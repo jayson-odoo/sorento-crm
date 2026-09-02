@@ -5,7 +5,7 @@
  * ref: a clickable `DataGrid` row (hover), the detail pager's prev/next
  * neighbours (mount), and the sidebar menu (hover).
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 
 import { usePrefetchOnce } from './usePrefetchOnce';
@@ -19,6 +19,25 @@ vi.mock('next/navigation', () => ({
 beforeEach(() => {
   prefetch.mockReset();
 });
+
+const realMatchMedia = window.matchMedia;
+afterEach(() => {
+  window.matchMedia = realMatchMedia;
+});
+
+/** Answers `matches` for `(hover: none)` and never matches anything else. */
+function stubHover(hoverNone: boolean) {
+  window.matchMedia = ((query: string) => ({
+    matches: query.includes('hover: none') ? hoverNone : false,
+    media: query,
+    onchange: null,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    addListener: () => {},
+    removeListener: () => {},
+    dispatchEvent: () => false,
+  })) as unknown as typeof window.matchMedia;
+}
 
 describe('usePrefetchOnce', () => {
   it('calls router.prefetch for a new href', () => {
@@ -63,5 +82,39 @@ describe('usePrefetchOnce', () => {
     act(() => result.current('/orders/a1'));
 
     expect(prefetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('usePrefetchOnce on a touch device', () => {
+  it('does not prefetch when (hover: none) matches', () => {
+    // `pointerenter` fires on the tap that is ALREADY opening the record, so the
+    // prefetch is pure cost: a second request for a page the click is fetching.
+    stubHover(true);
+    const { result } = renderHook(() => usePrefetchOnce());
+
+    act(() => result.current('/orders/a1'));
+
+    expect(prefetch).not.toHaveBeenCalled();
+  });
+
+  it('prefetches when (hover: none) does not match', () => {
+    // Asked in the positive on purpose: a stub that answers "no match" to every
+    // query - jsdom's, and the one this repo installs in vitest.setup.ts - would
+    // read `!(hover: hover)` as "no hover" and switch prefetching off everywhere.
+    stubHover(false);
+    const { result } = renderHook(() => usePrefetchOnce());
+
+    act(() => result.current('/orders/a1'));
+
+    expect(prefetch).toHaveBeenCalledWith('/orders/a1');
+  });
+
+  it('prefetches when the environment has no matchMedia at all', () => {
+    (window as { matchMedia?: unknown }).matchMedia = undefined;
+    const { result } = renderHook(() => usePrefetchOnce());
+
+    act(() => result.current('/orders/a1'));
+
+    expect(prefetch).toHaveBeenCalledWith('/orders/a1');
   });
 });

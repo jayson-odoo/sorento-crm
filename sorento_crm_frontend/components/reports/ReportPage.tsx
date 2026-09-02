@@ -260,7 +260,7 @@ export function periodIsRunnable(params: ReportParamValues): boolean {
  * the row count, a year of forms turned every reload into 214 grey rows scrolling past a
  * screen the user is waiting on; the wait is the same wait whatever the answer's size.
  */
-const ONE_PAGE: PaginationState = { pageIndex: 0, pageSize: 15 };
+export const ONE_PAGE: PaginationState = { pageIndex: 0, pageSize: 15 };
 
 /**
  * The one report screen. Everything about it comes from `GET /reports/{key}` and
