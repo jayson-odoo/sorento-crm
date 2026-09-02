@@ -7,6 +7,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
+import { cn } from '@/lib/utils';
 import {
   amendNeedsReason,
   matchesSuggestion,
@@ -34,6 +35,7 @@ import type {
 } from '../../_shared/types/fulfilmentPlanning.types';
 import { BoardLadderOptionsTable } from './BoardLadderOptionsTable';
 import { BorrowAddDialog } from './BorrowAddDialog';
+import { ReserveAddDialog } from './ReserveAddDialog';
 
 /**
  * The decision on one contributing line, taken IN THE ROW (PLAN section 3.C, ruling R7).
@@ -107,6 +109,7 @@ export function BoardLineDecisionPanel({
     () => Boolean(contribution.covered) && !decision,
   );
   const [adding, setAdding] = React.useState(false);
+  const [addingReserve, setAddingReserve] = React.useState(false);
   /** Untouched since it opened. Saving or approving puts it back, because it is saved now. */
   const [dirty, setDirty] = React.useState(false);
 
@@ -121,6 +124,28 @@ export function BoardLineDecisionPanel({
   const candidates = React.useMemo<BorrowCandidate[]>(
     () => borrowCandidatesOf(contribution),
     [contribution],
+  );
+
+  // Reserve add-location (S3, R-G): any location the cell's own stock rows carry, with free
+  // stock left and not already on the Reserve list. The site pool is not filtered out - R-A
+  // asks it first, so a planner adding it by hand is asking for exactly what the ladder itself
+  // would have asked for.
+  const reserveWarehouseIds = React.useMemo(
+    () =>
+      draft.reserve
+        .map((row) => row.warehouse_id)
+        .filter((id): id is string => Boolean(id)),
+    [draft.reserve],
+  );
+  const reserveCandidates = React.useMemo(
+    () =>
+      locations.filter(
+        (location) =>
+          Boolean(location.warehouse_id) &&
+          !reserveWarehouseIds.includes(location.warehouse_id as string) &&
+          toMinor(location.qty_free_remaining ?? location.qty_free ?? '0') > 0,
+      ),
+    [locations, reserveWarehouseIds],
   );
 
   const balance = lineBalance(draft);
@@ -292,41 +317,77 @@ export function BoardLineDecisionPanel({
           <Block label="Reserve">
             {buying ? (
               <Muted>The whole line is being bought.</Muted>
-            ) : draft.reserve.length === 0 ? (
-              <Muted>The sales order states no warehouse for this line.</Muted>
             ) : (
               <div className="space-y-2">
-                {draft.reserve.map((row, index) => (
-                  <div
-                    key={row.key}
-                    className="flex flex-wrap items-center gap-2"
+                {draft.reserve.length === 0 ? (
+                  <Muted>The sales order states no warehouse for this line.</Muted>
+                ) : (
+                  draft.reserve.map((row, index) => {
+                    const available = availableAt(
+                      locations,
+                      row.warehouse_id,
+                      row.location,
+                    );
+                    // The SERVER's own guard refuses a reserve above on-hand at that
+                    // location (`_check_reserve_against_on_hand`); this is the same check
+                    // read off the same figure, so a planner sees it before Confirm does
+                    // (AC-3.3). The row is never removed for it - it stays here, editable.
+                    const over =
+                      available !== null && toMinor(row.qty) > toMinor(available);
+                    return (
+                      <div
+                        key={row.key}
+                        className="flex flex-wrap items-center gap-2"
+                      >
+                        <Input
+                          type="number"
+                          min="0"
+                          step="any"
+                          value={row.qty}
+                          disabled={locked}
+                          aria-label={`Reserve at ${row.location ?? 'the fulfilment location'}`}
+                          onChange={(event) => {
+                            const next = [...draft.reserve];
+                            next[index] = { ...row, qty: event.target.value };
+                            edit({ ...draft, reserve: next });
+                          }}
+                          className="h-8 w-24 tabular-nums"
+                        />
+                        <span className="text-sm">
+                          {row.location ?? 'Location not set'}
+                        </span>
+                        {/* The SERVER's figure for this location, beside the box it bounds. */}
+                        {available !== null && (
+                          <span
+                            data-testid={`line-reserve-available-${row.key}`}
+                            className={cn(
+                              'text-sm tabular-nums',
+                              over ? 'text-destructive' : 'text-muted-foreground',
+                            )}
+                          >
+                            {over
+                              ? `Only ${available} available here`
+                              : `${available} available`}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+
+                {locked ? null : reserveCandidates.length === 0 ? (
+                  <Muted>No other location holds free stock of this item.</Muted>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setAddingReserve(true)}
                   >
-                    <Input
-                      type="number"
-                      min="0"
-                      step="any"
-                      value={row.qty}
-                      disabled={locked}
-                      aria-label={`Reserve at ${row.location ?? 'the fulfilment location'}`}
-                      onChange={(event) => {
-                        const next = [...draft.reserve];
-                        next[index] = { ...row, qty: event.target.value };
-                        edit({ ...draft, reserve: next });
-                      }}
-                      className="h-8 w-24 tabular-nums"
-                    />
-                    <span className="text-sm">
-                      {row.location ?? 'Location not set'}
-                    </span>
-                    {/* The SERVER's figure for this location, beside the box it bounds. */}
-                    {availableAt(locations, row.warehouse_id, row.location) !==
-                      null && (
-                      <span className="text-sm text-muted-foreground tabular-nums">
-                        {`${availableAt(locations, row.warehouse_id, row.location)} available`}
-                      </span>
-                    )}
-                  </div>
-                ))}
+                    <Plus className="size-4" aria-hidden />
+                    Add location
+                  </Button>
+                )}
               </div>
             )}
           </Block>
@@ -658,6 +719,31 @@ export function BoardLineDecisionPanel({
                 same_agent: candidate.same_agent,
               },
             ])
+          }
+        />
+      )}
+
+      {addingReserve && (
+        <ReserveAddDialog
+          lineNo={contribution.line_no}
+          itemCode={contribution.item_code}
+          locations={reserveCandidates}
+          openRemainder={fromMinor(Math.max(balance.openMinor - balance.totalMinor, 0))}
+          onDone={() => setAddingReserve(false)}
+          onAdd={(location, qty) =>
+            edit({
+              ...draft,
+              reserve: [
+                ...draft.reserve,
+                {
+                  key: `reserve-${location.warehouse_id}-${draft.reserve.length}`,
+                  location: location.location,
+                  warehouse_id: location.warehouse_id ?? '',
+                  qty,
+                  reason: '',
+                },
+              ],
+            })
           }
         />
       )}
