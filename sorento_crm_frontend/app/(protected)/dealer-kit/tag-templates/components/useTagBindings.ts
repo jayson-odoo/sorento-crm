@@ -47,20 +47,43 @@ export interface TagBindings {
   loadAll: (bindings: GroupBinding[]) => Promise<void>;
 }
 
+/**
+ * Failed resolutions already toasted, by binding key ("product:<id>" /
+ * "set:<id>"). Module-level rather than hook state: a line switch remounts
+ * `TagCanvasEditor` (a fresh `useTagBindings` instance), and `loadAll`
+ * re-resolves the same carried binding on every mount - so a line whose
+ * product 404s (a cross-company reference, see `457_ptag_line_xco_repair`)
+ * toasted once per remount / retry, a stack for the same product. ONE toast
+ * survives for as long as this module does; a later SUCCESSFUL resolve clears
+ * the id, so a transient failure never permanently silences a real one.
+ */
+const _toastedResolutionFailures = new Set<string>();
+
+function toastResolutionFailureOnce(key: string, message: string): void {
+  if (_toastedResolutionFailures.has(key)) return;
+  _toastedResolutionFailures.add(key);
+  toast.error(message);
+}
+
+/** Tests only - the module-level dedupe set is per tab, and a test is one tab. */
+export function resetTagBindingsToastDedupeForTests(): void {
+  _toastedResolutionFailures.clear();
+}
+
 export function useTagBindings(promotionId?: string | null): TagBindings {
   const [data, setData] = useState<Record<string, TagBindingData>>({});
 
   const loadProduct = useCallback(
     async (productId: string) => {
+      const key = `product:${productId}`;
       try {
         const product = await getProductTagData(productId, promotionId);
-        setData((prev) => ({
-          ...prev,
-          [`product:${productId}`]: { kind: 'product', product },
-        }));
+        _toastedResolutionFailures.delete(key);
+        setData((prev) => ({ ...prev, [key]: { kind: 'product', product } }));
         return product;
       } catch (error) {
-        toast.error(
+        toastResolutionFailureOnce(
+          key,
           error instanceof Error ? error.message : 'Failed to load product data',
         );
         return null;
@@ -71,12 +94,15 @@ export function useTagBindings(promotionId?: string | null): TagBindings {
 
   const loadSet = useCallback(
     async (setId: string) => {
+      const key = `set:${setId}`;
       try {
         const set = await getProductSetTagData(setId, promotionId);
-        setData((prev) => ({ ...prev, [`set:${setId}`]: { kind: 'set', set } }));
+        _toastedResolutionFailures.delete(key);
+        setData((prev) => ({ ...prev, [key]: { kind: 'set', set } }));
         return set;
       } catch (error) {
-        toast.error(
+        toastResolutionFailureOnce(
+          key,
           error instanceof Error ? error.message : 'Failed to load product set data',
         );
         return null;

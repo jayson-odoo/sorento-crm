@@ -592,6 +592,61 @@ describe('RequestTagDesigner - explicit canvas states (AC-S3-2, AC-S3-3)', () =>
 });
 
 // ---------------------------------------------------------------------------
+// A line whose product could not be resolved (457_ptag_line_xco_repair): the
+// prices resolve skips a line whose product 404s under the request's
+// company - the rail must say so plainly, without a toast, instead of
+// showing "Resolving..." forever.
+// ---------------------------------------------------------------------------
+
+describe("RequestTagDesigner - a line the request's company cannot resolve", () => {
+  it('shows a "Product not found in this company" chip once prices have loaded, for the line resolveRequestLines skipped', async () => {
+    mockListTemplates.mockResolvedValue([]);
+    // Only line-1 comes back - line-2's product 404d under this request's
+    // company and resolve_request_line_data silently skips it.
+    mockResolveRequestLines.mockResolvedValue([lineTagData({ line_id: 'line-1' })]);
+
+    renderDesigner(
+      request({
+        lines: [line({ id: 'line-1' }), line({ id: 'line-2', product_id: 'prod-2' })],
+        line_count: 2,
+      }),
+    );
+
+    expect(
+      await screen.findByText('Product not found in this company'),
+    ).toBeInTheDocument();
+    // The resolved line never shows the chip.
+    expect(screen.getByText('Kitchen Sink')).toBeInTheDocument();
+  });
+
+  it('the chip never appears while prices are still resolving (the rail is gated behind pricesStatus === loaded)', async () => {
+    mockListTemplates.mockResolvedValue([]);
+    const prices = deferred<LineTagData[]>();
+    mockResolveRequestLines.mockReturnValue(
+      prices.promise as unknown as ReturnType<typeof resolveRequestLines>,
+    );
+
+    renderDesigner(
+      request({
+        lines: [line({ id: 'line-1' }), line({ id: 'line-2', product_id: 'prod-2' })],
+        line_count: 2,
+      }),
+    );
+
+    expect(await screen.findByText('Resolving prices...')).toBeInTheDocument();
+    expect(screen.queryByText('Product not found in this company')).not.toBeInTheDocument();
+
+    await act(async () => {
+      prices.resolve([lineTagData({ line_id: 'line-1' })]);
+    });
+
+    expect(
+      await screen.findByText('Product not found in this company'),
+    ).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Autosave (D22, S8, AC-S8-3)
 //
 // Autosave and manual Save are two different acts on two different routes

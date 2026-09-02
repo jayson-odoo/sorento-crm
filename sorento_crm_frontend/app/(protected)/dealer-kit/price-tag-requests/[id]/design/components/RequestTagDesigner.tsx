@@ -650,6 +650,7 @@ export function RequestTagDesigner({
       <LinesRail
         lines={request.lines}
         resolved={resolved}
+        pricesStatus={pricesStatus}
         tags={tags}
         selectedLineId={selectedLineId}
         onSelect={handleSelectLine}
@@ -885,6 +886,7 @@ function CanvasMessage({
 function LinesRail({
   lines,
   resolved,
+  pricesStatus,
   tags,
   selectedLineId,
   onSelect,
@@ -892,6 +894,7 @@ function LinesRail({
 }: {
   lines: PriceTagRequestLine[];
   resolved: Map<string, LineTagData>;
+  pricesStatus: 'loading' | 'loaded' | 'error';
   tags: Record<string, PlacedTag>;
   selectedLineId: string | null;
   onSelect: (lineId: string) => void;
@@ -913,6 +916,11 @@ function LinesRail({
           <div className="divide-y">
             {lines.map((line) => {
               const row = resolved.get(line.id);
+              // Prices resolution finished and this line still has no row: its
+              // product could not be resolved in this request's company (a
+              // cross-company reference, or a genuinely deleted product) - not
+              // "still loading". See `457_ptag_line_xco_repair`.
+              const notFound = pricesStatus === 'loaded' && !row;
               const code = row?.code ?? '';
               const name = row?.name ?? '';
               const designed = Boolean(tags[line.id]);
@@ -941,23 +949,35 @@ function LinesRail({
                         className="truncate font-mono text-xs text-muted-foreground"
                         title={code}
                       >
-                        {code || 'Resolving...'}
+                        {code || (notFound ? 'Not found' : 'Resolving...')}
                       </span>
                       {designed && (
                         <Check className="size-3 shrink-0 text-emerald-600" />
                       )}
                     </div>
-                    <p className="mt-0.5 truncate text-xs" title={name}>
-                      {name}
-                    </p>
-                    <p className="mt-0.5 truncate text-2xs text-muted-foreground">
-                      Qty {line.quantity} / {family}
-                      {row && row.show_promo_price && row.sell_price != null
-                        ? ` / SP ${formatTagPrice(row.sell_price)}`
-                        : row && row.list_price != null
-                          ? ` / LP ${formatTagPrice(row.list_price)}`
-                          : ''}
-                    </p>
+                    {notFound ? (
+                      <Badge
+                        variant="destructive"
+                        appearance="light"
+                        className="mt-1 px-1.5 py-0 text-2xs font-normal"
+                      >
+                        Product not found in this company
+                      </Badge>
+                    ) : (
+                      <>
+                        <p className="mt-0.5 truncate text-xs" title={name}>
+                          {name}
+                        </p>
+                        <p className="mt-0.5 truncate text-2xs text-muted-foreground">
+                          Qty {line.quantity} / {family}
+                          {row && row.show_promo_price && row.sell_price != null
+                            ? ` / SP ${formatTagPrice(row.sell_price)}`
+                            : row && row.list_price != null
+                              ? ` / LP ${formatTagPrice(row.list_price)}`
+                              : ''}
+                        </p>
+                      </>
+                    )}
                   </button>
                   <button
                     type="button"
