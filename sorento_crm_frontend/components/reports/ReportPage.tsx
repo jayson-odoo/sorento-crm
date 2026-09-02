@@ -340,6 +340,7 @@ export function ReportPage({
 
   const {
     data: result,
+    isPlaceholderData,
     error: runError,
     isFetching,
     refetch: refetchRun,
@@ -599,6 +600,7 @@ export function ReportPage({
                   table={table}
                   recordCount={result.row_count}
                   isLoading={isFetching}
+                  isPlaceholderData={isPlaceholderData}
                   /**
                    * Column preferences are the REPORT DEFAULT's memory (AC-C1).
                    *
