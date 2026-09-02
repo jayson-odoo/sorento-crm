@@ -1,5 +1,7 @@
 /**
  * AC-A.2, AC-G.8 - the registry grid renders, filters and opens a specification.
+ * D13/D14 - the toolbar reads like the Products list, and bulk delete skips seed
+ * rows, reporting the skip.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -17,6 +19,21 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
 }));
 
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: () => true,
+}));
+
+vi.mock('sonner', () => ({
+  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
+}));
+
+// The countdown engine itself is `hooks/useDeferredBulkAction.test.tsx`'s job -
+// this only pins that the grid wires the USER-sourced selection into `run()`.
+const bulkDeletionRun = vi.fn();
+vi.mock('@/hooks/useDeferredBulkAction', () => ({
+  useDeferredBulkAction: () => ({ run: bulkDeletionRun, isStarting: false }),
+}));
+
 const getSpecRegistry = vi.fn();
 const getKeysForProduct = vi.fn();
 vi.mock('../services/productSpecService', () => ({
@@ -24,6 +41,7 @@ vi.mock('../services/productSpecService', () => ({
   getKeysForProduct: (...a: unknown[]) => getKeysForProduct(...a),
 }));
 
+import { toast } from 'sonner';
 import { SpecRegistryGrid } from './SpecRegistryGrid';
 
 function baseKey(overrides: Record<string, unknown> = {}) {
@@ -84,6 +102,8 @@ beforeEach(() => {
   getSpecRegistry.mockReset();
   getKeysForProduct.mockReset();
   getSpecRegistry.mockResolvedValue({ keys: ROWS });
+  bulkDeletionRun.mockReset();
+  vi.mocked(toast.warning).mockReset();
   Element.prototype.scrollIntoView = vi.fn();
   Element.prototype.hasPointerCapture = vi.fn();
 });
@@ -163,5 +183,44 @@ describe('SpecRegistryGrid', () => {
     });
 
     expect(await screen.findByText(/No specifications match that search/i)).toBeInTheDocument();
+  });
+});
+
+describe('SpecRegistryGrid - row menu (D14, D15)', () => {
+  it('a user-made specification has a row "..." menu; a seed one has none', async () => {
+    renderGrid();
+    await screen.findByText('Finish');
+
+    // Bowl count is source: 'user' - it carries Delete (useSpecKeyActions).
+    expect(
+      screen.getByRole('button', { name: 'specification actions' }),
+    ).toBeInTheDocument();
+  });
+});
+
+describe('SpecRegistryGrid - bulk delete skips seed rows (D14)', () => {
+  it('parks the deferred bulk action for the user row only, and reports the seed skip', async () => {
+    renderGrid();
+    await screen.findByText('Finish');
+
+    fireEvent.click(screen.getByLabelText('Select Finish')); // seed
+    fireEvent.click(screen.getByLabelText('Select Bowl count')); // user
+
+    fireEvent.click(await screen.findByRole('button', { name: /Delete selected/i }));
+
+    expect(bulkDeletionRun).toHaveBeenCalledWith([{ id: 'bowl_count' }]);
+    expect(toast.warning).toHaveBeenCalledWith('1 skipped (shipped with the product)');
+  });
+
+  it('runs nothing and still reports the skip when only seed rows are selected', async () => {
+    renderGrid();
+    await screen.findByText('Finish');
+
+    fireEvent.click(screen.getByLabelText('Select Finish')); // seed only
+
+    fireEvent.click(await screen.findByRole('button', { name: /Delete selected/i }));
+
+    expect(bulkDeletionRun).not.toHaveBeenCalled();
+    expect(toast.warning).toHaveBeenCalledWith('1 skipped (shipped with the product)');
   });
 });

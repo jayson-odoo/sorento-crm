@@ -1,24 +1,36 @@
 'use client';
 
-import { useCallback, useMemo } from 'react';
-import { X } from 'lucide-react';
+import { useCallback, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { MessageSquareText, Plus, RefreshCw, Trash2, X } from 'lucide-react';
 import {
   getCoreRowModel,
   useReactTable,
   type ColumnDef,
+  type RowSelectionState,
 } from '@tanstack/react-table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { Skeleton } from '@/components/ui/skeleton';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { useDeferredBulkAction } from '@/hooks/useDeferredBulkAction';
+import { useHasPermission } from '@/hooks/usePermissions';
+import { pendingEntityKey, usePendingEntityKeys } from '@/lib/pending-entity-store';
+import { toast } from 'sonner';
+import { SpecKeyRowActions } from '../actions';
+import { AddSpecificationDialog } from './AddSpecificationDialog';
+import { TryPhraseDialog } from './TryPhraseDialog';
 import { useKeysForProductQuery } from '../hooks/useKeysForProductQuery';
-import { useSpecRegistryQuery } from '../hooks/useSpecRegistryQuery';
+import { SPEC_REGISTRY_QUERY_KEY, useSpecRegistryQuery } from '../hooks/useSpecRegistryQuery';
+import { useSpecRegistryMutations } from '../hooks/useSpecRegistryMutations';
 import { filterSpecKeys } from '../lib/specRegistryFilter';
 import { specTypeLabel } from '../lib/specTypeLabel';
 import type { SpecRegistryKey } from '../types/productSpec.types';
@@ -28,9 +40,19 @@ import type { SpecRegistryKey } from '../types/productSpec.types';
  *
  * The list is 37 rows, ETag-cached and read whole (D9): filtering, and the
  * product-code narrowing, both run in the browser rather than round-tripping the
- * server on every keystroke.
+ * server on every keystroke. The toolbar reads structurally the same as the
+ * Products list (D13): search, primary Add, secondary Actions, select column, row
+ * "..." menu, bulk delete strip (D14).
  */
 export function SpecRegistryGrid() {
+  const router = useRouter();
+  const canAdd = useHasPermission('master_data.spec_registry.add');
+  const canEdit = useHasPermission('master_data.spec_registry.edit');
+  const canDelete = useHasPermission('master_data.spec_registry.delete');
+  const { reread } = useSpecRegistryMutations();
+  const [adding, setAdding] = useState(false);
+  const [trying, setTrying] = useState(false);
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const { data: keys, isLoading, isError, error } = useSpecRegistryQuery();
   const {
     value: filter,
@@ -67,6 +89,9 @@ export function SpecRegistryGrid() {
 
   const columns = useMemo<ColumnDef<SpecRegistryKey>[]>(
     () => [
+      buildSelectColumn<SpecRegistryKey>({
+        rowLabel: (row) => `Select ${row.original.label}`,
+      }),
       {
         id: 'label',
         accessorFn: (row) => row.label,
@@ -175,6 +200,15 @@ export function SpecRegistryGrid() {
           </Badge>
         ),
       },
+      {
+        id: 'actions',
+        header: '',
+        cell: ({ row }) => <SpecKeyRowActions specKey={row.original} />,
+        size: 50,
+        enableSorting: false,
+        enableHiding: false,
+        enableResizing: false,
+      },
     ],
     [],
   );
@@ -187,11 +221,45 @@ export function SpecRegistryGrid() {
       // Every key on one page (D9): this is a small vocabulary read whole, not a
       // feed paged through.
       pagination: { pageIndex: 0, pageSize: Math.max(visible.length, 1) },
+      rowSelection,
     },
     columnResizeMode: 'onChange',
     enableColumnResizing: true,
+    enableRowSelection: true,
+    onRowSelectionChange: setRowSelection,
     getCoreRowModel: getCoreRowModel(),
   });
+
+  // A specification whose deletion is counting down stays on the grid, dimmed,
+  // until the window lapses (D7).
+  const pendingKeys = usePendingEntityKeys();
+  const rowPending = (row: SpecRegistryKey) =>
+    pendingKeys.has(pendingEntityKey('spec_key', row.spec_key));
+
+  // Bulk delete = one countdown over the user-made rows in the selection (D14). A
+  // seed row ships with the product and would just reappear on the next deploy, so
+  // it never enters the batch - the toast says how many were left out and why,
+  // rather than the selection quietly shrinking with no explanation.
+  const bulkDeletion = useDeferredBulkAction({
+    actionKey: 'spec_key.delete',
+    entityType: 'spec_key',
+    describe: (count) => `${count} specification${count === 1 ? '' : 's'}`,
+    invalidateKeys: [SPEC_REGISTRY_QUERY_KEY],
+    onStarted: () => setRowSelection({}),
+  });
+
+  const handleBulkDelete = () => {
+    const selectedKeys = table.getSelectedRowModel().rows.map((r) => r.original);
+    const deletable = selectedKeys.filter((key) => key.source === 'user');
+    const skipped = selectedKeys.length - deletable.length;
+    if (skipped > 0) {
+      toast.warning(
+        `${skipped} skipped (shipped with the product)`,
+      );
+    }
+    if (deletable.length === 0) return;
+    bulkDeletion.run(deletable.map((key) => ({ id: key.spec_key })));
+  };
 
   if (isError) {
     return (
@@ -201,47 +269,106 @@ export function SpecRegistryGrid() {
     );
   }
 
+  // The one offer this listing makes, in both places it belongs: the toolbar, and
+  // the empty state's next step.
+  const listPrimaryAction = canAdd ? (
+    <Button onClick={() => setAdding(true)}>
+      <Plus className="size-4" aria-hidden />
+      Add specification
+    </Button>
+  ) : undefined;
+
   return (
     <DataGrid
       table={table}
       recordCount={visible.length}
       isLoading={isLoading}
       rowHref={rowHref}
+      rowPending={rowPending}
       listingKey="master_data.spec_registry.view"
       tableLayout={{ width: 'fixed', columnsResizable: true }}
       emptyMessage="No specifications match that search."
+      emptyAction={listPrimaryAction}
     >
       <Card>
-        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3">
-          <ListSearchInput
-            className="w-full sm:w-72"
-            value={filter}
-            onChange={setFilter}
-            isSettling={isSearchInFlight(isSettling, probeLoading, debouncedFilter)}
-            placeholder="Find a specification, word or product code"
+        <CardHeader className="block">
+          <DataGridListToolbar
+            table={table}
+            searchSlot={
+              <>
+                <ListSearchInput
+                  className="w-full sm:w-72"
+                  value={filter}
+                  onChange={setFilter}
+                  isSettling={isSearchInFlight(isSettling, probeLoading, debouncedFilter)}
+                  placeholder="Find a specification, word or product code"
+                />
+                {matchedCode && (
+                  <div className="flex items-center gap-1.5">
+                    <Badge variant="secondary" appearance="light" shape="circle" size="sm">
+                      Specifications of {matchedCode}
+                    </Badge>
+                    <Button
+                      type="button"
+                      mode="icon"
+                      size="sm"
+                      variant="ghost"
+                      aria-label={`Clear the ${matchedCode} filter`}
+                      onClick={() => setFilter('')}
+                    >
+                      <X className="size-3.5" />
+                    </Button>
+                  </div>
+                )}
+              </>
+            }
+            primaryAction={listPrimaryAction}
+            secondaryActions={[
+              {
+                key: 'try-phrase',
+                label: 'Try a phrase',
+                icon: MessageSquareText,
+                onClick: () => setTrying(true),
+              },
+              ...(canEdit
+                ? [
+                    {
+                      key: 'reread',
+                      label: 'Reread catalogue',
+                      icon: RefreshCw,
+                      disabled: reread.isPending,
+                      onClick: () => reread.mutate(),
+                    },
+                  ]
+                : []),
+            ]}
+            bulkActions={
+              canDelete
+                ? [
+                    {
+                      key: 'delete',
+                      label: 'Delete selected',
+                      icon: Trash2,
+                      destructive: true,
+                      onClick: handleBulkDelete,
+                    },
+                  ]
+                : []
+            }
           />
-          {matchedCode && (
-            <div className="flex items-center gap-1.5">
-              <Badge variant="secondary" appearance="light" shape="circle" size="sm">
-                Specifications of {matchedCode}
-              </Badge>
-              <Button
-                type="button"
-                mode="icon"
-                size="sm"
-                variant="ghost"
-                aria-label={`Clear the ${matchedCode} filter`}
-                onClick={() => setFilter('')}
-              >
-                <X className="size-3.5" />
-              </Button>
-            </div>
-          )}
         </CardHeader>
         <CardTable>
           <DataGridTable />
         </CardTable>
       </Card>
+      <AddSpecificationDialog
+        open={adding}
+        onOpenChange={setAdding}
+        onCreated={(specKey) =>
+          router.push(`/master-data-management/product-specifications/${specKey}`)
+        }
+      />
+      <TryPhraseDialog open={trying} onOpenChange={setTrying} />
     </DataGrid>
   );
 }
