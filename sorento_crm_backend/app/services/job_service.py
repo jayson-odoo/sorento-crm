@@ -1,5 +1,6 @@
 """Service for managing import jobs."""
 import logging
+import re
 import threading
 import uuid
 from datetime import datetime
@@ -17,6 +18,45 @@ logger = logging.getLogger(__name__)
 _IMPORT_NOTIFICATION_DISCLAIMER = (
     "\n\nThis is a system-generated message. Please do not reply."
 )
+
+#: Matches a Python traceback frame line, e.g.
+#: `File "/app/app/tasks/import_tasks.py", line 42, in process_outstanding_import`
+_TRACEBACK_FRAME_RE = re.compile(r', in (?P<func>\S+)\s*$')
+
+_ERROR_SUMMARY_MAX_LENGTH = 2000
+
+
+def _summarise_error(text: Optional[str], max_length: int = _ERROR_SUMMARY_MAX_LENGTH) -> Optional[str]:
+    """Reduce a possibly multi-line error/traceback to one line for `import_jobs.error`.
+
+    RQ's own `exc_info` (surfaced via `sync_job_status` and the orphan-job
+    reconciler) is the FULL Python traceback - "Traceback (most recent call
+    last): File ... " down to the exception. Storing that verbatim made the
+    Upload activity drawer row overflow: one unbroken line with no wrap
+    points wide enough to push the row's status icon off the edge.
+
+    This keeps only the exception line itself, plus the function it was
+    raised from when the text looks like a traceback (the last `File ...,
+    in <func>` frame line right before the exception). A single-line
+    message (the common case - `ValueError("...")`, an RQ failure string)
+    passes through unchanged aside from the length cap. The full text
+    always still reaches the server log; only this shorter form lands in
+    the DB column the UI renders.
+    """
+    if not text:
+        return text
+    lines = [line.strip() for line in text.strip().splitlines() if line.strip()]
+    if not lines:
+        return text[:max_length]
+    exception_line = lines[-1]
+    func_name = None
+    for line in reversed(lines[:-1]):
+        match = _TRACEBACK_FRAME_RE.search(line)
+        if match:
+            func_name = match.group('func')
+            break
+    summary = f"{exception_line} (in {func_name})" if func_name else exception_line
+    return summary[:max_length]
 
 
 def active_company_id_from_scope(db: Session) -> Optional[str]:
@@ -206,7 +246,10 @@ class JobService:
             job.status = JobStatus.FAILED.value
             job.completed_at = now
             job.updated_at = now
-            job.error = error
+            # Full text (may be a multi-KB traceback) to the server log; only the
+            # one-line summary lands in the column the drawer renders.
+            logger.error("import job %s failed: %s", job_id, error)
+            job.error = _summarise_error(error)
             self.db.commit()
             _notify_import_job_event(
                 self.db,
@@ -384,7 +427,9 @@ class JobService:
             job.completed_at = now
             job.updated_at = now
             if rq_status.get('exc_info'):
-                job.error = str(rq_status['exc_info'])
+                full_error = str(rq_status['exc_info'])
+                logger.error("import job %s failed (RQ exc_info): %s", job_id, full_error)
+                job.error = _summarise_error(full_error)
             self.db.commit()
             _notify_import_job_event(
                 self.db,

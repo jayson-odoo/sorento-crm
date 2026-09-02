@@ -25,6 +25,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
+import { errorSummary } from './errorSummary';
 import { timeAgo } from './timeUtil';
 import { summariseSession } from './translation';
 import type { UploadActivitySession } from './types';
@@ -98,6 +99,7 @@ export function UploadSessionRow({
   // Excel/data import jobs: no file rows to expand - flat row, whole row
   // navigates to the import-job detail page. (After all hooks - keep order stable.)
   if (session.session_type === 'import_job') {
+    const summary = summariseSession(session);
     return (
       <div className="border-b border-border">
         <button
@@ -125,16 +127,17 @@ export function UploadSessionRow({
                 {timeAgo(session.started_at)}
               </span>
             </div>
-            {/* NOT `truncate`. For a failed import this line is the error itself
-                (`summariseImportJob` returns `job_error` verbatim), and RQ's
-                failure strings are long — "Moved to FailedJobRegistry, due to
-                AbandonedJobError, at ..." was cut mid-timestamp, which is the
-                half a reader needs. Two wrapped lines, the rest on hover. */}
+            {/* A failed import's `job_error` can be a full Python traceback, which
+                as one unbroken line overflowed the drawer and pushed the row's
+                status icon off the edge (`summariseImportJob` returns `job_error`
+                verbatim). `truncate` keeps this to one line, `errorSummary` picks
+                just the exception - not the traceback header - and the full text
+                is still one hover away via `title`. */}
             <div
-              className="text-xs text-muted-foreground mt-1 break-words line-clamp-2"
-              title={summariseSession(session)}
+              className="text-xs text-muted-foreground mt-1 truncate"
+              title={summary}
             >
-              {summariseSession(session)}
+              {errorSummary(summary)}
             </div>
           </div>
           <ExternalLink className="size-3.5 mt-1 shrink-0 text-muted-foreground" />
