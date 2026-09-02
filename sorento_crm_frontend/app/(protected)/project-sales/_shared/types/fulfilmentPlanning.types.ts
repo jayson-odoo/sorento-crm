@@ -847,12 +847,19 @@ export interface BoardLadderOption {
   /** The option the engine proposed. Exactly one option carries it, or none when nothing covers. */
   chosen: boolean;
   /**
-   * How much THIS step alone can give, stated only on `pool_share` (S2, R-B): the one step
-   * that may cover PART of the unit rather than whole-or-nothing (R10/R33 still bind every
-   * other step, so a quantity beside them would say nothing `whole` does not already say).
-   * `null` when the step gives nothing at all - `0`, per R-K, is never blank.
+   * How much THIS step can give (S2, R-B). On `pool_share` it is the SHARE - the one step
+   * that may cover part of the unit rather than whole-or-nothing, so the one row whose
+   * quantity `whole` does not already state. On every other row it is what that step would
+   * contribute to what is LEFT after the share ("Use BRW stock 450, Use our locations 0,
+   * Buy 200", AC-2.1). `0` renders as `0`, never blank (R-K).
    */
   gives_qty?: string | null;
+  /**
+   * The step's own sentence, where the quantity alone does not say it - "600 is more than
+   * the 450 BRW can spare" (AC-2.4). Set on `pool_share`; null elsewhere, because a reason
+   * per row for its own sake is noise.
+   */
+  reason?: string | null;
 }
 
 /**
@@ -1514,10 +1521,9 @@ export interface BoardCellLocation {
    * `own` / `group` / `other_group` row (there is no pool share to keep there); on an
    * addressable `site_pool` row it is always a number, `0` included, never blank.
    *
-   * PHASE 1 MOCK (this field does not exist on the wire yet): `lib/fulfilmentV8Mock.ts`
-   * computes it client-side in `fulfilmentPlanningService.ts` from `available_qty` and
-   * `net`, which the v7.1 board already sends. Phase 2 deletes the mock the day the v8
-   * engine sends this number for real.
+   * The SAME allowance the walk's own step 0 asked the pool for
+   * (`front_planning_engine.available_for_project`): the planner reads the number the
+   * engine obeyed, never a second computation of it.
    */
   available_for_project?: string | null;
 }
@@ -1670,6 +1676,14 @@ export interface PlanningBoard {
   unplannable_line_count: number;
   /** Of those, the lines the allocation rule could not cover from free stock (13.5). */
   contested_line_count: number;
+  /**
+   * S2 (R-K): how much of a site pool is kept back for dealers, in percent, off the active
+   * policy row. Every site-pool ROW already carries the server's own
+   * `available_for_project`; this is what the Stock tab's pool SUBTOTAL applies the same
+   * rule with, over the pool's own net - a figure that belongs to the SET and so appears on
+   * no row.
+   */
+  pool_share_pct?: number;
   dateBuckets: BoardDateBucket[];
   productRows: BoardProductRow[];
   cells: BoardCell[];
@@ -1922,12 +1936,16 @@ export interface StockDetail {
    * `group: 'pools'` reading's running ledger. Absent on every other read (a bin, or a
    * non-pool group), which has no pool share to cap.
    *
-   * PHASE 1 MOCK: on today's wire this is the SAME number `available_qty` already carries
-   * for a `group: 'pools'` read (both are the five pools' net, signed), so
-   * `fulfilmentPlanningService.ts` aliases it client-side until Phase 2 sends the field for
-   * real under its own name.
+   * Signed, and read off the engine's own `netting().pools_net()`, so the cap the ledger
+   * applies is the cap the walk was bound by (R-D).
    */
   five_pool_net?: string | null;
+  /**
+   * S2 (R-K): how much of a site pool is kept back for dealers, in percent, off the active
+   * policy row. Sent with `five_pool_net` on the `group: 'pools'` reading only; the ledger
+   * needs it because it computes its running balances itself and the server never sees them.
+   */
+  pool_share_pct?: number | null;
 }
 
 // ---------------------------------------------------------------------------

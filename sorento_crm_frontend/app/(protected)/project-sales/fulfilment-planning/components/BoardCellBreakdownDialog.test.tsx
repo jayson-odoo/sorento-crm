@@ -641,10 +641,11 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
       }),
     );
 
-    // Location, On hand, SO qty, SPO qty, Available, PO qty, Taken - after the chevron cell,
-    // which carries no text. No demand column: the table below says that per line. No
-    // Reserved and no Free either: Free was `On hand - Reserved`, and Reserved itself was read
-    // by nothing on this screen once `Available` turned out not to use it.
+    // Location, On hand, SO qty, SPO qty, Available, Available for Project, PO qty, Taken -
+    // after the chevron cell, which carries no text. No demand column: the table below says
+    // that per line. No Reserved and no Free either: Free was `On hand - Reserved`, and
+    // Reserved itself was read by nothing on this screen once `Available` turned out not to
+    // use it.
     expect(stockRow('BRW-BB').slice(1)).toEqual([
       'BRW-BB',
       'Own location',
@@ -654,6 +655,9 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
       // A negative available is the whole point: it is the shortfall, and clamping it to zero
       // would turn the one number that says "this cannot be met" into one that says it can.
       '-46531',
+      // Available for Project: blank on an own location (LADDER v8, R-K) - there is no dealer
+      // share to keep back outside a site pool, and a 0 would read as an empty location.
+      '-',
       // PO qty and Taken: the server stated neither, and a row that names a location reads 0.
       '0',
       '0',
@@ -701,7 +705,7 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
 
     const row = stockRow('none');
     expect(row[1]).toBe('No location');
-    expect(row.slice(3)).toEqual(['-', '-', '-', '-', '-', '-']);
+    expect(row.slice(3)).toEqual(['-', '-', '-', '-', '-', '-', '-']);
     expect(row).not.toContain('0');
   });
 
@@ -1423,8 +1427,11 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
     );
     openLines();
 
+    // LADDER v8 (R-E): the unit is still one cell, but its lines no longer share ONE
+    // composition - they walk one at a time, smallest first, each fed what the previous one
+    // left - so the sentence names the unit and points at the per-line rows.
     expect(await sourceNoteOf(cell.contributions[0].key)).toContain(
-      'Planned with 1 other line of this order for 04/09/2026: 30 in all, covered or bought as one.',
+      "Planned with 1 other line of this order for 04/09/2026: 30 in all. Each line's own composition is shown on its own row.",
     );
   });
 

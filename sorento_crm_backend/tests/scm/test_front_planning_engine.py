@@ -34,6 +34,9 @@ def test_own_location_is_never_a_reserve_source_the_pool_covers_it_instead():
     """Ladder v2 (section E, rule 7): "the own-location Reserve rung is REMOVED". A line
     whose own free stock used to cover it directly now draws the SAME quantity from the
     pool instead - own free stock is never read by the ladder at all.
+
+    LADDER V8: the pool holds 200 rather than 100, because a project line may take half of
+    it (R-B) and this case is about WHERE the 90 comes from.
     """
     from app.services.scm.front_planning_engine import propose_line
 
@@ -47,11 +50,11 @@ def test_own_location_is_never_a_reserve_source_the_pool_covers_it_instead():
             pools=[
                 {
                     "location": POOL_LOCATION,
-                    "free": Decimal("100"),
-                    "available": Decimal("100"),
+                    "free": Decimal("200"),
+                    "available": Decimal("200"),
                 }
             ],
-            pools_net=Decimal("100"),
+            pools_net=Decimal("200"),
             is_discontinued=False,
         )
     )
@@ -61,7 +64,7 @@ def test_own_location_is_never_a_reserve_source_the_pool_covers_it_instead():
     assert set(reserves) == {POOL_LOCATION}
     assert reserves[POOL_LOCATION].qty == Decimal("90")
     assert reserves[POOL_LOCATION].reason == (
-        "Pool BRW lends 90 of the 100 the site pools net between them"
+        "Pool BRW spares 90 of the 100 it may lend a project"
     )
     assert reserves[POOL_LOCATION].rung == "pool"
 
@@ -73,7 +76,12 @@ def test_own_location_is_never_a_reserve_source_the_pool_covers_it_instead():
 def test_pool_reserve_draws_the_own_site_pool_before_the_other_site_pools():
     """Section E rule 2: "P(S) first, then the other site pools". The own site pool is
     not enough on its own, so the residual comes from the SECOND pool in the ordered list,
-    never the reverse."""
+    never the reverse.
+
+    LADDER V8 sharpens exactly this: the ALLOWANCE (half of the asking bin's own pool
+    availability, 90 of 180) says HOW MUCH the pool may lend, and each pool's FREE pile says
+    WHERE it can come from - BRW has only 30 on a floor, so the other 60 comes from MWH.
+    """
     from app.services.scm.front_planning_engine import propose_line
 
     proposed = _components(
@@ -82,7 +90,7 @@ def test_pool_reserve_draws_the_own_site_pool_before_the_other_site_pools():
             required_date=REQUIRED_DATE,
             fulfilment_location=OWN_LOCATION,
             pools=[
-                {"location": "BRW", "free": Decimal("30"), "available": Decimal("30")},
+                {"location": "BRW", "free": Decimal("30"), "available": Decimal("180")},
                 {"location": "MWH", "free": Decimal("100"), "available": Decimal("100")},
             ],
             pools_net=Decimal("130"),
@@ -114,12 +122,14 @@ def test_every_pool_is_capped_by_its_own_signed_availability_not_only_a_hot_sell
         )
     )
 
-    # The whole-line rule: 40 of 90 covered is not the whole line, so the WHOLE 90 is
-    # bought - never "reserve 40, buy 50" - and no Reserve component survives at all.
+    # LADDER V8 (R-B): the pool's 40 availability is not what is on offer - half of it is,
+    # and 90 is more than 20, so a line due beyond the immediate window takes nothing from
+    # the pool at all and the whole 90 is bought. Nothing else could cover any of it, which
+    # is what the sentence says.
     assert len(proposed) == 1
     assert proposed[0].kind == "buy"
     assert proposed[0].qty == Decimal("90")
-    assert proposed[0].reason == "Only 40 of 90 can be covered from stock - buy the whole line"
+    assert proposed[0].reason == "Only 0 of 90 can be covered from stock - buy the whole line"
 
 
 # --------------------------------------------------------------- hot-selling (PLAN 3.3a)
@@ -161,10 +171,10 @@ def test_dealer_hot_selling_offers_no_pool_at_all():
 
 
 def test_the_pools_own_net_bounds_a_project_hot_selling_draw_like_any_other():
-    """PLAN 3.3a, still true for a single pool under ladder v2: `max(min(pool free,
-    pool_available), 0)`. The pool's free balance (150) is more than its signed
-    availability (40), so the draw stops at 40 - which is not the whole line, so the
-    whole-line rule buys all of it rather than leaving a partial Reserve standing.
+    """PLAN 3.3a, still true for a single pool under ladder v2: the pile's own position
+    bounds the draw. LADDER V8 halves it once more (R-B): 80 available is 40 on offer, and
+    the line is 40, so the pool covers it whole and the sentence names the ALLOWANCE the
+    quantity is a share of rather than the raw pile.
     """
     from app.services.scm.front_planning_engine import propose_line
 
@@ -179,10 +189,10 @@ def test_the_pools_own_net_bounds_a_project_hot_selling_draw_like_any_other():
                 {
                     "location": POOL_LOCATION,
                     "free": Decimal("150"),
-                    "available": Decimal("40"),
+                    "available": Decimal("80"),
                 }
             ],
-            pools_net=Decimal("40"),
+            pools_net=Decimal("80"),
             is_discontinued=False,
         )
     )
@@ -191,11 +201,11 @@ def test_the_pools_own_net_bounds_a_project_hot_selling_draw_like_any_other():
     assert proposed[0].kind == "reserve"
     assert proposed[0].qty == Decimal("40")
     assert proposed[0].source_location == POOL_LOCATION
-    # Ladder v4: the sentence names the PILE's number, because that is what the quantity is
-    # a share of. 3.3a's per-pool cap for a project hot-selling item is gone - the pile's
-    # net bounds this draw exactly as it bounds a cold item's.
+    # Ladder v8: the sentence names the ALLOWANCE, because that is what the quantity is a
+    # share of now. Naming the pile's whole net invited the next planner to ask for the
+    # other half, which is the half being kept for dealers.
     assert proposed[0].reason == (
-        "Pool BRW lends 40 of the 40 the site pools net between them"
+        "Pool BRW spares 40 of the 40 it may lend a project"
     )
 
 
@@ -355,11 +365,12 @@ def test_quantities_stay_exact_decimal_with_fractional_inputs():
             pools=[
                 {
                     "location": POOL_LOCATION,
-                    "free": Decimal("100"),
-                    "available": Decimal("100"),
+                    # 200, so half of it still covers the line under ladder v8 (R-B).
+                    "free": Decimal("200"),
+                    "available": Decimal("200"),
                 }
             ],
-            pools_net=Decimal("100"),
+            pools_net=Decimal("200"),
             is_discontinued=False,
         )
     )
@@ -499,10 +510,12 @@ def test_a_line_required_on_or_before_the_coverage_date_runs_the_ladder_normally
             required_date=date(2026, 10, 31),
             fulfilment_location=OWN_LOCATION,
             reorder_coverage_until=date(2026, 10, 31),
+            # 100 in the pool: half of it is what a project line may take (v8, R-B), and
+            # this case is about rung 0 NOT firing.
             pools=[
-                {"location": POOL_LOCATION, "free": Decimal("50"), "available": Decimal("50")}
+                {"location": POOL_LOCATION, "free": Decimal("100"), "available": Decimal("100")}
             ],
-            pools_net=Decimal("50"),
+            pools_net=Decimal("100"),
         )
     )
 
@@ -522,9 +535,9 @@ def test_no_coverage_date_set_never_gates_a_line():
             fulfilment_location=OWN_LOCATION,
             reorder_coverage_until=None,
             pools=[
-                {"location": POOL_LOCATION, "free": Decimal("10"), "available": Decimal("10")}
+                {"location": POOL_LOCATION, "free": Decimal("20"), "available": Decimal("20")}
             ],
-            pools_net=Decimal("10"),
+            pools_net=Decimal("20"),
         )
     )
 
@@ -730,9 +743,10 @@ def test_the_group_is_drawn_before_the_pool():
     ]
 
 
-def test_the_group_alone_covers_the_line_before_the_pool_is_asked():
-    """The other half of the same ruling: where the GROUP can cover the whole unit, it does,
-    and the pool is not reached however much sits in it."""
+def test_the_group_answers_when_the_pool_has_nothing_to_spare():
+    """The other half of the same ruling, RE-BLESSED BY LADDER V8 (R-A): the site pool is
+    asked FIRST now, so a pool holding 1000 would answer this line and the group would never
+    be reached. With the pool empty, the group covers the whole unit exactly as before."""
     from app.services.scm.front_planning_engine import propose_line
 
     proposed = _components(
@@ -746,9 +760,9 @@ def test_the_group_alone_covers_the_line_before_the_pool_is_asked():
                 {"location": "DC1-BB", "qty": Decimal("30")},
             ],
             pools=[
-                {"location": "BRW", "free": Decimal("1000"), "available": Decimal("1000")}
+                {"location": "BRW", "free": Decimal("0"), "available": Decimal("0")}
             ],
-            pools_net=Decimal("1000"),
+            pools_net=Decimal("0"),
         )
     )
 
@@ -771,10 +785,11 @@ def test_the_pool_rung_still_runs_when_the_group_holds_nothing():
             fulfilment_location="BRW-BB",
             group_code=GROUP_CODE,
             group_take_candidates=[],
+            # 142 available: half of it is the 71 the line needs (ladder v8, R-B).
             pools=[
-                {"location": "BRW", "free": Decimal("71"), "available": Decimal("71")}
+                {"location": "BRW", "free": Decimal("142"), "available": Decimal("142")}
             ],
-            pools_net=Decimal("71"),
+            pools_net=Decimal("142"),
         )
     )
 
@@ -877,14 +892,20 @@ def test_whole_line_rule_covers_the_whole_line_across_every_rung_in_order():
 
 
 def test_whole_line_rule_drops_every_partial_component_when_the_line_falls_short():
-    """Section 1b rung 5, the other side: 213 of 358 covered is not the whole line, so
-    NONE of the partial components survive and the whole 358 is bought instead."""
+    """Section 1b rung 5, the other side, RE-BLESSED BY LADDER V8 (R-C): the pool's SHARE
+    is its own sub-unit and survives, and the whole-line rule applies to what is left. 213
+    in the pool is 106 on offer, so the line reads Pool 106 + Buy 252 rather than Buy 358 -
+    the captain's own "BRW 325 + Buy 325" shape.
+    """
     from app.services.scm.front_planning_engine import propose_line
 
     proposed = _components(
         propose_line(
             open_qty=Decimal("358"),
-            required_date=REQUIRED_DATE,
+            # DUE SOON, and pinned: the partial share is the immediate window's own rule
+            # (R-B). Beyond it the pool is whole-or-nothing and this line would buy entire.
+            as_of=date(2026, 9, 2),
+            required_date=date(2026, 9, 12),
             fulfilment_location="BRW-BB",
             group_code=GROUP_CODE,
             pools=[
@@ -894,11 +915,12 @@ def test_whole_line_rule_drops_every_partial_component_when_the_line_falls_short
         )
     )
 
-    assert len(proposed) == 1
-    assert proposed[0].kind == "buy"
-    assert proposed[0].qty == Decimal("358")
-    assert proposed[0].reason == (
-        "Only 213 of 358 can be covered from stock - buy the whole line"
+    assert [(c.kind, c.qty) for c in proposed] == [
+        ("reserve", Decimal("106")),
+        ("buy", Decimal("252")),
+    ]
+    assert proposed[1].reason == (
+        "Only 0 of the remaining 252 can be covered from stock - buy the rest"
     )
 
 

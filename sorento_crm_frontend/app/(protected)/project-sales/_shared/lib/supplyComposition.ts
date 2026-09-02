@@ -19,7 +19,13 @@ import type {
   BorrowDonorImpact,
 } from '../types/fulfilmentPlanning.types';
 
-const SCALE = 10_000;
+/**
+ * One whole unit, in the minor units every comparison here is done in. EXPORTED because
+ * ladder v8's pool share has to floor to a WHOLE unit (`poolShare.ts`, R-K: "47 free reads
+ * 23"), and a second copy of this number is how two files come to disagree about precision.
+ */
+export const QTY_SCALE = 10_000;
+const SCALE = QTY_SCALE;
 
 /** A quantity that is not a number at all counts as 0, so a half-typed input never NaNs. */
 export function toMinor(qty: string | number | null | undefined): number {

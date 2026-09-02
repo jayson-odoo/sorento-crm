@@ -120,7 +120,13 @@ def test_no_composition_the_engine_writes_carries_the_retired_incoming_rung():
         components = _components(ProjectSupplyService(db).proposal_for(order))
 
     assert "incoming" not in [c["rung"] for c in components]
-    assert [(c["kind"], c["rung"]) for c in components] == [("timely_spo", "group_take")]
+    # LADDER V8 (R-A/R-C): the site pool is asked FIRST and spares its half of the 5 it
+    # holds, and the 38 left of the line is what question 1 answers with the water. The
+    # rung under test is unchanged - what the SPO reaches this line as is `group_take`.
+    assert [(c["kind"], c["rung"]) for c in components] == [
+        ("reserve", "pool"),
+        ("timely_spo", "group_take"),
+    ]
 
 
 def test_a_line_beyond_the_window_buys_whole_even_when_an_spo_would_cover_it():
@@ -147,14 +153,16 @@ def test_a_line_beyond_the_window_buys_whole_even_when_an_spo_would_cover_it():
 # --------------------------------------------------------------------------- AC-V7
 
 
-def test_another_groups_free_pile_is_used_before_the_pool_under_v7():
-    """AC-V7 REVERSED by ladder v7.1 (R1, R5): the pool is the LAST stock step now, and
-    another PROJECT group's FREE pile is step 1's own second half.
+def test_the_site_pools_share_is_asked_before_another_groups_free_pile_under_v8():
+    """AC-V7, reversed by v7.1 (R1, R5) and reversed BACK by ladder v8 (R-A).
 
-    Same case, same numbers - 24 needed, the site pools free 268, another group holding 100
-    - and the answer moves from the pool to the donor. Free stock is owed to nobody, so it
-    raises no order-back, and taking it before the shared pool is what keeps the pool for
-    the orders that have nowhere else to go.
+    Same case, same numbers - 24 needed, the site pools free 268, another group holding 100.
+    v5 answered from the pool, v7.1 moved the pool last so the donor answered, and v8 asks
+    the asking bin's own pool FIRST again: it may spare 134 of its 268 and 24 fits inside
+    that, so the pool answers and the other group's 100 is never reached.
+
+    What kept the pool for the orders with nowhere else to go under v7.1 is the SHARE now
+    (R-B): the pool never gives a project line more than half of itself, whoever asks.
     """
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)
@@ -172,10 +180,10 @@ def test_another_groups_free_pile_is_used_before_the_pool_under_v7():
         components = _components(ProjectSupplyService(db).proposal_for(order))
 
     assert [(c["kind"], c["rung"], c["qty"]) for c in components] == [
-        ("reserve", "group_take", "24"),
+        ("reserve", "pool", "24"),
     ]
-    assert components[0]["source_location"] == donor.warehouse_code
-    assert pool is not None, "the pool held 268 and was not reached"
+    assert components[0]["source_location"] == pool.warehouse_code
+    assert donor is not None, "the donor held 100 free and was not reached"
 
 
 # --------------------------------------------------------------------------- AC-V6

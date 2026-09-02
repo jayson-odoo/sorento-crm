@@ -141,23 +141,31 @@ def test_the_pool_is_asked_before_another_location_and_answers_the_whole_line():
 
         contribution = _contribution(db, order, product)
 
-        # LADDER V7.1 (R1, R5): the pool is the LAST stock step, and another project
-        # group's FREE pile is step 1's second half. So the 100 at the `-NTC` site answers
-        # first and the 268 in the pool is left where it is - which is the reversal AC-V7
-        # used to pin the other way round.
+        # LADDER V8 (R-A) puts the pool back in FRONT, where v5 had it and v7.1 had moved
+        # it from: the asking bin's own pool may spare 134 of its 268 and 24 fits inside
+        # that, so the pool answers and the 100 at the `-NTC` site is never reached.
         assert [(s["kind"], s["qty"], s["location"]) for s in contribution["sources"]] == [
-            ("reserve", "24", donor.warehouse_code),
+            ("reserve", "24", pool.warehouse_code),
         ]
-        assert _step(contribution, "own")["answer"] == "yes"
-        assert _step(contribution, "own")["took"] == "24"
-        assert _step(contribution, "pool")["answer"] == "no"
+        assert _step(contribution, "pool")["answer"] == "yes"
+        assert _step(contribution, "pool")["took"] == "24"
+        assert _step(contribution, "own")["answer"] == "no"
         assert _step(contribution, "buy")["answer"] == "no"
 
 
 # --------------------------------------------------------------------------- AC-V6
 
 
-def test_dealer_hot_selling_refuses_the_whole_pile_not_this_site_s_share_of_it():
+def test_a_pool_holding_nothing_at_the_asking_site_offers_nothing_of_another_sites():
+    """AC-V6, RE-BLESSED BY LADDER V8 (R-A): the dealer hot-selling gate is retired - the
+    SHARE keeps stock for dealers now - so a hot item is no longer refused the pile for
+    being hot.
+
+    The answer is the same and the REASON is different: the share a project line may take is
+    a share of the ASKING bin's own site pool (R-B), and that pool holds nothing. The 500 at
+    the other site's pool is where the other site's own orders draw from; it is not a second
+    allowance behind an empty one.
+    """
     from app.models.scm import ItemClassification
 
     with blank_session() as db:
@@ -186,7 +194,7 @@ def test_dealer_hot_selling_refuses_the_whole_pile_not_this_site_s_share_of_it()
         pool = _step(contribution, "pool")
         assert pool["answer"] == "no"
         assert pool["took"] == "0"
-        assert "hot-selling" in pool["why"] and "retail" in pool["why"]
+        assert "no stock" in pool["why"], pool["why"]
         assert _step(contribution, "buy")["took"] == "10", (
             "500 sits in the pile at the other site and none of it is offered"
         )

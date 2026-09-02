@@ -98,12 +98,19 @@ export function BoardCellBreakdownDialog({
   cell,
   bucketLabel,
   draft,
+  poolSharePct,
   onDecide,
   onClose,
 }: {
   cell: BoardCell;
   bucketLabel: string;
   draft: BoardDraft;
+  /**
+   * The board's own `pool_share_pct` (LADDER v8, R-K), passed through to the Stock tab so
+   * its site-pool SUBTOTAL applies the tenant's real policy rather than a constant. Every
+   * pool ROW arrives with the server's own `available_for_project` and needs nothing here.
+   */
+  poolSharePct?: number;
   onDecide: (key: string, decision: BoardDecision | null) => void;
   onClose: () => void;
 }) {
@@ -1001,6 +1008,7 @@ export function BoardCellBreakdownDialog({
                 documentInfo={documentMatch}
                 filterText={stockSearch.debouncedValue}
                 landOnMount
+                poolSharePct={poolSharePct}
               />
             </TabsContent>
 

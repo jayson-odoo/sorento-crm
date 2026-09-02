@@ -75,6 +75,11 @@ COMPONENT_LABELS = {
 
 REQUIRED_DATE = date(2027, 3, 1)
 
+#: The day every walk below is taken on. PINNED rather than `date.today()`: ladder v8's share
+#: rule reads which side of `immediate_window_days` a line falls on, so a case that let the
+#: clock decide would answer one way this year and another the next.
+AS_OF = date(2026, 9, 2)
+
 # The locations the cases talk about. Codes, not ids: nothing here is a UUID, and a golden
 # case that named one would be unreadable in a failure message.
 DEALER_LOCATION = "DLR-KL"
@@ -184,11 +189,12 @@ class AttributionCase:
 HOT_SELLING_WORKED_CASE = ProposalCase(
     ac="AC-B08",
     title=(
-        "dealer hot-selling product: the shared pool contributes nothing at all, and with "
-        "no own-location Reserve any more (ladder v2, section E rule 7) the whole line is "
-        "a Buy"
+        "dealer hot-selling product: the pool contributes nothing and the whole line is a "
+        "Buy - under ladder v8 because 70 is more than the 60 the pool can spare a far "
+        "line (R-B), not because the item is hot (R-A retired that gate)"
     ),
     inputs={
+        "as_of": AS_OF,
         "open_qty": Decimal("70"),
         "line_no": 10,
         "required_date": REQUIRED_DATE,
@@ -216,10 +222,12 @@ PROJECT_HOT_SELLING_WORKED_CASE = ProposalCase(
     ac="AC-B08",
     title=(
         "project hot-selling product: the pile's own net bounds the draw exactly as it "
-        "bounds a cold item's (ladder v4 replaces 3.3a's per-pool cap), and covers the "
-        "whole line here"
+        "bounds a cold item's (ladder v4 replaces 3.3a's per-pool cap) - and under ladder "
+        "v8 the SHARE of that net bounds it again, so a far line of 40 against an allowance "
+        "of 20 takes nothing and buys (R-B: there is time to buy)"
     ),
     inputs={
+        "as_of": AS_OF,
         "open_qty": Decimal("40"),
         "line_no": 12,
         "required_date": REQUIRED_DATE,
@@ -236,11 +244,13 @@ PROJECT_HOT_SELLING_WORKED_CASE = ProposalCase(
         "is_discontinued": False,
     },
     components=(
+        # v4 to v7.1: `Reserve 40` off the pool, because the whole net was on the table.
+        # v8 keeps half of it for dealers, so 20 is what a project may have, and a line due
+        # in six months takes the pool WHOLE or not at all - 40 does not fit in 20.
         Component(
-            kind=RESERVE,
+            kind=BUY,
             qty=Decimal("40"),
-            reason="Pool BRW lends 40 of the 40 the site pools net between them",
-            source_location=POOL_LOCATION,
+            reason="Only 0 of 40 can be covered from stock - buy the whole line",
         ),
     ),
 )
@@ -253,6 +263,7 @@ BALANCE_INVARIANT_CASE = ProposalCase(
     ac="AC-B12",
     title="every component carries its reason and the terms add up to the open quantity",
     inputs={
+        "as_of": AS_OF,
         "open_qty": Decimal("70"),
         "line_no": 10,
         "required_date": REQUIRED_DATE,
@@ -435,10 +446,11 @@ CONFIRMED_COVER_RETAIL_NEED = Decimal("10")
 GROUP_BEFORE_POOL_CASE = ProposalCase(
     ac="AC-L2",
     title=(
-        "ladder v3: the ownership group is drawn before the shared pool, this line's own "
-        "location first"
+        "ladder v8 (R-A) REVERSES this case: the site pool is asked FIRST, and 100 inside "
+        "its 500 allowance is taken whole from the pool - the group's 70 is never reached"
     ),
     inputs={
+        "as_of": AS_OF,
         "open_qty": Decimal("100"),
         "line_no": 14,
         "required_date": REQUIRED_DATE,
@@ -462,23 +474,14 @@ GROUP_BEFORE_POOL_CASE = ProposalCase(
         "is_discontinued": False,
     },
     components=(
+        # v3 drew the group first and let the pool pay the difference (40 + 30 + 30), which
+        # ladder v7.1 had already refused - R10 gives a step the whole unit or nothing. v8
+        # asks the pool BEFORE the group (R-A): 100 fits inside half of the 1000 the pools
+        # net, so the pool answers the line whole and the group keeps its 70.
         Component(
             kind=RESERVE,
-            qty=Decimal("40"),
-            reason="BRW-BB gives 40 of the 70 the BB group can cover this line with",
-            source_location=GROUP_OWN_LOCATION,
-        ),
-        Component(
-            kind=RESERVE,
-            qty=Decimal("30"),
-            reason="DC1-BB gives 30 of the 70 the BB group can cover this line with",
-            source_location=GROUP_SIBLING_LOCATION,
-        ),
-        # Only what the group could not meet reaches the shared pile.
-        Component(
-            kind=RESERVE,
-            qty=Decimal("30"),
-            reason="Pool BRW lends 30 of the 1000 the site pools net between them",
+            qty=Decimal("100"),
+            reason="Pool BRW spares 100 of the 500 it may lend a project",
             source_location=POOL_LOCATION,
         ),
     ),
@@ -492,6 +495,7 @@ BEYOND_THE_WINDOW_CASE = ProposalCase(
         "much sits beside it, incoming included - it is bought whole"
     ),
     inputs={
+        "as_of": AS_OF,
         "open_qty": Decimal("40"),
         "line_no": 16,
         "required_date": REQUIRED_DATE,
@@ -529,6 +533,7 @@ BEYOND_THE_WINDOW_SHORT_CASE = ProposalCase(
         "still bought whole, and the reason names the window rather than the arithmetic"
     ),
     inputs={
+        "as_of": AS_OF,
         "open_qty": Decimal("71"),
         "line_no": 18,
         "required_date": REQUIRED_DATE,
@@ -666,10 +671,11 @@ INCOMING_INSIDE_A_NEGATIVE_GROUP_NET_CASE = ProposalCase(
 POOL_BEFORE_ANOTHER_GROUP_CASE = ProposalCase(
     ac="AC-V7",
     title=(
-        "ladder v5: the pool is asked before another location, so 24 needed against 268 "
-        "free in the pile is Pool 24 and never Borrow 24"
+        "ladder v8 restores v5's answer: the pool is asked FIRST again (R-A), so 24 needed "
+        "against an allowance of 134 is Pool 24 - v7.1's pool-last order gave it to DC1-NTC"
     ),
     inputs={
+        "as_of": AS_OF,
         "open_qty": Decimal("24"),
         "line_no": 26,
         "required_date": REQUIRED_DATE,
@@ -682,9 +688,10 @@ POOL_BEFORE_ANOTHER_GROUP_CASE = ProposalCase(
             {"location": POOL_LOCATION, "free": Decimal("268"), "available": Decimal("268")}
         ],
         "pools_net": Decimal("268"),
-        # LADDER V7.1 (R1, R5) REVERSES this case: another project group's FREE stock is
-        # step 1's second half, and the pool is the LAST stock step. The pool holds 268 and
-        # is not reached, because the 100 at DC1-NTC is owed to nobody and answers first.
+        # v7.1 reversed this case - the pool went LAST and DC1-NTC's free 100 answered
+        # first - and v8 reverses it back (R-A): the site pool of the asking bin is step 0,
+        # so DC1-NTC is not reached. It stays in the inputs because the case is about WHICH
+        # of the two answers, not about either of them being absent.
         "other_group_candidates": [
             {"location": "DC1-NTC", "qty": Decimal("100"), "group_code": "NTC"},
         ],
@@ -694,10 +701,8 @@ POOL_BEFORE_ANOTHER_GROUP_CASE = ProposalCase(
         Component(
             kind=RESERVE,
             qty=Decimal("24"),
-            reason=(
-                "DC1-NTC has 24 free outside the IB group, and free stock is owed to nobody"
-            ),
-            source_location="DC1-NTC",
+            reason="Pool BRW spares 24 of the 134 it may lend a project",
+            source_location=POOL_LOCATION,
         ),
     ),
 )
@@ -716,3 +721,364 @@ PROPOSAL_CASES = (
     POOL_BEFORE_ANOTHER_GROUP_CASE,
 )
 ATTRIBUTION_CASES = (TWO_LINE_ATTRIBUTION_CASE, CONFIRMED_COVER_CASE)
+
+
+# --------------------------------------------------------------------------- LADDER v8
+#
+# `PLAN-scm-fulfilment-feedback-2sep.md` S2, rulings R-A to R-E, and the six walks the UAC
+# (`scm-fulfilment-feedback-2sep-acceptance-criteria.md`) writes as AC-2.1 to AC-2.7. The
+# site pool of the asking bin is asked FIRST and may cover PART of a line - the one step
+# that may, because the share it keeps back for dealers is the whole point of the rule.
+#
+# Every case below pins `as_of` and dates itself off it: the share rule reads which side of
+# `immediate_window_days` a line falls on, so a case that let the clock decide would answer
+# one way this year and another way next.
+
+#: Inside `immediate_window_days` (30) and well outside it. Both still inside the ATP
+#: reserve window, so what is under test is the SHARE rule and never rung 0.
+IMMEDIATE_DATE = date(2026, 9, 12)
+FAR_DATE = date(2026, 11, 1)
+
+
+@dataclass(frozen=True)
+class OptionRow:
+    """One row of the options table, as the UAC writes it (R36 + R-B)."""
+
+    step: str
+    whole: bool
+    #: How much this step alone can give. `pool_share` is the one step that may answer with
+    #: less than the whole line (R-B); every other row states what it would contribute to
+    #: what is left after the share.
+    gives_qty: Decimal
+    #: The step's own sentence, where it has something to say a quantity does not (AC-2.4).
+    reason: str | None = None
+    chosen: bool = False
+
+
+@dataclass(frozen=True)
+class WalkCase:
+    """One walk: what the engine is given, what it must propose, and the rows behind it.
+
+    A `ProposalCase` with the OPTIONS pinned as well. The ladder-v8 rulings are as much
+    about what the table says (AC-2.1's "Use BRW stock 450 (not whole)", AC-2.4's reason)
+    as about the composition, and a case that pinned only the components would let the
+    sentence beside the number drift.
+    """
+
+    ac: str
+    title: str
+    inputs: Mapping[str, Any]
+    components: tuple[Component, ...]
+    options: tuple[OptionRow, ...]
+
+    @property
+    def open_qty(self) -> Decimal:
+        return self.inputs["open_qty"]
+
+
+#: The bin that asks, its ownership group, and the site pool behind it - the shape every
+#: case below shares, so only the numbers under test differ between them.
+V8_OWN_LOCATION = "BRW-BB"
+V8_SIBLING_LOCATION = "MWH-BB"
+V8_GROUP = "BB"
+
+
+def _v8_inputs(**overrides: Any) -> dict[str, Any]:
+    """The common walk inputs, with the case's own numbers written over them."""
+    base: dict[str, Any] = {
+        "as_of": AS_OF,
+        "line_no": 2,
+        "fulfilment_location": V8_OWN_LOCATION,
+        "group_code": V8_GROUP,
+        "group_take_candidates": [],
+        "group_offer": Decimal("0"),
+        "pool_share_pct": 50,
+        "immediate_window_days": 30,
+        "is_discontinued": False,
+    }
+    base.update(overrides)
+    return base
+
+
+IMMEDIATE_SHARE_CASE = WalkCase(
+    ac="AC-2.1",
+    title=(
+        "immediate share, pile base: 650 due in 10 days against 900 free at BRW takes the "
+        "450 half and walks the other 200"
+    ),
+    inputs=_v8_inputs(
+        open_qty=Decimal("650"),
+        required_date=IMMEDIATE_DATE,
+        pools=[
+            {"location": POOL_LOCATION, "free": Decimal("900"), "available": Decimal("900")}
+        ],
+        pools_net=Decimal("900"),
+    ),
+    components=(
+        Component(
+            kind=RESERVE,
+            qty=Decimal("450"),
+            reason="Pool BRW spares 450 of the 450 it may lend a project",
+            source_location=POOL_LOCATION,
+        ),
+        Component(
+            kind=BUY,
+            qty=Decimal("200"),
+            reason=(
+                "Only 0 of the remaining 200 can be covered from stock - buy the rest"
+            ),
+        ),
+    ),
+    options=(
+        OptionRow(
+            step="pool_share",
+            whole=False,
+            gives_qty=Decimal("450"),
+            reason="BRW can spare 450 of the 650 needed",
+        ),
+        OptionRow(step="use", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="order_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="supply_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="buy", whole=True, gives_qty=Decimal("200"), chosen=True),
+    ),
+)
+
+
+SMALL_LINE_WHOLE_FROM_POOL_CASE = WalkCase(
+    ac="AC-2.2",
+    title=(
+        "a small line takes its whole quantity from the pool: 3 against an allowance of 23 "
+        "is Pool 3, never Pool 1 and Own 2"
+    ),
+    inputs=_v8_inputs(
+        open_qty=Decimal("3"),
+        required_date=date(2026, 9, 4),
+        group_take_candidates=[
+            {"location": V8_SIBLING_LOCATION, "qty": Decimal("84")},
+        ],
+        group_offer=Decimal("84"),
+        pools=[
+            {"location": POOL_LOCATION, "free": Decimal("47"), "available": Decimal("47")}
+        ],
+        pools_net=Decimal("47"),
+    ),
+    components=(
+        Component(
+            kind=RESERVE,
+            qty=Decimal("3"),
+            reason="Pool BRW spares 3 of the 23 it may lend a project",
+            source_location=POOL_LOCATION,
+        ),
+    ),
+    options=(
+        OptionRow(
+            step="pool_share",
+            whole=True,
+            gives_qty=Decimal("3"),
+            reason="BRW can spare 23",
+            chosen=True,
+        ),
+        OptionRow(step="use", whole=True, gives_qty=Decimal("3")),
+        OptionRow(step="order_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="supply_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="buy", whole=True, gives_qty=Decimal("3")),
+    ),
+)
+
+
+BEYOND_WINDOW_FITS_THE_ALLOWANCE_CASE = WalkCase(
+    ac="AC-2.3",
+    title=(
+        "beyond the immediate window and inside the allowance: 100 due in 60 days against "
+        "an allowance of 450 is taken WHOLE from the pool"
+    ),
+    inputs=_v8_inputs(
+        open_qty=Decimal("100"),
+        required_date=FAR_DATE,
+        pools=[
+            {"location": POOL_LOCATION, "free": Decimal("900"), "available": Decimal("900")}
+        ],
+        pools_net=Decimal("900"),
+    ),
+    components=(
+        Component(
+            kind=RESERVE,
+            qty=Decimal("100"),
+            reason="Pool BRW spares 100 of the 450 it may lend a project",
+            source_location=POOL_LOCATION,
+        ),
+    ),
+    options=(
+        OptionRow(
+            step="pool_share",
+            whole=True,
+            gives_qty=Decimal("100"),
+            reason="BRW can spare 450",
+            chosen=True,
+        ),
+        OptionRow(step="use", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="order_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="supply_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="buy", whole=True, gives_qty=Decimal("100")),
+    ),
+)
+
+
+BEYOND_WINDOW_EXCEEDS_THE_ALLOWANCE_CASE = WalkCase(
+    ac="AC-2.4",
+    title=(
+        "beyond the immediate window and OVER the allowance: 600 against 450 takes nothing "
+        "from the pool - there is time to buy - and the group covers it whole"
+    ),
+    inputs=_v8_inputs(
+        open_qty=Decimal("600"),
+        required_date=FAR_DATE,
+        group_take_candidates=[
+            {"location": V8_OWN_LOCATION, "qty": Decimal("700")},
+        ],
+        group_offer=Decimal("700"),
+        pools=[
+            {"location": POOL_LOCATION, "free": Decimal("900"), "available": Decimal("900")}
+        ],
+        pools_net=Decimal("900"),
+    ),
+    components=(
+        Component(
+            kind=RESERVE,
+            qty=Decimal("600"),
+            reason="BRW-BB gives 600 of the 700 the BB group can cover this line with",
+            source_location=V8_OWN_LOCATION,
+        ),
+    ),
+    options=(
+        OptionRow(
+            step="pool_share",
+            whole=False,
+            gives_qty=Decimal("0"),
+            reason="600 is more than the 450 BRW can spare",
+        ),
+        OptionRow(step="use", whole=True, gives_qty=Decimal("600"), chosen=True),
+        OptionRow(step="order_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="supply_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="buy", whole=True, gives_qty=Decimal("600")),
+    ),
+)
+
+
+NET_BOUNDS_THE_SHARE_CASE = WalkCase(
+    ac="AC-2.5",
+    title=(
+        "the five-pool net bounds the share: 3,034 free at BRW with the pools netting 1 "
+        "spares 1, never 1,517 (TPE-9204 on SO381895 line 74)"
+    ),
+    inputs=_v8_inputs(
+        open_qty=Decimal("30"),
+        required_date=date(2026, 9, 7),
+        pools=[
+            {
+                "location": POOL_LOCATION,
+                "free": Decimal("3034"),
+                "available": Decimal("3034"),
+            }
+        ],
+        pools_net=Decimal("1"),
+    ),
+    components=(
+        Component(
+            kind=RESERVE,
+            qty=Decimal("1"),
+            reason="Pool BRW spares 1 of the 1 it may lend a project",
+            source_location=POOL_LOCATION,
+        ),
+        Component(
+            kind=BUY,
+            qty=Decimal("29"),
+            reason="Only 0 of the remaining 29 can be covered from stock - buy the rest",
+        ),
+    ),
+    options=(
+        OptionRow(
+            step="pool_share",
+            whole=False,
+            gives_qty=Decimal("1"),
+            reason="BRW can spare 1 of the 30 needed",
+        ),
+        OptionRow(step="use", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="order_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="supply_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="buy", whole=True, gives_qty=Decimal("29"), chosen=True),
+    ),
+)
+
+
+DEALER_HOT_SELLING_TAKES_THE_POOL_CASE = WalkCase(
+    ac="AC-2.7",
+    title=(
+        "the dealer hot-selling gate is retired (R-A): 6,500 free at the pool answers a 40 "
+        "line, where ladder v4 to v7.1 refused the step outright and bought"
+    ),
+    inputs=_v8_inputs(
+        open_qty=Decimal("40"),
+        required_date=IMMEDIATE_DATE,
+        is_dealer_hot_selling=True,
+        pools=[
+            {
+                "location": POOL_LOCATION,
+                "free": Decimal("6500"),
+                "available": Decimal("6500"),
+            }
+        ],
+        pools_net=Decimal("6500"),
+    ),
+    components=(
+        Component(
+            kind=RESERVE,
+            qty=Decimal("40"),
+            reason="Pool BRW spares 40 of the 3250 it may lend a project",
+            source_location=POOL_LOCATION,
+        ),
+    ),
+    options=(
+        OptionRow(
+            step="pool_share",
+            whole=True,
+            gives_qty=Decimal("40"),
+            reason="BRW can spare 3250",
+            chosen=True,
+        ),
+        OptionRow(step="use", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="order_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="supply_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="buy", whole=True, gives_qty=Decimal("40")),
+    ),
+)
+
+
+#: AC-2.6b's own arithmetic, away from any walk: what a site-pool ROW may show a planner as
+#: "Available for Project" - `min(floor(available x (100 - share) / 100), max(net, 0))`.
+#: `(available, five_pool_net, share_pct, expected)`.
+AVAILABLE_FOR_PROJECT_CASES = (
+    # The captain's own lightbox reading: 590 available, half kept for dealers, the pools
+    # netting more than the share so the share is what shows.
+    (Decimal("590"), Decimal("900"), 50, Decimal("295")),
+    # R-K's worked line: "BRW 47 free reads 23" - the floor, not 23.5.
+    (Decimal("47"), Decimal("900"), 50, Decimal("23")),
+    # The five-pool net is the bound (R-D): 1,517 would be the share and 1 is the pile.
+    (Decimal("3034"), Decimal("1"), 50, Decimal("1")),
+    # A pool with nothing to give reads 0, never blank (R-K).
+    (Decimal("-103"), Decimal("-102"), 50, Decimal("0")),
+    (Decimal("590"), Decimal("-1"), 50, Decimal("0")),
+    # 0 % keeps nothing back for dealers; 100 % keeps everything.
+    (Decimal("590"), Decimal("900"), 0, Decimal("590")),
+    (Decimal("590"), Decimal("900"), 100, Decimal("0")),
+)
+
+
+V8_WALK_CASES = (
+    IMMEDIATE_SHARE_CASE,
+    SMALL_LINE_WHOLE_FROM_POOL_CASE,
+    BEYOND_WINDOW_FITS_THE_ALLOWANCE_CASE,
+    BEYOND_WINDOW_EXCEEDS_THE_ALLOWANCE_CASE,
+    NET_BOUNDS_THE_SHARE_CASE,
+    DEALER_HOT_SELLING_TAKES_THE_POOL_CASE,
+)

@@ -69,7 +69,7 @@ import type {
  * that no longer runs, and the screen labels it as history rather than passing it off as
  * today's answer (AC-V8).
  */
-export const LADDER_VERSION = 'v7.1';
+export const LADDER_VERSION = 'v8';
 
 export type SupplyKind =
   | 'buy'

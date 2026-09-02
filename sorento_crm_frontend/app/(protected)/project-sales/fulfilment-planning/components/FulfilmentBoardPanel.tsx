@@ -1164,6 +1164,7 @@ export function FulfilmentBoardPanel({
           cell={liveCell}
           bucketLabel={bucketLabel.get(liveCell.bucket_key) ?? liveCell.bucket_key}
           draft={draft}
+          poolSharePct={board.data?.pool_share_pct}
           onDecide={decide}
           onClose={() => setOpenCell(null)}
         />

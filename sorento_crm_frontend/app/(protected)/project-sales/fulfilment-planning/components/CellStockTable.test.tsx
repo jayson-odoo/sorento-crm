@@ -98,6 +98,10 @@ describe('CellStockTable: the position, tabulated', () => {
       'SO qty',
       'SPO qty',
       'Available',
+      // LADDER v8 (R-K): what a SITE POOL row may give a project once the dealers' share is
+      // kept back. It sits beside Available because it is a reading OF Available, and it is
+      // the number the walk's own first step obeyed.
+      'Available for Project',
       'PO qty',
       'Taken',
     ]);
@@ -129,6 +133,9 @@ describe('CellStockTable: the position, tabulated', () => {
       '47009',
       '0',
       '-46531',
+      // Blank, not 0: an own location keeps no dealer share, so the question does not apply
+      // there and a 0 would read as a pool with nothing in it (R-K).
+      '-',
       '0',
       '0',
     ]);
@@ -140,6 +147,7 @@ describe('CellStockTable: the position, tabulated', () => {
       '9028',
       '500',
       '-7513',
+      '-',
       '0',
       '0',
     ]);
@@ -188,7 +196,7 @@ describe('CellStockTable: the position, tabulated', () => {
 
     const cells = cellsOf('none');
     expect(cells[1]).toBe('No location');
-    expect(cells.slice(3)).toEqual(['-', '-', '-', '-', '-', '-']);
+    expect(cells.slice(3)).toEqual(['-', '-', '-', '-', '-', '-', '-']);
     expect(cells).not.toContain('0');
     // The phrase is gone from the table: it was the answer to a question this table no
     // longer asks (AC-B2).
@@ -526,6 +534,12 @@ describe('CellStockTable: the whole ladder, in sections', () => {
           so_qty: '0',
           spo_qty: '0',
           available_qty: '100',
+          // LADDER v8 (R-K): the SERVER states this per pool row - half of the 100 available,
+          // capped by the five pools' net. The table prints what it is given and computes
+          // nothing of its own here.
+          available_for_project: '50',
+          net: '500',
+          net_of: 'pools',
         }),
       ),
     ];
@@ -566,11 +580,18 @@ describe('CellStockTable: the whole ladder, in sections', () => {
     expect(group).toContain('Group subtotal');
     expect(group).toContain('40');
 
+    // The pool rows carry the set they net over (`net_of: 'pools'`), which is what the
+    // server sends and what names the section.
     const pool = [
-      ...screen.getByTestId('stock-subtotal-site_pool').querySelectorAll('td'),
+      ...screen.getByTestId('stock-subtotal-pools').querySelectorAll('td'),
     ].map((entry) => entry.textContent ?? '');
     expect(pool).toContain('Site pool subtotal');
     expect(pool).toContain('500');
+    // AC-2.6b: the subtotal's own Available for Project is the share of the pool's NET -
+    // half of 500 - and not a sum of the rows above it, exactly as Available is not.
+    expect(
+      screen.getByTestId('stock-subtotal-available-for-project-pools').textContent,
+    ).toBe('250');
 
     const footer = [...screen.getByRole('table').querySelectorAll('tfoot td')].map(
       (entry) => entry.textContent ?? '',
@@ -586,9 +607,12 @@ describe('CellStockTable: the whole ladder, in sections', () => {
   it('shows what a pool holds even when nothing was drawn from it', () => {
     renderTable(ladder(), null, new Map([['BRW', '71']]));
 
-    expect(cellsOf('BRW')[7]).toBe('0');
-    expect(cellsOf('BRW')[8]).toBe('71');
-    expect(cellsOf('MWH')[8]).toBe('0');
+    // Available for Project, PO qty, Taken - the server's own share figure, then the two
+    // columns the new one pushed along.
+    expect(cellsOf('BRW')[7]).toBe('50');
+    expect(cellsOf('BRW')[8]).toBe('0');
+    expect(cellsOf('BRW')[9]).toBe('71');
+    expect(cellsOf('MWH')[9]).toBe('0');
   });
 });
 

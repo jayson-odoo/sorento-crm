@@ -1,14 +1,7 @@
 import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
-import {
-  mockAugmentLocations,
-  mockReorderLadderOptionsV8,
-  POOLS_SET,
-} from '../lib/fulfilmentV8Mock';
 import type {
   AdoptSalesOrderResult,
-  BoardCell,
-  BoardContribution,
   BoardGranularity,
   ClassificationEvidence,
   PlanningBoard,
@@ -105,32 +98,29 @@ import type {
  * fixtures survive only as test support, which is the whole of what "throwaway by design"
  * meant.
  *
- * ── S2 LADDER v8 (PLAN-scm-fulfilment-feedback-2sep.md, PHASE 1 - the overlay below, not
- *    the routes above) ─────────────────────────────────────────────────────────────────
+ * ── S2 LADDER v8 (PLAN-scm-fulfilment-feedback-2sep.md, rulings R-A/R-B/R-E/R-K) ────────
  *
- * `getPlanningBoard`, `getSupply` and `getStockDetail` call `lib/fulfilmentV8Mock.ts` on
- * their own response, BEFORE returning it, to add three fields the v7.1 board/stock-detail
- * routes above do not send yet - the v8 engine change (this plan's S2) is Phase 2 for a
- * DIFFERENT slice, so this file fakes its wire shape rather than its numbers, over payloads
- * that are otherwise entirely real:
+ * The v8 engine states all of the following ITSELF; the Phase 1 overlay that computed them
+ * client-side is gone, and the functions below return the payload verbatim again:
  *
  *   BoardCellLocation.available_for_project : string | null
- *     `cell.locations[]`, `contribution.locations[]` (board) - one per `site_pool` row and
- *     the "Site pool subtotal" row built from it (R-K). `0`, never blank, on an addressable
- *     pool row; absent on `own` / `group` / `other_group`.
+ *     `cell.locations[]`, `contribution.locations[]` - one per `site_pool` row, `0` rather
+ *     than blank on an addressable pool row, absent on `own` / `group` / `other_group`. The
+ *     SAME allowance the walk's step 0 asked the pool for
+ *     (`front_planning_engine.available_for_project`), so the lightbox and the engine can
+ *     never disagree about what BRW can spare.
  *
- *   StockDetail.five_pool_net : string | null
- *     `stock-detail` - only on a `group=pools` read, which is what the Stock tab's expanded
- *     ledger caps its running "Available for Project" column by, under a site-pool section
- *     (a plain bin or a non-pool group keeps "Balance after", uncapped, unchanged).
+ *   PlanningBoard.pool_share_pct : number
+ *   StockDetail.pool_share_pct / .five_pool_net : number | string | null
+ *     The policy share and the five pools' net, for the two figures the client computes for
+ *     itself and the server has no row for: the Stock tab's pool SUBTOTAL and the expanded
+ *     ledger's running column (`_shared/lib/poolShare.ts`). `stock-detail` sends both on a
+ *     `group=pools` read only - a bin or an ownership group keeps no dealer share.
  *
- *   BoardLadderOption.step === 'pool_share', label "Use BRW stock", first in walk order
- *     `contribution.options[]` (board), `SupplyLine.options[]` (sheet) - today's `pool` step
- *     (last, before Buy) relabelled and moved first (R-A), carrying `gives_qty` (R-B).
- *
- * Phase 2 (S2's own Phase 2, not this slice's) deletes the `lib/fulfilmentV8Mock.ts` calls
- * the day `front_planning_engine.walk_line` and the board/stock-detail serializers send all
- * three for real; the functions below go back to `return response.json()` verbatim.
+ *   BoardLadderOption.step === 'pool_share', first in walk order, with `gives_qty`/`reason`
+ *     `contribution.options[]` (board), `SupplyLine.options[]` (sheet). The site pool of the
+ *     asking bin is asked FIRST and may cover PART of a line, which is why that row - alone
+ *     among the five - states a quantity and, where the number needs one, a sentence.
  */
 
 const BASE = '/api/v1/project-sales';
@@ -240,15 +230,7 @@ export async function getSupply(psoId: string): Promise<SupplyProposal> {
   const response = await apiFetch(`${BASE}/sales-orders/${psoId}/supply`);
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to load the supply composition'));
-  const data: SupplyProposal = await response.json();
-  // PHASE 1 MOCK (S2, `lib/fulfilmentV8Mock.ts`): v8's walk order, until the engine sends it.
-  return {
-    ...data,
-    lines: data.lines.map((line) => ({
-      ...line,
-      options: mockReorderLadderOptionsV8(line.options),
-    })),
-  };
+  return response.json();
 }
 
 /**
@@ -334,15 +316,17 @@ export async function confirmSupply(
  * transaction. A refusal reports per order and the orders that committed stay committed
  * (13.6).
  *
- * ── LADDER v7.1: THE OPTIONS CONTRACT (S3, R36, AC-S3-14) ───────────────────────────────
+ * ── LADDER v8: THE OPTIONS CONTRACT (S3 R36 / AC-S3-14, amended by S2 R-A/R-B) ──────────
  *
  * Additive to the payload above. Every contribution the ladder WALKED (so: not unplannable,
  * not covered by a frozen decision) carries, alongside its `trail`:
  *
  *     options: [{
- *       step:           'use' | 'order_borrow' | 'supply_borrow' | 'pool' | 'buy',
+ *       step:           'pool_share' | 'use' | 'order_borrow' | 'supply_borrow' | 'buy',
  *       label:          string,           // the step in a planner's words, the SERVER's sentence
  *       whole:          boolean,          // does it cover the WHOLE planning unit (R10, R33)
+ *       gives_qty:      string|null,      // what this step can give (R-B)
+ *       reason:         string|null,      // why, where the quantity does not say it (AC-2.4)
  *       fulfil_date:    'YYYY-MM-DD'|null,// when the unit would be fulfilled if it were taken
  *       days_late:      number|null,      // days after the line's required date; 0 = on time
  *       debt_so_number: string|null,      // whose order pays for it, by DOCUMENT NUMBER
@@ -350,10 +334,16 @@ export async function confirmSupply(
  *       chosen:         boolean           // the option the engine proposed
  *     }]
  *
- * FIVE ENTRIES, ALWAYS, IN STEP ORDER - `use`, `order_borrow`, `supply_borrow`, `pool`, `buy` -
- * and every one of them answered, for the same reason the trail sends five rows: a step the
- * server omitted reads as a step nobody walked. The client renders them in the order they
- * arrive and never sorts them.
+ * FIVE ENTRIES, ALWAYS, IN STEP ORDER - `pool_share`, `use`, `order_borrow`, `supply_borrow`,
+ * `buy` - and every one of them answered, for the same reason the trail sends five rows: a
+ * step the server omitted reads as a step nobody walked. The client renders them in the order
+ * they arrive and never sorts them.
+ *
+ * `pool_share` is v8's own step and the only one that may cover PART of a line (R-B): the site
+ * pool of the asking bin keeps `pool_share_pct` of itself back for dealers and lends what is
+ * left, so its row states `gives_qty` and, where that number needs explaining, `reason`. The
+ * v7.1 key `pool` (last, before Buy) is gone from a live walk and survives only inside a
+ * FROZEN trail being re-rendered.
  *
  * `fulfil_date` is today for on hand (plus two days when a transfer between bins is needed),
  * the SPO's arrival, the PO's `issue + lead` (R29: a PO line's `expected_date` is what it was
@@ -442,42 +432,7 @@ export async function getPlanningBoard(
   const response = await apiFetch(`${BASE}/fulfilment-planning/board?${search.toString()}`);
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to load the planning board'));
-  const data: PlanningBoard = await response.json();
-  return mockAugmentBoard(data);
-}
-
-/**
- * PHASE 1 MOCK (S2, `lib/fulfilmentV8Mock.ts`): `available_for_project` on every site-pool
- * location row and v8's ladder-option order, applied to BOTH homes a contribution's numbers
- * live in - a cell's own `contributions` (windowed) and the board's flat, never-windowed
- * `contributions` (`PlanningBoard.contributions` - "Approve all" and the List view read this
- * one, not the cells). The two are separate arrays over the wire, so augmenting only one
- * would leave the other reading v7.1's numbers depending which surface asked.
- *
- * Every array is read defensively (`?? []`, `?.map`): a minimal fixture built only to assert
- * the URL a call makes (`{ cells: [] }`, no top-level `contributions`) is not this function's
- * business to reject, and the real route always sends both.
- */
-function mockAugmentBoard(board: PlanningBoard): PlanningBoard {
-  return {
-    ...board,
-    cells: (board.cells ?? []).map(
-      (cell): BoardCell => ({
-        ...cell,
-        locations: mockAugmentLocations(cell.locations),
-        contributions: (cell.contributions ?? []).map(mockAugmentContribution),
-      }),
-    ),
-    contributions: (board.contributions ?? []).map(mockAugmentContribution),
-  };
-}
-
-function mockAugmentContribution(contribution: BoardContribution): BoardContribution {
-  return {
-    ...contribution,
-    locations: mockAugmentLocations(contribution.locations),
-    options: mockReorderLadderOptionsV8(contribution.options),
-  };
+  return response.json();
 }
 
 
@@ -511,14 +466,7 @@ export async function getStockDetail(
   );
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to load the stock detail'));
-  const data: StockDetail = await response.json();
-  // PHASE 1 MOCK (S2, `lib/fulfilmentV8Mock.ts`): a `group: 'pools'` read's own `available_qty`
-  // already IS the five-pool net (both read `netting().pools_net()`); Phase 2 exposes it under
-  // its own name instead of this alias.
-  return {
-    ...data,
-    five_pool_net: data.group === POOLS_SET ? data.available_qty : (data.five_pool_net ?? null),
-  };
+  return response.json();
 }
 
 /**

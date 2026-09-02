@@ -147,11 +147,14 @@ def test_a_line_beyond_the_coverage_date_proposes_buy_all_only():
 
 
 def test_a_line_on_or_before_the_coverage_date_runs_the_ladder_normally():
+    """LADDER V8: the pool holds 80 rather than 40, because half of it is kept back for
+    dealers now (R-B) and the point of this case is rung 0 NOT firing - a line inside the
+    coverage date walking the ladder normally."""
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)
         _group, sites = _group_sites(db)
         own, pool = sites["BRW"]
-        _stock(db, product, pool, on_hand=40)
+        _stock(db, product, pool, on_hand=80)
         priority.create_revision(
             db, name="zzt-coverage-2", factors={}, demand_class_weights={},
             reorder_coverage_until=date(2026, 10, 31),
@@ -201,7 +204,16 @@ def test_the_own_location_is_a_group_source_again_under_ladder_v3():
 # --------------------------------------------------------------------------- rung 2: pool
 
 
-def test_pool_reserve_draws_the_own_site_pool_before_other_site_pools():
+def test_the_share_offered_is_the_asking_bins_own_pools_and_not_every_pools():
+    """LADDER V8 (R-A/R-B): the ASKING bin's own site pool is the one whose share is on
+    offer - BRW's 15 spares 7 - and the other site pools are not a second allowance behind
+    it. They are still in the draw chain (`_pool_chain`) and are reached when the own pool
+    cannot physically supply the share it owes; here it can, so the walk never leaves BRW
+    and the rest of the line walks the ladder (R-C).
+
+    Under v7.1 this case read "15 from BRW, 25 from MWH": the whole five-pool net was on the
+    table for one project line, which is exactly what the share rule exists to stop.
+    """
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)
         _group, sites = _group_sites(db)
@@ -218,9 +230,9 @@ def test_pool_reserve_draws_the_own_site_pool_before_other_site_pools():
         components = _components(proposal)
 
     reserves = {c["source_location"]: c for c in components if c["kind"] == "reserve"}
-    assert set(reserves) == {pool.warehouse_code, other_pool.warehouse_code}
-    assert reserves[pool.warehouse_code]["qty"] == "15"
-    assert reserves[other_pool.warehouse_code]["qty"] == "25"
+    assert set(reserves) == {pool.warehouse_code}
+    assert reserves[pool.warehouse_code]["qty"] == "7"
+    assert [c["kind"] for c in components] == ["reserve", "buy"]
     assert sum(Decimal(c["qty"]) for c in components) == Decimal("40")
 
 
@@ -276,7 +288,14 @@ def test_group_take_covers_the_line_from_a_sibling_location_mwh_bb():
 # --------------------------------------------------------------------------- rung 6: whole-line
 
 
-def test_whole_line_rule_a_partial_cover_becomes_a_single_buy_for_the_whole_line():
+def test_whole_line_rule_applies_to_what_is_left_after_the_pools_share():
+    """LADDER V8 (R-C), which is where the whole-line rule now bites: the site pool spares
+    its half of 213 - 106 - as its own sub-unit, and the REMAINING 252 is what the rest of
+    the ladder must cover whole or not at all. Nothing else can, so 252 is bought.
+
+    Under v7.1 the pool covered the unit whole or gave nothing, so this same case read a
+    single Buy of 358 with 213 sitting in the pool.
+    """
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)
         _group, sites = _group_sites(db)
@@ -290,18 +309,24 @@ def test_whole_line_rule_a_partial_cover_becomes_a_single_buy_for_the_whole_line
         proposal = ProjectSupplyService(db).proposal_for(order)
         components = _components(proposal)
 
-    assert len(components) == 1
-    assert components[0]["kind"] == "buy"
-    assert components[0]["qty"] == "358"
-    assert "213" in components[0]["reason"] and "358" in components[0]["reason"]
+    assert [(c["kind"], c["qty"]) for c in components] == [
+        ("reserve", "106"),
+        ("buy", "252"),
+    ]
+    assert components[0]["source_location"] == pool.warehouse_code
+    assert "252" in components[1]["reason"], (
+        "the Buy states what is left after the share, not the whole line"
+    )
 
 
 def test_whole_line_rule_a_full_cover_keeps_its_composition():
+    """LADDER V8: 716 in the pool, because the line may have half of it (R-B) and half of
+    716 is the 358 this case is about covering whole."""
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)
         _group, sites = _group_sites(db)
         own, pool = sites["BRW"]
-        _stock(db, product, pool, on_hand=358)
+        _stock(db, product, pool, on_hand=716)
         db.commit()
 
         order, _line, _cso, _cline = _seed_line(

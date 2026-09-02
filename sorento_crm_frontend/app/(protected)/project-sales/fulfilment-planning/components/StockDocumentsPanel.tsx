@@ -11,10 +11,7 @@ import { formatDateInMalaysia } from '@/lib/helpers';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
 import { useStockDetail } from '../../_shared/hooks/useFulfilmentPlanning';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
-import {
-  mockAvailableForProject,
-  POOLS_SET,
-} from '../../_shared/lib/fulfilmentV8Mock';
+import { availableForProject, POOLS_SET } from '../../_shared/lib/poolShare';
 import type {
   StockDocumentMatch,
   StockDonorMatch,
@@ -632,8 +629,11 @@ export function StockDocumentsPanel({
       // uncapped, exactly as it always has.
       const balanceHeading = isPoolsSection ? 'Available for Project' : 'Balance after';
       const fivePoolNet = isPoolsSection ? (detail.data?.five_pool_net ?? null) : null;
+      const sharePct = detail.data?.pool_share_pct;
       const displayedBalance = (balance: string | null): string | null =>
-        isPoolsSection ? (mockAvailableForProject(balance, fivePoolNet) ?? balance) : balance;
+        isPoolsSection
+          ? (availableForProject(balance, fivePoolNet, sharePct) ?? balance)
+          : balance;
       list.push({
         id: 'balance',
         accessorFn: (row) => Number(row.balance || 0),
@@ -683,7 +683,13 @@ export function StockDocumentsPanel({
     }
 
     return list;
-  }, [isGroup, rows, isPoolsSection, detail.data?.five_pool_net]);
+  }, [
+    isGroup,
+    rows,
+    isPoolsSection,
+    detail.data?.five_pool_net,
+    detail.data?.pool_share_pct,
+  ]);
 
   return (
     <div

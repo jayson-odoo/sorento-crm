@@ -298,11 +298,13 @@ class BoardTrailStep(BaseModel):
 
 
 class BoardLadderOption(BaseModel):
-    """One step of ladder v7.1, answered whether or not it was taken (R36, AC-S3-14).
+    """One step of ladder v8, answered whether or not it was taken (R36, AC-S3-14, R-A/R-B).
 
-    FIVE per walked line, in step order - `use`, `order_borrow`, `supply_borrow`, `pool`,
-    `buy` - because a step the server omitted reads as a step nobody walked. The client
-    renders them as given and never sorts them.
+    FIVE per walked line, in step order - `pool_share`, `use`, `order_borrow`,
+    `supply_borrow`, `buy` - because a step the server omitted reads as a step nobody walked.
+    The client renders them as given and never sorts them. Ladder v8 moved the site pool from
+    last to FIRST and gave it a share rather than an all-or-nothing draw (R-A/R-B); the v7.1
+    key `pool` reaches this schema only from a frozen snapshot being re-rendered.
     """
 
     #: The step's own key. Addressing and test ids; the reader is shown `label`.
@@ -310,8 +312,19 @@ class BoardLadderOption(BaseModel):
     #: The step in a planner's words. The SERVER's sentence, so two screens cannot spell
     #: one step two ways.
     label: str
-    #: Does it cover the WHOLE planning unit (R10, R33)? Half a unit is not an option.
+    #: Does it cover the WHOLE planning unit (R10, R33)? Half a unit is not an option -
+    #: except on `pool_share`, which may cover part of a line BY RULE (R-B) and says how
+    #: much in `gives_qty`.
     whole: bool = False
+    #: How much this step can give. On `pool_share` it is the share itself - the one figure
+    #: in the table a reader cannot derive from `whole` - and on every other step it is what
+    #: that step would contribute to what is LEFT after the share (AC-2.1: "Use BRW stock
+    #: 450, Use our locations 0, Buy 200").
+    gives_qty: Optional[str] = None
+    #: The step's own sentence, where the quantity alone does not say it: "600 is more than
+    #: the 450 BRW can spare" (AC-2.4). Null on a step whose label and quantity are the whole
+    #: answer.
+    reason: Optional[str] = None
     #: When the unit would be fulfilled if this were taken. NULL exactly when the step
     #: offered nothing, and `days_late` is null with it: "nothing was offered" and
     #: "offered, on time" are different answers.
@@ -795,6 +808,13 @@ class StockDetail(BaseModel):
     incoming: List[StockDetailIncoming] = []
     #: Confirmed holds taken by lines booked outside this set. Group reading only.
     holds: List[StockDetailHold] = []
+    #: LADDER V8 (R-K), the SITE POOL reading only: what the five pools net between them and
+    #: how much of a pool is kept back for dealers. Together they are what turns this read's
+    #: running "Balance after" column into "Available for Project" - the pool's own share of
+    #: each running balance, capped by the net the walk was bound by (R-D). Null on a bin or
+    #: an ownership group, which keep no dealer share.
+    five_pool_net: Optional[str] = None
+    pool_share_pct: Optional[int] = None
 
 
 class PileQueueLine(BaseModel):
@@ -934,6 +954,12 @@ class BoardCellLocation(BaseModel):
     #: Which set that net is over, for the subtotal's own label: the group code (`IB`),
     #: `pools`, or None where no set applies.
     net_of: Optional[str] = None
+    #: LADDER V8 (R-K): what a SITE POOL row may give a project line once the dealers' share
+    #: is kept back - `min(floor(available_qty x (100 - pool_share_pct) / 100), max(net, 0))`,
+    #: the SAME allowance the walk's own step 0 asked the pool for. `0` rather than blank on
+    #: an addressable pool row; absent on `own` / `group` / `other_group`, which keep no
+    #: dealer share and where a zero would read as an empty location.
+    available_for_project: Optional[str] = None
     incoming: List["BoardIncoming"] = []
     qty_proposed_reserve: str = "0"
     qty_proposed_incoming: str = "0"
@@ -1060,3 +1086,8 @@ class PlanningBoard(BaseModel):
     #: supply first. Allocation runs over the whole selection, not over the window, so this is
     #: the selection's contest count on every granularity.
     contested_line_count: int = 0
+    #: LADDER V8 (R-K): how much of a site pool is kept back for dealers, in percent. Every
+    #: pool ROW already carries its own `available_for_project`; this is what the Stock tab's
+    #: pool SUBTOTAL applies the same rule with, over the pool's own net - a figure that
+    #: belongs to the SET and so appears on no row.
+    pool_share_pct: int = 50

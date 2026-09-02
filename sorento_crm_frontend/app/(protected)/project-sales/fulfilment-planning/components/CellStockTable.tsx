@@ -6,9 +6,10 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
 import {
-  mockAvailableForProject,
+  availableForProject,
+  DEFAULT_POOL_SHARE_PCT,
   POOLS_SET,
-} from '../../_shared/lib/fulfilmentV8Mock';
+} from '../../_shared/lib/poolShare';
 import { StockDocumentsPanel } from './StockDocumentsPanel';
 import type {
   BoardCellLocation,
@@ -134,6 +135,15 @@ export interface CellStockTableProps {
    * dialog wants the auto-land its own default-landing contract promises.
    */
   landOnMount?: boolean;
+  /**
+   * How much of a site pool is kept back for dealers, off the board's own policy
+   * (`PlanningBoard.pool_share_pct`, LADDER v8 R-K). Every site-pool ROW already arrives
+   * with `available_for_project` computed by the server; this is only what the pool
+   * SUBTOTAL applies the same rule with, over the pool's own net - a figure that belongs to
+   * the set rather than to any bin, so no row carries it. Defaulted, so a caller with no
+   * board in hand (this component's own tests) still renders the documented rule.
+   */
+  poolSharePct?: number;
 }
 
 /**
@@ -156,6 +166,7 @@ export const CellStockTable = React.forwardRef<
     documentInfo,
     filterText,
     landOnMount,
+    poolSharePct = DEFAULT_POOL_SHARE_PCT,
   },
   ref,
 ) {
@@ -545,7 +556,11 @@ export const CellStockTable = React.forwardRef<
                           ? section.net
                           : isPoolShare
                             ? section.netOf === POOLS_SET
-                              ? mockAvailableForProject(section.net, section.net)
+                              ? availableForProject(
+                                  section.net,
+                                  section.net,
+                                  poolSharePct,
+                                )
                               : null
                             : sumOf(section.rows, (entry) =>
                                 valueOf(column, entry, drawn),

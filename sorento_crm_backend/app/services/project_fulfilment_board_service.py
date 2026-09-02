@@ -93,6 +93,7 @@ from app.services.scm.planning_predicate import (
 from app.services.scm.demand import demand_qty, is_open_demand, is_plan_demand_line
 from app.services.scm.front_planning_engine import (
     BORROW,
+    available_for_project,
     BUY,
     RESERVE,
     RUNG_BUY,
@@ -304,11 +305,19 @@ def _option_row(option: Any) -> Dict[str, Any]:
     `app/(protected)/project-sales/_shared/services/fulfilmentPlanningService.ts`, and this
     is the server half of it: five entries, in step order, one chosen at most,
     `fulfil_date` and `days_late` null TOGETHER, `debt_*` on the borrow steps only.
+
+    LADDER V8 adds two fields to every row: `gives_qty`, because `pool_share` may cover PART
+    of a line (R-B) and no other column would say how much, and `reason`, which is the
+    `pool_share` row's own sentence when the number needs one ("600 is more than the 450 BRW
+    can spare", AC-2.4).
     """
+    gives = getattr(option, "gives_qty", None)
     return {
         "step": option.step,
         "label": option.label,
         "whole": bool(option.whole),
+        "gives_qty": qty_text(_dec(gives)) if gives is not None else None,
+        "reason": getattr(option, "reason", None),
         "fulfil_date": option.fulfil_date.isoformat() if option.fulfil_date else None,
         "days_late": option.days_late,
         "debt_so_number": option.debt_so_number,
@@ -702,6 +711,15 @@ class FulfilmentBoardService:
             "past_line_count": sum(1 for row in rows if row.is_past),
             "unplannable_line_count": sum(1 for row in rows if row.unplannable),
             "contested_line_count": sum(1 for row in rows if row.contested),
+            # LADDER V8 (R-K): how much of a site pool is kept back for dealers, so the Stock
+            # tab's SUBTOTAL row can print "Available for Project" over the pool's own net -
+            # a figure no row carries, because it is the SET's position rather than a bin's.
+            # Every pool ROW already arrives with its own `available_for_project` computed
+            # here; this is the one number the client still has to apply the rule with.
+            "pool_share_pct": int(
+                self.supply.fulfilment_settings().get("pool_share_pct")
+                or 0
+            ),
         }
 
     # ----------------------------------------------------- the stock drill-down
@@ -943,6 +961,24 @@ class FulfilmentBoardService:
             "sales_orders": sales_orders,
             "incoming": incoming,
             "holds": holds,
+            # LADDER V8 (R-K): the five site pools' own net and the share kept back for
+            # dealers, so the expanded ledger under a SITE POOL section can read its running
+            # column as "Available for Project" - the pool's share of each running balance,
+            # capped by the same net the walk was bound by (R-D). Stated only on the pools
+            # reading: a bin or an ownership group has no dealer share to keep back, and a
+            # number there would invite the client to apply the rule where it does not hold.
+            **(
+                {
+                    "five_pool_net": qty_text(
+                        self.supply.netting().pools_net(str(product.id)).net
+                    ),
+                    "pool_share_pct": int(
+                        self.supply.fulfilment_settings().get("pool_share_pct") or 0
+                    ),
+                }
+                if (group or "").strip().lower() == POOLS_SET
+                else {}
+            ),
         }
 
     def _set_locations(self, product_id: str, group: str) -> Dict[str, str]:
@@ -2716,10 +2752,26 @@ class FulfilmentBoardService:
                 fact, as_of=as_of, borrow_left=borrow_open, pool=True
             )
         )
+        # LADDER V8 (R-B): what the pile can offer THIS line is its share, not the whole
+        # net - the same `available_for_project` the walk's own step 0 was bound by, read
+        # off the chain's first pool exactly as the walk reads it. Without the cap the proof
+        # advertised 31 beside a step that could only ever have given 15.
+        pool_allowance = (
+            _ZERO
+            if outside_window
+            else available_for_project(
+                (pool_chain[0].get("available") if pool_chain else _ZERO),
+                pools_net_open,
+                self.supply.fulfilment_settings().get("pool_share_pct"),
+            )
+        )
         # The two halves are ALTERNATIVES, never a sum: one step, one story (R33), so the
         # offer is the larger of them and not both added together.
         pool_offered = max(
-            sum((amount for _location, amount in pool_capacity), _ZERO),
+            min(
+                sum((amount for _location, amount in pool_capacity), _ZERO),
+                pool_allowance,
+            ),
             sum((_dec(c.get("qty")) for c in pool_borrow_candidates), _ZERO),
         )
         add(
@@ -2727,7 +2779,10 @@ class FulfilmentBoardService:
             "Can we take from the pool?",
             taken=pool_taken,
             offered=pool_offered,
-            eligible=not outside_window and not fact.is_dealer_hot_selling,
+            # LADDER V8 (R-A): the dealer hot-selling gate is retired - the SHARE is what
+            # keeps stock for dealers now - so a hot item's pool step is walked like any
+            # other item's.
+            eligible=not outside_window,
             sources=drawn_at("pool"),
             location=pool_code,
             warehouse_id=row.warehouse_ids.get(pool_code) if pool_code else None,
@@ -3064,7 +3119,21 @@ class FulfilmentBoardService:
             pools=list(pool_chain),
             pools_net=net,
         )
-        capacity_by_location = {location: amount for location, amount in capacity}
+        # LADDER V8 (R-B): what the pile may give THIS line is its share, so the sentence
+        # must not offer a figure the walk could never have taken. The same
+        # `available_for_project` the walk and the option row are bound by, applied to the
+        # chain's first pool exactly as the walk applies it.
+        allowance = available_for_project(
+            (pool_chain[0].get("available") if pool_chain else _ZERO),
+            net,
+            self.supply.fulfilment_settings().get("pool_share_pct"),
+        )
+        left_to_share = allowance
+        capacity_by_location: Dict[str, Decimal] = {}
+        for location, amount in capacity:
+            share = min(amount, max(left_to_share, _ZERO))
+            capacity_by_location[location] = share
+            left_to_share -= share
         pools_net_refused = not capacity and any(
             _dec(entry.get("free")) > _ZERO for entry in pool_chain
         )
@@ -3078,11 +3147,6 @@ class FulfilmentBoardService:
                 taken,
                 pools_net_refused,
                 pools_net=net,
-            )
-        if fact.is_dealer_hot_selling:
-            return (
-                f"{self._hot_prefix(fact, dealer=True)}: the shared pile is kept for "
-                "retail, so no pool is offered - not this site's, and not another's."
             )
         return self._pool_why_no_own(outcome, capacity_by_location)
 
@@ -3139,14 +3203,11 @@ class FulfilmentBoardService:
         code = fact.pool_code
         if outcome == "none_needed":
             return _COVERED_BEFORE
-        if fact.is_dealer_hot_selling:
-            # AC-V6: the gate refuses the WHOLE pile, not this site's share of it, so the
-            # sentence has to say pile. Naming only `code` read as "BRW is kept for retail"
-            # beside 500 units sitting at DC1 and MWH that were equally not on offer.
-            return (
-                f"{self._hot_prefix(fact, dealer=True)}: the shared pile is kept for retail, "
-                f"so no pool is offered - not {code}, and not another site's."
-            )
+        # LADDER V8 (R-A): the dealer hot-selling gate is retired, so there is no sentence
+        # here refusing the pile for a hot item any more. What keeps stock for dealers is the
+        # SHARE - a percentage of every pool, for every item - and the ordinary sentences
+        # below say what the pile is and what it gave, with `_pool_class_prefix` still naming
+        # hot or cold in front of them because the captain reads that either way.
         # LADDER V4 (section 1d): the five site pools are ONE pile, and that pile's net is
         # now the ONLY thing that bounds the rung - `BRW -103` beside `DC1 +1` nets -102,
         # and the 1 at DC1 is stock the shared book already owes at BRW. Said wherever the
@@ -3176,7 +3237,10 @@ class FulfilmentBoardService:
                 f"12 months), so {code} is offered as for a cold item."
             )
             return f"{base} This line takes {qty_text(taken)}." if outcome == "took" else base
-        prefix = self._cold_prefix(fact)
+        # LADDER V8 (R-A): the dealer-hot early return above is gone, so these sentences
+        # are now the ones a HOT item reads too - and they have to name the class the
+        # captain asked for rather than defaulting every reader to "cold".
+        prefix = self._pool_class_prefix(fact)
         on_hand = _dec(pile.get("on_hand"))
         # The "Available" the captain was holding the rung against is the Inventory screen's
         # (on hand less reserved), so that is the figure the sentence quotes; AutoCount's
@@ -4101,6 +4165,13 @@ class FulfilmentBoardService:
             **self._net_fields(
                 product_id, warehouse_id, where, stated, own_demand=own_demand
             ),
+            #: LADDER V8 (R-K): what a SITE POOL row may give a project line once the dealers'
+            #: share is kept back - the SAME `available_for_project` the walk's step 0 asked it
+            #: for, so the lightbox and the engine can never disagree about the number. `0`
+            #: rather than blank on an addressable pool row ("the pool can spare you nothing"
+            #: is an answer); absent everywhere else, because outside a pool there is no share
+            #: to keep back and a zero would read as a pool with nothing in it.
+            **self._project_share_fields(product_id, warehouse_id, where, stated, available),
             "incoming": [
                 {
                     "spo_number": ref.spo_number,
@@ -4165,6 +4236,41 @@ class FulfilmentBoardService:
                 position.net + self._mine_in(position, own_demand, product_id)
             ),
             "net_of": group,
+        }
+
+    def _project_share_fields(
+        self,
+        product_id: Optional[str],
+        warehouse_id: Optional[str],
+        where: str,
+        stated: bool,
+        available: Optional[Decimal],
+    ) -> Dict[str, Optional[str]]:
+        """`available_for_project` for one row of the cell table (LADDER V8, R-K).
+
+        A SITE POOL row only. `min(floor(available x (100 - pool_share_pct) / 100),
+        max(five-pool net, 0))` - the engine's own `available_for_project`, called rather than
+        restated, because the whole point of R-K is that the planner reads the number the walk
+        obeyed. The net is the row's own (`_net_fields` prints the same figure), so the two
+        columns of one row are read off one position.
+
+        Absent on every other row: `own`, `group` and `other_group` keep no dealer share, and
+        a `0` there would read as a location that has nothing rather than as a rule that does
+        not apply.
+        """
+        if not stated or not product_id or not warehouse_id or available is None:
+            return {}
+        netting = self.supply.netting()
+        if not (where == WHERE_SITE_POOL or netting.is_pool(warehouse_id)):
+            return {}
+        return {
+            "available_for_project": qty_text(
+                available_for_project(
+                    available,
+                    netting.pools_net(product_id).net,
+                    self.supply.fulfilment_settings().get("pool_share_pct"),
+                )
+            )
         }
 
     @staticmethod

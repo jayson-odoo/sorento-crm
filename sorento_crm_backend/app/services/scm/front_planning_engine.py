@@ -126,26 +126,34 @@ RUNG_BUY = "buy"
 #
 # The ladder walks five steps and the screen shows all five, answered, whether or not they
 # were taken: a step the server omitted reads as a step nobody walked. The keys are the
-# wire's own (`fulfilmentPlanningService.ts`, "LADDER v7.1: THE OPTIONS CONTRACT").
+# wire's own (`fulfilmentPlanningService.ts`, "LADDER v8: THE OPTIONS CONTRACT").
 
+#: LADDER V8 (R-A): the site pool of the ASKING bin, asked FIRST and for its share alone.
+#: It replaces `STEP_POOL` in the walk; that key survives below only so a proposal frozen
+#: under v4 to v7.1 still renders in the words it was made with.
+STEP_POOL_SHARE = "pool_share"
 STEP_USE = "use"
 STEP_ORDER_BORROW = "order_borrow"
 STEP_SUPPLY_BORROW = "supply_borrow"
+#: Retired as a WALK step by ladder v8. Read, never emitted: a frozen snapshot names it.
 STEP_POOL = "pool"
 STEP_BUY = "buy"
 
 #: In walk order, always. The client renders what it is given and never sorts.
 OPTION_STEPS = (
+    STEP_POOL_SHARE,
     STEP_USE,
     STEP_ORDER_BORROW,
     STEP_SUPPLY_BORROW,
-    STEP_POOL,
     STEP_BUY,
 )
 
 #: The step in a planner's words. The SERVER's sentence, so two screens cannot spell one
-#: step two ways.
+#: step two ways. `pool_share` is the exception and names the pool it asks
+#: (`_pool_share_label`): "Use BRW stock" beside a BRW-BB line, "Use MWH stock" beside an
+#: MWH one, because "the pool" is four different piles to the four sites that ask.
 STEP_LABELS = {
+    STEP_POOL_SHARE: "Use site pool stock",
     STEP_USE: "Use our locations",
     STEP_ORDER_BORROW: "Borrow on hand from a later order",
     STEP_SUPPLY_BORROW: "Borrow incoming from a later order",
@@ -154,6 +162,55 @@ STEP_LABELS = {
 }
 
 BUY_REASON = "remaining uncovered need"
+
+# --------------------------------------------------------------------------- #
+# The site pool's share (LADDER V8, R-A/R-B/R-D/R-K)
+# --------------------------------------------------------------------------- #
+#
+# The site pool is the dealers' own pile, and a project line may take up to the half of it
+# the policy does not keep back. Two windows, one allowance:
+#
+#     allowance = min(floor(pool available x (100 - pool_share_pct) / 100), max(net, 0))
+#
+# INSIDE `immediate_window_days` a line takes `min(line, allowance)` and the rest of it
+# walks the ladder (R-B); BEYOND it the line is taken whole or not at all, because a far
+# line can be bought for and the pile is better kept whole for the near ones.
+#
+# The BASE is the pool's AVAILABLE (`on hand - SO + SPO`), which is the figure the lightbox
+# prints beside it and the figure R-K's "Available for Project" column is a share of; the
+# five-pool net caps it (R-D) and the pool's own FREE pile still decides WHERE the units
+# physically come from, exactly as it did under v4 to v7.1 (`_draw_pool`).
+#
+# Both numbers are POLICY (`scm.priority_policy`, S1 of this plan) and the caller reads them
+# off the active row (`ProjectSupplyService._fulfilment_settings`); the defaults below are
+# the same two `app.services.scm.priority.FULFILMENT_SETTINGS_DEFAULTS` states, restated so a
+# direct caller of the engine walks the documented rule rather than no rule at all.
+
+#: How much of the site pool is kept back for dealers, in percent.
+DEFAULT_POOL_SHARE_PCT = 50
+
+#: How near a line has to be due before it may take a PART of the pool's allowance rather
+#: than all-or-nothing of it.
+DEFAULT_IMMEDIATE_WINDOW_DAYS = 30
+
+
+def available_for_project(
+    available: Any, pools_net: Any, pool_share_pct: Optional[int] = None
+) -> Decimal:
+    """What a site pool may lend a PROJECT line: R-K's "Available for Project".
+
+    `min(floor(available x (100 - share) / 100), max(net, 0))`, in WHOLE units - a pool with
+    47 available and half kept back spares 23, not 23.5, because nobody ships half a unit.
+
+    ONE formula, called from three places that must never disagree: the walk's own step 0,
+    the board's site-pool rows and their subtotal, and the lightbox ledger's running column.
+    A pool with nothing to spare answers `0`, never `None` - "the pool can give you nothing"
+    is an answer, and a blank cell is not (R-K).
+    """
+    share = DEFAULT_POOL_SHARE_PCT if pool_share_pct is None else int(pool_share_pct)
+    share = min(max(share, 0), 100)
+    spare = (max(_dec(available), ZERO) * (100 - share)) // 100
+    return min(spare, max(_dec(pools_net), ZERO))
 
 # --------------------------------------------------------------------------- #
 # The ATP reserve window
@@ -317,8 +374,18 @@ class Option:
     step: str
     label: str
     #: Does this step cover the WHOLE planning unit (R10, R33)? A step that covers part of
-    #: it is not an option, because half a unit is not a proposal.
+    #: it is not an option, because half a unit is not a proposal - with ONE exception since
+    #: ladder v8: `pool_share` may cover part of a line by rule (R-B), and states how much
+    #: in `gives_qty`.
     whole: bool
+    #: How much this step can give. LADDER V8: on `pool_share` it is the share itself, which
+    #: is the number the rule is about; on every other step it is what that step would
+    #: contribute to what is LEFT after the share, so the table's rows add up on screen.
+    gives_qty: Optional[Decimal] = None
+    #: The step's own sentence, where it has something to say the quantity does not
+    #: (AC-2.4: "600 is more than the 450 BRW can spare"). `None` on a step whose label and
+    #: quantity already say everything - a reason per row for its own sake is noise.
+    reason: Optional[str] = None
     fulfil_date: Optional[date] = None
     days_late: Optional[int] = None
     #: Whose order pays for it, by DOCUMENT NUMBER. Set on the two borrow steps only: `use`
@@ -395,15 +462,17 @@ def pool_reserve_capacity(
 
     THERE IS NO PER-POOL CAP any more, and 3.3a's project hot-selling gate goes with it:
     that rule capped such a line's draw at the pool's own signed availability, and the
-    pile's net now bounds EVERY draw the same way, for every item. Dealer hot-selling still
-    excludes the rung entirely, which is a different rule - the pool is kept for retail, so
-    it is not offered at all.
+    pile's net now bounds EVERY draw the same way, for every item.
+
+    `is_dealer_hot_selling` IS ACCEPTED AND NOT READ since ladder v8 (R-A). It used to
+    exclude the whole rung - "the pool is kept for retail" - and what keeps stock for
+    dealers now is the SHARE (`available_for_project`), which keeps a percentage of every
+    pool rather than the whole of one for a subset of items. The parameter survives because
+    three callers pass it and the flag itself is still a fact about the product.
 
     Nothing is un-netted here, unlike rung 2: this line's demand is booked at
     `BRW-<group>`, never at a pool, so none of it is inside `pools_net`.
     """
-    if is_dealer_hot_selling:
-        return []
     left = max(_dec(pools_net), ZERO)
     out: List[Tuple[str, Decimal]] = []
     for pool in pools:
@@ -434,6 +503,64 @@ def pool_reason(location: str, qty: Decimal, pools_net: Any) -> str:
         f"Pool {location} lends {qty_text(qty)} of the {qty_text(_dec(pools_net))} the "
         "site pools net between them"
     )
+
+
+def pool_share_reason(location: str, qty: Decimal, allowance: Decimal) -> str:
+    """LADDER V8 (R-A/R-B): why the site pool may lend a PROJECT line this much.
+
+    The number beside it is the ALLOWANCE - what the pool can spare once the dealers' share
+    is kept back and the five-pool net has had its say - and never the raw pile, because
+    "Pool BRW lends 3 of the 47 free" invites the next planner to ask for the other 44.
+
+    Public for the same reason `pool_reason` is: the supply service builds this sentence
+    when it reads a CONFIRMED component back off a frozen snapshot.
+    """
+    return (
+        f"Pool {location} spares {qty_text(qty)} of the {qty_text(allowance)} it may lend "
+        "a project"
+    )
+
+
+def pool_share_option_reason(
+    location: str,
+    *,
+    open_qty: Decimal,
+    allowance: Decimal,
+    share: Decimal,
+) -> str:
+    """The `pool_share` option row's own sentence (AC-2.4).
+
+    The one option row that answers with a quantity the reader cannot derive from `Whole`:
+    it may give PART of a line, and when it gives nothing the reason is the whole point -
+    "600 is more than the 450 BRW can spare" is what stops a planner hunting for a pool
+    they can see 900 sitting in.
+    """
+    if allowance <= ZERO:
+        return f"{location} has nothing to spare for projects"
+    if share <= ZERO:
+        if open_qty > allowance:
+            return (
+                f"{qty_text(open_qty)} is more than the {qty_text(allowance)} {location} "
+                "can spare"
+            )
+        return f"{location} has nothing free on the floor to spare"
+    if share < open_qty:
+        return (
+            f"{location} can spare {qty_text(allowance)} of the {qty_text(open_qty)} needed"
+        )
+    return f"{location} can spare {qty_text(allowance)}"
+
+
+def _pool_share_label(pools: Optional[Sequence[Mapping[str, Any]]]) -> str:
+    """"Use BRW stock" - the ASKING bin's own pool, named (R-A).
+
+    The caller hands the pool chain over with that pool first (`_pool_chain`), so the label
+    is the first entry's code. A line whose bin names no pool at all keeps the generic
+    wording rather than naming somebody else's site.
+    """
+    first = (pools or [None])[0]
+    location = (first or {}).get("location") if first else None
+    return f"Use {location} stock" if location else STEP_LABELS[STEP_POOL_SHARE]
 
 
 def group_water_reason(
@@ -661,6 +788,19 @@ def _whole_line_buy_reason(covered: Decimal, open_qty: Decimal) -> str:
     )
 
 
+def _remainder_buy_reason(covered: Decimal, remainder: Decimal) -> str:
+    """LADDER V8 (R-C): the site pool took its share and nothing covers what is left.
+
+    A different sentence from `_whole_line_buy_reason` because it is a different fact: the
+    line is not uncovered, it is PART covered, and a planner reading "Only 0 of 650 can be
+    covered" beside a Reserve of 450 would be reading a contradiction.
+    """
+    return (
+        f"Only {qty_text(covered)} of the remaining {qty_text(remainder)} can be covered "
+        "from stock - buy the rest"
+    )
+
+
 # --------------------------------------------------------------------------- #
 # One line's composition (PLAN 3.2, amended by section E)
 # --------------------------------------------------------------------------- #
@@ -702,6 +842,18 @@ def walk_line(
     outside_reserve_window: bool = False,
     group_offer: Optional[Decimal] = None,
     pools_net: Optional[Decimal] = None,
+    #: LADDER V8 (R-B): how much of the site pool is kept back for dealers, and how near a
+    #: line has to be due before it may take PART of what is left rather than all-or-nothing
+    #: of it. Both are policy (`scm.priority_policy`, this plan's S1); `None` walks the
+    #: documented default, so a direct caller still walks the rule.
+    pool_share_pct: Optional[int] = None,
+    immediate_window_days: Optional[int] = None,
+    #: What is LEFT of the pool's project share in this walk (`compose_lines`' own ledger).
+    #: The allowance is a share of the pile, not a share per line: without a running figure
+    #: two lines of one board would each be offered half the pool and the pool would end up
+    #: lending all of it. `None` reads the pile fresh, which is what a single line on its
+    #: own may draw.
+    pool_share_left: Optional[Decimal] = None,
 ) -> Walk:
     """LADDER V7.1: the five steps, in order, each answered (PLAN 3.2, R1/R13/R33/R36).
 
@@ -768,74 +920,138 @@ def walk_line(
                 offers={},
                 chosen=STEP_BUY,
                 need=open_amount,
+                open_qty=open_amount,
+                pool_share_label=_pool_share_label(pools),
             ),
         )
 
     offers: Dict[str, "_Offer"] = {}
 
+    # 0b. pool_share - the ASKING bin's own site pool, and the share of it a project may
+    #     take (R-A, R-B, R-D). Inside the immediate window it may answer with PART of the
+    #     line; beyond it, whole or nothing. The dealer hot-selling gate that used to refuse
+    #     the whole step is retired: the share is what keeps stock for dealers now.
+    allowance = available_for_project(
+        (pools or [{}])[0].get("available") if pools else ZERO,
+        pools_net,
+        pool_share_pct,
+    )
+    if pool_share_left is not None:
+        allowance = min(allowance, max(_dec(pool_share_left), ZERO))
+    window_days = (
+        DEFAULT_IMMEDIATE_WINDOW_DAYS
+        if immediate_window_days is None
+        else max(int(immediate_window_days), 0)
+    )
+    # An UNDATED line is never beyond a bound - the same reading rung 0 takes of it - so it
+    # is treated as immediate and may take a share.
+    immediate = (
+        required_date is None or required_date <= today + timedelta(days=window_days)
+    )
+    wanted = (
+        min(open_amount, allowance)
+        if immediate
+        else (open_amount if open_amount <= allowance else ZERO)
+    )
+    step_share = _Offer()
+    if wanted > ZERO:
+        _draw_pool(step_share, pools, allowance, wanted, share=True)
+    share_qty = step_share.qty
+    offers[STEP_POOL_SHARE] = step_share
+
+    # What the REST of the ladder is asked about. The share is its own sub-unit (R-C), so
+    # steps 1 to 3 answer for what is left of the line - and for the WHOLE line when the
+    # share took nothing or took all of it, because a table that reported every other step
+    # against a remainder of zero would say nothing at all.
+    remainder = open_amount - share_qty
+    need = remainder if remainder > ZERO else open_amount
+
     # 1. use -----------------------------------------------------------------------------
     step_use = _Offer()
-    _draw_group(step_use, group_take_candidates, open_amount, group_code, group_offer)
-    _draw_other_groups(step_use, other_group_candidates, open_amount, group_code)
+    _draw_group(step_use, group_take_candidates, need, group_code, group_offer)
+    _draw_other_groups(step_use, other_group_candidates, need, group_code)
     offers[STEP_USE] = step_use
 
     # 2. order_borrow ---------------------------------------------------------------------
     offers[STEP_ORDER_BORROW] = _draw_order_borrow(
-        order_borrow_candidates, open_amount, RUNG_ORDER_BORROW
+        order_borrow_candidates, need, RUNG_ORDER_BORROW
     )
 
     # 3. supply_borrow - the DOCUMENT a later order is waiting on, ONE document whole
     #    (R33). The caller has already chosen which document that is and refused every
     #    combination of two, so this walks one document's rows and nothing else.
-    offers[STEP_SUPPLY_BORROW] = _draw_supply_borrow(
-        supply_borrow_candidates, open_amount
-    )
-
-    # 4. pool ------------------------------------------------------------------------------
-    step_pool = _Offer()
-    if not is_dealer_hot_selling:
-        _draw_pool(step_pool, pools, pools_net, open_amount)
-        if step_pool.qty < open_amount:
-            # The pool's FREE pile could not cover it, so its own later orders are asked -
-            # and that half raises a debt (R34). Never mixed with the free half: one step,
-            # one story.
-            borrowed = _draw_order_borrow(pool_borrow_candidates, open_amount, RUNG_POOL)
-            if borrowed.qty >= open_amount:
-                step_pool = borrowed
-    offers[STEP_POOL] = step_pool
+    offers[STEP_SUPPLY_BORROW] = _draw_supply_borrow(supply_borrow_candidates, need)
 
     chosen: Optional[str] = None
-    for step in (STEP_USE, STEP_ORDER_BORROW, STEP_SUPPLY_BORROW, STEP_POOL):
-        if offers[step].qty >= open_amount and offers[step].components:
-            chosen = step
-            break
+    if remainder <= ZERO and share_qty > ZERO:
+        chosen = STEP_POOL_SHARE
+    else:
+        for step in (STEP_USE, STEP_ORDER_BORROW, STEP_SUPPLY_BORROW):
+            if offers[step].qty >= remainder and offers[step].components:
+                chosen = step
+                break
+        if chosen is None and pool_borrow_candidates:
+            # The pool's own later orders, asked LAST exactly as v7.1 asked them - after
+            # every free step and before Buy - and reported inside the first row, because
+            # it is still the pool answering (R34). This half raises a debt; the free share
+            # above does not.
+            borrowed = _draw_order_borrow(pool_borrow_candidates, remainder, RUNG_POOL)
+            if borrowed.qty >= remainder and borrowed.components:
+                for component in borrowed.components:
+                    step_share.add(component)
+                chosen = STEP_POOL_SHARE
 
     options = _options(
         required_date=required_date,
         buy_date=buy_date,
         offers=offers,
         chosen=chosen or STEP_BUY,
-        need=open_amount,
+        need=need,
+        open_qty=open_amount,
+        share_whole=share_qty >= open_amount,
+        pool_share_reason_text=(
+            pool_share_option_reason(
+                str((pools or [{}])[0].get("location")),
+                open_qty=open_amount,
+                allowance=allowance,
+                share=share_qty,
+            )
+            if pools and (pools[0].get("location"))
+            else None
+        ),
+        pool_share_label=_pool_share_label(pools),
         as_of=today,
         own_location=fulfilment_location,
         transfer_days=transfer_days,
     )
     if chosen is None:
         covered = max(
-            (offer.qty for offer in offers.values()), default=ZERO
+            (
+                offer.qty
+                for step, offer in offers.items()
+                if step != STEP_POOL_SHARE
+            ),
+            default=ZERO,
+        )
+        buy = Component(
+            kind=BUY,
+            qty=remainder,
+            reason=(
+                _remainder_buy_reason(min(covered, remainder), remainder)
+                if share_qty > ZERO
+                else _whole_line_buy_reason(min(covered, open_amount), open_amount)
+            ),
+            rung=RUNG_BUY,
         )
         return Walk(
-            components=(
-                Component(
-                    kind=BUY,
-                    qty=open_amount,
-                    reason=_whole_line_buy_reason(min(covered, open_amount), open_amount),
-                    rung=RUNG_BUY,
-                ),
-            ),
-            options=options,
+            components=tuple(step_share.components) + (buy,), options=options
         )
-    return Walk(components=tuple(offers[chosen].components), options=options)
+    if chosen == STEP_POOL_SHARE:
+        return Walk(components=tuple(step_share.components), options=options)
+    return Walk(
+        components=tuple(step_share.components) + tuple(offers[chosen].components),
+        options=options,
+    )
 
 
 def propose_line(**kwargs: Any) -> Tuple[Component, ...]:
@@ -1124,8 +1340,16 @@ def _draw_pool(
     pools: Optional[Sequence[Mapping[str, Any]]],
     pools_net: Optional[Decimal],
     need: Decimal,
+    *,
+    share: bool = False,
 ) -> None:
-    """Step 4a: the site pools as ONE pile, own site first (the caller's draw order).
+    """Step 0a (v8) / step 4a (v7.1): the site pools as ONE pile, own site first (the
+    caller's draw order).
+
+    `share` says which rule the quantity is a share OF, and therefore which sentence it
+    carries: under v8 the pile handed in is the ALLOWANCE (`available_for_project`) and the
+    reason names that, because a component reading "3 of the 47 the site pools net between
+    them" invites the reader to ask for the other 44 the pool is keeping for dealers.
 
     The pile offers `max(pools_net, 0)` and not a unit more - `BRW -103` beside `DC1 +1`
     nets -102 and offers NOTHING, where per-pool arithmetic would have offered the 1, which
@@ -1149,7 +1373,11 @@ def _draw_pool(
             Component(
                 kind=RESERVE,
                 qty=take,
-                reason=pool_reason(str(location), take, pools_net),
+                reason=(
+                    pool_share_reason(str(location), take, max(_dec(pools_net), ZERO))
+                    if share
+                    else pool_reason(str(location), take, pools_net)
+                ),
                 source_location=str(location),
                 rung=RUNG_POOL,
             )
@@ -1189,18 +1417,33 @@ def _options(
     offers: Mapping[str, "_Offer"],
     chosen: str,
     need: Decimal = ZERO,
+    #: The WHOLE line, where `need` is only what is left of it after the pool's share
+    #: (R-C). They are the same number whenever the share took nothing.
+    open_qty: Optional[Decimal] = None,
+    #: Did the share cover the whole line on its own? `whole` on the `pool_share` row is
+    #: about the LINE, not about the remainder every other row answers for.
+    share_whole: bool = False,
+    pool_share_reason_text: Optional[str] = None,
+    pool_share_label: Optional[str] = None,
     as_of: Optional[date] = None,
     own_location: Optional[str] = None,
     transfer_days: int = 0,
 ) -> Tuple[Option, ...]:
-    """The five rows the trail and the decision panel print (R36, AC-S3-14).
+    """The five rows the trail and the decision panel print (R36, AC-S3-14, R-B).
 
-    FIVE, always, in step order. A step that offered nothing sends `fulfil_date` and
-    `days_late` NULL together - "nothing was offered" and "offered, on time" are different
-    answers and the table shows them differently - and `days_late` is never negative,
-    because landing before the required date is on time rather than minus six days late.
+    FIVE, always, in step order - and since ladder v8 the site pool's share leads them. A
+    step that offered nothing sends `fulfil_date` and `days_late` NULL together - "nothing
+    was offered" and "offered, on time" are different answers and the table shows them
+    differently - and `days_late` is never negative, because landing before the required
+    date is on time rather than minus six days late.
+
+    EVERY row states `gives_qty` (R-B, AC-2.1: "Use BRW stock 450, Use our locations 0, Buy
+    200"). On `pool_share` it is the share itself, the one quantity in the table a reader
+    cannot derive from `whole`; on the rest it is what that step would contribute to what is
+    left after the share, which is the question actually being asked of them.
     """
     today = as_of or date.today()
+    whole_line = open_qty if open_qty is not None else need
     out: List[Option] = []
     for step in OPTION_STEPS:
         if step == STEP_BUY:
@@ -1209,6 +1452,7 @@ def _options(
                     step=step,
                     label=STEP_LABELS[step],
                     whole=True,
+                    gives_qty=need,
                     fulfil_date=buy_date,
                     days_late=_days_late(buy_date, required_date),
                     chosen=chosen == STEP_BUY,
@@ -1216,26 +1460,53 @@ def _options(
             )
             continue
         offer = offers.get(step)
-        label = _use_step_label(offer) if step == STEP_USE else STEP_LABELS[step]
-        whole = bool(offer and offer.components and offer.qty >= need > ZERO)
-        if not whole:
-            out.append(Option(step=step, label=label, whole=False))
+        if step == STEP_POOL_SHARE:
+            label = pool_share_label or STEP_LABELS[STEP_POOL_SHARE]
+        elif step == STEP_USE:
+            label = _use_step_label(offer)
+        else:
+            label = STEP_LABELS[step]
+        given = min(offer.qty, need) if offer else ZERO
+        if step == STEP_POOL_SHARE:
+            # The share answers for the LINE (it may cover part of it by rule), so its own
+            # quantity is what it gave and its `whole` is whether that was all of it.
+            given = offer.qty if offer else ZERO
+            whole = bool(share_whole or (chosen == STEP_POOL_SHARE and given >= whole_line))
+        else:
+            whole = bool(offer and offer.components and offer.qty >= need > ZERO)
+        reason = pool_share_reason_text if step == STEP_POOL_SHARE else None
+        if not whole and not (step == STEP_POOL_SHARE and given > ZERO):
+            out.append(
+                Option(
+                    step=step,
+                    label=label,
+                    whole=False,
+                    gives_qty=given,
+                    reason=reason,
+                )
+            )
             continue
-        fulfil = offer.arrival or today
-        if transfer_days and any(code != own_location for code in offer.locations):
+        fulfil = (offer.arrival if offer else None) or today
+        if (
+            transfer_days
+            and offer
+            and any(code != own_location for code in offer.locations)
+        ):
             fulfil = max(fulfil, today + timedelta(days=transfer_days))
-        debt = step in (STEP_ORDER_BORROW, STEP_SUPPLY_BORROW, STEP_POOL)
+        debt = step in (STEP_ORDER_BORROW, STEP_SUPPLY_BORROW, STEP_POOL_SHARE)
         out.append(
             Option(
                 step=step,
                 label=label,
-                whole=True,
+                whole=whole,
+                gives_qty=given,
+                reason=reason,
                 fulfil_date=fulfil,
                 days_late=_days_late(fulfil, required_date),
-                debt_so_number=offer.donor_so_number if debt else None,
+                debt_so_number=offer.donor_so_number if debt and offer else None,
                 debt_month=(
                     month_key(offer.donor_required_date)
-                    if debt and offer.donor_required_date is not None
+                    if debt and offer and offer.donor_required_date is not None
                     else None
                 ),
                 chosen=chosen == step,
