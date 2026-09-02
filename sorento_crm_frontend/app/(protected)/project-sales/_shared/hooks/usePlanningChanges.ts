@@ -16,15 +16,16 @@ import {
   listPlanningChangeBatches,
 } from '../services/planningChangeService';
 import type { PlanningChangeListParams } from '../types/planningChange.types';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export const PLANNING_CHANGE_BATCHES_KEY = 'planning-change-batches';
 export const PLANNING_CHANGE_BATCH_KEY = 'planning-change-batch';
 
 export function usePlanningChangeBatches(params: PlanningChangeListParams = {}) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [PLANNING_CHANGE_BATCHES_KEY, params],
     queryFn: () => listPlanningChangeBatches(params),
-    placeholderData: (previous) => previous,
   });
 }
 

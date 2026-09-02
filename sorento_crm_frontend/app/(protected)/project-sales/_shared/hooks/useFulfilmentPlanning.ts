@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
   adoptSalesOrder,
@@ -42,6 +42,7 @@ import { BOARD_TRANSFERS_KEY } from './useBoardTransfers';
 // A confirmation on a `?batch=` board APPLIES the planning change, so the batch's own record
 // (applied_at, applied_by, the per-row applied state) is stale the moment it returns.
 import { PLANNING_CHANGE_BATCH_KEY } from './usePlanningChanges';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export const FULFILMENT_PLANNING_KEY = 'project-fulfilment-planning';
 export const PLANNING_BOARD_KEY = 'project-fulfilment-board';
@@ -59,12 +60,12 @@ export const fulfilmentPlanningKey = (params: FulfilmentPlanningListParams) => [
 
 export function useFulfilmentPlanning(params: FulfilmentPlanningListParams = {}) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: fulfilmentPlanningKey(params),
     queryFn: () => listFulfilmentPlanning(params),
     // The page and the search both change the key, so without this the grid empties to a
     // skeleton on every keystroke and every page turn. The previous page stays on screen
     // until the next one answers.
-    placeholderData: keepPreviousData,
   });
 }
 
@@ -336,14 +337,14 @@ export function useStockDetail(
 /**
  * The Plans page (D1): every supply decision, one row per revision, cross-order.
  *
- * `placeholderData` for the same reason the worklist keeps it: page and filter changes
+ * `LIST_QUERY_OPTIONS` for the same reason the worklist spreads it: page and filter changes
  * both change the query key, and without it the grid empties to a skeleton on every one.
  */
 export function usePlans(params: PlanListParams = {}) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [PLANS_KEY, params],
     queryFn: () => listPlans(params),
-    placeholderData: keepPreviousData,
   });
 }
 
