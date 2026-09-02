@@ -117,7 +117,11 @@ coarse-pointer `::after` hit area supplies the 44px target invisibly.
 - **D15** - one `recordActions` set per entity (`use<Entity>Actions(record)`), shared by the
   list row's "..." menu and the record's gear - same items, same order, same permissions. No
   Edit item in the row menu; the row click (list) / primary button (record) is the edit path.
-  Reference detail pattern: the Users account page (first case for D15).
+  An item that needs record-only state (built lines, a live link, an attachment) may be
+  OMITTED from the row menu - the row and the record still share one definition, and the
+  hook simply receives fewer items on the row. Do not add disabled placeholders to the row
+  to make the two lists the same length. Reference detail pattern: the Users account page
+  (first case for D15).
 
 ## 6. Copy and content
 
