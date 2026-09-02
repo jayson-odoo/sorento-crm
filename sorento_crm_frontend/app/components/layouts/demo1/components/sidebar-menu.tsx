@@ -25,6 +25,7 @@ import {
   AccordionMenuSubTrigger,
 } from '@/components/ui/accordion-menu';
 import { Badge } from '@/components/ui/badge';
+import { PRESSED_CLASS } from '@/components/ui/primitive-classes';
 import { QuickAccessBlock } from './quick-access-block';
 import { MenuItemPinButton } from './menu-item-pin-button';
 
@@ -153,10 +154,15 @@ export function SidebarMenu() {
     label:
       'uppercase text-xs font-medium text-muted-foreground/70 pt-2.25 pb-px',
     separator: '',
-    item: 'h-8 text-accent-foreground hover:bg-accent hover:text-primary active:scale-[0.98] transition-transform duration-75 data-[selected=true]:text-primary data-[selected=true]:bg-muted data-[selected=true]:font-medium',
+    item: cn(
+      'h-8 text-accent-foreground hover:bg-accent hover:text-primary data-[selected=true]:text-primary data-[selected=true]:bg-muted data-[selected=true]:font-medium',
+      PRESSED_CLASS,
+    ),
     sub: '',
-    subTrigger:
-      'h-8 text-accent-foreground hover:bg-accent hover:text-primary active:scale-[0.98] transition-transform duration-75 data-[selected=true]:text-primary data-[selected=true]:bg-muted data-[selected=true]:font-medium',
+    subTrigger: cn(
+      'h-8 text-accent-foreground hover:bg-accent hover:text-primary data-[selected=true]:text-primary data-[selected=true]:bg-muted data-[selected=true]:font-medium',
+      PRESSED_CLASS,
+    ),
     subContent: 'py-0',
     indicator: '',
   };

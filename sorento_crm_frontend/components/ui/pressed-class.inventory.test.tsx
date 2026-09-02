@@ -81,7 +81,9 @@ describe.skipIf(process.env.M1_PRESS_INVENTORY !== '1')(
         const src = read(file);
         if (!/<button(\s|>|$)/.test(src)) continue;
 
-        const importsButton = /import\s*\{[^}]*\bButton\b[^}]*\}\s*from\s*['"][^'"]*components\/ui\/button['"]/s.test(
+        // No `s` (dotAll) flag needed or wanted here: `[^}]` already spans
+        // newlines on its own, and the target build's TS lib predates es2018.
+        const importsButton = /import\s*\{[^}]*\bButton\b[^}]*\}\s*from\s*['"][^'"]*components\/ui\/button['"]/.test(
           src,
         );
         if (importsButton) continue;
