@@ -59,7 +59,6 @@ export function useCampaigns(params: CampaignsListParams) {
     queryFn: () => getCampaigns(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -82,7 +81,6 @@ export function useCampaignTypes() {
     queryFn: getCampaignTypes,
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
