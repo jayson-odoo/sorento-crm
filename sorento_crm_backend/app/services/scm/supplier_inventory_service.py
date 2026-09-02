@@ -158,15 +158,30 @@ def _summarise(
     }
 
 
-def preview(db: Session, data: bytes, *, supplier_id: str) -> dict:
-    """What the file says, and what it would replace, before anything is written."""
+def preview(
+    db: Session, data: bytes, *, supplier_id: str, loading_plan_id: Optional[str] = None
+) -> dict:
+    """What the file says, and what it would replace, before anything is written.
+
+    `rows_held_now` (the "Replaces" tile) has to count the SAME rows `apply` would delete, or
+    the preview promises a destruction the apply does not perform. It used to count every row
+    on file for the supplier regardless of plan, which over-stated a plan-bound preview by
+    everything OTHER plans and the standalone page hold for that supplier. `loading_plan_id`
+    absent (the standalone stock-list page, and the "Plan a container" dialog - which previews
+    before the plan it will apply into exists, so there is nothing of that plan's own to
+    count) narrows to `loading_plan_id IS NULL`, exactly as `apply`'s own replace scope does.
+    """
     parsed = _parse(db, data)
     summary = _summarise(db, parsed, supplier_id) if parsed.ok else {}
-    held = (
-        db.query(SupplierInventory)
-        .filter(SupplierInventory.supplier_id == supplier_id)
-        .count()
+    held_scope = db.query(SupplierInventory).filter(
+        SupplierInventory.supplier_id == supplier_id
     )
+    held_scope = (
+        held_scope.filter(SupplierInventory.loading_plan_id == loading_plan_id)
+        if loading_plan_id
+        else held_scope.filter(SupplierInventory.loading_plan_id.is_(None))
+    )
+    held = held_scope.count()
     return {
         "readable": parsed.ok,
         "missing_columns": parsed.missing_columns,

@@ -127,6 +127,12 @@ def _refuse_cancelled(plan: LoadingPlan) -> None:
 async def preview_supplier_inventory(
     file: UploadFile = File(..., description="The supplier's own stock list"),
     supplier_id: str = Form(..., description="Which supplier sent it"),
+    loading_plan_id: Optional[str] = Form(
+        None,
+        description="The plan this snapshot would belong to (S6), the same field `apply` "
+                    "takes. Stated, 'rows held now' counts only that plan's own rows; absent, "
+                    "the supplier-wide snapshot (loading_plan_id IS NULL).",
+    ),
     _user: dict = Depends(_WRITE),
     db: Session = Depends(get_db),
 ):
@@ -136,7 +142,7 @@ async def preview_supplier_inventory(
     quantities and no indication of who wrote it.
     """
     return supplier_inventory_service.preview(
-        db, await read_upload(file), supplier_id=supplier_id
+        db, await read_upload(file), supplier_id=supplier_id, loading_plan_id=loading_plan_id
     )
 
 
