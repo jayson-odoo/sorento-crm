@@ -36,7 +36,7 @@ import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 
 const KEY = ['scm', 'fulfilment'] as const;
 
-const cold = { staleTime: 5 * 60_000, refetchOnWindowFocus: false, retry: 1 } as const;
+const cold = { staleTime: 5 * 60_000, retry: 1 } as const;
 
 export function useFulfilmentSuppliers() {
   // Wrapped (not passed bare): `getFulfilmentSuppliers` now takes an optional server-search
@@ -58,7 +58,6 @@ export function useSupplierStock(supplierId: string | null) {
     queryKey: [...KEY, 'stock', supplierId],
     queryFn: () => getSupplierStock(supplierId as string),
     enabled: !!supplierId,
-    refetchOnWindowFocus: false,
   });
 }
 
@@ -100,7 +99,6 @@ export function useLoadingPlanList(params: LoadingPlanListParams) {
   return useQuery({
     queryKey: loadingPlanListQueryKey(params),
     queryFn: () => getLoadingPlanList(params),
-    refetchOnWindowFocus: false,
     placeholderData: (prev) => prev,
   });
 }
@@ -111,7 +109,6 @@ export function useSupplierStockListFile(supplierId: string | null) {
     queryKey: [...KEY, 'stock-list-file', supplierId],
     queryFn: () => getSupplierStockListFile(supplierId as string),
     enabled: !!supplierId,
-    refetchOnWindowFocus: false,
   });
 }
 
@@ -194,7 +191,6 @@ export function usePlanNotices(planId: string | null) {
     queryKey: [...KEY, 'notices', planId],
     queryFn: () => getPlanNotices(planId as string),
     enabled: !!planId,
-    refetchOnWindowFocus: false,
   });
 }
 
@@ -228,7 +224,6 @@ export function useContainerRequestBuild(planId: string | null) {
     queryKey: [...KEY, 'container-request', planId],
     queryFn: () => buildContainerRequest(planId as string),
     enabled: !!planId,
-    refetchOnWindowFocus: false,
     retry: false,
   });
 }
@@ -266,7 +261,6 @@ export function useSupplierNotices(supplierId: string | null, loadingPlanId?: st
     queryKey: [...KEY, 'notices', 'supplier', supplierId, loadingPlanId ?? null],
     queryFn: () => getSupplierNotices(supplierId as string, loadingPlanId),
     enabled: !!supplierId,
-    refetchOnWindowFocus: false,
   });
 }
 
@@ -288,7 +282,6 @@ export function useSupplierChatContacts(
     queryKey: [...KEY, 'chat-contacts', supplierId, query],
     queryFn: () => getSupplierChatContacts(supplierId as string, query),
     enabled: enabled && !!supplierId,
-    refetchOnWindowFocus: false,
   });
 }
 
@@ -349,7 +342,6 @@ export function useConsolidatedPackingList(shipmentId: string | null) {
     queryKey: [...KEY, 'packing-list', shipmentId],
     queryFn: () => getConsolidatedPackingList(shipmentId as string),
     enabled: !!shipmentId,
-    refetchOnWindowFocus: false,
   });
 }
 
@@ -364,7 +356,6 @@ export function useSpoSuggestion(shipmentId: string | null) {
     queryKey: [...KEY, 'spo-suggestion', shipmentId],
     queryFn: () => getSpoSuggestion(shipmentId as string),
     enabled: !!shipmentId,
-    refetchOnWindowFocus: false,
   });
 }
 

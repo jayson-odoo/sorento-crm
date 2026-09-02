@@ -97,7 +97,6 @@ export function usePurchaseOrders(params: UsePurchaseOrdersParams) {
         documents: params.documents ?? null,
       }),
     staleTime: 10_000,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -109,7 +108,6 @@ export function usePurchaseOrder(id: string | null) {
     queryFn: () => getPurchaseOrder(id as string),
     enabled: !!id,
     staleTime: 5_000,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

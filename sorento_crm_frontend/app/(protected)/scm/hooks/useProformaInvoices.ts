@@ -77,7 +77,6 @@ export function useProformaInvoices(
   return useQuery({
     queryKey: proformaInvoicesListQueryKey(options),
     queryFn: () => listProformaInvoices(options),
-    refetchOnWindowFocus: false,
   });
 }
 
@@ -86,7 +85,6 @@ export function useProformaInvoice(id: string | null) {
     queryKey: [...KEY, 'detail', id],
     queryFn: () => getProformaInvoice(id as string),
     enabled: !!id,
-    refetchOnWindowFocus: false,
   });
 }
 

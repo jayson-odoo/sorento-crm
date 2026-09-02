@@ -20,10 +20,10 @@ import {
   type ScmFilters,
 } from '../services/scmDashboardService';
 import type { HealthState } from '../types/scm.types';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 const baseOptions = {
   staleTime: 30_000,
-  refetchOnWindowFocus: false,
   retry: 1,
 } as const;
 
@@ -52,6 +52,7 @@ export function useNetPosition(
   const sortField = sorting?.[0]?.id;
   const sortDir: 'asc' | 'desc' = sorting?.[0]?.desc ? 'desc' : 'asc';
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['scm', 'net-position', filters, pagination, sorting, searchQuery],
     queryFn: () =>
       getNetPosition({

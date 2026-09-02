@@ -35,7 +35,6 @@ export function useCashBudget(enabled = true) {
       return (await res.json()) as CashBudget;
     },
     staleTime: 5 * 60_000,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

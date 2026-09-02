@@ -18,7 +18,6 @@ export function useSimulationOverview() {
   return useQuery({
     queryKey: OVERVIEW_KEY,
     queryFn: getOverview,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -27,7 +26,6 @@ export function useScenarios() {
   return useQuery({
     queryKey: SCENARIOS_KEY,
     queryFn: getScenarios,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -38,7 +36,6 @@ export function useScenarioDiff(code: string | null) {
     queryKey: DIFF_KEY(code ?? ''),
     queryFn: () => getScenarioDiff(code as string),
     enabled: code !== null,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
