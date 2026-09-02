@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { Check, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { Check, CheckCircle2, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
@@ -80,7 +80,12 @@ export function BoardLineDecisionPanel({
    * available beside it. The figure is the SERVER's - the panel never recomputes one.
    */
   locations: BoardCellLocation[];
-  onDecide: (decision: BoardDecision | null) => void;
+  /**
+   * S4/R-F: saves (or, on `null`, undoes) the decision on the SERVER, not only in this
+   * session's draft - `await`ed here so the Save button's own check state (AC-4.1) can wait
+   * for it to settle before showing.
+   */
+  onDecide: (decision: BoardDecision | null) => Promise<void> | void;
   /**
    * Whether this panel holds an edit nobody has saved. The dialog opens one row at a time,
    * so it has to ask before it closes this one over the planner's work.
@@ -112,6 +117,22 @@ export function BoardLineDecisionPanel({
   const [addingReserve, setAddingReserve] = React.useState(false);
   /** Untouched since it opened. Saving or approving puts it back, because it is saved now. */
   const [dirty, setDirty] = React.useState(false);
+  /**
+   * The Save button's own answer, within the interaction (S4, AC-4.1): a check state for
+   * about 600ms after `onDecide` resolves, whether or not `prefers-reduced-motion` is set -
+   * that preference turns off the CSS TRANSITIONS the button would otherwise animate through
+   * (`styles.css`), not the state itself, which still swaps.
+   */
+  const [justSaved, setJustSaved] = React.useState(false);
+  const justSavedTimeout = React.useRef<number | null>(null);
+  React.useEffect(
+    () => () => {
+      if (justSavedTimeout.current !== null) {
+        window.clearTimeout(justSavedTimeout.current);
+      }
+    },
+    [],
+  );
 
   React.useEffect(() => {
     onDirtyChange?.(dirty);
@@ -221,21 +242,26 @@ export function BoardLineDecisionPanel({
    * called it the suggestion - SO404352 line 22 stayed at 8 / 16 under a pill reading
    * Approved. The reason goes with it, because an approval overrides nothing.
    */
-  const save = () => {
+  const save = async () => {
     setDirty(false);
     setLocked(false);
     if (approving) {
       setDraft(suggestionDraftFrom(contribution));
       setReason('');
-      onDecide({ verdict: 'approved', suspected_system_issue: suspected });
-      return;
+      await onDecide({ verdict: 'approved', suspected_system_issue: suspected });
+    } else {
+      await onDecide({
+        ...decisionFromAmendDraft(draft, reason),
+        // THE BOOLEAN, never `|| undefined`: `false` is the planner's answer that the numbers
+        // are fine, and dropping the key let the frozen `true` behind it read as current.
+        suspected_system_issue: suspected,
+      });
     }
-    onDecide({
-      ...decisionFromAmendDraft(draft, reason),
-      // THE BOOLEAN, never `|| undefined`: `false` is the planner's answer that the numbers
-      // are fine, and dropping the key let the frozen `true` behind it read as current.
-      suspected_system_issue: suspected,
-    });
+    // S4/AC-4.1: the button answers the click itself, within the interaction, before the
+    // pill's own "Saved" and the toast even have to be looked at.
+    setJustSaved(true);
+    if (justSavedTimeout.current !== null) window.clearTimeout(justSavedTimeout.current);
+    justSavedTimeout.current = window.setTimeout(() => setJustSaved(false), 600);
   };
 
   const reject = () => {
@@ -670,8 +696,17 @@ export function BoardLineDecisionPanel({
                 disabled={!approving && !canSave}
                 onClick={save}
               >
-                <Check className="size-4" aria-hidden />
-                Save decision
+                {justSaved ? (
+                  <>
+                    <CheckCircle2 className="size-4" aria-hidden />
+                    Saved
+                  </>
+                ) : (
+                  <>
+                    <Check className="size-4" aria-hidden />
+                    Save decision
+                  </>
+                )}
               </Button>
               <Button
                 type="button"

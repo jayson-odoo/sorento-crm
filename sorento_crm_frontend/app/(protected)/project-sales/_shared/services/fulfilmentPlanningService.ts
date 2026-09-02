@@ -1,8 +1,15 @@
 import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
+import {
+  mockDeleteLineDraft,
+  mockPutLineDraft,
+  withMockDrafts,
+} from '../lib/fulfilmentS4Mock';
 import type {
   AdoptSalesOrderResult,
+  BoardDecision,
   BoardGranularity,
+  BoardLineDraft,
   ClassificationEvidence,
   PlanningBoard,
   ConfirmManyBody,
@@ -18,6 +25,15 @@ import type {
   SupplyFailingLine,
   SupplyProposal,
 } from '../types/fulfilmentPlanning.types';
+
+/**
+ * S4 (saved decisions) Phase 1: the backend has no drafts table yet, so `putLineDraft` /
+ * `deleteLineDraft` read and write `lib/fulfilmentS4Mock.ts` instead of a real endpoint, and
+ * `getPlanningBoard` stamps every response with whatever it holds. Phase 2 flips this to
+ * `false`, deletes the three mock functions above and their import, and the two functions
+ * below drop their `if (S4_MOCK)` branch. See that file's own doc comment for the contract.
+ */
+const S4_MOCK = true;
 
 /**
  * Fulfilment Planning: the worklist of everything that needs planning, the reconciliation
@@ -432,7 +448,10 @@ export async function getPlanningBoard(
   const response = await apiFetch(`${BASE}/fulfilment-planning/board?${search.toString()}`);
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to load the planning board'));
-  return response.json();
+  const board: PlanningBoard = await response.json();
+  // S4 Phase 1 (see the const above): the real board carries no `draft` yet, so it is
+  // stamped on here. A no-op once Phase 2 sends the field itself and this call is deleted.
+  return S4_MOCK ? withMockDrafts(board) : board;
 }
 
 
@@ -541,4 +560,59 @@ export async function confirmMany(body: ConfirmManyBody): Promise<ConfirmManyRes
       await extractApiError(response, 'Failed to confirm the approved decisions'),
     );
   return response.json();
+}
+
+/**
+ * Save decision (S4, R-F): the row survives leaving the page, another device, another
+ * planner.
+ *
+ *   PUT /project-sales/fulfilment-planning/lines/{contribution_key}/draft
+ *       body { decision: BoardDecision } -> BoardLineDraft
+ *
+ * `contributionKey` is `BoardContribution.key` and travels URL-encoded - it embeds `|`,
+ * which is not a legal unencoded path segment character.
+ */
+export async function putLineDraft(
+  contributionKey: string,
+  decision: BoardDecision,
+  /**
+   * S4 MOCK ONLY (see the `S4_MOCK` const above). The real PUT reads the saver off the
+   * caller's own JWT and the "what did the engine suggest" comparison off the database, so
+   * Phase 2 drops both parameters - `lib/fulfilmentS4Mock.ts` cannot reach either on its own.
+   */
+  mockSavedBy?: string,
+  mockProposedNow?: unknown,
+): Promise<BoardLineDraft> {
+  if (S4_MOCK) {
+    return mockPutLineDraft(contributionKey, decision, mockSavedBy ?? '', mockProposedNow);
+  }
+  const response = await apiFetch(
+    `${BASE}/fulfilment-planning/lines/${encodeURIComponent(contributionKey)}/draft`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ decision }),
+    },
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to save the decision'));
+  return response.json();
+}
+
+/**
+ * Undo (S4, AC-4.3): removes the saved draft; the pill returns to Suggested.
+ *
+ *   DELETE /project-sales/fulfilment-planning/lines/{contribution_key}/draft -> 204
+ */
+export async function deleteLineDraft(contributionKey: string): Promise<void> {
+  if (S4_MOCK) {
+    mockDeleteLineDraft(contributionKey);
+    return;
+  }
+  const response = await apiFetch(
+    `${BASE}/fulfilment-planning/lines/${encodeURIComponent(contributionKey)}/draft`,
+    { method: 'DELETE' },
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to remove the saved decision'));
 }

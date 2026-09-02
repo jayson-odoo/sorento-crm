@@ -52,6 +52,16 @@ vi.mock('../../_shared/services/fulfilmentPlanningService', () => ({
   getSupply: vi.fn(),
   confirmSupply: (...args: unknown[]) => confirmSupply(...args),
   confirmMany: (...args: unknown[]) => confirmMany(...args),
+  // S4 (`useLineDraftMutation`): no test here presses Save deep enough to reach these -
+  // that interaction is `BoardLineDecisionPanel.test.tsx`'s, against a plain `vi.fn()`
+  // `onDecide` - but `decide()` closes over them regardless, so an undefined export would
+  // throw the moment it did.
+  putLineDraft: vi.fn().mockResolvedValue({
+    decision: { verdict: 'approved' },
+    saved_by: 'Test Planner',
+    saved_at: '2026-09-03T00:00:00Z',
+  }),
+  deleteLineDraft: vi.fn().mockResolvedValue(undefined),
   // Declared INSIDE the factory: `vi.mock` is hoisted above every top-level binding, so a
   // class declared outside it is not initialised yet when the factory runs.
   ConfirmSupplyError: class ConfirmSupplyError extends Error {
@@ -86,6 +96,15 @@ vi.mock('../../_shared/services/planningChangeService', () => ({
 
 vi.mock('sonner', () => ({
   toast: { success: vi.fn(), warning: vi.fn(), error: vi.fn() },
+}));
+
+// S4: `decide()` names the saver off the session (R-F). A harmless authenticated session -
+// the popover-content assertion is left to `BoardDecisionPill.test.tsx`.
+vi.mock('next-auth/react', () => ({
+  useSession: () => ({
+    data: { user: { id: 'user-1', name: 'Test Planner' } },
+    status: 'authenticated',
+  }),
 }));
 
 /**
@@ -2393,8 +2412,9 @@ describe('FulfilmentBoardPanel: Undo all asks first (D2)', () => {
     await waitFor(() =>
       expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument(),
     );
+    // Saved (S4, R-F), not Approved: the pill reads the plain word once a decision exists.
     expect(await screen.findByTestId(/^decision-pill-/)).toHaveTextContent(
-      'Approved',
+      'Saved',
     );
   });
 

@@ -941,7 +941,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
     );
   });
 
-  it('shows Approved on a row the draft already decided, and reads the pill accordingly', () => {
+  it('shows Saved on a row the draft already decided, and reads the pill accordingly (S4, R-F)', () => {
     renderDialog(
       [demand()],
       {},
@@ -953,7 +953,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
 
     expect(
       screen.getByTestId('decision-pill-so-a|1|WESERP10B|2026-08-31'),
-    ).toHaveTextContent('Approved');
+    ).toHaveTextContent('Saved');
   });
 
   it('a row the draft already decided opens unlocked - no undo step before it can be edited again', () => {
@@ -993,7 +993,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
 
     expect(
       screen.getByTestId('decision-pill-so-a|1|WESERP10B|2026-08-31'),
-    ).toHaveTextContent('Amended');
+    ).toHaveTextContent('Saved');
     expect(
       screen.queryByRole('button', { name: 'Undo' }),
     ).not.toBeInTheDocument();
@@ -2648,7 +2648,7 @@ describe('BoardCellBreakdownDialog: a line a decision already covers', () => {
     expect(screen.getByLabelText('Buy the whole line')).not.toBeChecked();
   });
 
-  it('behaves like any amended row once it has been amended: the pill reads Amended, and it opens unlocked', () => {
+  it('behaves like any amended row once it has been amended: the pill reads Saved (S4), and it opens unlocked', () => {
     renderDialog(
       [covered()],
       {},
@@ -2668,7 +2668,7 @@ describe('BoardCellBreakdownDialog: a line a decision already covers', () => {
 
     expect(
       screen.getByTestId('decision-pill-so-a|1|WESERP10B|2026-08-31'),
-    ).toHaveTextContent('Amended');
+    ).toHaveTextContent('Saved');
 
     fireEvent.click(screen.getByText('SO403340'));
     expect(screen.getByLabelText('Buy the whole line')).toBeEnabled();

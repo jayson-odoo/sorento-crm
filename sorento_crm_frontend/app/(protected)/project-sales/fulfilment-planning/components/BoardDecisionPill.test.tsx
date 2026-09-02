@@ -42,24 +42,24 @@ describe('BoardDecisionPill: the five labels (C3, R6)', () => {
     expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent('Suggested');
   });
 
-  it('reads Approved', () => {
+  it('reads Saved for an approval, not Approved (S4, R-F)', () => {
     render(
       <BoardDecisionPill
         contribution={contributionOf()}
         decision={{ verdict: 'approved' }}
       />,
     );
-    expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent('Approved');
+    expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent('Saved');
   });
 
-  it('reads Amended', () => {
+  it('reads Saved for an amendment, not Amended (S4, R-F)', () => {
     render(
       <BoardDecisionPill
         contribution={contributionOf()}
         decision={{ verdict: 'amended' }}
       />,
     );
-    expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent('Amended');
+    expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent('Saved');
   });
 
   it('reads Rejected', () => {

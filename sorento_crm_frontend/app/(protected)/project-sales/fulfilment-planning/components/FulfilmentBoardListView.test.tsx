@@ -166,9 +166,11 @@ describe('FulfilmentBoardListView', () => {
       />,
     );
 
+    // Saved (S4, R-F), not Approved - the pill reads the plain "has this been dealt with"
+    // word once a decision exists, whichever of the two verbs produced it.
     expect(
       await screen.findByTestId('decision-pill-so-1:line-10'),
-    ).toHaveTextContent('Approved');
+    ).toHaveTextContent('Saved');
   });
 
   it('quotes THIS line\u2019s own Available beside the Reserve input (C4)', async () => {

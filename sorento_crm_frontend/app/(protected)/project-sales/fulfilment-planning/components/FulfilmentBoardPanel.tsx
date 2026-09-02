@@ -39,12 +39,14 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { useSession } from 'next-auth/react';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import {
   useConfirmManyMutation,
   useFulfilmentPlanningMutations,
+  useLineDraftMutation,
   usePlanningBoard,
 } from '../../_shared/hooks/useFulfilmentPlanning';
 import { usePlanningChangeBatch } from '../../_shared/hooks/usePlanningChanges';
@@ -56,8 +58,8 @@ import {
 import {
   boardAxis,
   bucketLabelText,
+  confirmSummaryFor,
   orderByProductRows,
-  plannedLineCount,
   rowMatchesSearch,
   confirmLinesFor,
   shiftedDayWindow,
@@ -288,16 +290,11 @@ export function FulfilmentBoardPanel({
     [board.data, dayWindow],
   );
 
-  const decide = React.useCallback((key: string, decision: BoardDecision | null) => {
-    setDraft((current) => {
-      const next = { ...current };
-      if (decision) next[key] = decision;
-      else delete next[key];
-      return next;
-    });
-  }, []);
-
   const { adopt } = useFulfilmentPlanningMutations();
+  const { save: saveLineDraft, remove: removeLineDraft } = useLineDraftMutation();
+  // The saver's name (S4, R-F): whoever the pill's popover names once this line reaches a
+  // reload, so it has to be the display name a person recognises, never the id.
+  const { data: session } = useSession();
 
   // NO PER-ORDER CONFIRM (R11). The board used to carry one Confirm per sales order in a
   // Commit section under the matrix, each with its own busy flag and its own refusal list.
@@ -349,6 +346,81 @@ export function FulfilmentBoardPanel({
   }, [batchId, changeBatchData, allContributions]);
 
   /**
+   * A line SAVED elsewhere - another device, another planner, or this one before a reload -
+   * arrives ON THE BOARD ITSELF (S4, R-F): `contribution.draft` is the server's own row, and
+   * this seeds it into the SAME `draft` map a click here would write, so a Saved pill, the
+   * header counter and Confirm all read the one state whichever way the line got there.
+   *
+   * Seeded on EVERY board read, not once like `preMarked` above: AC-4.5 ("a second planner
+   * sees the first planner's saved lines") needs a later fetch to bring in a save nobody
+   * here made. `!next[key]` is what keeps this from clobbering THIS session's own edit - the
+   * same guard `preMarked` uses, and for the same reason: a verdict already given here is
+   * never overwritten by what the server happened to say a moment before.
+   */
+  React.useEffect(() => {
+    const serverDrafts = allContributions.filter((contribution) => contribution.draft);
+    if (serverDrafts.length === 0) return;
+    setDraft((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const contribution of serverDrafts) {
+        if (!next[contribution.key] && contribution.draft) {
+          next[contribution.key] = contribution.draft.decision;
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [allContributions]);
+
+  /**
+   * Save decision / Undo (S4, R-F): local first, then the server write, so the pill answers
+   * the click before any network round-trip - and reverted, with the mutation's own error
+   * toast, if the write fails.
+   *
+   * Reads `draft` and `allContributions` off the closure rather than through `setDraft`'s
+   * updater: `decide` is recreated every render `draft` changes, so a click always runs the
+   * FRESHEST closure, and the toast below needs a plain, synchronous "the draft as it now
+   * stands" to compute `confirmSummaryFor` against - a value `setDraft`'s own updater cannot
+   * hand back synchronously (React does not promise WHEN it runs).
+   */
+  const decide = React.useCallback(
+    async (key: string, decision: BoardDecision | null) => {
+      const previous = draft;
+      const next = { ...draft };
+      if (decision) next[key] = decision;
+      else delete next[key];
+      setDraft(next);
+      try {
+        if (decision) {
+          const contribution = allContributions.find((entry) => entry.key === key);
+          await saveLineDraft(
+            key,
+            decision,
+            session?.user?.name ?? '',
+            contribution?.proposed,
+          );
+        } else {
+          await removeLineDraft(key);
+        }
+      } catch {
+        // The mutation's own `onError` already toasted the message; nothing here is left to
+        // say beyond putting the board back the way the click found it.
+        setDraft(previous);
+        return;
+      }
+      if (decision && decision.verdict !== 'rejected') {
+        const contribution = allContributions.find((entry) => entry.key === key);
+        const { toConfirm } = confirmSummaryFor(allContributions, next);
+        toast.success(
+          `Line ${contribution?.line_no ?? ''} saved · ${toConfirm} to confirm`,
+        );
+      }
+    },
+    [draft, allContributions, saveLineDraft, removeLineDraft, session],
+  );
+
+  /**
    * The same lines, in the GRID's product order.
    *
    * The two views are two readings of one payload and the reader toggles between them to find
@@ -370,39 +442,15 @@ export function FulfilmentBoardPanel({
    * What one press of Confirm would do: "N to confirm · M rejected" (D1/D3).
    *
    * Counted over exactly the population `confirmLinesFor` posts, so the sentence beside the
-   * button and what the button does can never disagree. NO APPROVE ALL (R11): silence on a
-   * plannable line is agreement, so there is nothing left for it to fill in, and the counter
-   * has no "undecided" to report. A REJECTED line is a decision that commits nothing, which
-   * is why it is counted apart rather than simply subtracted in silence.
-   *
-   * A line an active decision already COVERS and nobody has amended is not counted: the
-   * server carries it into the next revision itself, so this press does not confirm it.
+   * button and what the button does can never disagree. `confirmSummaryFor` is the shared
+   * implementation (`_shared/lib/fulfilmentBoard.ts`) - `decide()`'s own S4 save toast needs
+   * the SAME count read off the draft it just wrote, before this `useMemo` has re-run with
+   * it, so the reduction lives in one place rather than being kept in step by hand in two.
    */
-  const confirmSummary = React.useMemo(() => {
-    let rejected = 0;
-    const orderIds = new Set<string>();
-    for (const contribution of allContributions) {
-      if (contribution.unplannable) continue;
-      const decision = draft[contribution.key];
-      if (decision?.verdict === 'rejected') {
-        rejected += 1;
-        continue;
-      }
-      if (contribution.covered && decision?.verdict !== 'amended') continue;
-      orderIds.add(contribution.sales_order_id);
-    }
-    // `plannedLineCount`, not a manual re-filter of the same rule: it counts a line the
-    // press INTENDS to commit, whether or not adoption has minted its mirror yet, but never
-    // one that cannot be addressed for a reason adoption does not fix (no Reserve warehouse,
-    // a discontinued Buy with no reason) - the same population `confirmLinesFor` posts once
-    // the order IS adopted, so the number beside the button and what the button does can
-    // never disagree, on an adopted order or on one Confirm is about to adopt.
-    const toConfirm = [...orderIds].reduce(
-      (total, salesOrderId) => total + plannedLineCount(allContributions, salesOrderId, draft),
-      0,
-    );
-    return { toConfirm, rejected, orderCount: orderIds.size };
-  }, [allContributions, draft]);
+  const confirmSummary = React.useMemo(
+    () => confirmSummaryFor(allContributions, draft),
+    [allContributions, draft],
+  );
 
   /**
    * Decided lines this confirmation cannot carry, across the WHOLE board, each with why.
@@ -1207,7 +1255,11 @@ export function FulfilmentBoardPanel({
             <AlertDialogCancel>Keep them</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
-                setDraft({});
+                // S4/AC-4.3: a saved line's draft lives on the server now, so discarding it
+                // has to be the SAME `decide(key, null)` a single line's own Undo takes - a
+                // bare local `setDraft({})` cleared the screen and left every one of them to
+                // re-seed right back in off the next board refetch.
+                for (const key of Object.keys(draft)) void decide(key, null);
                 setUndoAllOpen(false);
               }}
             >

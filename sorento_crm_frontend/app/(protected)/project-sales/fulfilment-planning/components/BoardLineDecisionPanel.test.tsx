@@ -540,7 +540,7 @@ describe('BoardLineDecisionPanel: a covered row opens locked with Amend (C11)', 
    * from the pool while the engine suggests 9 plus 15, so typing those back IS the approval.
    * One button, and the comparison takes the verdict.
    */
-  it('takes an approval once the engine’s numbers are typed back on the unlocked row, and the pill reads Approved', () => {
+  it('takes an approval once the engine’s numbers are typed back on the unlocked row, and the pill reads Saved (S4)', () => {
     const contribution = contributionOf({
       covered: true,
       decision: {
@@ -578,8 +578,9 @@ describe('BoardLineDecisionPanel: a covered row opens locked with Amend (C11)', 
       verdict: 'approved',
       suspected_system_issue: false,
     });
-    // The row the planner is looking at afterwards: Approved, not the Confirmed the covered
-    // flag alone would print, because the draft's verdict outranks what is in the database.
+    // The row the planner is looking at afterwards: Saved (S4, R-F), not the Confirmed the
+    // covered flag alone would print, because the draft's verdict outranks what is in the
+    // database.
     render(
       <BoardDecisionPill
         contribution={contribution}
@@ -587,7 +588,7 @@ describe('BoardLineDecisionPanel: a covered row opens locked with Amend (C11)', 
       />,
     );
     expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent(
-      'Approved',
+      'Saved',
     );
   });
 

@@ -1242,6 +1242,16 @@ export interface BoardContribution {
   /** What was frozen, when the row is covered. Absent otherwise, never an empty object. */
   decision?: BoardLineDecision | null;
   /**
+   * A decision SAVED here but not yet confirmed (S4, R-F): survives leaving the page,
+   * another device, another planner. `null`/absent on a line nobody has saved.
+   *
+   * Distinct from `decision` above, which is what an ACTIVE (confirmed) revision froze -
+   * a line can carry a `draft` with no `decision` (saved, not yet confirmed), a `decision`
+   * with no `draft` (confirmed, and Confirm deletes the draft it promotes), or neither
+   * (untouched, running on the suggestion).
+   */
+  draft?: BoardLineDraft | null;
+  /**
    * The order inquiry purchasing was given for this line, reached through the planning
    * record's mirror line, and the state that instruction is in.
    *
@@ -1815,6 +1825,29 @@ export interface BoardDecision {
 
 /** Keyed by `BoardContribution.key`. Client-side in Phase 1 (13.4). */
 export type BoardDraft = Record<string, BoardDecision>;
+
+/**
+ * A decision saved on the SERVER but not yet confirmed (S4, R-F, PLAN-scm-fulfilment-
+ * feedback-2sep.md). `PUT /fulfilment-planning/lines/{contribution_key}/draft` upserts one
+ * of these; `DELETE` (Undo) removes it; Confirm promotes the keys it posts and deletes their
+ * drafts in the same write. Drafts are SHARED, not per user (R-F: "a second planner sees the
+ * same saved lines and the pill names who saved").
+ */
+export interface BoardLineDraft {
+  decision: BoardDecision;
+  /** The saver's display name - never a UUID. */
+  saved_by: string;
+  /** ISO timestamp. */
+  saved_at: string;
+  /**
+   * The engine has re-suggested this line since it was saved (AC-4.4: "a line saved but
+   * then re-suggested by a new upload"). Computed by comparing the composition/`proposed`
+   * this draft was saved against to what the engine proposes NOW - server-side in Phase 2;
+   * `fulfilmentS4Mock.ts` approximates it client-side for Phase 1. Absent/false on an
+   * ordinary saved line.
+   */
+  stale?: boolean;
+}
 
 // ---------------------------------------------------------------------------
 // Stock Status with Detail: what the figures on a location ROW of the cell's stock table are

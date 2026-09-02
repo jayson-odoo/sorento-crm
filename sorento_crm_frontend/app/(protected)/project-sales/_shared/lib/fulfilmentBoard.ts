@@ -317,6 +317,10 @@ function lineFor(
   // refuses the whole order over one such line. It was never reachable while a line had to
   // be ticked first (the row offers no verb); silence-means-yes makes it reachable.
   if (contribution.unplannable) return null;
+  // SAVED, BUT THE ENGINE HAS RE-SUGGESTED SINCE (S4, AC-4.4): the pill already says
+  // "Suggestion changed" - excluded here rather than posted on the strength of a comparison
+  // that is no longer true, until the planner opens the row and saves it again.
+  if (contribution.draft?.stale) return null;
   // ALREADY CONFIRMED, AND NOT TOUCHED SINCE: the server carries it. Nothing to post, and
   // nothing to derive - the board proposes nothing for a covered line, and inventing one
   // would overwrite a person's composition with the engine's opinion of it.
@@ -580,6 +584,44 @@ export function plannedLineCount(
     const built = lineFor(contribution, draft[contribution.key]);
     return built !== null && (typeof built !== 'string' || built === 'no_mirror');
   }).length;
+}
+
+/**
+ * What one press of Confirm would do over a given draft: "N to confirm - M rejected"
+ * (D1/D3), extracted out of `FulfilmentBoardPanel`'s own `confirmSummary` so a decision the
+ * planner has not yet seen re-rendered - S4's Save toast needs the count as of the draft it
+ * JUST wrote, before React has re-rendered with it - can be read the same way the header
+ * counter is, off a plain `draft` object rather than off component state.
+ *
+ * NO APPROVE ALL (R11): silence on a plannable line is agreement, so there is nothing left
+ * for it to fill in, and the counter has no "undecided" to report. A REJECTED line is a
+ * decision that commits nothing, counted apart rather than simply subtracted in silence. A
+ * line an active decision already COVERS and nobody has amended is not counted: the server
+ * carries it into the next revision itself. A SAVED-BUT-STALE line (S4, AC-4.4) is not
+ * counted either, the same reason `lineFor` will not post it.
+ */
+export function confirmSummaryFor(
+  contributions: BoardContribution[],
+  draft: BoardDraft,
+): { toConfirm: number; rejected: number; orderCount: number } {
+  let rejected = 0;
+  const orderIds = new Set<string>();
+  for (const contribution of contributions) {
+    if (contribution.unplannable) continue;
+    const decision = draft[contribution.key];
+    if (decision?.verdict === 'rejected') {
+      rejected += 1;
+      continue;
+    }
+    if (contribution.draft?.stale) continue;
+    if (contribution.covered && decision?.verdict !== 'amended') continue;
+    orderIds.add(contribution.sales_order_id);
+  }
+  const toConfirm = [...orderIds].reduce(
+    (total, salesOrderId) => total + plannedLineCount(contributions, salesOrderId, draft),
+    0,
+  );
+  return { toConfirm, rejected, orderCount: orderIds.size };
 }
 
 /**
