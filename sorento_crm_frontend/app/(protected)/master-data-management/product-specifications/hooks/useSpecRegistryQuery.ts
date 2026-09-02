@@ -18,7 +18,6 @@ export function useSpecRegistryQuery() {
     queryFn: () => getSpecRegistry(),
     select: (data) => data.keys,
     staleTime: 60_000,
-    refetchOnWindowFocus: false,
   });
 }
 
