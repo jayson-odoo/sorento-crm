@@ -252,3 +252,156 @@ describe('every paginated list hook spreads LIST_QUERY_OPTIONS (M4-01)', () => {
     expect(extractQueryKeyValue(blocks[0].block)).toBe('ordersListQueryKey(params)');
   });
 });
+
+/**
+ * M4-02 - every grid fed by a `LIST_QUERY_OPTIONS` hook forwards
+ * `isPlaceholderData` to `DataGrid`.
+ *
+ * The spread alone keeps the previous page's ROWS in the query cache; it does
+ * not dim them. TanStack reports a placeholder window as
+ * `isLoading: false, isFetching: true, isPlaceholderData: true`, so
+ * `DataGridTableBody`'s `isLoading && rows.length > 0` clause is false
+ * throughout it and the body never dims. The flag has to travel from the list
+ * query to the grid, at the call site, one list at a time - which is exactly
+ * the kind of per-file wiring that rots, so it is inventoried here.
+ *
+ * The walk:
+ *
+ *  1. a file that spreads `...LIST_QUERY_OPTIONS` OWNS the top-level
+ *     declaration the spread sits in (`useOrders`, or the component itself
+ *     when the `useQuery` is inline);
+ *  2. a CONSUMER is any file that renders a `<DataGrid>` and either imports one
+ *     of those owner names or owns a spread of its own;
+ *  3. every `<DataGrid>` opening tag in a consumer must pass
+ *     `isPlaceholderData`.
+ *
+ * Comments are blanked before step 1 for the same reason as above, and because
+ * `options.ts`'s own docstring shows the spread - reading a doc example as a
+ * hook is how a phantom owner gets into the inventory.
+ */
+
+/**
+ * A grid a consumer renders that is NOT fed by the list query, so forwarding
+ * the flag would dim rows that are not placeholders. Each entry says why.
+ */
+const GRID_ALLOWLIST: Record<string, string> = {};
+
+/** Top-level `function`/`const`/`let`/`class` declarations, with the span each covers. */
+function topLevelDeclSpans(text: string): { name: string; start: number; end: number }[] {
+  const re = /^(?:export\s+)?(?:async\s+)?(?:function|const|let|class)\s+([A-Za-z0-9_$]+)/gm;
+  const marks: { name: string; start: number }[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) marks.push({ name: m[1], start: m.index });
+  return marks.map((mark, i) => ({
+    name: mark.name,
+    start: mark.start,
+    end: i + 1 < marks.length ? marks[i + 1].start : text.length,
+  }));
+}
+
+/** Every `<DataGrid ...>` opening tag (not `<DataGridTable>` and friends), brace-aware. */
+function findDataGridTags(text: string): { text: string; line: number }[] {
+  const tags: { text: string; line: number }[] = [];
+  const re = /<DataGrid(?![A-Za-z])/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    let i = m.index;
+    let depth = 0;
+    let inStr: string | null = null;
+    for (; i < text.length; i++) {
+      const c = text[i];
+      if (inStr) {
+        if (c === '\\') { i++; continue; }
+        if (c === inStr) inStr = null;
+        continue;
+      }
+      if (c === '"' || c === "'" || c === '`') { inStr = c; continue; }
+      if (c === '{') depth++;
+      else if (c === '}') depth--;
+      else if (c === '>' && depth === 0) break;
+    }
+    tags.push({ text: text.slice(m.index, i + 1), line: text.slice(0, m.index).split('\n').length });
+  }
+  return tags;
+}
+
+function findForwardingMisses(): string[] {
+  const files = SCAN_DIRS.filter((d) => fs.existsSync(path.join(ROOT, d))).flatMap((d) =>
+    walk(path.join(ROOT, d), []),
+  );
+
+  // 1. owner declarations, per file.
+  const owners = new Map<string, Set<string>>();
+  for (const file of files) {
+    const raw = fs.readFileSync(file, 'utf8');
+    if (!raw.includes('LIST_QUERY_OPTIONS')) continue;
+    const text = stripComments(raw);
+    if (!text.includes('...LIST_QUERY_OPTIONS')) continue;
+    const spans = topLevelDeclSpans(text);
+    const names = new Set<string>();
+    const re = /\.\.\.LIST_QUERY_OPTIONS/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text))) {
+      const owning = spans.filter((s) => s.start <= m!.index && m!.index < s.end).pop();
+      names.add(owning ? owning.name : '<module>');
+    }
+    owners.set(path.relative(ROOT, file), names);
+  }
+
+  const ownerNames = new Set<string>();
+  for (const names of owners.values()) for (const n of names) if (!n.startsWith('<')) ownerNames.add(n);
+
+  // 2 + 3. consumers, and the tags inside them.
+  const misses: string[] = [];
+  for (const file of files) {
+    const rel = path.relative(ROOT, file);
+    const raw = fs.readFileSync(file, 'utf8');
+    if (!/<DataGrid(?![A-Za-z])/.test(raw)) continue;
+
+    const fed = new Set<string>(owners.get(rel) ?? []);
+    const importRe = /import\s+(?:type\s+)?\{([^}]*)\}\s+from\s+['"][^'"]+['"]/g;
+    let m: RegExpExecArray | null;
+    while ((m = importRe.exec(raw))) {
+      for (const part of m[1].split(',')) {
+        const name = part.trim().split(/\s+as\s+/)[0].trim();
+        if (ownerNames.has(name)) fed.add(name);
+      }
+    }
+    if (!fed.size) continue;
+
+    for (const tag of findDataGridTags(raw)) {
+      const key = `${rel}:${tag.line}`;
+      if (GRID_ALLOWLIST[key] || GRID_ALLOWLIST[rel]) continue;
+      if (/\bisPlaceholderData\b/.test(tag.text)) continue;
+      misses.push(`${key} :: fed by ${[...fed].join(', ')}`);
+    }
+  }
+  return misses;
+}
+
+describe('every grid fed by a LIST_QUERY_OPTIONS hook forwards isPlaceholderData (M4-02)', () => {
+  it('has no misses', () => {
+    const misses = findForwardingMisses();
+    if (misses.length) {
+      console.error(
+        `${misses.length} <DataGrid> call(s) not forwarding isPlaceholderData:\n${misses.join('\n')}`,
+      );
+    }
+    expect(misses).toEqual([]);
+  });
+
+  it('reads the tag, not the file - a sibling DataGridTable is not a DataGrid', () => {
+    const tags = findDataGridTags(
+      '<DataGridTable />\n<DataGrid table={t} isLoading={x}>\n<DataGridPagination />',
+    );
+
+    expect(tags).toHaveLength(1);
+    expect(tags[0].text).toContain('isLoading={x}');
+  });
+
+  it('does not let a `>` inside an attribute end the tag early', () => {
+    const tags = findDataGridTags('<DataGrid rowHref={(r) => `/x/${r.id}`} isPlaceholderData={p}>');
+
+    expect(tags[0].text).toContain('isPlaceholderData={p}');
+  });
+});
