@@ -16,6 +16,7 @@ import { useSpecKeyActions } from '../actions';
 import { useSpecKeyRecord } from '../hooks/useSpecKeyRecord';
 import { selectSpecKey, useSpecRegistryQuery } from '../hooks/useSpecRegistryQuery';
 import { filterSpecKeys } from '../lib/specRegistryFilter';
+import { HeaderTab } from './record/HeaderTab';
 import { RulesTab } from './record/RulesTab';
 import { SeenInProductsTab } from './record/SeenInProductsTab';
 import { SpecKeyRecordCard } from './record/SpecKeyRecordCard';
@@ -26,15 +27,16 @@ const LIST_PATH = '/master-data-management/product-specifications';
 /**
  * The specification record page (B.1-B.8).
  *
- * View and edit share this one layout: the same three tabs in the same order, the
- * same record card, only the controls each field renders change. `useSpecKeyRecord`
- * owns the draft and the one PATCH Save sends; this component is the wiring - the
- * pager, the tabs, the not-found state, and the unsaved-changes guard.
+ * View and edit share this one layout: the same four tabs in the same order (D15b:
+ * Header first), the same record card, only the controls each field renders change.
+ * `useSpecKeyRecord` owns the draft and the one PATCH Save sends; this component is
+ * the wiring - the pager, the tabs, the not-found state, and the unsaved-changes
+ * guard.
  */
 export function SpecKeyRecordDetail({ specKey }: { specKey: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [tab, setTab] = useState('values');
+  const [tab, setTab] = useState('header');
 
   const { data: keys, isLoading, isError } = useSpecRegistryQuery();
   const row = selectSpecKey(keys, specKey);
@@ -151,8 +153,6 @@ export function SpecKeyRecordDetail({ specKey }: { specKey: string }) {
         <SpecKeyRecordCard
           row={row}
           mode={record.mode}
-          draft={record.draft}
-          setDraft={record.setDraft}
           pagerNode={pagerNode}
           actions={actions}
           pending={pending}
@@ -161,10 +161,15 @@ export function SpecKeyRecordDetail({ specKey }: { specKey: string }) {
 
         <Tabs value={tab} onValueChange={setTab} className="w-full">
           <TabsList variant="line" className="mb-4 w-full justify-start overflow-x-auto">
+            <TabsTrigger value="header">Header</TabsTrigger>
             <TabsTrigger value="values">Values and words</TabsTrigger>
             <TabsTrigger value="rules">Rules</TabsTrigger>
             <TabsTrigger value="seen-in">Seen in products</TabsTrigger>
           </TabsList>
+
+          <TabsContent value="header" className="mt-0 focus-visible:outline-none">
+            <HeaderTab row={row} mode={record.mode} draft={record.draft} setDraft={record.setDraft} />
+          </TabsContent>
 
           <TabsContent value="values" className="mt-0 focus-visible:outline-none">
             <ValuesAndWordsTab
@@ -180,16 +185,7 @@ export function SpecKeyRecordDetail({ specKey }: { specKey: string }) {
           </TabsContent>
 
           <TabsContent value="rules" className="mt-0 focus-visible:outline-none">
-            <RulesTab
-              row={row}
-              mode={record.mode}
-              draft={record.draft}
-              setDraft={record.setDraft}
-              onEnterEdit={() => {
-                record.edit();
-                setTab('rules');
-              }}
-            />
+            <RulesTab row={row} mode={record.mode} draft={record.draft} setDraft={record.setDraft} />
           </TabsContent>
 
           <TabsContent value="seen-in" className="mt-0 focus-visible:outline-none">

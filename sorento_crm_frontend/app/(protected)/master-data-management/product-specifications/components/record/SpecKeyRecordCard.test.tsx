@@ -1,13 +1,13 @@
 /**
- * D12 - `is_active` stays on the record card as a labelled switch in both modes
- * (the seed-key delete refusal tells the user to switch the key off instead).
+ * D15b - the record card is never editable: label, slug, type + source pills, unit
+ * and Active are read-only facts in both modes. Editing them lives on the Header
+ * tab (see `HeaderTab.test.tsx`).
  */
 import React from 'react';
 import { describe, it, expect } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 
 import { SpecKeyRecordCard } from './SpecKeyRecordCard';
-import { projectSpecKeyDraft } from '../../hooks/useSpecKeyRecord';
 import type { SpecRegistryKey } from '../../types/productSpec.types';
 
 function seedRow(overrides: Partial<SpecRegistryKey> = {}): SpecRegistryKey {
@@ -39,70 +39,50 @@ function seedRow(overrides: Partial<SpecRegistryKey> = {}): SpecRegistryKey {
   } as SpecRegistryKey;
 }
 
-describe('SpecKeyRecordCard - Active switch (D12)', () => {
-  it('view mode shows the switch disabled, reflecting the stored value', () => {
-    const row = seedRow({ is_active: false });
-    render(
-      <SpecKeyRecordCard
-        row={row}
-        mode="view"
-        draft={null}
-        setDraft={() => {}}
-        pagerNode={null}
-        actions={[]}
-        pending={null}
-        primary={null}
-      />,
-    );
+function renderCard(row: SpecRegistryKey, mode: 'view' | 'edit') {
+  return render(
+    <SpecKeyRecordCard
+      row={row}
+      mode={mode}
+      pagerNode={null}
+      actions={[]}
+      pending={null}
+      primary={null}
+    />,
+  );
+}
 
-    const toggle = screen.getByRole('switch', { name: 'Active' });
-    expect(toggle).toBeDisabled();
-    expect(toggle).toHaveAttribute('aria-checked', 'false');
+describe('SpecKeyRecordCard - read-only in both modes (D15b)', () => {
+  it('view mode shows label, unit and Active as plain facts', () => {
+    const row = seedRow({ label: 'Finish', unit: 'mm', is_active: false });
+    renderCard(row, 'view');
+
+    expect(screen.getByText('Finish')).toBeInTheDocument();
+    expect(screen.getByText('mm')).toBeInTheDocument();
+    expect(screen.getByText('Inactive')).toBeInTheDocument();
+    expect(screen.queryByRole('switch')).not.toBeInTheDocument();
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
   });
 
-  it('edit mode shows the switch enabled at the same place, and toggling it changes the draft', () => {
-    const row = seedRow({ is_active: true });
-    const draft = projectSpecKeyDraft(row);
-    let current = draft;
-    const setDraft = (updater: (d: typeof draft) => typeof draft) => {
-      current = updater(current);
-    };
+  it('edit mode renders the SAME facts, not inputs - nothing on the card is editable', () => {
+    const row = seedRow({ label: 'Finish', unit: 'mm', is_active: true });
+    renderCard(row, 'edit');
 
-    const { rerender } = render(
-      <SpecKeyRecordCard
-        row={row}
-        mode="edit"
-        draft={current}
-        setDraft={setDraft}
-        pagerNode={null}
-        actions={[]}
-        pending={null}
-        primary={null}
-      />,
-    );
+    expect(screen.getByText('Finish')).toBeInTheDocument();
+    expect(screen.getByText('mm')).toBeInTheDocument();
+    // "Active" appears twice with the field on (the field's own label, and the
+    // badge's state text) - both read-only, neither an input.
+    expect(screen.getAllByText('Active')).toHaveLength(2);
+    expect(screen.queryByRole('switch')).not.toBeInTheDocument();
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+  });
 
-    const toggle = screen.getByRole('switch', { name: 'Active' });
-    expect(toggle).not.toBeDisabled();
-    expect(toggle).toHaveAttribute('aria-checked', 'true');
+  it('shows the slug and the type/source pills', () => {
+    const row = seedRow({ spec_key: 'finish', data_type: 'enum', source: 'user' });
+    renderCard(row, 'view');
 
-    fireEvent.click(toggle);
-    expect(current.isActive).toBe(false);
-
-    rerender(
-      <SpecKeyRecordCard
-        row={row}
-        mode="edit"
-        draft={current}
-        setDraft={setDraft}
-        pagerNode={null}
-        actions={[]}
-        pending={null}
-        primary={null}
-      />,
-    );
-    expect(screen.getByRole('switch', { name: 'Active' })).toHaveAttribute(
-      'aria-checked',
-      'false',
-    );
+    expect(screen.getByText('finish')).toBeInTheDocument();
+    expect(screen.getByText('Choice')).toBeInTheDocument();
+    expect(screen.getByText('User')).toBeInTheDocument();
   });
 });

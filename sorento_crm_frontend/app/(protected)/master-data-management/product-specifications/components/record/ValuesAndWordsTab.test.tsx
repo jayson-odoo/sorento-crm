@@ -140,41 +140,6 @@ describe('ValuesAndWordsTab - view and edit share field labels (G.8)', () => {
   });
 });
 
-describe('ValuesAndWordsTab - max_value (item 4)', () => {
-  it('view mode shows the stored cap, numeric keys only', () => {
-    const row: SpecRegistryKey = {
-      ...finishWithASuppressedValue(),
-      spec_key: 'dim_height',
-      data_type: 'numeric',
-      unit: 'mm',
-      max_value: 5000,
-    };
-    render(<ValuesAndWordsTab row={row} mode="view" draft={null} setDraft={() => {}} onEnterEdit={() => {}} />);
-
-    expect(screen.getByText('Ignore values above (mm)')).toBeInTheDocument();
-    expect(screen.getByText('5000 mm')).toBeInTheDocument();
-  });
-
-  it('view mode shows No cap when unset', () => {
-    const row: SpecRegistryKey = {
-      ...finishWithASuppressedValue(),
-      spec_key: 'dim_height',
-      data_type: 'numeric',
-      unit: 'mm',
-      max_value: null,
-    };
-    render(<ValuesAndWordsTab row={row} mode="view" draft={null} setDraft={() => {}} onEnterEdit={() => {}} />);
-
-    expect(screen.getByText('No cap')).toBeInTheDocument();
-  });
-
-  it('is absent on a non-numeric key in either mode', () => {
-    const row = finishWithASuppressedValue();
-    render(<ValuesAndWordsTab row={row} mode="view" draft={null} setDraft={() => {}} onEnterEdit={() => {}} />);
-    expect(screen.queryByText(/Ignore values above/)).not.toBeInTheDocument();
-  });
-});
-
 describe('ValuesAndWordsTab - empty state', () => {
   it('offers Add value when the key has none', () => {
     const row: SpecRegistryKey = {

@@ -358,32 +358,6 @@ export function ValuesAndWordsTab({
           }}
         />
       )}
-
-      {row.data_type === 'numeric' && (
-        <Field label={`Ignore values above${row.unit ? ` (${row.unit})` : ''}`}>
-          {mode === 'edit' ? (
-            <Input
-              type="number"
-              step="1"
-              min="0"
-              placeholder="no cap"
-              className="h-8 w-40"
-              value={draft?.maxValue ?? ''}
-              onChange={(event) =>
-                setDraft((d) => ({ ...d, maxValue: event.target.value }))
-              }
-            />
-          ) : (
-            <span className="text-sm">
-              {row.max_value === null || row.max_value === undefined
-                ? 'No cap'
-                : row.unit
-                  ? `${row.max_value} ${row.unit}`
-                  : row.max_value}
-            </span>
-          )}
-        </Field>
-      )}
     </div>
   );
 }
