@@ -475,8 +475,16 @@ def test_placing_sets_the_tag_appends_the_note_and_writes_one_resolved_claim(api
         .all()
     )
     assert len(claims) == 1
-    assert claims[0].resolved_at is not None
+    # The PURCHASE half is known, so it is recorded. The SALES half is not: this fixture's
+    # row hangs off no project line reconciled to a core `sales_order_lines` row, so
+    # `claim_identity` has no `so_line_id` to give. "Resolved" means BOTH sides found
+    # (S3, review of PR #490) - stamping it here retired the claim before the resolver
+    # could finish it, because `resolve()` only ever looks at unresolved rows, and
+    # dedication only ever reads claims it can join through `so_line_id`. A production row
+    # raised off a real reconciled sales-order line does carry one and does resolve.
     assert claims[0].po_line_id == line.id
+    assert claims[0].so_line_id is None
+    assert claims[0].resolved_at is None
 
 
 def test_placing_refuses_a_purchase_order_line_of_a_different_product(api):

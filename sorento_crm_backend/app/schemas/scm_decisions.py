@@ -81,6 +81,11 @@ class BulkConfirmRequest(BaseModel):
 
 class BulkConfirmResult(BaseModel):
     confirmed_count: int
+    #: How many project-bin lines this confirm attributed to the order-inquiry rows that
+    #: sized them (G12 write-time claiming). DECLARED HERE or `response_model` drops it,
+    #: and a confirm that could attribute nothing would be indistinguishable from one that
+    #: attributed everything.
+    claimed_lines: int = 0
 
 
 class CreateGrResult(BaseModel):

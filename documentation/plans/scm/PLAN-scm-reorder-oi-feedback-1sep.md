@@ -15,10 +15,16 @@ pending captain confirm. S3 (perf quick wins) built on `feat/reorder-perf-quickw
 S3 below). S5 (plan detail Header/Lines tabs + Re-plan supersede) built on
 `feat/reorder-replan`, PR #493 (stacked on S2), review round 1 addressed - see the S5
 section's own note on the one OPEN ruling (confirmed/keyed decisions block a Re-plan
-outright; captain confirm pending). All six slices built, PRs open as of 2 Sep 2026:
-S1 #471, S2 #488, S3 #491, S4 #489, S5 #493, S6 #490. Merge order: #471 -> #488 -> #489 -> #491 -> #490 -> #493 -
-S3/S4/S5/S6 each stack a migration onto 453/454/455 in turn (see
-`456_reorder_perf_quickwins`'s own docstring for the two-round renumbering this caused).
+outright; captain confirm pending). S6 IMPLEMENTED (PR #490, 2 Sep 2026) - its first cut
+answered G12's gate with a BORN-CLAIMED pass that let the cascade write its own claim,
+which the captain measured on real data as theft and WITHDREW the same day, replaced by
+WRITE-TIME CLAIMING (the cascade may never claim a line it did not create at write time;
+G12's own entry below, plus D2/D3/D4 beneath it; migrations renumbered 458/459 to land
+after S5's 457). All six slices built, PRs open as of 2 Sep 2026: S1 #471, S2 #488, S3
+#491, S4 #489, S5 #493, S6 #490. Merge order (S6 now LAST, its migrations stack onto
+S5's 457): #471 -> #488 -> #489 -> #491 -> #493 -> #490 - S3/S4/S5/S6 each stack a
+migration onto 453/454/455/457 in turn (see `456_reorder_perf_quickwins`'s own docstring
+for the two-round renumbering this caused).
 UAC: `scm-reorder-oi-feedback-1sep-acceptance-criteria.md`
 
 ## Journeys
@@ -119,8 +125,149 @@ UAC: `scm-reorder-oi-feedback-1sep-acceptance-criteria.md`
   it to claimed. Pool-destination documents keep today's rules. Safe against double-buying
   because the reorder engine nets open PO qty by location regardless of claims - the
   unclaimed line still counts as supply in the plan; only the OI cover state waits for
-  attribution. The import result + PO view surface the unclaimed-project-bin count so Joey
-  backfills FromSODocList in AutoCount.
+  attribution. MEASURED (S6, 2 Sep review round 2): the engine sizes on
+  `net = net_position + po_ordered`, and `scm.po_ordered_v` sums every OPEN line of an
+  active purchase order by `(product, warehouse)`, joining neither `scm.order_link_claim`
+  nor a warehouse's `segment` - so an unattributed project-bin line IS counted as supply
+  and there is no double-buy. (`scm.on_order_v` alone is SPO-only and has been since
+  migration 337; that is a different fact and not the one this rests on.)
+  The import result + PO view surface the unclaimed-project-bin count so Joey
+  backfills FromSODocList in AutoCount. WHAT THE SEGMENT ACTUALLY DECIDES: see R-1's
+  four-case table below - attribution decides ownership, location only decides the
+  fallback for a line nobody has attributed.
+  - WRITE-TIME CLAIMING (captain, 2 Sep 2026 - this SUPERSEDES the withdrawn
+    "born claimed" mechanism, which is deleted, not disabled). The rule, stated
+    strictly: the automatic pass may take (a) POOL-location documents and (b)
+    project-bin lines explicitly attributed to the row's OWN sales order. It never
+    takes a project-bin line that is unattributed or attributed to another SO, and it
+    NEVER writes the attribution itself. An own-SO-attributed bin line IS auto-linked -
+    forcing a manual click there is busywork.
+    Attribution has exactly three sources, none of them the cascade:
+      1. the BOOK's `FromSODocList` column - `po_history` on the purchase-history
+         channel, `po_upload` on the outstanding channel (D2 below);
+      2. the SUPPLY WRITER, at the moment this codebase CREATES the line for known
+         demand: `app/services/scm/supply_claim.py`, source `crm_supply`. A reorder
+         plan's Confirm lands its buy at a project bin (the buy lands where the demand
+         is), so `purchase_order_service.bulk_confirm` claims each project-bin line it
+         opens for the order-inquiry rows that sized its `(product, location)` cell -
+         in the SAME transaction, never best-effort. One line, several SOs, several
+         claims (114 at BRW-IB sized by SO X 30 + SO Y 84 = two claims): ordinary G7
+         sharing, not a split;
+      3. a PERSON in the Link dialog (`manual` / the placement's own audit row).
+    Why the first cut was wrong, measured: PO 202607-S0067's CB1178A-SS-NL at BRW-IB,
+    114 units bought for SO391853 per the AutoCount book, was auto-linked to SO381895
+    at 2026-09-02 02:47:41 against a claim SO381895 had written for itself moments
+    earlier. `_born_claimed_takes`, `_has_external_claim`, `trial_cascadable` and
+    `pass_unattributed` are gone; `_candidate`'s `cascadable` is the only gate and has
+    no trial variant.
+    A blank `FromSODocList` beside a Loading Date remark such as "REPLACE BACK" means
+    the line belongs to ANOTHER sales order (captain, 2 Sep) - one more reason
+    unattributed reads as locked rather than as free.
+    Kept from the first cut, because they were separate, real bugs: `_claims_by_target`
+    reading the CLAIM's own `so_number` (not the joined core one), and the netting that
+    stops a claim being subtracted twice once its own SO has placed part of it - now
+    measured off `OrderInquiryLink.claim_id` rather than guessed from the claim's
+    source (`_reserved_for_netting`).
+- G16 (2 Sep, review rounds 2 + 3; CONFIRMED by the captain 2 Sep) HOW MUCH A CLAIM
+  RESERVES. The captain's own words: **the dedicated quantity for a sales order is that SO
+  line's REMAINING NEED, counted ONCE across every document naming it, and on a shared line
+  the OLDER sales order is served first, up to the line's real free capacity.** That is the
+  two rules below, which is what ships.
+  A claim carries no quantity of its own, so the figure is derived; deriving it per CLAIM
+  over-reserved in both directions at once.
+  1. A SALES ORDER LINE'S UNPLACED NEED IS RESERVED ONCE, ACROSS ALL OF ITS DOCUMENTS.
+     Per claim, a line claimed on two documents reserved its whole outstanding on each
+     (SO line 100 with 70 placed on PO-A and 10 on PO-B reserved 30 + 90 = 120 against a
+     need of 20, and PO-B read as fully spoken for). So: need = live outstanding less
+     everything already PLACED under that line's own claims; its claims are visited in
+     document-number order; each takes min(that document's REMAINING capacity, whatever
+     of the need is still unreserved).
+  2. A DOCUMENT LINE IS RATIONED ACROSS ITS CLAIMANTS IN SO-DATE ORDER, AND NEVER HANDS
+     OUT MORE THAN IT HOLDS. Rule 1 alone offers every claimant the line's FULL capacity,
+     because it is applied per sales order line with no knowledge of the others - so two
+     orders of 60 on a 100-unit line reserved 60 each, each then saw only 40 free, and
+     NEITHER could auto-take its own 60. Measured on the live book: 25,788 units across
+     155 lines, reserved twice and takeable by nobody. AC-6.1's "multiple claims reserve
+     in SO-date order" is the tie-break - the earlier order gets its 60, the later one the
+     40 that is left, and the line adds up to 100.
+  CAPACITY IS NET OF LINKS throughout (the line's own size less what links already take),
+  never gross: with a gross ceiling a reservation settled on the document whose every unit
+  was already placed while the document with room read free.
+  `order_link_service.reservations_by_target` returns both figures - `reserved` (the
+  rationed share, what every netting consumer reads) and `outstanding` (the raw live
+  outstanding, kept because AC-6.9 reports it as the audit figure).
+- G17 (2 Sep, review round 2) ATTRIBUTION IS FILLED, NEVER REPOINTED. A claim's identity is
+  document-level - (company, SO, PO, item) - while `po_line_id` names one line of it. A
+  placement on a DIFFERENT line of the same order used to move the book's pointer off the
+  line the book bought, leaving that line unattributed and therefore locked for ever (worst
+  on a `po_history` claim with a NULL item code, which matches every item on the order).
+  Each pointer is now written only while it is still NULL. `resolved_at` is likewise stamped
+  only once BOTH sides are known: `resolve()` looks only at unresolved claims, so stamping
+  it early retired a claim before it was finished and hid it from dedication for good.
+- G18 (2 Sep, review round 2) THE MANUAL OVERRIDE IS REAL (AC-6.5). A person naming a line
+  is validated against `raw_remaining` - what the line actually has left after real LINKS -
+  never against the dedication-reduced `remaining` the automatic pass uses. The dialog greys
+  a dedicated line and still offers it, and G12's own answer for an unattributed bin is
+  "link it manually"; validating the override against the automatic figure refused exactly
+  those links with a 409.
+- G19 (2 Sep, review round 2) THE UNCLAIMED COUNT IS THE EXACT COMPLEMENT OF THE LOCK. It
+  counted "no claim row at all" while the lock opens only for a claim that has RESOLVED onto
+  a core sales-order line whose order is still UNSETTLED - so Joey could chase the number to
+  zero and the lines stayed locked. Both now ask the same question.
+- KNOWN LIMITATION (S7, 2 Sep, documented not fixed): claim identity is document-level, so
+  ONE purchase order carrying two lines of the SAME item at two different project bins for
+  two different sales orders cannot have both attributed - the second claim resolves onto
+  whichever line the resolver reaches first, and the other stays unattributed and
+  manual-link only. It needs a line-grained identity (the line number or the location in the
+  key) and a migration, so it waits for a case that actually occurs; AC-6.11's count makes
+  such a line visible rather than silent. Related: an unreconciled project sales order (no
+  `autocount_doc_no`, so its claims are written under the provisional reference) cannot
+  match a claim the BOOK wrote under the AutoCount number - the two identities are different
+  strings until reconciliation happens. Also: 2 live rows carry `resolved_at` with a NULL
+  `so_line_id` (both `order_inquiry`, written before G17 made the stamp honest). They
+  self-heal the next time anything restates that pairing, since `claim_placed_on_po` now
+  recomputes `resolved_at` from what is actually known; no backfill is scheduled for two
+  rows.
+- G13 (2 Sep) THE OUTSTANDING BOOK WRITES CLAIMS (D2). `outstanding_import_service`
+  resolved `FromSODocList` and threw the value away, so the feed most attribution
+  arrives on could not seed a single dedication. It now writes one `po_upload` claim per
+  stated line through the same get-or-create the history channel uses
+  (`order_link_service.claim_book_pairing`) and resolves both sides immediately. A
+  re-upload restates rather than doubles (identity = company + SO + PO + item), and a
+  claim another feed already made keeps ITS source. Alias seeds: migration 456.
+- G14 (2 Sep) FREE NETS DEDICATION (D3). The purchase order's "Allocated to" panel read
+  `Free = outstanding - links`, so 202607-S0067's BRW-IB line printed Free 69 on a line
+  the book dedicated wholly to SO391853 - which is how the same quantity gets bought
+  twice. `Free` now also nets what other SOs' claims still reserve (G7: the claiming
+  line's LIVE outstanding, less what that claim has already placed), and each block
+  names who holds it. A line with a dedication and no placement is a block of its own.
+- G15 (2 Sep) THE REPAIR IS A GUARDED ONE-SHOT, NOT A MIGRATION (D4).
+  `scripts/repair_project_bin_self_claims.py`, `--scope today|legacy|both`, dry-run by
+  default. `today` undoes exactly what the withdrawn pass wrote (an `auto = true` link on
+  a project-bin target whose only claims are `order_inquiry` rows from 2026-09-02
+  onward, plus those claims). `legacy` extends it to every other automatic project-bin
+  placement no EXTERNAL claim names the row's own SO for. A human link (`auto = false`)
+  is never touched in either scope; a row that loses every link returns to uncovered,
+  which is intended. NOT run by `alembic upgrade`: `legacy` requires a fresh upload of
+  the current PO & SPO outstanding book FIRST, or it drops links that book would have
+  justified. Prod sequence: deploy -> captain re-uploads the book -> run `--scope legacy
+  --apply`. Dev (2 Sep): `today` applied, 22 links + 11 claims deleted; `legacy` dry-run
+  then reported 2 links / 1 row / 2 claims still to go, awaiting the book upload.
+- R-1 (raised 2 Sep review round 3, RESOLVED by the captain the same day): do G7
+  reservations apply on POOL lines? YES - **as built, no code change.** ATTRIBUTION
+  decides who a quantity belongs to; LOCATION only decides what happens to a line nobody
+  has attributed. The whole rule, in four cases:
+
+  | Line's destination | Names a sales order? | What happens |
+  | --- | --- | --- |
+  | Pool | yes | Dedicated to that SO. NOT shared. |
+  | Pool | no | Shared, first-come. |
+  | Project bin | yes | Dedicated; only that SO auto-takes it. |
+  | Project bin | no | LOCKED - manual link only (G12). |
+
+  So a pool line is not "shared by definition": it is shared only while nobody has said
+  whose it is. The only thing the project segment changes is the fallback - an unattributed
+  pool line is up for grabs, an unattributed bin line is nobody's to take automatically.
 - G8 Re-plan: Plan until AND warehouse/product scope editable. New run supersedes old;
   decisions carry for products present in both runs with unchanged suggestion; leaving scope
   drops them; entering arrives undecided; changed suggestions return flagged "re-check".
@@ -250,6 +397,9 @@ review round's own two items, not the OI-slice S1/S2 elsewhere in this document.
   (claimed-by-other AND unclaimed alike); dialog shows unclaimed project-bin lines greyed
   "Unattributed - link manually"; manual link writes the claim. Unclaimed-project-bin
   counts on the PO/SPO upload result and as a PO-view filter for Joey's backfill.
+- Write-time claiming (`app/services/scm/supply_claim.py`, source `crm_supply`), the book's
+  own `FromSODocList` on the outstanding channel (`po_upload`), dedication netted out of the
+  PO detail's Free, and the one-shot repair: G12's own entry above plus G13/G14/G15.
 
 ## Build order
 

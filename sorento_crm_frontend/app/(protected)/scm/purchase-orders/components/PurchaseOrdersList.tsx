@@ -85,6 +85,22 @@ const ALLOCATED_FILTER_OPTIONS = [
   { value: 'no', label: 'Not allocated' },
 ];
 
+/** Same tri-state shape as Allocated (G12, `PLAN-scm-reorder-oi-feedback-1sep.md` S6):
+ *  a purchase order carrying an open line at a project-segment warehouse no claim names
+ *  - the backfill Joey works from `FromSODocList` in AutoCount. */
+type UnclaimedProjectBinFilter = '' | 'yes' | 'no';
+
+const UNCLAIMED_PROJECT_BIN_TO_PARAM: Record<UnclaimedProjectBinFilter, boolean | null> = {
+  '': null,
+  yes: true,
+  no: false,
+};
+
+const UNCLAIMED_PROJECT_BIN_FILTER_OPTIONS = [
+  { value: 'yes', label: 'Unclaimed project bin' },
+  { value: 'no', label: 'No unclaimed project bin' },
+];
+
 const isDraft = isDraftPurchaseOrder;
 
 export default function PurchaseOrdersList() {
@@ -127,6 +143,10 @@ export default function PurchaseOrdersList() {
   // "Is this purchase order already spoken for" (section 3.G, AC-G4). '' = every order,
   // 'yes' = something is linked to a line of it, 'no' = nothing is.
   const [allocatedFilter, setAllocatedFilter] = useState<AllocatedFilter>('');
+  // G12's own filter (AC-6.11): '' = every order, 'yes' = carries an unclaimed
+  // project-bin line, 'no' = none of its open lines do.
+  const [unclaimedProjectBinFilter, setUnclaimedProjectBinFilter] =
+    useState<UnclaimedProjectBinFilter>('');
   // `?documents=a,b,c` - the exact orders ONE upload wrote, which is how the Order
   // Inquiries page sends the buyer here to look at the book they just uploaded (AC-H13).
   // Read from the URL and clearable like any other filter; absent on every other visit.
@@ -154,6 +174,7 @@ export default function PurchaseOrdersList() {
     productCode: productFilter || null,
     outstanding: OUTSTANDING_TO_PARAM[outstandingFilter],
     allocated: ALLOCATED_TO_PARAM[allocatedFilter],
+    unclaimedProjectBin: UNCLAIMED_PROJECT_BIN_TO_PARAM[unclaimedProjectBinFilter],
     documents: documentsFilter.length ? documentsFilter : null,
   });
 
@@ -171,6 +192,7 @@ export default function PurchaseOrdersList() {
     productFilter,
     outstandingFilter,
     allocatedFilter,
+    unclaimedProjectBinFilter,
     documentsFilter,
   ]);
 
@@ -187,6 +209,8 @@ export default function PurchaseOrdersList() {
           product_code: productFilter || undefined,
           outstanding: OUTSTANDING_TO_PARAM[outstandingFilter] ?? undefined,
           allocated: ALLOCATED_TO_PARAM[allocatedFilter] ?? undefined,
+          unclaimed_project_bin:
+            UNCLAIMED_PROJECT_BIN_TO_PARAM[unclaimedProjectBinFilter] ?? undefined,
         },
       ),
     [
@@ -198,6 +222,7 @@ export default function PurchaseOrdersList() {
       productFilter,
       outstandingFilter,
       allocatedFilter,
+      unclaimedProjectBinFilter,
     ],
   );
 
@@ -363,6 +388,7 @@ export default function PurchaseOrdersList() {
     (statusFilter ? 1 : 0) +
     (productFilter ? 1 : 0) +
     (allocatedFilter ? 1 : 0) +
+    (unclaimedProjectBinFilter ? 1 : 0) +
     (documentsFilter.length ? 1 : 0);
   const lastCost = data?.product_cost ?? null;
 
@@ -575,6 +601,21 @@ export default function PurchaseOrdersList() {
                         clearable
                       />
                     </div>
+                    <div>
+                      <Label htmlFor="po-unclaimed-project-bin" className="mb-1 block">
+                        Project bin
+                      </Label>
+                      <SearchableSelect
+                        id="po-unclaimed-project-bin"
+                        value={unclaimedProjectBinFilter}
+                        onChange={(v) =>
+                          setUnclaimedProjectBinFilter((v || '') as UnclaimedProjectBinFilter)
+                        }
+                        options={UNCLAIMED_PROJECT_BIN_FILTER_OPTIONS}
+                        placeholder="Any"
+                        clearable
+                      />
+                    </div>
                     {filtersActive > 0 ? (
                       <div className="flex justify-end">
                         <Button
@@ -585,6 +626,7 @@ export default function PurchaseOrdersList() {
                             setProductFilter('');
                             setProductDraft('');
                             setAllocatedFilter('');
+                            setUnclaimedProjectBinFilter('');
                             setDocumentsFilter([]);
                           }}
                         >

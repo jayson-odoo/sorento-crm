@@ -201,7 +201,7 @@ def _link(world, row, po_line, *, qty, document):
     )
     world.db.add(link)
     world.db.flush()
-    ProjectOrderInquiryService(world.db)._refresh_link_state([row])
+    ProjectOrderInquiryService(world.db).refresh_link_state([row])
     world.db.flush()
     return link
 
@@ -1503,7 +1503,7 @@ def test_a_settle_cancels_the_still_raised_cancel_balance_for_the_same_line(api)
 def test_a_placed_row_with_no_link_declines_settle_and_keeps_its_placed_quantity(api):
     """The SO349754 WESERP10B shape: purchasing placed 5 through a path that wrote no link
     row. Settling that row in place would have restated it at the new need and demoted it
-    back to raised through `_refresh_link_state` - losing the netting that says 5 of it is
+    back to raised through `refresh_link_state` - losing the netting that says 5 of it is
     already bought. The caller's own path nets `placed` off the need and raises only the
     difference, which is the honest answer."""
     client, world = api

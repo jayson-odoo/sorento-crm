@@ -1138,8 +1138,16 @@ class OrderLinkClaim(Base, CompanyScopedMixin):
         # The FK check when a purchase order line is deleted: without it every deleted line
         # costs a sequential scan of this table (migration 420 deleted 80k lines).
         Index("ix_scm_order_link_claim_po_line", "po_line_id"),
+        # WHO attributed this pairing, and it is the only way to tell an attribution
+        # apart from an echo of one. `po_history` / `po_upload` are the book's own
+        # `FromSODocList` column on the two purchase channels; `manual` is a person in
+        # the Link dialog; `crm_supply` is the supply WRITER claiming a line it has just
+        # created for known demand (`app/services/scm/supply_claim.py`, G12's write-time
+        # rule); `order_inquiry` is the audit row `_write_link` writes in lockstep with
+        # a link, which therefore names a quantity that link already accounts for.
         CheckConstraint(
-            "source IN ('po_history', 'order_inquiry', 'so_upload', 'po_upload', 'manual')",
+            "source IN ('po_history', 'order_inquiry', 'so_upload', 'po_upload', "
+            "'manual', 'crm_supply')",
             name="ck_scm_order_link_claim_source",
         ),
         {"schema": "scm"},

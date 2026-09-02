@@ -207,7 +207,16 @@ def world():
             title=f"{MARKER} Yotu Builder {_uid()[:12]}",
         )
         product = _product(db)
-        warehouse = _warehouse(db, f"ZZT-IB-{_uid()[:4]}", segment="project")
+        # A SITE POOL, not a project bin (fixture corrected 2 Sep 2026 with G12's
+        # strict reading). What this suite pins is the HANDSHAKE - who may link, when a
+        # link is a draft, what the horizon holds back - and none of that is about
+        # dedication. A project-bin line is auto-linkable only where somebody attributed
+        # it to the row's own sales order (the book's `FromSODocList`, the supply writer
+        # that created it, or a person in the Link dialog), so seeding the supply at a
+        # bin with no attribution at all would test G12's lock in fifty places that are
+        # not about it. The lock has its own suites: `tests/scm/test_project_bin_lock.py`
+        # and `tests/test_order_inquiry_dedication.py`.
+        warehouse = _warehouse(db, f"ZZT-IB-{_uid()[:4]}")
         plan_run = _pin_the_plan_horizon(db, company_id)
         db.flush()
         db.commit()
