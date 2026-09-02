@@ -72,7 +72,11 @@ def _reference_rows(db):
         category_code=unique_code("c")[:20],
         category_name=unique_code("cat"),
     )
-    uom = UnitOfMeasure(id=str(uuid.uuid4()), uom_name=unique_code("uom"), uom_code=unique_code("u")[:10])
+    # `[:10]` used to survive only 4 hex chars of unique_code's suffix ("ZZT-u-" is 6
+    # chars already), which collided under CI's parallel xdist workers
+    # (units_of_measure_uom_code_key UniqueViolation). uom_code is String(50); widen to
+    # match every other test file's `[:20]`/`[:50]` convention.
+    uom = UnitOfMeasure(id=str(uuid.uuid4()), uom_name=unique_code("uom"), uom_code=unique_code("u")[:20])
     db.add_all([category, uom])
     db.flush()
     return category.id, uom.id

@@ -71,6 +71,26 @@ def _mk_demand(db, pid, wid, add, cv=0.2, sample=13):
     ), {"id": str(uuid.uuid4()), "p": pid, "w": wid, "add": add, "cv": cv, "s": sample})
 
 
+def _mk_committed(db, pid, wid, qty=1):
+    """One LOCATED, open `retail` SO line - G1 (`PLAN-scm-reorder-oi-feedback-1sep.md`)
+    admits a product x warehouse to the daily run ONLY when it has committed demand, so
+    every M3 fixture that wants the engine to evaluate a SKU (rather than exercise the
+    G10 named-product bypass) needs one of these alongside its forecast/stock rows. `qty`
+    is kept small on purpose: these tests size the buy off `avg_daily_demand`/stock, not
+    off the committed figure, and the arithmetic assertions read the FROZEN `inputs` back
+    off the stored rec rather than recomputing net independently."""
+    from app.models.order import SalesOrder, SalesOrderLine
+    so = SalesOrder(id=str(uuid.uuid4()), so_number=f"M3TESTSO-{uuid.uuid4().hex[:8]}",
+                    status="open", demand_class="retail")
+    db.add(so)
+    db.flush()
+    db.add(SalesOrderLine(
+        id=str(uuid.uuid4()), sales_order_id=so.id, product_id=pid, warehouse_id=wid,
+        qty_ordered=qty, qty_delivered=0, line_status="open",
+    ))
+    db.flush()
+
+
 def _mk_supplier(db, name):
     sid = str(uuid.uuid4())
     db.execute(text(
@@ -127,6 +147,7 @@ def test_run_writes_recommendations_and_completes(scm_app):
     pid = _mk_product(db, "M3P-DONE")
     _mk_stock(db, pid, wid, 10)          # low stock → triggers a buy
     _mk_demand(db, pid, wid, 10.0)       # demand·lead = 300 ≫ net 10
+    _mk_committed(db, pid, wid)          # G1: committed demand admits the SKU to the run
     _link(db, pid, _mk_supplier(db, "M3 Done Supplier"))
     db.flush()
 
@@ -203,6 +224,7 @@ def test_frozen_inputs_reproduce_rop_and_qty(scm_app):
     pid = _mk_product(db, "M3P-FROZE")
     _mk_stock(db, pid, wid, 20)
     _mk_demand(db, pid, wid, 12.0)
+    _mk_committed(db, pid, wid)          # G1: committed demand admits the SKU to the run
     _link(db, pid, _mk_supplier(db, "M3 Froze Supplier"), lead=30, moq=100, mult=50)
     db.flush()
 
@@ -236,6 +258,10 @@ def test_network_run_allocation_sums_to_buy_qty(scm_app):
     _mk_stock(db, pid, wb, 15)
     _mk_demand(db, pid, wa, 9.0)
     _mk_demand(db, pid, wb, 6.0)
+    # G1: committed demand admits a SKU x warehouse to the run - both members need it, or
+    # the network aggregate loses the other location's position entirely.
+    _mk_committed(db, pid, wa)
+    _mk_committed(db, pid, wb)
     _link(db, pid, _mk_supplier(db, "M3 Net Supplier"), lead=20, moq=100, mult=25)
     db.flush()
 
@@ -254,10 +280,28 @@ def test_network_run_allocation_sums_to_buy_qty(scm_app):
     assert all(a.get("warehouse_code") for a in alloc)  # codes frozen, no bare UUIDs
 
 
+@pytest.mark.xfail(
+    reason="pre-existing #1/#4 network ROP/OUP netting bug, tracked as GH #495 - "
+    "restored to visibility by product-grain admission (2 Sep); remove this marker "
+    "(and drop the now-vacuous docstring caveat) once #495 is closed",
+    strict=True,
+)
 def test_network_run_no_buy_when_net_above_rop_below_oup(scm_app):
     """#1/#4: a network reorder_point aggregate whose net sits ABOVE ROP but BELOW OUP
     must NOT emit a buy (sizing OUP-net>0 is not a trigger). agg_demand=10, safety 7,
-    lead 30 → ROP 370, OUP 670; agg_net=500 is in the band → no buy rec."""
+    lead 30 → ROP 370, OUP 670; agg_net=498 is in the band → no buy rec.
+
+    G1: committed demand admits the SKU to the run (like its six siblings above) - 1 unit
+    at EACH location, so agg_net drops from the uncommitted 500 to 498 and stays inside
+    the band; the arithmetic under test is otherwise untouched.
+
+    XFAIL, strict (GH #495): the row-grain admission cut of S2 masked this pre-existing
+    bug by excluding the SKU from the run entirely (no committed demand -> 0 buys,
+    trivially satisfying `buys == 0` for the wrong reason). Product-grain admission
+    restores the SKU to the run and this assertion is genuinely live again - and
+    genuinely fails. `strict=True` turns an unexpected pass into a hard failure, so
+    fixing #495 forces this marker to be removed rather than leaving a silent XPASS.
+    """
     _, db, _, _ = scm_app
     wa = _mk_warehouse(db, "M3W-BANDA")
     wb = _mk_warehouse(db, "M3W-BANDB")
@@ -266,6 +310,8 @@ def test_network_run_no_buy_when_net_above_rop_below_oup(scm_app):
     _mk_stock(db, pid, wb, 200)          # net 200, demand 4  → agg_net 500 in (370, 670)
     _mk_demand(db, pid, wa, 6.0)
     _mk_demand(db, pid, wb, 4.0)
+    _mk_committed(db, pid, wa)            # agg_net 500 -> 498, still inside the band
+    _mk_committed(db, pid, wb)
     _link(db, pid, _mk_supplier(db, "M3 Band Supplier"), lead=30)
     db.flush()
 
@@ -280,14 +326,21 @@ def test_network_run_no_buy_when_net_above_rop_below_oup(scm_app):
 
 
 def test_dead_cell_does_not_also_emit_a_buy(scm_app):
-    """#8: a cell classified for disposition (dead) must NOT also emit a buy - even when
-    its low net would otherwise trigger a reorder. Only the disposition rec is written."""
+    """#8, superseded by G2 (`PLAN-scm-reorder-oi-feedback-1sep.md`, 1 Sep 2026):
+    disposition/dead-stock rows leave the plan ENTIRELY now (no `disposition` rec at
+    all), and the #8 gate that used to suppress a contradictory buy on that cell is
+    unchanged underneath - a dead cell still emits no buy. But the cell here still
+    carries committed demand (AC-2.3's amended sentence, 2 Sep): silently dropping
+    demand somebody is owed would be a worse outcome than #8's contradiction, so
+    `_emit_cell` emits `covered` instead of nothing - "use this stock instead of
+    buying", the same suggestion any other untriggered cell states."""
     _, db, _, _ = scm_app
     wid = _mk_warehouse(db, "M3W-DEAD")
     pid = _mk_product(db, "M3P-DEAD")
     _mk_stock(db, pid, wid, 5)           # low net → would trigger a buy
     _mk_demand(db, pid, wid, 10.0)
     _mk_movement(db, pid, wid, 1, days_ago=400)   # stale movement > 180d → dead
+    _mk_committed(db, pid, wid)          # G1: committed demand admits the SKU to the run
     _link(db, pid, _mk_supplier(db, "M3 Dead Supplier"))
     db.flush()
 
@@ -298,8 +351,11 @@ def test_dead_cell_does_not_also_emit_a_buy(scm_app):
         "SELECT rec_type FROM scm.reorder_recommendation WHERE run_id = :id AND product_id = :p"
     ), {"id": created["run_id"], "p": pid}).mappings().all()
     types = [r["rec_type"] for r in rows]
-    assert "disposition" in types, "expected a dead-stock disposition rec"
+    assert "disposition" not in types, "G2: disposition rows leave the plan entirely"
     assert "buy" not in types, "a dead cell must not also emit a buy rec"
+    assert "covered" in types, (
+        "the cell's committed demand must not vanish silently - it states covered instead"
+    )
 
 
 def test_no_supplier_sku_emits_exception(scm_app):
@@ -310,6 +366,7 @@ def test_no_supplier_sku_emits_exception(scm_app):
     pid = _mk_product(db, "M3P-NOSUP")
     _mk_stock(db, pid, wid, 5)
     _mk_demand(db, pid, wid, 10.0)        # triggers, but no product_suppliers link
+    _mk_committed(db, pid, wid)           # G1: committed demand admits the SKU to the run
     db.flush()
 
     created = svc.create_run(db, ["M3W-NOSUP"], "warehouse", enqueue=False)
@@ -336,6 +393,7 @@ def test_endpoints_full_flow(scm_app):
     pid = _mk_product(db, "M3P-API")
     _mk_stock(db, pid, wid, 8)
     _mk_demand(db, pid, wid, 11.0)
+    _mk_committed(db, pid, wid)          # G1: committed demand admits the SKU to the run
     _link(db, pid, _mk_supplier(db, "M3 Api Supplier"))
     db.flush()
 
@@ -404,6 +462,7 @@ def test_list_runs_newest_first_with_summary_and_pagination(scm_app):
     pid = _mk_product(db, "M3P-HIST")
     _mk_stock(db, pid, wid, 8)
     _mk_demand(db, pid, wid, 11.0)
+    _mk_committed(db, pid, wid)          # G1: committed demand admits the SKU to the run
     _link(db, pid, _mk_supplier(db, "M3 Hist Supplier"))
     db.flush()
 

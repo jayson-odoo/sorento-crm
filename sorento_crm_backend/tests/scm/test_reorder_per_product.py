@@ -356,6 +356,11 @@ def test_a_product_with_no_level_anywhere_is_named_not_guessed_at(scm_app):
         _mk_stock(db, pid, wid, 0)
         _mk_demand(db, pid, wid, 3.0)
     _link(db, pid, _mk_supplier(db, f"{MARKER} R7"), moq=None, mult=None)
+    # G1 (`PLAN-scm-reorder-oi-feedback-1sep.md`): `needs_level` is only ever emitted for
+    # a COMMITTED product (AC-2.4) - the run is already scoped to this product by
+    # `_run`'s `product_codes` (G10), but the row itself still needs demand to be one CS
+    # is actually owed, or the run has nothing to name a level FOR.
+    _core_line_for_run(db, pid, a, qty=5, demand_class="retail")
     rl.store_suggestion(db, product_id=pid, warehouse_id=None, suggested_level=99.0,
                         basis={"avg_monthly": 49.5, "cover_months": 2, "months_studied": 3})
     db.flush()
@@ -414,11 +419,13 @@ def test_set_level_writes_the_product_wide_row(scm_app):
     assert rows[0]["source"] == "manual"
 
 
-# --- AC-R10: disposition is still about a place -----------------------------------------
+# --- AC-R10 (superseded by G2, 1 Sep 2026): disposition left the plan entirely ---------
 
-def test_the_overstocked_location_still_gets_its_disposition_row(scm_app):
-    """AC-R10: netting per product does not aggregate away "this bin is sitting on a
-    year of cover". Disposition is a statement about a place and stays per location."""
+def test_an_overstocked_location_emits_no_disposition_row(scm_app):
+    """G2 (`PLAN-scm-reorder-oi-feedback-1sep.md`) supersedes AC-R10: disposition/
+    dead-stock rows are no longer emitted by a run AT ALL - a dead-stock/overstock report
+    is a separate backlog item, not a plan recommendation. Pinned here so a regression
+    that resurrects the old per-location disposition rec is caught."""
     _, db, _, _ = scm_app
     _use_level_basis(db)
     root, root_code = _wh(db, "DR")
@@ -433,10 +440,7 @@ def test_the_overstocked_location_still_gets_its_disposition_row(scm_app):
 
     rows = _recs(db, _run(db, [root_code, bin_code], code), pid)
 
-    disposition = [r for r in rows if r["rec_type"] == "disposition"]
-    assert len(disposition) == 1, "the location holding the stock, and only it"
-    assert disposition[0]["warehouse_id"] == root
-    assert disposition[0]["inputs"]["disposition_action"] == "hold"
+    assert not [r for r in rows if r["rec_type"] == "disposition"]
 
 
 # --- the lane run, 27 Aug: three things the seeded tests did not catch -------------------
