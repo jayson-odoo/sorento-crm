@@ -1,9 +1,7 @@
 # PLAN - Price Tag Feedback R2
 
-Status: Approved 1 Sep 2026 - in implementation. Round 3: S11 built (PR #511, review
-round 2 Sep); S8/S9/S10 on their own branches.
-Status: Lane A + Lane B built; round 3 in flight - S8 delivered (PR #510,
-review round 2 Sep), S9-S11 built.
+Status: Round 2 (S1-S7) in 8 reviewed PRs awaiting merge; round 3 (S8-S11) built,
+reviewed and merged into integration/price-tag-r2 for captain testing (2 Sep).
 UAC: `documentation/plans/dealer-kit/price-tag-feedback-r2-acceptance-criteria.md`
 Predecessor: `documentation/plans/dealer-kit/PLAN-price-tag-request.md` (shipped, PR #289)
 
