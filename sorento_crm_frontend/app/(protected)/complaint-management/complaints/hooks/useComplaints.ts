@@ -28,6 +28,7 @@ import {
 } from '../services/complaintService';
 import type { ComplaintFormData } from '../types/complaint.types';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 
 /**
@@ -81,7 +82,6 @@ export function useComplaints(params: ComplaintsListParams) {
     queryFn: () => getComplaints(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -280,6 +280,7 @@ export function useComplaintConversation(
   options?: { limit?: number; cursor?: string; enabled?: boolean },
 ) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['complaint-conversation', complaintId, options?.limit, options?.cursor],
     queryFn: () =>
       getComplaintConversation(complaintId!, {
