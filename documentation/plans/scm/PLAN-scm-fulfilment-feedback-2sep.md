@@ -1,6 +1,6 @@
 # PLAN: Fulfilment planning feedback batch, 2 Sep (BRW first, per-line walk, saved decisions, upload speed)
 
-Status: IN REVIEW - S1 to S5 are all in PR #553 (the ONE final PR, captain 2 Sep), every slice delivered. S1 DONE; S2 Phase 1 + Phase 2 DONE (ladder v8 live on the lane); S3 and S3b Phase 1 + Phase 2 DONE, plus a first-pill-truncation fix (3 Sep); S4 Phase 1 + Phase 2 DONE (3 Sep - `projects.so_supply_decision_drafts`, the two draft routes and the confirm-time promotion are live on the lane, the Phase 1 mock is deleted); S5 DONE (folded in from #546). Review pending.
+Status: IN REVIEW - S1 to S5 are all in PR #553 (the ONE final PR, captain 2 Sep), every slice delivered. S1 DONE; S2 Phase 1 + Phase 2 DONE (ladder v8 live on the lane); S3 and S3b Phase 1 + Phase 2 DONE, plus a first-pill-truncation fix (3 Sep); S4 Phase 1 + Phase 2 DONE (3 Sep - `projects.so_supply_decision_drafts`, the two draft routes and the confirm-time promotion are live on the lane, the Phase 1 mock is deleted); S5 DONE (folded in from #546). Code review round 3 fix batch (3 Sep, two coordinator messages) folded in: B1/B2/C1/S1-S3/N1-N7/C4-C8 and nits - `stale` rewritten to judge the LINE's own facts rather than the proposal (S1), the pill/Undo-all race fixes (B1/C1), the availability echo fix (B2), 422 line validation (S3), the `changed` count (C4), ladder v8 wiring gaps (C5/C8) and import-failure audit accuracy (C6). Second review round pending.
 Captain rulings: 2 Sep 2026 user test on SO419208 / SO419370 / SO418324 (screenshots on the session)
 Probe: `scratchpad/probe_brw_first.md` (read-only, worktree `.claude/worktrees/scm-brw-first`, branch `probe/scm-brw-first` off `origin/main cf255833d`)
 Lane: engine lane `.claude/worktrees/scm-fulfilment-2sep` branch `feat/scm-fulfilment-feedback-2sep` FE :3080 BE :8080 (S1, S2, then S3, S3b, S4); import lane `.claude/worktrees/scm-upload-2sep` branch `feat/scm-upload-speed-2sep` BE :8090, no FE server (S5). Both off origin/main. Own `.env` per lane (API_PORT, NEXTAUTH_URL, FASTAPI_INTERNAL_URL), venv symlinked to the primary checkout, node_modules cloned from it.
@@ -188,6 +188,16 @@ Verified facts this plan stands on:
   Contributing lines Sourced-from column, and the Stock tab's Taken cell all adopt it.
 - Pill wording = kind + qty + location, ordered as the composition is ordered (share first).
 - Column resize (DataGrid `columnsResizable`) reflows the pills live.
+- N7 (code review round 3): pills carry no `title` attribute - a departure from the DataGrid
+  truncate+`title` convention elsewhere in this codebase, deliberate here because the popover
+  IS the disclosure R-J itself asks for ("clicking any pill ... opens the composition"); a
+  second, competing disclosure (a browser tooltip) on the same element would answer the same
+  question a worse way.
+- N4 (code review round 3, accepted, no code): the "+N" pill wrapping to its own row when
+  pill 0 does not leave room beside it grows the column's own row height by roughly 20px.
+  Accepted as the trade `flex-wrap` makes for "a quantity is never truncated" (S3b fix,
+  AC-3b.4) - the alternative was capping pill 0's own text, which is the thing this fix
+  exists to stop.
 
 ### S4 - saved decisions (server draft + response)
 
@@ -288,6 +298,25 @@ claims no stock, and Confirm still applies the full check to what it posts. And 
 line nobody saved answers 404, which `deleteLineDraft` treats as "already gone" - "Undo all"
 walks every key in the panel's map, and a `?batch=` board pre-marks lines locally that were
 never PUT.
+
+**S1 rewrite (code review round 3, 3 Sep, captain ruling): staleness is judged on the LINE's
+own facts, never on the proposal.** The "Phase 2 as built" `proposed` snapshot above was
+itself the bug: the proposal depends on which orders share the board, its granularity and its
+window (`_allocate` draws the shared piles in board order), so comparing PROPOSED snapshots
+flipped `stale` falsely the moment a planner opened a different view of the exact same
+line - a save made on a multi-order week board came back "Suggestion changed" the instant it
+was re-read on a single-order day board, with nothing about the line itself different. Fixed:
+the PUT body carries no `proposed` any more (`{decision}` only); the server snapshots, at
+save time, the LINE's own `open_qty` and `required_date` (resolved off the sales order the
+key names, the same resolution S3 needs anyway) into a `line_snapshot` JSONB column
+(`SOSupplyDecisionDraft.line_snapshot`, renamed from `proposed_snapshot` - hand-altered on
+the dev DB with `ALTER TABLE projects.so_supply_decision_drafts RENAME COLUMN
+proposed_snapshot TO line_snapshot;`, the table having been hand-created there too).
+`is_stale` compares that snapshot against the row's CURRENT `qty` / `required_date` on every
+board read (`_attach_drafts`). A contribution with no proposal at all is never stale on that
+account, because this predicate never looks at one. Also fixed in the same round: S3 refuses
+a save whose key names no real line under the caller's company (422, never a 500 with raw DB
+text), and N2 adds an explicit company predicate to `_row_for`.
 
 ### S5 - upload speed and live progress
 
