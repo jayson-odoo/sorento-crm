@@ -20,6 +20,7 @@ import type { PurchaseRequestFormData } from '../types/purchaseRequest.types';
 import type { FormPdfExportOptions } from '@/lib/revision-export';
 import { requestTypeLabel, requestTypeLabelLower } from '../lib/purchase-request-field-labels';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 
 export type PurchaseRequestsListQueryParams = DataGridApiFetchParams & {
@@ -76,7 +77,6 @@ export function usePurchaseRequests(params: PurchaseRequestsListQueryParams) {
     queryFn: () => getPurchaseRequests(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -216,6 +216,7 @@ export function usePurchaseRequestConversation(
   options?: { limit?: number; cursor?: string; enabled?: boolean },
 ) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['purchase-request-conversation', requestId, options?.limit, options?.cursor],
     queryFn: () =>
       getPurchaseRequestConversation(requestId!, {

@@ -37,7 +37,6 @@ export function usePackingListHistory(packingListId: string | null) {
         pageSize: 50,
       }),
     enabled: !!packingListId,
-    refetchOnWindowFocus: false,
   });
 }
 
@@ -53,7 +52,6 @@ export function usePackingListSourceInvoices(packingListId: string | null) {
     queryKey: ['packing-lists', 'source-proforma-invoices', packingListId],
     queryFn: () => getPackingListSourceInvoices(packingListId as string),
     enabled: !!packingListId,
-    refetchOnWindowFocus: false,
   });
 }
 
@@ -102,7 +100,6 @@ export function usePackingLists(params: PackingListsListParams) {
     queryFn: () => getPackingLists(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
