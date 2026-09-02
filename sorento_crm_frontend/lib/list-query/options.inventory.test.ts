@@ -76,6 +76,12 @@ const LIST_KEY_PARAMS_RE = /\b(params|listParams)\b/;
  */
 const ALLOWLIST: Record<string, string> = {
   'hooks/useListPager.ts': 'background neighbour lookup, renders no rows',
+  // The MCP tools catalogue reads all 500 rows in one go, so its key never
+  // changes for a page - only for the Active-only toggle. Keeping the previous
+  // answer across THAT change shows inactive rows to a reader who just asked
+  // for active ones, which reads as a toggle that does not work.
+  'app/(protected)/system-management/mcp-tools/hooks/useMcpAdmin.ts':
+    'unpaginated 500-row catalogue whose only key change is a filter toggle',
 };
 
 function walk(dir: string, out: string[]): string[] {
