@@ -31,7 +31,7 @@ import {
 import { useProducts } from '../../../master-data-management/products/hooks/useProducts';
 import type { GetProductsParams } from '../../../master-data-management/products/services/productService';
 import { formatDateInMalaysia } from '@/lib/helpers';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { LoaderCircleIcon } from 'lucide-react';
 import PromotionAttachmentsTab from './PromotionAttachmentsTab';
 import DetailActions from '@/components/common/DetailActions';

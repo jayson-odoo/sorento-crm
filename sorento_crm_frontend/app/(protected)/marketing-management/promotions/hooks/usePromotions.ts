@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 import type { DataGridApiResponse } from '@/components/ui/data-grid';
