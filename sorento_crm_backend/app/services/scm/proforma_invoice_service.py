@@ -762,6 +762,34 @@ def validate(
     return envelope(ok=not problems, problems=problems, warnings=warnings, summary=summary)
 
 
+def _plan_of_this_supplier(
+    db: Session, loading_plan_id: Optional[str], *, supplier_id: str
+) -> None:
+    """Refuse a plan that belongs to somebody else (AC-F3).
+
+    Checked BEFORE anything is written, like the revision targets: stamping one supplier's
+    invoices onto another supplier's plan would make every read on that plan wrong - its
+    holdings, its unknown codes and its own subtitle - and nothing on the record would say so.
+    """
+    if not loading_plan_id:
+        return
+    from app.models.scm import LoadingPlan
+
+    try:
+        uuid.UUID(str(loading_plan_id))
+    except (ValueError, AttributeError, TypeError):
+        raise AppException(422, "That loading plan does not exist.", detail="loading_plan_id")
+    plan = db.query(LoadingPlan).filter(LoadingPlan.id == loading_plan_id).first()
+    if plan is None:
+        raise AppException(422, "That loading plan does not exist.", detail="loading_plan_id")
+    if str(plan.supplier_id) != str(supplier_id):
+        raise AppException(
+            422,
+            "That loading plan belongs to a different supplier.",
+            detail="invoice_supplier_mismatch",
+        )
+
+
 def apply(
     db: Session,
     data: bytes,
@@ -772,6 +800,7 @@ def apply(
     actor: Optional[str] = None,
     revision_of: Optional[dict] = None,
     file_as_new: Optional[list] = None,
+    loading_plan_id: Optional[str] = None,
 ) -> dict:
     """Write one proforma invoice per document in the file. Idempotent by identity.
 
@@ -779,7 +808,14 @@ def apply(
     rather than generated: the same file uploaded twice resolves to the same invoices and
     replaces their lines, which is AC-P1.4 and is also what stops a nervous second click
     doubling an invoice. Does not commit.
+
+    `loading_plan_id` (S6, AC-F3) stamps EVERY invoice this call creates or revises with the
+    plan it was uploaded into. That stamp is what lets the plan sum its own five blocks
+    instead of reading whichever single invoice sorted first for the supplier - which, over
+    five blocks sharing an invoice date and a transaction timestamp, was decided by the UUID.
+    A superseded prior keeps the plan that took IT, so an older plan goes on reading its own.
     """
+    _plan_of_this_supplier(db, loading_plan_id, supplier_id=supplier_id)
     parsed = _parse(db, data)
     if not parsed.ok:
         raise AppException(
@@ -893,6 +929,10 @@ def apply(
         invoice.source_ref = source_ref
         invoice.block_index = doc.index
         invoice.uploaded_by = actor
+        # Only ever SET, never cleared: a standalone re-upload of a file that a plan is
+        # reading must not quietly unbind it from that plan.
+        if loading_plan_id:
+            invoice.loading_plan_id = loading_plan_id
         db.flush()
 
         # Replace rather than merge: the file is the document of record, and a line the new

@@ -1,10 +1,15 @@
 """Hold one supplier's current stock list, so a container can be planned against it.
 
-A SNAPSHOT per supplier, replaced whole on every upload. The alternative - merging the new
-file into the old rows - keeps an item the supplier no longer lists as loadable stock forever,
-and the first symptom is a container planned around something that is not in their warehouse.
-Replacement is stated in the result (`rows_replaced`) rather than done quietly, because it is
-the one destructive thing this upload does.
+A SNAPSHOT, replaced whole on every upload. The alternative - merging the new file into the
+old rows - keeps an item the supplier no longer lists as loadable stock forever, and the first
+symptom is a container planned around something that is not in their warehouse. Replacement is
+stated in the result (`rows_replaced`) rather than done quietly, because it is the one
+destructive thing this upload does.
+
+A snapshot per PLAN since S6, when the upload names one (`loading_plan_id`); per supplier when
+it does not, which is the standalone stock-list page. It was per supplier alone, and that is
+what let a plan started with no file at all run on a stock list somebody had uploaded from a
+different plan for the same supplier - while its own subtitle read "No file".
 
 Which supplier the file describes cannot be derived: the sheet carries model numbers and
 quantities, never the name of who wrote it. So it is asked for, once, in the dialog - the only
@@ -218,8 +223,15 @@ def apply(
     supplier_id: str,
     as_of: Optional[date] = None,
     actor: Optional[str] = None,
+    loading_plan_id: Optional[str] = None,
 ) -> dict:
-    """Replace this supplier's snapshot with the file. Does not commit."""
+    """Replace a snapshot with the file. Does not commit.
+
+    WHOSE snapshot is what `loading_plan_id` decides (S6, AC-F3). Stated, this replaces only
+    that plan's rows and stamps the new ones with it, so a re-upload into the same plan is
+    still a replace and no other plan's figures move. Absent - the standalone stock-list page
+    - it keeps the supplier-wide replace it always did.
+    """
     parsed = _parse(db, data)
     if not parsed.ok:
         return {
@@ -236,11 +248,15 @@ def apply(
         db, {r.item_code for r in parsed.rows}, supplier_id=supplier_id, actor=actor
     )
 
-    replaced = (
-        db.query(SupplierInventory)
-        .filter(SupplierInventory.supplier_id == supplier_id)
-        .delete(synchronize_session=False)
+    scope = db.query(SupplierInventory).filter(
+        SupplierInventory.supplier_id == supplier_id
     )
+    scope = (
+        scope.filter(SupplierInventory.loading_plan_id == loading_plan_id)
+        if loading_plan_id
+        else scope.filter(SupplierInventory.loading_plan_id.is_(None))
+    )
+    replaced = scope.delete(synchronize_session=False)
     # The delete has to reach the database before the inserts, or the unique identity index
     # rejects a model number that appears in both the old snapshot and the new one.
     db.flush()
@@ -286,6 +302,7 @@ def apply(
                 spec=v["spec"],
                 remark=v["remark"],
                 as_of=stamp,
+                loading_plan_id=loading_plan_id,
                 uploaded_by=actor,
                 source_system=SOURCE_SYSTEM,
                 source_ref="supplier_inventory",

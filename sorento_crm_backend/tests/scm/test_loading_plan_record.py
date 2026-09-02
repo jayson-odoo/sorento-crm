@@ -57,6 +57,21 @@ def _world(db) -> World:
     w.supplier.email = f"{MARKER}-supplier@example.test"
     db.flush()
     w.stock("A", packed=50, cbm=0.5)
+    # We BUY this product from this supplier. Since S6 a plan reads its own statement, and
+    # these plans are created with `document_kind: "none"` - so without the sourcing link
+    # there is no membership left to put the product in the plan's universe at all, and
+    # every one of these lifecycle tests would run against an empty grid (AC-E0).
+    from app.models.procurement import ProductSupplier
+
+    db.add(
+        ProductSupplier(
+            id=str(uuid.uuid4()),
+            product_id=w.product("A").id,
+            supplier_id=w.supplier.id,
+            standard_lead_time_days=30,
+        )
+    )
+    db.flush()
     _so(db, w, "A", 20)
     return w
 
@@ -488,35 +503,57 @@ def test_the_list_carries_what_the_last_build_asked_for(scm_app):
     assert row["to_request_cbm"] is not None
 
 
-def test_a_newer_stock_list_moves_an_older_plans_numbers_but_not_its_document(scm_app):
-    # AC-A17 / R2, stated in the open: the supplier snapshot is per supplier and replaced
-    # whole, so an older open plan reads what the supplier holds NOW - which is the correct
-    # reading of "what should we ask them for". What must NOT move is which file that plan
-    # says it started from, which is why the snapshot date is pinned at create time.
+def test_a_newer_stock_list_leaves_an_older_plan_exactly_as_it_was(scm_app):
+    # AC-F6 (S6), which SUPERSEDES p4's AC-A17. That line said the opposite - an older plan
+    # read what the supplier holds NOW, because the snapshot was one per supplier and
+    # replaced whole - and the captain ruled against it on 2 Sep: "the data in the plan
+    # should be respective to the plan, not per supplier". Migration 454 stamps every row an
+    # upload writes with the plan it was uploaded into, so a newer list started from a NEW
+    # plan cannot reach this one: not its figures, not its subtitle.
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk)
     w = _world(db)
     client = TestClient(app)
     plan = _create(client, str(w.supplier.id), document_kind="stock_list").json()
-    label_before = plan["document_label"]
-    packed_before = client.post(BUILD_URL, json={"plan_id": plan["id"]}).json()["rows"][0][
-        "qty_packed"
-    ]
-
-    # A newer list for the same supplier, exactly as a second plan's upload would leave it.
+    # The rows this plan was started from, as its own upload would have left them.
     db.execute(
         text(
-            "UPDATE scm.supplier_inventory SET qty_packed = qty_packed + 100, "
-            "as_of = as_of + INTERVAL '30 days' WHERE supplier_id = CAST(:s AS uuid)"
+            "UPDATE scm.supplier_inventory SET loading_plan_id = CAST(:p AS uuid) "
+            "WHERE supplier_id = CAST(:s AS uuid)"
         ),
-        {"s": str(w.supplier.id)},
+        {"p": plan["id"], "s": str(w.supplier.id)},
+    )
+    db.flush()
+    before = client.post(BUILD_URL, json={"plan_id": plan["id"]}).json()
+    packed_before = before["rows"][0]["qty_packed"]
+    label_before = before["plan"]["document_label"]
+
+    # A newer, bigger list for the same supplier, uploaded from a SECOND plan.
+    newer = _create(client, str(w.supplier.id), document_kind="stock_list").json()
+    db.execute(
+        text(
+            """
+            INSERT INTO scm.supplier_inventory
+                (id, company_id, supplier_id, item_code, product_id, qty_packed,
+                 qty_unfinished, as_of, loading_plan_id)
+            SELECT gen_random_uuid(), company_id, supplier_id, item_code, product_id,
+                   qty_packed + 100, qty_unfinished, as_of + INTERVAL '30 days',
+                   CAST(:n AS uuid)
+              FROM scm.supplier_inventory
+             WHERE loading_plan_id = CAST(:p AS uuid)
+            """
+        ),
+        {"n": newer["id"], "p": plan["id"]},
     )
     db.flush()
 
     after = client.post(BUILD_URL, json={"plan_id": plan["id"]}).json()
 
-    assert after["rows"][0]["qty_packed"] == packed_before + 100
+    assert after["rows"][0]["qty_packed"] == packed_before
     assert after["plan"]["document_label"] == label_before
+    # And the newer plan reads its own, which is the other half of the same rule.
+    newer_built = client.post(BUILD_URL, json={"plan_id": newer["id"]}).json()
+    assert newer_built["rows"][0]["qty_packed"] == packed_before + 100
 
 
 # --------------------------------------------------------------------------- #

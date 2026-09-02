@@ -60,7 +60,12 @@ from sqlalchemy.orm import Session
 from app.models.order import SalesOrder, SalesOrderLine
 from app.models.procurement import ProductSupplier
 from app.models.product import Product
-from app.models.scm import ProformaInvoiceLine, SupplierInventory
+from app.models.scm import (
+    ProformaInvoice,
+    ProformaInvoiceLine,
+    SupplierInventory,
+    SupplierProductCodeAlias,
+)
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
 from app.services.scm import priority, supplier_notice_service
@@ -173,6 +178,16 @@ def _stock_list(db: Session, supplier_id: str) -> tuple[Optional[Any], dict[str,
         )
         .all()
     )
+    return _aggregate_stock(rows)
+
+
+def _aggregate_stock(rows: list) -> tuple[Optional[Any], dict[str, dict]]:
+    """The aggregation half of `_stock_list`, over whatever rows a caller selected.
+
+    Split out so the plan-owned read (`_plan_stock_list`, S6) differs from the supplier-wide
+    one by its WHERE clause and nothing else - two copies of this loop would be two places
+    for the packed/unfinished split and the `as_of` rule to drift.
+    """
     if not rows:
         return None, {}
     as_of = max((r.as_of for r in rows if r.as_of is not None), default=None)
@@ -208,6 +223,13 @@ def _linked_products(db: Session, supplier_id: str) -> set[str]:
     Without this leg the universe was the supplier's stock list ALONE, which is why a
     supplier who had never sent one produced an empty screen on the very page that exists to
     say what to ask them for.
+
+    UNIONED with the supplier's remembered codes (AC-E0): once somebody has ruled that this
+    supplier's `SRTWC8354-SH` is our product, that ruling is a statement of what they make,
+    and it has to outlive the file it was answered on - otherwise a plan with no statement of
+    its own (S6) forgets every code the supplier has ever been matched on. A DISMISSED code
+    names nothing and is excluded; a code naming one of our SETS is not a product id and does
+    not belong in this set.
     """
     rows = (
         db.query(ProductSupplier.product_id)
@@ -215,7 +237,16 @@ def _linked_products(db: Session, supplier_id: str) -> set[str]:
         .filter(ProductSupplier.supplier_id == supplier_id)
         .all()
     )
-    return {str(r.product_id) for r in rows}
+    aliased = (
+        db.query(SupplierProductCodeAlias.product_id)
+        .join(Product, Product.id == SupplierProductCodeAlias.product_id)
+        .filter(
+            SupplierProductCodeAlias.supplier_id == supplier_id,
+            SupplierProductCodeAlias.product_id.isnot(None),
+        )
+        .all()
+    )
+    return {str(r.product_id) for r in rows} | {str(r.product_id) for r in aliased}
 
 
 def _standin_proforma(db: Session, supplier_id: str) -> Optional[dict]:
@@ -262,15 +293,114 @@ def _standin_proforma(db: Session, supplier_id: str) -> Optional[dict]:
     holdings: dict[str, dict] = {}
     for ln in lines:
         pid = _set_key(ln.product_set_id) if ln.product_set_id else str(ln.product_id)
-        cur = holdings.setdefault(pid, {"qty": 0.0, "cbm_per_unit": None})
+        cur = holdings.setdefault(pid, {"qty": 0.0, "cbm_per_unit": None, "blocks": []})
         cur["qty"] += float(ln.qty or 0)
         if cur["cbm_per_unit"] is None and ln.cbm_per_unit is not None:
             cur["cbm_per_unit"] = float(ln.cbm_per_unit)
     if not holdings:
         return None
+    # One invoice, so one block, named the same way a plan-owned statement names its own -
+    # the drill opens on the legacy path too rather than on an empty table.
+    for pid, cur in holdings.items():
+        cur["blocks"] = [
+            {"block_index": None, "pi_number": head["pi_number"], "qty": cur["qty"]}
+        ]
     return {
         "pi_number": head["pi_number"],
         "as_of": head["invoice_date"],
+        "block_count": 1,
+        "holdings": holdings,
+    }
+
+
+def _plan_stock_list(db: Session, plan) -> tuple[Optional[Any], dict[str, dict]]:
+    """THIS plan's own stock rows, in `_stock_list`'s shape (S6, AC-F4).
+
+    Same aggregation, one predicate added. The snapshot used to be one per supplier, so a
+    plan started with no file at all read whatever the supplier had last sent - from any
+    plan - and its own subtitle said "No file" while it did.
+    """
+    rows = (
+        db.query(SupplierInventory)
+        .filter(
+            SupplierInventory.loading_plan_id == str(plan.id),
+            SupplierInventory.product_id.isnot(None)
+            | SupplierInventory.product_set_id.isnot(None),
+        )
+        .all()
+    )
+    return _aggregate_stock(rows)
+
+
+def _plan_proforma(db: Session, plan) -> Optional[dict]:
+    """Every invoice bound to this plan, summed per product or set (S6, AC-F4).
+
+    ALL of them, not one: the pre-loading sheet is five stacked invoice blocks, the upload
+    writes five documents, and the plan binds to all five. The old read took ONE - `ORDER BY
+    invoice_date DESC, created_at DESC, id DESC LIMIT 1` over five rows that share an invoice
+    date and a transaction timestamp, which means the UUID decided which block a plan showed.
+
+    "Current revision" is judged WITHIN the plan's own set: an invoice is skipped only when
+    its successor is bound to this same plan, which is what a re-upload into one plan writes.
+    A LATER plan revising these invoices supersedes them for the supplier, but this plan is
+    the record of what it was started from and goes on reading it (AC-F5).
+    """
+    invoices = (
+        db.query(ProformaInvoice)
+        .filter(ProformaInvoice.loading_plan_id == str(plan.id))
+        .all()
+    )
+    if not invoices:
+        return None
+    superseded_here = {
+        str(pi.revision_of_id) for pi in invoices if pi.revision_of_id is not None
+    }
+    current = [pi for pi in invoices if str(pi.id) not in superseded_here]
+    if not current:
+        return None
+
+    lines = (
+        db.query(ProformaInvoiceLine)
+        .filter(
+            ProformaInvoiceLine.invoice_id.in_([str(pi.id) for pi in current]),
+            ProformaInvoiceLine.product_id.isnot(None)
+            | ProformaInvoiceLine.product_set_id.isnot(None),
+        )
+        .all()
+    )
+    by_invoice = {str(pi.id): pi for pi in current}
+    holdings: dict[str, dict] = {}
+    #: `(holdings key, invoice id) -> qty`, so one product named twice inside ONE block is
+    #: one line of the split rather than two.
+    per_block: dict[tuple[str, str], float] = {}
+    for ln in lines:
+        pid = _set_key(ln.product_set_id) if ln.product_set_id else str(ln.product_id)
+        cur = holdings.setdefault(pid, {"qty": 0.0, "cbm_per_unit": None, "blocks": []})
+        cur["qty"] += float(ln.qty or 0)
+        if cur["cbm_per_unit"] is None and ln.cbm_per_unit is not None:
+            cur["cbm_per_unit"] = float(ln.cbm_per_unit)
+        key = (pid, str(ln.invoice_id))
+        per_block[key] = per_block.get(key, 0.0) + float(ln.qty or 0)
+    if not holdings:
+        return None
+    for (pid, invoice_id), qty in per_block.items():
+        pi = by_invoice[invoice_id]
+        holdings[pid]["blocks"].append(
+            {"block_index": pi.block_index, "pi_number": pi.pi_number, "qty": qty}
+        )
+    for cur in holdings.values():
+        cur["blocks"].sort(key=lambda b: (b["block_index"] is None, b["block_index"], b["pi_number"]))
+
+    dated = [pi.invoice_date for pi in current if pi.invoice_date is not None]
+    head = sorted(
+        current,
+        key=lambda pi: (pi.invoice_date or date.min, pi.block_index or 0, str(pi.id)),
+    )[0]
+    return {
+        # What the label falls back to when the plan holds exactly one invoice.
+        "pi_number": head.pi_number,
+        "as_of": max(dated) if dated else None,
+        "block_count": len(current),
         "holdings": holdings,
     }
 
@@ -406,6 +536,11 @@ def _empty_holding() -> dict:
         "holding_source": "none",
         "holding_qty": None,
         "holding_as_of": None,
+        # How many invoice blocks the plan's statement was read from, and which of them named
+        # THIS product (S6). Both empty off a statement that is not a proforma: a stock list
+        # is one document and has no blocks to split.
+        "holding_blocks": 0,
+        "blocks": [],
         "qty_packed": 0.0,
         "qty_unfinished": 0.0,
         "cbm_per_unit": None,
@@ -420,6 +555,11 @@ def _holdings(stock: dict[str, dict], proforma: Optional[dict]) -> dict[str, dic
     proforma row, because a proforma states one quantity per line and inventing an unfinished
     half of it would be a number the supplier never wrote. `holding_qty` is the one the screen
     reads: packed on a stock-list row, the invoiced quantity on a proforma row.
+
+    `holding_blocks` and `blocks` (S6) are the proforma's own two answers to "where did this
+    number come from": how many invoice blocks the plan's statement is, and which of them
+    named this product, at what quantity. One uploaded sheet is five stacked invoices, so a
+    figure with no split behind it cannot be checked against the paper the supplier sent.
     """
     if stock:
         return {
@@ -427,6 +567,8 @@ def _holdings(stock: dict[str, dict], proforma: Optional[dict]) -> dict[str, dic
                 "holding_source": "stock_list",
                 "holding_qty": v["qty_packed"],
                 "holding_as_of": v["row_as_of"].isoformat() if v["row_as_of"] else None,
+                "holding_blocks": 0,
+                "blocks": [],
                 "qty_packed": v["qty_packed"],
                 "qty_unfinished": v["qty_unfinished"],
                 "cbm_per_unit": v["cbm_per_unit"],
@@ -436,11 +578,14 @@ def _holdings(stock: dict[str, dict], proforma: Optional[dict]) -> dict[str, dic
         }
     if proforma:
         as_of = proforma["as_of"].isoformat() if proforma["as_of"] else None
+        blocks = int(proforma.get("block_count") or 0)
         return {
             pid: {
                 "holding_source": "proforma",
                 "holding_qty": v["qty"],
                 "holding_as_of": as_of,
+                "holding_blocks": blocks,
+                "blocks": list(v.get("blocks") or []),
                 "qty_packed": 0.0,
                 "qty_unfinished": 0.0,
                 "cbm_per_unit": v["cbm_per_unit"],
@@ -1088,10 +1233,10 @@ def build_for_plan(db: Session, *, plan_id: str, include_lines: bool = False) ->
     quantities are applied to `suggested_qty` before the payload leaves, and the engine's own
     answer rides along as `engine_qty` so the formula tooltip and `Save (N)` still have it.
 
-    The supplier stock snapshot stays per supplier and is replaced whole (the S7 rule), so a
-    newer stock list changes an older open plan's numbers. That is the correct reading - the
-    plan asks for what the supplier holds NOW - and it is why a plan somebody is done with is
-    cancelled rather than left open.
+    The statement is the PLAN's own since S6: the rows an upload writes are stamped with the
+    plan they were uploaded into, so a newer stock list started from a NEW plan leaves this
+    one exactly as it was. That supersedes the p4 rule (AC-A17), under which a plan read
+    whatever the supplier had sent most recently and an older plan's figures moved under it.
 
     The totals are stamped back onto the row for the list's "To request" column: it is a cache
     of a derived figure, because re-deriving it per listed row is one full suggestion run per
@@ -1105,6 +1250,9 @@ def build_for_plan(db: Session, *, plan_id: str, include_lines: bool = False) ->
         supplier_id=str(plan.supplier_id),
         include_lines=include_lines,
         plan_horizon_date=plan.plan_horizon_date,
+        # S6: the plan reads its OWN statement, so `build` is handed the row rather than just
+        # the supplier it names.
+        plan=plan,
     )
     edits = plan.line_edits or {}
     total_qty = 0.0
@@ -1136,12 +1284,55 @@ def build_for_plan(db: Session, *, plan_id: str, include_lines: bool = False) ->
     return out
 
 
+def _statement(
+    db: Session, supplier_id: str, plan: Optional[Any]
+) -> tuple[Optional[Any], dict[str, dict], Optional[dict]]:
+    """What this build reads as "what they hold": `(as_of, stock rows, proforma)`.
+
+    THE UNIVERSE's statement leg (F1, AC-A1). One statement, never two, because the stock
+    list and the proforma answer the same question about the same warehouse.
+
+    A PLAN reads its OWN rows and nothing else (S6, AC-F4/AC-F6): the stock list it was
+    started from for `stock_list`, the invoices its upload created for `proforma`, and NOTHING
+    for `none` - a plan started with no file has no statement, which is the whole ROYAL MIRROR
+    defect (79 unknown codes and a full set of holdings on a plan whose subtitle read "No
+    file", off a snapshot another plan had uploaded).
+
+    The supplier-wide reads survive for exactly two callers and are marked for deletion with
+    the second: a build with no plan at all (a test, and the send preview), and a LEGACY plan
+    that predates migration 454 and therefore has nothing stamped. Blanking every plan that
+    was open on the day 454 landed would be a worse answer than the drift they already carry;
+    the branch retires once every one of them is cancelled or sent.
+    """
+    if plan is None:
+        as_of, stock = _stock_list(db, supplier_id)
+        return as_of, stock, (_standin_proforma(db, supplier_id) if not stock else None)
+
+    kind = plan.document_kind
+    if kind == "stock_list":
+        as_of, stock = _plan_stock_list(db, plan)
+        if stock:
+            return as_of, stock, None
+    elif kind == "proforma":
+        proforma = _plan_proforma(db, plan)
+        if proforma:
+            return None, {}, proforma
+    else:
+        # "No file" is a real answer, not a missing one: this plan reads no statement.
+        return None, {}, None
+
+    # Legacy: nothing of this plan's own is on file, so it keeps today's supplier-wide rule.
+    as_of, stock = _stock_list(db, supplier_id)
+    return as_of, stock, (_standin_proforma(db, supplier_id) if not stock else None)
+
+
 def build(
     db: Session,
     *,
     supplier_id: str,
     include_lines: bool = False,
     plan_horizon_date: Optional[date] = None,
+    plan: Optional[Any] = None,
 ) -> dict:
     """What to ask this supplier for, ranked. Pure read - persists nothing.
 
@@ -1172,14 +1363,8 @@ def build(
     and the horizon does not disturb it: every side applies it identically.
     """
     _supplier(db, supplier_id)
-    as_of, stock = _stock_list(db, supplier_id)
+    as_of, stock, proforma = _statement(db, supplier_id, plan)
     stock_list_as_of = as_of.isoformat() if as_of else None
-
-    # THE UNIVERSE (F1, AC-A1): what we buy from them, what customers are owed on it, and
-    # whatever their own latest statement names. The statement is the stock list when there
-    # is one and the newest un-converted proforma when there is not (Q2, AC-A3) - never both,
-    # because they answer the same question about the same warehouse.
-    proforma = _standin_proforma(db, supplier_id) if not stock else None
     holdings = _holdings(stock, proforma)
     holding_source = "stock_list" if stock else "proforma" if proforma else "none"
 

@@ -133,39 +133,12 @@ export async function listUnmatchedSupplierCodes(
   const res = await apiFetch(
     `/api/v1/scm/supplier-code-aliases/unmatched?plan_id=${encodeURIComponent(planId)}`,
   );
-  // PHASE 1 MOCK (S6) - DELETE THIS BRANCH WITH ITS COMMENT in Phase 2. The route still
-  // takes `supplier_id` until the plan-scoped read is built, so a `plan_id` call is refused;
-  // the queue falls back to two invented rows so the tab's populated state can be tuned and
-  // verified in a browser. Everything below the fallback is the real contract.
-  if (!res.ok) return PHASE1_UNMATCHED_MOCK;
   const body = await readJson<{ data: UnmatchedSupplierCode[] }>(
     res,
     'Failed to load the codes that match nothing',
   );
   return body.data ?? [];
 }
-
-/** PHASE 1 MOCK (S6) - DELETE WITH THE BRANCH ABOVE in Phase 2. */
-const PHASE1_UNMATCHED_MOCK: UnmatchedSupplierCode[] = [
-  {
-    item_code: 'SRTWC8354-SH-250',
-    product_name: '连体马桶',
-    brand: 'SORENTO',
-    spec: '纸箱包装',
-    qty_packed: 100,
-    qty_unfinished: 0,
-    as_of: '2026-07-31',
-  },
-  {
-    item_code: '7405盖板',
-    product_name: '盖板',
-    brand: null,
-    spec: '纸箱包装',
-    qty_packed: 100,
-    qty_unfinished: 0,
-    as_of: '2026-07-31',
-  },
-];
 
 /** Exactly one of the two, which is what the backend refuses to be given both or neither. */
 export type SupplierCodeTarget = { product_id: string } | { product_set_id: string };

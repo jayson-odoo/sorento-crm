@@ -777,50 +777,13 @@ export interface ContainerRequestBuild {
   plan_horizon_date: string | null;
 }
 
-/**
- * PHASE 1 MOCK (S6) - DELETE WITH THIS COMMENT in Phase 2.
- *
- * `holding_blocks`, `blocks` and `plan.statement_as_of` are the fields S6 adds to this
- * response; the backend does not serve them until Phase 2. Until it does, a proforma row's
- * figure is split over two INVENTED blocks so the cell, its drill and the codes-tab header
- * can be tuned and verified in a browser without a backend. Nothing here reaches a write,
- * and every value is discarded the moment the real fields arrive.
- */
-function mockStatementFields(build: ContainerRequestBuild): ContainerRequestBuild {
-  const rows = build.rows.map((row) => {
-    if (row.blocks !== undefined) return row;
-    if (row.holding_source !== 'proforma' || row.holding_qty === null) {
-      return { ...row, holding_blocks: 0, blocks: [] };
-    }
-    const pi = build.sources.proforma_pi_number ?? 'PI';
-    const first = Math.round(row.holding_qty * 0.6);
-    return {
-      ...row,
-      holding_blocks: 2,
-      blocks: [
-        { block_index: 4, pi_number: `${pi}-4`, qty: first },
-        { block_index: 5, pi_number: `${pi}-5`, qty: row.holding_qty - first },
-      ],
-    };
-  });
-  const plan =
-    build.plan.statement_as_of === undefined
-      ? { ...build.plan, statement_as_of: build.stock_list_as_of ?? build.sources.proforma_as_of }
-      : build.plan;
-  return { ...build, rows, plan };
-}
-
 export async function buildContainerRequest(planId: string): Promise<ContainerRequestBuild> {
   const res = await apiFetch('/api/v1/scm/container-requests/build?include_lines=true', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ plan_id: planId }),
   });
-  const build = await readJson<ContainerRequestBuild>(
-    res,
-    'Failed to work out what to ask this supplier for',
-  );
-  return mockStatementFields(build);
+  return readJson<ContainerRequestBuild>(res, 'Failed to work out what to ask this supplier for');
 }
 
 /**

@@ -277,9 +277,14 @@ function dialogContext(dialog: OpenPlanRowDialog, horizon: string | null): strin
   if (kind === 'spo') return `${fmtInt(row.incoming_spo)} arriving at site pools`;
   if (kind === 'incoming_pl') return `${fmtInt(row.incoming_pl)} on packing lists`;
   if (kind === 'blocks') {
-    const blocks = row.holding_blocks ?? 0;
-    return `${fmtInt(row.holding_qty ?? 0)} over ${fmtInt(blocks)} ${
-      blocks === 1 ? 'invoice block' : 'invoice blocks'
+    // The blocks that named THIS product, not the statement's own count: the cell beside it
+    // already says how many blocks the file is, and a title claiming five while the table
+    // lists two would read as a missing row.
+    const named = row.blocks?.length ?? 0;
+    // Short on purpose: the shell prints this beside the title, and at 375px a longer
+    // qualifier wraps under the close button.
+    return `${fmtInt(row.holding_qty ?? 0)} over ${fmtInt(named)} ${
+      named === 1 ? 'block' : 'blocks'
     }`;
   }
   return `${fmtInt(row.outstanding_po)} still to come`;

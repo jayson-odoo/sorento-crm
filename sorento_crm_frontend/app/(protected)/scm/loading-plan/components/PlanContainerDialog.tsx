@@ -329,11 +329,15 @@ export function PlanContainerDialog({
           ) : null}
 
           {stockSummary ? (
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            // No "Replaces" tile here since S6: this file is applied INTO a plan that does
+            // not exist yet, so it replaces nothing. The count the preview returns is the
+            // supplier's standalone snapshot, and printing it beside a new plan would
+            // promise a destruction that is not going to happen. The standalone stock-list
+            // page still shows it, where it is still true.
+            <div className="grid grid-cols-3 gap-2">
               <CountTile label="Items" value={stockSummary.rows} />
               <CountTile label="Packed" value={stockSummary.qty_packed} />
               <CountTile label="Unfinished" value={stockSummary.qty_unfinished} />
-              <CountTile label="Replaces" value={(preview as StockListPreview).rows_held_now} />
             </div>
           ) : null}
 

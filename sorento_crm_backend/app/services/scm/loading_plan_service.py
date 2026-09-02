@@ -587,6 +587,74 @@ def _latest_notice_channels(db: Session, plan_ids: list[str]) -> dict[str, dict]
     return supplier_notice_service.latest_notice_for_plans(db, plan_ids)
 
 
+def _plan_statements(db: Session, plan_ids: list[str]) -> dict[str, dict]:
+    """What each plan's OWN statement is: `{plan_id: {"kind", "as_of", "pi_number",
+    "source_ref", "blocks"}}` (S6, AC-F7/AC-G1).
+
+    Two queries for a whole page rather than one per row, the same reason
+    `_latest_notice_channels` batches: the list prints the document label in a column.
+
+    A plan with nothing stamped is ABSENT from the result rather than present and empty -
+    "this plan predates migration 454" and "this plan's upload wrote nothing" have to reach
+    the caller as different answers, because the first one falls back to the supplier-wide
+    label and the second must not.
+    """
+    if not plan_ids:
+        return {}
+    out: dict[str, dict] = {}
+
+    for row in db.execute(
+        text(
+            """
+            SELECT loading_plan_id::text AS plan_id, max(as_of) AS as_of
+              FROM scm.supplier_inventory
+             WHERE loading_plan_id = ANY(CAST(:ids AS uuid[]))
+             GROUP BY loading_plan_id
+            """
+        ),
+        {"ids": plan_ids},
+    ).mappings():
+        out[row["plan_id"]] = {"kind": "stock_list", "as_of": row["as_of"]}
+
+    invoices = db.execute(
+        text(
+            """
+            SELECT loading_plan_id::text AS plan_id, id::text AS id,
+                   revision_of_id::text AS revision_of_id, pi_number, source_ref,
+                   invoice_date
+              FROM scm.proforma_invoice
+             WHERE loading_plan_id = ANY(CAST(:ids AS uuid[]))
+            """
+        ),
+        {"ids": plan_ids},
+    ).mappings().all()
+    by_plan: dict[str, list] = {}
+    for row in invoices:
+        by_plan.setdefault(row["plan_id"], []).append(row)
+    for plan_id, rows in by_plan.items():
+        # "Current" is judged inside the PLAN's own set: an invoice a LATER plan revised is
+        # still what this plan was started from, and it goes on naming it (AC-F5).
+        superseded = {r["revision_of_id"] for r in rows if r["revision_of_id"]}
+        current = [r for r in rows if r["id"] not in superseded] or rows
+        dates = [r["invoice_date"] for r in current if r["invoice_date"]]
+        out[plan_id] = {
+            "kind": "proforma",
+            "as_of": max(dates) if dates else None,
+            "pi_number": current[0]["pi_number"] if len(current) == 1 else None,
+            "source_ref": next((r["source_ref"] for r in current if r["source_ref"]), None),
+            "blocks": len(current),
+        }
+    return out
+
+
+def _file_stem(source_ref: Optional[str]) -> Optional[str]:
+    """The file's name without its extension - what a person calls the sheet they sent."""
+    if not source_ref:
+        return None
+    stem = source_ref.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+    return stem.rsplit(".", 1)[0] if "." in stem else stem
+
+
 def _proforma_numbers(db: Session, supplier_ids: list[str]) -> dict[str, str]:
     """The newest un-converted proforma per supplier, for the Document label.
 
@@ -614,13 +682,31 @@ def _proforma_numbers(db: Session, supplier_ids: list[str]) -> dict[str, str]:
     return {r["supplier_id"]: r["pi_number"] for r in rows}
 
 
-def _document_label(plan: LoadingPlan, pi_number: Optional[str]) -> str:
-    """Ready to print. "No file" is a real answer, not a missing one."""
+def _document_label(
+    plan: LoadingPlan, pi_number: Optional[str], statement: Optional[dict] = None
+) -> str:
+    """Ready to print, off the plan's OWN rows. "No file" is a real answer, not a missing one.
+
+    The label used to be re-looked-up from the SUPPLIER at read time - their newest
+    un-converted proforma - so every plan of one supplier's was named after the same
+    document, and a plan started with no file at all still borrowed one. Since S6 (AC-F7) the
+    rows an upload writes carry the plan they were uploaded into, and this reads those.
+
+    `statement` absent means the plan has nothing stamped, which is every plan open when
+    migration 454 landed: those keep the old supplier-wide reading rather than going blank.
+    """
     if plan.document_kind == "stock_list":
-        when = plan.inventory_as_of.strftime("%d/%m/%Y") if plan.inventory_as_of else None
-        return f"Stock list {when}" if when else "Stock list"
+        as_of = (statement or {}).get("as_of") or plan.inventory_as_of
+        return f"Stock list {as_of.strftime('%d/%m/%Y')}" if as_of else "Stock list"
     if plan.document_kind == "proforma":
-        return f"Proforma invoice {pi_number}" if pi_number else "Proforma invoice"
+        blocks = int((statement or {}).get("blocks") or 0)
+        if blocks > 1:
+            # A five-block sheet has no single invoice number to print, so the FILE names it.
+            stem = _file_stem((statement or {}).get("source_ref"))
+            named = stem or "several blocks"
+            return f"Proforma invoice {named} · {blocks} blocks"
+        number = (statement or {}).get("pi_number") or pi_number
+        return f"Proforma invoice {number}" if number else "Proforma invoice"
     return "No file"
 
 
@@ -637,6 +723,7 @@ def record_dict(
     supplier_email: Optional[str] = None,
     notice: Optional[dict] = None,
     pi_number: Any = _UNSET,
+    statement: Any = _UNSET,
 ) -> dict[str, Any]:
     """One plan, in the shape the list and the record page both read.
 
@@ -662,6 +749,13 @@ def record_dict(
             if plan.document_kind == "proforma"
             else None
         )
+    if statement is _UNSET:
+        statement = (
+            _plan_statements(db, [str(plan.id)]).get(str(plan.id))
+            if plan.document_kind in ("stock_list", "proforma")
+            else None
+        )
+    as_of = (statement or {}).get("as_of")
     return {
         "id": str(plan.id),
         "supplier_id": str(plan.supplier_id),
@@ -673,7 +767,11 @@ def record_dict(
             plan.plan_horizon_date.isoformat() if plan.plan_horizon_date else None
         ),
         "document_kind": plan.document_kind,
-        "document_label": _document_label(plan, pi_number),
+        "document_label": _document_label(plan, pi_number, statement),
+        # The DATE of the statement this plan is bound to (AC-G1) - the codes tab's header
+        # names it. Null on a "No file" plan, which reads no statement at all, and on a
+        # legacy plan that has nothing of its own stamped.
+        "statement_as_of": as_of.isoformat() if as_of else None,
         "source_attachment_id": (
             str(plan.source_attachment_id) if plan.source_attachment_id else None
         ),
@@ -740,6 +838,10 @@ def list_records(
     numbers = _proforma_numbers(
         db, sorted({str(p.supplier_id) for p in plans if p.document_kind == "proforma"})
     )
+    # One pair of queries for the page, not one per row: the Document column reads this.
+    statements = _plan_statements(
+        db, [str(p.id) for p in plans if p.document_kind in ("stock_list", "proforma")]
+    )
     return {
         "data": [
             record_dict(
@@ -749,6 +851,7 @@ def list_records(
                 supplier_email=email,
                 notice=notices.get(str(p.id)) or {},
                 pi_number=numbers.get(str(p.supplier_id)),
+                statement=statements.get(str(p.id)),
             )
             for p, name, email in rows
         ],

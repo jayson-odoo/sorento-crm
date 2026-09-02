@@ -832,6 +832,20 @@ def test_a_match_with_no_product_is_refused_by_the_database():
             db.flush()
 
 
+def _plan_for(db, w):
+    """A stock-list plan for this supplier, so an upload has somewhere to belong (S6)."""
+    from app.services.scm import loading_plan_service
+
+    return loading_plan_service.create_record(
+        db,
+        supplier_id=str(w.supplier.id),
+        plan_horizon_date=None,
+        document_kind="stock_list",
+        source_attachment_id=None,
+        actor="Ms Tee",
+    )
+
+
 def test_the_dismiss_route_records_it_and_forget_puts_it_back(scm_app):
     from fastapi.testclient import TestClient
 
@@ -841,9 +855,12 @@ def test_the_dismiss_route_records_it_and_forget_puts_it_back(scm_app):
     as_company_user(app, db, gcu, gcuk)
     w = World(db)
     code = w.supplier_code("NOTHING-LIKE-THIS")
+    # Uploaded INTO a plan (S6): the queue route reads a plan's own rows, so a file applied
+    # supplier-wide has no queue to appear on.
+    plan = _plan_for(db, w)
     stock_svc.apply(
         db, _stock_workbook([[code, "mystery", 5, 0, 0.2, None]]),
-        supplier_id=str(w.supplier.id), actor="Ms Tee",
+        supplier_id=str(w.supplier.id), actor="Ms Tee", loading_plan_id=str(plan.id),
     )
     db.commit()
     client = TestClient(app)
@@ -861,7 +878,7 @@ def test_the_dismiss_route_records_it_and_forget_puts_it_back(scm_app):
 
     assert client.get(
         "/api/v1/scm/supplier-code-aliases/unmatched",
-        params={"supplier_id": str(w.supplier.id)},
+        params={"plan_id": str(plan.id)},
     ).json()["data"] == []
     listed = client.get(
         "/api/v1/scm/supplier-code-aliases", params={"supplier_id": str(w.supplier.id)}
@@ -874,7 +891,7 @@ def test_the_dismiss_route_records_it_and_forget_puts_it_back(scm_app):
         r["item_code"]
         for r in client.get(
             "/api/v1/scm/supplier-code-aliases/unmatched",
-            params={"supplier_id": str(w.supplier.id)},
+            params={"plan_id": str(plan.id)},
         ).json()["data"]
     ] == [code]
 
@@ -1066,17 +1083,20 @@ def test_the_rematch_route_reports_what_it_bound(scm_app):
     as_company_user(app, db, gcu, gcuk)
     w = World(db)
     code = w.supplier_code("SRTWC8357-RL-300")
+    plan = _plan_for(db, w)
     stock_svc.apply(
         db, _stock_workbook([[code, "toilet", 10, 0, 0.17, None]]),
-        supplier_id=str(w.supplier.id), actor="Ms Tee",
+        supplier_id=str(w.supplier.id), actor="Ms Tee", loading_plan_id=str(plan.id),
     )
     w.product("SRTWC8357-300-RL")
     db.commit()
     client = TestClient(app)
 
+    # The pass is scoped to the PLAN since S6 (AC-C7) - the same scope as the queue beside
+    # the button, so the counts in the toast describe rows this screen can see.
     r = client.post(
         "/api/v1/scm/supplier-code-aliases/rematch",
-        json={"supplier_id": str(w.supplier.id)},
+        json={"plan_id": str(plan.id)},
     )
 
     assert r.status_code == 200, r.text
@@ -1089,7 +1109,7 @@ def test_the_rematch_route_reports_what_it_bound(scm_app):
     }
     assert client.get(
         "/api/v1/scm/supplier-code-aliases/unmatched",
-        params={"supplier_id": str(w.supplier.id)},
+        params={"plan_id": str(plan.id)},
     ).json()["data"] == []
 
 
@@ -1105,7 +1125,7 @@ def test_rematching_without_the_write_permission_is_403(scm_app):
 
     r = TestClient(app).post(
         "/api/v1/scm/supplier-code-aliases/rematch",
-        json={"supplier_id": str(w.supplier.id)},
+        json={"plan_id": str(_plan_for(db, w).id)},
     )
 
     assert r.status_code == 403, r.text

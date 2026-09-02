@@ -255,7 +255,32 @@ def delete(db: Session, alias_id: str, *, actor: Optional[str] = None) -> dict:
     return {"deleted": 1, **rebound}
 
 
-def rematch(db: Session, *, supplier_id: str, actor: Optional[str] = None) -> dict:
+def rematch_for_plan(db: Session, plan_id: str, *, actor: Optional[str] = None) -> dict:
+    """Run the ladder again over THIS plan's still-unbound rows (S6, AC-C7).
+
+    The same pass, one scope narrower: the queue beside the button is the plan's own, so a
+    run that moved another plan's rows would report counts nobody on this screen can see. The
+    ALIAS it writes is still the supplier's and is consulted on every later upload - the
+    memory is the supplier's, only the rebind is the plan's.
+    """
+    plan = _plan_or_422(db, plan_id)
+    if plan.document_kind == "none":
+        return {"inventory_bound": 0, "invoice_lines_bound": 0, "still_unmatched": 0}
+    return rematch(
+        db,
+        supplier_id=str(plan.supplier_id),
+        actor=actor,
+        loading_plan_id=str(plan.id),
+    )
+
+
+def rematch(
+    db: Session,
+    *,
+    supplier_id: str,
+    actor: Optional[str] = None,
+    loading_plan_id: Optional[str] = None,
+) -> dict:
     """Run the ladder again over everything of this supplier's that is still unbound (R18).
 
     The catalogue moves after the file lands. A product added the day after the stock list
@@ -274,16 +299,15 @@ def rematch(db: Session, *, supplier_id: str, actor: Optional[str] = None) -> di
     if not _is_uuid(supplier_id):
         raise AppException(422, "That supplier does not exist.", detail="supplier_id")
 
-    stock = (
-        db.query(SupplierInventory)
-        .filter(
-            SupplierInventory.supplier_id == str(supplier_id),
-            SupplierInventory.product_id.is_(None),
-            SupplierInventory.product_set_id.is_(None),
-        )
-        .all()
+    stock_q = db.query(SupplierInventory).filter(
+        SupplierInventory.supplier_id == str(supplier_id),
+        SupplierInventory.product_id.is_(None),
+        SupplierInventory.product_set_id.is_(None),
     )
-    lines = (
+    if loading_plan_id:
+        stock_q = stock_q.filter(SupplierInventory.loading_plan_id == loading_plan_id)
+    stock = stock_q.all()
+    lines_q = (
         db.query(ProformaInvoiceLine)
         .join(ProformaInvoice, ProformaInvoice.id == ProformaInvoiceLine.invoice_id)
         .filter(
@@ -301,8 +325,10 @@ def rematch(db: Session, *, supplier_id: str, actor: Optional[str] = None) -> di
             ProformaInvoiceLine.product_id.is_(None),
             ProformaInvoiceLine.product_set_id.is_(None),
         )
-        .all()
     )
+    if loading_plan_id:
+        lines_q = lines_q.filter(ProformaInvoice.loading_plan_id == loading_plan_id)
+    lines = lines_q.all()
 
     codes = [
         code
@@ -316,7 +342,7 @@ def rematch(db: Session, *, supplier_id: str, actor: Optional[str] = None) -> di
         return {
             "inventory_bound": 0,
             "invoice_lines_bound": 0,
-            "still_unmatched": len(unmatched_for_supplier(db, supplier_id)),
+            "still_unmatched": _still_unmatched(db, supplier_id, loading_plan_id),
         }
 
     found = resolve(db, supplier_id, codes, remember=True, actor=actor)
@@ -347,10 +373,20 @@ def rematch(db: Session, *, supplier_id: str, actor: Optional[str] = None) -> di
     return {
         "inventory_bound": bound_stock,
         "invoice_lines_bound": bound_lines,
-        # The queue as the operator will see it after this - stock rows still unbound and not
+        # The queue as the operator will see it after this - the rows still unbound and not
         # dismissed - rather than a count of codes, because the queue is what they read.
-        "still_unmatched": len(unmatched_for_supplier(db, supplier_id)),
+        "still_unmatched": _still_unmatched(db, supplier_id, loading_plan_id),
     }
+
+
+def _still_unmatched(
+    db: Session, supplier_id: str, loading_plan_id: Optional[str]
+) -> int:
+    """What is left to answer, on the same scope the pass just ran on."""
+    if not loading_plan_id:
+        return len(unmatched_for_supplier(db, supplier_id))
+    rows = _unmatched_rows(db, supplier_id, loading_plan_id=loading_plan_id)
+    return len(rows) if rows is not None else len(unmatched_for_supplier(db, supplier_id))
 
 
 def list_for_supplier(db: Session, supplier_id: str) -> list[dict]:
@@ -390,6 +426,43 @@ def list_for_supplier(db: Session, supplier_id: str) -> list[dict]:
     ]
 
 
+def _plan_or_422(db: Session, plan_id: str):
+    """The loading plan a read is scoped to. A bad id is a form mistake, not a 500."""
+    from app.models.scm import LoadingPlan
+
+    if not _is_uuid(plan_id):
+        raise AppException(422, "That loading plan does not exist.", detail="plan_id")
+    plan = db.query(LoadingPlan).filter(LoadingPlan.id == str(plan_id)).first()
+    if plan is None:
+        raise AppException(422, "That loading plan does not exist.", detail="plan_id")
+    return plan
+
+
+def unmatched_for_plan(db: Session, plan_id: str) -> list[dict]:
+    """The unknown codes on THIS plan's own statement (S6, AC-C7).
+
+    The queue used to be the supplier's, and a ROYAL MIRROR plan started with NO file listed
+    79 codes off a stock list somebody had uploaded from a different plan - beside a subtitle
+    reading "No file". A plan reads what it was started from:
+
+    * `stock_list` - the `supplier_inventory` rows stamped with it;
+    * `proforma` - the `proforma_invoice_line` rows of the invoices stamped with it, which
+      the supplier-wide read never looked at, so a proforma plan's queue was always empty;
+    * `none` - nothing at all. That is the whole point of the fix.
+
+    A plan that predates migration 454 has nothing stamped and falls back to the supplier-wide
+    queue, exactly as the build does: blanking every plan that was open on the day would be a
+    worse answer than the drift they already carry. A "No file" plan never falls back - it has
+    no statement to be legacy about.
+    """
+    plan = _plan_or_422(db, plan_id)
+    if plan.document_kind == "none":
+        return []
+    supplier_id = str(plan.supplier_id)
+    rows = _unmatched_rows(db, supplier_id, loading_plan_id=str(plan.id))
+    return rows if rows is not None else unmatched_for_supplier(db, supplier_id)
+
+
 def unmatched_for_supplier(db: Session, supplier_id: str) -> list[dict]:
     """The codes this supplier sent that bind to nothing we hold.
 
@@ -425,18 +498,97 @@ def unmatched_for_supplier(db: Session, supplier_id: str) -> list[dict]:
         .order_by(SupplierInventory.item_code)
         .all()
     )
-    return [
-        {
-            "item_code": row.item_code,
-            "product_name": row.product_name,
-            "brand": row.brand,
-            "spec": row.spec,
-            "qty_packed": float(row.qty_packed or 0),
-            "qty_unfinished": float(row.qty_unfinished or 0),
-            "as_of": row.as_of.isoformat() if row.as_of else None,
-        }
-        for row in rows
-    ]
+    return [_stock_queue_row(row) for row in rows]
+
+
+def _stock_queue_row(row: SupplierInventory) -> dict:
+    """One queue line off a stock row. The supplier's own words travel with the code, because
+    that is what the person matching it recognises."""
+    return {
+        "item_code": row.item_code,
+        "product_name": row.product_name,
+        "brand": row.brand,
+        "spec": row.spec,
+        "qty_packed": float(row.qty_packed or 0),
+        "qty_unfinished": float(row.qty_unfinished or 0),
+        "as_of": row.as_of.isoformat() if row.as_of else None,
+    }
+
+
+def _unmatched_rows(
+    db: Session, supplier_id: str, *, loading_plan_id: str
+) -> Optional[list[dict]]:
+    """The queue for ONE plan's own rows, or `None` when it has none of its own (legacy).
+
+    `None` rather than `[]` on purpose: "this plan has nothing stamped" and "this plan's
+    codes are all answered" are different states, and only the first one falls back.
+    """
+    dismissed = (
+        db.query(func.upper(SupplierProductCodeAlias.supplier_code))
+        .filter(
+            SupplierProductCodeAlias.supplier_id == str(supplier_id),
+            SupplierProductCodeAlias.source == _DISMISSED,
+        )
+        .scalar_subquery()
+    )
+
+    stock_scope = db.query(SupplierInventory).filter(
+        SupplierInventory.loading_plan_id == loading_plan_id
+    )
+    if stock_scope.count():
+        rows = (
+            stock_scope.filter(
+                SupplierInventory.product_id.is_(None),
+                SupplierInventory.product_set_id.is_(None),
+                func.upper(SupplierInventory.item_code).notin_(dismissed),
+            )
+            .order_by(SupplierInventory.item_code)
+            .all()
+        )
+        return [_stock_queue_row(row) for row in rows]
+
+    invoice_scope = db.query(ProformaInvoice).filter(
+        ProformaInvoice.loading_plan_id == loading_plan_id
+    )
+    if not invoice_scope.count():
+        return None
+    lines = (
+        db.query(ProformaInvoiceLine, ProformaInvoice)
+        .join(ProformaInvoice, ProformaInvoice.id == ProformaInvoiceLine.invoice_id)
+        .filter(
+            ProformaInvoice.loading_plan_id == loading_plan_id,
+            ProformaInvoiceLine.product_id.is_(None),
+            ProformaInvoiceLine.product_set_id.is_(None),
+            func.upper(ProformaInvoiceLine.item_code).notin_(dismissed),
+        )
+        .order_by(ProformaInvoiceLine.item_code)
+        .all()
+    )
+    # One line per CODE, not per block: the pre-loading sheet names one model in two of its
+    # five blocks, and asking the same question twice is what makes a queue stop being read.
+    merged: dict[str, dict] = {}
+    for line, invoice in lines:
+        code = (line.item_code or "").strip()
+        if not code:
+            continue
+        cur = merged.setdefault(
+            code,
+            {
+                "item_code": code,
+                "product_name": line.description,
+                "brand": None,
+                "spec": None,
+                "qty_packed": 0.0,
+                # A proforma states ONE quantity per line: there is no unfinished half of it,
+                # and inventing one would be a number the supplier never wrote.
+                "qty_unfinished": 0.0,
+                "as_of": invoice.invoice_date.isoformat() if invoice.invoice_date else None,
+            },
+        )
+        cur["qty_packed"] += float(line.qty or 0)
+        if cur["product_name"] is None:
+            cur["product_name"] = line.description
+    return [merged[code] for code in sorted(merged)]
 
 
 def _rebind(
