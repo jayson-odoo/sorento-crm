@@ -396,12 +396,9 @@ export function SupplierCodesTab({
     [forget],
   );
 
-  // Newest ruling first. The backend orders by `supplier_code` today (Phase 2 to switch it
-  // to `created_at desc` per AC-C5); sorted here so the visible order is right regardless.
-  const remembered = React.useMemo(
-    () => [...aliases].sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? '')),
-    [aliases],
-  );
+  // Newest ruling first, straight off the response: the backend orders by `created_at desc`
+  // (AC-C5), so there is nothing left for this screen to re-sort.
+  const remembered = aliases;
 
   const needsTable = useReactTable({
     columns: needsDecisionColumns,

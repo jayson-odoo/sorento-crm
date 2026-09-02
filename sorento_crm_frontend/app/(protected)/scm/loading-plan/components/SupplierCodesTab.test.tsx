@@ -392,15 +392,18 @@ describe('SupplierCodesTab - Remembered', () => {
     expect(screen.getAllByText('Ms Tee').length).toBeGreaterThanOrEqual(1);
   });
 
-  it('orders newest ruling first regardless of what the backend returns', () => {
+  it('renders in the order the response returns it - ordering is the backend\'s job now (AC-C5)', () => {
+    // `created_at desc` is the backend's ordering rule (AC-C5), not this screen's; the array
+    // is handed in DESCENDING `created_at` order but starting with the OLDER row, so a
+    // lingering client-side re-sort by `created_at` would flip it and fail this assertion.
     state.aliases = [
-      alias({ id: 'a-old', supplier_code: 'OLD-CODE', created_at: '2026-01-01T00:00:00' }),
-      alias({ id: 'a-new', supplier_code: 'NEW-CODE', created_at: '2026-08-30T00:00:00' }),
+      alias({ id: 'a-older', supplier_code: 'OLDER-CODE', created_at: '2026-01-01T00:00:00' }),
+      alias({ id: 'a-newer', supplier_code: 'NEWER-CODE', created_at: '2026-08-30T00:00:00' }),
     ];
     const { container } = renderTab();
 
     const text = container.textContent ?? '';
-    expect(text.indexOf('NEW-CODE')).toBeLessThan(text.indexOf('OLD-CODE'));
+    expect(text.indexOf('OLDER-CODE')).toBeLessThan(text.indexOf('NEWER-CODE'));
   });
 
   it('forgets a remembered code through the deferred row action', () => {

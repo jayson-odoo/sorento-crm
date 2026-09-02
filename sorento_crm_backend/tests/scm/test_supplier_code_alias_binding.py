@@ -13,6 +13,7 @@ because the loading plan and the PI convert are read off those rows.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timedelta
 from io import BytesIO
 
 import pytest
@@ -360,6 +361,104 @@ def test_the_supplier_s_aliases_are_listed_with_the_names_a_person_reads():
         assert listed[0]["product_code"] == product.product_code
         assert listed[0]["source"] == "manual"
         assert str(product.id) not in str(listed[0]["product_code"])
+
+
+def test_the_alias_list_is_newest_first_dismissed_included_and_scoped_to_one_supplier():
+    """AC-C5: every alias for the supplier - a dismissal included - ordered `created_at
+    desc`, and a second supplier's ruling never shows up on this one's list."""
+    from app.services.scm import supplier_code_alias_service as alias_svc
+
+    with pg_session() as db:
+        w = World(db)
+        other = World(db)
+        product = w.product("SRTWC8357-RL")
+        now = datetime(2026, 8, 27, 12, 0, 0)
+
+        oldest = SupplierProductCodeAlias(
+            id=_u(), supplier_id=w.supplier.id, supplier_code=w.supplier_code("OLDEST"),
+            product_id=product.id, source="manual", matched_by="manual",
+            created_by="Ms Tee", created_at=now - timedelta(days=2),
+        )
+        middle_dismissed = SupplierProductCodeAlias(
+            id=_u(), supplier_id=w.supplier.id,
+            supplier_code=w.supplier_code("DISMISSED-ONE"), product_id=None,
+            source="dismissed", matched_by="dismissed", created_by="Mr Lim",
+            created_at=now - timedelta(days=1),
+        )
+        newest = SupplierProductCodeAlias(
+            id=_u(), supplier_id=w.supplier.id, supplier_code=w.supplier_code("NEWEST"),
+            product_id=product.id, source="auto", matched_by="token_set",
+            created_by=None, created_at=now,
+        )
+        elsewhere = SupplierProductCodeAlias(
+            id=_u(), supplier_id=other.supplier.id,
+            supplier_code=other.supplier_code("NEWEST"),
+            product_id=other.product("SOMETHING-ELSE").id,
+            source="manual", matched_by="manual", created_by="Ms Tee", created_at=now,
+        )
+        db.add_all([oldest, middle_dismissed, newest, elsewhere])
+        db.flush()
+
+        listed = alias_svc.list_for_supplier(db, str(w.supplier.id))
+
+        assert [row["supplier_code"] for row in listed] == [
+            newest.supplier_code, middle_dismissed.supplier_code, oldest.supplier_code,
+        ]
+        dismissed_row = listed[1]
+        assert dismissed_row["source"] == "dismissed"
+        assert dismissed_row["product_code"] is None
+        assert dismissed_row["set_code"] is None
+        assert dismissed_row["created_by"] == "Mr Lim"
+        # A name, never a UUID (`_actor()` writes it that way; asserted here too, since this
+        # is the surface the screen reads).
+        for row in listed:
+            if row["created_by"]:
+                with pytest.raises(ValueError):
+                    uuid.UUID(row["created_by"])
+
+
+def test_the_alias_route_lists_newest_first_with_every_ac_c5_field(scm_app):
+    """The same rule through the route. No `response_model` guards this endpoint, but the
+    flat shape is asserted at the boundary anyway - it is the whole contract (R16)."""
+    from fastapi.testclient import TestClient
+
+    from tests.scm.test_outstanding_import_routes import as_company_user
+
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+    product = w.product("SRTWC8357-RL")
+    now = datetime(2026, 8, 27, 12, 0, 0)
+    # Alphabetically first, chronologically OLDER - so a route still ordering by
+    # `supplier_code` (the pre-S3 behaviour) would list this FIRST, the wrong way round.
+    old = SupplierProductCodeAlias(
+        id=_u(), supplier_id=w.supplier.id, supplier_code=w.supplier_code("AAA-OLDER"),
+        product_id=product.id, source="manual", matched_by="manual",
+        created_by="Ms Tee", created_at=now - timedelta(days=1),
+    )
+    new = SupplierProductCodeAlias(
+        id=_u(), supplier_id=w.supplier.id, supplier_code=w.supplier_code("ZZZ-NEWER"),
+        product_id=None, source="dismissed", matched_by="dismissed",
+        created_by="Mr Lim", created_at=now,
+    )
+    db.add_all([old, new])
+    db.commit()
+    client = TestClient(app)
+
+    resp = client.get(
+        "/api/v1/scm/supplier-code-aliases", params={"supplier_id": str(w.supplier.id)}
+    )
+
+    assert resp.status_code == 200, resp.text
+    rows = resp.json()["data"]
+    assert [r["supplier_code"] for r in rows] == [new.supplier_code, old.supplier_code]
+    for field in (
+        "id", "supplier_code", "product_code", "product_name", "set_code", "set_name",
+        "source", "matched_by", "created_by", "created_at",
+    ):
+        assert field in rows[0]
+    assert rows[0]["created_by"] == "Mr Lim"
+    assert rows[1]["created_by"] == "Ms Tee"
 
 
 # --------------------------------------------------------------------------------- #

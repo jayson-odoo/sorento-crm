@@ -366,7 +366,11 @@ def list_for_supplier(db: Session, supplier_id: str) -> list[dict]:
         .outerjoin(Product, Product.id == SupplierProductCodeAlias.product_id)
         .outerjoin(ProductSet, ProductSet.id == SupplierProductCodeAlias.product_set_id)
         .filter(SupplierProductCodeAlias.supplier_id == str(supplier_id))
-        .order_by(SupplierProductCodeAlias.supplier_code)
+        # Newest ruling first (AC-C5): this is the supplier's memory, and what somebody just
+        # decided is what they came back to check, not whatever sorts first alphabetically.
+        .order_by(
+            SupplierProductCodeAlias.created_at.desc(), SupplierProductCodeAlias.id.desc()
+        )
         .all()
     )
     return [
