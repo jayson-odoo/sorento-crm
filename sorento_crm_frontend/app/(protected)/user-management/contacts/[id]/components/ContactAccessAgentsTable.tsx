@@ -24,6 +24,7 @@ import ContactAgentAccessDeleteDialog from '../../../access-agents/components/co
 import CopyAccessAgentsFromContactDialog from './CopyAccessAgentsFromContactDialog';
 import ContactFieldAccessDialog from '../../../access-agents/components/ContactFieldAccessDialog';
 import type { ContactAgentAccess } from '../../../access-agents/types/accessAgent.types';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 interface ContactAccessAgentsTableProps {
   contactId: string;
@@ -43,6 +44,7 @@ export default function ContactAccessAgentsTable({ contactId }: ContactAccessAge
   const [fieldAccessFor, setFieldAccessFor] = useState<ContactAgentAccess | null>(null);
 
   const { data, isLoading } = useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['contact-access-agents', contactId, pagination, sorting],
     queryFn: async () => {
       const sortField = sorting?.[0]?.id || 'created_at';

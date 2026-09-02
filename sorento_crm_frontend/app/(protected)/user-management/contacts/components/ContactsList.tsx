@@ -104,7 +104,6 @@ export default function ContactsList() {
     queryFn: () => fetchContactsPage(listParams),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 

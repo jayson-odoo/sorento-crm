@@ -82,7 +82,6 @@ interface UsersToolbarProps {
     action: 'delete' | 'activate' | 'deactivate' | 'permanent_delete' | 'resend_invite',
   ) => void;
   roleList: UserRoleSimple[] | undefined;
-  isLoading: boolean;
   addUserButton: React.ReactNode;
 }
 
@@ -111,7 +110,6 @@ const UsersToolbar = ({
   bulkActionPending,
   runBulkAction,
   roleList,
-  isLoading,
   addUserButton,
 }: UsersToolbarProps) => {
   const initialConditionsFromApplied = (): UserFilterCondition[] => {
@@ -248,7 +246,6 @@ const UsersToolbar = ({
                       <SearchableSelect
                         value={cond.value}
                         onChange={(v) => updateCondition(cond.id, { value: v })}
-                        disabled={isLoading}
                         options={[
                           { value: 'all', label: 'All roles' },
                           ...(roleList ?? []).map((role) => ({
@@ -261,7 +258,6 @@ const UsersToolbar = ({
                       <SearchableSelect
                         value={cond.value}
                         onChange={(v) => updateCondition(cond.id, { value: v })}
-                        disabled={isLoading}
                         options={[
                           { value: 'all', label: 'All users' },
                           ...Object.entries(UserStatusProps).map(([status, { label }]) => ({
@@ -274,7 +270,6 @@ const UsersToolbar = ({
                       <SearchableSelect
                         value={cond.value}
                         onChange={(v) => updateCondition(cond.id, { value: v })}
-                        disabled={isLoading}
                         options={[
                           { value: 'exclude', label: 'Active only' },
                           { value: 'only', label: 'Trashed only' },
@@ -413,7 +408,6 @@ const UserList = () => {
     queryFn: () => fetchUsersListPage(listParams),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60, // 60 minutes
-    refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: 1,
   });
@@ -750,7 +744,6 @@ const UserList = () => {
   // and the empty state's next step (S5-06).
   const addUserButton = (
     <Button
-      disabled={isLoading && true}
       onClick={() => {
         setInviteDialogOpen(true);
       }}
@@ -799,7 +792,6 @@ const UserList = () => {
             bulkActionPending={bulkActionPending}
             runBulkAction={runBulkAction}
             roleList={roleList}
-            isLoading={isLoading}
             addUserButton={addUserButton}
           />
           <CardTable>

@@ -48,6 +48,7 @@ import {
   useRowPending,
 } from '@/hooks/useDeferredRowAction';
 import RoleEditDialog from './role-edit-dialog';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 const RoleList = () => {
   // List state management
@@ -87,6 +88,7 @@ const RoleList = () => {
 
   // Role list
   const { data, isLoading, isFetching } = useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['user-roles', pagination, sorting, searchQuery],
     queryFn: () =>
       fetchRoles({
@@ -97,7 +99,6 @@ const RoleList = () => {
       }),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60, // 60 minutes
-    refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: 1,
   });
@@ -313,7 +314,6 @@ const RoleList = () => {
   // toolbar, and the empty state's next step (S5-06).
   const listPrimaryAction = (
     <Button
-      disabled={isLoading}
       onClick={() => {
         setEditRole(null);
         setEditDialogOpen(true);

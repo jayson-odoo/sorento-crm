@@ -52,7 +52,6 @@ export function useAccessAgents(params: AccessAgentsListParams) {
     queryFn: () => getAccessAgents(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

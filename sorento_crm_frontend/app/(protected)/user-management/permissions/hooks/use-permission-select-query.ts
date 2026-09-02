@@ -24,6 +24,5 @@ export const usePermissionSelectQuery = () => {
     queryKey: ['user-permission-select'],
     queryFn: fetchPermissionList,
     staleTime: Infinity,
-    refetchOnWindowFocus: false,
   });
 };

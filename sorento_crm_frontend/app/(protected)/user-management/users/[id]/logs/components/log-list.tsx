@@ -34,6 +34,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { SystemLog } from '@/app/models/system';
 import { useUser } from '../../components/user-context';
 import { LogActionsCell } from './log-actions-cell';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 const LogList = () => {
   const { user } = useUser();
@@ -98,6 +99,7 @@ const LogList = () => {
 
   // Users query
   const { data, isLoading, isFetching } = useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [
       'user-logs',
       pagination,

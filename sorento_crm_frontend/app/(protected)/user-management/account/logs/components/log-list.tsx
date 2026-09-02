@@ -34,6 +34,7 @@ import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SystemLog } from '@/app/models/system';
 import { LogActionsCell } from './log-actions-cell';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 const LogList = () => {
   const [pagination, setPagination] = useState<PaginationState>({
@@ -96,6 +97,7 @@ const LogList = () => {
 
   // Users query
   const { data, isLoading, isFetching } = useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [
       'system-logs',
       pagination,
@@ -113,7 +115,6 @@ const LogList = () => {
       }),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60, // 60 minutes
-    refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: 1,
   });

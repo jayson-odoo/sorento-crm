@@ -49,6 +49,7 @@ import { useRoleSelectQuery } from '../../roles/hooks/use-role-select-query';
 import PermissionDeleteDialog from './permission-delete-dialog';
 import PermissionEditDialog from './permission-edit-dialog';
 import PermissionGroupDeleteDialog from './permission-group-delete-dialog';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 const PermissionList = () => {
   // List state management
@@ -119,6 +120,7 @@ const PermissionList = () => {
 
   // Permissions query
   const { data, isLoading, isFetching } = useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [
       'user-permissions',
       pagination,
@@ -138,7 +140,6 @@ const PermissionList = () => {
       }),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60, // 60 minutes
-    refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: 1,
   });
@@ -318,7 +319,6 @@ const PermissionList = () => {
   // toolbar, and the empty state's next step (S5-06).
   const listPrimaryAction = (
     <Button
-      disabled={isLoading}
       onClick={() => {
         setEditPermission(null);
         setEditDialogOpen(true);
@@ -367,7 +367,6 @@ const PermissionList = () => {
                   <div className="space-y-2">
                     <Label>Role</Label>
                     <SearchableSelect
-                      disabled={isLoading}
                       onChange={handleRoleSelection}
                       value={selectedRole || 'all'}
                       placeholder="Filter by role"
