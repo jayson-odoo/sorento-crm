@@ -1263,12 +1263,17 @@ class SOSupplyDecisionDraft(Base, CompanyScopedMixin):
     mirror: the board is built from the core book, and a line whose order nobody has
     adopted yet still has a key and can still be saved.
 
-    IDENTITY IS THE FIRST THREE PARTS, not four (plus the company, the way every other
-    owned uniqueness rule here is scoped). `bucket_key` is derived from the board's
-    GRANULARITY as well as the line's required date (`bucket_key_for`), so the same line is
-    `2026-09-07` at week granularity and `2026-09-09` at day: keyed on all four, a planner
-    who switched the view would watch every saved line disappear. It is stored because it
-    is the key the save was made under, and it is not part of the unique index.
+    IDENTITY IS THE CORE SALES ORDER LINE (C2, code review round 4), and every other part
+    of that key is stored display rather than identity. NONE of the four parts is durable:
+    `line_no` is POSITIONAL whenever the order's lines are not all mirrored
+    (`FulfilmentBoardService._line_numbers`), so a re-upload that moves an earlier line's
+    required date renumbers every line after it and the draft stopped attaching; and on
+    such an order the mirror row numbers the same physical line differently again, so the
+    confirmation - which deletes by the MIRROR's `line_no` - deleted nothing and the draft
+    survived its own promotion. `bucket_key` moves with the board's GRANULARITY
+    (`bucket_key_for`), so the same line is `2026-09-07` at week and `2026-09-09` at day.
+    The core line id moves with none of that: it is the row the board, the mirror and the
+    confirmation all agree names this line.
     """
 
     __tablename__ = "so_supply_decision_drafts"
@@ -1280,6 +1285,17 @@ class SOSupplyDecisionDraft(Base, CompanyScopedMixin):
         ForeignKey("sales_orders.id", ondelete="CASCADE"),
         nullable=False,
     )
+    #: WHAT THIS DRAFT IS. Resolved from the contribution key at save time
+    #: (`project_line_draft_service._resolve_core_line`) and matched on everywhere after:
+    #: the board stamps a draft onto a row by it, and the confirmation deletes by it.
+    #: CASCADE, because a draft on a line that no longer exists has nothing to be about.
+    core_line_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("sales_order_lines.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    #: What the line was CALLED on the board when it was saved. Recorded and re-stamped on
+    #: every save, never matched on: see the class docstring.
     line_no = Column(Integer, nullable=False)
     item_code = Column(String(100), nullable=False)
     #: Which column of the board the save was made in. Recorded, never matched on: see the
@@ -1314,9 +1330,7 @@ class SOSupplyDecisionDraft(Base, CompanyScopedMixin):
     __table_args__ = (
         UniqueConstraint(
             "company_id",
-            "sales_order_id",
-            "line_no",
-            "item_code",
+            "core_line_id",
             name="uq_so_supply_decision_drafts_line",
         ),
         Index("ix_so_supply_decision_drafts_order", "sales_order_id"),

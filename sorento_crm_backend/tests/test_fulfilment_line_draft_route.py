@@ -430,7 +430,7 @@ def test_a_draft_saved_in_another_company_is_invisible_here(api):
     from app.models.project_so import SOSupplyDecisionDraft
     from .test_so_supply_confirmation import _second_company
 
-    client, world, core_so, _core_line, _order, _line = _world(api)
+    client, world, core_so, core_line, _order, _line = _world(api)
     db = world.db
     contribution = _contribution(_board(client, core_so), core_so.so_number)
     other = _second_company(db)
@@ -439,6 +439,7 @@ def test_a_draft_saved_in_another_company_is_invisible_here(api):
             id=_uid(),
             company_id=other,
             sales_order_id=core_so.id,
+            core_line_id=core_line.id,
             line_no=contribution["line_no"],
             item_code=contribution["item_code"],
             bucket_key=contribution["key"].split("|")[3],
@@ -528,3 +529,168 @@ def test_a_confirmation_that_fails_leaves_the_saved_decision_in_place(api):
         == 1
     ), "a refused confirmation must not take the planner's saved decision with it"
     assert _contribution(_board(client, core_so), core_so.so_number)["draft"] is not None
+
+
+# ------------------------------------------------- C2: the identity a draft is keyed by
+#
+# A board line number is POSITIONAL whenever the order's lines are not all mirrored
+# (`FulfilmentBoardService._line_numbers`), so it moves - a re-upload that changes an
+# earlier line's required date renumbers every line after it, and a mirror that numbers one
+# line 10 while the board counts it 2 gives the same physical line two numbers at once. The
+# draft's durable identity is therefore the CORE sales order line, and the number is only
+# what it was saved under.
+
+
+def _two_open_lines(api, *, mirror_second=False, mirror_line_no=10):
+    """One core order with two OPEN lines of different products, at two dates.
+
+    Different products, because the board numbers by (required date, item code, line id)
+    and a same-product pair would resolve to the wrong line in silence rather than fail.
+    `mirror_second` adopts the order and mirrors ONLY the later line, which is what makes
+    `_line_numbers` fall back to the POSITIONAL index for the whole order.
+    """
+    client, world = api
+    db = world.db
+    first_product = _product(db)
+    second_product = _product(db)
+    _stock(db, first_product, world.pool_wh, on_hand=100)
+    _stock(db, second_product, world.pool_wh, on_hand=100)
+    core_so = _core_so(db, world.company_id)
+    first = _core_line(
+        db, core_so, first_product, world.own_wh, qty_ordered="7",
+        required_date=date(2026, 6, 1),
+    )
+    second = _core_line(
+        db, core_so, second_product, world.own_wh, qty_ordered="10",
+        required_date=date(2026, 7, 1),
+    )
+    order = mirror = None
+    if mirror_second:
+        order = _project_so(db, world.project, so_id=core_so.id)
+        mirror = _project_line(
+            db, order, line_no=mirror_line_no, product=second_product, core_line=second,
+        )
+    db.commit()
+    return client, world, core_so, first, second, order, mirror
+
+
+def _by_item(board, product) -> dict:
+    return next(
+        row for row in board["contributions"]
+        if row["item_code"] == product.product_code
+    )
+
+
+def test_confirming_deletes_the_draft_even_when_the_board_numbers_lines_positionally(api):
+    """C2 (code review round 4). Only ONE of the order's two lines has a mirror, so
+    `_line_numbers` gives the whole order POSITIONAL numbers - the saved line is board line
+    2 while its mirror row calls itself line 10.
+
+    `_write_decision` deleted the promoted drafts by the MIRROR's `line_no`, so nothing
+    matched: the draft survived its own confirmation and re-attached beside the frozen
+    decision, offering the planner a line that had already been confirmed.
+    """
+    from app.models.project_so import SOSupplyDecisionDraft
+
+    client, world, core_so, _first, second, order, mirror = _two_open_lines(
+        api, mirror_second=True
+    )
+    db = world.db
+    contribution = _by_item(_board(client, core_so), second.product)
+    assert contribution["line_no"] == 2, (
+        "sanity: the board numbers positionally here, so the saved line is 2 and not the "
+        "mirror's own 10 - which is the divergence this test is about"
+    )
+    assert mirror.line_no == 10
+    assert _save(client, contribution["key"]).status_code == 200
+
+    response = client.post(
+        f"{BASE}/fulfilment-planning/confirm-all",
+        json={
+            "orders": [
+                {
+                    "pso_id": order.id,
+                    "lines": [
+                        _line_payload(
+                            mirror.id,
+                            reserve=[{"warehouse_id": world.pool_wh.id, "qty": "10"}],
+                        )
+                    ],
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["results"][0]["ok"] is True, response.text
+    assert (
+        db.query(SOSupplyDecisionDraft)
+        .filter(SOSupplyDecisionDraft.sales_order_id == core_so.id)
+        .count()
+        == 0
+    ), "the confirmation must take the draft it promoted with it"
+    after = _by_item(_board(client, core_so), second.product)
+    assert after["covered"] is True
+    assert after["draft"] is None
+
+
+def test_a_saved_line_survives_the_board_renumbering_its_lines(api):
+    """C2. A re-upload that moves an EARLIER line's required date renumbers every line
+    after it, and the draft has to stay on the physical line it was saved against.
+
+    Keyed by (order, line number, item code) it did not: the save was made under line 2 and
+    the line became line 1, so the board read `draft: null` on a line somebody had saved and
+    the planner's work was invisible until the date moved back.
+    """
+    client, world, core_so, first, second, _order, _mirror = _two_open_lines(api)
+    db = world.db
+    contribution = _by_item(_board(client, core_so), second.product)
+    assert contribution["line_no"] == 2
+    assert _save(client, contribution["key"]).status_code == 200
+
+    # The re-upload: the FIRST line's required date moves past the second's, so the board's
+    # positional numbering swaps them.
+    first.required_date = date(2026, 8, 1)
+    db.commit()
+
+    board = _board(client, core_so)
+    moved = _by_item(board, second.product)
+    assert moved["line_no"] == 1, "sanity: the saved line has been renumbered"
+    assert moved["draft"] is not None, (
+        "the draft belongs to the LINE, not to the number it happened to carry"
+    )
+    assert moved["draft"]["decision"]["verdict"] == "amended"
+    # Its OWN facts did not move - only the line before it did - so it is not stale (S1).
+    assert moved["draft"]["stale"] is False
+    # And it did not follow the number onto the other line.
+    assert _by_item(board, first.product)["draft"] is None
+
+
+def test_re_saving_the_same_line_under_a_new_line_number_updates_the_one_row(api):
+    """C2. Same physical line, a new board number, one saved decision - never two rows,
+    which is what a key of (order, line number, item code) produced the moment the board
+    renumbered and the planner saved again."""
+    from app.models.project_so import SOSupplyDecisionDraft
+
+    client, world, core_so, first, second, _order, _mirror = _two_open_lines(api)
+    db = world.db
+    assert _save(
+        client, _by_item(_board(client, core_so), second.product)["key"]
+    ).status_code == 200
+
+    first.required_date = date(2026, 8, 1)
+    db.commit()
+    renumbered = _by_item(_board(client, core_so), second.product)
+    assert renumbered["line_no"] == 1
+    assert _save(
+        client, renumbered["key"], decision={**DECISION, "buy_qty": "3"}
+    ).status_code == 200
+
+    rows = (
+        db.query(SOSupplyDecisionDraft)
+        .filter(SOSupplyDecisionDraft.sales_order_id == core_so.id)
+        .all()
+    )
+    assert len(rows) == 1, "one physical line, one saved decision"
+    assert rows[0].line_no == 1, "and it records the number it was last saved under"
+    assert rows[0].decision["buy_qty"] == "3"

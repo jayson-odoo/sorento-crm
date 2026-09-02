@@ -6683,9 +6683,9 @@ def test_a_saved_decision_is_attached_to_its_own_contribution_and_to_no_other():
     """S4 (R-F): `build()` stamps the drafts table onto the contribution whose key it was
     saved under, and leaves every other line alone.
 
-    A draft is addressed by (sales order, line number, item code), so the sibling line of
-    the SAME order and the same product - one row away in the same cell - is the case that
-    would catch a match made on too little.
+    A draft is read by sales order and matched by CORE LINE (C2, code review round 4), so
+    the sibling line of the SAME order and the same product - one row away in the same cell
+    - is the case that would catch a match made on too little.
     """
     from app.models.base import company_scope
     from app.models.project_so import SOSupplyDecisionDraft
@@ -6710,6 +6710,9 @@ def test_a_saved_decision_is_attached_to_its_own_contribution_and_to_no_other():
                 SOSupplyDecisionDraft(
                     id=_uid(),
                     sales_order_id=str(order.id),
+                    # What the draft IS (C2): the core line, which `_attach_drafts` matches
+                    # on. The three below are what it was CALLED when it was saved.
+                    core_line_id=mine["line_id"],
                     line_no=mine["line_no"],
                     item_code=mine["item_code"],
                     bucket_key=mine["key"].split("|")[3],

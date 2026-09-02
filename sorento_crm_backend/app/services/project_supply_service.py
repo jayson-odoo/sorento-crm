@@ -5308,14 +5308,17 @@ class ProjectSupplyService:
         # confirmation itself was refused (the 409 above, a stale line, `confirm_many`'s
         # per-order rollback).
         #
-        # Addressed by the board's own contribution key, whose first three parts are the
-        # CORE sales order, the line number and the item code.
+        # Addressed by the CORE sales order line each confirmed mirror line reconciles to
+        # (C2, code review round 4). It used to be the MIRROR's own `(line_no, item_code)`,
+        # and the board numbers a line positionally whenever the order's lines are not all
+        # mirrored (`FulfilmentBoardService._line_numbers`) - so on such an order the two
+        # numberings named different rows, nothing matched, and the draft survived its own
+        # promotion to re-attach beside the frozen decision.
         from app.services import project_line_draft_service
 
         project_line_draft_service.delete_drafts_for_lines(
             self.db,
-            str(order.so_id) if order.so_id else None,
-            [(line.line_no, fact.item_code) for line, _entry, fact in checked],
+            [line.core_sales_order_line_id for line, _entry, _fact in checked],
             company_id=str(order.company_id) if order.company_id else None,
         )
         transfers_written, transfers_failed, transfers_kept = self._write_transfers(

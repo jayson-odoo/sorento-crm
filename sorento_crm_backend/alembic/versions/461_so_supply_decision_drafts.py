@@ -5,12 +5,16 @@ a draft is its OWN row rather than a `draft` state on `so_supply_decisions`, whi
 row per ORDER REVISION with `revision_no` and `line_snapshots` NOT NULL and a partial unique
 index enforcing one active revision per order.
 
-Keyed by the board's own contribution key. `sales_order_id` is the CORE sales order, which
-is what `_Row.key` carries - the board is built from the core book and a line whose order
-nobody has adopted yet can still be saved. The unique index is the first THREE parts of that
-key: `bucket_key` is derived from the board's granularity as well as the line's date, so a
-uniqueness rule including it would lose every saved line the moment the planner switched
-between week and day.
+Addressed by the board's own contribution key. `sales_order_id` is the CORE sales order,
+which is what `_Row.key` carries - the board is built from the core book and a line whose
+order nobody has adopted yet can still be saved.
+
+IDENTITY IS `core_line_id` (C2, code review round 4), not the key's own parts: `line_no` is
+positional whenever the order's lines are not all mirrored, so a re-upload that moves an
+earlier line's date renumbers the rest and orphans their drafts, and on such an order the
+mirror numbers the same line differently again - which is how a confirmation deleting by
+the mirror's number left the draft it had just promoted behind. `bucket_key` moves with the
+board's granularity for the same class of reason. The core line moves with neither.
 
 Hand-written and guarded, for the reason 443/450/452/460 state: the shared dev database is a
 prod copy whose `alembic_version` points at another lane's head, so this is applied there by
@@ -44,6 +48,11 @@ def upgrade() -> None:
         sa.Column("id", postgresql.UUID(as_uuid=False), primary_key=True),
         sa.Column("company_id", postgresql.UUID(as_uuid=False), nullable=True),
         sa.Column("sales_order_id", postgresql.UUID(as_uuid=False), nullable=False),
+        # The draft's identity (C2). Hand-added on the dev DB, where this table was
+        # hand-created: `ALTER TABLE projects.so_supply_decision_drafts ADD COLUMN
+        # core_line_id uuid REFERENCES sales_order_lines(id) ON DELETE CASCADE;` then
+        # backfilled, `SET NOT NULL`, and the unique constraint swapped.
+        sa.Column("core_line_id", postgresql.UUID(as_uuid=False), nullable=False),
         sa.Column("line_no", sa.Integer(), nullable=False),
         sa.Column("item_code", sa.String(length=100), nullable=False),
         sa.Column("bucket_key", sa.String(length=32), nullable=False),
@@ -67,12 +76,13 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["sales_order_id"], ["sales_orders.id"], ondelete="CASCADE"
         ),
+        sa.ForeignKeyConstraint(
+            ["core_line_id"], ["sales_order_lines.id"], ondelete="CASCADE"
+        ),
         sa.ForeignKeyConstraint(["saved_by"], ["users.id"], ondelete="SET NULL"),
         sa.UniqueConstraint(
             "company_id",
-            "sales_order_id",
-            "line_no",
-            "item_code",
+            "core_line_id",
             name="uq_so_supply_decision_drafts_line",
         ),
         schema=SCHEMA,

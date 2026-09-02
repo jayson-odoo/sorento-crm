@@ -4318,10 +4318,14 @@ class FulfilmentBoardService:
     def _attach_drafts(self, rows: Sequence[_Row]) -> None:
         """Stamp what has been SAVED on each line back onto it (S4, R-F, AC-4.2).
 
-        One query for the whole board, addressed by (core sales order, line number, item
-        code) - the first three parts of the contribution key. Not the fourth: `bucket_key`
-        moves with the board's GRANULARITY (`bucket_key_for`), so matching on it would hide
-        every saved line the moment the planner switched from week to day.
+        One query for the whole board, read by sales order and matched by the CORE LINE
+        (C2, code review round 4). NONE of the contribution key's own parts is durable
+        enough to match on: `line_no` is POSITIONAL whenever the order's lines are not all
+        mirrored (`_line_numbers`), so a re-upload that moves an earlier line's required
+        date renumbered the rest and their drafts stopped attaching, and `bucket_key` moves
+        with the board's GRANULARITY (`bucket_key_for`), so matching on it would hide every
+        saved line the moment the planner switched from week to day. `row.line_id` is the
+        one identity all three of the board, the mirror and the confirmation agree on.
 
         `stale` is computed here rather than stored, against the LINE's own current facts
         (S1, code review round 3, captain ruling) - `row.qty` and `row.required_date`, the
@@ -4336,11 +4340,9 @@ class FulfilmentBoardService:
         if not saved:
             return
         for row in rows:
-            if row.line_no is None or not row.item_code:
+            if not row.line_id:
                 continue
-            entry = saved.get(
-                (str(row.sales_order_id), int(row.line_no), row.item_code)
-            )
+            entry = saved.get(str(row.line_id))
             if entry is None:
                 continue
             row.draft = {

@@ -1,6 +1,9 @@
 """Saved decisions on the planning board (S4 of `PLAN-scm-fulfilment-feedback-2sep.md`).
 
-One row per board contribution, in `projects.so_supply_decision_drafts`. Three readers and
+One row per CORE SALES ORDER LINE, in `projects.so_supply_decision_drafts` - addressed from
+outside by the board's contribution key, and identified inside by the line that key resolves
+to (C2, code review round 4: none of the key's own four parts survives a re-upload that
+renumbers the order, a partly-mirrored order, or a change of granularity). Three readers and
 they are deliberately the only three:
 
   * the two routes, `PUT` / `DELETE .../fulfilment-planning/lines/{key}/draft`;
@@ -18,7 +21,7 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any, Dict, Iterable, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, Optional, Tuple
 
 from sqlalchemy.orm import Session
 
@@ -41,10 +44,11 @@ KEY_PARTS = 4
 ITEM_CODE_MAX = 100
 BUCKET_KEY_MAX = 32
 
-#: (core sales order id, line number, item code). The bucket is NOT part of it: see the
-#: model's docstring - it moves with the board's granularity, and the same saved line has
-#: to be found at day, week and month.
-LineKey = Tuple[str, int, str]
+#: The CORE sales order line a draft belongs to (C2, code review round 4). None of the
+#: contribution key's own four parts is durable - `line_no` is positional whenever the
+#: order's lines are not all mirrored, and `bucket_key` moves with the board's granularity
+#: - so the row the board, the mirror and the confirmation all agree on is the identity.
+LineKey = str
 
 
 def parse_contribution_key(key: str) -> Tuple[str, int, str, str]:
@@ -206,16 +210,20 @@ def save_draft(
     """
     sales_order_id, line_no, item_code, bucket_key = parse_contribution_key(key)
     core_line = _resolve_core_line(db, sales_order_id, line_no, item_code)
-    row = _row_for(db, (sales_order_id, line_no, item_code), company_id=core_line.company_id)
+    row = _row_for(db, str(core_line.id), company_id=core_line.company_id)
     if row is None:
         row = SOSupplyDecisionDraft(
             id=str(uuid.uuid4()),
+            core_line_id=str(core_line.id),
             sales_order_id=sales_order_id,
-            line_no=line_no,
-            item_code=item_code,
-            bucket_key=bucket_key,
         )
         db.add(row)
+    # Re-stamped on every save, because all three move: the board renumbers a line when an
+    # earlier one's date changes, an item code follows the line's product, and the bucket
+    # follows the granularity the save was made under. They are what this draft was CALLED,
+    # never what it is.
+    row.line_no = line_no
+    row.item_code = item_code
     row.bucket_key = bucket_key
     row.decision = decision
     row.line_snapshot = _line_snapshot(core_line)
@@ -233,9 +241,20 @@ def save_draft(
 
 
 def remove_draft(db: Session, key: str) -> None:
-    """Undo (AC-4.3). A line nobody saved is a 404: there is nothing to undo."""
+    """Undo (AC-4.3). A line nobody saved is a 404: there is nothing to undo.
+
+    Resolved through the CORE line, the same way the save is (C2), so an Undo made after
+    the board renumbered the line still removes the draft that line actually carries. A key
+    naming no line at all is that same 404 rather than the save's 422: this route's whole
+    contract is "there is nothing saved here", which is true either way, and the client
+    already treats it as "already gone".
+    """
     sales_order_id, line_no, item_code, _bucket = parse_contribution_key(key)
-    row = _row_for(db, (sales_order_id, line_no, item_code))
+    try:
+        core_line = _resolve_core_line(db, sales_order_id, line_no, item_code)
+    except AppException:
+        core_line = None
+    row = None if core_line is None else _row_for(db, str(core_line.id))
     if row is None:
         raise AppException(
             status_code=404,
@@ -249,10 +268,14 @@ def remove_draft(db: Session, key: str) -> None:
 def drafts_for_orders(
     db: Session, sales_order_ids: Iterable[str]
 ) -> Dict[LineKey, Dict[str, Any]]:
-    """Every saved decision on these CORE sales orders, keyed by line.
+    """Every saved decision on these CORE sales orders, keyed by CORE LINE id.
 
     One query for the whole board, like every other per-board read here, with the saver's
     NAME resolved in it - the pill's popover renders a person, never an id.
+
+    Read by sales order (one indexed predicate for the whole board) and keyed by the line
+    (C2): the board stamps a draft onto the row whose `line_id` matches, never onto the row
+    that happens to carry the number the save was made under.
     """
     ids = [str(order_id) for order_id in sales_order_ids if order_id]
     if not ids:
@@ -264,11 +287,7 @@ def drafts_for_orders(
         .all()
     )
     return {
-        (
-            str(row.sales_order_id),
-            int(row.line_no),
-            row.item_code,
-        ): {
+        str(row.core_line_id): {
             "decision": row.decision,
             "saved_by": name or "",
             "saved_at": row.saved_at,
@@ -280,26 +299,27 @@ def drafts_for_orders(
 
 def delete_drafts_for_lines(
     db: Session,
-    sales_order_id: Optional[str],
-    lines: Sequence[Tuple[int, str]],
+    core_line_ids: Iterable[Optional[str]],
     *,
     company_id: Optional[str] = None,
 ) -> int:
     """Drop the drafts a confirmation has just promoted, in ITS transaction.
 
-    `lines` is `(line_no, item_code)` per confirmed line. Matched on the line rather than
-    on the order as a whole, because a confirmation may cover a SUBSET of an order's lines
-    (13.4) and the ones the planner deliberately left undecided keep what they saved.
+    Addressed by the CORE sales order line of each confirmed line (C2), which the mirror
+    carries as `core_sales_order_line_id`. It used to be the mirror's own `(line_no,
+    item_code)`, and on an order the board numbers POSITIONALLY - any order whose lines are
+    not all mirrored - the two numberings disagree, so nothing matched and the draft
+    survived its own confirmation.
+
+    Per line rather than per order, because a confirmation may cover a SUBSET of an order's
+    lines (13.4) and the ones the planner deliberately left undecided keep what they saved.
     """
-    if not sales_order_id or not lines:
+    ids = {str(line_id) for line_id in core_line_ids if line_id}
+    if not ids:
         return 0
     deleted = 0
-    for line_no, item_code in set(lines):
-        if line_no is None or not item_code:
-            continue
-        row = _row_for(
-            db, (str(sales_order_id), int(line_no), item_code), company_id=company_id
-        )
+    for core_line_id in ids:
+        row = _row_for(db, core_line_id, company_id=company_id)
         if row is not None:
             db.delete(row)
             deleted += 1
@@ -333,22 +353,19 @@ def is_stale(
 
 
 def _row_for(
-    db: Session, line: LineKey, *, company_id: Optional[str] = None
+    db: Session, core_line_id: LineKey, *, company_id: Optional[str] = None
 ) -> Optional[SOSupplyDecisionDraft]:
-    """The one draft row for `line`, or `None`.
+    """The one draft row for a CORE sales order line, or `None`.
 
     `company_id`, when the caller already has it, is an EXPLICIT predicate on top of the
     session's own scope filter (N2, code review round 3): the all-companies principal (no
     `EXTERNAL_API_KEY_ACT_AS_USER_ID`) reads with no company predicate at all, and while the
-    natural key here is already pinned to one company through `sales_order_id`'s own FK, a
-    caller that has already resolved the order is better placed to say which company than a
-    query left to find out the hard way.
+    line here is already pinned to one company through its own FK, a caller that has already
+    resolved it is better placed to say which company than a query left to find out the hard
+    way.
     """
-    sales_order_id, line_no, item_code = line
     query = db.query(SOSupplyDecisionDraft).filter(
-        SOSupplyDecisionDraft.sales_order_id == sales_order_id,
-        SOSupplyDecisionDraft.line_no == line_no,
-        SOSupplyDecisionDraft.item_code == item_code,
+        SOSupplyDecisionDraft.core_line_id == str(core_line_id),
     )
     if company_id:
         query = query.filter(SOSupplyDecisionDraft.company_id == company_id)
