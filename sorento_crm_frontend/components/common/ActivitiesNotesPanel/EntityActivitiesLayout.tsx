@@ -168,7 +168,13 @@ export default function EntityActivitiesLayout({
         className={cn(
           'fixed top-0 right-0 z-30 h-full bg-background border-l shadow-xl flex flex-col',
           'w-full lg:w-[420px]',
-          'transition-transform duration-200 ease-out',
+          // `motion-reduce:` at the site, not in the reduced-motion block in
+          // css/styles.css: a NAMED duration utility matches none of that
+          // block's selectors and this <aside> carries no data-slot either, so
+          // the panel slid its full 200ms for someone who asked for no motion
+          // (measured, evidence/M3/README.md M3-04). This is the shared pattern
+          // DESIGN-LANGUAGE names for a one-off transition.
+          'transition-transform duration-200 ease-out motion-reduce:transition-none',
           open ? 'translate-x-0' : 'translate-x-full',
         )}
         aria-hidden={!open}

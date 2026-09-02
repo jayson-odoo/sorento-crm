@@ -130,9 +130,22 @@
    (`REDUCED_MOTION_TRANSITION`, lib/motion.ts) and the browser then smears that jump over
    150ms anyway. Popover and DropdownMenu don't need the same exclusion: their animated
    `motion.div` is an inner child with no `data-slot` of its own, so this selector never
-   touches it in the first place. */
+   touches it in the first place.
+
+   `drawer-content` is excluded for a THIRD reason, and it was a real bug (M3-04): vaul's
+   drawer is the one surface whose element carries BOTH `data-vaul-drawer` and a
+   `-content` data-slot, and this selector is (0,3,0) against that rule's (0,1,0). Both
+   are `!important` and author-origin, so specificity decides and the drawer travelled for
+   150ms under reduced motion instead of the intended 1ms (measured,
+   `evidence/M3/README.md`). Excluding it here is what lets the vaul rule below win; it
+   costs nothing, because vaul drives the drawer with its own transform + transition and
+   renders none of the tw-animate enter/exit classes this rule is zeroing.
+   `css/reduced-motion-m3.test.ts` asserts the resolved cascade for that element, not the
+   selector text, so a future `-content` rule cannot quietly outrank it again. */
 @media (prefers-reduced-motion: reduce) {
-  [data-slot$='-content']:not([data-slot='dialog-content']):not([data-slot='sheet-content']),
+  [data-slot$='-content']:not([data-slot='dialog-content']):not([data-slot='sheet-content']):not(
+      [data-slot='drawer-content']
+    ),
   [data-radix-popper-content-wrapper],
   [data-radix-popper-content-wrapper] > * {
     --tw-enter-translate-x: 0 !important;
@@ -171,10 +184,21 @@
     transition: none !important;
   }
 
+  /* 1ms rather than 0s: vaul reads the drawer's own transition to decide when a
+     drag has settled, so a duration of zero would leave it waiting for a
+     `transitionend` that a zero-length transition may never fire. 1ms reads as
+     instant to a person and still counts as "has a duration" to code keyed on
+     one. */
   [data-vaul-drawer] {
     transition-duration: 1ms !important;
   }
 
+  /* Deliberately broad, and narrower than it looks: it catches an arbitrary-value
+     `transition-[width]`/`transition-[transform,opacity]` utility a component
+     reached for directly, and NOTHING named - `transition-all`, `transition-colors`
+     and `transition-transform` have no `[` in them and never match. A component
+     using one of those names carries `motion-reduce:transition-none` at its own
+     site instead (the activities panel is the one that had to, M3-04). */
   [class*='transition-['] {
     transition-duration: 1ms !important;
   }
