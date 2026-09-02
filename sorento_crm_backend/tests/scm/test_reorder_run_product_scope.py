@@ -25,6 +25,7 @@ import uuid
 import pytest
 
 from app.models.inventory import Stock, Warehouse
+from app.models.order import SalesOrder, SalesOrderLine
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.scm import ReorderRun
 from app.services.scm import reorder_run_service as svc
@@ -120,7 +121,24 @@ def test_an_empty_product_scope_still_plans_every_product(db, catalogue):
 
     Empty means all: the daily scheduled run sends no product scope at all, and a filter
     that treated an empty list as "plan nothing" would silently stop the whole plan.
+
+    G1 (`PLAN-scm-reorder-oi-feedback-1sep.md`) narrowed the unscoped universe further, to
+    committed demand only - orthogonal to what THIS test pins (None vs [] product-scope
+    semantics), so both candidates need an open SO line or G1 alone would empty the run
+    and this test could no longer tell "committed-demand gate" from "scope bug" apart.
     """
+    for p in (catalogue["wanted"], catalogue["other"]):
+        so = SalesOrder(id=_u(), so_number=unique_code("SO"), status="open",
+                        demand_class="retail")
+        db.add(so)
+        db.flush()
+        db.add(SalesOrderLine(
+            id=_u(), sales_order_id=so.id, product_id=p.id,
+            warehouse_id=catalogue["wh"].id, qty_ordered=1, qty_delivered=0,
+            line_status="open",
+        ))
+    db.flush()
+
     out = svc.create_run(db, [catalogue["wh"].warehouse_code], enqueue=False)
 
     run = db.get(ReorderRun, out["run_id"])

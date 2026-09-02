@@ -38,20 +38,20 @@ Global batch chain, captain's final call:
     457                          (S5, PR #493)
 Merge order: #471 -> #488 -> #489 -> #491 -> #490 -> #493.
 
-``down_revision`` stays pinned to ``453_shared_brand_attach`` for now, deliberately NOT
-``455_saved_views_and_perms`` - that revision id exists only on the S4 branch (PR #489),
-not on this one, and an alembic graph with a ``down_revision`` pointing at a revision id
-absent from the loaded version files fails to load AT ALL (breaks every `alembic` command,
-including CI's `alembic upgrade head` for this whole PR). ``down_revision`` moves to
-``455_saved_views_and_perms`` in a one-line follow-up commit immediately before #491 merges,
-once #489 has landed on main and that revision id is real here too.
+``down_revision`` was pinned to ``453_shared_brand_attach`` while this PR was open,
+deliberately NOT ``455_saved_views_and_perms`` - that revision id existed only on the S4
+branch (PR #489), not on this one, and an alembic graph with a ``down_revision`` pointing
+at a revision id absent from the loaded version files fails to load AT ALL (breaks every
+`alembic` command, including CI's `alembic upgrade head` for this whole PR). It was
+flipped to ``455_saved_views_and_perms`` in the merge commit that brought #489's revision
+onto this branch, at merge time into main.
 """
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 revision = "456_reorder_perf_quickwins"
-down_revision = "453_shared_brand_attach"
+down_revision = "455_saved_views_and_perms"
 branch_labels = None
 depends_on = None
 

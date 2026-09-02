@@ -287,6 +287,17 @@ async def startup_event():
     except Exception as e:
         logging.error(f"Failed to register spec write backstop: {str(e)}", exc_info=True)
     try:
+        from app.services.project_order_inquiry_service import (
+            register_order_inquiry_post_commit_dispatch,
+        )
+        register_order_inquiry_post_commit_dispatch()
+        logging.info("Order inquiry post-commit dispatch registered")
+    except Exception as e:
+        logging.error(
+            f"Failed to register order inquiry post-commit dispatch: {str(e)}",
+            exc_info=True,
+        )
+    try:
         # The status engine ships with an empty registry; every entity arrives from
         # a module. `inbound_shipment` is the first adopter in this repo, and it
         # registers a CHECKPOINT TIMELINE rather than a single-status graph - see

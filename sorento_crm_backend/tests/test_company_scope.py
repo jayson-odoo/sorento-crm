@@ -478,7 +478,12 @@ def test_every_company_id_table_is_registered():
     # `dealer_kit.tag_template` is owned for the same reason `dealer_kit.page` is:
     # a reusable tag layout is one company's own catalogue asset, loaded by id when a
     # request line is dropped onto the designer.
-    expected_owned = 125
+    #
+    # PLAN-scm-reorder-oi-feedback-1sep.md S4 (PR #489 review round) adds 1: `saved_views`
+    # is a saved filter/sort/column view of a listing, and a shared/published one can name
+    # another company's suppliers, products or warehouses inside its filter blob - owned
+    # the same reason `price_tag_requests` is, loaded by id on publish/set-default/delete.
+    expected_owned = 126
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

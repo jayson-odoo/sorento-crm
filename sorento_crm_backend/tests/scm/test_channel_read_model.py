@@ -926,8 +926,13 @@ def test_a_network_sized_buy_states_its_own_replenishment_not_the_sum_of_its_cel
     _confirmed_leg(db, product_id=pid, warehouse_id=wb, buy_qty=5)
     db.flush()
 
+    # G1/G10 (`PLAN-scm-reorder-oi-feedback-1sep.md`): naming the SKU (G10) admits BOTH
+    # its warehouse rows to the run - A's row has no committed demand of its own (it is
+    # pure surplus for this scenario) and would otherwise drop out of the unscoped gate,
+    # hiding its supply from the network aggregate exactly as this test's own point
+    # (summing member cells instead of the run's own aggregate) got wrong before.
     created = run_svc.create_run(db, ["ZZTCHRM-DJ-AGGA", "ZZTCHRM-DJ-AGGB"], "network",
-                                 enqueue=False)
+                                 product_codes=["ZZTCHRM-DJ-AGG"], enqueue=False)
     run_svc.run_reorder(created["run_id"], db=db)
 
     buy = db.execute(

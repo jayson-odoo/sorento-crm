@@ -253,6 +253,7 @@ def _list_item(
     r,
     code_by_id: dict,
     buy_counts: dict[str, int] | None = None,
+    counts: dict[str, int] | None = None,
     awaiting_rows: int = 0,
 ) -> dict:
     """One run-history row: scope resolved to warehouse codes + the completed
@@ -273,10 +274,6 @@ def _list_item(
             "exception_count": int(log_obj.get("exceptions", 0)),
             "total_cash_impact": float(log_obj.get("total_cash_impact", 0.0)),
             "recommendation_count": int(log_obj.get("recommendation_count", 0)),
-            # Live, off the rows themselves (AC-H10), never off this run's log: it drops
-            # as purchasing acknowledges, and the chip is what tells them there is work
-            # the plan itself cannot see.
-            "awaiting_rows": awaiting_rows,
         }
     return {
         "run_id": str(r["id"]),
@@ -386,7 +383,6 @@ def get_today_reorder_run(
         row,
         code_by_id,
         _costed_buy_counts(db, [str(row["id"])]),
-        awaiting_rows=svc.awaiting_acknowledgement_rows(db),
     )
     item["is_today"] = picked["is_today"]
     item["in_progress"] = bool(picked.get("in_progress"))
@@ -470,9 +466,6 @@ def get_reorder_run(
             "exception_count": int(log_obj.get("exceptions", 0)),
             "total_cash_impact": float(log_obj.get("total_cash_impact", 0.0)),
             "recommendation_count": int(log_obj.get("recommendation_count", 0)),
-            # Live (AC-H10), the same figure `/reorder-runs/today` carries: the page reads
-            # whichever of the two responses it happens to be holding.
-            "awaiting_rows": svc.awaiting_acknowledgement_rows(db),
         }
     return {
         "run_id": str(row["id"]),
