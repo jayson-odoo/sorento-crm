@@ -124,14 +124,8 @@ versions.
   gone.
 - **AC-S5-6 [FE]** Given version history, when the designer opens Versions, then
   versions list newest-first with number, note, author, time; Restore copies that
-  version's doc into the draft immediately, without touching the live pointer.
-  DEVIATION (captain ruling 2 Sep 2026, pending user ratification): the
-  original "(confirmation first)" wording is replaced by an undo pattern -
-  PRINCIPLES treats a new destructive-confirm `AlertDialog` as an auto-reject,
-  so Restore (both the Versions sheet row and the version viewer's banner,
-  identical) runs on click with no dialog; the host holds the draft it is
-  about to overwrite in memory and the success toast carries an Undo action
-  that PUTs that prior draft straight back.
+  version's doc into the draft (confirmation first) without touching the live
+  pointer.
 - **AC-S5-8 [FE]** Given a past version, when View is clicked, then the canvas
   shows that version's design read-only under a "Viewing vN - read-only" banner
   with Back-to-draft and Restore actions; the unsaved draft is intact after
@@ -183,3 +177,25 @@ versions.
   renders through the same frontend print page).
 - **AC-S7-5 [BE]** Contract appendix updated: `BarCode` on the canonical product
   wire, documented for the connector.
+
+## Round 3 (approved 2 Sep)
+
+### S8 - guides + autosave
+- **AC-S8-1 [FE]** Given a vertical guide exists, when the top ruler is clicked elsewhere, then the SAME guide moves there; never a second vertical guide. Same for the left ruler / horizontal guide.
+- **AC-S8-2 [FE]** Given a guide, when it is dragged back onto its ruler, OR selected and Delete/Backspace pressed, OR its ruler-end x is clicked, then it is removed.
+- **AC-S8-3 [FE]** Given the request designer, when a change is committed, then it is persisted within ~1s without pressing Save and the header shows Saving/Saved; switching Design/Arrange, switching lines, or navigating away never loses a committed change.
+- **AC-S8-4 [FE]** Given the template editor, when a draft change is committed, then the draft autosaves the same way; Live is unchanged until Publish.
+
+### S9 - barcode override + tag size
+- **AC-S9-1 [FE]** Given a barcode layer, when a value is typed into the inspector's override field, then the layer renders that value (EAN-13/Code128 rule applies); Relink clears it back to the bound product barcode; the product master is unchanged.
+- **AC-S9-2 [E2E]** An overridden barcode prints on the exported PDF.
+- **AC-S9-3 [FE]** Given a line's tag, when W/H (mm) are set (preset or custom), then the tag and all its copies take that size; "Apply to all lines" resizes every line's tag in the request.
+
+### S10 - request detail tabs
+- **AC-S10-1 [FE]** CRM request detail renders tabs Request / Lines / PO Attachments / Proof; the standalone Proof card is gone; "Open the designer" lives in the header actions.
+- **AC-S10-2 [FE]** Given the Lines tab, when a row's Design action is clicked, then the designer opens with that line selected; each row shows its tag status (no tag / designed).
+- **AC-S10-3 [FE]** Text sizes on the page use the system's standard tokens only.
+
+### S11 - bulk delete
+- **AC-S11-1 [FE]** Given selected rows on Tag Templates, when Delete is clicked, then the rows are removed via the deferred-action pattern with an Undo toast; no confirmation dialog.
+- **AC-S11-2 [BE]** Bulk delete endpoint deletes only templates in the caller's company scope; a foreign id in the batch is refused as one 404 for the whole batch (no existence oracle).

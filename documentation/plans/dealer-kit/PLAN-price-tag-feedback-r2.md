@@ -1,41 +1,6 @@
 # PLAN - Price Tag Feedback R2
 
-Status: Approved 1 Sep 2026 - implementation starting. S3 DONE, review round
-closed, ready for PR - 1 Sep 2026 on branch `price-tag-r2-s3`: Phase 1
-browser-verified (starter path, template-load error+Retry, published-template
-regression); Phase 2 vitest red-first (46 tests across `request-tags.test.ts`
-+ `RequestTagDesigner.test.tsx`); review fixes closed - set-line starter
-(`buildSetStarterBlock`), honest group binding via `bindingForLine` inside
-`starterTemplateFor` (not left to `tagForLine` to correct downstream),
-`STARTER_TEMPLATE_ID` constant, price-resolution failure gets the same
-explicit error+Retry as templates. Full `app/(protected)/dealer-kit` + lib
-suite green (762 tests), tsc/eslint clean on touched files. Lane B S5
-(template save/publish versions) delivered 2 Sep 2026, PR #486 open; review
-round 2 Sep 2026 fixed B1 (View mount-reset wiped unsaved drafts), replaced
-the Restore confirm dialog with an immediate-restore + Undo toast (captain
-ruling, pending user ratification - see AC-S5-6), made Publish persist the
-draft before snapshotting it, and added a 409 for a concurrent publish race.
-S6 (editor UX - fullscreen, live text reflow, ruler guides, per-block
-preview) branched from S5 with S3 merged in (pre-resolving #484-vs-#486),
-DONE 2 Sep 2026, PR TBD: `FocusShell`/`FocusToggle` on the template editor
-and the request designer (Design + Arrange both wrap the same shell); text
-reflow via a live `onTransform` handler on the Transformer that folds scale
-into width/height and resets it every tick (extracted pure helper
-`reflowedTextSize`), text-only, groups untouched (`transformGroup` still
-owns their commit); ruler guides are a new session-only `RulerGuide[]`
-(`lib/dealer-kit/ruler-guides.ts`) with click-to-drop, drag-to-move,
-drag-back-onto-the-spawning-ruler-to-remove, and they join
-`useSnapGuides`' targets; per-block preview moved off the toolbar onto each
-block (hover/selected eye, `PreviewBlocksDialog` + the toolbar chip deleted)
-plus a new synthesized `WHOLE_TAG_BLOCK_ID` block/eye on the tag frame for
-loose (ungrouped) bound layers, replacing the old "loose layer follows the
-first previewed block" rule. Browser-verified on lane :3135/:8135 (fullscreen
-both pages + Esc, live reflow edge+corner handles, guide click/drag/remove
-on both rulers - caught and fixed a real bug where a plain ruler click
-dropped then immediately deleted its own guide, per-block eye independence,
-whole-tag frame eye + picker copy, toolbar eye gone, 375px). Full
-`app/(protected)/dealer-kit` + `lib/dealer-kit` suite green (794 tests),
-tsc/eslint clean on touched files.
+Status: Approved 1 Sep 2026 - implementation starting
 UAC: `documentation/plans/dealer-kit/price-tag-feedback-r2-acceptance-criteria.md`
 Predecessor: `documentation/plans/dealer-kit/PLAN-price-tag-request.md` (shipped, PR #289)
 
@@ -247,3 +212,38 @@ S7 independent; its connector half ships whenever the AutoCount side sends
 - Doc-persisted guides (D9 defers)
 - CRM-side attachment upload (D4 defers)
 - Barcode on document lines / scanning flows
+
+## Round 3 (captain test on the integration stack, 2 Sep) - decisions D21-D27
+
+- D21 ruler guides: ONE vertical (top ruler) + ONE horizontal (left ruler) guide at a
+  time; clicking a ruler places or MOVES that axis's guide. Remove by drag-back to
+  the ruler, by selecting the guide + Delete/Backspace, or by the small x at the
+  guide's ruler end.
+- D22 autosave: request designer autosaves every committed change (debounced ~1s,
+  "Saved"/"Saving" indicator in the header; Save stays as a manual flush).
+  Template editor autosaves the DRAFT the same way; Publish remains the deliberate
+  act.
+- D23 barcode value override per layer in the inspector (override wins, Relink
+  clears - the text-layer override pattern); lives in the doc only, product master
+  stays the source of truth.
+- D24 tag size control in the request designer: W x H in mm per line's tag
+  (presets = published templates' print sizes + custom), with an "apply to all
+  lines" action.
+- D25 CRM request detail restructured into tabs: Request / Lines / PO Attachments /
+  Proof. Lines rows carry a Design action opening the designer with THAT line
+  selected plus a per-line tag status. The standalone Proof card is removed; its
+  "Open the designer" moves to the header actions. Font sizes follow system tokens.
+- D26 tag templates list: checkbox selection + bulk Delete as a deferred action
+  with Undo toast (no confirm dialog).
+- D27 sequencing: round 3 lands AFTER the eight round-2 PRs merge (shared files).
+
+### Round-3 defects found on the integration stack (fix on their PR branches)
+- portal item picker lists a product twice (lookup_tag_items - diagnose fan-out vs
+  duplicate rows)
+- request designer canvas collapses at the bottom outside fullscreen (#496 layout)
+- a designed tag vanishes on Design -> Arrange -> Design (render, not data; diagnose)
+
+### S8 - guides single-per-axis + autosave (D21, D22)
+### S9 - barcode override + tag size control (D23, D24)
+### S10 - request detail tabs + per-line Design (D25)
+### S11 - tag templates bulk delete, deferred action (D26)
