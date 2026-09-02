@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { PRESSED_CLASS } from '@/components/ui/primitive-classes';
 import {
   fetchAIAssistantGreeting,
   listAIAssistantConversations,
@@ -479,7 +480,7 @@ export default function AIAssistantBubble() {
             aria-expanded={false}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.15 }}
-            className={`flex w-8 flex-col items-center justify-center gap-2 rounded-s-lg border border-e-0 border-primary/20 bg-primary py-3 text-primary-foreground shadow-lg transition-all hover:w-9 ${isSending ? 'animate-pulse' : ''}`}
+            className={`flex w-8 flex-col items-center justify-center gap-2 rounded-s-lg border border-e-0 border-primary/20 bg-primary py-3 text-primary-foreground shadow-lg hover:bg-primary/90 ${PRESSED_CLASS} ${isSending ? 'animate-pulse' : ''}`}
             onClick={() => setOpenPersisted(true)}
           >
             <Sparkles className="size-4 shrink-0" />
