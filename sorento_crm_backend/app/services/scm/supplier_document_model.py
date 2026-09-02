@@ -212,7 +212,7 @@ def build(
     a plan in scope the rows are its own (`plan_statement.stock_scope`); with none, the read
     is the supplier-wide one it always was.
     """
-    raw = _retained_stock_list(db, supplier_id)
+    raw = _retained_stock_list(db, supplier_id, loading_plan_id=loading_plan_id)
     if raw:
         try:
             return _from_their_sheet(
@@ -234,23 +234,32 @@ def build(
     )
 
 
-def _retained_stock_list(db: Session, supplier_id: str) -> Optional[bytes]:
-    """The bytes of the stock list they last sent us, if it was retained.
+def _retained_stock_list(
+    db: Session, supplier_id: str, *, loading_plan_id: Optional[str] = None
+) -> Optional[bytes]:
+    """The bytes of the sheet THIS plan was started from, if it was retained.
+
+    The plan's own pointer first (`loading_plan.source_attachment_id`, stamped by S6 while
+    the file is applied), and nothing else when it has one: this read used to take the
+    supplier's LATEST retained sheet, so the moment a second plan uploaded a newer file, the
+    older plan's document went to the factory answered in the newer plan's numbers. Measured
+    on the lane, 3 Sep: plan one's Download XLSX came back stating plan two's figures.
+
+    A plan with no pointer of its own - every plan open before S6, and a proforma plan, whose
+    file is not retained as a stock list - keeps the supplier-wide lookup, which is the only
+    sheet there is to answer in.
 
     Best-effort by construction: retention is itself best-effort
     (`store_stock_list_attachment` logs and continues), so an absent or unreachable object is
     an ordinary state here rather than an error.
     """
     try:
-        from app.services.resources_service import AttachmentService
-        from app.services.scm import supplier_inventory_service
-
-        held = supplier_inventory_service.latest_stock_list_attachment(
-            db, supplier_id=supplier_id
+        attachment_id = _plan_attachment_id(db, loading_plan_id) or _latest_attachment_id(
+            db, supplier_id
         )
-        if not held:
+        if not attachment_id:
             return None
-        return AttachmentService(db).get_file_content(held["attachment_id"])
+        return _attachment_bytes(db, attachment_id)
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "supplier document: could not read supplier %s's retained stock list (%s)",
@@ -258,6 +267,31 @@ def _retained_stock_list(db: Session, supplier_id: str) -> Optional[bytes]:
             exc,
         )
         return None
+
+
+def _plan_attachment_id(db: Session, loading_plan_id: Optional[str]) -> Optional[str]:
+    """The sheet this plan was started from, or None when it names none."""
+    if not loading_plan_id:
+        return None
+    from app.models.scm import LoadingPlan
+
+    plan = db.query(LoadingPlan).filter(LoadingPlan.id == str(loading_plan_id)).first()
+    return str(plan.source_attachment_id) if plan and plan.source_attachment_id else None
+
+
+def _latest_attachment_id(db: Session, supplier_id: str) -> Optional[str]:
+    from app.services.scm import supplier_inventory_service
+
+    held = supplier_inventory_service.latest_stock_list_attachment(
+        db, supplier_id=supplier_id
+    )
+    return held["attachment_id"] if held else None
+
+
+def _attachment_bytes(db: Session, attachment_id: str) -> Optional[bytes]:
+    from app.services.resources_service import AttachmentService
+
+    return AttachmentService(db).get_file_content(attachment_id)
 
 
 # --------------------------------------------------------------------------- their sheet

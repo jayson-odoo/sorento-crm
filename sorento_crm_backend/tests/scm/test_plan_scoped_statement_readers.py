@@ -126,7 +126,7 @@ def test_the_no_file_document_reads_this_plans_own_snapshot(monkeypatch):
         mine, theirs = w.plan("stock_list"), w.plan("stock_list")
         w.stock_row("A", packed=40, plan_id=str(mine.id))
         w.stock_row("A", packed=900, plan_id=str(theirs.id))
-        monkeypatch.setattr(doc_model, "_retained_stock_list", lambda _db, _sid: None)
+        monkeypatch.setattr(doc_model, "_retained_stock_list", lambda _db, _sid, **_kw: None)
 
         sheet = doc_model.build(
             db,
@@ -162,7 +162,7 @@ def test_the_ask_binds_through_this_plans_own_rows(monkeypatch):
         monkeypatch.setattr(
             doc_model,
             "_retained_stock_list",
-            lambda _db, _sid: _their_sheet([(their_code, 4)]),
+            lambda _db, _sid, **_kw: _their_sheet([(their_code, 4)]),
         )
 
         sheet = doc_model.build(
@@ -183,6 +183,81 @@ def test_the_ask_binds_through_this_plans_own_rows(monkeypatch):
         row = next(r for r in sheet.rows if r.cells[code_at].value == their_code)
         assert row.cells[-1].value == 7
         assert not any(r.appended for r in sheet.rows)
+
+
+def test_the_document_renders_the_sheet_this_plan_was_started_from(monkeypatch):
+    """The FIRST branch of the builder: their own workbook, answered in.
+
+    It read the supplier's LATEST retained sheet, so the moment a second plan uploaded a
+    newer file, the older plan's Download XLSX and its emailed copy went out on the newer
+    plan's numbers. Measured live on the lane (3 Sep): plan one's document came back stating
+    plan two's 222 for the code both files name.
+    """
+    with pg_session() as db:
+        require_aliases(db, "supplier_inventory")
+        w = World(db)
+        mine, theirs = w.plan("stock_list"), w.plan("stock_list")
+        code = f"ZZPO-SHARED-{w.tag}"
+        w.stock_row("A", packed=111, plan_id=str(mine.id), item_code=code)
+        w.stock_row("A", packed=222, plan_id=str(theirs.id), item_code=code)
+        mine.source_attachment_id = str(uuid.uuid4())
+        theirs.source_attachment_id = str(uuid.uuid4())
+        db.flush()
+        sheets = {
+            str(mine.source_attachment_id): _their_sheet([(code, 111)]),
+            str(theirs.source_attachment_id): _their_sheet([(code, 222)]),
+        }
+        monkeypatch.setattr(
+            doc_model,
+            "_attachment_bytes",
+            lambda _db, attachment_id: sheets.get(str(attachment_id)),
+        )
+        monkeypatch.setattr(
+            doc_model,
+            "_latest_attachment_id",
+            lambda _db, _sid: str(theirs.source_attachment_id),
+        )
+
+        sheet = doc_model.build(
+            db,
+            supplier_id=str(w.supplier.id),
+            lines=[
+                {
+                    "product_id": str(w.product("A").id),
+                    "item_code": w.code("A"),
+                    "product_name": "A",
+                    "qty": 5,
+                }
+            ],
+            loading_plan_id=str(mine.id),
+        )
+
+        assert _held(sheet, code) == 111
+
+
+def test_a_plan_with_no_sheet_of_its_own_still_answers_in_the_suppliers(monkeypatch):
+    """Every plan open before S6 stamped the pointer has none, and their document is the one
+    thing on the record that still worked: it keeps the supplier-wide lookup."""
+    with pg_session() as db:
+        require_aliases(db, "supplier_inventory")
+        w = World(db)
+        legacy = w.plan("stock_list")
+        code = f"ZZPO-LEGACY-{w.tag}"
+        w.stock_row("A", packed=7, plan_id=None, item_code=code)
+        supplier_sheet = _their_sheet([(code, 7)])
+        monkeypatch.setattr(
+            doc_model, "_attachment_bytes", lambda _db, _aid: supplier_sheet
+        )
+        monkeypatch.setattr(doc_model, "_latest_attachment_id", lambda _db, _sid: "att-x")
+
+        sheet = doc_model.build(
+            db,
+            supplier_id=str(w.supplier.id),
+            lines=[],
+            loading_plan_id=str(legacy.id),
+        )
+
+        assert _held(sheet, code) == 7
 
 
 # --------------------------------------------------------------------------- #
