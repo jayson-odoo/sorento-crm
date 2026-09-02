@@ -1,2 +1,0 @@
-[console_scripts]
-sorento-crm-mcp = sorento_crm_mcp.__main__:main
