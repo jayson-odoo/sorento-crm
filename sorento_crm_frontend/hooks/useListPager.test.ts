@@ -21,10 +21,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useListPager, type ListPagerParams, type ListPagerPage } from './useListPager';
 
 const push = vi.fn();
+const prefetch = vi.fn();
 let search = '';
 
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push }),
+  useRouter: () => ({ push, prefetch }),
   useSearchParams: () => new URLSearchParams(search),
 }));
 
@@ -95,6 +96,7 @@ function renderPager(currentId: string) {
 
 beforeEach(() => {
   push.mockReset();
+  prefetch.mockReset();
   fetchPage.mockClear();
   search = 'page=1&limit=3';
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -250,6 +252,25 @@ describe('useListPager', () => {
     expect(push).not.toHaveBeenCalled();
     expect(result.current.hasPrevious).toBe(false);
     expect(result.current.hasNext).toBe(true);
+  });
+
+  it('M4-06: prefetches the prev and next hrefs as soon as the record mounts', async () => {
+    seed(0);
+    renderPager('a2');
+
+    await waitFor(() => expect(prefetch).toHaveBeenCalledWith('/things/a1?page=1&limit=3'));
+    expect(prefetch).toHaveBeenCalledWith('/things/a3?page=1&limit=3');
+  });
+
+  it('M4-06: prefetches each href only once, even across re-renders', async () => {
+    seed(0);
+    const { rerender } = renderPager('a2');
+
+    await waitFor(() => expect(prefetch).toHaveBeenCalledTimes(2));
+    rerender();
+    rerender();
+
+    expect(prefetch).toHaveBeenCalledTimes(2);
   });
 
   it('S3-04: a page fetched by a boundary step is cached, not fetched twice', async () => {
