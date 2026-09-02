@@ -226,7 +226,7 @@ const ProductsList = () => {
     ],
   );
 
-  const { data, isLoading, isFetching, isError, error } = useQuery({
+  const { data, isLoading, isPlaceholderData, isFetching, isError, error } = useQuery({
     ...LIST_QUERY_OPTIONS,
     queryKey: productsListQueryKey(listParams),
     queryFn: () => fetchProductsPage(listParams),
@@ -742,6 +742,7 @@ const ProductsList = () => {
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       rowHref={rowHref}
       rowPending={rowPending}
       tableLayout={{

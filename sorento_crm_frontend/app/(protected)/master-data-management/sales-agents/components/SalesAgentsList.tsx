@@ -84,7 +84,7 @@ export default function SalesAgentsList() {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
   }, [debouncedSearch, sorting]);
 
-  const { data, isLoading, isError, error, refetch, isFetching } = useSalesAgents({
+  const { data, isLoading, isPlaceholderData, isError, error, refetch, isFetching } = useSalesAgents({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -291,6 +291,7 @@ export default function SalesAgentsList() {
         table={table}
         recordCount={total}
         isLoading={isLoading}
+        isPlaceholderData={isPlaceholderData}
         listingKey="master_data.sales_agents.view"
         tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
         emptyMessage="No sales agents found."
