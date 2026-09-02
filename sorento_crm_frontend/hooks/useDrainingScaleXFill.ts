@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, type CSSProperties } from 'react';
+import { useReducedMotion } from '@/lib/motion';
 
 /**
  * The ONE shared mechanism every fill bar counting down against a server
@@ -28,23 +29,34 @@ import { useEffect, useState, type CSSProperties } from 'react';
  * match on the value rendered, not a "have I run yet" flag, so it cannot get
  * out of step with an effect that ran a different number of times.
  *
+ * **Reduced motion is branched on HERE, not left to a class.** Both callers
+ * carry `motion-reduce:transition-none` on the bar, and it cannot win: this
+ * hook writes the transition as an inline style, and an inline declaration
+ * beats any class. Under `prefers-reduced-motion: reduce` the hook therefore
+ * arms nothing and simply renders `scaleX(startFraction)`, which makes
+ * `startFraction` the LIVE fraction rather than a value read once - both
+ * callers already re-render every tick to redraw their label, so the bar steps
+ * with the label instead of tweening between the two.
+ *
  * `transform` runs on the compositor and never triggers layout, unlike the
  * `width` tween this replaces - `components/common/gpu-properties.inventory.test.ts`
  * is the guardrail that keeps a future bar from reverting to it.
  *
  * @param targetMs Absolute `Date.now()`-comparable deadline. `<= 0` parks the
  *   fill at `startFraction` with no transition (nothing to count down to yet).
- * @param startFraction The proportion (0..1) the bar should show as already
- *   elapsed at the moment `targetMs` is (re)armed - `1` for a countdown that
- *   always starts fresh and full, the live remaining fraction for one that
- *   can mount partway through its window.
+ * @param startFraction The proportion (0..1) of the bar still to run. Full
+ *   motion reads it once, at the moment `targetMs` is (re)armed; reduced motion
+ *   renders it on every tick, so a caller must pass the LIVE fraction
+ *   (`remaining / window`) rather than a constant, or the bar never moves for
+ *   the person who asked for less motion.
  */
 export function useDrainingScaleXFill(targetMs: number, startFraction: number): CSSProperties {
+  const prefersReducedMotion = useReducedMotion();
   /** The target this fill is currently transitioning to zero for, and over how long. */
   const [armed, setArmed] = useState<{ target: number; remaining: number } | null>(null);
 
   useEffect(() => {
-    if (targetMs <= 0) return;
+    if (prefersReducedMotion || targetMs <= 0) return;
     // Read at arm time: two frames from now is within a frame or two of this,
     // and reading it inside the callback would make the duration depend on
     // when the browser got round to the frame.
@@ -62,7 +74,11 @@ export function useDrainingScaleXFill(targetMs: number, startFraction: number): 
     // startFraction is read at arm time only (a re-arm happens on a new
     // targetMs, which always carries its own fresh startFraction with it).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [targetMs]);
+  }, [targetMs, prefersReducedMotion]);
+
+  // No transition for someone who asked for less motion: the caller's own tick
+  // steps this straight to the fraction it just computed.
+  if (prefersReducedMotion) return { transform: `scaleX(${startFraction})` };
 
   // A new target renders the start fraction again on the SAME frame it arrives,
   // with no transition, without waiting for the effect: the armed value belongs

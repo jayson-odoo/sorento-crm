@@ -6,7 +6,20 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, render, renderHook } from '@testing-library/react';
 import { useDrainingScaleXFill } from './useDrainingScaleXFill';
 
+/**
+ * `vitest.setup.ts` makes `prefers-reduced-motion` MATCH by default (so the
+ * suite does not pay a spring's settle time on every dialog), which would put
+ * every test in this file on the reduced branch by accident. The branch under
+ * test is named here instead: full motion above, reduced motion in its own
+ * block at the bottom.
+ */
+const motionPreference = vi.hoisted(() => ({ reduced: false }));
+vi.mock('@/lib/motion', () => ({
+  useReducedMotion: () => motionPreference.reduced,
+}));
+
 beforeEach(() => {
+  motionPreference.reduced = false;
   vi.useFakeTimers();
   vi.setSystemTime(Date.UTC(2026, 7, 30, 10, 0, 0));
 });
@@ -129,5 +142,66 @@ describe('useDrainingScaleXFill', () => {
     armFrames();
     expect(result.current.transform).toBe('scaleX(1)');
     expect(result.current.transitionDuration).toBeUndefined();
+  });
+});
+
+/**
+ * M3-01 fix round: the hook writes its transition as an INLINE style, and an
+ * inline `transition-duration` beats the `motion-reduce:transition-none` class
+ * the two callers carry - so the class alone left a full-speed tween running
+ * for someone who asked for none. The preference is branched on here instead,
+ * at the one place that writes the style.
+ *
+ * Reduced motion has no transition to arm, so the fill can only move when the
+ * caller re-renders it: both callers already tick once a second (or faster) to
+ * redraw their label, and they pass the live fraction with it.
+ */
+describe('useDrainingScaleXFill under prefers-reduced-motion', () => {
+  beforeEach(() => {
+    motionPreference.reduced = true;
+  });
+
+  it('renders the caller fraction with no transition, and never arms one', () => {
+    const target = Date.now() + 10_000;
+    const { result, rerender } = renderHook(
+      ({ fraction }) => useDrainingScaleXFill(target, fraction),
+      { initialProps: { fraction: 1 } },
+    );
+
+    expect(result.current.transform).toBe('scaleX(1)');
+    expect(result.current.transitionDuration).toBeUndefined();
+
+    // The frames that would arm the transition under full motion.
+    armFrames();
+
+    expect(result.current.transform).toBe('scaleX(1)');
+    expect(result.current.transitionProperty).toBeUndefined();
+    expect(result.current.transitionDuration).toBeUndefined();
+    expect(result.current.transitionTimingFunction).toBeUndefined();
+  });
+
+  it('steps to whatever fraction the caller passes on its next tick', () => {
+    const target = Date.now() + 10_000;
+    const { result, rerender } = renderHook(
+      ({ fraction }) => useDrainingScaleXFill(target, fraction),
+      { initialProps: { fraction: 1 } },
+    );
+    armFrames();
+
+    rerender({ fraction: 0.7 });
+    expect(result.current.transform).toBe('scaleX(0.7)');
+    expect(result.current.transitionDuration).toBeUndefined();
+
+    rerender({ fraction: 0.3 });
+    expect(result.current.transform).toBe('scaleX(0.3)');
+  });
+
+  it('still arms the transition for someone who did NOT ask for less motion', () => {
+    motionPreference.reduced = false;
+    const target = Date.now() + 4_000;
+    const { result } = renderHook(() => useDrainingScaleXFill(target, 1));
+    armFrames();
+    expect(result.current.transform).toBe('scaleX(0)');
+    expect(result.current.transitionDuration).toBe('4000ms');
   });
 });

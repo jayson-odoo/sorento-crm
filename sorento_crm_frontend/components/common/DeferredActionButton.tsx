@@ -58,15 +58,19 @@ export function DeferredCountdown({
     };
   }, [pending]);
 
-  // The fill always parks fresh and full - an action is only ever just-parked,
-  // never resumed partway through from a remount - so the ONE shared
-  // draining mechanism (`hooks/useDrainingScaleXFill`, M3-01) always starts
-  // it at scaleX(1) and drains to 0 by the server's `commit_at`.
-  const fillStyle = useDrainingScaleXFill(target, 1);
+  const remainingMs = Math.max(0, target - now);
+  const windowMs = (pending?.window_seconds ?? 0) * 1000;
+  // Under full motion the fill parks fresh and full and the ONE shared draining
+  // mechanism (`hooks/useDrainingScaleXFill`, M3-01) transitions it to 0 by the
+  // server's `commit_at`, reading this fraction once. Under reduced motion there
+  // is no transition to read it once - the hook renders this value every time,
+  // so it has to be the LIVE fraction, and the 1s tick above is what steps the
+  // bar down with the label.
+  const fraction = windowMs > 0 ? Math.max(0, Math.min(1, remainingMs / windowMs)) : 1;
+  const fillStyle = useDrainingScaleXFill(target, fraction);
 
   if (!pending) return null;
 
-  const remainingMs = Math.max(0, target - now);
   const lapsed = remainingMs <= 0;
   const label = lapsed ? `${verb}…` : `${verb} in ${Math.ceil(remainingMs / 1000)}s`;
 

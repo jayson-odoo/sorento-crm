@@ -2,6 +2,16 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, act } from '@testing-library/react';
 import { TakeoverCountdown } from './TakeoverCountdown';
 
+/**
+ * `vitest.setup.ts` makes `prefers-reduced-motion` MATCH by default, and the
+ * shared fill is branched on that preference (M3-01/M3-02 fix round), so the
+ * branch is named per test rather than inherited.
+ */
+const motionPreference = vi.hoisted(() => ({ reduced: false }));
+vi.mock('@/lib/motion', () => ({
+  useReducedMotion: () => motionPreference.reduced,
+}));
+
 /** Two frames, not a millisecond guess - the double rAF arms the fill's transition. */
 function armFrames() {
   act(() => {
@@ -23,7 +33,10 @@ function scaleXOf(el: HTMLElement): number {
 }
 
 describe('TakeoverCountdown', () => {
-  beforeEach(() => vi.useFakeTimers());
+  beforeEach(() => {
+    motionPreference.reduced = false;
+    vi.useFakeTimers();
+  });
   afterEach(() => vi.useRealTimers());
 
   it('renders remaining time from commit_at (server time), depleting', () => {
@@ -86,6 +99,27 @@ describe('TakeoverCountdown', () => {
       vi.advanceTimersByTime(3_000);
     });
     expect(onExpire).toHaveBeenCalledTimes(1);
+  });
+
+  it('steps the bar with its own tick under reduced motion, with no transition (M3-02)', () => {
+    // No transition is armed at all, so the 250ms tick's own recomputed
+    // fraction is what moves the bar - an inline transition would otherwise
+    // beat the `motion-reduce:transition-none` class on the element.
+    motionPreference.reduced = true;
+    const commitAt = new Date(Date.now() + 60_000).toISOString().replace('Z', '');
+    render(<TakeoverCountdown commitAt={commitAt} windowSeconds={60} />);
+    const bar = screen.getByTestId('takeover-bar') as HTMLElement;
+
+    armFrames();
+    expect(bar.style.transitionDuration).toBe('');
+    expect(bar.style.transitionProperty).toBe('');
+    expect(scaleXOf(bar)).toBeGreaterThan(0.9);
+
+    act(() => {
+      vi.advanceTimersByTime(30_000);
+    });
+    expect(scaleXOf(bar)).toBeCloseTo(0.5, 1);
+    expect(bar.style.transitionDuration).toBe('');
   });
 
   it('animates transform only, keeps motion-reduce:transition-none (M3-02)', () => {

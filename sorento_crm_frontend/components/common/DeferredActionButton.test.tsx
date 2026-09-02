@@ -19,6 +19,17 @@ import { render, screen, fireEvent, act } from '@testing-library/react';
 import DeferredActionButton, { DeferredCountdown } from './DeferredActionButton';
 import type { PendingAction } from '@/services/pendingActionService';
 
+/**
+ * `vitest.setup.ts` makes `prefers-reduced-motion` MATCH by default, and the
+ * fill's transition is branched on that preference (M3-01 fix round), so the
+ * branch has to be named per test rather than inherited: full motion below,
+ * reduced motion in its own test.
+ */
+const motionPreference = vi.hoisted(() => ({ reduced: false }));
+vi.mock('@/lib/motion', () => ({
+  useReducedMotion: () => motionPreference.reduced,
+}));
+
 /** Naive UTC, exactly as the backend serialises it. */
 const NOW = Date.UTC(2026, 7, 30, 10, 0, 0);
 
@@ -35,6 +46,7 @@ function parked(overrides: Partial<PendingAction> = {}): PendingAction {
 }
 
 beforeEach(() => {
+  motionPreference.reduced = false;
   vi.useFakeTimers();
   vi.setSystemTime(NOW);
 });
@@ -171,6 +183,28 @@ describe('the fill animates transform, not width (M3-01)', () => {
     } finally {
       globalThis.ResizeObserver = realRO;
     }
+  });
+
+  it('steps the fill once per tick under reduced motion, with no inline transition', () => {
+    // The class alone cannot do this: the hook writes the transition as an
+    // INLINE style, which beats `motion-reduce:transition-none` every time.
+    motionPreference.reduced = true;
+    render(<DeferredCountdown pending={parked()} verb="Deleting" onCancel={vi.fn()} />);
+    const bar = screen.getByTestId('deferred-countdown-bar') as HTMLElement;
+
+    expect(bar.style.transform).toBe('scaleX(1)');
+    armFillTransition();
+    expect(bar.style.transitionDuration).toBe('');
+    expect(bar.style.transitionProperty).toBe('');
+
+    // Three of the ten seconds gone: the bar steps with the label rather than
+    // tweening between the two.
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+    expect(screen.getByRole('timer')).toHaveTextContent('Deleting in 7s');
+    expect(bar.style.transform).toBe('scaleX(0.7)');
+    expect(bar.style.transitionDuration).toBe('');
   });
 
   it('keeps motion-reduce:transition-none on the fill and still counts the label down', () => {
