@@ -13,7 +13,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook } from '@testing-library/react';
 
 const toastPlain = vi.fn();
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: Object.assign(
     (...args: unknown[]) => toastPlain(...args),
     { success: vi.fn(), error: vi.fn() },
