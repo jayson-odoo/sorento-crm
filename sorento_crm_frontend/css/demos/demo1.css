@@ -157,6 +157,71 @@
       top: 0.25rem;
       transform: translateX(100%);
     }
+
+    /*
+     * M3-05 (`ui-motion-round2`): the same eight rules again, without
+     * `:not(:hover)`, for a device that cannot hover.
+     *
+     * Gating the hover-EXPAND above stops the rail growing on a tap. It does
+     * not stop `:hover` MATCHING: a tap on a touch screen leaves a sticky
+     * hover on the element until something else takes it, and every rule that
+     * paints the collapsed rail is written as `:not(:hover)`. The rail would
+     * hold at 80px while the labels, badges and submenu indicators inside it
+     * came back - a rail that looks broken rather than one that peeked.
+     *
+     * These carry one class less specificity than the `:not(:hover)` rules
+     * they mirror, which is fine: where both apply they say the same thing,
+     * and where only these apply nothing else is competing for the property.
+     */
+    @media (hover: none), (pointer: coarse) {
+      .demo1.sidebar-collapse .sidebar .default-logo {
+        display: none;
+      }
+
+      .demo1.sidebar-collapse .sidebar .small-logo {
+        display: flex;
+      }
+
+      .demo1.sidebar-collapse .sidebar [data-slot='accordion-menu-title'],
+      .demo1.sidebar-collapse .sidebar [data-slot='badge'],
+      .demo1.sidebar-collapse
+        .sidebar
+        [data-slot='accordion-menu-sub-indicator'] {
+        display: none !important;
+        transition: none !important;
+        animation: none !important;
+      }
+
+      .demo1.sidebar-collapse
+        .sidebar
+        [data-slot='accordion-menu-sub-content'] {
+        visibility: hidden;
+        position: absolute;
+        height: 0;
+        width: 0;
+      }
+
+      .demo1.sidebar-collapse .sidebar [data-slot='accordion-menu-label'] {
+        visibility: hidden;
+        position: relative;
+      }
+
+      .demo1.sidebar-collapse
+        .sidebar
+        [data-slot='accordion-menu-label']::before {
+        content: '...';
+        color: currentColor;
+        font-size: inherit;
+        position: absolute;
+        visibility: visible;
+        display: inline-block;
+        bottom: 50%;
+        inset-inline-start: 0;
+        margin-inline-start: -0.15rem;
+        top: 0.25rem;
+        transform: translateX(100%);
+      }
+    }
   }
 
   /*

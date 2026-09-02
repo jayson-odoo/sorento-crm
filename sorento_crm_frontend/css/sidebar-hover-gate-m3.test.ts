@@ -48,4 +48,37 @@ describe('M3-05 sidebar hover-expand is gated to a device with real hover', () =
     );
     expect(withoutHoverGate).not.toMatch(/\.demo1\.sidebar-collapse \.sidebar:hover\s*\{/);
   });
+
+  /**
+   * The gate above stops a tap EXPANDING the rail. It does not stop `:hover`
+   * MATCHING: a tap on a touch device leaves a sticky hover on the element
+   * until something else takes it, and every rule that paints the collapsed
+   * rail is written as `:not(:hover)`. So the rail stayed 80px while the
+   * labels, badges and submenu indicators inside it reappeared, which reads as
+   * a broken rail rather than a peek.
+   */
+  describe('the collapsed rail keeps its appearance under a sticky tap-hover', () => {
+    const coarse = block(demo1Css, '@media (hover: none), (pointer: coarse)');
+
+    it('re-asserts the collapsed appearance without depending on :hover', () => {
+      expect(coarse).not.toContain(':hover');
+    });
+
+    it.each([
+      ['.default-logo', /\.demo1\.sidebar-collapse \.sidebar \.default-logo/],
+      ['.small-logo', /\.demo1\.sidebar-collapse \.sidebar \.small-logo/],
+      ['menu titles', /\[data-slot='accordion-menu-title'\]/],
+      ['badges', /\[data-slot='badge'\]/],
+      ['sub-indicators', /\[data-slot='accordion-menu-sub-indicator'\]/],
+      ['sub-content', /\[data-slot='accordion-menu-sub-content'\]/],
+      ['menu labels', /\[data-slot='accordion-menu-label'\]/],
+    ])('covers %s', (_name, pattern) => {
+      expect(coarse).toMatch(pattern);
+    });
+
+    it('hides what the :not(:hover) rules hide', () => {
+      expect(coarse).toMatch(/\.default-logo\s*\{\s*display:\s*none/);
+      expect(coarse).toMatch(/\.small-logo\s*\{\s*display:\s*flex/);
+    });
+  });
 });
