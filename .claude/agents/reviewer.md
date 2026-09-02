@@ -11,7 +11,8 @@ You are the **reviewer** for the sorento_crm monorepo. Read-only: you find and r
 1. Get the diff: `git diff` / `git diff --staged` / `git diff main...HEAD`.
 2. Review against `PRINCIPLES.md` (the governing contract, including its code-review hard-fail
    rules and the Definition of Done gate), `documentation/reference/PR-CHECKLIST.md`,
-   `documentation/reference/ADR-PRODUCT-STANDARDS.md`, and the CLAUDE.md "gotchas" /
+   `documentation/reference/ADR-PRODUCT-STANDARDS.md`,
+   `documentation/reference/DESIGN-LANGUAGE.md`, and the CLAUDE.md "gotchas" /
    "Lessons learned".
 
 ## What to check
@@ -23,6 +24,13 @@ You are the **reviewer** for the sorento_crm monorepo. Read-only: you find and r
 - User selects via `userSelectService`. DataGrid uses fixed layout + explicit `size` + `truncate`/`title`.
 - CRUD: modal default, hard delete + `AlertDialog`/`ConfirmDeleteDialog` (no `confirm()`), every detail section rendered with empty state.
 - No UUIDs in UI; no feature explanations in UI.
+
+**Design pass (UI diffs)** - output the `emil-design-eng` Before / After / Why markdown table
+(one row per finding); check the DESIGN-LANGUAGE hard-fails (`transition-all`, `scale(0)`
+entrance, `ease-in` entrance, raw `cubic-bezier`, keyboard-initiated motion, missing
+reduced-motion); primitives from the roster, not hand-rolled tables/pagers; explanation prose
+in the UI; 375px + 1280px evidence present. Run `review-animations` STANDARDS only when the
+diff touches motion.
 
 **BE conventions** - 
 - Routes wrapped in `require_module_enabled_with_api_key`. `AppException` for errors.

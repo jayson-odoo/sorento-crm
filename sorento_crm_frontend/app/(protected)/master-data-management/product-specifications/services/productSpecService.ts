@@ -174,60 +174,9 @@ import type {
   SpecSearchPolicyRow,
   SpecTryResult,
   ProductSpecDetail,
-  ProductSpecRow,
-  SpecException,
   SpecPreviewResult,
   SpecRegistryKey,
 } from '../types/productSpec.types';
-
-interface Paged<T> {
-  data: T[];
-  pagination: { total: number; page: number; limit: number };
-}
-
-export async function getProductSpecs(params: {
-  page?: number;
-  limit?: number;
-  query?: string;
-  status?: string;
-}): Promise<Paged<ProductSpecRow>> {
-  const search = new URLSearchParams({
-    page: String(params.page ?? 1),
-    limit: String(params.limit ?? 25),
-    ...(params.query ? { query: params.query } : {}),
-    ...(params.status ? { status: params.status } : {}),
-  });
-
-  const response = await apiFetch(
-    `/api/v1/master-data/product-specifications/?${search.toString()}`,
-  );
-  if (!response.ok) {
-    throw new Error(
-      await extractApiError(response, 'Failed to load product specifications'),
-    );
-  }
-  return response.json();
-}
-
-export async function getSpecExceptions(params: {
-  page?: number;
-  limit?: number;
-}): Promise<Paged<SpecException>> {
-  const search = new URLSearchParams({
-    page: String(params.page ?? 1),
-    limit: String(params.limit ?? 25),
-  });
-
-  const response = await apiFetch(
-    `/api/v1/master-data/product-specifications/exceptions?${search.toString()}`,
-  );
-  if (!response.ok) {
-    throw new Error(
-      await extractApiError(response, 'Failed to load spec exceptions'),
-    );
-  }
-  return response.json();
-}
 
 /**
  * One product's derived specs, or the reason there are none. Used by the
@@ -294,6 +243,8 @@ export interface ApplicableSpecKey {
   unit: string | null;
   allowed_values: string[];
   synonyms: Record<string, string[]>;
+  /** How each value reads on screen (#423), keyed by the stored slug. */
+  value_labels?: Record<string, string>;
   /** The `applies_when` gate, evaluated the way derivation evaluates it. */
   applicable: boolean;
   /** Already on the product, meaning it has a value. A removed key is reported not held. */
@@ -432,6 +383,8 @@ export async function updateSpecKey(
   specKey: string,
   body: {
     label?: string;
+    /** Editable from the record page's header field (B.1, B.2). null clears it. */
+    unit?: string | null;
     rank_weight?: number;
     is_active?: boolean;
     match_tolerance?: number;
@@ -447,6 +400,9 @@ export async function updateSpecKey(
     applies_when?: Record<string, string[]>;
     /** The plausibility cap (AC-A.5, C.5). null clears it; absent leaves it as stored. */
     max_value?: number | null;
+    /** How each value reads on screen (#423, folded into the spec workbench
+     * redesign). Trimmed and validated server-side; an empty label drops the key. */
+    value_labels?: Record<string, string>;
   },
 ): Promise<SpecRegistryKey> {
   const response = await apiFetch(
@@ -525,12 +481,23 @@ export async function getSpecCoverage(): Promise<{
 
 export async function getSpecKeyProducts(
   specKey: string,
-  params: { value?: string; q?: string; limit?: number; offset?: number } = {},
+  params: {
+    value?: string;
+    q?: string;
+    classLabel?: string;
+    source?: string;
+    limit?: number;
+    offset?: number;
+  } = {},
 ): Promise<SpecKeyProducts> {
   const query = new URLSearchParams();
   if (params.value !== undefined) query.set('value', params.value);
   // Searched server-side over the whole key, not over the page on screen.
   if (params.q) query.set('q', params.q);
+  // Class and Source narrow the query itself (UAC B.5, D17), not the page already on
+  // screen - a key with 10,000 rows only has one page loaded client-side.
+  if (params.classLabel) query.set('class_label', params.classLabel);
+  if (params.source) query.set('source', params.source);
   query.set('limit', String(params.limit ?? 100));
   query.set('offset', String(params.offset ?? 0));
   const response = await apiFetch(

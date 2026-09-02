@@ -585,6 +585,131 @@ def test_an_unknown_key_is_a_404_not_an_empty_list(client, db):
     assert client.get(f"{ENDPOINT}/not_a_key/products").status_code == 404
 
 
+# --------------------------------------------------------------------------- #
+# Class and Source narrow the query, not just the loaded page (UAC B.5, D17)
+# --------------------------------------------------------------------------- #
+def _overflow_catalogue(db):
+    """Four products carrying `has_overflow`, spread across two classes and two
+    sources, so a `class_label`/`source` filter has something real to narrow."""
+    import uuid as _uuid
+    from decimal import Decimal
+
+    from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
+    from app.models.product_spec import ProductSpecifications
+    from app.services.product_class_signal import backfill_category_signals
+    from app.services.product_spec_derivation import derive_for_code
+
+    ks = ProductCategory(id=str(_uuid.uuid4()), category_code="ZZT-KS", category_name="ZZT-KS")
+    jc = ProductCategory(id=str(_uuid.uuid4()), category_code="ZZT-JC", category_name="ZZT-JC")
+    uom = UnitOfMeasure(id=str(_uuid.uuid4()), uom_code="ZZT-PCS", uom_name="Piece")
+    brand = Brand(id=str(_uuid.uuid4()), brand_code="ZZT-SRT", brand_name="SORENTO")
+    db.add_all([ks, jc, uom, brand])
+    db.flush()
+    backfill_category_signals(db)
+    seed_spec_registry(db)
+
+    codes = {
+        "ZZT-OV-1": ks,  # Kitchen Sink, derived
+        "ZZT-OV-2": ks,  # Kitchen Sink, re-stamped human below
+        "ZZT-OV-3": jc,  # Bathtub and Jacuzzi, derived
+        "ZZT-OV-4": jc,  # Bathtub and Jacuzzi, re-stamped human below
+    }
+    for code, category in codes.items():
+        db.add(
+            Product(
+                id=str(_uuid.uuid4()),
+                product_code=code,
+                product_name=code,
+                description="SORENTO C/W OVERFLOW",
+                category_id=category.id,
+                base_uom_id=uom.id,
+                brand_id=brand.id,
+                list_price=Decimal("1.00"),
+            )
+        )
+        db.flush()
+        derive_for_code(db, code)
+    db.commit()
+
+    # Re-stamp two of the four rows as a person's own word rather than a rule's read,
+    # so `source` has two real values to filter on.
+    for code in ("ZZT-OV-2", "ZZT-OV-4"):
+        product = db.query(Product).filter_by(product_code=code).one()
+        spec = db.query(ProductSpecifications).filter_by(product_id=product.id).one()
+        values = dict(spec.values)
+        provenance = dict(spec.provenance)
+        provenance["has_overflow"] = {**provenance["has_overflow"], "source": "human"}
+        spec.values = values
+        spec.provenance = provenance
+        db.add(spec)
+    db.commit()
+
+
+def test_class_narrows_the_query_not_the_loaded_page(client, db):
+    """AC B.5 / D17: on a 10,000-row key the client only holds one page, so the
+    filter has to run in the database or it silently reports on the wrong set."""
+    _overflow_catalogue(db)
+
+    body = client.get(f"{ENDPOINT}/has_overflow/products", params={"class_label": "Kitchen Sink"}).json()
+
+    assert body["total"] == 2
+    assert {row["product_code"] for row in body["products"]} == {"ZZT-OV-1", "ZZT-OV-2"}
+    assert all(row["class"] == "Kitchen Sink" for row in body["products"])
+
+
+def test_source_narrows_the_query_not_the_loaded_page(client, db):
+    _overflow_catalogue(db)
+
+    body = client.get(f"{ENDPOINT}/has_overflow/products", params={"source": "human"}).json()
+
+    assert body["total"] == 2
+    assert {row["product_code"] for row in body["products"]} == {"ZZT-OV-2", "ZZT-OV-4"}
+    assert all(row["source"] == "human" for row in body["products"])
+
+
+def test_class_and_source_filters_compose(client, db):
+    _overflow_catalogue(db)
+
+    body = client.get(
+        f"{ENDPOINT}/has_overflow/products",
+        params={"class_label": "Kitchen Sink", "source": "human"},
+    ).json()
+
+    assert body["total"] == 1
+    assert body["products"][0]["product_code"] == "ZZT-OV-2"
+
+
+def test_class_and_source_facets_stay_unfiltered_so_the_dropdowns_do_not_collapse(client, db):
+    """The facets describe every option there IS to pick, not just the one already
+    picked - narrowing them to match the current filter would make the other options
+    disappear the moment one is chosen."""
+    _overflow_catalogue(db)
+
+    unfiltered = client.get(f"{ENDPOINT}/has_overflow/products").json()
+    by_class = client.get(
+        f"{ENDPOINT}/has_overflow/products", params={"class_label": "Kitchen Sink"}
+    ).json()
+    by_source = client.get(f"{ENDPOINT}/has_overflow/products", params={"source": "human"}).json()
+
+    assert sorted(unfiltered["by_class"], key=lambda r: r["class"]) == [
+        {"class": "Bathtub and Jacuzzi", "count": 2},
+        {"class": "Kitchen Sink", "count": 2},
+    ]
+    assert sorted(unfiltered["by_source"], key=lambda r: r["source"]) == [
+        {"source": "derived", "count": 2},
+        {"source": "human", "count": 2},
+    ]
+    assert sorted(by_class["by_class"], key=lambda r: r["class"]) == sorted(
+        unfiltered["by_class"], key=lambda r: r["class"]
+    ), "picking a class must not collapse the class options themselves"
+    assert sorted(by_class["by_source"], key=lambda r: r["source"]) == sorted(
+        unfiltered["by_source"], key=lambda r: r["source"]
+    ), "picking a class must not collapse the source options"
+    assert sorted(by_source["by_class"], key=lambda r: r["class"]) == sorted(
+        unfiltered["by_class"], key=lambda r: r["class"]
+    ), "picking a source must not collapse the class options"
+
+
 def test_coverage_reports_the_live_count_not_the_note_from_when_the_key_was_written(client, db):
     """`measured_coverage` is a figure from the past; this is the catalogue now."""
     _catalogue(db)

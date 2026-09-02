@@ -85,6 +85,7 @@ const AI_ROW: CertificateProduct = {
   product_id: '9d1f0a2e-0000-4000-8000-000000000001',
   product_code: 'SR-1001',
   product_name: 'Close Coupled WC',
+  company_name: 'Sorento',
   source: 'ai',
 };
 
@@ -93,6 +94,7 @@ const MANUAL_ROW: CertificateProduct = {
   product_id: '9d1f0a2e-0000-4000-8000-000000000002',
   product_code: 'SR-2002',
   product_name: 'Wall Hung Basin',
+  company_name: 'Mocha',
   source: 'manual',
 };
 
@@ -149,24 +151,46 @@ describe('CertificateCoveredProducts - paging', () => {
 describe('CertificateCoveredProducts - standard grid shape', () => {
   it('renders the documented columns', () => {
     renderPanel([AI_ROW, MANUAL_ROW]);
-    ['Product Code', 'Product Name', 'Added By'].forEach((header) => {
+    ['Product Code', 'Product Name', 'Company', 'Added By'].forEach((header) => {
       expect(screen.getAllByText(header).length).toBeGreaterThanOrEqual(1);
     });
   });
 
-  it('renders one row per covered product, with code and name', () => {
+  it('renders one row per covered product, with code, name and company', () => {
     const { container } = renderPanel([AI_ROW, MANUAL_ROW]);
     const rows = gridRows(container);
     expect(rows).toHaveLength(2);
     expect(rows[0].textContent).toContain('SR-1001');
     expect(rows[0].textContent).toContain('Close Coupled WC');
+    expect(rows[0].textContent).toContain('Sorento');
     expect(rows[1].textContent).toContain('SR-2002');
+    expect(rows[1].textContent).toContain('Mocha');
+  });
+
+  it('shows every coverage row, including one from another company - no blank rows', () => {
+    // Regression: certificate_products spans companies (AI extraction matches
+    // codes across companies), and the row used to render blank outside the
+    // viewer's own company scope.
+    const otherCompanyRow: CertificateProduct = {
+      id: 'cov-3',
+      product_id: '9d1f0a2e-0000-4000-8000-000000000003',
+      product_code: 'MC-3003',
+      product_name: 'Kitchen Sink Mixer',
+      company_name: 'Mocha',
+      source: 'ai',
+    };
+    const { container } = renderPanel([AI_ROW, otherCompanyRow]);
+    const rows = gridRows(container);
+    expect(rows).toHaveLength(2);
+    expect(rows[1].textContent).toContain('MC-3003');
+    expect(rows[1].textContent).toContain('Kitchen Sink Mixer');
+    expect(rows[1].textContent).toContain('Mocha');
   });
 
   it('truncates long text with a title attribute rather than overflowing', () => {
     const { container } = renderPanel([AI_ROW]);
     const cells = Array.from(gridRows(container)[0].querySelectorAll('div.truncate'));
-    expect(cells.length).toBeGreaterThanOrEqual(2);
+    expect(cells.length).toBeGreaterThanOrEqual(3);
     expect(cells.every((c) => c.getAttribute('title'))).toBe(true);
   });
 });

@@ -449,6 +449,16 @@ def _delete_warehouse(db: Session, payload: dict):
     return WarehouseService(db).delete_warehouse(_entity_id(payload))
 
 
+def _delete_spo_document(db: Session, payload: dict):
+    from app.services.procurement_service import SPOAllocationService
+
+    # `entity_id` is the SPO NUMBER, not a uuid - `spo_allocations` has no document
+    # row of its own (PLAN-spo-investigation-grid.md), so the "document" this deletes
+    # is every line sharing that number, and only the caller's own company's lines
+    # (see `delete_document`'s docstring for why the company scoping lives there).
+    return SPOAllocationService(db).delete_document(_entity_id(payload))
+
+
 def _delete_integration(db: Session, payload: dict):
     from app.services.integration_admin_service import IntegrationAdminService
 
@@ -501,6 +511,17 @@ register(
         window=WINDOW_DESTRUCTIVE,
         permission="inventory.warehouses.delete",
         label="Delete warehouse",
+    )
+)
+
+register(
+    FormAction(
+        key="spo_document.delete",
+        entity_types=("spo_document",),
+        execute=_delete_spo_document,
+        window=WINDOW_DESTRUCTIVE,
+        permission="procurement.spo_allocations.delete",
+        label="Delete SPO document",
     )
 )
 
@@ -777,6 +798,52 @@ register(
         window=WINDOW_DESTRUCTIVE,
         permission="master_data.products.edit",
         label="Clear specification",
+    )
+)
+
+def _unverify_spec_verification(db: Session, payload: dict):
+    from app.services import product_spec_verification
+
+    # Keyed by the PRODUCT CODE, not a uuid - `product_spec_verification.unverify_code`
+    # takes the code, and the verification ledger has no row of its own to key on
+    # (`ProductSpecVerification` is append-only and never re-pointed).
+    return product_spec_verification.unverify_code(
+        db, _entity_id(payload), actor=_actor(db, payload)
+    )
+
+
+register(
+    FormAction(
+        key="spec_verification.unverify",
+        entity_types=("spec_verification",),
+        execute=_unverify_spec_verification,
+        # Reversible: withdrawing a stamp is not a delete - Verify can be pressed again
+        # on the same row afterwards, and the ledger row itself is never removed, only
+        # marked withdrawn (D8).
+        window=WINDOW_REVERSIBLE,
+        permission="master_data.products.edit",
+        label="Unverify",
+    )
+)
+
+
+def _delete_spec_key(db: Session, payload: dict):
+    from app.services.product_spec_registry import delete_registry_key
+
+    # Keyed by the spec key ITSELF, not a uuid - `delete_registry_key` takes it and is
+    # the same refusal `DELETE /spec-registry/{spec_key}` runs (D.6, PLAN-spec-
+    # workbench-redesign.md): a seed-sourced key is refused, never deleted.
+    return delete_registry_key(db, _entity_id(payload))
+
+
+register(
+    FormAction(
+        key="spec_key.delete",
+        entity_types=("spec_key",),
+        execute=_delete_spec_key,
+        window=WINDOW_DESTRUCTIVE,
+        permission="master_data.spec_registry.delete",
+        label="Delete specification",
     )
 )
 
@@ -1141,5 +1208,31 @@ register(
         window=WINDOW_REVERSIBLE,
         permission=OWN_RECORD,
         label="Delete notification",
+    )
+)
+
+
+def _delete_saved_view(db: Session, payload: dict):
+    from app.services.saved_views_service import SavedViewsService
+
+    # `SavedViewsService.delete` already answers 404 (via `handle_not_found`) for a view
+    # that is not the requester's own, so ownership IS the check - the same shape
+    # `notification.delete` above uses.
+    SavedViewsService(db).delete(_entity_id(payload), str(payload.get("requested_by_id") or ""))
+    return {"message": "Deleted"}
+
+
+register(
+    FormAction(
+        key="saved_view.delete",
+        entity_types=("saved_view",),
+        execute=_delete_saved_view,
+        # Destructive (the suite's own default for every `.delete`, `test_record_actions_s6b
+        # .SHORT_WINDOW_DELETES` is a narrow allowlist): unlike a notification, a saved view
+        # can carry real, non-trivial filter/sort/column work a reader built up over time,
+        # so ten seconds to catch a stray click is worth more than the five-second window.
+        window=WINDOW_DESTRUCTIVE,
+        permission=OWN_RECORD,
+        label="Delete view",
     )
 )

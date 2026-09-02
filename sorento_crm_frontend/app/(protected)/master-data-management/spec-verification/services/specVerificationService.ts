@@ -30,7 +30,8 @@
  *     label and the stored ENTRY (`{ value, unit? }`) or null when the key is unfilled,
  *     sorted by label. It is what the Coverage cell opens, so a reviewer can judge a
  *     code without leaving the list (captain ruling 2026-08-17). `open_exceptions` is
- *     still sent and is deliberately not rendered anywhere.
+ *     rendered as a warning pill on the Coverage cell, "{n} need a human" (AC-F.4,
+ *     design-language D11) - the count only, no reasons on this payload.
  *
  *     VerificationBlock: { state: 'unverified'|'verified'|'needs_reverify',
  *            verified_by_name|null, verified_at|null,

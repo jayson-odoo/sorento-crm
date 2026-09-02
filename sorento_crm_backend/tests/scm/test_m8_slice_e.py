@@ -225,9 +225,9 @@ def test_past_plans_bounded_by_limit(scm_app):
 def test_chat_injects_past_plans_when_sku_mentioned(scm_app, monkeypatch):
     _, db, _, _ = scm_app
     _seed_two_buys(db)
-    prior = run_svc.create_run(db, ["M4W-CASH"], "warehouse", enqueue=False)
+    prior = run_svc.create_run(db, ["M4W-CASH"], "warehouse", product_codes=["M4P-URGENT", "M4P-CALM"], enqueue=False)
     assert run_svc.run_reorder(prior["run_id"], db=db)["status"] == "completed"
-    today = run_svc.create_run(db, ["M4W-CASH"], "warehouse", enqueue=False)
+    today = run_svc.create_run(db, ["M4W-CASH"], "warehouse", product_codes=["M4P-URGENT", "M4P-CALM"], enqueue=False)
     assert run_svc.run_reorder(today["run_id"], db=db)["status"] == "completed"
 
     fake = _install_provider(monkeypatch, "Last run we ordered the same qty.")
@@ -297,7 +297,7 @@ def test_proposed_qty_uplift_and_multiple_rounding():
 def _seed_run_with_category(db):
     """A real completed run over two same-category buys; returns (run_id, category_code)."""
     _seed_two_buys(db)
-    created = run_svc.create_run(db, ["M4W-CASH"], "warehouse", enqueue=False)
+    created = run_svc.create_run(db, ["M4W-CASH"], "warehouse", product_codes=["M4P-URGENT", "M4P-CALM"], enqueue=False)
     assert run_svc.run_reorder(created["run_id"], db=db)["status"] == "completed"
     a_pid = db.execute(
         text(
@@ -567,9 +567,9 @@ def test_chat_endpoint_plain_question_has_null_proposal(scm_app, monkeypatch):
 def test_chat_injects_past_plans_for_no_sku_similar_question(scm_app, monkeypatch):
     _, db, _, _ = scm_app
     _seed_two_buys(db)
-    prior = run_svc.create_run(db, ["M4W-CASH"], "warehouse", enqueue=False)
+    prior = run_svc.create_run(db, ["M4W-CASH"], "warehouse", product_codes=["M4P-URGENT", "M4P-CALM"], enqueue=False)
     assert run_svc.run_reorder(prior["run_id"], db=db)["status"] == "completed"
-    today = run_svc.create_run(db, ["M4W-CASH"], "warehouse", enqueue=False)
+    today = run_svc.create_run(db, ["M4W-CASH"], "warehouse", product_codes=["M4P-URGENT", "M4P-CALM"], enqueue=False)
     assert run_svc.run_reorder(today["run_id"], db=db)["status"] == "completed"
 
     fake = _install_provider(monkeypatch, "Previously we ordered similar quantities.")

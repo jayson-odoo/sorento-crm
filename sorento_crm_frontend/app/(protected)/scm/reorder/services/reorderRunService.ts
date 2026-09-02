@@ -246,6 +246,9 @@ export interface ReorderRunHistoryItem {
   decided_product_count?: number | null;
   /** Products already confirmed into a draft purchase order - drives the Confirmed status. */
   confirmed_product_count?: number | null;
+  /** Re-plan (S5, AC-5.4): set once a NEWER run has superseded this one. The run itself
+   *  stays readable - this only drives the "Superseded" label in the plans list. */
+  superseded_by_run_id?: string | null;
 }
 
 export interface ReorderRunHistoryPage {
@@ -339,6 +342,11 @@ interface ReorderRunStatusDto {
   /** When the engine started. The plan page's header reads "Plan dd/mm/yyyy HH:mm" off
    *  it (C1) and this response is the only thing that page reads. */
   started_at?: string | null;
+  warehouse_codes?: string[];
+  is_all_warehouses?: boolean;
+  product_codes?: string[] | null;
+  supersedes_run_id?: string | null;
+  superseded_by_run_id?: string | null;
 }
 
 const DEFAULT_STAGE: ReorderRunStage = 'resolving_policies';
@@ -399,6 +407,46 @@ export async function getReorderRun(runId: string): Promise<ReorderRun> {
     front_planning_contract_version: dto.front_planning_contract_version ?? null,
     plan_horizon_date: dto.plan_horizon_date ?? null,
     started_at: dto.started_at ?? null,
+    warehouse_codes: dto.warehouse_codes ?? [],
+    is_all_warehouses: dto.is_all_warehouses ?? false,
+    product_codes: dto.product_codes ?? null,
+    supersedes_run_id: dto.supersedes_run_id ?? null,
+    superseded_by_run_id: dto.superseded_by_run_id ?? null,
+  };
+}
+
+/** Re-plan (S5, G8): editing "Sales order cut-off" or the warehouse/product scope on a
+ *  completed plan offers this - a NEW run with the edited values that supersedes
+ *  `runId` once it finishes. Same request shape as `createReorderRun`; the header form
+ *  always submits its full current state, so an unedited field simply carries the value
+ *  it was pre-filled with. Navigate to the returned `run_id` immediately, exactly like
+ *  Start Plan's own 202. */
+export async function replanReorderRun(
+  runId: string,
+  req: CreateReorderRunRequest,
+): Promise<ReorderRun & { supersedes_run_id: string }> {
+  const res = await apiFetch(
+    `/api/v1/scm/reorder-runs/${encodeURIComponent(runId)}/replan`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        warehouse_codes: req.warehouse_codes,
+        product_codes: req.product_codes ?? [],
+        plan_horizon_date: req.plan_horizon_date || null,
+      }),
+    },
+  );
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to re-plan'));
+  const dto = (await res.json()) as ReorderRunAcceptedDto & { supersedes_run_id: string };
+  return {
+    run_id: dto.run_id,
+    status: dto.status,
+    stage: (dto.stage as ReorderRunStage) ?? DEFAULT_STAGE,
+    buy_scope: (dto.buy_scope as BuyScope) ?? 'network',
+    summary: null,
+    error: null,
+    supersedes_run_id: dto.supersedes_run_id,
   };
 }
 

@@ -140,8 +140,9 @@ Mutation hooks: shared `useCreateMutation` / `useUpdateMutation` / `useDeleteMut
 
 ### CRUD UX standard
 
-**`PRINCIPLES.md` "Design mandates" + `documentation/reference/ADR-PRODUCT-STANDARDS.md` are the
-contract.** Summary only, so the two cannot drift:
+**`PRINCIPLES.md` "Design mandates" + `documentation/reference/ADR-PRODUCT-STANDARDS.md` +
+`documentation/reference/DESIGN-LANGUAGE.md` are the contract.** Summary only, so the three
+cannot drift:
 
 - List = DataGrid + search/filters + Add. Create/edit = **modal by default**; dedicated page only
   for complex/multi-tab/file-centric flows. View = `/{module}/{id}` detail page rendering **every**
@@ -306,6 +307,7 @@ Reference docs this file defers to, so nothing is stated twice:
 | `LESSONS-LEARNT.md` | 88 gotchas. Read before debugging anything non-obvious. |
 | `documentation/agents/browser-verification.md` | Full agent-browser policy + command table. |
 | `documentation/reference/ADR-PRODUCT-STANDARDS.md` | CRUD/UX standard in full. |
+| `documentation/reference/DESIGN-LANGUAGE.md` | Tokens, motion presets, primitives roster, external-skill precedence. |
 | `documentation/reference/PR-CHECKLIST.md` | Reviewer checklist. |
 | `CONTEXT-MAP.md` | Which glossary covers which domain. |
 

@@ -42,9 +42,11 @@ function makeTable() {
 function TestHarness({
   listingKey,
   debounceMs,
+  suppressPersist,
 }: {
   listingKey: string;
   debounceMs: number;
+  suppressPersist?: boolean;
 }) {
   const { columns, data } = useMemo(makeTable, []);
   const [, setForceRerender] = useState(0);
@@ -63,6 +65,7 @@ function TestHarness({
     table,
     listingKey,
     debounceMs,
+    suppressPersist,
   });
 
   const bVisible = table.getColumn('b')?.getIsVisible();
@@ -166,6 +169,44 @@ describe('useListingColumnPreferences', () => {
     await waitFor(() => {
       expect(screen.getByTestId('b-state').textContent).toBe('b-visible');
     });
+  });
+
+  it('B1 (PR #489 review round): suppressPersist stops a column change from writing back', async () => {
+    vi.mocked(service.getUserListColumnConfig).mockResolvedValue({
+      listing_key: 'k',
+      config: { version: 1, columnVisibility: { b: false }, columnOrder: null },
+    });
+    vi.mocked(service.upsertUserListColumnConfig).mockResolvedValue({
+      listing_key: 'k',
+      config: { version: 1, columnVisibility: { b: true }, columnOrder: null },
+    });
+    vi.mocked(service.resetUserListColumnConfig).mockResolvedValue(undefined);
+
+    const qc = new QueryClient();
+
+    render(
+      <QueryClientProvider client={qc}>
+        <TestHarness listingKey="k" debounceMs={20} suppressPersist />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('b-state').textContent).toBe('b-hidden');
+    });
+
+    act(() => {
+      screen.getByText('show-b').click();
+    });
+
+    // The column DID change on screen...
+    await waitFor(() => {
+      expect(screen.getByTestId('b-state').textContent).toBe('b-visible');
+    });
+    // ...but nothing was written back to the server - the exact failure B1 names: a
+    // segment-driven column change (or any other caller-driven one) must not overwrite
+    // the reader's own saved layout while `suppressPersist` is on.
+    await new Promise((r) => setTimeout(r, 60)); // past the 20ms debounce
+    expect(service.upsertUserListColumnConfig).not.toHaveBeenCalled();
   });
 });
 

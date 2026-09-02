@@ -21,6 +21,10 @@ interface ProductComboboxProps {
   /** Server-side search callback, debounced 300ms, so the parent can refetch from
    *  `/products?query=...` rather than relying on the local slice. */
   onSearch?: (query: string) => void;
+  /** Every optional select is clearable (ADR standard) - off by default so a REQUIRED
+   *  product picker (e.g. the create-allocation form) does not grow a clear affordance
+   *  it has no use for. */
+  clearable?: boolean;
 }
 
 /**
@@ -36,6 +40,7 @@ export function ProductCombobox({
   disabled,
   className,
   onSearch,
+  clearable = false,
 }: ProductComboboxProps) {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => {
@@ -64,6 +69,7 @@ export function ProductCombobox({
       onChange={onChange}
       disabled={disabled}
       placeholder={placeholder}
+      clearable={clearable}
       emptyMessage="No product found."
       triggerClassName={className}
       onSearchChange={onSearch ? handleSearch : undefined}

@@ -38,6 +38,7 @@ from app.models.access import MarketSegment, Team
 from app.models.notification import Notification
 from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
 from app.models.product_set import ProductSet, ProductSetMember
+from app.models.product_spec import ProductSpecVerification
 from app.models.procurement import ProductSupplier, Supplier
 from app.models.sla import FORM_ACTION_CANCELLED, FORM_ACTION_COMMITTED, SlaFormAction
 from app.models.user import SystemSetting, User
@@ -195,6 +196,37 @@ def _product_supplier(db) -> ProductSupplier:
     db.add(link)
     db.commit()
     return link
+
+
+def _spec_key(db, *, source: str = "user"):
+    from app.models.product_spec import ProductSpecRegistry
+
+    row = ProductSpecRegistry(
+        id=_uid(),
+        spec_key=f"zzt_{_uid()[:8]}",
+        label=f"{MARKER} spec",
+        data_type="enum",
+        allowed_values=["chrome"],
+        source=source,
+    )
+    db.add(row)
+    db.commit()
+    return row
+
+
+def _verified_spec(db) -> ProductSpecVerification:
+    """A code with an active stamp - nothing else on the ledger this handler reads."""
+    row = ProductSpecVerification(
+        id=_uid(),
+        product_code=f"{MARKER}-{_uid()[:8]}",
+        party="internal",
+        verified_by_user_id=_uid(),
+        verified_by_name="Ada Actor",
+        values_hash="x" * 10,
+    )
+    db.add(row)
+    db.commit()
+    return row
 
 
 def _settings_with_background(db) -> SystemSetting:
@@ -591,6 +623,106 @@ def test_a_notification_is_deleted_only_for_the_reader_who_owns_it(client):
     assert db.query(Notification).filter(Notification.id == mine.id).first() is None
     assert db.query(Notification).filter(Notification.id == theirs.id).first() is not None
     assert body["last_outcome"]["status"] == "failed", body["last_outcome"]
+
+
+def test_spec_verification_unverify_withdraws_the_stamp_on_commit(client):
+    """Spec Verification (F.1/F.2): the row/bulk Unverify button parks this rather than
+    confirming through a dialog. Reversible (5s) - the ledger row is never deleted,
+    only marked withdrawn, and Verify can be pressed again on the same code."""
+    c, db, _actor, _denied = client
+    stamp = _verified_spec(db)
+
+    parked = _start(
+        c, "spec_verification.unverify", "spec_verification", stamp.product_code
+    )
+
+    assert parked.status_code == 202, parked.text
+    assert parked.json()["window_seconds"] == 5
+    db.refresh(stamp)
+    assert stamp.invalidated_reason is None
+
+    _commit_now(
+        c, db, "spec_verification", stamp.product_code, parked.json()["id"]
+    )
+
+    db.expire_all()
+    db.refresh(stamp)
+    assert stamp.invalidated_reason == "manual_unverify"
+    assert stamp.invalidated_at is not None
+
+
+def test_spec_verification_unverify_cancelled_leaves_the_stamp_verified(client):
+    c, db, _actor, _denied = client
+    stamp = _verified_spec(db)
+
+    parked = _start(
+        c, "spec_verification.unverify", "spec_verification", stamp.product_code
+    ).json()
+
+    response = c.post(f"{BASE}/{parked['id']}/cancel")
+
+    assert response.status_code == 200, response.text
+    db.expire_all()
+    db.refresh(stamp)
+    assert stamp.invalidated_reason is None
+
+
+def test_spec_key_delete_commits_and_removes_a_user_key(client):
+    """D.6 (PLAN-spec-workbench-redesign.md): the record page's gear Delete has no
+    backend action until this is registered - the same refusal
+    `DELETE /spec-registry/{spec_key}` runs, parked instead of immediate."""
+    from app.models.product_spec import ProductSpecRegistry
+
+    c, db, _actor, _denied = client
+    key = _spec_key(db, source="user")
+
+    parked = _start(c, "spec_key.delete", "spec_key", key.spec_key)
+    assert parked.status_code == 202, parked.text
+    assert parked.json()["window_seconds"] == 10
+
+    body = _commit_now(c, db, "spec_key", key.spec_key, parked.json()["id"]).json()
+
+    assert body["last_outcome"]["status"] == "committed", body["last_outcome"]
+    db.expire_all()
+    assert db.query(ProductSpecRegistry).filter_by(spec_key=key.spec_key).first() is None
+
+
+def test_spec_key_delete_cancelled_leaves_the_key_standing(client):
+    from app.models.product_spec import ProductSpecRegistry
+
+    c, db, _actor, _denied = client
+    key = _spec_key(db, source="user")
+
+    parked = _start(c, "spec_key.delete", "spec_key", key.spec_key).json()
+
+    response = c.post(f"{BASE}/{parked['id']}/cancel")
+
+    assert response.status_code == 200, response.text
+    db.expire_all()
+    assert db.query(ProductSpecRegistry).filter_by(spec_key=key.spec_key).first() is not None
+
+
+def test_spec_key_delete_refuses_a_seed_key_on_commit(client):
+    """A seed key would simply reappear on the next deploy - the countdown lapses,
+    the record action fails, and the row is left standing, exactly like the immediate
+    route it replaces."""
+    from app.models.product_spec import ProductSpecRegistry
+
+    c, db, _actor, _denied = client
+    key = _spec_key(db, source="seed")
+
+    parked = _start(c, "spec_key.delete", "spec_key", key.spec_key)
+    assert parked.status_code == 202, parked.text
+
+    body = _commit_now(c, db, "spec_key", key.spec_key, parked.json()["id"]).json()
+
+    assert body["last_outcome"]["status"] == "failed", body["last_outcome"]
+    assert body["last_outcome"]["error_text"] == (
+        "This key ships with the product and would come back on the next deploy. "
+        "Switch it off instead."
+    )
+    db.expire_all()
+    assert db.query(ProductSpecRegistry).filter_by(spec_key=key.spec_key).first() is not None
 
 
 def test_cancel_inside_the_window_leaves_the_record_exactly_where_it_was(client):

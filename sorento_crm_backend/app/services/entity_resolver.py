@@ -502,7 +502,7 @@ class ResolvedEntity:
     uuid: Optional[str] = None  # the row's primary key - required for tools that accept UUID-only inputs
     display: dict[str, Any] = field(default_factory=dict)
     match_field: str = ""  # which column matched (e.g. "product_code", "product_name")
-    match_tier: str = "exact"  # "exact" | "prefix" | "substring" | "embedding"
+    match_tier: str = "exact"  # "exact" | "prefix" | "substring" | "embedding" | "head_code"
     similarity: Optional[float] = None  # cosine similarity for embedding-tier matches
     # Owning company, when the entity type is company-scoped (NULL for a shared row
     # and absent entirely for a global type like attachment_type). Emitted so a
@@ -588,6 +588,8 @@ class ResolutionResult:
                     elif match.match_tier == "embedding":
                         sim_str = f"{match.similarity:.2f}" if match.similarity is not None else "?"
                         tier_note = f" (semantic match, similarity={sim_str})"
+                    elif match.match_tier == "head_code":
+                        tier_note = " (matched by leading code; trailing words ignored)"
                     lines.append(
                         f'- "{tr.token}" \u2192 {match.entity_type} (canonical_code={match.canonical_code})'
                         + tier_note
@@ -781,6 +783,14 @@ def _norm_token_map(tokens: Iterable[str]) -> dict[str, str]:
         for t in tokens
         if t and len(_strip_all_ws(t)) >= _NORM_MIN_LEN
     }
+
+
+# A leading code-shaped word: letters, then any run of letters/digits/dashes,
+# with at least one digit somewhere in it ("SRTWB8004", "ZZB6201", "MUB6201").
+# Mirrors the n8n parser's own `prodTok` regex, so a raw text this pattern
+# rejects (no digit in the head, e.g. bare "MUB") is not a code candidate on
+# either side. Used only by the head-code retry in `resolve_references`.
+_HEAD_CODE_RE = re.compile(r"^[A-Za-z]{2,}[A-Za-z0-9-]*\d[A-Za-z0-9-]*")
 
 
 def _probe_product(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
@@ -4545,6 +4555,7 @@ def resolve_references(
     cross_type_expand: bool = False,
     domain_hint: Optional[str] = None,
     entity_pins: Optional[dict[str, str]] = None,
+    raw_tokens: Optional[list[str]] = None,
 ) -> ResolutionResult:
     """Main entry point.
 
@@ -4569,11 +4580,39 @@ def resolve_references(
     `EntityPinMismatch` - a bogus uuid and a real-but-out-of-scope uuid are
     NOT distinguished, both are a 400 to the caller. Every `entity_pins` key
     must bind to a token actually being resolved, or the whole call raises.
+
+    `raw_tokens` (positionally parallel to `query_or_tokens` when the latter
+    is a list) carries the pre-fold raw text behind each token, e.g. n8n folds
+    "SRTWB8004 BASIN TAP" into one token "SRTWB8004BASINTAP" before calling
+    resolve. A token that is still matchless after Tier 2 gets one more try:
+    the leading code-shaped word of its raw text is exact-probed against
+    products only (`match_tier="head_code"` on a hit). Ignored when the two
+    lists have different lengths, or when `query_or_tokens` is a plain string.
     """
     t0 = time.perf_counter()
     raw_query: Optional[str] = None
+    # {token: pre-fold raw text} for the head-code retry, built by zipping
+    # `query_or_tokens` with `raw_tokens` BEFORE the strip/empty-filter/cap
+    # below, so positional alignment survives it. Empty (never populated) when
+    # `query_or_tokens` is a plain string or the two lists' lengths differ.
+    raw_by_token: dict[str, str] = {}
     if isinstance(query_or_tokens, list):
-        tokens = [t for t in (s.strip() for s in query_or_tokens) if t][:max_candidates]
+        paired_raw = (
+            raw_tokens
+            if isinstance(raw_tokens, list) and len(raw_tokens) == len(query_or_tokens)
+            else None
+        )
+        tokens = []
+        for idx, t in enumerate(query_or_tokens):
+            s = (t or "").strip()
+            if not s:
+                continue
+            tokens.append(s)
+            if paired_raw is not None:
+                raw_by_token[s] = paired_raw[idx]
+        tokens = tokens[:max_candidates]
+        if paired_raw is not None:
+            raw_by_token = {t: raw_by_token[t] for t in tokens}
     else:
         raw_query = query_or_tokens or ""
         tokens = extract_candidate_tokens(raw_query, max_candidates=max_candidates)
@@ -4680,7 +4719,50 @@ def resolve_references(
             per_token[tok] = balanced[:PREFIX_LIMIT]
             ambiguous_tokens.add(tok)
 
-    # Snapshot which tokens already had matches BEFORE cross-type expansion - 
+    # ----- Head-code retry (product tokens only, still matchless) -----
+    # n8n folds "SRTWB8004 BASIN TAP" into ONE token "SRTWB8004BASINTAP" before
+    # calling resolve, so Tier 1/2 above see only the folded form and miss the
+    # code inside it (a SPACED catalogue code like "SRTWB7299-WALL HUNG" still
+    # exact-hits Tier 1 above, since both sides are dash/ws-stripped, so it
+    # never reaches here). `raw_by_token` carries the pre-fold text; when the
+    # folded token is still empty, pull a leading code-shaped word out of that
+    # raw text and exact-probe it against products only. See
+    # PLAN-resolver-head-code-retry.md.
+    if raw_by_token:
+        for tok in tokens:
+            if per_token[tok] or tok in ambiguous_tokens:
+                continue
+            tok_allowed = _types_for(tok)
+            if tok_allowed is not None and "product" not in tok_allowed:
+                continue
+            raw = raw_by_token.get(tok)
+            if not raw:
+                continue
+            raw_stripped = raw.strip()
+            if not raw_stripped or " " not in raw_stripped or raw_stripped == tok:
+                continue
+            m = _HEAD_CODE_RE.match(raw_stripped)
+            if not m:
+                continue
+            head = m.group(0)
+            if _strip_all_ws(head).lower() == _strip_all_ws(raw).lower():
+                # The head IS the whole raw text - that lookup already ran
+                # (as the folded token) and missed.
+                continue
+            try:
+                hits = _probe_product(db, [head]).get(head, [])
+            except Exception:
+                logger.exception("Head-code retry probe failed for token=%s head=%s", tok, head)
+                continue
+            if not hits:
+                continue
+            for h in hits:
+                h.match_tier = "head_code"
+            per_token[tok] = hits
+            if len(hits) > 1:
+                ambiguous_tokens.add(tok)
+
+    # Snapshot which tokens already had matches BEFORE cross-type expansion -
     # used below to flag tokens that grew into multi-type candidate sets so the
     # LLM disambiguates instead of picking the first match.
     pre_expand_type_count: dict[str, int] = {

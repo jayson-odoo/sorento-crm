@@ -15,8 +15,12 @@ Flow:
     ``failed`` (+ error_text) - it NEVER crashes the worker.
   * A re-run always creates a NEW run_id - runs are immutable history.
 
-Two recommendation types (M3-D5):
-  * ``buy`` - a triggered reorder (per policy trigger); ``disposition`` - dead/overstock.
+Recommendation types (M3-D5, G2 (`PLAN-scm-reorder-oi-feedback-1sep.md`) retired
+``disposition`` - a dead-stock/overstock report is a separate backlog item, BL-045, not a
+run recommendation):
+  * ``buy`` - a triggered reorder (per policy trigger); ``covered`` - stock on hand already
+    covers the demand, a suggestion rather than a silent decision; ``needs_level`` - the
+    ``reorder_level`` basis with no level set to plan against.
   * A no-supplier SKU that WOULD trigger a buy emits an ``exception`` rec (never silently
     skipped - AC-M3.6).
 """
@@ -70,7 +74,8 @@ def create_run(db: Session, warehouse_codes: Optional[list[str]],
                budget_id: Optional[str] = None, actor: Optional[str] = None,
                enqueue: bool = True, include_market: bool = False,
                product_codes: Optional[list[str]] = None,
-               plan_horizon_date: Optional[date] = None) -> dict:
+               plan_horizon_date: Optional[date] = None,
+               supersedes_run_id: Optional[str] = None) -> dict:
     """Insert a ``running`` ``scm.reorder_run`` (scope snapshot + started_at) and
     enqueue the RQ ``run_reorder`` task. Returns ``{run_id, status, buy_scope, stage}``.
 
@@ -98,6 +103,13 @@ def create_run(db: Session, warehouse_codes: Optional[list[str]],
     version here, at creation, and never again: the grain a screen shows for a run is its
     stamp rather than the live setting, so changing the policy affects only later runs and
     an existing run's decisions stay valid where they were made.
+
+    ``supersedes_run_id`` (plan 5.1, G8) is set only by `replan_run` below - it is the run
+    a Re-plan is replacing. Stamped on THIS row immediately (the RQ worker needs it to find
+    the old run's decisions once its own recommendations exist); the reverse pointer on the
+    OLD run is written only when this run actually reaches ``completed`` (see
+    `_execute_run_scoped`), so a still-running or failed re-plan never makes a still-valid
+    old run look superseded.
     """
     buy_scope = buy_scope if buy_scope in ("network", "warehouse") else "warehouse"
     warehouse_ids = _resolve_warehouse_ids(db, warehouse_codes)
@@ -121,6 +133,7 @@ def create_run(db: Session, warehouse_codes: Optional[list[str]],
         source_ref=_SEED,
         decision_grain=plan_grain.resolve_plan_grain(db),
         front_planning_contract_version=plan_grain.FRONT_PLANNING_CONTRACT_VERSION,
+        supersedes_run_id=supersedes_run_id,
     ))
     db.commit()
 
@@ -180,6 +193,143 @@ def _resolve_warehouse_ids(db: Session, warehouse_codes: Optional[list[str]]) ->
         return [str(r[0]) for r in rows]
     rows = db.query(Warehouse.id).filter(Warehouse.is_active.is_(True)).all()
     return [str(r[0]) for r in rows]
+
+
+def _covers_every_warehouse(wids: list[str], warehouses_then) -> bool:
+    """Whether a scope was the whole estate, as it stood when the run started.
+
+    ``>=`` rather than ``==``: a warehouse deactivated since the run leaves the scope
+    larger than the count, and that plan still covered everything there was. A private
+    twin of the route layer's own `_covers_every_warehouse` (`reorder_runs.py`, used by
+    the plans-LIST resolver) - not shared across the API/service boundary on purpose, the
+    same reason `_resolve_warehouse_ids` above stays ORM rather than raw SQL: this one
+    pure 3-line rule is cheaper to duplicate once than to route a service function through
+    the API layer for.
+    """
+    if not wids:
+        return True
+    total = int(warehouses_then or 0)
+    return total > 0 and len(wids) >= total
+
+
+def resolve_run_scope(db: Session, warehouse_ids, product_ids, started_at) -> dict:
+    """Resolve one run's stored id scope to human codes for the Header tab (plan 5.1,
+    S5, AC-5.1) - the same facts the plans-list resolver already works out per page, done
+    here for ONE run so the plan detail page needs no second endpoint to pre-fill a
+    Re-plan edit. Moved here from the route module (review nit) so the raw SQL sits next
+    to this file's other scope-resolution code (`_resolve_warehouse_ids` above) rather
+    than living in the API layer, which otherwise owns no SQL of its own for this run.
+    """
+    wids = [str(w) for w in (warehouse_ids or [])]
+    codes: list[str] = []
+    if wids:
+        wh_co, wh_co_params = company_sql_predicate(db, "w.company_id", param_prefix="cws",
+                                                     shared=True)
+        wh_co_sql = ("AND " + wh_co) if wh_co else ""
+        rows = db.execute(text(
+            "SELECT warehouse_code FROM warehouses w "
+            "WHERE id = ANY(CAST(:ids AS uuid[])) "
+            f"{wh_co_sql} "
+            "ORDER BY warehouse_code"
+        ), {"ids": wids, **wh_co_params}).all()
+        codes = [r[0] for r in rows]
+    wh_co2, wh_co2_params = company_sql_predicate(db, "w.company_id", param_prefix="cwt2",
+                                                   shared=True)
+    wh_co2_sql = ("AND " + wh_co2) if wh_co2 else ""
+    warehouses_then = db.execute(text(
+        "SELECT count(*) FROM warehouses w WHERE w.is_active = true "
+        "AND (CAST(:started AS timestamp) IS NULL OR w.created_at <= CAST(:started AS timestamp)) "
+        f"{wh_co2_sql}"
+    ), {"started": started_at, **wh_co2_params}).scalar() or 0
+    pids = [str(p) for p in product_ids] if product_ids is not None else None
+    product_codes: Optional[list[str]] = None
+    if pids is not None:
+        product_codes = []
+        if pids:
+            po_co, po_co_params = company_sql_predicate(db, "company_id", param_prefix="cps")
+            po_co_sql = ("AND " + po_co) if po_co else ""
+            rows = db.execute(text(
+                "SELECT product_code FROM products "
+                "WHERE id = ANY(CAST(:ids AS uuid[])) "
+                f"{po_co_sql} "
+                "ORDER BY product_code"
+            ), {"ids": pids, **po_co_params}).all()
+            product_codes = [r[0] for r in rows]
+    return {
+        "warehouse_codes": codes,
+        "is_all_warehouses": _covers_every_warehouse(wids, warehouses_then),
+        "product_codes": product_codes,
+    }
+
+
+# ===========================================================================
+# replan - a new run that supersedes an old one (plan 5.1, G8)
+# ===========================================================================
+
+def replan_run(db: Session, old_run_id: str, *, warehouse_codes: list[str],
+               product_codes: list[str], plan_horizon_date: Optional[date],
+               actor: Optional[str]) -> dict:
+    """Launch a NEW run that supersedes ``old_run_id`` (G8). Runs stay immutable - this
+    never mutates the old row's own scope/recommendations, it only starts a fresh run and
+    marks the lineage. Returns the same shape `create_run` does.
+
+    The old run must be ``completed`` (nothing to supersede on a run that never finished)
+    and not already superseded (one re-plan per run keeps the lineage a simple chain rather
+    than a fork nobody asked for - re-plan the NEWEST run instead). Two more guards (review
+    S3/S4):
+
+    - a SECOND re-plan request for the same old run, arriving before the first one's worker
+      has stamped ``superseded_by_run_id`` (double-click, or two tabs), is refused - the
+      completion-time stamp alone is too late to catch this, since both requests can read
+      ``old.superseded_by_run_id IS NULL`` before either has finished.
+    - a run carrying any CONFIRMED or KEYED decision is refused outright (conservative;
+      flagged for captain confirm - see the PLAN doc's S5 section). Re-planning it would
+      hand `confirm_decisions` a run whose recs carry brand-new ids, orphaning the existing
+      draft PO line(s) it already wrote and risking a double-key into AutoCount.
+    """
+    old = db.get(ReorderRun, old_run_id)
+    if old is None:
+        raise AppException(status_code=404, message="Reorder run not found.")
+    if old.status != "completed":
+        raise AppException(
+            status_code=422,
+            message="Only a completed plan can be re-planned.",
+        )
+    if old.superseded_by_run_id:
+        raise AppException(
+            status_code=422,
+            message="This plan has already been re-planned - open the newer plan instead.",
+        )
+    already_replanning = (
+        db.query(ReorderRun.id)
+        .filter(
+            ReorderRun.supersedes_run_id == old_run_id,
+            ReorderRun.status != "failed",
+        )
+        .first()
+    )
+    if already_replanning is not None:
+        raise AppException(
+            status_code=422,
+            message="This plan is already being re-planned.",
+        )
+    from app.services.scm import decision_service
+    if decision_service.has_confirmed_or_keyed_decisions(db, old_run_id):
+        raise AppException(
+            status_code=422,
+            message=(
+                "This plan has confirmed or keyed purchase decisions on it - re-planning "
+                "would duplicate them. Confirm or key the remaining products first."
+            ),
+        )
+    return create_run(
+        db,
+        warehouse_codes=warehouse_codes,
+        product_codes=product_codes or None,
+        actor=actor,
+        plan_horizon_date=plan_horizon_date,
+        supersedes_run_id=old_run_id,
+    )
 
 
 # ===========================================================================
@@ -435,6 +585,18 @@ def _execute_run_scoped(db: Session, run: ReorderRun, _caller_scope) -> dict:
         run.status = "completed"
         run.finished_at = datetime.utcnow()
         run.run_log = {"stage": _STAGES[3], **counts}
+        # S3 perf quick wins (AC-3.3): the plans list's Products/Decided/Confirmed
+        # columns read these stored counts instead of joining `purchase_order_lines`
+        # per page - a fresh run has decided none of them yet, but its planned figure
+        # (by DISTINCT product, R14, the same rec types the decision layer decides on)
+        # is known the moment generation finishes, off the rows already in hand.
+        from app.services.scm import decision_service as dsvc
+        run.planned_count = len({
+            str(r.product_id) for r in recs
+            if r.rec_type in dsvc._PLAN_ROW_DECIDABLE_TYPES
+        })
+        run.decided_count = 0
+        run.confirmed_count = 0
         db.add(run)
         db.commit()
 
@@ -460,6 +622,38 @@ def _execute_run_scoped(db: Session, run: ReorderRun, _caller_scope) -> dict:
             log.info("run_reorder %s: refreshed %s level suggestions", run_id, n)
         except Exception:  # noqa: BLE001
             log.exception("run_reorder %s: failed to refresh level suggestions", run_id)
+
+        # Re-plan (plan 5.1, G8): mark the OLD run superseded, then carry decisions onto
+        # THIS run. AFTER the commit and BEST-EFFORT, same reasoning as the two blocks
+        # above - this run is a complete, durable plan either way, and a failure here must
+        # not flip it to `failed`. TWO SEPARATE tries (review S1): the supersede stamp is
+        # the lineage link the Header tab and the plans list both read, and it must survive
+        # a carry failure - the old shape had them share one try/commit, so a carry
+        # exception (which the shared block never rolled back) left the transaction torn:
+        # the stamp update was silently lost too, and nothing said so anywhere.
+        if run.supersedes_run_id:
+            try:
+                old = db.get(ReorderRun, run.supersedes_run_id)
+                if old is not None:
+                    old.superseded_by_run_id = run_id
+                    db.add(old)
+                    db.commit()
+            except Exception:  # noqa: BLE001
+                db.rollback()
+                log.exception(
+                    "run_reorder %s: failed to stamp superseded_by_run_id on %s",
+                    run_id, run.supersedes_run_id,
+                )
+
+            try:
+                from app.services.scm import decision_service
+                stats = decision_service.carry_replan_decisions(
+                    db, str(run.supersedes_run_id), run_id)
+                db.commit()
+                log.info("run_reorder %s: replan carried %s", run_id, stats)
+            except Exception:  # noqa: BLE001
+                db.rollback()
+                log.exception("run_reorder %s: failed to carry replan decisions", run_id)
 
         return {"run_id": run_id, "status": "completed", **counts}
     except Exception as exc:  # noqa: BLE001 - record, never crash the worker
@@ -504,6 +698,21 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
     row purchasing has ACKNOWLEDGED, and the view goes on counting an awaiting one because
     it is still owed to the customer. One SELECT holds both halves of the rule, rather
     than a branch here that could answer differently on two runs of one plan.
+
+    G1 (`PLAN-scm-reorder-oi-feedback-1sep.md`, captain-intent ruling 2 Sep - PENDING
+    CAPTAIN CONFIRM): the DAILY (unscoped) run is COMMITTED DEMAND ONLY, admitted at
+    PRODUCT GRAIN - a product earns ALL of its rows iff it has ``committed > 0`` at ANY of
+    its own locations, using the SAME horizoned/acknowledged figure above (not a second
+    reading that could disagree). On-hand, movement, and an AutoCount level alone no longer
+    earn a PRODUCT entry: retail with no demand anywhere is not replenished, by design
+    (overstock-averse ruling). A per-ROW gate (rejected 2 Sep) strips an uncommitted
+    location's on-hand/on-order from every aggregate basis reading it (a pool, a network
+    scope, the product-wide level) - see `_emit_cell` for the LOCATION half of the rule,
+    which a location-grain basis still applies per row at EMISSION time. G10 is the one
+    bypass - a run given explicit ``product_ids`` plans those products regardless of
+    committed demand (a named product is buyer intent), so the join below applies only when
+    no product scope was asked for; a scoped run is already narrowed to exactly the rows the
+    buyer named two blocks up.
 
     ``horizon`` is the run's own "Plan until" date (captain, 20 Aug) and rides into that
     same SELECT: when set, demand with a stated required/delivery date AFTER it is
@@ -556,12 +765,55 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
     # one - it is still owed to the customer. `demand.horizon_committed_select_sql` is that
     # narrower reading, with `:horizon` NULL on an unhorizoned run (every date comparison
     # short-circuits true), so the two rules live in one SELECT rather than in a branch
-    # here that could answer differently.
-    cv_join = (f"LEFT JOIN ({demand.horizon_committed_select_sql()}) cv "
+    # here that could answer differently. Computed ONCE as a CTE (`cv_all`) rather than a
+    # bare subquery, because G1 below reads it a second time (product admission) and a CTE
+    # spares Postgres re-running the same 4-leg UNION twice.
+    cv_with = f"WITH cv_all AS ({demand.horizon_committed_select_sql()})"
+    cv_join = ("LEFT JOIN cv_all cv "
                "ON cv.product_id = np.product_id AND cv.warehouse_id = np.warehouse_id")
     committed_col = "COALESCE(cv.committed, 0) AS committed"
     committed_expr = "COALESCE(cv.committed, 0)"
     params["horizon"] = horizon
+
+    # G1 (`PLAN-scm-reorder-oi-feedback-1sep.md`, captain-intent ruling 2 Sep - PENDING
+    # CAPTAIN CONFIRM): the run universe is committed demand only, admitted at PRODUCT
+    # GRAIN, not per row. "As long as got committed demand -> into plan" is a statement
+    # about the PRODUCT: a product with committed demand > 0 ANYWHERE among its own
+    # locations (inside the horizon) admits ALL of that product's rows into the run, so an
+    # aggregate basis (pooled netting, a network-scope buy, the product-wide reorder_level
+    # basis) keeps every location's on-hand/on-order in its net - a location with none of
+    # the committed demand itself is still real SUPPLY an aggregate is entitled to see.
+    # WHICH locations get their OWN recommendation row is a separate, LOCATION question,
+    # and the gate differs by shape: `_emit_cell` (a non-pooled location) withholds its
+    # WHOLE cell - buy, covered, needs_level alike - for zero committed demand of its
+    # own; `_emit_pool`'s `unset` loop withholds `needs_level` ONLY, per member (the
+    # pool's own buy/covered stay POOL-level, unfiltered by one member's commitment -
+    # that visibility is the fix). `_plan_network` carries no such gate at all - see the
+    # comment above `policy_type` in `_plan_network` for why the reorder_level branch it
+    # would have gated is unreachable there. Either way, a location does not lose its
+    # stock from the run's math just to get to "no row of its own".
+    #
+    # A row-grain gate (this slice's first cut) stripped 76,098 on-hand + 14,475 on-order
+    # units from 298 in-plan products' aggregates on the dev-DB full-network run: 55
+    # covered rows flipped to buy and 37 buys grew, +2,032 units net over-buy - the exact
+    # SRTWT7408 shape ("1,296 at the pool root, nothing at nine group bins",
+    # `test_reorder_per_product.py`) ADR-0011's pooled netting exists to solve, because a
+    # customer's SO names the BIN, never the pool ROOT, so the root itself is almost always
+    # zero-committed. Two hand-written per-row exception joins (pool-root, unlocated-demand)
+    # patched around that mistake in the row-grain cut; both are gone now that admission is
+    # correctly product-grain (a product whose ENTIRE demand is unlocated - `warehouse_id
+    # IS NULL` in `cv_all` - already has committed > 0 on ITS row of the product-only
+    # GROUP BY below, so it needs no second join either).
+    #
+    # G10 is the other exception: a NAMED product (`product_ids` was given) is buyer intent
+    # and enters regardless of committed demand, so the join below applies ONLY to the
+    # unscoped daily run.
+    product_admit_join = ""
+    if product_ids is None:
+        product_admit_join = """
+        JOIN (
+            SELECT DISTINCT product_id FROM cv_all WHERE COALESCE(committed, 0) > 0
+        ) admitted_product ON admitted_product.product_id = np.product_id"""
 
     # Captain, 20 Aug: "the on hand need to consider pool quantity only ... project on
     # hand quantity is not really an actual usable quantity." `w.segment` is the test
@@ -588,6 +840,7 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
     net_position_col = f"({on_hand_expr} + np.on_order - {committed_expr}) AS net_position"
 
     sql = text(f"""
+        {cv_with}
         SELECT np.product_id, np.warehouse_id,
                p.product_code, p.product_name, pc.category_code, p.list_price,
                -- Master-data reorder settings. Shown beside what the plan computed so the
@@ -598,8 +851,11 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
                -- The site pool this location draws on (its own id when it heads one).
                -- R15: the last purchase, the SPO book and the PO book are all read at the
                -- POOL, never at a project bin, so the pool has to travel with the row that
-               -- freezes them.
+               -- freezes them. The pool's CODE travels alongside (S3 perf, AC-3.4) so a
+               -- product/network-grain group's basis (`_plan_basis`) can state its own
+               -- pool without a per-row read-time lookup.
                COALESCE(w.pool_warehouse_id, w.id) AS pool_warehouse_id,
+               COALESCE(pw.warehouse_code, w.warehouse_code) AS pool_warehouse_code,
                {on_hand_expr} AS quantity_on_hand,
                np.on_order, {committed_col}, {net_position_col},
                -- Front planning 5.3: the SAME committed figure, split by demand channel.
@@ -627,7 +883,9 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
         FROM scm.net_position_v np
         JOIN products p ON p.id = np.product_id
         JOIN warehouses w ON w.id = np.warehouse_id
+        LEFT JOIN warehouses pw ON pw.id = w.pool_warehouse_id
         {cv_join}
+        {product_admit_join}
         LEFT JOIN scm.po_ordered_v po
           ON po.product_id = np.product_id AND po.warehouse_id = np.warehouse_id
         LEFT JOIN product_categories pc ON pc.id = p.category_id
@@ -638,7 +896,20 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
         WHERE {' AND '.join(where)}
         ORDER BY p.product_code, w.warehouse_code
     """)
-    return [dict(r) for r in db.execute(sql, params).mappings().all()]
+    out = [dict(r) for r in db.execute(sql, params).mappings().all()]
+    if product_ids is not None:
+        # G10: a named product is buyer intent, not merely "let it into the run" - a
+        # buyer who typed a SKU into Start Plan wants the SAME evaluation this product
+        # got before G1 existed (forecast/stock trigger, unrelated to committed demand),
+        # so its rows are exempt from the LOCATION-grain gate too - `_emit_cell`'s
+        # whole-cell withhold and `_emit_pool`'s `unset` (`needs_level`) loop both read
+        # this flag - not just from the product-grain admission gate above. Stamped onto
+        # the row rather than threaded as a parameter through every emitter, the same
+        # pattern `_apply_unlocated_demand` / `_apply_project_supply_reduction` already
+        # use.
+        for r in out:
+            r["committed_gate_exempt"] = True
+    return out
 
 
 def awaiting_acknowledgement_rows(db: Session) -> int:
@@ -1021,9 +1292,10 @@ def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: li
     that has configured no pooling gets byte-identical output to before - pinned by
     ``tests/scm/test_pool_netting_parity.py``.
 
-    Disposition and transfer flags stay per LOCATION: "this stock has not moved in a year"
-    and "this bin is overstocked while that one is short" are statements about a place, and
-    aggregating them away would hide the very thing they exist to surface.
+    Disposition stays per LOCATION for the same reason grouping never applied to it:
+    "this stock has not moved in a year" is a statement about a place - moot now that G2
+    stopped emitting the rec at all, but the LOCATION-grain committed gate that replaced
+    it (`_emit_cell`) is the same shape.
     """
     recs: list[ReorderRecommendation] = []
     # Read once for the whole plan, never once per SKU.
@@ -1032,7 +1304,6 @@ def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: li
                           for r in rows}
     pool_of = _pool_map(db, rows)
 
-    # group by product so transfer flags can see all warehouses of a SKU
     by_product: dict[str, list[dict]] = {}
     for r in rows:
         by_product.setdefault(str(r["product_id"]), []).append(r)
@@ -1049,7 +1320,6 @@ def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: li
             c = _compute_cell(db, r, policies, cands, today, last_move, last_buy,
                               levels=levels, last_cost=last_cost)
             computed.append(c)
-        flags = _transfer_flags_for(prows, computed)
 
         # The reorder-level basis is planned per PRODUCT, whatever the pooling
         # configuration says: one level, one net across every location, one buy
@@ -1058,7 +1328,7 @@ def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: li
         # the net.
         if _is_product_level_basis(db, pid, policies):
             recs.extend(_emit_product(db, run_id, prows, computed, policies, cands,
-                                      flags, wh_meta, last_cost=last_cost))
+                                      wh_meta, last_cost=last_cost))
             continue
 
         by_pool: dict[str, list[tuple[dict, dict]]] = {}
@@ -1070,10 +1340,10 @@ def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: li
             if len(members) == 1:
                 # The degenerate case, and the common one. Unchanged arithmetic.
                 r, c = members[0]
-                recs.extend(_emit_cell(run_id, r, c, flags.get(str(r["warehouse_id"]))))
+                recs.extend(_emit_cell(run_id, r, c))
             else:
                 recs.extend(_emit_pool(db, run_id, pool_id, members, policies, cands,
-                                       flags, wh_meta))
+                                       wh_meta))
     return recs
 
 
@@ -1244,7 +1514,7 @@ def _qty_label(value: float) -> str:
 
 def _emit_pool(db: Session, run_id: str, pool_id: str,
                members: list[tuple[dict, dict]], policies: list[dict], cands: list[dict],
-               flags: dict, wh_meta: dict) -> list[ReorderRecommendation]:
+               wh_meta: dict) -> list[ReorderRecommendation]:
     """One buy decision for a multi-location pool, apportioned back to its locations.
 
     Reuses ``aggregate_network`` and ``allocate`` rather than growing a second netting
@@ -1375,7 +1645,20 @@ def _emit_pool(db: Session, run_id: str, pool_id: str,
     # single pool-level "somebody needs a level" would not say which. Emitted here rather
     # than where `unset` was collected, so each row can carry the pool's basis; they still
     # come first in the pool's rows, exactly as before.
+    #
+    # G1 (product-grain admission, 2 Sep): the pool can hold a member admitted purely as
+    # SUPPLY for a committed sibling (the pool root, most often) - `needs_level` is a
+    # LOCATION statement ("you have not set a level for THIS bin"), so a member with none
+    # of the pool's committed demand of its own gets no row here, the same location-grain
+    # gate `_emit_cell` applies for the single-member case (G10-named products exempt,
+    # `committed_gate_exempt`).
     for r, c in unset:
+        # `c["committed"]` (the frozen cell), not `r["committed"]` (the raw row) - one
+        # reading of the fact, matching `_emit_cell`'s gate below; `_compute_cell` builds
+        # `c["committed"]` straight off `r["committed"]`, so the two never disagreed, but
+        # one canonical read is fewer places for that to stop being true.
+        if not (float(c.get("committed") or 0.0) > 0 or r.get("committed_gate_exempt")):
+            continue
         recs.append(_build_rec(run_id, "needs_level", r, c,
                                warehouse_id=str(r["warehouse_id"]),
                                order_qty=None, rounded=None,
@@ -1458,19 +1741,11 @@ def _emit_pool(db: Session, run_id: str, pool_id: str,
         if covered is not None:
             recs.append(covered)
 
-    # Disposition stays per location: idle stock is a fact about one bin.
-    for r, cell in zip(prows, cells):
-        disp = cell["disposition"]
-        if disp:
-            action = "discontinue" if disp["type"] == "dead" else "hold"
-            recs.append(_build_rec(run_id, "disposition", r, cell,
-                                   warehouse_id=str(r["warehouse_id"]),
-                                   order_qty=None, rounded=None,
-                                   reason_enum=disp["type"],
-                                   reason_label=_disposition_label(
-                                       disp["type"], cell, disp.get("basis")),
-                                   disposition_action=action,
-                                   transfer_flag=flags.get(str(r["warehouse_id"]))))
+    # G2 (`PLAN-scm-reorder-oi-feedback-1sep.md`): disposition/dead-stock rows leave the
+    # plan entirely - a dead-stock/overstock report is a separate backlog item (BL-045),
+    # not a run recommendation. This path never read `cell["disposition"]` (a pool sizes
+    # against the GROUP's net, not a single bin's ageing signal); only the single-location
+    # path (`_emit_cell`) ever suppressed a buy on it.
     return recs
 
 
@@ -1486,7 +1761,7 @@ def _is_product_level_basis(db: Session, product_id: str, policies: list[dict]) 
 
 
 def _emit_product(db: Session, run_id: str, prows: list[dict], cells: list[dict],
-                  policies: list[dict], cands: list[dict], flags: dict, wh_meta: dict,
+                  policies: list[dict], cands: list[dict], wh_meta: dict,
                   *, last_cost: Optional[dict] = None) -> list[ReorderRecommendation]:
     """ONE decision for the whole product: one level, one net, one buy.
 
@@ -1499,8 +1774,8 @@ def _emit_product(db: Session, run_id: str, prows: list[dict], cells: list[dict]
     level lifecycle where the rule now is - a `needs_level` row for a product carries no
     location, so accepting its suggestion writes the product-wide row the next plan reads.
 
-    Disposition stays per LOCATION (AC-R10): "this bin is sitting on a year of cover" is a
-    statement about a place, and aggregating it away would hide the thing it exists to say.
+    Disposition/dead-stock rows are not emitted here at all (G2, 1 Sep 2026) - see the
+    matching comment in `_emit_pool`.
     """
     recs: list[ReorderRecommendation] = []
     pid = str(prows[0]["product_id"])
@@ -1577,6 +1852,9 @@ def _emit_product(db: Session, run_id: str, prows: list[dict], cells: list[dict]
                         retail_need=retail_need, recommended=recommended,
                         rounded=rounded, project_need=project_need)
 
+    # AC-2.4 falls out of G1, not a separate gate here: an unscoped run's `_planning_rows`
+    # has already excluded every uncommitted product (G1); a G10-named product with none
+    # still wants "no level" told, which is why it entered the run.
     if level is None:
         # Nobody has set a level for this item anywhere. Proposing a quantity would be a
         # guess and omitting the row would read as "nothing to do", so the product is named
@@ -1603,18 +1881,8 @@ def _emit_product(db: Session, run_id: str, prows: list[dict], cells: list[dict]
         if covered is not None:
             recs.append(covered)
 
-    for r, c in zip(prows, cells):
-        disp = c["disposition"]
-        if disp:
-            action = "discontinue" if disp["type"] == "dead" else "hold"
-            recs.append(_build_rec(run_id, "disposition", r, c,
-                                   warehouse_id=str(r["warehouse_id"]),
-                                   order_qty=None, rounded=None,
-                                   reason_enum=disp["type"],
-                                   reason_label=_disposition_label(
-                                       disp["type"], c, disp.get("basis")),
-                                   disposition_action=action,
-                                   transfer_flag=flags.get(str(r["warehouse_id"]))))
+    # G2: disposition/dead-stock rows leave the plan entirely - see the matching comment
+    # in `_emit_pool`.
     return recs
 
 
@@ -1901,8 +2169,7 @@ def _compute_cell(db: Session, row: dict, policies: list[dict], cands: list[dict
     }
 
 
-def _emit_cell(run_id: str, row: dict, c: dict,
-               transfer_flag: Optional[str]) -> list[ReorderRecommendation]:
+def _emit_cell(run_id: str, row: dict, c: dict) -> list[ReorderRecommendation]:
     """Turn one computed SKU×warehouse cell into 0..2 persisted recommendations."""
     out: list[ReorderRecommendation] = []
     chosen = c["chosen"]
@@ -1922,14 +2189,38 @@ def _emit_cell(run_id: str, row: dict, c: dict,
                            retail_need=float(c.get("retail_need") or 0.0),
                            recommended=recommended, rounded=rounded)
 
-    # #8: a cell classified for disposition (dead OR overstock) must NOT also emit a buy
-    # - buying more of dead/overstocked stock is contradictory. The disposition rec
-    # below is the single action for that cell.
-    # A triggered cell whose order qty rounds to 0 (net already at/above order-up-to
-    # once MOQ/multiple are applied) is NOT an actionable buy - "buy 0" is noise, so
-    # emit nothing. Mirrors the network path's `rounded > 0` gate (line ~516).
+    # G1 (product-grain admission, 2 Sep): the run only checked that the PRODUCT has
+    # committed demand somewhere - this row can still be one of the product's OTHER
+    # locations, admitted purely so its on-hand/on-order stay in an aggregate's net. On
+    # this LOCATION-grain basis a location answers for ITS OWN commitment, so a location
+    # carrying none emits NOTHING of its own here - never a buy, needs_level or covered
+    # row, whatever its own stock/trigger says. This is the location half of G1; the
+    # product half (admission) lives in `_planning_rows`. G10 exempts a NAMED product
+    # from this too (`committed_gate_exempt`, stamped in `_planning_rows`) - a buyer who
+    # typed a SKU wants the SAME evaluation it got before G1 existed.
+    committed_here = float(c.get("committed") or 0.0)
+    if committed_here <= 0 and not row.get("committed_gate_exempt"):
+        return out
+
     rounded = c["rounded"] or 0
-    if not disp and c.get("needs_level"):
+    if disp:
+        # #8 (unchanged): a cell classified for disposition (dead OR overstock) must NOT
+        # also emit a buy - buying more of dead/overstocked stock is contradictory. G2
+        # removed the `disposition` rec type itself, but this cell still carries real
+        # committed demand (the early return above already sent a zero-committed one away
+        # with nothing), and silently dropping demand somebody is owed is a worse outcome
+        # than the contradiction #8 exists to prevent. State it the same way any other
+        # untriggered cell is stated - "use this stock instead of buying" - which is what
+        # `_covered_rec` already says for every other kind of untriggered cell.
+        covered = _covered_rec(run_id, wid, [row], row, c,
+                               moq=_fnum(c.get("moq")),
+                               order_multiple=_fnum(c.get("order_multiple")),
+                               plan_basis=_basis())
+        if covered is not None:
+            out.append(covered)
+        return out
+
+    if c.get("needs_level"):
         # S10 - the plan runs on a level nobody has set for this item. Proposing a quantity
         # would be a guess and omitting the row would read as "nothing to do here", so it is
         # emitted as its own kind, carrying the suggestion and the months behind it. One
@@ -1940,7 +2231,10 @@ def _emit_cell(run_id: str, row: dict, c: dict,
                               reason_enum="needs_level",
                               reason_label=_needs_level_label(c),
                               plan_basis=_basis()))
-    elif not disp and c["triggered"] and rounded > 0:
+    elif c["triggered"] and rounded > 0:
+        # A triggered cell whose order qty rounds to 0 (net already at/above order-up-to
+        # once MOQ/multiple are applied) is NOT an actionable buy - "buy 0" is noise, so
+        # emit nothing. Mirrors the network path's `rounded > 0` gate (line ~516).
         if chosen:
             out.append(_build_rec(run_id, "buy", row, c, warehouse_id=wid,
                                   order_qty=c["recommended"], rounded=c["rounded"],
@@ -1961,12 +2255,10 @@ def _emit_cell(run_id: str, row: dict, c: dict,
                                   order_qty=None, rounded=None,
                                   reason_label="no linked supplier - cannot source this reorder",
                                   plan_basis=_basis()))
-    elif not disp:
-        # Same rule as the pool path: stock covering the demand is a SUGGESTION, and
-        # writing nothing here would silently decide "use stock" for the single-location
-        # case, which is most of the catalogue. A cell already destined for disposition is
-        # excluded - "buy more of this dead stock" is the contradiction the gate above
-        # exists to prevent, and offering it as a choice is the same contradiction.
+    else:
+        # Stock covering the demand is a SUGGESTION, and writing nothing here would
+        # silently decide "use stock" for the single-location case, which is most of the
+        # catalogue.
         covered = _covered_rec(run_id, wid, [row], row, c,
                                moq=_fnum(c.get("moq")),
                                order_multiple=_fnum(c.get("order_multiple")),
@@ -1974,15 +2266,6 @@ def _emit_cell(run_id: str, row: dict, c: dict,
         if covered is not None:
             out.append(covered)
 
-    # disposition (dead / overstock)
-    if disp:
-        action = "discontinue" if disp["type"] == "dead" else "hold"
-        label = _disposition_label(disp["type"], c, disp.get("basis"))
-        out.append(_build_rec(run_id, "disposition", row, c,
-                              warehouse_id=str(row["warehouse_id"]),
-                              order_qty=None, rounded=None,
-                              reason_enum=disp["type"], reason_label=label,
-                              disposition_action=action, transfer_flag=transfer_flag))
     return out
 
 
@@ -2004,18 +2287,17 @@ def _plan_network(db: Session, run_id: str, rows: list[dict], policies: list[dic
 
     for pid, prows in by_product.items():
         cands = eng.load_supplier_candidates(db, pid, rates=rates)
-        # per-warehouse cells (drive disposition + transfer flags + allocation demand)
+        # per-warehouse cells (drive allocation demand)
         computed = [_compute_cell(db, r, policies, cands, today, last_move, last_buy,
                                   levels=levels, last_cost=last_cost)
                     for r in prows]
-        flags = _transfer_flags_for(prows, computed)
 
         # Same answer under either scope: the reorder-level basis is per product, and a
         # network run is already a per-product aggregate - it simply summed the members'
         # levels for its target, which is the multiplication this basis had to stop doing.
         if _is_product_level_basis(db, pid, policies):
             recs.extend(_emit_product(db, run_id, prows, computed, policies, cands,
-                                      flags, wh_meta, last_cost=last_cost))
+                                      wh_meta, last_cost=last_cost))
             continue
 
         # --- aggregate buy on the network ---
@@ -2040,21 +2322,16 @@ def _plan_network(db: Session, run_id: str, rows: list[dict], policies: list[dic
                           for r, c in zip(prows, computed)}
         network_project_need = sum(project_by_wid.values())
         policy_type = policy.get("policy_type") or "reorder_point"
-        # S10 - same rule as the pool path: the network target is the sum of the levels the
-        # buyer owns, and a location with no level is named rather than guessed at.
-        net_levels = None
-        # Collected here, emitted after the network has been sized, so each row can carry
-        # the network's own basis; they still come first in this product's rows.
-        unset_levels: list[tuple[dict, dict]] = []
-        if policy_type == "reorder_level":
-            net_levels = {str(r["warehouse_id"]): c.get("reorder_level")
-                          for r, c in zip(prows, computed)}
-            unset_levels = [(r, c) for r, c in zip(prows, computed)
-                            if c.get("reorder_level") is None]
-
+        # NEVER 'reorder_level' here: `policy` is resolved the SAME way (product_id,
+        # warehouse_id=None) `_is_product_level_basis` already resolved it above, and a
+        # 'reorder_level' answer there already sent this product to `_emit_product` and
+        # `continue`d past this whole branch. So this scope carries no per-member level
+        # concept (`net_levels` / `unset_levels` / a `needs_level` row) to gate at all -
+        # removed 2 Sep, the code was dead since the per-product reorder_level basis
+        # landed (27 Aug) and unreachable by construction, not merely untested.
         agg = eng.aggregate_network(wh_inputs, lead_time_days=lead, safety_days=safety_days,
                                     review_days=review_days, moq=moq,
-                                    order_multiple=order_multiple, levels=net_levels)
+                                    order_multiple=order_multiple, levels=None)
 
         # Gate the network buy on the SAME policy trigger as per-warehouse, computed on
         # the AGGREGATE (net vs agg-ROP / agg-min / agg-OUP). Sizing the buy is NOT a
@@ -2069,10 +2346,11 @@ def _plan_network(db: Session, run_id: str, rows: list[dict], policies: list[dic
         else:
             target_oup = float(agg["order_up_to"])
         # on_cadence=True: every run is a review cadence in M3 (see per-warehouse note).
+        # reorder_level=None: this scope never resolves the reorder_level policy_type
+        # (see above), so `trigger` always takes its reorder_point/min_max/periodic arm.
         triggered, reason_label = eng.trigger(
             policy_type, net=agg_net, rop=float(agg["reorder_point"]),
-            min_level=min_override, oup=target_oup, on_cadence=True,
-            reorder_level=(float(agg["reorder_point"]) if net_levels is not None else None))
+            min_level=min_override, oup=target_oup, on_cadence=True, reorder_level=None)
         retail_recommended, _unrounded = eng.order_qty(
             triggered, net=agg_net, oup=target_oup, moq=None, order_multiple=None)
         recommended = retail_recommended + network_project_need
@@ -2107,13 +2385,11 @@ def _plan_network(db: Session, run_id: str, rows: list[dict], policies: list[dic
         network_basis = _plan_basis("network", "network", prows, computed, allocation_map,
                                     retail_need=retail_recommended,
                                     recommended=recommended, rounded=rounded)
-        for r, c in unset_levels:
-            recs.append(_build_rec(run_id, "needs_level", r, c,
-                                   warehouse_id=str(r["warehouse_id"]),
-                                   order_qty=None, rounded=None,
-                                   reason_enum="needs_level",
-                                   reason_label=_needs_level_label(c),
-                                   plan_basis=network_basis))
+        # No `needs_level` row is emitted here: this scope never resolves the
+        # reorder_level policy_type (see the comment above `policy_type`), so there is
+        # no per-member level to be missing. The location-grain `needs_level` gate lives
+        # in `_emit_cell` (single-location) and `_emit_pool`'s `unset` loop (pooled);
+        # this network-aggregate scope has neither concept.
         if triggered and rounded > 0 and chosen:
             allocation = _allocation_lines(allocation_map, wh_meta)
             recs.append(_build_rec(run_id, "buy", first, agg_cell, warehouse_id=None,
@@ -2127,18 +2403,8 @@ def _plan_network(db: Session, run_id: str, rows: list[dict], policies: list[dic
                 reason_label="no linked supplier - cannot source this network reorder",
                 plan_basis=network_basis))
 
-        # --- per-warehouse disposition recs (dead/overstock) ---
-        for r, cell in zip(prows, computed):
-            disp = cell["disposition"]
-            if disp:
-                action = "discontinue" if disp["type"] == "dead" else "hold"
-                label = _disposition_label(disp["type"], cell, disp.get("basis"))
-                recs.append(_build_rec(run_id, "disposition", r, cell,
-                                       warehouse_id=str(r["warehouse_id"]),
-                                       order_qty=None, rounded=None,
-                                       reason_enum=disp["type"], reason_label=label,
-                                       disposition_action=action,
-                                       transfer_flag=flags.get(str(r["warehouse_id"]))))
+        # G2: disposition/dead-stock rows leave the plan entirely - see the matching
+        # comment in `_emit_pool`.
     return recs
 
 
@@ -2256,6 +2522,12 @@ def _plan_basis(group: str, scope: str, prows: list[dict], cells: list[dict],
             "warehouse_id": wid,
             "warehouse_code": r.get("warehouse_code"),
             "warehouse_name": r.get("warehouse_name"),
+            # The location's own pool (S3 perf, AC-3.4) - `_build_rec` reads these back
+            # off this same list to precompute the GROUP's pool at generation time
+            # (`_group_pool_from_basis`), the one-time cost the read-path LATERAL used to
+            # pay on every request.
+            "pool_warehouse_id": _str_or_none(r.get("pool_warehouse_id")),
+            "pool_warehouse_code": r.get("pool_warehouse_code"),
             "project_need": _r(c.get("project_need")) or 0.0,
             "retail_need": _r(c.get("retail_need")) or 0.0,
             # Shared facts of the product-location, carrying no channel dimension.
@@ -2293,6 +2565,35 @@ def _plan_basis(group: str, scope: str, prows: list[dict], cells: list[dict],
 # ===========================================================================
 # recommendation builder (freezes inputs)
 # ===========================================================================
+
+def _group_pool_from_basis(plan_basis: Optional[dict]) -> tuple[Optional[str], Optional[str]]:
+    """The ONE pool every location a product/network-grain group was sized over shares,
+    or ``(None, None)`` when they do not all share one (S3 perf, AC-3.4) - the same "name
+    none rather than one of several" rule ``list_recommendations``'s old per-row
+    read-time ``LEFT JOIN LATERAL`` applied by unnesting this same
+    ``plan_basis.locations`` list on every request. Computed here, once, at generation
+    time instead, off the ``pool_warehouse_id``/``pool_warehouse_code`` `_plan_basis`
+    already carries per location."""
+    locations = (plan_basis or {}).get("locations") or []
+    pool_ids = {loc.get("pool_warehouse_id") for loc in locations if loc.get("pool_warehouse_id")}
+    if len(pool_ids) != 1:
+        return None, None
+    pool_id = next(iter(pool_ids))
+    pool_code = next(
+        (loc.get("pool_warehouse_code") for loc in locations
+         if loc.get("pool_warehouse_id") == pool_id and loc.get("pool_warehouse_code")),
+        None,
+    )
+    # Nit (review): in practice this never returns an id with no code - every
+    # location's own `pool_warehouse_code` is populated by `_plan_basis` off the same
+    # `COALESCE(pw.warehouse_code, w.warehouse_code)` the main planning query already
+    # carries, so a consensus `pool_id` always has at least one location naming its
+    # code too. Left as `(pool_id, None)` rather than folded to `(None, None)` should
+    # that assumption ever break on real data - a caller failing to resolve a code for
+    # a real pool id is a data gap worth surfacing, not one worth hiding behind a
+    # second null.
+    return pool_id, pool_code
+
 
 def _build_rec(run_id: str, rec_type: str, row: dict, c: dict, *,
                warehouse_id: Optional[str], order_qty: Optional[float],
@@ -2407,12 +2708,23 @@ def _build_rec(run_id: str, rec_type: str, row: dict, c: dict, *,
         "xyz_class": row["xyz_class"],
         "category_code": row.get("category_code"),
     }
+    # S3 perf quick wins (AC-3.4): a location-grain row already carries its own pool off
+    # the main planning query; a product/network-grain row (no single `warehouse_id`)
+    # reads its group's consensus pool back off the `plan_basis` just built above -
+    # precomputed here so `list_recommendations` never re-derives it per row.
+    if warehouse_id:
+        pool_wh_id = _str_or_none(row.get("pool_warehouse_id"))
+        pool_wh_code = row.get("pool_warehouse_code")
+    else:
+        pool_wh_id, pool_wh_code = _group_pool_from_basis(plan_basis)
     return ReorderRecommendation(
         id=str(uuid.uuid4()),
         run_id=run_id,
         rec_type=rec_type,
         product_id=str(row["product_id"]),
         warehouse_id=warehouse_id,
+        pool_warehouse_id=pool_wh_id,
+        pool_warehouse_code=pool_wh_code,
         supplier_id=(chosen["supplier_id"] if chosen else None),
         net_position=_r(c.get("net")),
         reorder_point=_r(c.get("rop")),
@@ -2478,37 +2790,6 @@ def _supplier_choice(cand: Optional[dict]) -> Optional[dict]:
         "moq": _fnum(cand.get("moq")),
         "order_multiple": _fnum(cand.get("order_multiple")),
     }
-
-
-def _transfer_flags_for(prows: list[dict], computed: list[dict]) -> dict[str, str]:
-    """Advisory transfer flags per SKU across its warehouses (overstock-here +
-    short-there). Returns {warehouse_id: message} keyed to the OVERSTOCK warehouse."""
-    sku = prows[0]["product_code"]
-    whs = [{"warehouse_id": str(r["warehouse_id"]),
-            "warehouse_code": r["warehouse_code"],
-            "overstock": computed[i]["overstock"],
-            "short": computed[i]["short"]} for i, r in enumerate(prows)]
-    flags = eng.transfer_flags(sku, whs)
-    out: dict[str, str] = {}
-    for f, w in [(f, w) for f in flags for w in whs
-                 if w["warehouse_code"] == f["from_warehouse"]]:
-        out[w["warehouse_id"]] = f["message"]
-    return out
-
-
-def _disposition_label(kind: str, c: dict, basis: Optional[str] = None) -> str:
-    if kind == "dead":
-        if basis == "ageing":
-            days = c.get("last_purchase_days")
-            # The age is quoted rather than asserted: "bought 1,876 days ago and has never
-            # moved" is a fact somebody can check, and it is the whole argument for the call.
-            return (f"dead stock: bought {int(days):,} days ago and has never moved"
-                    if days is not None
-                    else "dead stock: bought before the dead-stock window and has never moved")
-        return "dead stock: no movement in the dead-stock window"
-    doc = c.get("doc")
-    return f"overstock: runway of {doc:g} days exceeds the ceiling" if doc is not None \
-        else "overstock: runway exceeds the ceiling"
 
 
 def _reason_enum(policy_type: Optional[str]) -> str:

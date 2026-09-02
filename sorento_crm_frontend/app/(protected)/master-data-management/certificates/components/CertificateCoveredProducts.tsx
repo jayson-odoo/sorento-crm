@@ -109,6 +109,18 @@ export default function CertificateCoveredProducts({
         meta: { headerTitle: 'Product Name' },
       },
       {
+        accessorKey: 'company_name',
+        header: ({ column }) => <DataGridColumnHeader title="Company" column={column} />,
+        cell: ({ row }) => (
+          <div className="truncate" title={row.original.company_name ?? undefined}>
+            {row.original.company_name ?? '-'}
+          </div>
+        ),
+        size: 140,
+        minSize: 100,
+        meta: { headerTitle: 'Company' },
+      },
+      {
         accessorKey: 'source',
         header: ({ column }) => <DataGridColumnHeader title="Added By" column={column} />,
         cell: ({ row }) => (

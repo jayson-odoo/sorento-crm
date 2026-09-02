@@ -73,8 +73,10 @@ export interface SpecVerificationRow {
   is_discontinued: boolean;
   coverage: SpecVerificationCoverage;
   /**
-   * Derivation's own flags. Carried because the API still sends it; NOTHING renders
-   * it (captain ruling 2026-08-17: there is no exceptions concept for the user).
+   * Derivation's own count of open catalogue exceptions for this code. Rendered as
+   * a warning pill in the Coverage cell, "{n} need a human" (AC-F.4, design-language
+   * D11) - the reason detail stays internal derivation data, so the pill and its
+   * hover card carry only the count.
    */
   open_exceptions: number;
   /** Echoed back on verify so the same-transaction guard applies from the list (AC-D.24). */

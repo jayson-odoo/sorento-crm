@@ -13,21 +13,7 @@ export interface SpecProvenance {
   evidence: string;
 }
 
-export interface ProductSpecRow {
-  product_id: string;
-  product_code: string;
-  class_label: string | null;
-  brand_hint: string | null;
-  spec_count: number;
-  /** The code-free sentence that gets embedded. This is what search matches. */
-  rendered_text: string | null;
-  status: string;
-  is_discontinued: boolean;
-  open_exceptions: number;
-  values: Record<string, SpecValue>;
-  provenance: Record<string, SpecProvenance>;
-}
-
+/** One `human_override_conflict` on a product's own Specifications tab. */
 export interface SpecException {
   id: string;
   /** Absent when the exception is already scoped to one product. */
@@ -271,6 +257,16 @@ export interface SpecRegistryKey {
   /** A number above this is dropped as implausible rather than stored. Null/absent
    *  means no cap. Seeded 5000 on mm keys; editable per key. */
   max_value?: number | null;
+  /**
+   * How each value reads on screen, when the raw slug does not already read as one
+   * (#423 folded into this redesign). `{ pp: "PP" }` overrides `readableValue('pp')`,
+   * which would otherwise render "Pp". Staff-owned on seed AND user rows alike -
+   * editable regardless of who owns the value itself (D4, AC-D.3).
+   *
+   * Optional because an older test fixture may not carry it - every reader treats an
+   * absent dict as `{}`.
+   */
+  value_labels?: Record<string, string>;
 }
 
 /** One tunable number in the ranker's scoring. */

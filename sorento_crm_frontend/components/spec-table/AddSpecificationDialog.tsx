@@ -16,6 +16,7 @@ import { Label } from '@/components/ui/label';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { readable } from '@/lib/spec-readable';
+import { CREATABLE_SPEC_TYPE_OPTIONS } from '@/app/(protected)/master-data-management/product-specifications/lib/specTypeLabel';
 import type { SpecKeyDefinition } from './types';
 
 /**
@@ -46,14 +47,6 @@ import type { SpecKeyDefinition } from './types';
  * Journey A step 3 already describes - so there is no second place to type a value.
  */
 export type SpecDataType = 'enum' | 'numeric' | 'boolean';
-
-// "Dropdown", not "a word from a list": named after the control the user will see,
-// which is the thing they already have a word for (captain's call, hands-on test).
-const DATA_TYPE_OPTIONS = [
-  { value: 'enum', label: 'Dropdown' },
-  { value: 'numeric', label: 'A number' },
-  { value: 'boolean', label: 'Yes or no' },
-];
 
 /** What the server said the proposed label already is. */
 export interface SimilarKeyMatch {
@@ -205,7 +198,7 @@ export function AddSpecificationDialog({
                 id="spec-new-type"
                 value={proposedType}
                 onChange={(next) => setProposedType(next as SpecDataType)}
-                options={DATA_TYPE_OPTIONS}
+                options={CREATABLE_SPEC_TYPE_OPTIONS}
               />
             </div>
             {match && (

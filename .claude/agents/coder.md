@@ -19,7 +19,8 @@ read them first, do not rely on the prompt's paraphrase.
   Phase 1 (frontend against mocks, no backend code) and Phase 2 (backend, test-FIRST) as separate
   steps; never write backend code while Phase 1 is still open.
 - Read the relevant `documentation/plans/PLAN-*.md` and its `<slug>-acceptance-criteria.md` (the UAC
-  is the contract), `CLAUDE.md`, `documentation/reference/ADR-PRODUCT-STANDARDS.md`.
+  is the contract), `CLAUDE.md`, `documentation/reference/DESIGN-LANGUAGE.md`,
+  `documentation/reference/ADR-PRODUCT-STANDARDS.md`.
 - Read the surrounding code first - match its conventions, don't impose new ones.
 
 ## Backend (`sorento_crm_backend/`)
@@ -35,7 +36,8 @@ read them first, do not rely on the prompt's paraphrase.
 - User selects via `services/userSelectService`. DataGrid: `tableLayout: { width: 'fixed', columnsResizable: true }`, explicit `size`, `truncate` + `title`.
 - CRUD: modal by default; hard delete + `AlertDialog`/`ConfirmDeleteDialog` (never `confirm()`); detail pages render every section with empty states.
 - No UUIDs in UI. No feature explanations in UI.
-- FE runs as prod build - NO HMR. After FE changes: rebuild + restart the :3000 session proactively, tell user when ready. Batch edits into one rebuild; don't log the user out unnecessarily.
+- Motion: `lib/motion.ts` presets + `config.reui.css` tokens only; run the `animate` skill's decision gate before adding any animation; most staff surfaces get none (frequency gate).
+- FE runs on `npm run dev` (HMR): edits hot-reload, never rebuild or restart the dev server to see a change, never start a second one (ONE machine-wide; check `lsof -i :3000 -sTCP:LISTEN` first). `npm run build` only when the user explicitly asks. See CLAUDE.md "Frontend dev loop".
 
 ## Rules
 - Implement exactly what the plan/contract specifies. If a deviation is unavoidable, update the contract doc + adjust both sides in the same change, and say so.

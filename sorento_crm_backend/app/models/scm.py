@@ -301,6 +301,26 @@ class ReorderRun(Base, CompanyScopedMixin):
     decision_grain = Column(String(20), nullable=True)
     front_planning_contract_version = Column(SmallInteger, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    # S3 perf quick wins (PLAN-scm-reorder-oi-feedback-1sep.md, AC-3.3): the plans list and
+    # its Decided sort used to LEFT JOIN the whole `purchase_order_lines` table per page to
+    # answer "how many of this run's products are decided / confirmed" (by DISTINCT
+    # PRODUCT, R14) - `decision_service._refresh_run_counts` keeps these three current on
+    # every decision write (accept/adjust/reject, a row decision, confirm, reset) and at run
+    # completion, so a read is a plain column instead of a join.
+    planned_count = Column(Integer, nullable=False, default=0, server_default=text("0"))
+    decided_count = Column(Integer, nullable=False, default=0, server_default=text("0"))
+    confirmed_count = Column(Integer, nullable=False, default=0, server_default=text("0"))
+    # Re-plan supersede link (plan 5.1 / G8). Two columns rather than one, so the RQ worker
+    # can find the OLD run's decisions the moment it starts (`supersedes_run_id`, stamped at
+    # creation) without waiting on the reverse pointer, which is only written once THIS run
+    # actually completes (`superseded_by_run_id`, stamped on the OLD row) - a still-running
+    # or failed re-plan must never make a still-valid old run look superseded.
+    supersedes_run_id = Column(
+        UUID(as_uuid=False), ForeignKey("scm.reorder_run.id", ondelete="SET NULL"), nullable=True
+    )
+    superseded_by_run_id = Column(
+        UUID(as_uuid=False), ForeignKey("scm.reorder_run.id", ondelete="SET NULL"), nullable=True
+    )
 
     recommendations = relationship(
         "ReorderRecommendation",
@@ -366,6 +386,17 @@ class ReorderRecommendation(Base, CompanyScopedMixin):
     source_system = Column(String, nullable=True)
     source_ref = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    # S3 perf quick wins (AC-3.4): the pool a row's location(s) draw on, precomputed at
+    # generation time (`reorder_run_service._plan_basis`) rather than re-derived on every
+    # read of `list_recommendations` via a per-row LATERAL that unnests
+    # `inputs.plan_basis.locations` - that LATERAL ran on the majority of rows (every
+    # product-grain row names no single warehouse) and was the read path's own cost, not a
+    # one-off. NULL on a network/product row whose members span more than one pool (the
+    # LATERAL's own "name none rather than one of several" rule, unchanged).
+    pool_warehouse_id = Column(
+        UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="SET NULL"), nullable=True
+    )
+    pool_warehouse_code = Column(String(50), nullable=True)
 
     run = relationship("ReorderRun", back_populates="recommendations")
     overrides = relationship(

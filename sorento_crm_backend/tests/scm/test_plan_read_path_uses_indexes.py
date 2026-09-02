@@ -42,6 +42,12 @@ PLAN_READ_PATH = [
     "app/services/scm/purchase_trend_service.py",
     "app/services/scm/reorder_level_service.py",
     "app/services/scm/trajectory_service.py",
+    # S3 perf quick wins (AC-3.1/3.2/3.3): the decisions list and the plans-list counts
+    # both resolve a recommendation's draft/active PO line through
+    # `ix_purchase_order_lines_source_ref_system` (`_po_for_rec`, `_pos_for_recs`,
+    # `_refresh_run_counts`) - the same "never cast the compared column away from its
+    # indexed type" rule applies here.
+    "app/services/scm/decision_service.py",
 ]
 
 # A string cast used as one side of a comparison, in either spelling Postgres accepts:
@@ -50,9 +56,21 @@ PLAN_READ_PATH = [
 # Projections (`::text AS product_id`, `::text,`) never match: they are not followed by a
 # comparison operator. `IN` needs a word boundary so `INNER JOIN` is not a hit.
 _COMPARISON = r"\s*(?:=|<>|!=|>|<|\bIN\b)"
+#: Review finding (S3 perf PR): the two alternatives above only catch the cast on the LEFT
+#: of the operator (`col::text = ...`). A parameter compared against a cast column in the
+#: REVERSED order (`:param = col::text`) is the identical violation - the column is still
+#: cast away from its indexed type - and went uncaught. Scoped to a bind PARAMETER on the
+#: left (`:word`, optionally `ANY(:word)`) rather than "anything", so a genuine two-column
+#: join that casts the UNINDEXED side to match an indexed column left bare (e.g.
+#: `pol.source_ref = r.id::text`, `decision_service._refresh_run_counts`) is not a false
+#: positive: that shape has a real column on the left, never a parameter marker.
+_PARAM = r":\w+|\bANY\s*\(\s*:\w+\s*\)"
+_CAST_AFTER_PARAM = r"(?:" + _PARAM + r")" + _COMPARISON + r"\s*"
 _CAST_IN_PREDICATE = re.compile(
     r"(?:::\s*(?:text|varchar|char)" + _COMPARISON + r")"
-    r"|(?:\bCAST\s*\([^()]*\bAS\s+(?:text|varchar|char)\s*\)" + _COMPARISON + r")",
+    r"|(?:\bCAST\s*\([^()]*\bAS\s+(?:text|varchar|char)\s*\)" + _COMPARISON + r")"
+    r"|(?:" + _CAST_AFTER_PARAM + r"\w+(?:\.\w+)?\s*::\s*(?:text|varchar|char)\b)"
+    r"|(?:" + _CAST_AFTER_PARAM + r"\bCAST\s*\(\s*\w+(?:\.\w+)?\s+AS\s+(?:text|varchar|char)\s*\))",
     re.IGNORECASE,
 )
 
@@ -113,6 +131,12 @@ def test_plan_read_path_never_casts_an_indexed_column_to_text(relpath):
         "WHERE cast(product_id as varchar) IN (:a, :b)",
         # split across lines, which a line-by-line scan would miss
         "WHERE p.id::text\n      = ANY(:ids)",
+        # Review finding: the SAME violation, operand order reversed - a parameter on the
+        # LEFT compared against the cast column on the RIGHT.
+        "WHERE :run_id = run_id::text",
+        "WHERE :pid = product_id :: text",
+        "WHERE :pid = CAST(product_id AS text)",
+        "WHERE ANY(:ids) = p.id::text",
     ],
 )
 def test_the_guard_catches_a_cast_used_in_a_comparison(sql):
@@ -132,6 +156,14 @@ def test_the_guard_catches_a_cast_used_in_a_comparison(sql):
         "WHERE COALESCE(warehouse_id::text, :zero) = COALESCE(CAST(:wid AS text), :zero)",
         # `IN` must need a word boundary, or every INNER JOIN after a projection is a hit.
         "SELECT p.id::text AS id FROM products p INNER JOIN stock s ON s.product_id = p.id",
+        # A genuine two-column join across mismatched types casts the UNINDEXED side to
+        # match the indexed one left BARE - `decision_service._refresh_run_counts`'s own
+        # `pol.source_ref = r.id::text` (the new `ix_purchase_order_lines_source_ref_system`
+        # covers `pol.source_ref`, untouched here; `r.id` is a uuid primary key cast only to
+        # join against `source_ref`'s varchar). The right-side-of-operator probe added above
+        # is scoped to a bind PARAMETER on the left precisely so this real, correct join
+        # shape does not become a false positive of that fix.
+        "ON pol.source_ref = r.id::text AND pol.source_system IN (:src, :src_product)",
     ],
 )
 def test_the_guard_leaves_projections_and_parameter_casts_alone(sql):

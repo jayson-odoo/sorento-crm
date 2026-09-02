@@ -81,6 +81,9 @@ export interface CertificateProduct {
   product_id: string;
   product_code: string;
   product_name: string;
+  /** The product's owning company. "Shared" for a company-less product, null
+   * only when the product row itself no longer exists. */
+  company_name: string | null;
   /** COV-2 / FE-7: rendered as colour, never as a per-row text badge. */
   source: CertificateSource;
 }
