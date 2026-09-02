@@ -275,30 +275,25 @@ export default function ConversationThreadPane({
           snippetTrackingId={snippetTicketId}
           emojiEnabled
           sendAdapter={async (payload) => {
-            // The bubble goes up before the request does (optimistic send):
-            // the backend writes the outgoing row at send time, so the refetch
-            // below swaps this placeholder for the real message and the two
-            // are never on screen together.
-            const pendingKey = thread.addPending({ text: payload.text, files: payload.files });
-            try {
-              const result = await replyMutation.mutateAsync({
-                text: payload.text,
-                files: payload.files,
-              });
-              await threadQuery.refetch();
-              // AC-N2: a stamped send answered one of the sender's own enquiries
-              // and stopped its clock. Said quietly - an unstamped send still
-              // reached the contact, so it is information, not a failure.
-              if (result.stamped_ticket_id) {
-                toast.success('Sent - counted as the reply to your open enquiry.');
-              } else {
-                toast.success('Sent.');
-              }
-              return result;
-            } finally {
-              thread.removePending(pendingKey);
+            const result = await replyMutation.mutateAsync({
+              text: payload.text,
+              files: payload.files,
+            });
+            // AC-N2: a stamped send answered one of the sender's own enquiries
+            // and stopped its clock. Said quietly - an unstamped send still
+            // reached the contact, so it is information, not a failure.
+            if (result.stamped_ticket_id) {
+              toast.success('Sent - counted as the reply to your open enquiry.');
+            } else {
+              toast.success('Sent.');
             }
+            return result;
           }}
+          // Optimistic send (M6-01): the bubble goes up before the request
+          // completes and comes down once the thread's own refetch lands - the
+          // real row and the placeholder are never both missing at once.
+          pendingBubble={{ add: thread.addPending, remove: thread.removePending }}
+          onSent={() => threadQuery.refetch()}
           notAvailableMessage="You do not have permission to reply to contacts."
         />
       )}

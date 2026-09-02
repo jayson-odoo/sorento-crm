@@ -191,8 +191,12 @@ export default function TicketConversationPanel({
 
   const handleSent = () => {
     void ticketQuery.refetch();
-    void threadQuery.refetch();
+    // Returned so the composer's optimistic bubble (M6-01) waits for the
+    // thread's own refetch before it comes down - the real row and the
+    // placeholder are never both missing on screen at once.
+    const threadRefetched = threadQuery.refetch();
     onSent?.();
+    return threadRefetched;
   };
 
   return (
@@ -331,30 +335,16 @@ export default function TicketConversationPanel({
               : undefined
           }
           onSent={handleSent}
+          // Optimistic send (M6-01): the bubble goes up before the request
+          // completes and comes down once `handleSent`'s thread refetch lands.
+          pendingBubble={{ add: thread.addPending, remove: thread.removePending }}
           windowStateOverride={
             ticket ? { closed: !ticket.window.open, template: ticket.chat_template } : null
           }
           sendAdapter={
             ticket
-              ? async (payload) => {
-                  // Optimistic send: the bubble is on screen before the
-                  // request completes; the backend writes the outgoing row at
-                  // send time, so the refetch swaps it for the real message.
-                  const pendingKey = thread.addPending({
-                    text: payload.text,
-                    files: payload.files,
-                  });
-                  try {
-                    const result = await sendMutation.mutateAsync({
-                      text: payload.text,
-                      attachments: payload.files,
-                    });
-                    await threadQuery.refetch();
-                    return result;
-                  } finally {
-                    thread.removePending(pendingKey);
-                  }
-                }
+              ? (payload) =>
+                  sendMutation.mutateAsync({ text: payload.text, attachments: payload.files })
               : undefined
           }
           notAvailableMessage={notAvailableMessage}
