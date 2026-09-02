@@ -30,52 +30,28 @@ export const ACK_LABELS: Record<OrderInquiryAckState, string> = {
 };
 
 /**
- * The default the page opens on (R3): awaiting AND changed, which to purchasing are one
- * question - nobody has said yes to this yet. Its own filter value rather than two,
- * because a to-do list is one press and not a multi-select.
- */
-export const ACK_TO_CONFIRM = 'to_confirm';
-
-/**
  * How the page says "show me everything" in the URL. An ABSENT `?ack=` opens on the
  * default, so a cleared filter needs a word of its own or a reload would put the default
  * straight back over the choice.
  */
 export const ACK_ANY = 'all';
 
-/** What the Confirmed filter offers, in the order purchasing reads them. */
+/**
+ * What the Confirmed filter offers, in the order purchasing reads them (S3, review of
+ * PR #471). No "To confirm" any more: a row is born acknowledged and a settle
+ * auto-acknowledges again (G4), so nothing sits in `awaiting` (bar a pre-migration or
+ * otherwise legacy row) for that option to mean anything about - the filter still
+ * selects a genuinely rejected or changed row, which is what purchasing still looks up.
+ */
 export const ACK_FILTER_OPTIONS: { value: string; label: string }[] = [
-  { value: ACK_TO_CONFIRM, label: ACK_LABELS.awaiting },
   { value: 'acknowledged', label: ACK_LABELS.acknowledged },
   { value: 'changed', label: ACK_LABELS.changed },
   { value: 'rejected', label: ACK_LABELS.rejected },
 ];
 
-/** The badge variants the rest of this screen already uses, one per state. */
-export const ACK_VARIANTS: Record<OrderInquiryAckState, 'secondary' | 'success' | 'warning' | 'destructive'> = {
-  awaiting: 'secondary',
-  acknowledged: 'success',
-  changed: 'warning',
-  rejected: 'destructive',
-};
-
 export function ackStateOf(row: OrderInquiryAckFields): OrderInquiryAckState {
   const value = (row.ack_state ?? 'awaiting') as OrderInquiryAckState;
   return ACK_STATES.includes(value) ? value : 'awaiting';
-}
-
-/**
- * A row worth taking on: never read (or changed since it was), and still OWED.
- *
- * The second half is why this is not just a state test. A cancelled row was called off
- * and an actioned one was answered somewhere else - the same two `scm.committed_v` and
- * the three supply cards already drop - so acknowledging one takes on work nobody is
- * doing, and the cascade behind the press would link nothing for it anyway.
- */
-export function isAcknowledgeable(row: OrderInquiryAckFields & { state?: string }): boolean {
-  const ack = ackStateOf(row);
-  if (ack !== 'awaiting' && ack !== 'changed') return false;
-  return row.state !== 'cancelled' && row.state !== 'actioned';
 }
 
 /** A row purchasing has not refused, so there is still something to refuse. */

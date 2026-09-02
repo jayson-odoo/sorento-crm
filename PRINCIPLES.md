@@ -219,6 +219,8 @@ the same axis as the module decision - not a separate schema axis.
 - **NEVER use em-dashes in any writing**: not the em-dash character, not the en-dash, anywhere
   (code comments, commit messages, PR bodies, docs, chat). Use a plain hyphen with spaces, a comma,
   a colon, or parentheses instead.
+- **Design language** (`documentation/reference/DESIGN-LANGUAGE.md`): tokens, motion presets,
+  primitives roster and the precedence rule for external design skills. Read before any UI work.
 
 ## Layering (enforced)
 
@@ -250,7 +252,9 @@ grant path · a new DB column missing from a manual dict builder · a write to `
 non-searchable dropdown -
 `@/components/ui/select`, raw `<select>`, or a hand-rolled `CommandInput` picker (every
 dropdown-select MUST use `SearchableSelect`/`SearchableMultiSelect` from `@/components/common`; see
-`ADR-PRODUCT-STANDARDS.md`).
+`ADR-PRODUCT-STANDARDS.md`) · `transition-all` · an entrance from `scale(0)` · `ease-in` on an
+entrance · a raw `cubic-bezier` outside `config.reui.css` · a new animation with no
+reduced-motion path.
 
 ## Ops quick-reference
 

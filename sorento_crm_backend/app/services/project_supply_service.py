@@ -86,6 +86,7 @@ from app.models.procurement import (
 from app.models.product import Product
 from app.models.sales_agent import SalesAgent
 from app.models.project_so import (
+    ACK_ACKNOWLEDGED,
     ALLOC_SOURCE_BRW,
     ALLOC_SOURCE_GROUP_TAKE,
     ALLOC_SOURCE_ORDER,
@@ -5415,6 +5416,12 @@ class ProjectSupplyService:
                 note=(item.reason or "").strip() or None,
                 supply_decision_id=decision.id,
                 state=INQUIRY_RAISED,
+                # Born acknowledged (G4, `PLAN-scm-reorder-oi-feedback-1sep.md` S1): the
+                # sixth creation site - a borrow's asker-side row is purchasing's work the
+                # moment the borrow is confirmed, not something somebody has to say yes to.
+                ack_state=ACK_ACKNOWLEDGED,
+                acknowledged_by=actor_user_id,
+                acknowledged_at=datetime.utcnow(),
             )
             self.db.add(row)
             self.db.flush()

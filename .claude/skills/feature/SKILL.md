@@ -76,6 +76,9 @@ it is manual, and it is the one that protects the rest.
   `/grill-with-docs`. It challenges the design against `CONTEXT-MAP.md` and writes
   ADRs into `documentation/adr/` inline.
 - Pure UX or flow question, no domain surface → `/grill-me`.
+- Design brief: for every surface touched, its density, how often the actor hits it per day
+  (the frequency gate in `documentation/reference/DESIGN-LANGUAGE.md`), and an explicit list of
+  what must NOT animate.
 
 Resolve every branch of the decision tree before writing anything down.
 
@@ -84,8 +87,10 @@ Resolve every branch of the decision tree before writing anything down.
 **UAC first - it is the contract.** Write
 `documentation/plans/<domain>/<slug>-acceptance-criteria.md`: the journey at the
 top as its `Journey` section, then independently-verifiable Given/When/Then ACs,
-each with an id, grouped by phase, tagged `[BE]` / `[FE]` / `[E2E]` / `[T]`. Every
-AC traces to a step in the journey.
+each with an id, grouped by phase, tagged `[BE]` / `[FE]` / `[E2E]` / `[T]` / `[UX]`. Every
+AC traces to a step in the journey. Run `find-animation-opportunities` read-only on the
+current surface; its capped list becomes `[UX]` ACs (each measurable: breakpoint, duration
+token, reduced-motion, pressed state, empty state) or an explicit no-motion list in the plan.
 
 **Then** the plan: `documentation/plans/<domain>/PLAN-<slug>.md`, the design that
 fulfils the UAC. No plan ships without its UAC file.
@@ -128,6 +133,9 @@ If the open question is "which of these three designs", run `/prototype` before
 this step and **throw the result away** - it is not built to this repo's layering
 rules and must not become the shipped FE.
 
+Any new motion goes through the `animate` decision gate and uses only `lib/motion.ts` presets
+and `config.reui.css` tokens. The coder reads `DESIGN-LANGUAGE.md` before the first UI file.
+
 ### Step 7 - Phase 2: backend wiring, test-FIRST
 
 Models → migration → schema → service → route, matching the Phase 1 contract
@@ -155,6 +163,10 @@ Backend tests run on **Postgres only, never sqlite**.
 `/code-review` (this repo's own - `ultra` for big diffs), then `/simplify` or
 `--fix` for the findings. The plugin ships its own `code-review`; prefer this
 repo's unless the user asks otherwise.
+
+Design pass: `emil-design-eng` review table (Before / After / Why) on every UI diff;
+`review-animations` only when the diff touches motion. Hard-fails listed in
+`DESIGN-LANGUAGE.md`.
 
 Reviewer runs `documentation/reference/PR-CHECKLIST.md` plus the DoD gate.
 
@@ -206,20 +218,25 @@ to also drop `node_modules` and `venv` from lanes you are done with.
 | 2 grill | `/grill-with-docs` (domain) or `/grill-me` (flow) | main session (user in loop) |
 | 2b terms shifting | `/domain-modeling` | main session |
 | 3 UAC + plan | `/to-spec`, output redirected to files | main session (plan mode) |
+| 3 UAC design ACs | `find-animation-opportunities` (read-only) | main session |
 | 4 plan review | `/lavish` then `/grill-me` | main session (user in loop) |
 | 5 tickets | `/to-tickets` | main session |
 | 6 design options | `/prototype` (throwaway, before Phase 1) | main session |
 | 6 Phase 1 FE mock | - | `coder` agent, worktree |
+| 6 new motion | `animate` (decision gate) | `coder` agent, worktree |
 | 7 TDD | `/tdd`, or `/implement` scoped to Phase 2 | `coder` agent, worktree; tests may split to `tester` |
 | 8 review | `/code-review` (this repo's), then optional `/codex-review` | `reviewer` agent + main session |
+| 8 review design | `emil-design-eng`, `review-animations` (motion diffs only) | `reviewer` agent |
+| new FE dependency | `pick-ui-library` | `coder` agent, worktree |
 | bugs | `/triage` then `/diagnosing-bugs` | main session |
-| periodic | `/improve-codebase-architecture`, `/codebase-design` | main session |
+| periodic | `/improve-codebase-architecture`, `/codebase-design`, `improve-animations` | main session |
 | context full mid-slice | `/handoff` then `/clear` then `/resume-handoff` | main session (user types `/clear`) |
 | context research | `/research` | main session |
 
 ## Related
 
 - `PRINCIPLES.md` - the binding contract this skill executes
+- `documentation/reference/DESIGN-LANGUAGE.md` - tokens, motion presets, primitives roster
 - `CLAUDE.md` - repo conventions, dev sessions, architecture
 - `LESSONS-LEARNT.md` - the gotcha log (88 entries); read before debugging anything non-obvious
 - `CONTEXT-MAP.md` - glossaries

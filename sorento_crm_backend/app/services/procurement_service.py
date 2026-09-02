@@ -2161,6 +2161,35 @@ class SPOAllocationService:
         span_map = self._planning_span_map(list(warehouse_ids))
 
         lines: List[SPODocumentLine] = []
+        # Line-grain GRN linkage: the picking lines that name each allocation directly.
+        # Sparse on live data (weak-matcher backfill), so the FE falls back to the
+        # document's key-matched `linked_grns` for lines this map does not cover.
+        line_grns: Dict[str, list] = {}
+        alloc_ids = [str(a.id) for a, *_ in rows]
+        if alloc_ids:
+            for pl_alloc_id, ph_id, ph_number, ph_status, ph_date in (
+                self.db.query(
+                    PickingLine.spo_allocation_id,
+                    PickingHeader.id,
+                    PickingHeader.picking_number,
+                    PickingHeader.picking_status,
+                    PickingHeader.picking_date,
+                )
+                .join(PickingHeader, PickingHeader.id == PickingLine.picking_header_id)
+                .filter(
+                    PickingLine.spo_allocation_id.in_(alloc_ids),
+                    PickingHeader.picking_type == "goods_received",
+                )
+                .all()
+            ):
+                line_grns.setdefault(str(pl_alloc_id), []).append(
+                    {
+                        "id": str(ph_id),
+                        "picking_number": ph_number,
+                        "picking_status": ph_status,
+                        "picking_date": ph_date,
+                    }
+                )
         supplier_counts: Dict[Optional[str], int] = {}
         for allocation, shipment, supplier_name, is_open in rows:
             allocated = allocation.allocated_quantity or 0
@@ -2204,6 +2233,7 @@ class SPOAllocationService:
                     inbound_shipment=InboundShipmentSimple.model_validate(shipment)
                     if shipment
                     else None,
+                    grns=line_grns.get(str(allocation.id), []),
                     line_status=allocation.line_status,
                 )
             )
@@ -2247,6 +2277,10 @@ class SPOAllocationService:
             balance=balance_sum,
             line_count=len(lines),
             lines=lines,
+            # The GRNs received against this document - the retired per-allocation
+            # page's Related Documents capability, now at its natural (document)
+            # grain. Same key-matched reader the old page used.
+            linked_grns=self.get_linked_grns_for_spo(spo_number),
         )
 
     def delete_document(self, spo_number: str) -> dict:

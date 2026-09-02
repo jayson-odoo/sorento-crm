@@ -1,6 +1,8 @@
 # PLAN: SCM reorder + order-inquiry feedback batch (1 Sep 2026)
 
-Status: GRILLED AND APPROVED - three grill rounds settled 1 Sep 2026, nothing built.
+Status: S1 IMPLEMENTED (PR #471, 1 Sep 2026) - review found a 6th creation site
+(`project_supply_service.py::_place_supply_borrows`) and 6 other must-fix items, addressed on the
+same branch. S2-S6 not built.
 UAC: `scm-reorder-oi-feedback-1sep-acceptance-criteria.md`
 
 ## Journeys
@@ -92,10 +94,11 @@ fresh grill - **pending captain confirm 2 Sep**:
 ## Slices
 
 ### S1 - OI auto-acknowledge
-- Rows born `acknowledged` at all 5 creation sites (import
+- Rows born `acknowledged` at all 6 creation sites (import
   `project_order_inquiry_import_service.py:864`, board raise `_handshake_for_raise` `:755`,
-  cancel-balance `:679`, borrow shortfalls `:1045`, amendment `_write` `:1263`). System
-  attribution when no actor.
+  cancel-balance `:679`, borrow shortfalls `:1045`, amendment `_write` `:1263`, borrow-asker
+  row `project_supply_service.py::_place_supply_borrows` `:5399` - found in review, missed
+  in the original grill). System attribution when no actor.
 - Amendment/supersede still stamps `changed` + was/now audit, then auto-acks (G4).
 - Migration backfills every existing `awaiting` row to `acknowledged` (G4).
 - Remove Confirm action (`OrderInquiriesClient.tsx:1290-1341`) and Confirmed column
