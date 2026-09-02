@@ -268,6 +268,9 @@ describe('S2-04 accessibility preference blocks', () => {
     const reduced = reducedMotion();
     const selector = /^[^{]*\{/.exec(reduced)?.[0] ?? '';
     expect(selector).toMatch(/\[data-slot\$='-content'\]:not\(\[data-slot='dialog-content'\]\):not\(\[data-slot='sheet-content'\]\)/);
+    // AlertDialog joined the same asChild/motion.div pattern (M2-05), so it
+    // needs the same exclusion for the same reason.
+    expect(selector).toContain("[data-slot='alert-dialog-content']");
   });
 
   it('gives every -content slot the reduced-motion rule to bite on', () => {

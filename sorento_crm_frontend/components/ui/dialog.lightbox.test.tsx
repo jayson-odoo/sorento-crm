@@ -181,12 +181,6 @@ describe('Overlay is one shared scrim (S1-02)', () => {
     ],
   ];
 
-  // Dialog and sheet fade their scrim with the shared spring (S8-01) instead of
-  // the `animate-in` CSS keyframe alert dialog still uses - a still-running CSS
-  // animation on `opacity` would fight a concurrent JS-driven one on the same
-  // property, so the two mechanisms cannot coexist on one element.
-  const cssAnimatedSurfaces = new Set(['alert dialog']);
-
   for (const [name, renderSurface, selector] of surfaces) {
     it(`S1-02: the ${name} scrim is 50% black with an 8px blur`, () => {
       render(renderSurface());
@@ -195,11 +189,11 @@ describe('Overlay is one shared scrim (S1-02)', () => {
       expect(overlay).not.toBeNull();
       expect(overlay).toHaveClass('bg-black/50');
       expect(overlay).toHaveClass('backdrop-blur-md');
-      // The blur fades in with the scrim rather than snapping on - either via
-      // the CSS keyframe (alert dialog) or the shared JS spring (dialog, sheet).
-      if (cssAnimatedSurfaces.has(name)) {
-        expect(overlay).toHaveClass('data-[state=open]:animate-in');
-      }
+      // Dialog, alert dialog and sheet all fade their scrim with the shared
+      // JS spring now (M2-05) - none of them carry the CSS `animate-in`
+      // keyframe classes, which would fight a concurrent JS-driven opacity
+      // on the same element.
+      expect(overlay).not.toHaveClass('data-[state=open]:animate-in');
     });
 
     it(`S1-02: the ${name} scrim drops the blur under reduced transparency`, () => {
@@ -210,6 +204,55 @@ describe('Overlay is one shared scrim (S1-02)', () => {
       expect(className).toContain('[@media(prefers-reduced-transparency:reduce)]:bg-black/72');
     });
   }
+});
+
+describe('AlertDialog migrated to the shared spring (M2-05)', () => {
+  it('renders no animate-in/animate-out/zoom keyframe classes on the content or overlay', () => {
+    render(
+      <AlertDialog open>
+        <AlertDialogContent>
+          <AlertDialogTitle>Confirm</AlertDialogTitle>
+        </AlertDialogContent>
+      </AlertDialog>,
+    );
+
+    const content = document.querySelector('[data-slot="alert-dialog-content"]');
+    const overlay = document.querySelector('[data-slot="alert-dialog-overlay"]');
+    for (const node of [content, overlay]) {
+      const className = node?.getAttribute('class') ?? '';
+      expect(className).not.toContain('animate-in');
+      expect(className).not.toContain('animate-out');
+      expect(className).not.toContain('zoom-in-95');
+      expect(className).not.toContain('zoom-out-95');
+    }
+  });
+
+  it('positions the content via a JS transform (motion.div), not a Tailwind translate class', () => {
+    render(
+      <AlertDialog open>
+        <AlertDialogContent>
+          <AlertDialogTitle>Confirm</AlertDialogTitle>
+        </AlertDialogContent>
+      </AlertDialog>,
+    );
+
+    const content = document.querySelector('[data-slot="alert-dialog-content"]') as HTMLElement;
+    expect(content).not.toHaveClass('translate-x-[-50%]');
+    // motion/react drives `transform` as an inline style once it commits.
+    expect(content.style.transform).toContain('translate');
+  });
+
+  it('does not render when closed (AnimatePresence has fully exited)', () => {
+    render(
+      <AlertDialog open={false}>
+        <AlertDialogContent>
+          <AlertDialogTitle>Confirm</AlertDialogTitle>
+        </AlertDialogContent>
+      </AlertDialog>,
+    );
+
+    expect(document.querySelector('[data-slot="alert-dialog-content"]')).toBeNull();
+  });
 });
 
 describe('Tall surfaces stay reachable (S1-03)', () => {

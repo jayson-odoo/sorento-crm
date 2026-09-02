@@ -14,7 +14,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, within, act } from '@testing-library/react';
+import { render, screen, fireEvent, within, act, waitFor } from '@testing-library/react';
 
 const useProductSetProposals = vi.hoisted(() => vi.fn());
 const useRunProductSetProposals = vi.hoisted(() => vi.fn());
@@ -146,7 +146,7 @@ describe('ProductSetProposals - discontinued badge', () => {
 });
 
 describe('ProductSetProposals - Scan again confirms and clears ticks', () => {
-  it('opens an AlertDialog rather than scanning immediately; cancel leaves the batch and ticks alone', () => {
+  it('opens an AlertDialog rather than scanning immediately; cancel leaves the batch and ticks alone', async () => {
     const runMutate = vi.fn();
     useRunProductSetProposals.mockReturnValue({ mutate: runMutate, isPending: false });
     useProductSetProposals.mockReturnValue({
@@ -170,14 +170,16 @@ describe('ProductSetProposals - Scan again confirms and clears ticks', () => {
 
     fireEvent.click(within(dialog).getByRole('button', { name: /^cancel$/i }));
     expect(runMutate).not.toHaveBeenCalled();
-    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    // The AlertDialog spring's exit (M2-05) unmounts it a tick after the
+    // click, and inerts the page behind it until then.
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
     // The batch and the tick are untouched.
     expect(stickyBar()).toBeInTheDocument();
     expect(stickyBar()!.closest('[data-slot="card"]')).toHaveTextContent('1 ticked');
     expect(screen.getByRole('checkbox', { name: 'Create SRTWC8608' })).toBeChecked();
   });
 
-  it('confirming runs the pass and empties the selection', () => {
+  it('confirming runs the pass and empties the selection', async () => {
     const runMutate = vi.fn();
     useRunProductSetProposals.mockReturnValue({ mutate: runMutate, isPending: false });
     useProductSetProposals.mockReturnValue({
@@ -204,6 +206,12 @@ describe('ProductSetProposals - Scan again confirms and clears ticks', () => {
     act(() => {
       options.onSuccess();
     });
+
+    // The confirm dialog also closes off the same Action click; the AlertDialog
+    // spring's exit (M2-05) inerts the rest of the page for one extra tick
+    // beyond the click, so the checkbox behind it needs a waitFor to become
+    // queryable again.
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
 
     expect(stickyBar()).not.toBeInTheDocument();
     expect(screen.getByRole('checkbox', { name: 'Create SRTWC8608' })).not.toBeChecked();
