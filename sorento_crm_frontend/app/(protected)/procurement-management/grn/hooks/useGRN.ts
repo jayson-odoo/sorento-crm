@@ -12,6 +12,7 @@ import {
 } from '../services/grnService';
 import type { GRNFormData } from '../types/grn.types';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 /**
  * The list's React Query key. The detail page's pager rebuilds the SAME key from
@@ -53,6 +54,7 @@ export const grnPagerQuery = {
 
 export function useGRNs(params: GRNListParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: grnListQueryKey(params),
     queryFn: () => getGRNs(params),
     staleTime: Infinity,

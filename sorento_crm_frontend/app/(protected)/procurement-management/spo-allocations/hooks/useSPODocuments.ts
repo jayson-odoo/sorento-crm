@@ -3,6 +3,7 @@ import type { SortingState } from '@tanstack/react-table';
 import { listSPODocuments, getSPODocument } from '../services/spoDocumentService';
 import type { SPODocumentState } from '../types/spoDocument.types';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export interface UseSPODocumentsParams {
   pageIndex: number;
@@ -48,6 +49,7 @@ async function fetchDocumentsPage(params: UseSPODocumentsParams) {
 
 export function useSPODocuments(params: UseSPODocumentsParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: spoDocumentsListQueryKey(params),
     queryFn: () => fetchDocumentsPage(params),
     staleTime: Infinity,

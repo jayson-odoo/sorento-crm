@@ -84,6 +84,7 @@ export function useStockInquiries(
 ) {
   const { enabled = true, ...listParams } = params;
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: stockInquiriesListQueryKey(listParams),
     queryFn: () => getStockInquiries(listParams),
     enabled,

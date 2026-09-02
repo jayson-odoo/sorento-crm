@@ -15,6 +15,7 @@ import {
 import { getAuditLogs } from '@/app/(protected)/system-management/audit-logs/services/auditLogService';
 import type { PackingListFormData } from '../types/packingList.types';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 /** `audit_logs.entity_type` for a container - `InboundShipment.__tablename__`. */
 const PACKING_LIST_ENTITY_TYPE = 'inbound_shipments';
@@ -96,6 +97,7 @@ export const packingListsPagerQuery = {
 
 export function usePackingLists(params: PackingListsListParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: packingListsListQueryKey(params),
     queryFn: () => getPackingLists(params),
     staleTime: Infinity,

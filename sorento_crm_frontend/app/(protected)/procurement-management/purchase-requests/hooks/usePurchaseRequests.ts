@@ -73,6 +73,7 @@ export const purchaseRequestsPagerQuery = {
 
 export function usePurchaseRequests(params: PurchaseRequestsListQueryParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: purchaseRequestsListQueryKey(params),
     queryFn: () => getPurchaseRequests(params),
     staleTime: Infinity,

@@ -8,6 +8,7 @@ import { getSuppliers, getSupplier, createSupplier, updateSupplier, deleteSuppli
 import type { Supplier, SupplierFormData } from '../types/supplier.types';
 import { postListQuerySearch } from '@/lib/list-query/listQueryService';
 import type { ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 
 export type SuppliersListQueryParams = DataGridApiFetchParams & {
@@ -81,6 +82,7 @@ export const suppliersPagerQuery = {
 
 export function useSuppliers(params: SuppliersListQueryParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: suppliersListQueryKey(params),
     queryFn: () => fetchSuppliersPage(params),
     staleTime: Infinity,
