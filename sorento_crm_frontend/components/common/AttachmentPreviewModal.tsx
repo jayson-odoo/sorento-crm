@@ -166,9 +166,11 @@ export default function AttachmentPreviewModal({
       // play Embla's own scroll (carousel.tsx, duration 20).
       //
       // Kept even though carousel.tsx now jumps on the same keys: its handler
-      // is a capture listener on the carousel region, and focus inside this
-      // dialog usually sits on the panel or a header button instead, where
-      // that listener never sees the key.
+      // is a capture listener on the carousel region, so it only sees a key
+      // pressed with focus INSIDE that region - and there it wins and stops
+      // propagation, so this handler does not also run. Focus anywhere else in
+      // the dialog (the panel itself, a header button) never reaches the
+      // capture listener, and this is what moves the slide.
       if (e.key === 'ArrowRight') api?.scrollNext(true);
       else if (e.key === 'ArrowLeft') api?.scrollPrev(true);
       else if (e.key === '+' || e.key === '=') zoomBy(1.25);
