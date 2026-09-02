@@ -1,6 +1,6 @@
 # PLAN: Fulfilment planning feedback batch, 2 Sep (BRW first, per-line walk, saved decisions, upload speed)
 
-Status: IN PROGRESS - S1, S2 and S5 are all in PR #553 (draft; review round 2 fixes applied), which is the ONE final PR (captain, 2 Sep) ("yessir, correct ... let's go"). S1 DONE; S2 Phase 1 + Phase 2 DONE (ladder v8 live on the lane); S5 DONE (folded in from #546). S3, S3b and S4 outstanding on the same branch.
+Status: IN PROGRESS - S1, S2 and S5 are all in PR #553 (draft; review round 2 fixes applied), which is the ONE final PR (captain, 2 Sep) ("yessir, correct ... let's go"). S1 DONE; S2 Phase 1 + Phase 2 DONE (ladder v8 live on the lane); S5 DONE (folded in from #546). S3 Phase 1 + Phase 2 DONE; S3b Phase 1 + Phase 2 DONE, plus a first-pill-truncation fix (3 Sep) on top - a quantity was clipped below its own content instead of "+N" wrapping. S4 Phase 1 DONE (3 Sep, frontend against the draft contract below); Phase 2 (the real `so_supply_decision_drafts` table and endpoints) outstanding.
 Captain rulings: 2 Sep 2026 user test on SO419208 / SO419370 / SO418324 (screenshots on the session)
 Probe: `scratchpad/probe_brw_first.md` (read-only, worktree `.claude/worktrees/scm-brw-first`, branch `probe/scm-brw-first` off `origin/main cf255833d`)
 Lane: engine lane `.claude/worktrees/scm-fulfilment-2sep` branch `feat/scm-fulfilment-feedback-2sep` FE :3080 BE :8080 (S1, S2, then S3, S3b, S4); import lane `.claude/worktrees/scm-upload-2sep` branch `feat/scm-upload-speed-2sep` BE :8090, no FE server (S5). Both off origin/main. Own `.env` per lane (API_PORT, NEXTAUTH_URL, FASTAPI_INTERNAL_URL), venv symlinked to the primary checkout, node_modules cloned from it.
@@ -203,6 +203,53 @@ Verified facts this plan stands on:
   Leaving with unsaved edits in an OPEN panel keeps the existing `UnsavedDecisionPrompt`.
 - Drafts are shared, not per user (one planning team; a second planner sees the same saved
   lines and the pill names who saved).
+
+**Phase 1 note (3 Sep).** The FE was built against the contract above, no backend change:
+`BoardContribution.draft?: BoardLineDraft | null`
+(`BoardLineDraft = { decision: BoardDecision; saved_by: string; saved_at: string; stale?:
+boolean }` - `stale` is an ADDITION to the contract stated above, S4/AC-4.4's own predicate,
+below); `_shared/services/fulfilmentPlanningService.ts` gains `putLineDraft` /
+`deleteLineDraft`, routed through a NEW `_shared/lib/fulfilmentS4Mock.ts` overlay behind one
+`S4_MOCK` flag (the `fulfilmentV8Mock.ts`/S2 Phase 1 shape: a module-level map,
+`getPlanningBoard` stamps every response with it); `useFulfilmentPlanning.ts` gains
+`useLineDraftMutation()` (`{ save, remove }`, invalidates `PLANNING_BOARD_KEY` only, no
+success toast - D6, the toast is `FulfilmentBoardPanel`'s own, off the FRESH draft).
+`FulfilmentBoardPanel.tsx`'s `decide()` is now async and optimistic: local `setDraft` first,
+then the mutation, reverted on error; a NEW `confirmSummaryFor` (extracted out of the panel's
+own `confirmSummary` into `_shared/lib/fulfilmentBoard.ts`) lets the save toast read
+"N to confirm" off the draft it JUST wrote rather than a stale render. `BoardDecisionPill.tsx`
+collapses `approved`/`amended` into one verdict, `saved` ("Saved" - the composition is in the
+expanded row already), and reads the saver from a small `Popover` (`BoardRankPopover.tsx`'s
+shape) showing "Saved by \<name\> · \<absolute timestamp\>" (`formatDateTimeInMalaysia`, NOT a
+relative label - this codebase's own `describeLastActivity` states why one screen over: a
+relative stamp "changes meaning depending on when the page happened to be loaded", so the
+brief's "relative time" wording is not followed here). `BoardLineDecisionPanel.tsx`'s Save
+button shows a 600 ms `CheckCircle2` state after `onDecide` resolves. "Undo all" (the only
+existing clear path - a per-key Undo control does not exist in this UI) now calls
+`decide(key, null)` per key instead of a bare local `setDraft({})`, so a discarded draft is
+actually deleted server-side and does not re-seed on the next board read.
+
+`stale` (AC-4.4, "a line saved but then re-suggested by a new upload"): `matchesSuggestion`
+as named in the brief compares a composition against `contribution.proposed`'s CURRENT,
+LIVE value - applying it directly to a saved decision is always false the instant an
+amendment is saved (an amendment differs from the suggestion BY DEFINITION) and always false
+for an approval (which carries no frozen composition to compare), so neither reading detects
+drift. `fulfilmentS4Mock.ts` instead keeps a JSON-stringified snapshot of
+`contribution.proposed` alongside the draft AT SAVE TIME and compares it to the CURRENT
+`contribution.proposed` on every board read; `lineFor` (`fulfilmentBoard.ts`) excludes a
+stale line from `confirmLinesFor`/`plannedLineCount`/`confirmSummaryFor` the same way it
+excludes a rejected one. Phase 2's real drafts table needs the equivalent: a snapshot column
+on the row, taken at save time, compared against a fresh `propose_line` call on GET.
+
+**Deviation (3 Sep).** Drafts live in a NEW table `so_supply_decision_drafts`, keyed by the
+contribution key (sales order id, line no, item code, bucket key), carrying the composition
+as JSONB, `saved_by`, `saved_at`, and a `proposal_snapshot` JSONB column for the `stale`
+comparison above - NOT `so_supply_decisions`, because that table is one row per ORDER
+REVISION (`revision_no` and `line_snapshots` NOT NULL, one-active partial index per
+`(pso_id)`): a per-line draft on it would either loosen the NOT NULLs for a row that is not a
+revision, or fabricate a revision number and a snapshot for a decision that has not been
+confirmed - both weaken a constraint the confirmed audit trail depends on. Confirm deletes
+the drafts it promotes in the same transaction that writes the new revision.
 
 ### S5 - upload speed and live progress
 
