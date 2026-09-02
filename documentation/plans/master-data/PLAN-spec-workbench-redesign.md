@@ -33,10 +33,11 @@ components/
   CatalogueFreshnessLine.tsx      one line + pill (A.3)
   AddSpecificationDialog          (A.5) thin wrapper over spec-table/AddSpecificationDialog, or that dialog used directly
   TryPhraseDialog.tsx             (A.6) wraps the SpecSearchPreview body
-  record/SpecKeyRecordCard.tsx    identity + DetailActions (B.1)
+  record/SpecKeyRecordCard.tsx    identity (read-only) + DetailActions (B.1)
+  record/HeaderTab.tsx            Label, Unit, Active, max_value (B.2, D15b)
   record/ValuesAndWordsTab.tsx    (B.3)
   record/RulesTab.tsx             (B.4) hosts SpecRuleEditor + TryOnProduct + PreviewImpact
-  record/SeenInProductsTab.tsx    (B.5) search by code + facets + paged grid
+  record/SeenInProductsTab.tsx    (B.5) toolbar search + Value/Class/Source filters + paged grid (D17)
   SpecRuleEditor.tsx              kept (dnd reorder + SearchableSelect), loses its prose
   TokenInput.tsx, PillList.tsx    kept
 hooks/
@@ -86,6 +87,10 @@ Every `<p className="text-muted-foreground">` in both routes is deleted unless i
 ### 3.9 Motion (D7)
 
 None added. Inherited only: lightbox surface spring, pressed states from `PRESSED_CLASS`. The frequency gate says this is a tens-per-week staff surface; nothing here earns motion.
+
+### 3.12 Hands-on feedback round 1 (2 Sep, D13-D17)
+
+List toolbar copies the Products list (`DataGridListToolbar`: primaryAction, actions, filters, bulkActions, select column, row "..." menu via the entity `recordActions`). Bulk delete = `useDeferredBulkAction` over user rows only, seed rows skipped and counted in the toast. Record card read-only; new Header tab first; one Edit button; Rules tab loses its card; Seen in products facets become toolbar filters.
 
 ## 4. Slices and order
 
