@@ -1,7 +1,7 @@
 import { RiCheckboxCircleFill } from '@remixicon/react';
 import { Row } from '@tanstack/react-table';
 import { Ellipsis } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';

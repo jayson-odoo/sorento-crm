@@ -1,7 +1,7 @@
 import { useCompany } from '@/app/providers/CompanyProvider';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useEntityMutation } from '@/hooks/useEntityMutation';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   getTeam,
   getTeamMembers,

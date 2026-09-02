@@ -12,7 +12,7 @@ vi.mock('../components/settings-context', () => ({
 
 const apiFetch = vi.fn();
 vi.mock('@/lib/api', () => ({ apiFetch: (...args: unknown[]) => apiFetch(...args) }));
-vi.mock('sonner', () => ({ toast: { custom: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({ toast: { custom: vi.fn() } }));
 
 function wrap(node: ReactNode) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });

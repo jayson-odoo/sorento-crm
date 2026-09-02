@@ -17,7 +17,7 @@ import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { LoaderCircleIcon, Search, Copy } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { createContactAgentAccess } from '../../access-agents/services/accessAgentService';
 import type { ContactAgentAccess } from '../../access-agents/types/accessAgent.types';
 import type { RespondContact } from '../types/contact.types';

@@ -1,7 +1,7 @@
 'use client';
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { updateSearchPolicy } from '@/app/(protected)/master-data-management/product-specifications/services/productSpecService';
 import { SEARCH_POLICY_QUERY_KEY } from './useSearchPolicyQuery';
 

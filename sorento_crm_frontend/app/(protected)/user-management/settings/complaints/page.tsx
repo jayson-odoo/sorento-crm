@@ -252,7 +252,7 @@ const HandlingLockSettingsCard = () => {
 
 function toast(icon: 'success' | 'destructive', title: string) {
   // Lazy import to keep parity with the rest of the settings pages.
-  import('sonner').then(({ toast: sonner }) =>
+  import('@/lib/toast').then(({ toast: sonner }) =>
     sonner.custom(
       () => (
         <Alert variant="mono" icon={icon}>
@@ -262,7 +262,6 @@ function toast(icon: 'success' | 'destructive', title: string) {
           <AlertTitle>{title}</AlertTitle>
         </Alert>
       ),
-      { position: 'top-center' },
     ),
   );
 }

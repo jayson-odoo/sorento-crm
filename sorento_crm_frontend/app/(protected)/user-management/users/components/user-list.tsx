@@ -55,7 +55,7 @@ import { useEntityMutation } from '@/hooks/useEntityMutation';
 import { useRoleSelectQuery } from '../../roles/hooks/use-role-select-query';
 import { getUserStatusProps, UserStatusProps } from '../constants/status';
 import UserInviteDialog from './user-add-dialog';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import type { Table as ReactTable } from '@tanstack/react-table';
 

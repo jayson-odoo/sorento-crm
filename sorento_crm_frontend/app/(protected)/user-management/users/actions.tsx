@@ -17,7 +17,7 @@ import { useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useQueryClient } from '@tanstack/react-query';
 import { LoaderCircleIcon, Mail, Trash2, UserCog } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
 import {

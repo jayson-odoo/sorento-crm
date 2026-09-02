@@ -13,7 +13,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import type { RespondContact } from '../types/contact.types';
 
 interface ContactDeleteDialogProps {
