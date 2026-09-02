@@ -8,15 +8,21 @@
  * (trail derived from the sidebar, title + ONE Back on the toolbar row), then a
  * record card carrying the document number, its status pill and the read-only
  * metadata, with `DetailActions` (page-scoped pager, gear, one primary CTA) on
- * its right. The request, its lines, its PO attachments and its proof follow as
- * cards.
+ * its right. Everything else - the request, its lines, its PO attachments and
+ * its proof - lives in tabs (D25), the same shape `StockTransferDetail` and
+ * `SPODocumentDetail` use: `Tabs`/`TabsList variant="line"` under the record
+ * card, one `Card` per tab.
  *
  * The title is the DOC NUMBER rather than the word "Details", which is why it
  * lives here and not in the route's server component: that one holds the id,
  * and no id reaches a screen.
  *
  * Which action is primary and which are secondary is `priceTagActions`, so the
- * page never has to decide twice.
+ * page never has to decide twice. There used to be a second "Open the
+ * designer" button living in a standalone Proof card; `priceTagActions`
+ * already puts `design`/`view design` first whenever it is legal, so that
+ * button was a duplicate of the header's own primary CTA and is gone with the
+ * card (D25).
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -25,7 +31,9 @@ import {
   Download,
   Eye,
   FileText,
+  ListOrdered,
   Loader2,
+  Paperclip,
   Palette,
   UserPlus,
   XCircle,
@@ -46,6 +54,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import BackToList from '@/components/common/BackToList';
 import DetailActions from '@/components/common/DetailActions';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
@@ -59,8 +68,10 @@ import {
   priceTagStatusPillClass,
 } from '@/lib/price-tag-status';
 import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
+import { tagsFromDoc } from '@/lib/dealer-kit/request-tags';
 import {
   getPriceTagRequest,
+  getTagSheetDoc,
   claimPriceTagRequest,
   transitionPriceTagRequest,
   exportTagSheet,
@@ -71,6 +82,8 @@ import {
   type PriceTagAction,
   type PriceTagActionSpec,
 } from './priceTagRequestActions';
+
+type DetailTab = 'request' | 'lines' | 'attachments' | 'proof';
 
 const STATUS_PILL_BASE =
   'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold';
@@ -120,6 +133,11 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
   const [voidDialogOpen, setVoidDialogOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewIndex, setPreviewIndex] = useState(0);
+  const [tab, setTab] = useState<DetailTab>('request');
+  // Which lines already have a tag drawn, so the Lines tab can say so per row
+  // without a second page of clicking (D25/AC-S10-2). Fetched once, off the
+  // same tag-sheet doc the designer itself reads and writes.
+  const [designedLineIds, setDesignedLineIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     let cancelled = false;
@@ -131,6 +149,22 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [requestId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    getTagSheetDoc(requestId)
+      .then((doc) => {
+        if (cancelled) return;
+        setDesignedLineIds(new Set(tagsFromDoc(doc).keys()));
+      })
+      .catch(() => {
+        // No design yet, or the fetch failed - every line reads "No tag",
+        // which is the correct empty state either way.
       });
     return () => {
       cancelled = true;
@@ -202,6 +236,17 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
   const openDesigner = useCallback(() => {
     router.push(`/dealer-kit/price-tag-requests/${requestId}/design`);
   }, [requestId, router]);
+
+  // A row's own Design action (AC-S10-2): the same designer, opened with THAT
+  // line pre-selected rather than whichever line the designer defaults to.
+  const openDesignerForLine = useCallback(
+    (lineId: string) => {
+      router.push(
+        `/dealer-kit/price-tag-requests/${requestId}/design?line=${encodeURIComponent(lineId)}`,
+      );
+    },
+    [requestId, router],
+  );
 
   const runAction = useCallback(
     (action: PriceTagAction) => {
@@ -367,195 +412,257 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
         </CardHeader>
       </Card>
 
-      {/* Request */}
-      <Card>
-        <CardHeader className="py-3 px-4">
-          <CardTitle className="text-base">Request</CardTitle>
-        </CardHeader>
-        <CardContent className="px-4 pb-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
-            <div>
-              <span className="text-muted-foreground block">Debtor</span>
-              {/* A portal draft may carry neither (D48a). */}
-              <p className="font-medium">{request.debtor_name ?? '-'}</p>
-              {request.debtor_code && (
-                <p className="text-xs text-muted-foreground">
-                  {request.debtor_code}
+      {/* Request / Lines / PO Attachments / Proof (D25): the same record, four
+          tabs instead of four stacked cards - view and edit are the same
+          layout, and there is no edit here beyond what the header's own
+          actions already do. */}
+      <Tabs value={tab} onValueChange={(v) => setTab(v as DetailTab)} className="w-full">
+        <TabsList variant="line" className="mb-4 w-full justify-start overflow-x-auto">
+          <TabsTrigger value="request">
+            <FileText />
+            <span>Request</span>
+          </TabsTrigger>
+          <TabsTrigger value="lines">
+            <ListOrdered />
+            <span>Lines</span>
+          </TabsTrigger>
+          <TabsTrigger value="attachments">
+            <Paperclip />
+            <span>PO Attachments</span>
+          </TabsTrigger>
+          <TabsTrigger value="proof">
+            <Eye />
+            <span>Proof</span>
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="request" className="mt-0 space-y-4 focus-visible:outline-none">
+          <Card>
+            <CardContent className="px-4 py-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
+                <div>
+                  <span className="text-muted-foreground block">Debtor</span>
+                  {/* A portal draft may carry neither (D48a). */}
+                  <p className="font-medium">{request.debtor_name ?? '-'}</p>
+                  {request.debtor_code && (
+                    <p className="text-xs text-muted-foreground">
+                      {request.debtor_code}
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <span className="text-muted-foreground block">Salesperson</span>
+                  <p className="font-medium">{request.contact_name ?? '-'}</p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground block">Promotion</span>
+                  <p className="font-medium">{request.promotion_name ?? '-'}</p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground block">Needed by</span>
+                  <p className="font-medium">
+                    {request.needed_by_date
+                      ? formatDate(new Date(request.needed_by_date))
+                      : '-'}
+                  </p>
+                </div>
+              </div>
+              <div className="mt-4">
+                <span className="text-sm text-muted-foreground block">Notes</span>
+                <p className="text-sm mt-1">
+                  {request.notes ? (
+                    request.notes
+                  ) : (
+                    <span className="text-muted-foreground">
+                      The salesperson left no notes.
+                    </span>
+                  )}
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="lines" className="mt-0 space-y-4 focus-visible:outline-none">
+          <Card>
+            <CardHeader className="py-3 px-4">
+              <CardTitle className="text-base">
+                Lines ({request.lines.length})
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="px-4 pb-4">
+              {request.lines.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-4">
+                  No lines in this request.
+                </p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b text-left text-muted-foreground">
+                        <th className="py-2 pr-3 font-medium">Type</th>
+                        <th className="py-2 pr-3 font-medium">Code</th>
+                        <th className="py-2 pr-3 font-medium">Name</th>
+                        <th className="py-2 pr-3 font-medium text-right">Qty</th>
+                        <th className="py-2 pr-3 font-medium text-right">
+                          List Price
+                        </th>
+                        <th className="py-2 pr-3 font-medium text-right">
+                          Sell Price
+                        </th>
+                        <th className="py-2 pr-3 font-medium">Accessories</th>
+                        <th className="py-2 pr-3 font-medium">Tag</th>
+                        <th className="py-2 font-medium text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {request.lines.map((line) => {
+                        const designed = designedLineIds.has(line.id);
+                        return (
+                          <tr key={line.id} className="border-b last:border-b-0">
+                            <td className="py-2 pr-3">
+                              <Badge variant="secondary" className="text-xs">
+                                {line.line_type === 'product' ? 'Product' : 'Set'}
+                              </Badge>
+                            </td>
+                            <td className="py-2 pr-3 font-mono text-xs">
+                              {line.code}
+                            </td>
+                            <td className="py-2 pr-3">
+                              <span
+                                className="truncate block max-w-[200px]"
+                                title={line.name}
+                              >
+                                {line.name}
+                              </span>
+                              {line.alternatives.length > 0 && (
+                                <span className="text-xs text-muted-foreground">
+                                  +{line.alternatives.length} alt
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-2 pr-3 text-right">{line.quantity}</td>
+                            <td className="py-2 pr-3 text-right">
+                              {line.list_price != null
+                                ? `RM ${line.list_price.toFixed(2)}`
+                                : '-'}
+                            </td>
+                            <td className="py-2 pr-3 text-right">
+                              {line.show_promo_price && line.sell_price != null ? (
+                                <span className="text-green-700 font-medium">
+                                  RM {line.sell_price.toFixed(2)}
+                                </span>
+                              ) : (
+                                '-'
+                              )}
+                              {line.marketing_price_override != null && (
+                                <span className="block text-xs text-amber-600">
+                                  Override: RM{' '}
+                                  {line.marketing_price_override.toFixed(2)}
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-2 pr-3 text-muted-foreground text-xs">
+                              {line.included_accessories ?? '-'}
+                            </td>
+                            <td className="py-2 pr-3">
+                              {designed ? (
+                                <span className="text-xs text-emerald-700 font-medium">
+                                  Designed
+                                </span>
+                              ) : (
+                                <span className="text-xs text-muted-foreground">
+                                  No tag
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-2 text-right">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="gap-1.5"
+                                onClick={() => openDesignerForLine(line.id)}
+                                aria-label={`Design ${line.code || line.name}`}
+                              >
+                                <Palette className="size-3.5" />
+                                Design
+                              </Button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="attachments" className="mt-0 space-y-4 focus-visible:outline-none">
+          {/* PO attachments - read-only: marketing views/downloads what the
+              salesperson attached, upload stays portal-only (D4). */}
+          <Card>
+            <CardHeader className="py-3 px-4">
+              <CardTitle className="text-base">PO Attachments</CardTitle>
+            </CardHeader>
+            <CardContent className="px-4 pb-4">
+              {attachments.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-4">
+                  No PO attachments uploaded.
+                </p>
+              ) : (
+                <div className="space-y-1">
+                  {attachments.map((att, idx) => (
+                    <button
+                      key={att.link_id}
+                      type="button"
+                      onClick={() => {
+                        setPreviewIndex(idx);
+                        setPreviewOpen(true);
+                      }}
+                      className="flex w-full items-center justify-between text-sm px-2 py-1.5 bg-muted rounded hover:bg-muted/70 transition text-left"
+                    >
+                      <div className="flex items-center min-w-0">
+                        <FileText className="size-4 mr-2 text-muted-foreground shrink-0" />
+                        <span className="truncate" title={att.filename ?? undefined}>
+                          {att.filename || 'Attachment'}
+                        </span>
+                      </div>
+                      <span className="text-xs text-muted-foreground ml-2 shrink-0">
+                        {att.uploaded_at ? formatDateTimeInMalaysia(att.uploaded_at) : '-'}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="proof" className="mt-0 space-y-4 focus-visible:outline-none">
+          <Card>
+            <CardHeader className="py-3 px-4">
+              <CardTitle className="text-base">Proof</CardTitle>
+            </CardHeader>
+            <CardContent className="px-4 pb-4">
+              <p className="text-sm text-muted-foreground">
+                {proofSummary(request.status)}
+              </p>
+              {/* "ready" already says this (proofSummary above); this line is
+                  for the rarer case - an earlier export exists but the status
+                  has since moved on (e.g. back to "approved" after a reprint
+                  request) and the record of it would otherwise be lost. */}
+              {request.has_completed_export && request.status !== 'ready' && (
+                <p className="mt-2 text-sm text-muted-foreground">
+                  A completed PDF export exists for this request - check My
+                  Downloads.
                 </p>
               )}
-            </div>
-            <div>
-              <span className="text-muted-foreground block">Salesperson</span>
-              <p className="font-medium">{request.contact_name ?? '-'}</p>
-            </div>
-            <div>
-              <span className="text-muted-foreground block">Promotion</span>
-              <p className="font-medium">{request.promotion_name ?? '-'}</p>
-            </div>
-          </div>
-          <div className="mt-4">
-            <span className="text-sm text-muted-foreground block">Notes</span>
-            <p className="text-sm mt-1">
-              {request.notes ? (
-                request.notes
-              ) : (
-                <span className="text-muted-foreground">
-                  The salesperson left no notes.
-                </span>
-              )}
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Lines */}
-      <Card>
-        <CardHeader className="py-3 px-4">
-          <CardTitle className="text-base">
-            Lines ({request.lines.length})
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="px-4 pb-4">
-          {request.lines.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-4">
-              No lines in this request.
-            </p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b text-left text-muted-foreground">
-                    <th className="py-2 pr-3 font-medium">Type</th>
-                    <th className="py-2 pr-3 font-medium">Code</th>
-                    <th className="py-2 pr-3 font-medium">Name</th>
-                    <th className="py-2 pr-3 font-medium text-right">Qty</th>
-                    <th className="py-2 pr-3 font-medium text-right">
-                      List Price
-                    </th>
-                    <th className="py-2 pr-3 font-medium text-right">
-                      Sell Price
-                    </th>
-                    <th className="py-2 font-medium">Accessories</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {request.lines.map((line) => (
-                    <tr key={line.id} className="border-b last:border-b-0">
-                      <td className="py-2 pr-3">
-                        <Badge variant="secondary" className="text-xs">
-                          {line.line_type === 'product' ? 'Product' : 'Set'}
-                        </Badge>
-                      </td>
-                      <td className="py-2 pr-3 font-mono text-xs">
-                        {line.code}
-                      </td>
-                      <td className="py-2 pr-3">
-                        <span
-                          className="truncate block max-w-[200px]"
-                          title={line.name}
-                        >
-                          {line.name}
-                        </span>
-                        {line.alternatives.length > 0 && (
-                          <span className="text-xs text-muted-foreground">
-                            +{line.alternatives.length} alt
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-2 pr-3 text-right">{line.quantity}</td>
-                      <td className="py-2 pr-3 text-right">
-                        {line.list_price != null
-                          ? `RM ${line.list_price.toFixed(2)}`
-                          : '-'}
-                      </td>
-                      <td className="py-2 pr-3 text-right">
-                        {line.show_promo_price && line.sell_price != null ? (
-                          <span className="text-green-700 font-medium">
-                            RM {line.sell_price.toFixed(2)}
-                          </span>
-                        ) : (
-                          '-'
-                        )}
-                        {line.marketing_price_override != null && (
-                          <span className="block text-xs text-amber-600">
-                            Override: RM{' '}
-                            {line.marketing_price_override.toFixed(2)}
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-2 text-muted-foreground text-xs">
-                        {line.included_accessories ?? '-'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* PO attachments - read-only: marketing views/downloads what the
-          salesperson attached, upload stays portal-only (D4). */}
-      <Card>
-        <CardHeader className="py-3 px-4">
-          <CardTitle className="text-base">PO Attachments</CardTitle>
-        </CardHeader>
-        <CardContent className="px-4 pb-4">
-          {attachments.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-4">
-              No PO attachments uploaded.
-            </p>
-          ) : (
-            <div className="space-y-1">
-              {attachments.map((att, idx) => (
-                <button
-                  key={att.link_id}
-                  type="button"
-                  onClick={() => {
-                    setPreviewIndex(idx);
-                    setPreviewOpen(true);
-                  }}
-                  className="flex w-full items-center justify-between text-sm px-2 py-1.5 bg-muted rounded hover:bg-muted/70 transition text-left"
-                >
-                  <div className="flex items-center min-w-0">
-                    <FileText className="size-4 mr-2 text-muted-foreground shrink-0" />
-                    <span className="truncate" title={att.filename ?? undefined}>
-                      {att.filename || 'Attachment'}
-                    </span>
-                  </div>
-                  <span className="text-xs text-muted-foreground ml-2 shrink-0">
-                    {att.uploaded_at ? formatDateTimeInMalaysia(att.uploaded_at) : '-'}
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Proof */}
-      <Card>
-        <CardHeader className="py-3 px-4">
-          <CardTitle className="text-base">Proof</CardTitle>
-        </CardHeader>
-        <CardContent className="px-4 pb-4">
-          <p className="text-sm text-muted-foreground">
-            {proofSummary(request.status)}
-          </p>
-          {actions.some((spec) => spec.action === 'design') && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="mt-3"
-              onClick={openDesigner}
-            >
-              <Palette className="size-4 mr-1" />
-              Open the designer
-            </Button>
-          )}
-        </CardContent>
-      </Card>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
 
       <AttachmentPreviewModal
         open={previewOpen}

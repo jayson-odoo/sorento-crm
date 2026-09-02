@@ -78,6 +78,8 @@ export interface PriceTagRequestDetail extends PriceTagRequestSummary {
   contact_id: string;
   lines: PriceTagRequestLine[];
   attachments?: PriceTagAttachment[];
+  /** Whether a completed (READY) tag sheet PDF export exists (S10 Proof tab). */
+  has_completed_export?: boolean;
 }
 
 // ---------------------------------------------------------------------------

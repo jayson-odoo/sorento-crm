@@ -22,7 +22,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import {
   ChevronLeft,
   Check,
@@ -98,6 +98,7 @@ interface Props {
 
 export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   const [mode, setMode] = useState<'design' | 'arrange'>('design');
   /** Full screen (D11, AC-S6-1): the same `FocusShell` the room designer uses.
@@ -192,11 +193,19 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
   }, []);
 
   // The first line opens by itself: this page exists to design, and a canvas
-  // waiting to be told which line is a click nobody needs to make.
+  // waiting to be told which line is a click nobody needs to make. A row's own
+  // Design action on the detail page's Lines tab (S10) preselects THAT line via
+  // `?line=<lineId>` instead - honoured only on the initial pick, same as the
+  // fallback it replaces.
   useEffect(() => {
     if (selectedLineId || request.lines.length === 0) return;
-    setSelectedLineId(request.lines[0].id);
-  }, [selectedLineId, request.lines]);
+    const requestedLineId = searchParams.get('line');
+    const preselected =
+      requestedLineId && request.lines.some((line) => line.id === requestedLineId)
+        ? requestedLineId
+        : request.lines[0].id;
+    setSelectedLineId(preselected);
+  }, [selectedLineId, request.lines, searchParams]);
 
   // A line with no tag yet is cloned from its family's default template. It
   // waits for BOTH the templates and the prices to settle (loaded OR error -

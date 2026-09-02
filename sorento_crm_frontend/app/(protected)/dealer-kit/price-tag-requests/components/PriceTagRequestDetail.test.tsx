@@ -70,6 +70,7 @@ vi.mock('@/components/common/AttachmentPreviewModal', () => ({
 
 vi.mock('../../services/priceTagRequestService', () => ({
   getPriceTagRequest: vi.fn(),
+  getTagSheetDoc: vi.fn(),
   claimPriceTagRequest: vi.fn(),
   transitionPriceTagRequest: vi.fn(),
   exportTagSheet: vi.fn(),
@@ -78,8 +79,10 @@ vi.mock('../../services/priceTagRequestService', () => ({
 
 import {
   getPriceTagRequest,
+  getTagSheetDoc,
   listPriceTagRequests,
   type PriceTagRequestDetail as PriceTagRequestDetailType,
+  type PriceTagRequestLine,
 } from '../../services/priceTagRequestService';
 import PriceTagRequestDetail from './PriceTagRequestDetail';
 import { priceTagActions } from './priceTagRequestActions';
@@ -87,6 +90,12 @@ import { formatDateTimeInMalaysia } from '@/lib/helpers';
 
 const mockGet = vi.mocked(getPriceTagRequest);
 const mockList = vi.mocked(listPriceTagRequests);
+const mockGetDoc = vi.mocked(getTagSheetDoc);
+
+/** Radix activates a tab on mousedown, which jsdom does not synthesize from a click. */
+function switchTab(name: string) {
+  fireEvent.mouseDown(screen.getByRole('tab', { name }), { button: 0, ctrlKey: false });
+}
 
 /**
  * The page-scoped pager reads its list page through React Query (S3-03), so the
@@ -127,6 +136,27 @@ function requestWith(
   };
 }
 
+function lineWith(overrides: Partial<PriceTagRequestLine> = {}): PriceTagRequestLine {
+  return {
+    id: 'line-1',
+    line_type: 'product',
+    product_id: 'prod-1',
+    product_set_id: null,
+    name: 'Kitchen Sink',
+    code: 'SRT-1',
+    show_promo_price: false,
+    quantity: 1,
+    alternatives: [],
+    included_accessories: null,
+    sort_order: 0,
+    marketing_price_override: null,
+    marketing_override_reason: null,
+    list_price: 100,
+    sell_price: null,
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   // The page the pager walks: this record plus one neighbour, so the chevrons
@@ -135,6 +165,8 @@ beforeEach(() => {
     data: [{ id: 'req-1' }, { id: 'req-2' }] as never,
     pagination: { total: 2, page: 1, limit: 50 },
   });
+  // No design yet unless a test says otherwise.
+  mockGetDoc.mockResolvedValue(null);
 });
 
 // ---------------------------------------------------------------------------
@@ -250,10 +282,17 @@ describe('PriceTagRequestDetail', () => {
     renderDetail();
 
     await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
-    expect(screen.getByText('No lines in this request.')).toBeTruthy();
-    expect(screen.getByText('No PO attachments uploaded.')).toBeTruthy();
+    // Request tab is open by default.
     expect(screen.getByText('The salesperson left no notes.')).toBeTruthy();
-    expect(screen.getByText(/Mark the proof ready to send it/)).toBeTruthy();
+
+    switchTab('Lines');
+    expect(await screen.findByText('No lines in this request.')).toBeTruthy();
+
+    switchTab('PO Attachments');
+    expect(await screen.findByText('No PO attachments uploaded.')).toBeTruthy();
+
+    switchTab('Proof');
+    expect(await screen.findByText(/Mark the proof ready to send it/)).toBeTruthy();
   });
 
   it('asks before voiding rather than voiding on the click', async () => {
@@ -298,6 +337,9 @@ describe('PriceTagRequestDetail', () => {
     );
     renderDetail();
 
+    await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
+    switchTab('PO Attachments');
+
     expect(await screen.findByText('ZZT-po.pdf')).toBeInTheDocument();
     expect(
       screen.getByText(formatDateTimeInMalaysia(uploadedAt)),
@@ -311,5 +353,118 @@ describe('PriceTagRequestDetail', () => {
         downloadUrl: expect.stringContaining('att-1'),
       }),
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tabs (D25, AC-S10-1..3): Request / Lines / PO Attachments / Proof replace
+// the four stacked cards; the standalone Proof card and its duplicate "Open
+// the designer" button are gone; the Lines tab carries a per-row Design
+// action and a per-line tag status.
+// ---------------------------------------------------------------------------
+
+describe('PriceTagRequestDetail - tabs', () => {
+  it('renders the tabs in order: Request, Lines, PO Attachments, Proof', async () => {
+    mockGet.mockResolvedValue(requestWith());
+    renderDetail();
+
+    await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
+    const tabLabels = screen.getAllByRole('tab').map((tab) => tab.textContent);
+    expect(tabLabels).toEqual(['Request', 'Lines', 'PO Attachments', 'Proof']);
+  });
+
+  it('has no standalone Proof card outside the Proof tab, and no duplicate Open the designer button', async () => {
+    mockGet.mockResolvedValue(requestWith({ status: 'designing' }));
+    renderDetail();
+
+    // Request tab is open by default - the old standalone Proof card lived
+    // alongside it as a fourth stacked card, so its heading must not appear
+    // here any more.
+    await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
+    expect(screen.queryByRole('heading', { name: 'Proof' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Open the designer' })).toBeNull();
+
+    switchTab('Proof');
+    expect(await screen.findByRole('heading', { name: 'Proof' })).toBeTruthy();
+    // The action moved into the header (the primary CTA), so the tab body
+    // never grows its own copy of it back.
+    expect(screen.queryByRole('button', { name: 'Open the designer' })).toBeNull();
+  });
+
+  it('keeps exactly one Design entry point in the header for a claimed, designable request', async () => {
+    mockGet.mockResolvedValue(requestWith({ status: 'designing' }));
+    renderDetail();
+
+    const primary = await screen.findByTestId('price-tag-primary-cta');
+    expect(primary.textContent).toContain('Design tags');
+  });
+
+  it("a line's Design action opens the designer with THAT line preselected", async () => {
+    mockGet.mockResolvedValue(
+      requestWith({
+        lines: [
+          lineWith({ id: 'line-1', code: 'SRT-1' }),
+          lineWith({ id: 'line-2', code: 'SRT-2', name: 'Bath Tub' }),
+        ],
+      }),
+    );
+    renderDetail();
+
+    await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
+    switchTab('Lines');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Design SRT-2' }));
+    expect(push).toHaveBeenCalledWith(
+      '/dealer-kit/price-tag-requests/req-1/design?line=line-2',
+    );
+  });
+
+  it("shows each line's tag status: Designed once a tag exists for it, No tag otherwise", async () => {
+    mockGet.mockResolvedValue(
+      requestWith({
+        lines: [
+          lineWith({ id: 'line-1', code: 'SRT-1' }),
+          lineWith({ id: 'line-2', code: 'SRT-2', name: 'Bath Tub' }),
+        ],
+      }),
+    );
+    mockGetDoc.mockResolvedValue({
+      kind: 'tag_sheet',
+      imposition: {
+        preset: 'a4_3up',
+        page_width_mm: 210,
+        page_height_mm: 297,
+        bleed_mm: 3,
+        gap_mm: 2,
+      },
+      sheets: [
+        {
+          id: 'sheet-1',
+          tags: [
+            {
+              id: 'tag-1',
+              template_id: 'tmpl-1',
+              request_line_id: 'line-1',
+              x_mm: 0,
+              y_mm: 0,
+              width_mm: 85,
+              height_mm: 58,
+              layers: [],
+            },
+          ],
+        },
+      ],
+    });
+    renderDetail();
+
+    await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
+    switchTab('Lines');
+
+    const line1Row = (await screen.findByText('SRT-1')).closest('tr');
+    const line2Row = screen.getByText('SRT-2').closest('tr');
+    expect(line1Row).not.toBeNull();
+    expect(line2Row).not.toBeNull();
+    expect(within(line1Row as HTMLElement).getByText('Designed')).toBeTruthy();
+    expect(within(line2Row as HTMLElement).getByText('No tag')).toBeTruthy();
   });
 });
