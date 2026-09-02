@@ -9,7 +9,7 @@
  * takes it from there - so this pins the class set at both ends: two columns and twenty.
  */
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { FulfilmentBoardMatrix } from './FulfilmentBoardMatrix';
 import { COLOURS } from '../../_shared/lib/supplyVocabulary';
@@ -446,5 +446,41 @@ describe('FulfilmentBoardMatrix: the whole cell is the click target', () => {
 
     fireEvent.click(screen.getByRole('button'));
     expect(onOpenCell).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * S3b, R-J, `PillOverflow`'s own contract: the whole cell is a `<button>`, and the strip's
+   * pills are `role="button"` spans nested inside it - one click landing on a pill has to stop
+   * there, or it opens BOTH the pill's own popover and the cell it sits inside.
+   */
+  it('a click on a strip pill opens its own popover, not the cell underneath it', () => {
+    const onOpenCell = vi.fn();
+    const cell = {
+      ...cellWith([contribution()]),
+      locations: [
+        { location: 'BRW-BB', qty: '10' },
+        { location: 'MWH-BB', qty: '5' },
+      ],
+    };
+    render(
+      <FulfilmentBoardMatrix
+        dateBuckets={buckets(2)}
+        rows={rows}
+        rowHeader="Product"
+        cells={[cell]}
+        draft={{}}
+        onOpenCell={onOpenCell}
+      />,
+    );
+
+    // Scoped to the VISIBLE strip (`cell-locations-<row>-<bucket>`), never the whole
+    // document - `PillOverflow`'s own hidden measuring row repeats the same pill text
+    // off-screen so it can size itself, and a plain `getByText` finds that copy too.
+    const strip = within(
+      screen.getByTestId('cell-locations-ZZT-PRODUCT-2026-01-01'),
+    );
+    fireEvent.click(strip.getByText('BRW-BB 10'));
+
+    expect(onOpenCell).not.toHaveBeenCalled();
   });
 });

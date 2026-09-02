@@ -662,3 +662,205 @@ describe('BoardLineDecisionPanel: the saved amendment overlays on reopen', () =>
     );
   });
 });
+
+/**
+ * S3 - Reserve add-location (AC-3.1 to AC-3.3, R-G): "any location with free stock, the site
+ * pool included, can be added to Reserve by hand; the server's on-hand check stays the guard."
+ *
+ * A fixture of its own, distinct from the header fixture above: `contributionOf`'s line is
+ * already fully reserved across both `LOCATIONS` rows, so there is nothing left for "Add
+ * location" to offer and no existing test here exercises it. This line reserves only 9 of
+ * BRW-AM's own 24 outstanding, leaving exactly BRW's whole 16 free to add.
+ */
+const ADD_KEY = 'so-c|5|SRTWB9001|2026-07-10';
+
+function contributionForAddLocation(
+  overrides: Partial<BoardContribution> = {},
+): BoardContribution {
+  return {
+    key: ADD_KEY,
+    sales_order_id: 'so-c',
+    so_number: 'SO410000',
+    customer_name: 'ZZT Sdn Bhd',
+    project_label: null,
+    agent_code: 'AG02',
+    line_no: 5,
+    item_code: 'SRTWB9001',
+    qty: '25',
+    qty_ordered: '25',
+    qty_delivered: '0',
+    qty_outstanding: '25',
+    project_line_id: 'pl-so-c-5',
+    required_date: '2026-07-10',
+    is_past: false,
+    fulfilment_location: 'BRW-AM',
+    fulfilment_warehouse_id: 'wh-BRW-AM',
+    unplannable: false,
+    priority: null,
+    sources: [
+      {
+        kind: 'reserve',
+        qty: '9',
+        location: 'BRW-AM',
+        warehouse_id: 'wh-BRW-AM',
+        reason: 'Free unclaimed stock at BRW-AM covers this much by the delivery date.',
+      },
+    ],
+    qty_proposed_reserve: '9',
+    qty_proposed_incoming: '0',
+    qty_proposed_buy: '0',
+    contested: false,
+    rank_score: 0,
+    rank_factors: [],
+    covered: false,
+    decision: null,
+    order_inquiry: null,
+    item_flags: null,
+    borrow_candidates: [],
+    ...overrides,
+  };
+}
+
+/** BRW-AM already carries 9 reserved (`available_qty` states the 9 the ONE other line left
+ * free, per B1's own reading); BRW is a site pool with its whole 16 still free to add. */
+const ADD_LOCATION_FIXTURE: BoardCellLocation[] = [
+  {
+    location: 'BRW-AM',
+    warehouse_id: 'wh-BRW-AM',
+    where: 'own',
+    qty: '0',
+    available_qty: '9',
+    qty_free: '9',
+    qty_free_remaining: '9',
+  },
+  {
+    location: 'BRW',
+    warehouse_id: 'wh-BRW',
+    where: 'site_pool',
+    qty: '0',
+    available_qty: '16',
+    qty_free: '16',
+    qty_free_remaining: '16',
+  },
+];
+
+function renderAddLocationPanel(overrides: Partial<BoardContribution> = {}) {
+  const onDecide = vi.fn();
+  render(
+    <BoardLineDecisionPanel
+      contribution={contributionForAddLocation(overrides)}
+      decision={null}
+      locations={ADD_LOCATION_FIXTURE}
+      onDecide={onDecide}
+    />,
+  );
+  return { onDecide };
+}
+
+describe('BoardLineDecisionPanel: Reserve add-location (S3, AC-3.1 to AC-3.3)', () => {
+  it('offers only the free location not already on the Reserve list, and Save carries the new row at its own warehouse (AC-3.1, AC-3.2)', () => {
+    const { onDecide } = renderAddLocationPanel();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add location' }));
+
+    // BRW-AM is already a Reserve row; only BRW is offered.
+    expect(screen.getByTestId('reserve-location-table')).toBeInTheDocument();
+    expect(screen.queryByTestId('reserve-location-BRW-AM')).not.toBeInTheDocument();
+    expect(screen.getByTestId('reserve-location-BRW')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add the location' }));
+
+    // Seeded to the whole remainder (16 open beyond the 9 already reserved), and editable.
+    const added = screen.getByLabelText('Reserve at BRW');
+    expect(added).toHaveValue(16);
+    fireEvent.change(added, { target: { value: '16' } });
+
+    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+      target: { value: 'BRW can spare the rest of this line.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
+
+    expect(onDecide).toHaveBeenCalledWith(
+      expect.objectContaining({
+        verdict: 'amended',
+        reserve: expect.arrayContaining([
+          expect.objectContaining({ warehouse_id: 'wh-BRW-AM', qty: '9' }),
+          expect.objectContaining({ warehouse_id: 'wh-BRW', qty: '16' }),
+        ]),
+        reason: 'BRW can spare the rest of this line.',
+      }),
+    );
+  });
+
+  it('echoes the server’s own on-hand guard on the newly added row, and keeps the row rather than dropping it (AC-3.3)', () => {
+    renderAddLocationPanel();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add location' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add the location' }));
+
+    fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
+      target: { value: '30' },
+    });
+
+    expect(screen.getByText('Only 16 available here')).toBeInTheDocument();
+    expect(screen.getByLabelText('Reserve at BRW')).toHaveValue(30);
+  });
+
+  it('says no other location holds free stock once every candidate is already on the Reserve list', () => {
+    renderAddLocationPanel({
+      sources: [
+        {
+          kind: 'reserve',
+          qty: '9',
+          location: 'BRW-AM',
+          warehouse_id: 'wh-BRW-AM',
+          reason: 'Free unclaimed stock at BRW-AM covers this much.',
+        },
+        {
+          kind: 'reserve',
+          qty: '16',
+          location: 'BRW',
+          warehouse_id: 'wh-BRW',
+          reason: 'The shared pool at BRW covers the rest.',
+        },
+      ],
+    });
+
+    expect(
+      screen.getByText('No other location holds free stock of this item.'),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Add location' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('offers no Add location while the row is locked - Amend has to be pressed first', () => {
+    const frozen: BoardLineDecision = {
+      revision_no: 1,
+      confirmed_at: '2026-08-18T02:00:00',
+      timely_spo_qty: '0',
+      reserve: [{ warehouse_id: 'wh-BRW-AM', location: 'BRW-AM', qty: '9' }],
+      borrow: [],
+      buy_qty: '16',
+    };
+    renderAddLocationPanel({ covered: true, decision: frozen });
+
+    expect(
+      screen.queryByRole('button', { name: 'Add location' }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
+
+    expect(screen.getByRole('button', { name: 'Add location' })).toBeInTheDocument();
+  });
+
+  it('offers no Add location while the whole line is being bought', () => {
+    renderAddLocationPanel();
+
+    fireEvent.click(screen.getByRole('switch', { name: 'Buy the whole line' }));
+
+    expect(
+      screen.queryByRole('button', { name: 'Add location' }),
+    ).not.toBeInTheDocument();
+  });
+});

@@ -26,6 +26,7 @@ vi.mock('../../_shared/services/fulfilmentPlanningService', () => ({
 }));
 
 import { CellStockTable } from './CellStockTable';
+import type { SupplyKind } from '../../_shared/lib/supplyVocabulary';
 import type {
   BoardCellLocation,
   CellStockTableHandle,
@@ -54,13 +55,19 @@ function renderTable(
   locations: BoardCellLocation[],
   groupNote?: string | null,
   taken?: Map<string, string>,
+  takenKinds?: Map<string, { kind: SupplyKind; qty: string }[]>,
 ) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
   });
   render(
     <QueryClientProvider client={client}>
-      <CellStockTable locations={locations} groupNote={groupNote} taken={taken} />
+      <CellStockTable
+        locations={locations}
+        groupNote={groupNote}
+        taken={taken}
+        takenKinds={takenKinds}
+      />
     </QueryClientProvider>,
   );
 }
@@ -665,6 +672,50 @@ describe('CellStockTable: PO qty and Taken', () => {
 
     expect(screen.getByTestId('stock-taken-BRW-BB').textContent).toBe('0');
     expect(screen.getByTestId('stock-taken-BRW').textContent).toBe('0');
+  });
+
+  /**
+   * S3b (R-J): a location this cell draws on from more than one KIND - a Reserve off the
+   * floor and a borrow, say - gets a pill per part under the Taken number; a location drawn
+   * on by exactly one kind shows the number alone, unchanged.
+   */
+  it('shows a pill per kind under Taken for a location drawn on by two kinds, and the number alone for one', () => {
+    renderTable(
+      [
+        position({ location: 'DC1-BB', warehouse_id: 'wh-1', where: 'group' }),
+        position({ location: 'MWH-BB', warehouse_id: 'wh-2', where: 'group' }),
+      ],
+      null,
+      new Map([
+        ['DC1-BB', '25'],
+        ['MWH-BB', '10'],
+      ]),
+      new Map<string, { kind: SupplyKind; qty: string }[]>([
+        [
+          'DC1-BB',
+          [
+            { kind: 'own', qty: '15' },
+            { kind: 'borrow_other', qty: '10' },
+          ],
+        ],
+        ['MWH-BB', [{ kind: 'own', qty: '10' }]],
+      ]),
+    );
+
+    // Two kinds: the number, plus one pill per part, under it. At jsdom's own zero width
+    // only the first pill shows; the rest folds behind "+1", which opens the same popover
+    // every pill does and states the whole composition (the pattern every other adopting
+    // suite in this feature already documents).
+    expect(screen.getByTestId('stock-taken-DC1-BB').textContent).toBe('25');
+    const dc1Pills = within(screen.getByTestId('stock-taken-pills-DC1-BB'));
+    expect(dc1Pills.getByText('Own 15')).toBeInTheDocument();
+    fireEvent.click(dc1Pills.getByText('+1'));
+    const popover = screen.getByTestId('stock-taken-pills-DC1-BB-popover');
+    expect(within(popover).getByText('Borrow (other) 10')).toBeInTheDocument();
+
+    // One kind: the number alone, no pill row at all.
+    expect(screen.getByTestId('stock-taken-MWH-BB').textContent).toBe('10');
+    expect(screen.queryByTestId('stock-taken-pills-MWH-BB')).not.toBeInTheDocument();
   });
 });
 

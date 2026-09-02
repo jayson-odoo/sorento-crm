@@ -1506,6 +1506,79 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
       'Buy5',
     );
   });
+
+  /**
+   * S3b, R-J: "clicking any pill ... opens the composition with each part's location,
+   * quantity, kind and the option row it came from." The two adopting suites above only
+   * ever assert the popover's raw `textContent` for a two-part composition; this pins each
+   * PART'S OWN row (`source-popover-row-<key>-<index>`) so a location, a kind or an option
+   * label going missing from one part cannot hide behind a passing substring match on the
+   * whole popover.
+   */
+  it('lists kind, qty, location and the option row for each part of a two-part composition (AC-3b.2/AC-3b.3)', () => {
+    const base = serverCell([
+      {
+        kind: 'reserve',
+        qty: '10',
+        location: 'BRW-BB',
+        reason: 'Free unclaimed stock at BRW-BB covers this much.',
+        rung: 'group_take',
+      },
+      {
+        kind: 'buy',
+        qty: '5',
+        location: null,
+        reason: 'The residual is bought.',
+      },
+    ]);
+    const cell = {
+      ...base,
+      contributions: [
+        {
+          ...base.contributions[0],
+          options: [
+            { step: 'use' as const, label: 'Use own location', whole: true, chosen: true },
+            { step: 'buy' as const, label: 'Buy', whole: true, chosen: false },
+          ],
+        },
+      ],
+    };
+    render(
+      <QueryClientProvider
+        client={
+          new QueryClient({
+            defaultOptions: { queries: { retry: false, gcTime: 0 } },
+          })
+        }
+      >
+        <BoardCellBreakdownDialog
+          cell={cell}
+          bucketLabel="28 Sep 2026"
+          draft={{}}
+          onDecide={vi.fn()}
+          onClose={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+    openLines();
+
+    const key = cell.contributions[0].key;
+    const sourceTestId = `sources-pills-${key}`;
+    fireEvent.click(within(screen.getByTestId(sourceTestId)).getByText('+1'));
+
+    const popover = screen.getByTestId(`${sourceTestId}-popover`);
+    const reserveRow = within(popover).getByTestId(`source-popover-row-${key}-0`);
+    expect(reserveRow).toHaveTextContent('Own10');
+    expect(reserveRow).toHaveTextContent('at BRW-BB');
+    expect(reserveRow).toHaveTextContent('Use own location');
+
+    // The Buy carries no rung, so `optionForRung` matches nothing for it - the row states
+    // its kind and quantity and no location line, and no option row rather than a wrong one.
+    const buyRow = within(popover).getByTestId(`source-popover-row-${key}-1`);
+    expect(buyRow).toHaveTextContent('Buy5');
+    expect(buyRow).not.toHaveTextContent('at ');
+    expect(buyRow).not.toHaveTextContent('Use own location');
+  });
 });
 
 /**
