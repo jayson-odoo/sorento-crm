@@ -18,6 +18,7 @@ import {
   type FlyerSeedInput,
   type FlyerSeedResult,
 } from '../../services/flyerReadingService';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export const FLYER_READINGS_QUERY_KEY = 'dealer-kit-flyer-readings';
 
@@ -57,6 +58,7 @@ export function useFlyerReadingsQuery() {
  */
 export function useFlyerReadingQuery(readingId: string, promotionId: string | null) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [FLYER_READINGS_QUERY_KEY, readingId, promotionId ?? ''],
     queryFn: () => getFlyerReading(readingId, promotionId),
     enabled: Boolean(readingId),
@@ -65,7 +67,6 @@ export function useFlyerReadingQuery(readingId: string, promotionId: string | nu
     // half-filled seed form under it - is replaced by a skeleton for the length
     // of a match run. The previous answer stays on screen and the header says
     // it is being recomputed.
-    placeholderData: (previous) => previous,
     // Same rule as the list: a reading opened while its job is still running
     // fills itself in. Somebody who clicked a Processing row is the person most
     // likely to be waiting for it.
