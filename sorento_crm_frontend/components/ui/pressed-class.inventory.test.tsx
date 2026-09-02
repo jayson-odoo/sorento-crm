@@ -94,9 +94,7 @@ describe.skipIf(process.env.M1_PRESS_INVENTORY !== '1')(
       }
 
       if (process.env.M1_PRESS_INVENTORY === '1') {
-        // eslint-disable-next-line no-console
         console.log(`M1-08 press-class inventory misses: ${offenders.length}`);
-        // eslint-disable-next-line no-console
         console.log(offenders.join('\n'));
       }
 
