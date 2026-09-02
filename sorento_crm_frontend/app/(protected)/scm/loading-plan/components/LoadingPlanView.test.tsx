@@ -1,12 +1,13 @@
 /**
- * The loading plan RECORD (part 4, R5 / R6 - AC-A12, A13, A14, A15, A16, and the read-only
- * half of A8).
+ * The loading plan RECORD (part 4, R5 / R6 - AC-A12, A13, A14, A15, A16, the read-only half
+ * of A8, and S1's AC-A2).
  *
- * What this suite pins is the toolbar, because that is what the captain's 27 Aug ruling
- * reshaped: the supplier is the title, the subtitle states started / cut-off / document, the
- * status is a badge, and the right cluster reads [gear] [Save (N)] [Send to supplier] [Back]
- * with the gear FIRST. Save counts the rows that differ from the engine's own answer, Send
- * saves before it sends, leaving with unsaved edits asks, and a cancelled plan can do neither.
+ * What this suite pins is the toolbar: the supplier is the title, the subtitle states
+ * started / cut-off / document, the status is a badge, and the right cluster reads
+ * [pager] [gear] [Save (N)] [Back] - Send to supplier moved into the gear (captain's markup,
+ * 2 Sep), so there is no standalone Send button any more. Save counts the rows that differ
+ * from the engine's own answer, Send saves before it sends, leaving with unsaved edits asks,
+ * and a cancelled plan can do neither.
  *
  * The ranked grid inside it is `ContainerRequestSection.test.tsx`; the popup that starts a
  * plan is `PlanContainerDialog.test.tsx`.
@@ -255,23 +256,25 @@ describe('LoadingPlanView (the record)', () => {
     expect(screen.queryByRole('button', { name: /^Upload$/i })).toBeNull();
   });
 
-  it('offers the gear items the plan lists, and only one gear', () => {
+  it('offers the gear items the plan lists, in the order S1 names, and only one gear (AC-A2)', () => {
     renderView();
 
     expect(screen.getAllByRole('button', { name: 'Plan actions' })).toHaveLength(1);
-    for (const item of [
+    const menu = screen.getByTestId('menu-content');
+    const labels = [
       'View uploaded list',
       'Refresh matching',
       'Refresh suggestion',
       'Copy link',
       'Download XLSX',
       'Download PDF',
+      'Send to supplier',
       'Change cut-off',
       'Cancel plan',
       'Delete plan',
-    ]) {
-      expect(screen.getByRole('button', { name: item })).toBeTruthy();
-    }
+    ];
+    const buttons = Array.from(menu.querySelectorAll('button')).map((b) => b.textContent);
+    expect(buttons).toEqual(labels);
   });
 
   it('says why Copy link cannot act when nothing has been sent', () => {
@@ -298,7 +301,7 @@ describe('LoadingPlanView (the record)', () => {
     renderView();
     fireEvent.click(screen.getByTestId('type-qty'));
 
-    fireEvent.click(screen.getByTestId('send-to-supplier'));
+    fireEvent.click(screen.getByRole('button', { name: 'Send to supplier' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Send' }));
 
     await waitFor(() => expect(saveEdits).toHaveBeenCalledWith({ 'row-a': 4000 }));
@@ -320,7 +323,7 @@ describe('LoadingPlanView (the record)', () => {
     renderView();
     fireEvent.click(screen.getByTestId('type-qty'));
 
-    fireEvent.click(screen.getByTestId('send-to-supplier'));
+    fireEvent.click(screen.getByRole('button', { name: 'Send to supplier' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Send' }));
 
     await waitFor(() => expect(saveEdits).toHaveBeenCalled());
@@ -373,7 +376,7 @@ describe('LoadingPlanView (the record)', () => {
 
     expect(screen.getByText('Cancelled')).toBeTruthy();
     const save = screen.getByTestId('save-plan-edits') as HTMLButtonElement;
-    const send = screen.getByTestId('send-to-supplier') as HTMLButtonElement;
+    const send = screen.getByRole('button', { name: 'Send to supplier' }) as HTMLButtonElement;
     expect(save.disabled).toBe(true);
     expect(send.disabled).toBe(true);
     expect(send.getAttribute('title')).toBe('This plan is cancelled.');

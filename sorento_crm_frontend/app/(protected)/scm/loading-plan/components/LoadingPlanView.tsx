@@ -1,24 +1,17 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
+import { ArrowLeft, LoaderCircle, Save } from 'lucide-react';
 import {
-  ArrowLeft,
-  Ban,
-  CalendarDays,
-  Check,
-  Download,
-  Eye,
-  FileText,
-  Link2,
-  LoaderCircle,
-  RefreshCw,
-  Save,
-  Send,
-  Settings,
-  Trash2,
-} from 'lucide-react';
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -31,13 +24,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -45,13 +31,10 @@ import DetailActions from '@/components/common/DetailActions';
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from '@/components/common/AttachmentPreviewModal';
-import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
-import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
 import { EM_DASH, fmtDate } from '../../lib/format';
 import {
   loadingPlanPagerQuery,
-  useCancelLoadingPlan,
   useContainerRequestBuild,
   useDownloadContainerRequestDocument,
   useSaveLoadingPlanEdits,
@@ -67,6 +50,7 @@ import {
   type ContainerRequestSendOptions,
   type LoadingPlanStatus,
 } from '../../services/fulfilmentService';
+import { useLoadingPlanActions } from '../actions';
 import { UnmatchedSupplierCodesPanel } from './UnmatchedSupplierCodesPanel';
 import { ContainerRequestSection } from './ContainerRequestSection';
 import { SendRequestDialog } from './SendRequestDialog';
@@ -81,11 +65,11 @@ import { PageHeader } from '@/components/common/PageHeader';
  * anyone can reopen, so this screen is shaped like every other detail page: a `Toolbar`
  * carrying who and when, prev/next across the list, and one right-hand cluster of actions.
  *
- * The cluster reads [gear] [Save] [Send to supplier] [Back], gear FIRST. Send is the errand;
- * the gear holds the things done occasionally, and putting it on the left keeps the errand at
- * the end of the row where the eye stops. The old header card (Supplier / Plan until / Upload
- * / gear) is gone with the ephemeral page it described, and the "What to ask" card keeps its
- * heading only.
+ * The cluster reads [pager] [gear] [Save] [Back] (S1, captain's markup 2 Sep): Send to
+ * supplier is no longer a standalone button, it is a gear item (and a row menu item), one
+ * `useLoadingPlanActions(plan)` hook feeding both surfaces (D15) so Cancel and Delete cannot
+ * drift between them. The old header card (Supplier / Plan until / Upload / gear) is gone
+ * with the ephemeral page it described, and the "What to ask" card keeps its heading only.
  *
  * Typed quantities are held HERE, not in the grid, because Save and Send both act on them and
  * both live up here. What the grid shows is `suggested_qty` with the plan's saved edits
@@ -108,8 +92,55 @@ const STATUS_VARIANT: Record<LoadingPlanStatus, 'warning' | 'primary' | 'seconda
   cancelled: 'secondary',
 };
 
+/**
+ * A data-loss prompt (Refresh suggestion, a new cut-off, leaving with typed quantities) -
+ * the D7 carve-out AC-A6 names: these ask because something TYPED would vanish, not
+ * because the record itself is on its way out, so the record-action dialog retired for
+ * Cancel and Delete (`ConfirmActionDialog`, `scm/components/ConfirmActionDialog.tsx`) is
+ * deliberately not reached for here; this is its own small, local, non-destructive
+ * confirmation instead (AC-I1: nothing under `scm/loading-plan/` imports it any more).
+ */
+function DataLossPrompt({
+  open,
+  onOpenChange,
+  title,
+  description,
+  confirmLabel,
+  onConfirm,
+  isBusy,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  title: string;
+  description: React.ReactNode;
+  confirmLabel: string;
+  onConfirm: () => void;
+  isBusy: boolean;
+}) {
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{title}</AlertDialogTitle>
+          <AlertDialogDescription>{description}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isBusy}>
+            Cancel
+          </Button>
+          <Button onClick={onConfirm} disabled={isBusy}>
+            {isBusy ? <LoaderCircle className="size-4 animate-spin" /> : null}
+            {confirmLabel}
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
 export function LoadingPlanView({ planId }: { planId: string }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const build = useContainerRequestBuild(planId);
   const plan = build.data?.plan ?? null;
   const supplierId = plan?.supplier_id ?? '';
@@ -119,23 +150,17 @@ export function LoadingPlanView({ planId }: { planId: string }) {
   // ONLY what has not been written yet - which is exactly what the leave-the-page prompt and
   // the "Send saves first" rule need to know about.
   const [edits, setEdits] = useState<Record<string, number>>({});
-  const [cancelOpen, setCancelOpen] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);
   const [cutOffOpen, setCutOffOpen] = useState(false);
   const [cutOffDraft, setCutOffDraft] = useState('');
   const [cutOffDropOpen, setCutOffDropOpen] = useState(false);
   const [refreshOpen, setRefreshOpen] = useState(false);
   const [leaveOpen, setLeaveOpen] = useState(false);
-  // The gear's copy confirms itself in place (S7-05), so the menu has to stay
-  // open long enough to be read: an item that closes the menu has nowhere to
-  // put a tick.
-  const [linkCopied, setLinkCopied] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
 
   const save = useSaveLoadingPlanEdits(planId);
   const changeCutOff = useUpdateLoadingPlanCutOff(planId);
   const send = useSendContainerRequest();
-  const cancel = useCancelLoadingPlan();
   const download = useDownloadContainerRequestDocument(planId);
   // Scoped to THIS plan (R3/R11): the same supplier's other open plan has its own live
   // link and its own history, and neither belongs on this record.
@@ -227,19 +252,56 @@ export function LoadingPlanView({ planId }: { planId: string }) {
 
   const goBack = () => router.push('/scm/loading-plan');
 
-  // Delete asks nothing (D7): the countdown counts down in the toast and Cancel is
-  // the way back. A plan whose notice already went out is refused by the server,
-  // which is the same rule the menu item's disabled state states up front.
-  const deletion = useDeferredAction({
-    actionKey: 'loading_plan.delete',
-    entityType: 'loading_plan',
-    entityId: planId,
-    verb: 'Deleting',
-    subject: plan?.supplier_name ?? 'this plan',
-    surface: 'toast',
-    successMessage: 'Plan deleted',
-    invalidateKeys: [['scm-loading-plans']],
-    onCommitted: goBack,
+  // A link the row navigated here to open (LoadingPlanRowActions) - a row has no built lines
+  // to hand the dialog itself, so it opens the record and asks it to open the dialog instead.
+  useEffect(() => {
+    if (searchParams?.get('send') !== '1') return;
+    setSendOpen(true);
+    router.replace(`/scm/loading-plan/${planId}`);
+  }, [searchParams, planId, router]);
+
+  // One action set, gear and row menu alike (S1, D15): Cancel and Delete are parked here
+  // through the deferred-action engine (D7), and the record hands over every gear-only
+  // extra it has - the row, which has none of them, ends up with just Send/Cancel/Delete.
+  const { actions: planActions, pending: planPending } = useLoadingPlanActions(plan, {
+    onDeleted: goBack,
+    onCancelled: () => setEdits({}),
+    send: {
+      run: () => setSendOpen(true),
+      disabled: readOnly || lines.length === 0 || totalQty <= 0 || send.isPending,
+      disabledReason: readOnly ? 'This plan is cancelled.' : undefined,
+    },
+    changeCutOff: {
+      disabled: readOnly,
+      run: () => {
+        setCutOffDraft(plan?.plan_horizon_date ?? '');
+        setCutOffOpen(true);
+      },
+    },
+    refreshSuggestion: {
+      disabled: build.isFetching,
+      run: () => (editedCount > 0 ? setRefreshOpen(true) : void build.refetch()),
+    },
+    refreshMatching: {
+      disabled: rematch.isPending,
+      run: () => rematch.mutate({ supplier_id: supplierId }),
+    },
+    copyLink: {
+      disabled: !liveLinkNotice,
+      disabledReason: liveLinkNotice ? undefined : 'No link sent yet',
+      run: () => copyPublicLink(liveLinkNotice?.public_url),
+    },
+    downloadXlsx: {
+      disabled: lines.length === 0 || download.isPending,
+      run: () => download.mutate({ lines, format: 'xlsx' }),
+    },
+    downloadPdf: {
+      disabled: lines.length === 0 || download.isPending,
+      run: () => download.mutate({ lines, format: 'pdf' }),
+    },
+    ...(stockListFile.data?.attachment_id
+      ? { viewUploadedList: { run: () => setPreviewOpen(true) } }
+      : {}),
   });
 
   /**
@@ -355,8 +417,10 @@ export function LoadingPlanView({ planId }: { planId: string }) {
         </p>
       </PageHeader>
 
-      {/* The plan's own actions: pager, gear, primary (D6). They sit under the
-          toolbar rather than on it, and wrap at 375. */}
+      {/* The plan's own actions: pager, gear, primary (D6, S1). They sit under the
+          toolbar rather than on it, and wrap at 375. The gear renders `planActions` - the
+          same array the row menu renders on the list - so Cancel and Delete never drift
+          between the two surfaces (D15). */}
       <DetailActions
         className="mb-4"
         pager={{
@@ -365,135 +429,24 @@ export function LoadingPlanView({ planId }: { planId: string }) {
           currentId: planId,
           ariaLabel: 'loading plan',
         }}
-        gear={
-          <>
-            {/* Everything that is not the errand. ONE gear on this screen (R5): the card below
-                used to carry a second one, which made "the plan's actions" two menus deep. */}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  aria-label="Plan actions"
-                  data-testid="plan-actions"
-                >
-                  <Settings className="size-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56">
-                {stockListFile.data?.attachment_id ? (
-                  <DropdownMenuItem onSelect={() => setPreviewOpen(true)}>
-                    <Eye className="size-4" />
-                    View uploaded list
-                  </DropdownMenuItem>
-                ) : null}
-                <DropdownMenuItem
-                  disabled={rematch.isPending}
-                  onSelect={() => rematch.mutate({ supplier_id: supplierId })}
-                  data-testid="refresh-matching-item"
-                >
-                  <RefreshCw className="size-4" />
-                  Refresh matching
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  disabled={build.isFetching}
-                  onSelect={() => (editedCount > 0 ? setRefreshOpen(true) : void build.refetch())}
-                >
-                  <RefreshCw className="size-4" />
-                  Refresh suggestion
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  disabled={!liveLinkNotice}
-                  title={liveLinkNotice ? undefined : 'No link sent yet'}
-                  onSelect={(event) => {
-                    event.preventDefault();
-                    void copyPublicLink(liveLinkNotice?.public_url).then((copied) => {
-                      if (!copied) return;
-                      setLinkCopied(true);
-                      window.setTimeout(() => setLinkCopied(false), 2000);
-                    });
-                  }}
-                >
-                  {linkCopied ? <Check className="size-4" /> : <Link2 className="size-4" />}
-                  {linkCopied ? 'Copied' : 'Copy link'}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  disabled={lines.length === 0 || download.isPending}
-                  onSelect={() => download.mutate({ lines, format: 'xlsx' })}
-                >
-                  <Download className="size-4" />
-                  Download XLSX
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  disabled={lines.length === 0 || download.isPending}
-                  onSelect={() => download.mutate({ lines, format: 'pdf' })}
-                >
-                  <FileText className="size-4" />
-                  Download PDF
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  disabled={readOnly}
-                  onSelect={() => {
-                    setCutOffDraft(plan.plan_horizon_date ?? '');
-                    setCutOffOpen(true);
-                  }}
-                >
-                  <CalendarDays className="size-4" />
-                  Change cut-off
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  variant="destructive"
-                  disabled={readOnly}
-                  onSelect={() => setCancelOpen(true)}
-                >
-                  <Ban className="size-4" />
-                  Cancel plan
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  variant="destructive"
-                  disabled={!!plan.sent_at}
-                  title={plan.sent_at ? 'Sent plans are cancelled, not deleted' : undefined}
-                  onSelect={() => deletion.start()}
-                >
-                  <Trash2 className="size-4" />
-                  Delete plan
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </>
-        }
+        actions={planActions}
+        gearLabel="Plan actions"
+        pendingAction={planPending}
         primary={
-          <>
-            <Button
-              variant="outline"
-              disabled={readOnly || unsavedCount === 0 || save.isPending}
-              title={readOnly ? 'This plan is cancelled.' : undefined}
-              onClick={() => save.mutate(editedMap, { onSuccess: () => setEdits({}) })}
-              data-testid="save-plan-edits"
-            >
-              {save.isPending ? (
-                <LoaderCircle className="size-4 animate-spin" />
-              ) : (
-                <Save className="size-4" />
-              )}
-              Save ({unsavedCount})
-            </Button>
-
-            <Button
-              disabled={readOnly || lines.length === 0 || totalQty <= 0 || send.isPending}
-              title={readOnly ? 'This plan is cancelled.' : undefined}
-              onClick={() => setSendOpen(true)}
-              data-testid="send-to-supplier"
-            >
-              {send.isPending ? (
-                <LoaderCircle className="size-4 animate-spin" />
-              ) : (
-                <Send className="size-4" />
-              )}
-              Send to supplier
-            </Button>
-          </>
+          <Button
+            variant="outline"
+            disabled={readOnly || unsavedCount === 0 || save.isPending}
+            title={readOnly ? 'This plan is cancelled.' : undefined}
+            onClick={() => save.mutate(editedMap, { onSuccess: () => setEdits({}) })}
+            data-testid="save-plan-edits"
+          >
+            {save.isPending ? (
+              <LoaderCircle className="size-4 animate-spin" />
+            ) : (
+              <Save className="size-4" />
+            )}
+            Save ({unsavedCount})
+          </Button>
         }
       />
 
@@ -536,7 +489,7 @@ export function LoadingPlanView({ planId }: { planId: string }) {
         }
       />
 
-      <ConfirmActionDialog
+      <DataLossPrompt
         open={refreshOpen}
         onOpenChange={setRefreshOpen}
         title={`Drop your ${editedCount} typed ${editedCount === 1 ? 'quantity' : 'quantities'}?`}
@@ -553,7 +506,7 @@ export function LoadingPlanView({ planId }: { planId: string }) {
         }}
       />
 
-      <ConfirmActionDialog
+      <DataLossPrompt
         open={cutOffDropOpen}
         onOpenChange={setCutOffDropOpen}
         title={`Drop your ${editedCount} typed ${editedCount === 1 ? 'quantity' : 'quantities'}?`}
@@ -563,24 +516,7 @@ export function LoadingPlanView({ planId }: { planId: string }) {
         onConfirm={() => void applyCutOff()}
       />
 
-      <ConfirmActionDialog
-        open={cancelOpen}
-        onOpenChange={setCancelOpen}
-        title="Cancel this plan?"
-        description="The supplier link stops working. The plan stays on the list under the Cancelled filter."
-        confirmLabel="Cancel plan"
-        isBusy={cancel.isPending}
-        onConfirm={() =>
-          cancel.mutate(planId, {
-            onSuccess: () => {
-              setCancelOpen(false);
-              setEdits({});
-            },
-          })
-        }
-      />
-
-      <ConfirmActionDialog
+      <DataLossPrompt
         open={leaveOpen}
         onOpenChange={setLeaveOpen}
         title="Leave without saving?"

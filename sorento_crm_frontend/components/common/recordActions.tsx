@@ -40,6 +40,12 @@ export interface RecordAction {
   /** `destructive` items are rendered last, after a separator, in red. */
   kind?: 'secondary' | 'destructive';
   disabled?: boolean;
+  /**
+   * Why a disabled item cannot run right now ("Sent plans are cancelled, not deleted"),
+   * shown as the item's `title` (a hover tooltip) and `aria-description` (S1). Optional so
+   * every existing consumer that never set it renders exactly as before.
+   */
+  disabledReason?: string;
   run: () => void | boolean | Promise<boolean | void>;
   /**
    * When set, selecting this item does not close the menu the instant it is
@@ -135,6 +141,8 @@ function RecordActionItem({
       key={action.key}
       variant={action.kind === 'destructive' ? 'destructive' : undefined}
       disabled={action.disabled}
+      title={action.disabledReason}
+      aria-description={action.disabledReason}
       onSelect={handleSelect}
     >
       {Icon && <Icon className="size-4" />}
