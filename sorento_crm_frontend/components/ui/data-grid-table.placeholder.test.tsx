@@ -2,21 +2,30 @@
  * M4 list latency - a grid that still has rows dims them instead of showing a
  * skeleton.
  *
- * `LIST_QUERY_OPTIONS` keeps the previous page's rows in
- * `table.getRowModel()` while the next page loads; the grid says so by dimming
- * the body rather than unmounting it, on the house tokens.
+ * The first version of this file drove `isPlaceholderData` as a boolean prop,
+ * and passed while every real list was broken: with `keepPreviousData`,
+ * TanStack reports the window as `isLoading: false, isFetching: true,
+ * isPlaceholderData: true`, so the primitive's `isLoading && rows.length > 0`
+ * clause is false for its whole duration and nothing dimmed. A prop-level
+ * harness cannot see that, because it never asks the query what it reports.
  *
- * The gate is "no rows to show", not "loading" - and it lives HERE, in the
- * primitive, so all 186 grids inherit it. A call site that never passes
- * `isPlaceholderData` still gets the dim, because `isLoading` with rows on
- * screen means exactly the same thing to the reader. `isPlaceholderData`
- * stays as the explicit override.
+ * So the first suite below runs the real thing: a `useQuery` with
+ * `...LIST_QUERY_OPTIONS` inside a `QueryClientProvider`, paged by changing the
+ * query key, with the second page held open on a deferred promise. The dim is
+ * asserted DURING that window and gone after it.
+ *
+ * The second suite keeps the `isLoading`-with-rows case: that clause still
+ * serves the grids whose call site feeds `isLoading || isFetching`, and the
+ * skeleton gate ("no rows to show", not "loading") lives in the primitive so
+ * all 186 grids inherit it.
  */
 import React from 'react';
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { useReactTable, getCoreRowModel, type ColumnDef } from '@tanstack/react-table';
 
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import { DataGrid } from './data-grid';
 import { DataGridTable } from './data-grid-table';
 
@@ -37,7 +46,9 @@ afterEach(() => {
 
 type Row = { id: string; name: string };
 
-const DATA: Row[] = [{ id: 'p-1', name: 'Ergonomic Chair' }];
+const PAGE_ONE: Row[] = [{ id: 'p-1', name: 'Ergonomic Chair' }];
+const PAGE_TWO: Row[] = [{ id: 'p-2', name: 'Standing Desk' }];
+const DATA = PAGE_ONE;
 
 const COLUMNS: ColumnDef<Row>[] = [
   {
@@ -49,12 +60,103 @@ const COLUMNS: ColumnDef<Row>[] = [
   },
 ];
 
+const EMPTY: Row[] = [];
+
+/** A list exactly as the app builds one: paged query key, LIST_QUERY_OPTIONS, one grid. */
+function ListHarness({ pageTwo }: { pageTwo: Promise<Row[]> }) {
+  const [page, setPage] = React.useState(0);
+  const { data, isLoading, isPlaceholderData } = useQuery({
+    ...LIST_QUERY_OPTIONS,
+    queryKey: ['rows', page],
+    queryFn: () => (page === 0 ? Promise.resolve(PAGE_ONE) : pageTwo),
+  });
+
+  const table = useReactTable({
+    data: data ?? EMPTY,
+    columns: COLUMNS,
+    getRowId: (r) => r.id,
+    manualPagination: true,
+    pageCount: 2,
+    initialState: { pagination: { pageIndex: 0, pageSize: 25 } },
+    getCoreRowModel: getCoreRowModel(),
+  });
+
+  return (
+    <>
+      <button type="button" onClick={() => setPage(1)}>
+        Next
+      </button>
+      <DataGrid
+        table={table}
+        recordCount={2}
+        isLoading={isLoading}
+        isPlaceholderData={isPlaceholderData}
+        tableLayout={{ width: 'fixed', columnsResizable: true }}
+      >
+        <DataGridTable />
+      </DataGrid>
+    </>
+  );
+}
+
+function renderList(pageTwo: Promise<Row[]>) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={client}>
+      <ListHarness pageTwo={pageTwo} />
+    </QueryClientProvider>,
+  );
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+describe('a real LIST_QUERY_OPTIONS query dims the grid while its next page loads (M4-02)', () => {
+  it('dims during the placeholder window and undims once the page arrives', async () => {
+    const next = deferred<Row[]>();
+    const { container } = renderList(next.promise);
+    const tbody = () => container.querySelector('tbody')!;
+
+    await screen.findByText('Ergonomic Chair');
+    expect(tbody().className).not.toContain('opacity-60');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+
+    // The window itself: previous rows on screen, no skeleton, body dimmed on
+    // the house tokens. `isLoading` is false throughout, which is the whole
+    // reason the flag has to be forwarded.
+    await waitFor(() => expect(tbody().className).toContain('opacity-60'));
+    expect(tbody().className).toContain('transition-opacity');
+    expect(tbody().className).toContain('duration-(--duration-fast)');
+    expect(tbody().className).toContain('ease-(--ease-standard)');
+    expect(screen.getByText('Ergonomic Chair')).toBeInTheDocument();
+    expect(screen.queryAllByTestId('cell-skeleton')).toHaveLength(0);
+
+    next.resolve(PAGE_TWO);
+
+    await screen.findByText('Standing Desk');
+    await waitFor(() => expect(tbody().className).not.toContain('opacity-60'));
+  });
+
+  it('does not dim the first load - there is nothing on screen to dim yet', async () => {
+    const { container } = renderList(new Promise<Row[]>(() => {}));
+
+    expect(container.querySelector('tbody')!.className).not.toContain('opacity-60');
+    expect(screen.queryAllByTestId('cell-skeleton').length).toBeGreaterThan(0);
+
+    await screen.findByText('Ergonomic Chair');
+  });
+});
+
 function Harness({
-  isPlaceholderData,
   isLoading = false,
   rows = DATA,
 }: {
-  isPlaceholderData?: boolean;
   isLoading?: boolean;
   rows?: Row[];
 }) {
@@ -72,40 +174,12 @@ function Harness({
       table={table}
       recordCount={rows.length}
       isLoading={isLoading}
-      isPlaceholderData={isPlaceholderData}
       tableLayout={{ width: 'fixed', columnsResizable: true }}
     >
       <DataGridTable />
     </DataGrid>
   );
 }
-
-describe('DataGridTable dims while showing a placeholder page (M4)', () => {
-  it('adds the dim and transition classes while isPlaceholderData is true', () => {
-    const { container } = render(<Harness isPlaceholderData />);
-    const tbody = container.querySelector('tbody')!;
-
-    expect(tbody.className).toContain('opacity-60');
-    expect(tbody.className).toContain('transition-opacity');
-    expect(tbody.className).toContain('duration-(--duration-fast)');
-    expect(tbody.className).toContain('ease-(--ease-standard)');
-  });
-
-  it('adds none of them when isPlaceholderData is false and nothing is loading', () => {
-    const { container } = render(<Harness isPlaceholderData={false} />);
-    const tbody = container.querySelector('tbody')!;
-
-    expect(tbody.className).not.toContain('opacity-60');
-    expect(tbody.className).not.toContain('transition-opacity');
-  });
-
-  it('adds none of them when isPlaceholderData is omitted and nothing is loading', () => {
-    const { container } = render(<Harness />);
-    const tbody = container.querySelector('tbody')!;
-
-    expect(tbody.className).not.toContain('opacity-60');
-  });
-});
 
 describe('DataGridTable gates the body skeleton on having no rows (M4-02)', () => {
   it('dims the rows it already has while loading, with no isPlaceholderData passed', () => {
