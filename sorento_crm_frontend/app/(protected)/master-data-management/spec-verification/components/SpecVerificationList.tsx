@@ -30,6 +30,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import {
@@ -188,12 +189,15 @@ function CoverageCell({
             {coverage.have} / {coverage.applicable}
           </button>
           {openExceptions > 0 && (
-            <span
-              className={`${STATUS_PILL_BASE} bg-amber-100 text-amber-800`}
+            <Badge
+              variant="warning"
+              appearance="light"
+              shape="circle"
+              size="sm"
               title={exceptionsSummary}
             >
               {exceptionsSummary}
-            </span>
+            </Badge>
           )}
         </div>
       </HoverCardTrigger>
