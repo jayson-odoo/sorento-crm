@@ -73,6 +73,8 @@ vi.mock('../../reorder/services/outstandingImportService', () => ({
   getOutstandingUploadConfig: async () => ({ allowed_extensions: ['.xlsx'] }),
 }));
 
+import { toast } from 'sonner';
+
 import { PlanContainerDialog } from './PlanContainerDialog';
 
 function renderDialog() {
@@ -216,6 +218,31 @@ describe('PlanContainerDialog', () => {
       await screen.findByText('This file has no model number column.'),
     ).toBeInTheDocument();
     // Nobody is taken to a plan that holds nothing.
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it('names the plan it could not take back, so the operator can (SF-1)', async () => {
+    // The rollback was `.catch(() => undefined)`: a plan that could not be deleted stayed
+    // on the list holding nothing, and nobody was told which one it was.
+    applyStockList.mockRejectedValue(new Error('This file has no model number column.'));
+    deleteLoadingPlan.mockRejectedValue(new Error('The plan could not be deleted.'));
+    renderDialog();
+    await chooseSupplier();
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [new File(['x'], 'stock.xlsx')] } });
+
+    fireEvent.click(await screen.findByTestId('plan-container-confirm'));
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        expect.stringContaining('Foshan Ceramics'),
+      ),
+    );
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('Delete it'));
+    // The file's own refusal still reaches the dialog.
+    expect(
+      await screen.findByText('This file has no model number column.'),
+    ).toBeInTheDocument();
     expect(push).not.toHaveBeenCalled();
   });
 });

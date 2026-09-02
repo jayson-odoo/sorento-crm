@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { toast } from 'sonner';
 import { LoaderCircle, TestTube } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -176,7 +177,18 @@ export function PlanContainerDialog({
         // AC-F2: the file was refused, so the plan it was for goes with it. Nobody is left
         // holding an empty record they did not ask for and cannot tell from a real one.
         startedPlanRef.current = null;
-        await deleteLoadingPlan(plan.id).catch(() => undefined);
+        try {
+          await deleteLoadingPlan(plan.id);
+        } catch {
+          // The rollback itself failed, so the empty plan IS on the list. Silence left the
+          // operator with a record holding nothing and no way to know which one it was, so
+          // it is named here and they can finish the job the dialog could not (SF-1).
+          toast.error(
+            `The file was refused and the empty plan for ${
+              plan.supplier_name || supplierOption?.label || 'this supplier'
+            } could not be removed. Delete it from the loading plan list.`,
+          );
+        }
         throw e;
       }
     },
