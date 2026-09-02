@@ -29,10 +29,10 @@
  *   components/common/DeferredActionButton.tsx:99
  *   components/common/ActivitiesNotesPanel/EntityActivitiesLayout.tsx:144
  *
- * The activities panel needs a second look rather than a straight delete: its
- * `transition-[margin]` is gone (M3-03), but the `<aside>` that replaced it
- * still carries a literal `duration-200`, so M1-03's duration guard has a live
- * offender at a new line number, not a stale entry.
+ * All seven are straight deletes at merge, the activities panel entry
+ * included: its `transition-[margin]` is gone (M3-03) and, since S1's token
+ * pass, the `<aside>` no longer carries a literal `duration-200` either - so
+ * M1-03's duration guard has nothing live to catch at that line.
  *
  * SCOPE: `css/**` is not walked here - only `app/**` and `components/**`, the
  * two trees a component can put a class in. A layout-property transition

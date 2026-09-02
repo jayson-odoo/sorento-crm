@@ -54,8 +54,15 @@ export function DeferredCountdown({
     const tick = setInterval(() => setNow(Date.now()), 1000);
     // A window almost never ends on one of those 1s boundaries, and until it
     // is redrawn the bar sits empty beside a label still reading "in 1s". This
-    // lands the flip on the millisecond the window actually closes.
-    const lapse = setTimeout(() => setNow(Date.now()), Math.max(0, target - Date.now()));
+    // lands the flip on the millisecond the window actually closes. Clamped to
+    // `target`, not the raw clock read: a browser timer can fire a few ms
+    // early, and `Date.now()` at that instant is still short of `target`, so
+    // `now` would read as not-yet-lapsed and the label would sit on "in 1s"
+    // until the next 1s tick caught up.
+    const lapse = setTimeout(
+      () => setNow(Math.max(Date.now(), target)),
+      Math.max(0, target - Date.now()),
+    );
     return () => {
       clearInterval(tick);
       clearTimeout(lapse);
