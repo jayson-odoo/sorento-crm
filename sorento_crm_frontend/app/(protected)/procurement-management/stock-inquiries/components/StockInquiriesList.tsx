@@ -116,7 +116,7 @@ export default function StockInquiriesList() {
     resetSearch(state.searchQuery);
   });
 
-  const { data, isLoading, refetch, isFetching } = useStockInquiries({
+  const { data, isLoading, isPlaceholderData, refetch, isFetching } = useStockInquiries({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -460,6 +460,7 @@ export default function StockInquiriesList() {
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading || isViewPrefsLoading}
+      isPlaceholderData={isPlaceholderData}
       rowHref={rowHref}
       standardToolbar={false}
       tableLayout={{ columnsVisibility: true }}
