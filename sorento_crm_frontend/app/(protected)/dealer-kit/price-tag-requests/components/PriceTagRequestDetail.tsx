@@ -265,6 +265,12 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
   );
   const primary = actions[0] ?? null;
   const secondary = actions.slice(1);
+  // The SAME predicate the header CTA and gear use to decide whether Design
+  // (or its claimed-so-far "View design" phase) is legal right now - a row's
+  // own Design action must never offer something the header itself would
+  // refuse (review: row action was ungated, so an `approved`/`ready`/`void`
+  // request still let a row jump into the designer).
+  const canDesign = actions.some((spec) => spec.action === 'design');
 
   // PO Attachments: standard preview/download, read-only - upload stays
   // portal-only (D4). Backed by the generic attachment download route, same as
@@ -458,14 +464,6 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                   <span className="text-muted-foreground block">Promotion</span>
                   <p className="font-medium">{request.promotion_name ?? '-'}</p>
                 </div>
-                <div>
-                  <span className="text-muted-foreground block">Needed by</span>
-                  <p className="font-medium">
-                    {request.needed_by_date
-                      ? formatDate(new Date(request.needed_by_date))
-                      : '-'}
-                  </p>
-                </div>
               </div>
               <div className="mt-4">
                 <span className="text-sm text-muted-foreground block">Notes</span>
@@ -512,7 +510,9 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                         </th>
                         <th className="py-2 pr-3 font-medium">Accessories</th>
                         <th className="py-2 pr-3 font-medium">Tag</th>
-                        <th className="py-2 font-medium text-right">Actions</th>
+                        {canDesign && (
+                          <th className="py-2 font-medium text-right">Actions</th>
+                        )}
                       </tr>
                     </thead>
                     <tbody>
@@ -576,18 +576,20 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                                 </span>
                               )}
                             </td>
-                            <td className="py-2 text-right">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="gap-1.5"
-                                onClick={() => openDesignerForLine(line.id)}
-                                aria-label={`Design ${line.code || line.name}`}
-                              >
-                                <Palette className="size-3.5" />
-                                Design
-                              </Button>
-                            </td>
+                            {canDesign && (
+                              <td className="py-2 text-right">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="gap-1.5"
+                                  onClick={() => openDesignerForLine(line.id)}
+                                  aria-label={`Design ${line.code || line.name}`}
+                                >
+                                  <Palette className="size-3.5" />
+                                  Design
+                                </Button>
+                              </td>
+                            )}
                           </tr>
                         );
                       })}

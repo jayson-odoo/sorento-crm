@@ -19,11 +19,13 @@ import type { TagLayer, TagTemplateDoc } from '@/lib/dealer-kit/tag-template-typ
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 const push = vi.fn();
+const replace = vi.fn();
 // Empty by default; the ?line= preselection tests below build their own
 // URLSearchParams and stub this per-test.
 let searchParams = new URLSearchParams();
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push, replace: vi.fn(), refresh: vi.fn(), prefetch: vi.fn() }),
+  useRouter: () => ({ push, replace, refresh: vi.fn(), prefetch: vi.fn() }),
+  usePathname: () => '/dealer-kit/price-tag-requests/req-1/design',
   useSearchParams: () => searchParams,
 }));
 
@@ -286,6 +288,8 @@ beforeEach(() => {
   mockListTemplates.mockReset();
   mockResolveRequestLines.mockReset();
   searchParams = new URLSearchParams();
+  push.mockReset();
+  replace.mockReset();
 });
 
 // ---------------------------------------------------------------------------
@@ -623,5 +627,35 @@ describe('RequestTagDesigner - ?line= preselection', () => {
       (l) => l.props.kind === 'group',
     );
     expect(group?.props).toMatchObject({ binding: { product_id: 'prod-a' } });
+  });
+
+  it('strips ?line= from the URL once applied, so a refresh does not snap back to it', async () => {
+    searchParams = new URLSearchParams('line=line-b');
+    mockListTemplates.mockResolvedValue([]);
+    mockResolveRequestLines.mockResolvedValue([
+      lineTagData({ line_id: 'line-a', code: 'AAA-1' }),
+      lineTagData({ line_id: 'line-b', code: 'BBB-2' }),
+    ]);
+
+    renderDesigner(request({ lines: [lineA, lineB] }));
+
+    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+    expect(replace).toHaveBeenCalledWith(
+      '/dealer-kit/price-tag-requests/req-1/design',
+      { scroll: false },
+    );
+  });
+
+  it('leaves the URL alone when there was no ?line= to strip', async () => {
+    mockListTemplates.mockResolvedValue([]);
+    mockResolveRequestLines.mockResolvedValue([
+      lineTagData({ line_id: 'line-a', code: 'AAA-1' }),
+      lineTagData({ line_id: 'line-b', code: 'BBB-2' }),
+    ]);
+
+    renderDesigner(request({ lines: [lineA, lineB] }));
+
+    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+    expect(replace).not.toHaveBeenCalled();
   });
 });

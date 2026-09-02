@@ -354,6 +354,37 @@ class PriceTagRequestService:
             )
 
     @staticmethod
+    def validate_designable(request: PriceTagRequest) -> None:
+        """Mirrors the FE's ``priceTagActions`` design/"view design" predicate.
+
+        The CRM Lines tab and the request header both compute
+        ``actions.some(spec => spec.action === 'design')`` off
+        ``priceTagActions(status, assigned_to_id)`` to decide whether the
+        designer route is legal right now; this is that same rule, so the
+        endpoint that actually writes a design doc cannot be reached from a
+        status the UI never offers it from. ``designing`` / ``changes_requested``
+        / ``proof_ready`` are legal outright; ``new`` is legal only once
+        claimed (``assigned_to_id`` set) - the FE checks ``!assignedToId``
+        truthiness only, never "claimed by ME", so this does the same and
+        does not additionally require ``assigned_to_id == the caller``.
+        """
+        legal_claimed_new = request.status == STATUS_NEW and request.assigned_to_id
+        legal_status = request.status in (
+            STATUS_DESIGNING,
+            STATUS_CHANGES_REQUESTED,
+            STATUS_PROOF_READY,
+        )
+        if not (legal_claimed_new or legal_status):
+            raise AppException(
+                status_code=409,
+                message=(
+                    "This request's tags cannot be designed in its current "
+                    "status."
+                ),
+                code="INVALID_STATE",
+            )
+
+    @staticmethod
     def validate_set_guard(db: Session, request: PriceTagRequest) -> None:
         """Validate the set guard on an existing request's lines.
 

@@ -467,4 +467,39 @@ describe('PriceTagRequestDetail - tabs', () => {
     expect(within(line1Row as HTMLElement).getByText('Designed')).toBeTruthy();
     expect(within(line2Row as HTMLElement).getByText('No tag')).toBeTruthy();
   });
+
+  // Review: the row Design action was ungated - it rendered on every line
+  // regardless of status, while the header CTA (and the deleted Proof-card
+  // button) only ever offered Design when `priceTagActions` legalizes it.
+  // The row must use the exact same predicate.
+  it('hides the Actions column entirely on a request Design is not legal for', async () => {
+    mockGet.mockResolvedValue(
+      requestWith({ status: 'approved', lines: [lineWith({ id: 'line-1', code: 'SRT-1' })] }),
+    );
+    renderDetail();
+
+    await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
+    switchTab('Lines');
+
+    await screen.findByText('SRT-1');
+    expect(screen.queryByRole('columnheader', { name: 'Actions' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Design /i })).toBeNull();
+  });
+
+  it('shows the row Design action on a claimed, designing request', async () => {
+    mockGet.mockResolvedValue(
+      requestWith({
+        status: 'designing',
+        assigned_to_id: 'user-1',
+        lines: [lineWith({ id: 'line-1', code: 'SRT-1' })],
+      }),
+    );
+    renderDetail();
+
+    await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
+    switchTab('Lines');
+
+    expect(await screen.findByRole('button', { name: 'Design SRT-1' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Actions' })).toBeTruthy();
+  });
 });

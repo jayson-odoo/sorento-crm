@@ -22,7 +22,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   ChevronLeft,
   Check,
@@ -98,6 +98,7 @@ interface Props {
 
 export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
   const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
 
   const [mode, setMode] = useState<'design' | 'arrange'>('design');
@@ -205,7 +206,12 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
         ? requestedLineId
         : request.lines[0].id;
     setSelectedLineId(preselected);
-  }, [selectedLineId, request.lines, searchParams]);
+    // The link did its job the moment it picked a line - a refresh from here
+    // on should land on whatever line is actually open (Design/Arrange can
+    // move it), not snap back to the one the URL named. `pathname` alone has
+    // no query string, so this is a plain drop of `?line=`.
+    if (requestedLineId) router.replace(pathname, { scroll: false });
+  }, [selectedLineId, request.lines, searchParams, router, pathname]);
 
   // A line with no tag yet is cloned from its family's default template. It
   // waits for BOTH the templates and the prices to settle (loaded OR error -
