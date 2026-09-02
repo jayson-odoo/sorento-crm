@@ -302,6 +302,53 @@ def test_a_real_query_clears_the_floor(db):
     assert results["candidates"]
 
 
+# --------------------------------------------------------------------------- #
+# `top_evidence`: HOW MUCH the floor was tested against, not just the verdict    #
+# --------------------------------------------------------------------------- #
+# The endpoint ships this as `spec_top_score` (tests/test_resolve_raw_text.py).
+# These two are the unit-level pin underneath those: they say what the number IS,
+# where the endpoint tests say what a caller may conclude from it.
+def test_nothing_scored_at_all_reports_no_evidence(db):
+    # A regression here (a sentinel default, a `None`, the catalogue's best score)
+    # tells the renderer a greeting nearly found something. Nothing scored, so
+    # there is nothing to be near, and the bot must not say there was.
+    _catalog(db)
+
+    results = search_specs(db, specs=[], free_terms=["flux capacitor"])
+
+    assert results["candidates"] == []
+    assert results["top_evidence"] == 0.0
+
+
+def test_the_reported_evidence_is_the_best_one_in_the_shown_set(db):
+    """`max` over the shown rows, measured on EVIDENCE and not on the total.
+
+    `_evidence` is stripped from a candidate before the caller sees it, so the
+    quantity is read here off the row carrying no house preference and no penalty:
+    for that row the total IS its evidence. The house-preferred row outranks it on
+    the total while holding LESS evidence, which is what makes the three readings
+    distinguishable - `top[0]`'s evidence, the top total, and the real maximum are
+    three different numbers here. Without that separation a refactor could hand the
+    field the first row's score and every other test in this file would still pass.
+    """
+    _prefer(db, "brand", {"sorento": 8.0})
+    _product(db, "ZZT-HOUSE", "SORENTO S/STEEL KITCHEN SINK", brand="house")
+    _product(db, "ZZT-RIVAL", "BRAVAT S/STEEL KITCHEN SINK DOUBLE BOWL", brand="rival")
+
+    results = search_specs(
+        db,
+        specs=[{"key": "class", "value": "Kitchen Sink"}],
+        free_terms=["kitchen sink", "double bowl"],
+    )
+    scores = {c["product_code"]: c["score"] for c in results["candidates"]}
+    house_evidence = scores["ZZT-HOUSE"] - 8.0
+
+    assert _codes(results)[0] == "ZZT-HOUSE", "the preference still orders the list"
+    assert results["top_evidence"] == scores["ZZT-RIVAL"]
+    assert results["top_evidence"] > house_evidence, "the max over the set, not the first row's"
+    assert results["top_evidence"] < scores["ZZT-HOUSE"], "evidence, never the top total"
+
+
 def test_scores_are_ordered_descending(db):
     _catalog(db)
 

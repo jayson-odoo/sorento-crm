@@ -2336,6 +2336,18 @@ def resolve_reference_post(
         found = search_specs(db, specs=specs, exclusions=exclusions, free_terms=free_terms)
         result["spec_candidates"] = found["candidates"]
         result["floor_missed"] = found["floor_missed"]
+        # `floor_missed` answers two different questions with one bool: nothing
+        # scored at all, and things scored but none cleared the relevance floor.
+        # Both empty the candidate list, so a renderer holding only the bool says
+        # "I found near misses but nothing I would stand behind" on a turn where
+        # there were no misses to be near - a statement about the catalogue that
+        # never happened. This carries the quantity the floor was compared
+        # against, so the two turns can be worded differently.
+        #
+        # It is the EVIDENCE, never the total: a product riding a house
+        # preference alone reports 0.0, because the customer's own words earned
+        # nothing (see search_specs, where the floor is measured the same way).
+        result["spec_top_score"] = found["top_evidence"]
 
         # A brand token's code-prefix junk stops headlining, but only now that the
         # ranker has something to show instead.
