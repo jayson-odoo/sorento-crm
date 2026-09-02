@@ -27,6 +27,7 @@ import {
 } from '../services/promotionService';
 import { resubmitAttachmentWebhook } from '@/app/(protected)/resource-management/attachments/services/attachmentService';
 import type { Promotion, PromotionFormData } from '../types/promotion.types';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 
 /** The list params, plus the advanced filter that decides which endpoint serves them. */
@@ -120,6 +121,7 @@ export const promotionsPagerQuery = {
 
 export function usePromotions(params: PromotionsPageParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: promotionsListQueryKey(params),
     queryFn: () => fetchPromotionsPage(params),
     staleTime: Infinity,
