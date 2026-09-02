@@ -26,7 +26,7 @@ import {
   wfKeys,
 } from '../hooks/useWorkflowForms';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import {
   DropdownMenuItem,
