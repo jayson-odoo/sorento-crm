@@ -101,8 +101,11 @@ function statementLine(
       : `Codes from ${documentLabel}`;
   }
   // "Proforma invoice 2026-7-31 SORENTO 预装清单 · 5 blocks" reads as the file and its block
-  // count once the record's own heading word is taken off the front.
-  return `Codes from ${documentLabel.replace(/^Proforma invoice /, '').replace(' · ', ', ')}`;
+  // count once the record's own heading word is taken off the front. A plan whose invoice
+  // carries no number at all is labelled a bare "Proforma invoice", and there is nothing to
+  // take off it, so the line says which invoice it means in words instead.
+  const named = documentLabel.replace(/^Proforma invoice\s*/, '').replace(' · ', ', ');
+  return named ? `Codes from ${named}` : "Codes from this plan's proforma invoice";
 }
 
 export function SupplierCodesTab({
@@ -213,6 +216,9 @@ export function SupplierCodesTab({
     (code: string) => {
       const decision = decided[code];
       if (!decision) return;
+      // `busy` is the CODE a write is in flight for, so only its own Undo goes quiet: keyed
+      // on the mutation's `isPending`, one Undo greyed every other row's out with it.
+      setBusy(code);
       undo.mutate(decision.aliasId, {
         onSuccess: () =>
           setDecided((prev) => {
@@ -220,6 +226,7 @@ export function SupplierCodesTab({
             delete next[code];
             return next;
           }),
+        onSettled: () => setBusy(null),
       });
     },
     [decided, undo],
@@ -289,7 +296,7 @@ export function SupplierCodesTab({
                   variant="ghost"
                   size="sm"
                   className="shrink-0"
-                  disabled={undo.isPending}
+                  disabled={busy === code}
                   onClick={() => onUndo(code)}
                 >
                   Undo
@@ -339,7 +346,7 @@ export function SupplierCodesTab({
         },
       },
     ],
-    [busy, decided, fetchProducts, onDismiss, onPick, onUndo, undo.isPending],
+    [busy, decided, fetchProducts, onDismiss, onPick, onUndo],
   );
 
   const rememberedColumns = React.useMemo<ColumnDef<SupplierCodeAlias>[]>(

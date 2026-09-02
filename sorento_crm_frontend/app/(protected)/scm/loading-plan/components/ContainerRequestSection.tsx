@@ -968,10 +968,10 @@ export function ContainerRequestSection({
                         'flex w-full items-center gap-2 px-4 py-2.5 text-start text-sm text-muted-foreground hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 [&[data-state=open]_svg]:rotate-180',
                       )}
                     >
-                      <ChevronDown
-                        className="size-4 shrink-0 transition-transform duration-(--duration-fast)"
-                        aria-hidden
-                      />
+                      {/* The chevron flips without a transition: this fold is opened and
+                          closed tens of times a day, and the frequency gate says an
+                          interaction that often gets no motion of its own. */}
+                      <ChevronDown className="size-4 shrink-0" aria-hidden />
                       {foldedRows.length} products held with no open demand
                     </button>
                   </CollapsibleTrigger>

@@ -356,6 +356,62 @@ describe('ContainerRequestSection - the grid', () => {
     expect(screen.queryByText(/unfinished/)).not.toBeInTheDocument();
   });
 
+  it('opens the per-block split behind a proforma figure (AC-F4)', async () => {
+    // One uploaded sheet is five stacked invoices; a sum with no split behind it cannot be
+    // checked against the paper the supplier actually sent.
+    state.build.data = {
+      stock_list_as_of: null,
+      rows: [
+        row({
+          holding_source: 'proforma',
+          holding_qty: 100,
+          holding_as_of: '2026-07-31',
+          holding_blocks: 5,
+          blocks: [
+            { block_index: 4, pi_number: 'PI-JBC-4', qty: 60 },
+            { block_index: 5, pi_number: 'PI-JBC-5', qty: 40 },
+          ],
+          qty_packed: 0,
+          qty_unfinished: 0,
+        }),
+      ],
+      sources: { ...EMPTY_SOURCES, proforma_as_of: '2026-07-31', proforma_pi_number: 'PI-JBC-4' },
+    };
+    renderSection();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Invoice blocks behind this figure' }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('PI-JBC-4')).toBeInTheDocument();
+    expect(within(dialog).getByText('PI-JBC-5')).toBeInTheDocument();
+    expect(within(dialog).getByText('60')).toBeInTheDocument();
+    expect(within(dialog).getByText('40')).toBeInTheDocument();
+  });
+
+  it('says so when no invoice on the plan names the product', async () => {
+    state.build.data = {
+      stock_list_as_of: null,
+      rows: [
+        row({
+          holding_source: 'proforma',
+          holding_qty: 0,
+          holding_as_of: '2026-07-31',
+          holding_blocks: 5,
+          blocks: [],
+          qty_packed: 0,
+          qty_unfinished: 0,
+        }),
+      ],
+      sources: { ...EMPTY_SOURCES, proforma_as_of: '2026-07-31', proforma_pi_number: 'PI-JBC-4' },
+    };
+    renderSection();
+
+    // Nothing to split, so the figure is plain text rather than a door onto an empty table.
+    expect(
+      screen.queryByRole('button', { name: 'Invoice blocks behind this figure' }),
+    ).toBeNull();
+  });
+
   it('reads a dash when neither document names the product', () => {
     // Not a zero: "they have told us nothing" and "they told us they have none" are
     // different answers, and only one of them lets the plan proceed on their word.

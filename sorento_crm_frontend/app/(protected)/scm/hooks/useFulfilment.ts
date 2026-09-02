@@ -26,7 +26,6 @@ import {
   type ContainerRequestSendOptions,
   type LoadingPlanCreate,
   type LoadingPlanListParams,
-  type LoadingPlanRecord,
   type SpoConfirmLine,
 } from '../services/fulfilmentService';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';

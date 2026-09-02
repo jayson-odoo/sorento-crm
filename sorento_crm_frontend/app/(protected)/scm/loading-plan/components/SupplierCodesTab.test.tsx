@@ -243,6 +243,13 @@ describe('SupplierCodesTab - names the statement (AC-G2)', () => {
     renderTab('No file', 'none', null);
     expect(screen.getByText('No file on this plan')).toBeInTheDocument();
   });
+
+  it('falls back to a sentence when the invoice has no number to print', () => {
+    // `_document_label` says a bare "Proforma invoice" when the plan's own invoice carries
+    // no number; stripping the heading word off that left the line naming nothing at all.
+    renderTab('Proforma invoice', 'proforma', null);
+    expect(screen.getByText("Codes from this plan's proforma invoice")).toBeInTheDocument();
+  });
 });
 
 describe('SupplierCodesTab - Needs a decision', () => {
