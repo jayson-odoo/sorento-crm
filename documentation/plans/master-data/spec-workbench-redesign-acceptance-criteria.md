@@ -56,7 +56,7 @@ The primary button opens a `Dialog` (lightbox) with Label, Type (`SearchableSele
 Actions > Try a phrase opens a `Dialog` holding today's `SpecSearchPreview` body: phrase input, "what was understood" chips, ranked candidates with score and matched keys, each product a link to its record. Empty result renders "No product matched" with the phrase echoed. Closing clears nothing until the page unmounts (re-open shows the last run).
 
 ### AC-A.7 [FE] Data layer
-All fetches move to react-query hooks in `hooks/`: `useSpecRegistryQuery` (list, `staleTime` 60s to match the ETag), `useSpecExceptionsQuery`, `useCatalogueStatusQuery`, `useSpecRegistryMutations` (create, update, delete, addValue, rereadCatalogue). Components hold no `useEffect` + `useState` fetch pairs. Mutations invalidate the registry query and toast via `extractApiError`.
+All fetches move to react-query hooks in `hooks/`: `useSpecRegistryQuery` (list, `staleTime` 60s to match the ETag), `useKeysForProductQuery`, `useCatalogueStatusQuery`, `useSpecRegistryMutations` (create, update, delete, addValue, rereadCatalogue). Components hold no `useEffect` + `useState` fetch pairs. Mutations invalidate the registry query and toast via `extractApiError`.
 
 ### AC-A.8 [E2E] Sidebar walk
 From `/`, sidebar Master Data > Product Specifications: grid renders the seeded keys, search narrows, Needs a human tab shows Actions holds the two items and the primary button. 375px and 1280px.
