@@ -24,7 +24,7 @@ from tests.scm.test_m4_cash import (
     _mk_supplier,
     _mk_warehouse,
 )
-from tests.scm.test_plan_row_decision import _buy_rec, _mk_stock, _run_buys
+from tests.scm.test_plan_row_decision import _buy_rec, _mk_stock
 
 pytestmark = requires_pg
 
@@ -388,22 +388,43 @@ def test_plans_list_reads_the_counts_without_joining_purchase_order_lines(scm_ap
 # AC-3.4 - list_recommendations drops plan_basis and reads precomputed pool columns
 # ===========================================================================
 
+def _run_buys_for_product(db, wid_code: str, product_code: str) -> str:
+    """`_run_buys` (test_plan_row_decision.py), with the product named explicitly at
+    Start Plan (G10 bypass) - integration finding (merge with #488/S2): these AC-3.4
+    payload-shape tests seed only `_mk_demand` (a forecast row), never COMMITTED
+    demand, so under S2's G1 gate (`PLAN-scm-reorder-oi-feedback-1sep.md`, "run
+    universe = committed demand only") the product is never admitted to an unscoped
+    run at all - `_run_buys`'s own plain `create_run` call would silently produce zero
+    rows. Naming the product explicitly is the G10 carve-out for exactly this: these
+    three tests are about the response PAYLOAD shape (plan_basis absence,
+    pool_warehouse_id/code), not about G1 admission, so bypassing admission is the
+    correct scope rather than also seeding a committed SO line these tests have no
+    other use for."""
+    set_plan_grain(db, "location")
+    created = run_svc.create_run(
+        db, [wid_code], "warehouse", product_codes=[product_code], enqueue=False,
+    )
+    assert run_svc.run_reorder(created["run_id"], db=db)["status"] == "completed"
+    return created["run_id"]
+
+
 def test_recommendations_payload_never_carries_plan_basis(scm_app):
     app, db = _client(scm_app, "purchasing")
     wid_code = f"{MARKER}W-PB"
+    product_code = f"{MARKER}P-PB"
     wid = _mk_warehouse(db, wid_code)
-    pid = _mk_product(db, f"{MARKER}P-PB")
+    pid = _mk_product(db, product_code)
     _mk_stock(db, pid, wid, 5)
     _mk_demand(db, pid, wid, 10.0)
     _link(db, pid, _mk_supplier(db, f"{MARKER} PB supplier"), cost=60)
     db.flush()
-    set_plan_grain(db, "location")
-    run_id = _run_buys(db, wid_code)
+    run_id = _run_buys_for_product(db, wid_code, product_code)
     db.commit()
 
     with TestClient(app) as client:
         res = client.get(f"/api/v1/scm/reorder-runs/{run_id}/recommendations?limit=100")
     assert res.status_code == 200, res.text
+    assert res.json()["data"], "fixture must produce at least one row"
     assert "plan_basis" not in res.text, "AC-3.4: plan_basis must never reach the wire"
 
 
@@ -414,14 +435,14 @@ def test_recommendations_payload_carries_the_precomputed_pool(scm_app):
     read time."""
     app, db = _client(scm_app, "purchasing")
     wid_code = f"{MARKER}W-POOL"
+    product_code = f"{MARKER}P-POOL"
     wid = _mk_warehouse(db, wid_code)
-    pid = _mk_product(db, f"{MARKER}P-POOL")
+    pid = _mk_product(db, product_code)
     _mk_stock(db, pid, wid, 5)
     _mk_demand(db, pid, wid, 10.0)
     _link(db, pid, _mk_supplier(db, f"{MARKER} pool supplier"), cost=60)
     db.flush()
-    set_plan_grain(db, "location")
-    run_id = _run_buys(db, wid_code)
+    run_id = _run_buys_for_product(db, wid_code, product_code)
     db.commit()
 
     with TestClient(app) as client:
@@ -551,7 +572,13 @@ def test_generation_time_stamps_the_network_rows_consensus_pool(scm_app):
     `_group_pool_from_basis` stamping a genuine product/network-grain row's consensus
     pool at GENERATION time, off a real engine run - the read-path tests above only
     prove the API answers correctly off directly-inserted rows, never that the engine
-    itself writes the right value in the first place."""
+    itself writes the right value in the first place.
+
+    `product_codes` names the product explicitly at Start Plan (G10 bypass) - this
+    fixture seeds only `_mk_demand` (a forecast row), never committed demand, and
+    S2's G1 gate (merge integration finding, #488) admits nothing without it. The
+    point of this test is the pool stamp, not G1 admission, so the bypass is the
+    correct scope."""
     _, db, _, _ = scm_app
     set_plan_grain(db, "product")
     pool_code = f"{MARKER}W-GENPOOL"
@@ -564,7 +591,8 @@ def test_generation_time_stamps_the_network_rows_consensus_pool(scm_app):
         text("UPDATE warehouses SET pool_warehouse_id = :p WHERE id::text = ANY(:ids)"),
         {"p": pool_wid, "ids": [pool_wid, wa, wb]},
     )
-    pid = _mk_product(db, f"{MARKER}P-GENPOOL")
+    product_code = f"{MARKER}P-GENPOOL"
+    pid = _mk_product(db, product_code)
     _mk_stock(db, pid, wa, 0)
     _mk_stock(db, pid, wb, 0)
     _mk_demand(db, pid, wa, 5.0)
@@ -572,7 +600,9 @@ def test_generation_time_stamps_the_network_rows_consensus_pool(scm_app):
     _link(db, pid, _mk_supplier(db, f"{MARKER} genpool supplier"), moq=None, mult=None)
     db.flush()
 
-    created = run_svc.create_run(db, [wa_code, wb_code], "network", enqueue=False)
+    created = run_svc.create_run(
+        db, [wa_code, wb_code], "network", product_codes=[product_code], enqueue=False,
+    )
     run_svc.run_reorder(created["run_id"], db=db)
 
     buy = db.execute(text(
