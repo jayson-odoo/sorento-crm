@@ -44,6 +44,22 @@ describe('AddSpecificationDialog', () => {
     expect(await screen.findByText('rough_in_distance')).toBeInTheDocument();
   });
 
+  it('renders the near-duplicate warning as the label is typed, before any submit', async () => {
+    getSimilarSpecKey.mockResolvedValue({
+      spec_key: 'brand',
+      label: 'Brand',
+      matched_on: 'label',
+      matched_text: 'Brand',
+    });
+    renderDialog();
+
+    fireEvent.change(screen.getByLabelText('Label'), { target: { value: 'Brand' } });
+
+    expect(await screen.findByText(/Brand already exists/i)).toBeInTheDocument();
+    expect(getSimilarSpecKey).toHaveBeenCalledWith('Brand');
+    expect(createSpecKey).not.toHaveBeenCalled();
+  });
+
   it('checks for a near-duplicate before creating, and offers it instead', async () => {
     getSimilarSpecKey.mockResolvedValue({
       spec_key: 'finish',

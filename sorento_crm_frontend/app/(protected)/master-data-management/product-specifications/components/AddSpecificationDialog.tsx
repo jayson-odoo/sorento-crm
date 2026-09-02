@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
@@ -47,6 +47,35 @@ export function AddSpecificationDialog({
   const specKey = toSpecKey(label);
   const saving = create.isPending;
 
+  // The near-duplicate warning shows as the label is typed (AC-A.5), 300ms behind the
+  // last keystroke, so it is visible well before the reader reaches Add specification.
+  useEffect(() => {
+    const trimmedLabel = label.trim();
+    if (!trimmedLabel) {
+      setMatch(null);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setChecking(true);
+      getSimilarSpecKey(trimmedLabel)
+        .then((found) => {
+          if (!cancelled) setMatch(found);
+        })
+        .catch(() => {
+          // Silent here - submit re-checks and toasts on failure; a keystroke
+          // retrying quietly is better than an error on every letter typed.
+        })
+        .finally(() => {
+          if (!cancelled) setChecking(false);
+        });
+    }, 300);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [label]);
+
   const reset = () => {
     setLabel('');
     setDataType('enum');
@@ -62,20 +91,26 @@ export function AddSpecificationDialog({
   const submit = async () => {
     const trimmedLabel = label.trim();
     if (!trimmedLabel) return;
-    setChecking(true);
-    let found: SimilarKeyMatch | null = null;
-    try {
-      found = await getSimilarSpecKey(trimmedLabel);
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : 'Could not check for an existing specification',
-      );
+    // The live check above may still be debouncing (or may have raced a fast typist),
+    // so re-check right before writing rather than trusting a possibly-stale `match`.
+    if (!match) {
+      setChecking(true);
+      let found: SimilarKeyMatch | null = null;
+      try {
+        found = await getSimilarSpecKey(trimmedLabel);
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : 'Could not check for an existing specification',
+        );
+        setChecking(false);
+        return;
+      }
       setChecking(false);
-      return;
-    }
-    setChecking(false);
-    if (found) {
-      setMatch(found);
+      if (found) {
+        setMatch(found);
+        return;
+      }
+    } else {
       return;
     }
     try {
