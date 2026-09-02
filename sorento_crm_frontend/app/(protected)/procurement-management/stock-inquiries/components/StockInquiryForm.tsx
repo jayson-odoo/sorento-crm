@@ -37,7 +37,7 @@ import {
   useStockInquiry,
 } from '../hooks/useStockInquiries';
 import { getOrCreateStockInquiryViewLink } from '../services/stockInquiryService';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   StockInquirySchema,
   type StockInquirySchemaType,
