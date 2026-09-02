@@ -88,9 +88,13 @@ export function SpecKeyRecordCard({
             </div>
           </div>
 
+          {/* An edit session states ONE intent: Save or Cancel. Nav and Delete act on
+              the record as it is STORED, and offering them over a screen of unsaved
+              changes is offering to act on something nobody is reading (same rule
+              SalesAgentDetail's header follows) - so both hide while editing. */}
           <DetailActions
-            pagerNode={pagerNode}
-            actions={actions}
+            pagerNode={mode === 'edit' ? null : pagerNode}
+            actions={mode === 'edit' ? [] : actions}
             pendingAction={pending}
             primary={primary}
             gearLabel="Specification options"
