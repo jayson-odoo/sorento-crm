@@ -128,6 +128,24 @@ export function resolveSlotText(
   }
 }
 
+/**
+ * The value a `barcode` layer draws: a typed override wins, else the bound
+ * product/line's own barcode, else null (D23, S9).
+ *
+ * Mirrors the text layer's `text_override` pattern exactly - the override
+ * lives in the SAME `text_override` field every layer already carries, it
+ * just holds a barcode string instead of a sentence. One function so the
+ * Konva editor (`layerDisplay` below) and the print page's
+ * `TagSheetRenderer` cannot resolve an override two different ways; both call
+ * this instead of reading `text_override` themselves.
+ */
+export function resolveBarcodeValue(
+  layer: Pick<TagLayer, 'text_override'>,
+  data: TagBindingData | null | undefined,
+): string | null {
+  return layer.text_override ?? resolveSlotText({ slot_binding: 'barcode' }, data);
+}
+
 /** The photo a product leads with: the one marked primary, else the first. */
 export function primaryImageOf(images: TagImage[]): TagImage | undefined {
   return images.find((image) => image.is_primary) ?? images[0];
@@ -815,7 +833,7 @@ export function layerDisplay(
 
     case 'barcode':
       return {
-        text: resolveSlotText({ slot_binding: 'barcode' }, data) ?? undefined,
+        text: resolveBarcodeValue(layer, data) ?? undefined,
         code: resolveSlotText({ slot_binding: 'code' }, data),
       };
 

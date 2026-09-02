@@ -27,8 +27,11 @@ import {
   pinKeyForPlacement,
   pinnedFromDoc,
   placementKey,
+  resizeAllTags,
+  resizeTag,
   starterTemplateFor,
   tagForLine,
+  tagSizePresets,
 } from './request-tags';
 
 // ---------------------------------------------------------------------------
@@ -606,5 +609,78 @@ describe('a saved sheet reopens still arrangeable', () => {
     const positions = bumped
       .flatMap((sheet, index) => sheet.tags.map((t) => `${index}:${t.x_mm},${t.y_mm}`));
     expect(new Set(positions).size).toBe(positions.length);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tag size control (D24, S9, AC-S9-3)
+// ---------------------------------------------------------------------------
+
+describe('resizeTag', () => {
+  it('sets the tag footprint used by the sheet layout, leaving everything else alone', () => {
+    const tag = placed('a', 'l1');
+    const resized = resizeTag(tag, 95, 44.5);
+
+    expect(resized).toMatchObject({ width_mm: 95, height_mm: 44.5 });
+    expect(resized.id).toBe(tag.id);
+    expect(resized.layers).toBe(tag.layers);
+  });
+});
+
+describe('resizeAllTags', () => {
+  it('applies one size to every line, in "Apply to all lines" (AC-S9-3)', () => {
+    const tags = {
+      l1: placed('a', 'l1'),
+      l2: placed('b', 'l2'),
+    };
+
+    const resized = resizeAllTags(tags, 95, 44.5);
+
+    expect(resized.l1).toMatchObject({ width_mm: 95, height_mm: 44.5 });
+    expect(resized.l2).toMatchObject({ width_mm: 95, height_mm: 44.5 });
+  });
+
+  it('leaves an empty map empty', () => {
+    expect(resizeAllTags({}, 95, 44.5)).toEqual({});
+  });
+});
+
+describe('tagSizePresets', () => {
+  it('offers every published template print size, deduped, plus the starter size', () => {
+    const presets = tagSizePresets(TEMPLATES);
+
+    // TEMPLATES fixture: t-sink/t-wc/t-set all 60x40, t-plain also 60x40 -
+    // one preset for that size, not four.
+    expect(presets.filter((p) => p.width_mm === 60 && p.height_mm === 40)).toHaveLength(1);
+    expect(presets).toContainEqual(
+      expect.objectContaining({ width_mm: PRODUCT_BLOCK_SIZE.width_mm, height_mm: PRODUCT_BLOCK_SIZE.height_mm }),
+    );
+  });
+
+  it('still offers the starter size when there are no templates at all', () => {
+    const presets = tagSizePresets([]);
+    expect(presets).toEqual([
+      expect.objectContaining({ width_mm: PRODUCT_BLOCK_SIZE.width_mm, height_mm: PRODUCT_BLOCK_SIZE.height_mm }),
+    ]);
+  });
+});
+
+describe('autoArrange with resized tags (AC-S9-3)', () => {
+  it('re-lays out unpinned copies at the new size, and leaves a pinned copy exactly where it was dragged', () => {
+    const items = [
+      { tag: placed('a', 'l1'), quantity: 1 },
+      { tag: resizeTag(placed('b', 'l2'), 95, 44.5), quantity: 1 },
+    ];
+
+    const dragged = { [placementKey('l2', 0)]: { sheet: 0, x_mm: 12, y_mm: 34 } };
+    const sheets = autoArrange(items, A4_3UP, dragged);
+
+    const line2Tag = sheets[0].tags.find((t) => t.request_line_id === 'l2');
+    expect(line2Tag).toMatchObject({ x_mm: 12, y_mm: 34, width_mm: 95, height_mm: 44.5 });
+
+    // The unpinned line still flows through the slot grid, unaffected by the
+    // other line's resize.
+    const line1Tag = sheets[0].tags.find((t) => t.request_line_id === 'l1');
+    expect(line1Tag?.pinned).not.toBe(true);
   });
 });

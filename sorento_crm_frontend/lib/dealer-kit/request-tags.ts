@@ -185,6 +185,77 @@ export function tagForLine(
 }
 
 // ---------------------------------------------------------------------------
+// Tag size control (D24, S9)
+// ---------------------------------------------------------------------------
+
+/** One choice in the tag-size control's dropdown. */
+export interface TagSizePreset {
+  label: string;
+  width_mm: number;
+  height_mm: number;
+}
+
+/**
+ * The size choices offered in the request designer's tag-size control (D24):
+ * every PUBLISHED template's print size (`templates` is already
+ * `listPublishedTemplates()`'s result, so no separate published filter is
+ * needed here), deduped by size, plus the starter block's own footprint -
+ * always present, so the list is never empty even before any template has
+ * loaded. "Custom" is not a member of this list; the control itself offers
+ * it alongside these as the escape hatch for typing an arbitrary size.
+ */
+export function tagSizePresets(templates: TagTemplate[]): TagSizePreset[] {
+  const seen = new Set<string>();
+  const presets: TagSizePreset[] = [];
+  const add = (label: string, width_mm: number, height_mm: number) => {
+    const key = `${width_mm}x${height_mm}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    presets.push({ label, width_mm, height_mm });
+  };
+
+  for (const t of templates) {
+    add(
+      `${t.name} (${t.print_size.width_mm} x ${t.print_size.height_mm} mm)`,
+      t.print_size.width_mm,
+      t.print_size.height_mm,
+    );
+  }
+  add(
+    `Starter (${PRODUCT_BLOCK_SIZE.width_mm} x ${PRODUCT_BLOCK_SIZE.height_mm} mm)`,
+    PRODUCT_BLOCK_SIZE.width_mm,
+    PRODUCT_BLOCK_SIZE.height_mm,
+  );
+
+  return presets;
+}
+
+/**
+ * Resize one line's tag footprint - the outer plate size `autoArrange` lays
+ * sheets out with, not the layers inside it. Every copy of the line shares
+ * this one `PlacedTag` (`copiesOf`), so a single update here is what "changing
+ * it applies to all copies of that line" means; a pinned copy's position is
+ * untouched because `autoArrange` looks it up by line+copy-index regardless
+ * of size (AC-S9-3).
+ */
+export function resizeTag(tag: PlacedTag, width_mm: number, height_mm: number): PlacedTag {
+  return { ...tag, width_mm, height_mm };
+}
+
+/** "Apply to all lines" (AC-S9-3): one size, every line's tag. */
+export function resizeAllTags(
+  tags: Record<string, PlacedTag>,
+  width_mm: number,
+  height_mm: number,
+): Record<string, PlacedTag> {
+  const next: Record<string, PlacedTag> = {};
+  for (const [lineId, tag] of Object.entries(tags)) {
+    next[lineId] = resizeTag(tag, width_mm, height_mm);
+  }
+  return next;
+}
+
+// ---------------------------------------------------------------------------
 // Imposition
 // ---------------------------------------------------------------------------
 

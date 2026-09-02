@@ -25,6 +25,7 @@ import {
   layerText,
   priceBadgeInput,
   primaryImageOf,
+  resolveBarcodeValue,
   resolveSlotText,
   slotImageAttachmentId,
 } from './product-block';
@@ -353,6 +354,17 @@ function slotLayer(fieldKey: string): TagLayer {
   } as TagLayer;
 }
 
+function barcodeLayer(overrides: Partial<TagLayer> = {}): TagLayer {
+  return {
+    ...imageLayer(),
+    id: 'bc',
+    type: 'barcode',
+    slot_binding: 'barcode',
+    props: { kind: 'barcode', show_code: true },
+    ...overrides,
+  } as TagLayer;
+}
+
 const IMAGES = product().images;
 
 describe('primaryImageOf', () => {
@@ -485,5 +497,70 @@ describe('layerDisplay', () => {
     expect(layerDisplay(slotLayer('product_image'), null, {})).toEqual({
       imageUrl: null,
     });
+  });
+
+  // -------------------------------------------------------------------------
+  // Barcode value override (D23, S9) - the text layer's text_override pattern
+  // -------------------------------------------------------------------------
+
+  it('draws the bound product barcode when no override is set', () => {
+    const barcodeData = { kind: 'product' as const, product: product({ barcode: '4006381333931' }) };
+    expect(layerDisplay(barcodeLayer(), barcodeData, {})).toEqual({
+      text: '4006381333931',
+      code: 'SK-1234',
+    });
+  });
+
+  it('draws the override instead of the bound barcode when both exist', () => {
+    const barcodeData = { kind: 'product' as const, product: product({ barcode: '4006381333931' }) };
+    const layer = barcodeLayer({ text_override: '111222333' });
+    expect(layerDisplay(layer, barcodeData, {})).toEqual({
+      text: '111222333',
+      code: 'SK-1234',
+    });
+  });
+
+  it('draws the override even while no product is bound', () => {
+    const layer = barcodeLayer({ text_override: '111222333' });
+    expect(layerDisplay(layer, null, {})).toEqual({
+      text: '111222333',
+      code: null,
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveBarcodeValue (D23, S9): the ONE resolver the Konva editor and the
+// print page both call, so an override cannot draw differently in the two
+// places - override wins, then the bound product/line's barcode, else null.
+// ---------------------------------------------------------------------------
+
+describe('resolveBarcodeValue', () => {
+  const barcodeData = { kind: 'product' as const, product: product({ barcode: '4006381333931' }) };
+
+  it('resolves the bound product barcode when unoverridden', () => {
+    expect(resolveBarcodeValue(barcodeLayer(), barcodeData)).toBe('4006381333931');
+  });
+
+  it('prefers the override over the bound barcode', () => {
+    expect(
+      resolveBarcodeValue(barcodeLayer({ text_override: '111222333' }), barcodeData),
+    ).toBe('111222333');
+  });
+
+  it('returns the override even while unbound', () => {
+    expect(resolveBarcodeValue(barcodeLayer({ text_override: '111222333' }), null)).toBe(
+      '111222333',
+    );
+  });
+
+  it('returns null with no override and nothing bound', () => {
+    expect(resolveBarcodeValue(barcodeLayer(), null)).toBeNull();
+  });
+
+  it('clearing the override (Relink) falls back to the bound barcode again', () => {
+    const overridden = barcodeLayer({ text_override: '111222333' });
+    const relinked = { ...overridden, text_override: null };
+    expect(resolveBarcodeValue(relinked, barcodeData)).toBe('4006381333931');
   });
 });

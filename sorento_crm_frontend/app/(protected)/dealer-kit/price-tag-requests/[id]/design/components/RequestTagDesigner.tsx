@@ -52,6 +52,10 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
+import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
 import { cn } from '@/lib/utils';
 import type {
   ImpositionConfig,
@@ -70,11 +74,15 @@ import {
   defaultTemplateFor,
   pinKeyForPlacement,
   pinnedFromDoc,
+  resizeAllTags,
+  resizeTag,
   starterTemplateFor,
   tagForLine,
+  tagSizePresets,
   tagsFromDoc,
   type ArrangeItem,
   type PinnedPlacement,
+  type TagSizePreset,
 } from '@/lib/dealer-kit/request-tags';
 import { formatTagPrice } from '@/lib/dealer-kit/price-badge';
 import { TagCanvasEditor } from '@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor';
@@ -257,7 +265,10 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
   const selectedTag = selectedLineId ? tags[selectedLineId] ?? null : null;
 
   /**
-   * The document the canvas opens on, rebuilt only when the TAG changes.
+   * The document the canvas opens on, rebuilt only when the TAG's IDENTITY
+   * changes - its id, or its own footprint (D24, S9): a resize has to reach
+   * the artboard the same way a template swap does, because the editor never
+   * re-reads `width_mm`/`height_mm` off a `doc` prop update on its own.
    *
    * The editor reads its document once, on mount, and keeps the layers in its
    * own state from then on. So this has to be the tag's layers AS THEY STAND
@@ -266,7 +277,10 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
    * every edit away the moment somebody looked at another line and came back.
    * That is exactly what it did until this was measured on the lane.
    */
-  const docRef = useRef<{ tagId: string; doc: TagTemplateDoc } | null>(null);
+  const docKey = selectedTag
+    ? `${selectedTag.id}:${selectedTag.width_mm}x${selectedTag.height_mm}`
+    : null;
+  const docRef = useRef<{ key: string; doc: TagTemplateDoc } | null>(null);
   // The editor is unmounted whenever Arrange is showing (the mode ternary
   // below), so a snapshot taken before that switch is stale by the time
   // Design remounts it - dropping the ref here forces a rebuild off the
@@ -274,13 +288,13 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
   // the switch and losing whatever Arrange-side or since-mount edits
   // happened in between.
   if (mode !== 'design') docRef.current = null;
-  if (selectedTag && docRef.current?.tagId !== selectedTag.id) {
+  if (docKey && docRef.current?.key !== docKey) {
     docRef.current = {
-      tagId: selectedTag.id,
+      key: docKey,
       doc: {
-        layers: selectedTag.layers,
-        width_mm: selectedTag.width_mm,
-        height_mm: selectedTag.height_mm,
+        layers: selectedTag!.layers,
+        width_mm: selectedTag!.width_mm,
+        height_mm: selectedTag!.height_mm,
       },
     };
   }
@@ -292,6 +306,27 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
     const row = resolved.get(selectedLineId);
     return row ? { kind: 'line', line: row } : null;
   }, [selectedLineId, resolved]);
+
+  // -- Tag size control (D24, S9) ---------------------------------------------
+
+  const sizePresets = useMemo(() => tagSizePresets(templates), [templates]);
+
+  const handleResizeTag = useCallback(
+    (width_mm: number, height_mm: number) => {
+      const lineId = selectedLineId;
+      if (!lineId) return;
+      setTags((prev) => {
+        const tag = prev[lineId];
+        if (!tag) return prev;
+        return { ...prev, [lineId]: resizeTag(tag, width_mm, height_mm) };
+      });
+    },
+    [selectedLineId],
+  );
+
+  const handleResizeAllTags = useCallback((width_mm: number, height_mm: number) => {
+    setTags((prev) => resizeAllTags(prev, width_mm, height_mm));
+  }, []);
 
   const handleLayersChange = useCallback(
     (layers: TagLayer[]) => {
@@ -499,14 +534,22 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
   // -- Render ----------------------------------------------------------------
 
   const rail = (
-    <LinesRail
-      lines={request.lines}
-      resolved={resolved}
-      tags={tags}
-      selectedLineId={selectedLineId}
-      onSelect={handleSelectLine}
-      onUseTemplate={setPickerLineId}
-    />
+    <>
+      <LinesRail
+        lines={request.lines}
+        resolved={resolved}
+        tags={tags}
+        selectedLineId={selectedLineId}
+        onSelect={handleSelectLine}
+        onUseTemplate={setPickerLineId}
+      />
+      <TagSizeControl
+        tag={selectedTag}
+        presets={sizePresets}
+        onResize={handleResizeTag}
+        onResizeAll={handleResizeAllTags}
+      />
+    </>
   );
 
   return (
@@ -621,7 +664,7 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
             </CanvasMessage>
           ) : selectedTag && selectedDoc ? (
             <TagCanvasEditor
-              key={selectedTag.id}
+              key={docKey ?? selectedTag.id}
               doc={selectedDoc}
               onChange={() => void save()}
               promotionId={request.promotion_id}
@@ -822,6 +865,108 @@ function LinesRail({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Tag size control (D24, S9): W x H mm for the SELECTED line's tag
+// ---------------------------------------------------------------------------
+
+/** Key one preset (or the current custom size) is looked up under. */
+function sizeKey(width_mm: number, height_mm: number): string {
+  return `${width_mm}x${height_mm}`;
+}
+
+const CUSTOM_SIZE_VALUE = '__custom__';
+
+function TagSizeControl({
+  tag,
+  presets,
+  onResize,
+  onResizeAll,
+}: {
+  tag: PlacedTag | null;
+  presets: TagSizePreset[];
+  onResize: (width_mm: number, height_mm: number) => void;
+  onResizeAll: (width_mm: number, height_mm: number) => void;
+}) {
+  if (!tag) {
+    return (
+      <div className="border-b p-3">
+        <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          Tag Size
+        </span>
+        <p className="mt-1 text-2xs text-muted-foreground">
+          Select a line to set its tag size.
+        </p>
+      </div>
+    );
+  }
+
+  const options: SearchableSelectOption[] = [
+    ...presets.map((p) => ({ value: sizeKey(p.width_mm, p.height_mm), label: p.label })),
+    { value: CUSTOM_SIZE_VALUE, label: 'Custom' },
+  ];
+  const matchingPreset = presets.find(
+    (p) => p.width_mm === tag.width_mm && p.height_mm === tag.height_mm,
+  );
+
+  return (
+    <div className="flex flex-col gap-2 border-b p-3">
+      <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+        Tag Size
+      </span>
+      <SearchableSelect
+        value={matchingPreset ? sizeKey(matchingPreset.width_mm, matchingPreset.height_mm) : CUSTOM_SIZE_VALUE}
+        onChange={(value) => {
+          if (value === CUSTOM_SIZE_VALUE) return;
+          const preset = presets.find((p) => sizeKey(p.width_mm, p.height_mm) === value);
+          if (preset) onResize(preset.width_mm, preset.height_mm);
+        }}
+        options={options}
+      />
+      <div className="grid grid-cols-2 gap-2">
+        <div className="flex flex-col gap-1">
+          <Label className="text-xs text-muted-foreground">W (mm)</Label>
+          <Input
+            type="number"
+            className="h-7 px-2 text-xs"
+            aria-label="Tag width (mm)"
+            value={tag.width_mm}
+            step={0.5}
+            min={1}
+            onChange={(e) => {
+              const n = parseFloat(e.target.value);
+              if (!Number.isNaN(n)) onResize(n, tag.height_mm);
+            }}
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <Label className="text-xs text-muted-foreground">H (mm)</Label>
+          <Input
+            type="number"
+            className="h-7 px-2 text-xs"
+            aria-label="Tag height (mm)"
+            value={tag.height_mm}
+            step={0.5}
+            min={1}
+            onChange={(e) => {
+              const n = parseFloat(e.target.value);
+              if (!Number.isNaN(n)) onResize(tag.width_mm, n);
+            }}
+          />
+        </div>
+      </div>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="h-7 text-xs"
+        onClick={() => onResizeAll(tag.width_mm, tag.height_mm)}
+      >
+        Apply to all lines
+      </Button>
     </div>
   );
 }

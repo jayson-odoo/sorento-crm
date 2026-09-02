@@ -150,7 +150,7 @@ import type {
   PriceTagRequestDetail,
   PriceTagRequestLine,
 } from '../../../../services/priceTagRequestService';
-import type { LineTagData, TagTemplate } from '@/lib/dealer-kit/tag-template-types';
+import type { LineTagData, TagSheetDoc, TagTemplate } from '@/lib/dealer-kit/tag-template-types';
 
 const mockListTemplates = vi.mocked(listPublishedTemplates);
 const mockResolveRequestLines = vi.mocked(resolveRequestLines);
@@ -766,5 +766,79 @@ describe('RequestTagDesigner - ?line= preselection', () => {
 
     await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
     expect(replace).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tag size control (D24, S9, AC-S9-3)
+// ---------------------------------------------------------------------------
+
+describe('RequestTagDesigner - tag size control (D24, AC-S9-3)', () => {
+  const lineA = line({ id: 'line-a', product_id: 'prod-a', code: 'AAA-1' });
+  const lineB = line({ id: 'line-b', product_id: 'prod-b', code: 'BBB-2' });
+
+  it('editing W/H resizes the selected line\'s tag and every one of its copies', async () => {
+    mockListTemplates.mockResolvedValue([realTemplate()]);
+    mockResolveRequestLines.mockResolvedValue([
+      lineTagData({ line_id: 'line-a', code: 'AAA-1' }),
+    ]);
+    const onSave = vi.fn<(doc: TagSheetDoc) => Promise<void>>(async () => {});
+
+    render(
+      <RequestTagDesigner
+        request={request({ lines: [lineA] })}
+        initialDoc={null}
+        onSave={onSave}
+      />,
+    );
+    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+
+    fireEvent.change(screen.getByLabelText('Tag width (mm)'), { target: { value: '95' } });
+    fireEvent.change(screen.getByLabelText('Tag height (mm)'), { target: { value: '44.5' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+
+    const doc = onSave.mock.calls[onSave.mock.calls.length - 1][0];
+    const tag = doc.sheets[0].tags.find((t) => t.request_line_id === 'line-a');
+    expect(tag).toMatchObject({ width_mm: 95, height_mm: 44.5 });
+  });
+
+  it('"Apply to all lines" resizes every line\'s tag, not only the selected one', async () => {
+    mockListTemplates.mockResolvedValue([realTemplate()]);
+    mockResolveRequestLines.mockResolvedValue([
+      lineTagData({ line_id: 'line-a', code: 'AAA-1' }),
+      lineTagData({ line_id: 'line-b', code: 'BBB-2' }),
+    ]);
+    const onSave = vi.fn<(doc: TagSheetDoc) => Promise<void>>(async () => {});
+
+    render(
+      <RequestTagDesigner
+        request={request({ lines: [lineA, lineB] })}
+        initialDoc={null}
+        onSave={onSave}
+      />,
+    );
+    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+    // Line B needs a tag of its own before "apply to all" has two lines to
+    // reach - selecting it clones one the same way selecting line A already did.
+    fireEvent.click(screen.getByText('BBB-2'));
+    await waitFor(() =>
+      expect(canvasDocs[canvasDocs.length - 1].doc.width_mm).toBe(60),
+    );
+
+    fireEvent.change(screen.getByLabelText('Tag width (mm)'), { target: { value: '95' } });
+    fireEvent.change(screen.getByLabelText('Tag height (mm)'), { target: { value: '44.5' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply to all lines' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+
+    const doc = onSave.mock.calls[onSave.mock.calls.length - 1][0];
+    const allTags = doc.sheets.flatMap((s) => s.tags);
+    expect(allTags.length).toBeGreaterThan(0);
+    for (const tag of allTags) {
+      expect(tag).toMatchObject({ width_mm: 95, height_mm: 44.5 });
+    }
   });
 });

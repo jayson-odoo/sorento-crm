@@ -24,7 +24,12 @@ import type {
   TagSpecValue,
 } from '@/lib/dealer-kit/tag-template-types';
 import { imageSourceOf } from '@/lib/dealer-kit/tag-template-types';
-import { layerText, resolveSlotText, slotImageAttachmentId } from '@/lib/dealer-kit/product-block';
+import {
+  layerText,
+  resolveBarcodeValue,
+  resolveSlotText,
+  slotImageAttachmentId,
+} from '@/lib/dealer-kit/product-block';
 import { priceBadgeParts } from '@/lib/dealer-kit/price-badge';
 import {
   barcodePlateGeometry,
@@ -503,7 +508,7 @@ function BarcodeLayer({
   const isBarcode = props.kind === 'barcode';
 
   const binding = bindingOf(resolved);
-  const value = isBarcode ? resolveSlotText({ slot_binding: 'barcode' }, binding) : null;
+  const value = isBarcode ? resolveBarcodeValue(layer, binding) : null;
   const code = isBarcode ? resolveSlotText({ slot_binding: 'code' }, binding) : null;
   const symbology = barcodeSymbologyFor(value);
 

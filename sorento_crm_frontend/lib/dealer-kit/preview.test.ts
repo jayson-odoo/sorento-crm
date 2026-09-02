@@ -233,16 +233,23 @@ describe('previewBindingFor', () => {
     ).toBeUndefined();
   });
 
-  it('follows the first previewed block for a loose barcode layer too (S7)', () => {
+  it('resolves a loose barcode layer against the WHOLE-TAG entry too (S6, S7, AC-S7-4)', () => {
     // A barcode layer dropped onto a template canvas is a loose layer, not a
     // child of the product block's group - the same shape as the "code
     // repeated in a corner" case above, and it must not be left blank while
-    // the block beside it previews a real product (AC-S7-4).
+    // the whole-tag eye is previewing a real product. 'barcode' joined
+    // PRODUCT_SLOTS in S7 for exactly this; S6 (same day, merged after) is
+    // what replaced "follow the first previewed real block" with the
+    // WHOLE_TAG_BLOCK_ID rule above, so a loose barcode layer follows that
+    // rule now, same as a loose 'code' layer, not the first real block.
     const loose = [...layers, text('loose-barcode', 'barcode', '')];
-    const previews = { main: { product_id: 'p-main' } };
+    const previews = {
+      main: { product_id: 'p-main' },
+      [WHOLE_TAG_BLOCK_ID]: { product_id: 'p-whole' },
+    };
     expect(
-      previewBindingFor(loose[loose.length - 1], previews, groupsOf(loose), loose),
-    ).toEqual({ product_id: 'p-main' });
+      previewBindingFor(loose[loose.length - 1], previews, groupsOf(loose)),
+    ).toEqual({ product_id: 'p-whole' });
   });
 
   it('leaves an unbound layer in no group alone', () => {

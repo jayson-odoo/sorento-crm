@@ -430,6 +430,40 @@ describe('barcode on the print page', () => {
     expect(container.querySelector('[style*="border-radius"]')).toBeNull();
   });
 
+  // ---------------------------------------------------------------------------
+  // Barcode value override (D23, S9, AC-S9-2) - the print page prints the
+  // designer's typed override, not the bound line's barcode, using the SAME
+  // `resolveBarcodeValue` the Konva editor calls (product-block.ts).
+  // ---------------------------------------------------------------------------
+
+  it('prints the override instead of the bound barcode (AC-S9-2)', () => {
+    render(
+      <TagSheetRenderer
+        doc={docWith([{ ...barcodeLayer(), text_override: '111222333' }])}
+        resolvedData={{ [LINE_ID]: resolved({ barcode: VALID_EAN13 }) }}
+        assets={{}}
+        images={{}}
+      />,
+    );
+
+    // Code128 (non-EAN), so no guard split - plain override text.
+    expect(screen.getByText('111222333')).toBeInTheDocument();
+    expect(screen.queryByText('4 006381 333931')).not.toBeInTheDocument();
+  });
+
+  it('prints the override even when the line carries no barcode of its own', () => {
+    render(
+      <TagSheetRenderer
+        doc={docWith([{ ...barcodeLayer(), text_override: VALID_EAN13 }])}
+        resolvedData={{ [LINE_ID]: resolved({ barcode: null }) }}
+        assets={{}}
+        images={{}}
+      />,
+    );
+
+    expect(screen.getByText('4 006381 333931')).toBeInTheDocument();
+  });
+
   it('sizes the code-strip and human-readable text in pt, proportional to the plate (AC-S7-4/6)', () => {
     // A 40x22mm plate - the toolbar's default insert size. Against the BUG
     // (`Math.max(6, strip * 0.6)}mm`) this reads as a 6mm floor (~17pt): a

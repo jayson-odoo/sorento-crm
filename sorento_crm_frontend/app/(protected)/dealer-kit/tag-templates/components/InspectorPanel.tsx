@@ -379,7 +379,13 @@ export function InspectorPanel({
             />
           )}
           {layer.props.kind === 'barcode' && (
-            <BarcodeInspector props={layer.props} onChange={updateProps} />
+            <BarcodeInspector
+              layer={layer}
+              props={layer.props}
+              onChange={updateProps}
+              onUpdate={update}
+              resolvedText={resolvedText ?? null}
+            />
           )}
         </div>
       </ScrollArea>
@@ -950,24 +956,68 @@ function BadgeInspector({
 // ---------------------------------------------------------------------------
 
 function BarcodeInspector({
+  layer,
   props,
   onChange,
+  onUpdate,
+  resolvedText,
 }: {
+  layer: TagLayer;
   props: Extract<TagLayerProps, { kind: 'barcode' }>;
   onChange: (changes: Partial<TagLayerProps>) => void;
+  onUpdate: (changes: Partial<TagLayer>) => void;
+  resolvedText: string | null;
 }) {
+  // Same pattern as the text layer's `text_override` (D23): the barcode
+  // layer is always bound to slot 'barcode', so an override here works the
+  // same way - value in, binding survives, Relink clears it again. The
+  // product master stays the source of truth; the override lives in the doc
+  // only.
+  const overridden = layer.text_override != null;
+  const shown = layer.text_override ?? resolvedText ?? '';
+
   return (
     <section>
       <h4 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
         Barcode
       </h4>
-      <label className="flex items-center gap-1.5 text-xs">
-        <Checkbox
-          checked={props.show_code}
-          onCheckedChange={(v) => onChange({ ...props, show_code: !!v })}
-        />
-        Show product code
-      </label>
+      <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center justify-between">
+            <Label className="text-xs text-muted-foreground">Barcode value</Label>
+            {overridden && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-6 px-1.5 text-2xs"
+                onClick={() => onUpdate({ text_override: null })}
+              >
+                <Link2 className="mr-1 size-3" />
+                Relink
+              </Button>
+            )}
+          </div>
+          <Input
+            value={shown}
+            placeholder={resolvedText ?? 'No barcode on the product'}
+            onChange={(e) => onUpdate({ text_override: e.target.value })}
+          />
+          {overridden && (
+            <span className="flex items-center gap-1 text-2xs text-amber-600">
+              <Link2Off className="size-3" />
+              Unlinked from product data
+            </span>
+          )}
+        </div>
+        <label className="flex items-center gap-1.5 text-xs">
+          <Checkbox
+            checked={props.show_code}
+            onCheckedChange={(v) => onChange({ ...props, show_code: !!v })}
+          />
+          Show product code
+        </label>
+      </div>
     </section>
   );
 }
