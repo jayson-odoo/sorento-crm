@@ -185,6 +185,11 @@ versions.
 - **AC-S8-2 [FE]** Given a guide, when it is dragged back onto its ruler, OR selected and Delete/Backspace pressed, OR its ruler-end x is clicked, then it is removed.
 - **AC-S8-3 [FE]** Given the request designer, when a change is committed, then it is persisted within ~1s without pressing Save and the header shows Saving/Saved; switching Design/Arrange, switching lines, or navigating away never loses a committed change.
 - **AC-S8-4 [FE]** Given the template editor, when a draft change is committed, then the draft autosaves the same way; Live is unchanged until Publish.
+- **AC-S8-5 [BE]** (captain ruling 2 Sep) Given the request designer autosaving, when many committed changes are saved, then NO `page_version` row is written - the page's `draft_doc` is overwritten in place. Manual Save (and marking the proof ready) snapshots the draft into exactly one version and clears it; reopening the designer answers the draft when one exists, else the latest version. Export and proof rendering read versions only.
+- **AC-S8-6 [FE]** Given a successful autosave, when it lands, then the header indicator says so and NO toast appears; a failed autosave shows "Save failed" with a Retry that resends the same document. The manual Save button keeps its toast.
+- **AC-S8-7 [FE]** Given an edit whose debounce has not fired, when the user navigates away (back link, sidebar, browser Back) or the tab is refreshed or closed, then that edit is still saved.
+- **AC-S8-8 [FE]** Given a request whose lines have no tags yet, when the designer is opened and lines are browsed, then nothing is persisted - the starter clone is not a user change.
+- **AC-S8-9 [FE]** Given a layer is selected, when a guide is clicked and Delete pressed, then the GUIDE is removed and the layer is untouched (and the reverse).
 
 ### S9 - barcode override + tag size
 - **AC-S9-1 [FE]** Given a barcode layer, when a value is typed into the inspector's override field, then the layer renders that value (EAN-13/Code128 rule applies); Relink clears it back to the bound product barcode; the product master is unchanged.

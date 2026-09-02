@@ -15,9 +15,10 @@ export interface UseAutosaveResult<T> {
   savedAt: Date | null;
   /** Queue `value` for a debounced save. Call on every committed change. */
   schedule: (value: T) => void;
-  /** Save NOW - the debounce's own value if one is pending, otherwise a no-op.
-   *  For a moment that cannot wait out the debounce: a mode switch, a line
-   *  switch, leaving the page. */
+  /** Save NOW - the debounce's own value if one is pending - and resolve once
+   *  everything this hook has in flight has landed. For a moment that cannot
+   *  wait out the debounce: a mode switch, a line switch, leaving the page, or
+   *  the manual Save button making sure it is not racing an autosave. */
   flush: () => Promise<void>;
   /** Re-send the value a failed save left pending. */
   retry: () => void;
@@ -43,6 +44,14 @@ export interface UseAutosaveResult<T> {
  * failed save keeps its value pending - `retry` resends exactly that, not
  * whatever the caller happens to hold by the time someone notices the
  * failure.
+ *
+ * **Saves are serialised.** Every save chains onto whatever this hook already
+ * has in flight rather than racing it (B5). Two overlapping PUTs of the same
+ * document can land in either order, and the loser is the one the server keeps
+ * - so a flush fired a moment after an autosave could persist the OLDER
+ * document and silently undo the newer edit. Chaining also makes `flush`
+ * meaningful: it resolves when the work is actually on the server, which is
+ * what the page-teardown and manual-Save callers are waiting for.
  */
 export function useAutosave<T>(
   onSave: (value: T) => Promise<void>,
@@ -60,9 +69,14 @@ export function useAutosave<T>(
   // Always the latest `onSave` the caller passed, so a save that fires
   // asynchronously - after the caller's own state (e.g. which template id)
   // moved on - still calls the CURRENT closure rather than a stale one
-  // captured back when `schedule` was memoized.
+  // captured back when `schedule` was memoized. Assigned in an effect, not
+  // during render: a render can be thrown away (Suspense, StrictMode's double
+  // pass), and a discarded render must not leave its closure behind as the
+  // one a later save will call.
   const onSaveRef = useRef(onSave);
-  onSaveRef.current = onSave;
+  useEffect(() => {
+    onSaveRef.current = onSave;
+  }, [onSave]);
 
   const clearTimer = useCallback(() => {
     if (timer.current !== null) {
@@ -71,14 +85,24 @@ export function useAutosave<T>(
     }
   }, []);
 
-  /** Actually calls the server. Runs the CURRENTLY pending value, if any. */
-  const runSave = useCallback(async () => {
-    if (!hasPending.current) return;
+  /**
+   * Actually calls the server, behind whatever is already in flight.
+   *
+   * Returns the promise the caller should await: the new attempt when there
+   * was something to send, the in-flight one when there was not (so a `flush`
+   * with nothing pending still waits for a save already on its way), and a
+   * resolved promise when this hook is completely idle.
+   */
+  const runSave = useCallback((): Promise<void> => {
+    if (!hasPending.current) return inFlight.current ?? Promise.resolve();
     const value = pendingValue.current as T;
     hasPending.current = false;
     setStatus('saving');
-    const attempt = onSaveRef
-      .current(value)
+    // The predecessor's own chain swallows its rejection below, so it always
+    // settles fulfilled - there is nothing here for a `.catch` to do.
+    const previous = inFlight.current ?? Promise.resolve();
+    const attempt: Promise<void> = previous
+      .then(() => onSaveRef.current(value))
       .then(() => {
         setStatus('saved');
         setSavedAt(new Date());
@@ -91,7 +115,11 @@ export function useAutosave<T>(
         setStatus('error');
       })
       .finally(() => {
-        inFlight.current = null;
+        // Only if nothing newer has queued behind this one. Clearing
+        // unconditionally would drop the pointer to a save that is still
+        // running, and the NEXT save would then start in parallel with it -
+        // the exact race the chaining above exists to remove.
+        if (inFlight.current === attempt) inFlight.current = null;
       });
     inFlight.current = attempt;
     return attempt;
@@ -115,13 +143,6 @@ export function useAutosave<T>(
 
   const flush = useCallback(async () => {
     clearTimer();
-    if (inFlight.current) {
-      // A flush landing mid another save's flight waits for it, then - if a
-      // newer edit queued behind it while it ran - sends that one too.
-      await inFlight.current;
-      if (hasPending.current) await runSave();
-      return;
-    }
     await runSave();
   }, [clearTimer, runSave]);
 
@@ -134,6 +155,8 @@ export function useAutosave<T>(
   // closed page) - the callback above already guards `hasPending`, but the
   // TIMER itself has to stop, or a debounce armed a moment before unmount
   // fires a save for a component that is no longer there to hear back from it.
+  // Hosts that need the pending EDIT to survive their own unmount call
+  // `flush()` in their own cleanup, which runs before this one.
   useEffect(() => clearTimer, [clearTimer]);
 
   return { status, savedAt, schedule, flush, retry };

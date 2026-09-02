@@ -29,10 +29,12 @@
  *
  * Autosave (D22, S8): every committed draft change re-fires `onLayersChange`
  * (`draftLayers` changes), and an effect on THAT schedules a debounced save
- * through the same `updateTemplate` call the header's manual Save makes.
- * Publish is unchanged - it already persists the draft itself before
- * snapshotting it (S1 above), so it always sees the latest edit whether or
- * not autosave has gotten to it yet.
+ * through the same `updateTemplate` call the header's manual Save makes -
+ * the DRAFT, never the live pointer. Save and Publish both flush that
+ * debounce first (S4), so neither can race an autosave into landing after it
+ * and overwriting what it just wrote. Leaving the page flushes too: this
+ * component unmounting covers every in-app route change, and `pagehide`
+ * covers the refreshes and closes React never hears about.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -140,11 +142,37 @@ export default function TagTemplateEditorPage() {
 
   // -- Autosave (D22, S8) -----------------------------------------------------
 
-  const templateAutosave = useAutosave<TagLayer[]>(async (layers) => {
-    if (!template) return;
-    const updated = await updateTemplate(template.id, { ...template.doc, layers });
-    setTemplate(updated);
-  });
+  // `template` is read through a REF here rather than closed over, so this
+  // callback stays stable and does not restart the debounce on every save that
+  // lands (`setTemplate` below is its own re-render). Same reason the effect
+  // further down keeps it out of its dependency array.
+  const templateRef = useRef<TagTemplate | null>(null);
+  useEffect(() => {
+    templateRef.current = template;
+  }, [template]);
+
+  // Set while the page is going away, so ONLY the teardown request is sent
+  // `keepalive` - a keepalive body is capped at 64KB, which a busy template
+  // exceeds (see `updateTemplate`).
+  const teardownRef = useRef(false);
+  const {
+    status: autosaveStatus,
+    savedAt: autosaveSavedAt,
+    schedule: scheduleAutosave,
+    flush: flushAutosave,
+    retry: retryAutosave,
+  } = useAutosave<TagLayer[]>(
+    useCallback(async (layers: TagLayer[]) => {
+      const current = templateRef.current;
+      if (!current) return;
+      const updated = await updateTemplate(
+        current.id,
+        { ...current.doc, layers },
+        { keepalive: teardownRef.current },
+      );
+      setTemplate(updated);
+    }, []),
+  );
 
   // Every REAL edit to the draft schedules a debounced save. The first time
   // this effect can fire with a LOADED template is the load itself (the
@@ -155,20 +183,12 @@ export default function TagTemplateEditorPage() {
   // autosaving its already-persisted doc back is a harmless no-op overwrite,
   // not a bug worth a special case).
   //
-  // `template` itself is read through a REF, not a dependency: autosave's own
-  // `onSave` calls `setTemplate(updated)` when it lands, and putting `template`
-  // in the deps array would make that its own trigger - a successful save
-  // reschedules ANOTHER one for the same unchanged layers, forever. Only
-  // `draftLayers` changing is a reason to run this.
-  //
   // The "is this the load, not an edit" guard compares the VALUE last seen,
   // not a boolean "have I run yet" flag: dev's StrictMode fires a fresh
   // mount's effects twice (mount, cleanup, mount again) to catch effects
   // that are not idempotent, and a boolean flag would already read "yes" on
   // that second firing, autosaving the freshly-loaded (unedited) draft a
   // second time.
-  const templateRef = useRef<TagTemplate | null>(null);
-  templateRef.current = template;
   const lastSeenLayersRef = useRef<TagLayer[] | undefined>(undefined);
   useEffect(() => {
     if (!templateRef.current) return;
@@ -176,24 +196,41 @@ export default function TagTemplateEditorPage() {
     const isInitial = lastSeenLayersRef.current === undefined;
     lastSeenLayersRef.current = draftLayers;
     if (isInitial) return;
-    templateAutosave.schedule(draftLayers);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftLayers, templateAutosave.schedule]);
+    scheduleAutosave(draftLayers);
+  }, [draftLayers, scheduleAutosave]);
 
-  // beforeunload covers a refresh, a close and a jump out of the app.
+  // Leaving the page, both ways it can happen (S1/S2). A route change inside
+  // the app - Back to templates, a sidebar click, the browser's own Back -
+  // unmounts this page, so the cleanup is where that edit gets its last
+  // chance; `pagehide` covers what no React lifecycle sees (a refresh, a
+  // closed tab, a jump to another site). It replaces `beforeunload`, which
+  // fires too early and is skipped outright on mobile Safari when a
+  // backgrounded tab is discarded. Both set `teardownRef` first so the
+  // request goes out keepalive and outlives the document that made it.
   useEffect(() => {
+    // A mounted page is not tearing down - StrictMode's mount/cleanup/mount
+    // pass would otherwise leave the flag set for the whole session.
+    teardownRef.current = false;
     const handler = () => {
-      void templateAutosave.flush();
+      teardownRef.current = true;
+      void flushAutosave();
     };
-    window.addEventListener('beforeunload', handler);
-    return () => window.removeEventListener('beforeunload', handler);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [templateAutosave.flush]);
+    window.addEventListener('pagehide', handler);
+    return () => {
+      window.removeEventListener('pagehide', handler);
+      handler();
+    };
+  }, [flushAutosave]);
 
+  // Manual Save flushes first (S4): it cancels the armed debounce and waits for
+  // anything already on the wire, so the button and the autosave cannot write
+  // the same draft twice or land out of order. With nothing pending the flush
+  // is a no-op, which is the ordinary case.
   const handleSave = useCallback(async () => {
     if (!template) return;
     setSaving(true);
     try {
+      await flushAutosave();
       const updated = await updateTemplate(template.id, { ...template.doc, layers: draftLayers });
       setTemplate(updated);
       toast.success('Template saved');
@@ -202,7 +239,7 @@ export default function TagTemplateEditorPage() {
     } finally {
       setSaving(false);
     }
-  }, [template, draftLayers]);
+  }, [template, draftLayers, flushAutosave]);
 
   const handlePublish = useCallback(async () => {
     if (!template) return;
@@ -210,7 +247,10 @@ export default function TagTemplateEditorPage() {
     try {
       // Persist the draft FIRST (S1): Publish snapshots the CURRENT draft,
       // including edits made since the last manual Save, not whatever the
-      // backend last had saved.
+      // backend last had saved. The flush ahead of it settles any autosave
+      // still in flight (S4), so the two cannot land out of order and publish
+      // a draft that a late autosave then overwrites.
+      await flushAutosave();
       const saved = await updateTemplate(template.id, { ...template.doc, layers: draftLayers });
       setTemplate(saved);
       const updated = await publishTemplate(saved.id, publishNote.trim() || undefined);
@@ -223,7 +263,7 @@ export default function TagTemplateEditorPage() {
     } finally {
       setPublishing(false);
     }
-  }, [template, draftLayers, publishNote]);
+  }, [template, draftLayers, publishNote, flushAutosave]);
 
   const handleView = useCallback(
     async (versionId: string) => {
@@ -352,9 +392,9 @@ export default function TagTemplateEditorPage() {
                   Versions
                 </Button>
                 <AutosaveIndicator
-                  status={templateAutosave.status}
-                  savedAt={templateAutosave.savedAt}
-                  onRetry={templateAutosave.retry}
+                  status={autosaveStatus}
+                  savedAt={autosaveSavedAt}
+                  onRetry={retryAutosave}
                 />
                 <Button
                   variant="outline"

@@ -246,6 +246,68 @@ describe('TagCanvasEditor ruler guides - Delete/Backspace removal (D21, AC-S8-2)
   });
 });
 
+// ---------------------------------------------------------------------------
+// A guide and a layer are never selected at once (B4)
+//
+// One Delete key, two things it could remove. Before this, clicking a guide
+// left an already-selected layer selected as well, and Delete asked about the
+// layers first: the layer vanished and the guide the user had just clicked on
+// stayed. Selecting either now clears the other, and the key checks the guide
+// first, so the order matches what was clicked last.
+// ---------------------------------------------------------------------------
+
+describe('TagCanvasEditor - guide and layer selection are exclusive (B4)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /** The Layers panel row for the fixture's one text layer. */
+  function layerRow(): HTMLElement {
+    return screen.getByTitle('Hello');
+  }
+
+  it('deletes the GUIDE, leaving a previously selected layer alone', () => {
+    const onChange = vi.fn();
+    const { container } = render(<TagCanvasEditor doc={doc()} onChange={onChange} />);
+
+    // Select the layer first...
+    fireEvent.click(layerRow());
+    expect(layerRow()).toBeInTheDocument();
+
+    // ...then place and click a guide, which takes the selection over.
+    const topRuler = container.querySelector('.cursor-col-resize') as HTMLElement;
+    fireEvent.mouseDown(topRuler, { clientX: 100, clientY: 10 });
+    fireEvent.mouseUp(window, { clientX: 100, clientY: 10 });
+    expect(ruleGuideCount(container)).toBe(1);
+
+    fireEvent.keyDown(window, { key: 'Delete' });
+
+    expect(ruleGuideCount(container)).toBe(0);
+    // The layer is still there - still listed, and never sent upstream as a
+    // deletion.
+    expect(layerRow()).toBeInTheDocument();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('deletes the LAYER once a layer is selected after the guide', () => {
+    const onChange = vi.fn();
+    const { container } = render(<TagCanvasEditor doc={doc()} onChange={onChange} />);
+
+    const topRuler = container.querySelector('.cursor-col-resize') as HTMLElement;
+    fireEvent.mouseDown(topRuler, { clientX: 100, clientY: 10 });
+    fireEvent.mouseUp(window, { clientX: 100, clientY: 10 });
+    expect(ruleGuideCount(container)).toBe(1);
+
+    // Clicking the layer takes the selection back off the guide.
+    fireEvent.click(layerRow());
+    fireEvent.keyDown(window, { key: 'Delete' });
+
+    expect(screen.queryByTitle('Hello')).not.toBeInTheDocument();
+    // And the guide survives - it was not what was selected.
+    expect(ruleGuideCount(container)).toBe(1);
+  });
+});
+
 describe('TagCanvasEditor ruler guides - the x chip (D21, AC-S8-2)', () => {
   beforeEach(() => {
     vi.clearAllMocks();

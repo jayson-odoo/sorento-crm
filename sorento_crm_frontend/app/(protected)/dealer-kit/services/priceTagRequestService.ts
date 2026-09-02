@@ -223,11 +223,50 @@ export async function getTagSheetDoc(
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to load tag sheet design'));
   }
-  const result: { page_id: string; version: number; doc: TagSheetDoc | null } =
-    await response.json();
+  // `source` says whether this is the autosaved draft or the last deliberate
+  // save (B1). The designer opens on either identically - what it edits is the
+  // document, not its provenance - so it is read past here rather than
+  // returned; the field exists so the backend contract stays legible and a
+  // future "unsaved changes" cue has something to read.
+  const result: {
+    page_id: string;
+    version: number;
+    doc: TagSheetDoc | null;
+    source: 'draft' | 'version';
+  } = await response.json();
   return result.doc ?? null;
 }
 
+/**
+ * Autosave: overwrite the request's tag sheet DRAFT. Writes no version (B1).
+ *
+ * `keepalive` is for the page-teardown flush only. The browser cancels a normal
+ * fetch when the document goes away, which is exactly the moment the last edit
+ * most needs to reach the server; `keepalive` lets it outlive the page. It is
+ * NOT the default because a keepalive request body is capped at 64KB and a
+ * busy tag sheet exceeds that - the fetch would reject outright, turning every
+ * ordinary autosave on a large document into a failure.
+ */
+export async function saveTagSheetDraft(
+  requestId: string,
+  doc: TagSheetDoc,
+  options: { keepalive?: boolean } = {},
+): Promise<void> {
+  const response = await apiFetch(
+    `${BASE}/${encodeURIComponent(requestId)}/design/draft`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ doc }),
+      keepalive: options.keepalive,
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to save tag sheet design'));
+  }
+}
+
+/** Manual Save: snapshot the design into a new immutable version (B1). */
 export async function saveTagSheetDoc(
   requestId: string,
   doc: TagSheetDoc,
