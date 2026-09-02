@@ -175,6 +175,8 @@ export interface ProductProposalGroupProps {
     spec_key: string;
     value: SpecProposalValue;
   }) => Promise<unknown>;
+  /** `{spec_key: value_labels}` (E.2), from the registry the screen already loaded. */
+  valueLabels?: Record<string, Record<string, string>>;
 }
 
 export function ProductProposalGroup({
@@ -185,6 +187,7 @@ export function ProductProposalGroup({
   onEditValue,
   onDismiss,
   onAddRow,
+  valueLabels,
 }: ProductProposalGroupProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
@@ -341,6 +344,7 @@ export function ProductProposalGroup({
           }
           selectableKinds={BULK_SELECTABLE_KINDS}
           disabled={disabled}
+          valueLabels={valueLabels}
           renderValue={(proposal, read) => {
             const row = pendingByKey.get(proposal.spec_key);
             if (!row || row.id !== editingId) return read;
@@ -440,7 +444,7 @@ export function ProductProposalGroup({
                   {row.label || readable(row.spec_key)}
                 </span>
                 <span className="text-muted-foreground">
-                  {readableValue(row.value, row.unit ?? undefined)}
+                  {readableValue(row.value, row.unit ?? undefined, valueLabels?.[row.spec_key])}
                 </span>
                 <OutcomePill outcome={row.outcome as FlyerSpecOutcome} />
               </li>
@@ -463,7 +467,11 @@ export function ProductProposalGroup({
           {dismissing && (
             <p className="text-sm text-muted-foreground">
               {dismissing.label || readable(dismissing.spec_key)}{' '}
-              {readableValue(dismissing.value, dismissing.unit ?? undefined)}
+              {readableValue(
+                dismissing.value,
+                dismissing.unit ?? undefined,
+                valueLabels?.[dismissing.spec_key],
+              )}
             </p>
           )}
           <AlertDialogFooter>

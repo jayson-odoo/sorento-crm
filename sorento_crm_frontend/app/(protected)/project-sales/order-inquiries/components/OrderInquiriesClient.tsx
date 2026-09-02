@@ -13,8 +13,6 @@ import {
 import {
   AlertTriangle,
   Ban,
-  CheckCheck,
-  ChevronDown,
   Download,
   LayoutGrid,
   Link2,
@@ -55,12 +53,6 @@ import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -82,8 +74,6 @@ import {
 import {
   ACK_ANY,
   ACK_FILTER_OPTIONS,
-  ACK_TO_CONFIRM,
-  isAcknowledgeable,
   isBulkRejectable,
 } from '../../_shared/lib/orderInquiryAck';
 import {
@@ -200,16 +190,16 @@ const ORDER_INQUIRY_ACKNOWLEDGE_PERMISSION =
   'projects.order_inquiries.acknowledge';
 
 /**
- * What the page opens on (R3/AC-D12): the rows nobody has said yes to yet. Purchasing
- * works this page as a to-do list, and a to-do list that opens on every row ever raised
- * is a list nobody works.
+ * No default ack filter any more (S1, AC-1.5, G5): a row is born acknowledged, so "To
+ * confirm" is no longer a to-do list anybody works from - the page opens on every row,
+ * and the filter stays available for a rejected or changed lookup.
  *
  * A CLEARED filter travels as `?ack=all`, never as an absent parameter: an absent one
- * means "nobody has chosen" and the default would go straight back over the choice on
- * the next reload.
+ * means "nobody has chosen" and a future default would go straight back over the choice
+ * on the next reload.
  */
 function ackFilterFrom(value: string | null): string {
-  if (value === null) return ACK_TO_CONFIRM;
+  if (value === null) return '';
   return value === ACK_ANY ? '' : value;
 }
 
@@ -246,7 +236,7 @@ export function OrderInquiriesClient() {
     ORDER_INQUIRY_ACTION_PERMISSION,
   );
   const canAcknowledge = useHasPermission(ORDER_INQUIRY_ACKNOWLEDGE_PERMISSION);
-  const { acknowledge, linkNow } = useOrderInquiryHandshake();
+  const { linkNow } = useOrderInquiryHandshake();
   const [unlinkingSelected, setUnlinkingSelected] = React.useState(false);
 
   const [view, setView] = React.useState<OrderInquiryView>(() =>
@@ -635,11 +625,12 @@ export function OrderInquiriesClient() {
     // (`FulfilmentPlanningClient` carries the same note over the same trap). As a plain
     // boolean this let a cancelled or already-acknowledged row be ticked, and the press
     // then failed on the whole batch.
-    // A row stays tickable after Acknowledge (the captain, 27 Aug): the tick now feeds
-    // three presses - Acknowledge, Link selected, Unlink selected - and each counts only
-    // the ticked rows it applies to. Only a cancelled or actioned row has nothing left.
+    // The tick feeds TWO presses now (S1 retires Confirm): Reject, gated on
+    // `isBulkRejectable` since Reject applies to any still-owed row whatever its
+    // handshake reads; Link selected / Unlink selected, gated on the action grant and a
+    // supply state that still has something to link or unlink.
     enableRowSelection: (row) =>
-      (canAcknowledge && isAcknowledgeable(row.original)) ||
+      (canAcknowledge && isBulkRejectable(row.original)) ||
       (canBulkLink &&
         row.original.state !== 'cancelled' &&
         row.original.state !== 'actioned'),
@@ -657,9 +648,6 @@ export function OrderInquiriesClient() {
   const selectedRows = table
     .getSelectedRowModel()
     .rows.map((row) => row.original);
-  const selectedAcknowledgeable = selectedRows.filter((row) =>
-    isAcknowledgeable(row),
-  );
   const selectedLinked = selectedRows.filter(
     (row) => row.state === 'placed' || row.state === 'partly_linked',
   );
@@ -716,10 +704,6 @@ export function OrderInquiriesClient() {
   // in this popover: it narrows exactly what the rest of these narrow, so leaving it out
   // hid "Clear filters" from the one person who most needs it - somebody who pressed Buy,
   // sees three rows, and has nothing on the toolbar offering to give the rest back.
-  // How many rows the default filter is about (AC-D12), off the server's own facet: it
-  // counts the filtered set, and a client that added two of the other counts together
-  // would be answering a different question the moment either gained a state.
-  const toConfirmCount = summary.data?.ack?.to_confirm;
 
   // What the chip above the grid says, so the buyer can see WHY the list is short and
   // take the narrowing off in one press (AC-D12).
@@ -1062,13 +1046,11 @@ export function OrderInquiriesClient() {
                           clearable
                           options={ACK_FILTER_OPTIONS.map((option) => {
                             const count =
-                              option.value === ACK_TO_CONFIRM
-                                ? toConfirmCount
-                                : summary.data?.ack?.[
-                                    option.value as keyof NonNullable<
-                                      typeof summary.data.ack
-                                    >
-                                  ];
+                              summary.data?.ack?.[
+                                option.value as keyof NonNullable<
+                                  typeof summary.data.ack
+                                >
+                              ];
                             return {
                               value: option.value,
                               label:
@@ -1259,61 +1241,20 @@ export function OrderInquiriesClient() {
                     onClick: () => void handleExport(),
                   },
                 ]}
-                // START: the two things purchasing DOES here (item 12). Feeding the book
-                // and saying yes to the rows are the whole job, so they sit behind one
-                // primary press rather than a split button and a wide count-bearing one
-                // that together pushed the left cluster onto a second row.
+                // START: feeding the book is the one thing purchasing presses here now
+                // (S1, AC-1.5) - a row is born acknowledged, so there is no second press
+                // to say yes to it any more, and a one-item dropdown read as a step that
+                // was not there.
                 primaryAction={
                   canAcknowledge ? (
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button type="button" size="sm">
-                          Start
-                          <ChevronDown
-                            className="size-3.5 opacity-60"
-                            aria-hidden
-                          />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="w-60">
-                        <DropdownMenuItem
-                          onSelect={() => setUploadingBook(true)}
-                        >
-                          <Upload className="size-4" aria-hidden />
-                          Upload purchase orders
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          disabled={
-                            selectedAcknowledgeable.length === 0 ||
-                            acknowledge.isPending
-                          }
-                          title={
-                            selectedAcknowledgeable.length === 0
-                              ? 'Tick the rows you are taking on.'
-                              : undefined
-                          }
-                          onSelect={() => {
-                            if (selectedAcknowledgeable.length === 0) return;
-                            acknowledge.mutate(
-                              {
-                                rowIds: selectedAcknowledgeable.map(
-                                  (row) => row.id,
-                                ),
-                                // No horizon of its own (R6): Confirm links the
-                                // remainder of rows somebody has already decided to
-                                // take on, and the plan's own date is the right reach
-                                // for that. The cut off belongs to Auto link all, which
-                                // is the press that reaches rows nobody has looked at.
-                              },
-                              { onSuccess: () => setRowSelection({}) },
-                            );
-                          }}
-                        >
-                          <CheckCheck className="size-4" aria-hidden />
-                          {`Confirm selected (${selectedAcknowledgeable.length})`}
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => setUploadingBook(true)}
+                    >
+                      <Upload className="size-4" aria-hidden />
+                      Upload purchase orders
+                    </Button>
                   ) : null
                 }
                 onRefresh={() => {

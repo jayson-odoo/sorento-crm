@@ -8,7 +8,10 @@
 import { describe, it, expect } from 'vitest';
 import type { ReorderRecommendation } from '../types/reorder.types';
 import { recToPlanLine, toPlanLines, countByStatus, type PlanLine } from './planLine';
+import type { PlanRowDecision as ServerPlanDecision, PlanRowDecisionListResponse } from '../types/decisions.types';
 import {
+  applyDecisionClears,
+  applyDecisionWrites,
   budgetVerdict,
   decidedCost,
   decidedQty,
@@ -473,5 +476,263 @@ describe('groupDecisionState - a grouped row reads the fan-out back', () => {
   it('reads mixed when only SOME members have decided', () => {
     const decisions: PlanDecisionMap = { a: { buy: 10 } };
     expect(groupDecisionState(['a', 'b'], decisions)).toEqual({ decision: undefined, mixed: true });
+  });
+});
+
+// ===========================================================================
+// S3 perf, AC-3.5 - the cache is patched, never refetched, on a decide/clear
+// ===========================================================================
+
+function serverDecision(over: Partial<ServerPlanDecision> = {}): ServerPlanDecision {
+  return {
+    recommendation_id: 'r1', kind: 'buy', buy_qty: 10, stock_takes: [], po_qty: null,
+    po_refs: [], reason_text: null, price_mode: 'use_last', supplier_code: null,
+    supplier_name: null, unit_cost: null, lead_time_days: null,
+    draft_po_number: null, draft_po_id: null,
+    ...over,
+  };
+}
+
+function decisionList(
+  data: ServerPlanDecision[],
+  decided_count: number,
+  total_count = 10,
+): PlanRowDecisionListResponse {
+  return { data, decided_count, total_count };
+}
+
+/** A `productOf` resolver built from a plain `{recId: productId}` map, the shape
+ *  `usePlanLines.ts` builds via `productIdMap(lines)`. */
+function productOfFrom(pairs: Record<string, string>): (recId: string) => string | undefined {
+  return (recId) => pairs[recId];
+}
+
+describe('applyDecisionWrites - folds a written decision straight into the cache (AC-3.5)', () => {
+  it('does nothing when there is no cached list to patch (never conjures one)', () => {
+    expect(applyDecisionWrites(undefined, [serverDecision()], productOfFrom({}))).toBeUndefined();
+  });
+
+  it('is a no-op when nothing was actually written', () => {
+    const old = decisionList([], 0);
+    expect(applyDecisionWrites(old, [], productOfFrom({}))).toBe(old);
+  });
+
+  it('adds a NEW recommendation and increments decided_count by one', () => {
+    const old = decisionList([], 0);
+    const next = applyDecisionWrites(
+      old, [serverDecision({ recommendation_id: 'r1' })], productOfFrom({ r1: 'p1' }),
+    );
+    expect(next?.data.map((d) => d.recommendation_id)).toEqual(['r1']);
+    expect(next?.decided_count).toBe(1);
+  });
+
+  it('replaces an EXISTING recommendation in place without moving decided_count', () => {
+    const productOf = productOfFrom({ r1: 'p1' });
+    const old = decisionList([serverDecision({ recommendation_id: 'r1', buy_qty: 10 })], 1);
+    const next = applyDecisionWrites(
+      old, [serverDecision({ recommendation_id: 'r1', buy_qty: 99 })], productOf,
+    );
+    expect(next?.data).toHaveLength(1);
+    expect(next?.data[0].buy_qty).toBe(99);
+    expect(next?.decided_count).toBe(1);
+  });
+
+  it('a grouped write (several member recs of ONE product) increments decided_count by AT MOST one', () => {
+    // A product-grain group's decide fans the SAME decision out to every member rec -
+    // that is still ONE product decided, matching the server's own by-product count (R14).
+    const productOf = productOfFrom({ r1: 'p1', r2: 'p1', r3: 'p1' });
+    const old = decisionList([], 0);
+    const next = applyDecisionWrites(old, [
+      serverDecision({ recommendation_id: 'r1' }),
+      serverDecision({ recommendation_id: 'r2' }),
+      serverDecision({ recommendation_id: 'r3' }),
+    ], productOf);
+    expect(next?.data).toHaveLength(3);
+    expect(next?.decided_count).toBe(1);
+  });
+
+  it("a group re-decided where SOME members already had a decision leaves the count where it was", () => {
+    const productOf = productOfFrom({ r1: 'p1', r2: 'p1' });
+    const old = decisionList(
+      [serverDecision({ recommendation_id: 'r1' })],
+      1,
+    );
+    const next = applyDecisionWrites(old, [
+      serverDecision({ recommendation_id: 'r1', buy_qty: 5 }),
+      serverDecision({ recommendation_id: 'r2', buy_qty: 5 }),
+    ], productOf);
+    expect(next?.decided_count).toBe(1);
+  });
+
+  it('leaves total_count untouched - the denominator is a server fact this never guesses at', () => {
+    const old = decisionList([], 0, 42);
+    const next = applyDecisionWrites(old, [serverDecision()], productOfFrom({ r1: 'p1' }));
+    expect(next?.total_count).toBe(42);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Review finding (B1): the SAME product decided at two DIFFERENT warehouses on a
+  // location-grain (ungrouped) run is TWO separate `decide()` calls, each writing one
+  // rec of the same product - never fanned out together the way a product-grain
+  // group's members are. An increment-per-call count reads that as two decided
+  // products; the server counts one (DISTINCT product). Recomputing decided_count off
+  // the merged data's distinct-product set (rather than incrementing) is what fixes it.
+  // ---------------------------------------------------------------------------
+  describe('the same product decided at two warehouses (location-grain, ungrouped) counts ONCE', () => {
+    it('two separate decide() calls for two recs of one product move decided_count by one, not two', () => {
+      const productOf = productOfFrom({ 'rec-brw': 'p1', 'rec-pj': 'p1' });
+      // Call 1: decide the BRW row.
+      const afterFirst = applyDecisionWrites(
+        decisionList([], 0),
+        [serverDecision({ recommendation_id: 'rec-brw' })],
+        productOf,
+      );
+      expect(afterFirst?.decided_count).toBe(1);
+
+      // Call 2 (a SEPARATE decide() invocation, not a grouped fan-out): decide the PJ
+      // row of the SAME product. The bug: an increment-per-call implementation reads
+      // this as a second decided product and reports 2 of however-many - "412 of 200
+      // decided" was the review's own example.
+      const afterSecond = applyDecisionWrites(
+        afterFirst,
+        [serverDecision({ recommendation_id: 'rec-pj' })],
+        productOf,
+      );
+      expect(afterSecond?.data).toHaveLength(2);
+      expect(afterSecond?.decided_count).toBe(1);
+    });
+
+    it('the count never exceeds total_count-worth of distinct products across many location writes', () => {
+      // Three warehouses, one product, three separate decide() calls (the realistic
+      // shape of an ungrouped location-grain run's own product spread over sites).
+      const productOf = productOfFrom({ a: 'p1', b: 'p1', c: 'p1' });
+      let cache = decisionList([], 0);
+      for (const recId of ['a', 'b', 'c']) {
+        cache = applyDecisionWrites(cache, [serverDecision({ recommendation_id: recId })], productOf)!;
+      }
+      expect(cache.data).toHaveLength(3);
+      expect(cache.decided_count).toBe(1);
+    });
+  });
+});
+
+describe('applyDecisionClears - withdraws recs from the cache, the mirror of applyDecisionWrites (AC-3.5)', () => {
+  it('does nothing when there is no cached list to patch', () => {
+    expect(applyDecisionClears(undefined, ['r1'], productOfFrom({}))).toBeUndefined();
+  });
+
+  it('is idempotent - clearing a rec already absent changes nothing, same object back', () => {
+    const old = decisionList([serverDecision({ recommendation_id: 'r1' })], 1);
+    expect(applyDecisionClears(old, ['not-there'], productOfFrom({ r1: 'p1' }))).toBe(old);
+  });
+
+  it('removes the cleared rec and drops decided_count by one', () => {
+    const productOf = productOfFrom({ r1: 'p1' });
+    const old = decisionList([serverDecision({ recommendation_id: 'r1' })], 1);
+    const next = applyDecisionClears(old, ['r1'], productOf);
+    expect(next?.data).toHaveLength(0);
+    expect(next?.decided_count).toBe(0);
+  });
+
+  it('never drops decided_count below zero', () => {
+    const productOf = productOfFrom({ r1: 'p1' });
+    const old = decisionList([serverDecision({ recommendation_id: 'r1' })], 0);
+    const next = applyDecisionClears(old, ['r1'], productOf);
+    expect(next?.decided_count).toBe(0);
+  });
+
+  it('a grouped clear (several member recs) drops decided_count by AT MOST one', () => {
+    const productOf = productOfFrom({ r1: 'p1', r2: 'p1' });
+    const old = decisionList(
+      [
+        serverDecision({ recommendation_id: 'r1' }),
+        serverDecision({ recommendation_id: 'r2' }),
+      ],
+      1,
+    );
+    const next = applyDecisionClears(old, ['r1', 'r2'], productOf);
+    expect(next?.data).toHaveLength(0);
+    expect(next?.decided_count).toBe(0);
+  });
+
+  it('leaves the rest of the cached list alone (a different product)', () => {
+    const productOf = productOfFrom({ r1: 'p1', r2: 'p2' });
+    const old = decisionList(
+      [
+        serverDecision({ recommendation_id: 'r1' }),
+        serverDecision({ recommendation_id: 'r2' }),
+      ],
+      2,
+    );
+    const next = applyDecisionClears(old, ['r1'], productOf);
+    expect(next?.data.map((d) => d.recommendation_id)).toEqual(['r2']);
+    expect(next?.decided_count).toBe(1);
+  });
+
+  it('clearing ONE warehouse row of a product still decided at another warehouse keeps decided_count at one', () => {
+    // The mirror of the B1 write-side case: 'a' and 'b' are the SAME product at two
+    // sites, both decided (decided_count 1, by product). Clearing 'a' alone leaves 'b'
+    // - the product is still decided, so the count must stay 1, not drop to 0.
+    const productOf = productOfFrom({ a: 'p1', b: 'p1' });
+    const old = decisionList(
+      [serverDecision({ recommendation_id: 'a' }), serverDecision({ recommendation_id: 'b' })],
+      1,
+    );
+    const next = applyDecisionClears(old, ['a'], productOf);
+    expect(next?.data.map((d) => d.recommendation_id)).toEqual(['b']);
+    expect(next?.decided_count).toBe(1);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Review finding (S3): the server's clear pulls EVERY draft PO line the cleared
+  // rec's PRODUCT carries (`decision_service._remove_product_lines`), not just the
+  // cleared rec's own line - so a SIBLING rec of the same product that keeps its own
+  // decision can still lose its draft line as a side effect. The cache must strip
+  // `draft_po_number`/`draft_po_id` off any surviving decision of that product too.
+  // ---------------------------------------------------------------------------
+  describe('clearing one rec strips stale draft_po_number off SIBLING recs of the same product', () => {
+    it('a surviving decision of the same product loses its confirmed status', () => {
+      const productOf = productOfFrom({ a: 'p1', b: 'p1' });
+      const old = decisionList(
+        [
+          serverDecision({ recommendation_id: 'a', draft_po_number: 'PO-2026/09-0001', draft_po_id: 'po-1' }),
+          serverDecision({ recommendation_id: 'b', draft_po_number: 'PO-2026/09-0001', draft_po_id: 'po-1' }),
+        ],
+        1,
+      );
+      const next = applyDecisionClears(old, ['a'], productOf);
+      expect(next?.data.map((d) => d.recommendation_id)).toEqual(['b']);
+      expect(next?.data[0].draft_po_number).toBeNull();
+      expect(next?.data[0].draft_po_id).toBeNull();
+    });
+
+    it('a DIFFERENT product\'s draft_po_number is left alone', () => {
+      const productOf = productOfFrom({ a: 'p1', c: 'p2' });
+      const old = decisionList(
+        [
+          serverDecision({ recommendation_id: 'a', draft_po_number: 'PO-2026/09-0001', draft_po_id: 'po-1' }),
+          serverDecision({ recommendation_id: 'c', draft_po_number: 'PO-2026/09-0002', draft_po_id: 'po-2' }),
+        ],
+        2,
+      );
+      const next = applyDecisionClears(old, ['a'], productOf);
+      const survivor = next?.data.find((d) => d.recommendation_id === 'c');
+      expect(survivor?.draft_po_number).toBe('PO-2026/09-0002');
+      expect(survivor?.draft_po_id).toBe('po-2');
+    });
+
+    it('a sibling with no draft_po_number to begin with is left untouched (no needless object churn)', () => {
+      const productOf = productOfFrom({ a: 'p1', b: 'p1' });
+      const old = decisionList(
+        [
+          serverDecision({ recommendation_id: 'a', draft_po_number: 'PO-2026/09-0001', draft_po_id: 'po-1' }),
+          serverDecision({ recommendation_id: 'b' }),
+        ],
+        1,
+      );
+      const next = applyDecisionClears(old, ['a'], productOf);
+      const survivor = next?.data.find((d) => d.recommendation_id === 'b');
+      expect(survivor).toBe(old.data[1]);
+    });
   });
 });

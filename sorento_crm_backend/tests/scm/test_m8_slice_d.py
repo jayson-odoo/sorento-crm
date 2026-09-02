@@ -26,6 +26,7 @@ from tests.scm.conftest import requires_pg
 from tests.scm.test_m3_run import (
     _client,
     _link,
+    _mk_committed,
     _mk_demand,
     _mk_product,
     _mk_stock,
@@ -52,6 +53,10 @@ def test_scheduled_handler_runs_all_warehouses_market_off_full_budget(scm_app, m
     pid = _mk_product(db, "M8DP-ALL")
     _mk_stock(db, pid, wid, 8)            # low stock → triggers a buy
     _mk_demand(db, pid, wid, 11.0)        # demand·lead ≫ net
+    # G1 (`PLAN-scm-reorder-oi-feedback-1sep.md`): this test is SPECIFICALLY about the
+    # unscoped daily run (empty warehouse_codes), so G10's named-product bypass is not an
+    # option here - the SKU needs real committed demand to enter the run.
+    _mk_committed(db, pid, wid)
     _link(db, pid, _mk_supplier(db, "M8D All Supplier"))
     db.flush()
 
@@ -147,7 +152,10 @@ def test_today_returns_todays_completed_snapshot(scm_app):
     _link(db, pid, _mk_supplier(db, "M8D Today Supplier"))
     db.flush()
 
-    created = svc.create_run(db, ["M8DW-TODAY"], enqueue=False)  # warehouse default
+    # G1/G10: named-product bypass - this test proves the /today fallback, not the
+    # committed-demand universe.
+    created = svc.create_run(db, ["M8DW-TODAY"], product_codes=["M8DP-TODAY"],
+                             enqueue=False)  # warehouse default
     svc.run_reorder(created["run_id"], db=db)
 
     with TestClient(app) as c:

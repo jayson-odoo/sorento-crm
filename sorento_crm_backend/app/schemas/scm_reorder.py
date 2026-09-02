@@ -41,20 +41,28 @@ class ReorderRunAccepted(BaseModel):
     stage: str
 
 
+class ReplanReorderRunRequest(BaseModel):
+    """Re-plan a completed run (plan 5.1, G8): same shape as a manual Start Plan, since the
+    FE's header edit form always submits its full current state - unedited fields simply
+    carry the value the header was pre-filled with, which is what makes "only Plan until
+    changed" and "only scope changed" both read as "the same remaining scope"."""
+    warehouse_codes: List[str] = []
+    product_codes: List[str] = []
+    plan_horizon_date: Optional[date] = None
+
+
+class ReplanReorderRunAccepted(ReorderRunAccepted):
+    """The new run's accepted envelope, plus which run it supersedes - so the FE can
+    navigate straight to it exactly like Start Plan already does."""
+    supersedes_run_id: str
+
+
 class ReorderRunSummary(BaseModel):
     buy_count: int
     disposition_count: int
     exception_count: int
     total_cash_impact: float
     recommendation_count: int
-    #: How many order inquiry rows purchasing has not acknowledged yet
-    #: (`PLAN-scm-oi-handshake.md`, AC-H10) - the plan page's own chip.
-    #:
-    #: LIVE, not frozen into `run_log` with the counts above it: the plan counts
-    #: acknowledged rows only, so an awaiting one is invisible on the very screen that
-    #: decides what to buy, and a number that still claimed six after the buyer had
-    #: cleared them would send them looking for two that do not exist.
-    awaiting_rows: int = 0
 
 
 class ReorderRunStatusResponse(BaseModel):
@@ -77,6 +85,18 @@ class ReorderRunStatusResponse(BaseModel):
     # response is the only thing that page reads, so without it the header can state the
     # date or a fabricated time and nothing else.
     started_at: Optional[str] = None
+    # --- Header tab scope (plan 5.1, AC-5.1) - the same facts the plans list already
+    # resolves per row, added here so the plan's OWN detail page can show + pre-fill them
+    # for a Re-plan edit without a second endpoint. ---
+    warehouse_codes: List[str] = []
+    is_all_warehouses: bool = False
+    # None = every product (the run stored no scope); a list, INCLUDING empty, is a real
+    # narrowing - the same "None vs []" reading `_resolve_product_ids` already uses.
+    product_codes: Optional[List[str]] = None
+    # Re-plan supersede pointers (G8, AC-5.2/5.4). At most one of the two is ever set on a
+    # given run: a run that supersedes an older one is never itself superseded on arrival.
+    supersedes_run_id: Optional[str] = None
+    superseded_by_run_id: Optional[str] = None
 
 
 # --- run history (list) -----------------------------------------------------
@@ -120,6 +140,9 @@ class ReorderRunListItem(BaseModel):
     # one thing to decide and one thing to confirm.
     decided_product_count: Optional[int] = None
     confirmed_product_count: Optional[int] = None
+    # AC-5.4: the superseded run stays readable and labelled in the plans list. Set only
+    # once its replacement actually completed (never on a still-running or failed re-plan).
+    superseded_by_run_id: Optional[str] = None
 
 
 class ReorderRunListResponse(BaseModel):
@@ -228,6 +251,10 @@ class ReorderRecommendationRow(BaseModel):
     supplier: Optional[SupplierChoice] = None
     alternatives: List[SupplierChoice] = []
     is_exception: bool = False
+    # Re-plan (plan 5.1, G8): this row's product/location carried a decision on the run
+    # this one superseded, but the suggestion changed - flagged so the buyer decides
+    # again rather than assuming a carried figure. False on a run nobody re-planned.
+    needs_recheck: bool = False
     disposition_action: Optional[str] = None
     transfer_flag: Optional[str] = None
     # --- frozen derivation inputs (plain-language explanation popup) ---

@@ -652,11 +652,19 @@ class OrderInquiryWorklistService:
                     code="invalid_ack_filter",
                 )
             if ack == ACK_TO_CONFIRM:
-                # The page's own default (R3): awaiting AND changed, which is one question
-                # - "what has purchasing not answered yet" - asked of two stored states.
+                # The page's own former default (R3, retired by S1 - kept as a legal
+                # value for an old bookmark, never offered by the FE any more): awaiting
+                # AND changed, which is one question - "what has purchasing not answered
+                # yet" - asked of two stored states.
                 base = base.filter(
                     OrderInquiryRow.ack_state.in_(ACK_TO_CONFIRM_STATES)
                 )
+            elif ack == ACK_CHANGED:
+                # `changed_at IS NOT NULL`, not the literal `ack_state` (S3, review of
+                # PR #471): a settle auto-acknowledges the instant it stamps `changed_at`
+                # (G4), so a row is never LEFT reading `ack_state='changed'` the way one
+                # was before S1 - the Was/Now cell renders off the same column.
+                base = base.filter(OrderInquiryRow.changed_at.isnot(None))
             else:
                 base = base.filter(OrderInquiryRow.ack_state == ack)
         if query:
@@ -1226,6 +1234,17 @@ class OrderInquiryWorklistService:
         for state, count in rows:
             if state in counts:
                 counts[state] = int(count)
+        # `changed_at IS NOT NULL`, not the grouped `ack_state` above (S3, review of PR
+        # #471): a settle auto-acknowledges the instant it stamps `changed_at` (G4), so
+        # the group-by never finds a row still reading `ack_state='changed'` - the facet
+        # has to agree with the filter and the cell, both of which read this column.
+        counts[ACK_CHANGED] = int(
+            self._base(**filters)
+            .filter(OrderInquiryRow.changed_at.isnot(None))
+            .with_entities(func.count(OrderInquiryRow.id))
+            .scalar()
+            or 0
+        )
         # The default view's own count (R3), summed from the two states rather than
         # queried again: a second query could disagree with the chip beside it.
         counts[ACK_TO_CONFIRM] = sum(
