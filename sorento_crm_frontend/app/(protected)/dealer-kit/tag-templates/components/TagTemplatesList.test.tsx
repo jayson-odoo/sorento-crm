@@ -188,7 +188,7 @@ describe('TagTemplatesList - bulk delete (AC-S11-1, D26)', () => {
     await renderList();
 
     fireEvent.click(screen.getByLabelText('Select all rows on this page'));
-    fireEvent.click(screen.getByRole('button', { name: /^Delete$/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Delete$/i }));
 
     await waitFor(() => expect(createPendingAction).toHaveBeenCalledTimes(1));
     const body = parkedBody();
@@ -209,7 +209,7 @@ describe('TagTemplatesList - bulk delete (AC-S11-1, D26)', () => {
     await renderList();
 
     fireEvent.click(screen.getByLabelText('Select all rows on this page'));
-    fireEvent.click(screen.getByRole('button', { name: /^Delete$/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Delete$/i }));
 
     await waitFor(() => expect(createPendingAction).toHaveBeenCalledTimes(1));
     expect(screen.queryByRole('dialog')).toBeNull();
@@ -220,7 +220,7 @@ describe('TagTemplatesList - bulk delete (AC-S11-1, D26)', () => {
     await renderList();
 
     fireEvent.click(screen.getByLabelText('Select all rows on this page'));
-    fireEvent.click(screen.getByRole('button', { name: /^Delete$/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Delete$/i }));
 
     await waitFor(() => expect(raisedToasts).toHaveLength(1));
     expect(raisedToasts[0]).toEqual({ verb: 'Deleting', subject: '2 templates' });
@@ -230,7 +230,7 @@ describe('TagTemplatesList - bulk delete (AC-S11-1, D26)', () => {
     await renderList();
 
     fireEvent.click(screen.getByLabelText('Select all rows on this page'));
-    fireEvent.click(screen.getByRole('button', { name: /^Delete$/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Delete$/i }));
 
     await waitFor(() =>
       expect(pendingEntityStore.getKeys().has(pendingEntityKey('tag_template', 'tmpl-1'))).toBe(
@@ -250,7 +250,7 @@ describe('TagTemplatesList - bulk delete (AC-S11-1, D26)', () => {
     await renderList();
 
     fireEvent.click(screen.getByLabelText('Select all rows on this page'));
-    fireEvent.click(screen.getByRole('button', { name: /^Delete$/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Delete$/i }));
     await waitFor(() =>
       expect(pendingEntityStore.getKeys().has(pendingEntityKey('tag_template', 'tmpl-1'))).toBe(
         true,
@@ -270,7 +270,7 @@ describe('TagTemplatesList - bulk delete (AC-S11-1, D26)', () => {
     await renderList();
 
     fireEvent.click(rows().getAllByRole('checkbox')[0]);
-    fireEvent.click(screen.getByRole('button', { name: /^Delete$/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Delete$/i }));
 
     await waitFor(() => expect(raisedToasts).toHaveLength(1));
     expect(raisedToasts[0].subject).toBe('1 template');
