@@ -8,6 +8,7 @@ import { Dialog as DialogPrimitive } from 'radix-ui';
 import { AnimatePresence, motion } from 'motion/react';
 import { OVERLAY_CLASS, OVERLAY_CLASS_STATIC } from '@/components/ui/primitive-classes';
 import {
+  REDUCED_MOTION_TRANSITION,
   surfaceExitTransition,
   surfaceTransition,
   surfaceVariants,
@@ -111,13 +112,13 @@ function DialogContent({
     overlay?: boolean;
     /**
      * A keyboard-triggered surface never animates (DESIGN-LANGUAGE section 3,
-     * M2-01): `motion={false}` drops the scale entirely and makes the panel
-     * identical across initial/animate/exit, so it is simply THERE on the
-     * frame after the keydown and gone the frame Escape/selection fires - no
-     * spring to interrupt, no exit to wait out. The scrim still fades, just
-     * on a plain `--duration-fast` tween instead of the shared spring, since
-     * a scrim (not the thing the keyboard shortcut was for) reading as an
-     * abrupt on/off is more jarring than a panel that does.
+     * M2-01): `motion={false}` drops the scale entirely, so the panel is
+     * simply THERE on the frame after the keydown and gone the frame
+     * Escape/selection fires - no spring to interrupt, no exit to sit
+     * through. The scrim still fades, just on a plain `--duration-fast` tween
+     * instead of the shared spring, since a scrim (not the thing the keyboard
+     * shortcut was for) reading as an abrupt on/off is more jarring than a
+     * panel that does.
      */
     motion?: boolean;
   }) {
@@ -138,18 +139,31 @@ function DialogContent({
         exit: { ...base.exit, ...centerOffset },
       }
     : {
-        // Identical initial/animate/exit: nothing for the spring to
-        // interpolate, so the panel is simply there, then simply gone.
+        // No scale and no entry fade: the panel is simply THERE on the frame
+        // after the keydown. The exit is a real `opacity: 0` on a
+        // zero-duration transition (below), NOT a copy of `animate`: exit ===
+        // animate gives AnimatePresence nothing to run, and since the scrim
+        // beside it still fades for 150ms, the fragment stays mounted for that
+        // whole window with the panel at full opacity - then pops. The tester
+        // measured exactly that (evidence/M2/README.md, M2-01 Escape:
+        // content alive ~150-185ms at opacity 1). Zero duration removes the
+        // panel on the closing frame while the scrim fades out behind it.
         initial: { opacity: 1, ...centerOffset },
         animate: { opacity: 1, ...centerOffset },
-        exit: { opacity: 1, ...centerOffset },
+        exit: { opacity: 0, ...centerOffset },
       };
   const transition = motionEnabled ? surfaceTransition(prefersReducedMotion) : { duration: 0 };
   const exitTransition = motionEnabled ? surfaceExitTransition(prefersReducedMotion) : { duration: 0 };
   // 0.15s = `--duration-fast` (css/config.reui.css). The scrim is not what a
   // keyboard shortcut is asking to see, so it keeps a quick tween rather than
-  // going fully static like the content it sits behind.
-  const overlayTransition = motionEnabled ? transition : { duration: 0.15 };
+  // going fully static like the content it sits behind - except for a reader
+  // who asked for less motion, who gets the same same-frame change every other
+  // surface collapses to.
+  const overlayTransition = motionEnabled
+    ? transition
+    : prefersReducedMotion
+      ? REDUCED_MOTION_TRANSITION
+      : { duration: 0.15 };
   const needsFallbackTitle = !hasDialogTitleInChildren(children);
   // Track the moment the actual Content DOM node attaches (i.e. the moment
   // the dialog truly opens). We can't use mount of this React component
