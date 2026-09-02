@@ -455,6 +455,92 @@ describe('M1 motion perimeter hygiene', () => {
     return src.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '));
   }
 
+  /**
+   * Every string literal in a source file, with the line its opening quote sits on.
+   *
+   * A class string is the only place a bare `transition` can be a Tailwind
+   * utility, so the M1-02 scan below needs literals, not lines. One pass over the
+   * characters rather than a per-line regex, because the two shapes that matter
+   * most both defeat a per-line one: a template literal opened by
+   * `` className={`... transition ${ `` closes on a LATER line (five of the
+   * offenders this guard exists for are exactly that), and a `//` comment can
+   * carry an apostrophe that would otherwise read as an opening quote.
+   *
+   * `${...}` interpolations are blanked (brace-balanced) so an expression inside
+   * one cannot donate tokens to the literal that holds it.
+   */
+  function stringLiterals(src: string): { text: string; line: number }[] {
+    const out: { text: string; line: number }[] = [];
+    let line = 1;
+    let i = 0;
+    while (i < src.length) {
+      const ch = src[i];
+      if (ch === '\n') {
+        line += 1;
+        i += 1;
+      } else if (ch === '/' && src[i + 1] === '/') {
+        while (i < src.length && src[i] !== '\n') i += 1;
+      } else if (ch === '/' && src[i + 1] === '*') {
+        i += 2;
+        while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) {
+          if (src[i] === '\n') line += 1;
+          i += 1;
+        }
+        i += 2;
+      } else if (ch === "'" || ch === '"' || ch === '`') {
+        const quote = ch;
+        const startLine = line;
+        let text = '';
+        i += 1;
+        while (i < src.length && src[i] !== quote) {
+          if (src[i] === '\\') {
+            i += 2;
+            text += ' ';
+          } else if (src[i] === '\n') {
+            line += 1;
+            text += '\n';
+            i += 1;
+          } else if (quote === '`' && src[i] === '$' && src[i + 1] === '{') {
+            const interpolationLine = line;
+            i += 1; // the `{` itself, so the brace count below starts at 1
+            const from = i + 1;
+            let depth = 0;
+            do {
+              if (src[i] === '{') depth += 1;
+              else if (src[i] === '}') depth -= 1;
+              else if (src[i] === '\n') line += 1;
+              i += 1;
+            } while (i < src.length && depth > 0);
+            // The expression is scanned in its own right: a class string can hide
+            // one level down, as `${interactive ? 'hover:bg-muted/70 transition' : ''}`.
+            for (const nested of stringLiterals(src.slice(from, i - 1))) {
+              out.push({ text: nested.text, line: interpolationLine + nested.line - 1 });
+            }
+            text += ' ';
+          } else {
+            text += src[i];
+            i += 1;
+          }
+        }
+        i += 1;
+        out.push({ text, line: startLine });
+      } else {
+        i += 1;
+      }
+    }
+    return out;
+  }
+
+  /**
+   * A whitespace-run token that looks like a Tailwind utility: lower-case head,
+   * then at least one of `-` `:` `/` `[` (`w-full`, `hover:bg-muted/70`,
+   * `-translate-y-1/2`, `text-2xs`, `active:scale-[0.97]`). Deliberately shallow -
+   * it only has to tell a class string apart from a sentence, and every sentence
+   * in this tree that contains the word "transition" ("Failed to create the
+   * transition", "Who can use this transition") carries no token of this shape.
+   */
+  const UTILITY_TOKEN = /^-?[a-z][a-z0-9.]*(?:[-:/[][^\s]*)+$/;
+
   describe('M1-02 no transition-all, no bare `transition` shorthand', () => {
     it('leaves zero transition-all sites (audit baseline: 12)', () => {
       const offenders: string[] = [];
@@ -471,17 +557,27 @@ describe('M1 motion perimeter hygiene', () => {
 
     it('leaves zero bare `transition` (multi-property shorthand) utility classes', () => {
       // A bare `transition` is only a Tailwind utility, not the English word (a
-      // "status transition", a destructured `transition` value from useSortable /
-      // motion), when the same line also names one of its own steps - `duration-`
-      // or `ease-`. Every real class-string site pairs the two; nothing else does.
+      // "status transition", a destructured `transition` from useSortable /
+      // lib/motion, a "Delete transition" aria-label), when it stands as its own
+      // token INSIDE A STRING LITERAL that also carries another Tailwind utility.
+      //
+      // The first cut of this guard gated on the same LINE also naming
+      // `duration-` or `ease-`, on the theory that every real class string pairs
+      // the two. It does not: a bare `transition` is exactly the site that
+      // inherits both from the theme and names neither, so that matcher fired on
+      // 0 lines while 19 bare `transition` utilities survived in `app/**`.
       const offenders: string[] = [];
       for (const file of files) {
-        const src = stripBlockComments(read(file));
-        src.split('\n').forEach((line, i) => {
-          const isBareTransitionToken = /(^|[\s'"`])transition($|[\s'"`])/.test(line);
-          const namesItsOwnStep = /\bduration-|\bease-/.test(line);
-          if (isBareTransitionToken && namesItsOwnStep) offenders.push(`${file}:${i + 1}`);
-        });
+        for (const literal of stringLiterals(read(file))) {
+          const tokens = literal.text.split(/\s+/).filter(Boolean);
+          if (!tokens.includes('transition')) continue;
+          if (!tokens.some((t) => t !== 'transition' && UTILITY_TOKEN.test(t))) continue;
+          // A template literal can open on one line and carry the offending token
+          // on another, so report the token's line, not the quote's.
+          const at = literal.text.search(/(^|\s)transition(\s|$)/);
+          const ahead = literal.text.slice(0, Math.max(at, 0)).split('\n').length - 1;
+          offenders.push(`${file}:${literal.line + ahead}`);
+        }
       }
       expect(offenders).toEqual([]);
     });
