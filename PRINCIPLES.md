@@ -184,10 +184,11 @@ the same axis as the module decision - not a separate schema axis.
   window is 10s for hard delete / 5s for everything reversible (both configurable in System
   Settings > General), the server commits when it lapses even if the tab is closed, and Escape
   does not cancel it. Never `confirm()`; `ConfirmDeleteDialog` is retired - a new importer of it,
-  or a new destructive `AlertDialog`, is a defect to fix, not a style choice. Bulk-delete (a
-  multi-row selection, not one record) is the one case that stays a dialog: a grace-window
-  countdown names ONE record, and a selection has none. Backend `DELETE` is hard; a soft-delete
-  endpoint is **Archive**, never named "delete".
+  or a new destructive `AlertDialog`, is a defect to fix, not a style choice. **A multi-row batch
+  is ONE deferred action too**, not a dialog: its countdown names the COUNT ("Deleting 12
+  templates in 8s") and every selected row dims until it commits, so the reader can see which
+  records the count stands for (captain ruling 2 Sep, D26 - pending user ratification). Backend
+  `DELETE` is hard; a soft-delete endpoint is **Archive**, never named "delete".
 - **View and Edit are the SAME layout.** Same tabs in the same order, same fields in the same order
   within each tab; editing swaps a read-only value for an input **in place**. Nothing moves,
   appears or disappears between the two views. The read view is what teaches the user where things
@@ -235,9 +236,8 @@ the same axis as the module decision - not a separate schema axis.
 Raw SQL / DB query in a router · a React component calling axios/fetch directly · duplicated
 `extractApiError`/`buildDataGridParams`/user-select · a delete or destructive/detach action wired
 to a confirmation dialog instead of the deferred-action grace window (D7), or to native `confirm()`
-- **except the deliberate carve-outs `ADR-PRODUCT-STANDARDS.md` section 2 names**: a bulk action
-on a multi-row selection (no single record for the countdown to name); token-scoped surfaces
-(`PeopleGrid`, the portal ticket-draft confirm) that run outside the authenticated session the
+- **except the deliberate carve-outs `ADR-PRODUCT-STANDARDS.md` section 2 names**: token-scoped
+surfaces (`PeopleGrid`, the portal ticket-draft confirm) that run outside the authenticated session the
 deferred-action route needs; `ReportViewsMenu` (a request-time grant, not a stored record); and
 the 22 `project-sales` files still on `ConfirmDeleteDialog`/a destructive `AlertDialog`, kept until
 `FormAction` can carry a record-level authorisation callback (see S6-10 in the Apple Alignment UAC

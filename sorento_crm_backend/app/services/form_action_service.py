@@ -38,15 +38,80 @@ _UNDO_REFUSAL_COPY = {
     "no_permission": "You do not have permission to undo actions on this form.",
     "action_pending": "Another action on this form is still pending. Let it apply or withdraw it first.",
 }
+from app.models.base import (
+    UNSET,
+    CompanyScope,
+    company_scope,
+    get_company_scope,
+)
 from app.services.error_handler import AppException, handle_conflict, handle_not_found
 from app.services.form_action_registry import action_for
 
 logger = logging.getLogger(__name__)
 
+#: Reserved payload key holding the company scope the REQUESTER had when the action
+#: was parked.
+#:
+#: A parked action is executed later, by whoever gets to it first: the scheduler sweep
+#: (``set_company_scope(db, None)`` - every company, because a tick has no principal)
+#: or a lazy commit inside SOMEBODY ELSE'S request. Either way the session running the
+#: handler is not the session that authorised it, so without this the handler ran with
+#: the sweeper's scope: a user of company A could park a delete naming a company-B
+#: record, and ten seconds later the sweep - which sees every company - would carry it
+#: out. The permission check at the click is a slug check; it never was a company check.
+#:
+#: So the scope travels WITH the action and the commit runs inside it. A row parked
+#: before this existed has no key, and a missing scope reads as ``UNSET`` (0 rows),
+#: never as ``None`` (all companies) - fail-closed, the same rule
+#: ``app/services/company_scope.py`` applies to a session that never resolved one.
+#:
+#: In the payload rather than in a column of its own: nothing renders the payload (see
+#: ``_serialize_pending`` in ``app/api/v1/system/pending_actions.py``, which never
+#: returns it), so a reserved key is invisible where a column would be a migration. The
+#: engine strips it before the handler sees the payload, so no handler can read it by
+#: accident either.
+_SCOPE_PAYLOAD_KEY = "__company_scope"
+
 
 def _utc_naive_now() -> datetime:
     """Naive UTC, matching every other tracking timestamp in this schema."""
     return datetime.utcnow()
+
+
+def _payload_with_scope(db: Session, payload: Optional[dict]) -> dict:
+    """The payload as stored on a PARKED row, carrying the requester's scope.
+
+    ``UNSET`` stores nothing: the key's absence already reads back as ``UNSET``, and
+    writing a sentinel for it would only give a second spelling of the same state.
+    """
+    stored = dict(payload or {})
+    scope = get_company_scope(db)
+    if scope is None:
+        # The deliberate system / all-companies principal. Recorded EXPLICITLY, so a
+        # commit can tell "this action was authorised across every company" from
+        # "nobody ever asked".
+        stored[_SCOPE_PAYLOAD_KEY] = None
+    elif isinstance(scope, frozenset):
+        stored[_SCOPE_PAYLOAD_KEY] = sorted(str(company_id) for company_id in scope)
+    return stored
+
+
+def _scope_from_payload(payload: Optional[dict]) -> CompanyScope:
+    """The scope a parked action must execute under. Missing => ``UNSET`` (0 rows)."""
+    stored = payload or {}
+    if _SCOPE_PAYLOAD_KEY not in stored:
+        return UNSET
+    value = stored[_SCOPE_PAYLOAD_KEY]
+    if value is None:
+        return None
+    return frozenset(str(company_id) for company_id in value)
+
+
+def _handler_payload(payload: Optional[dict]) -> dict:
+    """What the handler is given: the payload without the engine's reserved keys."""
+    handler = dict(payload or {})
+    handler.pop(_SCOPE_PAYLOAD_KEY, None)
+    return handler
 
 
 def _audit(
@@ -193,7 +258,10 @@ class FormActionService:
             source_entity_type=entity_type,
             source_entity_id=str(entity_id),
             event_name=action.resolve_event(payload),
-            payload_json=payload or {},
+            # A parked row carries the requester's company scope; an immediate one has
+            # no gap between the click and the work, so it needs nothing stored - it
+            # runs on the requester's own session (see `_execute`).
+            payload_json=_payload_with_scope(self.db, payload) if defers else (payload or {}),
             prior_state_json=prior_state,
             requested_by_id=actor_id,
             channel=channel,
@@ -396,14 +464,28 @@ class FormActionService:
         `already_claimed` (the deferred commit path) means the row is durable; the
         immediate path hands in a row that is NOT in the session yet, so the wrapped
         method's internal commits cannot persist it half-written.
+
+        It also decides WHOSE company scope the handler runs under. A deferred commit
+        happens on a session that never authorised anything - the scheduler sweep runs
+        every company (`set_company_scope(db, None)`), and a lazy commit runs inside
+        whichever request happened to poll - so the scope stored at park time is put
+        back for the length of the call, and an action parked before that was stored
+        runs UNSET, seeing nothing (see `_SCOPE_PAYLOAD_KEY`). The immediate path is
+        already ON the requester's session and simply re-asserts what is there.
         """
         # The stage this action is about to close, recorded before it runs - the undo
         # has no other way to find which tracker to reopen once it is resolved.
         prior_tracking_id = self._active_tracker_id(
             row.source_entity_type, row.source_entity_id
         )
+        scope = (
+            _scope_from_payload(row.payload_json)
+            if already_claimed
+            else get_company_scope(self.db)
+        )
         try:
-            result = action.execute(self.db, dict(row.payload_json or {}))
+            with company_scope(self.db, scope):
+                result = action.execute(self.db, _handler_payload(row.payload_json))
         except Exception as exc:
             self.db.rollback()
             # Never `str(exc)`: this string is shown to the user (see
