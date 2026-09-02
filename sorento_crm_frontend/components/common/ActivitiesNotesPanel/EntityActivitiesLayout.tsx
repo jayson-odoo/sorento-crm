@@ -1,13 +1,18 @@
 'use client';
 
 /**
- * Push-not-overlay layout primitive for the Activities & Notes panel.
+ * Overlay layout primitive for the Activities & Notes panel.
  *
- * Wrap a detail page's body in this; the panel slides in as a 420 px column
- * on `lg+` and pushes the main content left via a margin transition. On
- * smaller screens the panel takes the full width (the main content is
- * effectively hidden behind it). A floating red pulse-icon launcher sits
- * pinned to the bottom-right edge while the panel is closed.
+ * Wrap a detail page's body in this; the panel slides in as a fixed-position
+ * 420 px column on `lg+` (full-width on smaller screens) via its own
+ * `translate-x` - it OVERLAYS the content rather than pushing it (M3-03,
+ * `ui-motion-round2`): the main column never changes width, so a DataGrid or
+ * any other width-sensitive child does not re-lay-out when the panel opens.
+ * This used to push the content left via an animated `margin` on `lg+`; the
+ * push was dropped, not just the animation, because a layout-affecting
+ * property costs a reflow on every frame regardless of whether it is
+ * transitioned. A floating red pulse-icon launcher sits pinned to the
+ * bottom-right edge while the panel is closed.
  *
  * Usage:
  *   <EntityActivitiesLayout entityType="ticket" entityId={id}>
@@ -139,14 +144,11 @@ export default function EntityActivitiesLayout({
 
   return (
     <div className="relative flex w-full">
-      <main
-        className={cn(
-          'flex-1 min-w-0 transition-[margin] duration-200 ease-out',
-          open ? 'lg:mr-[420px]' : 'mr-0',
-        )}
-      >
-        {children}
-      </main>
+      {/* The panel is a fixed-position overlay (see `aside` below, `translate-x-full`
+          when closed) - the content column never resizes to make room for it
+          (M3-03): a DataGrid or any other width-sensitive child on this page reports
+          zero layout changes when the panel opens. */}
+      <main className="min-w-0 flex-1">{children}</main>
 
       {/* Floating launcher - pinned bottom-right while panel is closed. */}
       {!open && (
