@@ -24,6 +24,7 @@ export function BoardChangeTable({
   annotation,
   compact = false,
   omitDecision = false,
+  omitHeader = false,
 }: {
   annotation: BoardChangeAnnotation;
   /** Inside a board cell, where every character costs width. */
@@ -34,6 +35,12 @@ export function BoardChangeTable({
    * Decision row reading "Not decided" on both sides would be a fact about nothing.
    */
   omitDecision?: boolean;
+  /**
+   * Drop the item-code/SO-number line (review of PR #471: the Order Inquiries lightbox
+   * already states both in its `DialogTitle`/`DialogDescription`, so this table's own
+   * header would repeat them for no reason).
+   */
+  omitHeader?: boolean;
 }) {
   const text = compact ? 'text-[10px]' : 'text-xs';
   return (
@@ -44,16 +51,18 @@ export function BoardChangeTable({
         text,
       )}
     >
-      <div className="flex items-center justify-between gap-1">
-        {/* `lineNo` 0 means the caller has no line number to print - the order inquiry
-            list, whose row IS the line - so the item code stands in its place. */}
-        <span className="truncate font-medium text-amber-900" title={annotation.itemCode}>
-          {annotation.lineNo ? `Line ${annotation.lineNo}` : annotation.itemCode}
-        </span>
-        <span className="truncate text-amber-800" title={annotation.soNumber}>
-          {annotation.soNumber}
-        </span>
-      </div>
+      {omitHeader ? null : (
+        <div className="flex items-center justify-between gap-1">
+          {/* `lineNo` 0 means the caller has no line number to print - the order inquiry
+              list, whose row IS the line - so the item code stands in its place. */}
+          <span className="truncate font-medium text-amber-900" title={annotation.itemCode}>
+            {annotation.lineNo ? `Line ${annotation.lineNo}` : annotation.itemCode}
+          </span>
+          <span className="truncate text-amber-800" title={annotation.soNumber}>
+            {annotation.soNumber}
+          </span>
+        </div>
+      )}
       <ScrollArea>
         <table className="w-full table-fixed">
           <thead>

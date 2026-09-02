@@ -109,20 +109,16 @@ def test_down_revision_is_the_main_head_at_branch_time():
     assert module.down_revision == "452_transfer_days"
 
 
-def test_453_is_the_single_head_of_the_whole_graph():
-    """453 does not have to BE the head - a later migration is free to chain on
-    top of it - but the graph must still resolve to exactly one head, and 453
-    must sit on the path to it (never orphaned onto a second branch)."""
-    script = _script_directory()
-    heads = script.get_heads()
-    assert len(heads) == 1, f"the graph must resolve to exactly one head; found {heads}"
-
-    revision_id = heads[0]
-    while revision_id is not None and revision_id != REVISION_ID:
-        revision_id = script.get_revision(revision_id).down_revision
-    assert revision_id == REVISION_ID, (
-        f"453 must be an ancestor of the single head {heads[0]}"
-    )
+def test_the_migration_graph_still_reports_a_single_head():
+    """Not pinned to 453 by id (review of PR #471): 454 landed on top of it in the
+    same review round, exactly the kind of one-more-migration event this test has to
+    survive without editing - `test_alembic_revision_ids.py::test_migration_graph_has_a_
+    single_head` already asserts the graph-wide invariant this way, and per-migration
+    files that pinned a specific id (`test_migration_359_...`, `test_migration_367_...`)
+    used `len(heads) == 1` for the same reason. A second head is a merge nobody asked
+    for; it is not about WHICH revision happens to be newest today."""
+    heads = _script_directory().get_heads()
+    assert len(heads) == 1, f"expected a single head, found {heads}"
 
 
 # --------------------------------------------------------------------------- #

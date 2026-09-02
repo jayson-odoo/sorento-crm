@@ -172,7 +172,11 @@ def test_explain_net_empty_when_no_open_sos(scm_app):
     _mk_demand(db, pid, wid, 10.0)
     _link(db, pid, _mk_supplier(db, "M8 Supplier NoSO"))
     db.flush()
-    created = svc.create_run(db, ["M8W-NOSO"], "warehouse", enqueue=False)
+    # G1/G10 (`PLAN-scm-reorder-oi-feedback-1sep.md`): the daily run plans committed
+    # demand only, and this fixture is deliberately zero-committed (that's the point of
+    # "no open SOs"), so it needs G10's named-product bypass to enter the run at all.
+    created = svc.create_run(db, ["M8W-NOSO"], "warehouse", product_codes=["M8P-NOSO"],
+                             enqueue=False)
     svc.run_reorder(created["run_id"], db=db)
     rec_id = db.execute(text(
         "SELECT id FROM scm.reorder_recommendation WHERE run_id = :r AND rec_type = 'buy'"

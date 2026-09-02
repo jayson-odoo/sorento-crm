@@ -10,14 +10,19 @@ read by every value display alongside `readableValue`/`readableEntry` (D, E).
 One column rather than a table: it is one small dict per key, read every time the
 row itself is read, with no lifecycle of its own.
 
-Revision ID: 454_spec_registry_value_labels
-Revises: 453_shared_brand_attach
+Rechained on merge (2 Sep 2026): this slice and `454_order_inquiry_born_ack` both
+branched off `453_shared_brand_attach` in parallel PRs. Renumbered 454 -> 455 and
+`down_revision` moved onto `454_order_inquiry_born_ack` to keep a single head; no
+merge migration needed since neither touches the other's objects.
+
+Revision ID: 455_spec_registry_value_labels
+Revises: 454_order_inquiry_born_ack
 """
 from alembic import op
 import sqlalchemy as sa
 
-revision = "454_spec_registry_value_labels"
-down_revision = "453_shared_brand_attach"
+revision = "455_spec_registry_value_labels"
+down_revision = "454_order_inquiry_born_ack"
 branch_labels = None
 depends_on = None
 

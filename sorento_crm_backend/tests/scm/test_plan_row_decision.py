@@ -54,9 +54,15 @@ def _mk_stock(db, pid, wid, qty):
     db.flush()
 
 
-def _run_buys(db, wid_code) -> str:
+def _run_buys(db, wid_code, product_codes=None) -> str:
     set_plan_grain(db, "location")
-    created = run_svc.create_run(db, [wid_code], "warehouse", enqueue=False)
+    # G1/G10 (`PLAN-scm-reorder-oi-feedback-1sep.md`): the daily run plans committed
+    # demand only; `product_codes` names the SKU (G10), which is what every caller here
+    # wants - these fixtures build a plain stock-shortage buy off `demand_stat`, not a
+    # committed order, and the run's committed-demand universe belongs to
+    # `test_reorder_run_product_scope.py` and the S2 goldens.
+    created = run_svc.create_run(db, [wid_code], "warehouse",
+                                 product_codes=product_codes, enqueue=False)
     assert run_svc.run_reorder(created["run_id"], db=db)["status"] == "completed"
     return created["run_id"]
 
@@ -68,7 +74,7 @@ def _buy_rec(db, wid_code, product_code):
     _mk_demand(db, pid, wid, 10.0)
     _link(db, pid, _mk_supplier(db, f"S16 Supplier {product_code}"), cost=60)
     db.flush()
-    run_id = _run_buys(db, wid_code)
+    run_id = _run_buys(db, wid_code, product_codes=[product_code])
     rec = db.execute(text(
         "SELECT id::text AS id FROM scm.reorder_recommendation "
         "WHERE run_id = :r AND product_id = :p AND rec_type = 'buy'"
@@ -286,7 +292,7 @@ def test_counter_counts_persisted_decisions(scm_app):
     _link(db, a, _mk_supplier(db, "S16 Count Supplier A"), cost=60)
     _link(db, b, _mk_supplier(db, "S16 Count Supplier B"), cost=70)
     db.flush()
-    run_id = _run_buys(db, wid_code)
+    run_id = _run_buys(db, wid_code, product_codes=["S16P-COUNT-A", "S16P-COUNT-B"])
     recs = db.execute(text(
         "SELECT id::text AS id FROM scm.reorder_recommendation "
         "WHERE run_id = :r AND rec_type = 'buy'"
