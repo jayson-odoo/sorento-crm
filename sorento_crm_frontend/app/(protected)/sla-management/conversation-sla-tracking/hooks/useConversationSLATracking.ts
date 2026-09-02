@@ -77,6 +77,7 @@ export const conversationSlaPagerQuery = {
 
 export function useConversationSLATracking(params: ConversationSLATrackingListParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: conversationSlaListQueryKey(params),
     queryFn: () => getConversationSLATracking(params),
     staleTime: Infinity,
