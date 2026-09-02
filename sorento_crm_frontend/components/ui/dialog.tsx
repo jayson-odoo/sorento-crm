@@ -7,7 +7,13 @@ import { X } from 'lucide-react';
 import { Dialog as DialogPrimitive } from 'radix-ui';
 import { AnimatePresence, motion } from 'motion/react';
 import { OVERLAY_CLASS, OVERLAY_CLASS_STATIC } from '@/components/ui/primitive-classes';
-import { surfaceTransition, surfaceVariants, useOpenState, useReducedMotion } from '@/lib/motion';
+import {
+  surfaceExitTransition,
+  surfaceTransition,
+  surfaceVariants,
+  useOpenState,
+  useReducedMotion,
+} from '@/lib/motion';
 
 const dialogContentVariants = cva(
   // `overflow-y-auto` + a bounded `max-h` make EVERY modal scrollable - without
@@ -119,6 +125,7 @@ function DialogContent({
     exit: { ...base.exit, ...centerOffset },
   };
   const transition = surfaceTransition(prefersReducedMotion);
+  const exitTransition = surfaceExitTransition(prefersReducedMotion);
   const needsFallbackTitle = !hasDialogTitleInChildren(children);
   // Track the moment the actual Content DOM node attaches (i.e. the moment
   // the dialog truly opens). We can't use mount of this React component
@@ -237,7 +244,7 @@ function DialogContent({
                 className={OVERLAY_CLASS_STATIC}
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
+                exit={{ opacity: 0, transition: exitTransition }}
                 transition={transition}
               />
             </DialogPrimitive.Overlay>
@@ -257,7 +264,7 @@ function DialogContent({
               className={cn(dialogContentVariants({ variant }), className)}
               initial={variants.initial}
               animate={variants.animate}
-              exit={variants.exit}
+              exit={{ ...variants.exit, transition: exitTransition }}
               transition={transition}
             >
               {needsFallbackTitle ? (

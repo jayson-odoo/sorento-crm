@@ -8,7 +8,15 @@
  * primitive inventing its own reduced-motion escape hatch.
  */
 import { describe, expect, it } from 'vitest';
-import { REDUCED_MOTION_TRANSITION, SURFACE_SPRING, surfaceTransition, surfaceVariants } from './motion';
+import {
+  MENU_SPRING,
+  REDUCED_MOTION_TRANSITION,
+  SURFACE_SPRING,
+  SURFACE_SPRING_EXIT,
+  surfaceExitTransition,
+  surfaceTransition,
+  surfaceVariants,
+} from './motion';
 
 describe('Shared surface spring collapses under reduced motion (S8-01)', () => {
   it('uses the critically damped spring when motion is not reduced', () => {
@@ -36,5 +44,43 @@ describe('Shared surface spring collapses under reduced motion (S8-01)', () => {
     expect(variants.animate).toStrictEqual({ opacity: 1 });
     expect(variants.exit).toStrictEqual({ opacity: 0 });
     expect(variants.initial).not.toHaveProperty('scale');
+  });
+});
+
+/**
+ * M2-03 - the menu family (Popover, DropdownMenu, ContextMenu, HoverCard,
+ * Menubar) opens/closes faster than a lightbox (Dialog, Sheet, AlertDialog),
+ * and every surface closes on the same shorter response it opened on for a
+ * menu, or a shorter one than it opened on for a lightbox.
+ */
+describe('surfaceTransition(kind) picks the menu preset (M2-03)', () => {
+  it('defaults to the lightbox spring when no kind is passed', () => {
+    expect(surfaceTransition(false)).toBe(SURFACE_SPRING);
+  });
+
+  it('returns the lightbox spring for kind "lightbox"', () => {
+    expect(surfaceTransition(false, 'lightbox')).toBe(SURFACE_SPRING);
+  });
+
+  it('returns the menu spring for kind "menu"', () => {
+    expect(surfaceTransition(false, 'menu')).toBe(MENU_SPRING);
+    expect(MENU_SPRING).toMatchObject({ type: 'spring', bounce: 0, visualDuration: 0.2 });
+  });
+
+  it('collapses both kinds to the same reduced-motion transition', () => {
+    expect(surfaceTransition(true, 'lightbox')).toBe(REDUCED_MOTION_TRANSITION);
+    expect(surfaceTransition(true, 'menu')).toBe(REDUCED_MOTION_TRANSITION);
+  });
+});
+
+describe('surfaceExitTransition (M2-03)', () => {
+  it('returns the shorter exit spring when motion is not reduced', () => {
+    expect(surfaceExitTransition(false)).toBe(SURFACE_SPRING_EXIT);
+    expect(surfaceExitTransition(null)).toBe(SURFACE_SPRING_EXIT);
+    expect(SURFACE_SPRING_EXIT).toMatchObject({ type: 'spring', bounce: 0, visualDuration: 0.2 });
+  });
+
+  it('collapses to the reduced-motion transition', () => {
+    expect(surfaceExitTransition(true)).toBe(REDUCED_MOTION_TRANSITION);
   });
 });

@@ -7,7 +7,7 @@ import { X } from 'lucide-react';
 import { Dialog as SheetPrimitive } from 'radix-ui';
 import { AnimatePresence, motion } from 'motion/react';
 import { OVERLAY_CLASS_STATIC } from '@/components/ui/primitive-classes';
-import { surfaceTransition, useOpenState, useReducedMotion } from '@/lib/motion';
+import { surfaceExitTransition, surfaceTransition, useOpenState, useReducedMotion } from '@/lib/motion';
 
 // Mirrors the Root's open state so SheetContent can gate its own
 // <AnimatePresence> (S8-01) - see the identical DialogOpenContext in dialog.tsx.
@@ -118,6 +118,7 @@ function SheetContent({
   const prefersReducedMotion = useReducedMotion();
   const rtl = useIsRtl();
   const transition = surfaceTransition(prefersReducedMotion);
+  const exitTransition = surfaceExitTransition(prefersReducedMotion);
   const variants = slideVariants(prefersReducedMotion, side ?? 'right', rtl);
 
   return (
@@ -130,7 +131,7 @@ function SheetContent({
                 className={OVERLAY_CLASS_STATIC}
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
+                exit={{ opacity: 0, transition: exitTransition }}
                 transition={transition}
               />
             </SheetPrimitive.Overlay>
@@ -140,7 +141,7 @@ function SheetContent({
               className={cn(sheetVariants({ side }), className)}
               initial={variants.initial}
               animate={variants.animate}
-              exit={variants.exit}
+              exit={{ ...variants.exit, transition: exitTransition }}
               transition={transition}
             >
               {children}

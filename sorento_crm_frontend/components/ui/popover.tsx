@@ -4,7 +4,13 @@ import * as React from 'react';
 import { cn } from '@/lib/utils';
 import { Popover as PopoverPrimitive } from 'radix-ui';
 import { AnimatePresence, motion } from 'motion/react';
-import { surfaceTransition, surfaceVariants, useOpenState, useReducedMotion } from '@/lib/motion';
+import {
+  surfaceExitTransition,
+  surfaceTransition,
+  surfaceVariants,
+  useOpenState,
+  useReducedMotion,
+} from '@/lib/motion';
 
 // Mirrors the Root's open state so PopoverContent can gate its own
 // <AnimatePresence> (S8-01) - see the identical DialogOpenContext in dialog.tsx.
@@ -37,6 +43,9 @@ function PopoverContent({
 }: React.ComponentProps<typeof PopoverPrimitive.Content>) {
   const open = React.useContext(PopoverOpenContext);
   const prefersReducedMotion = useReducedMotion();
+  const variants = surfaceVariants(prefersReducedMotion);
+  const transition = surfaceTransition(prefersReducedMotion, 'menu');
+  const exitTransition = surfaceExitTransition(prefersReducedMotion);
 
   // `PopoverPrimitive.Content` positions itself with an inline `transform`
   // (Radix Popper/floating-ui) that a motion.div rendered `asChild` would
@@ -65,8 +74,10 @@ function PopoverContent({
               'w-72 rounded-md border border-border bg-popover p-4 text-popover-foreground shadow-md shadow-black/5 origin-(--radix-popover-content-transform-origin)',
               className,
             )}
-            {...surfaceVariants(prefersReducedMotion)}
-            transition={surfaceTransition(prefersReducedMotion)}
+            initial={variants.initial}
+            animate={variants.animate}
+            exit={{ ...variants.exit, transition: exitTransition }}
+            transition={transition}
           >
             {children}
           </motion.div>

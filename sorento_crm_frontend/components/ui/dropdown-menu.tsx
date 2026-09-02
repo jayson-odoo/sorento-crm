@@ -5,7 +5,13 @@ import { cn } from '@/lib/utils';
 import { Check, ChevronRight, Circle } from 'lucide-react';
 import { DropdownMenu as DropdownMenuPrimitive } from 'radix-ui';
 import { AnimatePresence, motion } from 'motion/react';
-import { surfaceTransition, surfaceVariants, useOpenState, useReducedMotion } from '@/lib/motion';
+import {
+  surfaceExitTransition,
+  surfaceTransition,
+  surfaceVariants,
+  useOpenState,
+  useReducedMotion,
+} from '@/lib/motion';
 
 // Mirrors the Root's open state so DropdownMenuContent can gate its own
 // <AnimatePresence> (S8-01) - see the identical DialogOpenContext in dialog.tsx.
@@ -85,6 +91,9 @@ function DropdownMenuContent({
 }: React.ComponentProps<typeof DropdownMenuPrimitive.Content>) {
   const open = React.useContext(DropdownMenuOpenContext);
   const prefersReducedMotion = useReducedMotion();
+  const variants = surfaceVariants(prefersReducedMotion);
+  const transition = surfaceTransition(prefersReducedMotion, 'menu');
+  const exitTransition = surfaceExitTransition(prefersReducedMotion);
 
   // Same split as PopoverContent: `Content` keeps Radix Popper's own inline
   // positioning transform untouched, and the spring animates an INNER div
@@ -111,8 +120,10 @@ function DropdownMenuContent({
                 'space-y-0.5 min-w-[8rem] overflow-hidden rounded-md border border-border bg-popover p-2 text-popover-foreground shadow-md shadow-black/5 origin-(--radix-dropdown-menu-content-transform-origin)',
                 className,
               )}
-              {...surfaceVariants(prefersReducedMotion)}
-              transition={surfaceTransition(prefersReducedMotion)}
+              initial={variants.initial}
+              animate={variants.animate}
+              exit={{ ...variants.exit, transition: exitTransition }}
+              transition={transition}
             >
               {children}
             </motion.div>
