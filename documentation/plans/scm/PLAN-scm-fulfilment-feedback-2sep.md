@@ -1,6 +1,6 @@
 # PLAN: Fulfilment planning feedback batch, 2 Sep (BRW first, per-line walk, saved decisions, upload speed)
 
-Status: IN PROGRESS - S1, S2 (#553 draft, review round 1), S5 (#546 ready, to be folded into #553); one final PR carries S1 to S5 (captain, 2 Sep) ("yessir, correct ... let's go"). S1 DONE; S2 Phase 1 + Phase 2 DONE (ladder v8 live on the lane, PR open, Phase 3 review outstanding); S3, S3b, S4, S5 outstanding.
+Status: IN PROGRESS - S1, S2 and S5 are all in PR #553 (draft; review round 2 fixes applied), which is the ONE final PR (captain, 2 Sep) ("yessir, correct ... let's go"). S1 DONE; S2 Phase 1 + Phase 2 DONE (ladder v8 live on the lane); S5 DONE (folded in from #546). S3, S3b and S4 outstanding on the same branch.
 Captain rulings: 2 Sep 2026 user test on SO419208 / SO419370 / SO418324 (screenshots on the session)
 Probe: `scratchpad/probe_brw_first.md` (read-only, worktree `.claude/worktrees/scm-brw-first`, branch `probe/scm-brw-first` off `origin/main cf255833d`)
 Lane: engine lane `.claude/worktrees/scm-fulfilment-2sep` branch `feat/scm-fulfilment-feedback-2sep` FE :3080 BE :8080 (S1, S2, then S3, S3b, S4); import lane `.claude/worktrees/scm-upload-2sep` branch `feat/scm-upload-speed-2sep` BE :8090, no FE server (S5). Both off origin/main. Own `.env` per lane (API_PORT, NEXTAUTH_URL, FASTAPI_INTERNAL_URL), venv symlinked to the primary checkout, node_modules cloned from it.
@@ -66,6 +66,12 @@ Verified facts this plan stands on:
   existing ladder whole or nothing (own locations, borrow on hand, borrow incoming, buy).
   R10/R33 stand for the remainder. The user still sees ONE contributing line whose
   Sourced-from cell lists both parts ("BRW 325 · Buy 325").
+  **The CONFIRM's carve-out is deliberately wider than the walk (captain, 2 Sep):** it
+  admits a Reserve at ANY site pool of the line's chain, inside that pool's own allowance
+  and inside the one five-pool net, beside a Buy - because S3 lets a planner add a pool
+  location to Reserve by hand (R-G) and a composition the product invites must confirm. The
+  ENGINE's own R-L step stays whole-or-nothing, so the walk never proposes another site's
+  part share beside a Buy.
 - R-D. **Five-pool net stays the bound.** The pool never lends beyond
   `max(pools_net, 0)`; the site pool's own free pile says WHERE, the net says HOW MUCH.
   A dealer order booked at DC1 with no DC1 stock is served from BRW, so BRW's own free is
