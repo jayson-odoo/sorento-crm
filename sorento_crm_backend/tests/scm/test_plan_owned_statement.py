@@ -44,6 +44,9 @@ from app.services.scm import supplier_code_alias_service as alias_svc
 from app.services.scm import supplier_inventory_service as stock_svc
 from tests._pg_fixture import pg_session
 
+#: `record_dict`'s "look this up yourself" sentinel.
+_UNSET_ = plan_svc._UNSET
+
 MARKER = "ZZPO"
 
 #: The captain's own file: ONE sheet, five stacked invoice blocks (header rows 8, 18, 29, 57,
@@ -752,6 +755,41 @@ def test_the_document_label_is_read_off_the_plans_own_rows():
             plan_svc.record_dict(db, many)["document_label"]
             == "Proforma invoice 2026-7-31 SORENTO · 3 blocks"
         )
+
+
+def test_the_label_reads_only_this_companys_rows():
+    """SF-6: `_plan_statements` is raw SQL over two company-scoped tables.
+
+    The ORM's isolation filter runs on ORM execution only, so a raw SELECT sees every
+    company's rows. Both statement tables carry `company_id`, and a plan named by another
+    company's snapshot would put that company's date on this company's record.
+    """
+    from app.models.base import set_company_scope
+    from app.models.company import Company
+
+    with pg_session() as db:
+        set_company_scope(db, None)
+        mine = Company(id=_uid(), code=f"{MARKER}A{uuid.uuid4().hex[:6]}".upper()[:20],
+                       name=f"{MARKER} company A")
+        theirs = Company(id=_uid(), code=f"{MARKER}B{uuid.uuid4().hex[:6]}".upper()[:20],
+                         name=f"{MARKER} company B")
+        db.add_all([mine, theirs])
+        db.flush()
+
+        w = World(db)
+        plan = w.plan("stock_list")
+        plan.company_id = str(mine.id)
+        row = w.stock_row("A", packed=1, plan_id=str(plan.id), as_of=date(2026, 8, 28))
+        # Stamped to the OTHER company - the only shape in which this leaks, and the one the
+        # predicate exists to answer.
+        row.company_id = str(theirs.id)
+        db.flush()
+
+        set_company_scope(db, frozenset({str(mine.id)}))
+        record = plan_svc.record_dict(db, plan, supplier_name="ignored", statement=_UNSET_)
+
+        assert record["statement_as_of"] is None
+        assert record["document_label"] == "Stock list"
 
 
 def test_the_label_is_never_re_looked_up_from_the_supplier():

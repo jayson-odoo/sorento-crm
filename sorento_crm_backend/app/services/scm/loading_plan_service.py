@@ -601,32 +601,40 @@ def _plan_statements(db: Session, plan_ids: list[str]) -> dict[str, dict]:
     """
     if not plan_ids:
         return {}
+    from app.services.company_scope_sql import company_sql_predicate
+
     out: dict[str, dict] = {}
+    # Both tables are company-scoped, and the ORM's isolation filter does not reach a raw
+    # SELECT (SF-6): unscoped, another company's snapshot would date this company's record.
+    stock_co, stock_params = company_sql_predicate(db, "company_id", param_prefix="lpsi")
+    invoice_co, invoice_params = company_sql_predicate(db, "company_id", param_prefix="lppi")
 
     for row in db.execute(
         text(
-            """
+            f"""
             SELECT loading_plan_id::text AS plan_id, max(as_of) AS as_of
               FROM scm.supplier_inventory
              WHERE loading_plan_id = ANY(CAST(:ids AS uuid[]))
+               AND {stock_co or 'true'}
              GROUP BY loading_plan_id
             """
         ),
-        {"ids": plan_ids},
+        {"ids": plan_ids, **stock_params},
     ).mappings():
         out[row["plan_id"]] = {"kind": "stock_list", "as_of": row["as_of"]}
 
     invoices = db.execute(
         text(
-            """
+            f"""
             SELECT loading_plan_id::text AS plan_id, id::text AS id,
                    revision_of_id::text AS revision_of_id, pi_number, source_ref,
                    invoice_date
               FROM scm.proforma_invoice
              WHERE loading_plan_id = ANY(CAST(:ids AS uuid[]))
+               AND {invoice_co or 'true'}
             """
         ),
-        {"ids": plan_ids},
+        {"ids": plan_ids, **invoice_params},
     ).mappings().all()
     by_plan: dict[str, list] = {}
     for row in invoices:
