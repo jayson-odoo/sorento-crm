@@ -1,6 +1,6 @@
 # PLAN: Fulfilment planning feedback batch, 2 Sep (BRW first, per-line walk, saved decisions, upload speed)
 
-Status: APPROVED 2 Sep 2026 ("yessir, correct ... let's go"). S1 DONE; S2 Phase 1 + Phase 2 DONE (ladder v8 live on the lane, PR open, Phase 3 review outstanding); S3, S3b, S4, S5 outstanding.
+Status: IN PROGRESS - S1, S2 (#553 draft, review round 1), S5 (#546 ready, to be folded into #553); one final PR carries S1 to S5 (captain, 2 Sep) ("yessir, correct ... let's go"). S1 DONE; S2 Phase 1 + Phase 2 DONE (ladder v8 live on the lane, PR open, Phase 3 review outstanding); S3, S3b, S4, S5 outstanding.
 Captain rulings: 2 Sep 2026 user test on SO419208 / SO419370 / SO418324 (screenshots on the session)
 Probe: `scratchpad/probe_brw_first.md` (read-only, worktree `.claude/worktrees/scm-brw-first`, branch `probe/scm-brw-first` off `origin/main cf255833d`)
 Lane: engine lane `.claude/worktrees/scm-fulfilment-2sep` branch `feat/scm-fulfilment-feedback-2sep` FE :3080 BE :8080 (S1, S2, then S3, S3b, S4); import lane `.claude/worktrees/scm-upload-2sep` branch `feat/scm-upload-speed-2sep` BE :8090, no FE server (S5). Both off origin/main. Own `.env` per lane (API_PORT, NEXTAUTH_URL, FASTAPI_INTERNAL_URL), venv symlinked to the primary checkout, node_modules cloned from it.
@@ -100,6 +100,14 @@ Verified facts this plan stands on:
   capped by the five-pool net (markup round 4); group sections keep Balance after. The pool
   summary row keeps Available (dealers) and gains Available for Project. The five-pool net
   must reach the Stock tab (today it lives only on the board's `BoardCellLocation.net`).
+
+- R-L. **Other site pools still supply the remainder (ruled 2 Sep, "B, the current
+  behaviour").** Step 0 asks the asking bin's own site pool. When own locations and both
+  borrows cannot cover the remainder whole, the OTHER site pools are asked, in the v7.1 draw
+  order (by on hand), each under the same allowance rule (its own Available minus the kept
+  share, all bounded by the one five-pool net), whole or nothing. A DC1-IB line of 300 with
+  DC1's pool empty, own group 110, and BRW sparing 400 reads "BRW 300", not "Buy 300".
+  The share ledger is keyed by (product, pool); the net ledger stays one pile.
 
 ## Slices
 
