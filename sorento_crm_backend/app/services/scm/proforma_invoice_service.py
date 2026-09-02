@@ -943,9 +943,13 @@ def apply(
         invoice.source_ref = source_ref
         invoice.block_index = doc.index
         invoice.uploaded_by = actor
-        # Only ever SET, never cleared: a standalone re-upload of a file that a plan is
-        # reading must not quietly unbind it from that plan.
-        if loading_plan_id:
+        # The plan that CREATED this document owns it, and only a new row or a revision was
+        # created here (SF-8). An in-place replace - the same file re-uploaded without
+        # ticking the revision - found an invoice some other plan is reading, and stamping
+        # that row would move the first plan's own statement onto this one, leaving the
+        # first plan reading nothing. Never cleared either, for the same reason: a
+        # standalone re-upload must not unbind a plan from what it was started with.
+        if loading_plan_id and not existed:
             invoice.loading_plan_id = loading_plan_id
         db.flush()
 

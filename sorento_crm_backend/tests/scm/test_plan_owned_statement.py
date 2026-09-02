@@ -454,6 +454,57 @@ def test_a_revision_written_into_a_plan_is_stamped_with_it():
         assert str(db.query(ProformaInvoice).get(prior).loading_plan_id) == str(first.id)
 
 
+def test_a_replace_in_place_leaves_the_invoice_with_the_plan_that_created_it():
+    """SF-8: only a NEW document, or a revision, belongs to the plan that uploaded it.
+
+    Re-uploading the same file into a second plan without ticking the revision finds the
+    existing invoice by `(supplier, pi_number)` and replaces its lines in place. Stamping
+    that row would move the FIRST plan's own statement onto the second one, and the first
+    plan would silently start reading nothing.
+    """
+    with pg_session() as db:
+        w = World(db)
+        first, second = w.plan("proforma"), w.plan("proforma")
+        data = _preloading_bytes()
+        pi_svc.apply(
+            db,
+            data,
+            supplier_id=str(w.supplier.id),
+            source_ref="preload.xlsx",
+            loading_plan_id=str(first.id),
+        )
+        mine = {
+            str(pi.id)
+            for pi in db.query(ProformaInvoice)
+            .filter(ProformaInvoice.loading_plan_id == str(first.id))
+            .all()
+        }
+        assert mine
+
+        # The same file again, revisions UNTICKED: an in-place replace, not a new document.
+        pi_svc.apply(
+            db,
+            data,
+            supplier_id=str(w.supplier.id),
+            source_ref="preload.xlsx",
+            loading_plan_id=str(second.id),
+        )
+
+        still_first = {
+            str(pi.id)
+            for pi in db.query(ProformaInvoice)
+            .filter(ProformaInvoice.loading_plan_id == str(first.id))
+            .all()
+        }
+        assert still_first == mine
+        assert (
+            db.query(ProformaInvoice)
+            .filter(ProformaInvoice.loading_plan_id == str(second.id))
+            .count()
+            == 0
+        )
+
+
 def test_a_proforma_apply_refuses_a_plan_belonging_to_another_supplier():
     """422 `invoice_supplier_mismatch`: stamping it would bind one supplier's invoices to
     another supplier's plan, and every read on that plan would then be wrong."""
