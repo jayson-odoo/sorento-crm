@@ -10,14 +10,15 @@ import {
   type PaginationState,
 } from '@tanstack/react-table';
 import { RefreshCw } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { readableValue } from '@/lib/spec-readable';
@@ -58,6 +59,11 @@ export function SeenInProductsTab({
   const canEdit = useHasPermission('master_data.spec_registry.edit');
   const { reread } = useSpecRegistryMutations();
   const [valueFilter, setValueFilter] = useState<string | undefined>();
+  // Class and Source have no query-string equivalent on `GET .../products` (only
+  // `value` and `q` do), so these two narrow the loaded PAGE rather than the whole
+  // filtered set - a known gap, not a round trip the backend does not support yet.
+  const [classFilter, setClassFilter] = useState<string | undefined>();
+  const [sourceFilter, setSourceFilter] = useState<string | undefined>();
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
     pageSize: PAGE_SIZE,
@@ -80,8 +86,18 @@ export function SeenInProductsTab({
     offset: pagination.pageIndex * pagination.pageSize,
   });
 
-  const products = data?.products ?? [];
   const total = data?.total ?? 0;
+
+  const filteredProducts = useMemo(
+    () =>
+      (data?.products ?? []).filter((product) => {
+        if (classFilter !== undefined && (product.class ?? '') !== classFilter) return false;
+        if (sourceFilter !== undefined && (product.source ?? '') !== sourceFilter) return false;
+        return true;
+      }),
+    [data, classFilter, sourceFilter],
+  );
+  const filteringPage = classFilter !== undefined || sourceFilter !== undefined;
 
   const productHref = (row: SpecKeyProduct) =>
     `/master-data-management/products/${row.id}?tab=specifications&back=${encodeURIComponent(pathname)}`;
@@ -169,7 +185,7 @@ export function SeenInProductsTab({
 
   const table = useReactTable({
     columns,
-    data: products,
+    data: filteredProducts,
     getRowId: (row) => row.id,
     pageCount: Math.max(1, Math.ceil(total / pagination.pageSize)),
     state: { pagination },
@@ -198,96 +214,73 @@ export function SeenInProductsTab({
     </div>
   );
 
-  const hasFacets =
-    !!data && (data.by_value.length > 0 || data.by_class.length > 0 || data.by_source.length > 0);
+  const filtersActiveCount =
+    (valueFilter !== undefined ? 1 : 0) +
+    (classFilter !== undefined ? 1 : 0) +
+    (sourceFilter !== undefined ? 1 : 0);
 
   return (
     <div className="flex flex-col gap-3">
-      {/* Always mounted (item 6): an empty facet strip still tells the reader
-          there is nothing to narrow by, rather than the section just vanishing. */}
-      <div className="flex flex-col gap-1.5 text-xs">
-        {!hasFacets && (
-          <span className="text-muted-foreground">No facets yet</span>
-        )}
-        {data && data.by_value.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="w-14 shrink-0 uppercase tracking-wide text-muted-foreground">
-              Values
-            </span>
-            {valueFilter && (
-              <Button
-                type="button"
-                variant="link"
-                size="sm"
-                onClick={() => setValueFilter(undefined)}
-              >
-                Show all
-              </Button>
-            )}
-            {data.by_value.slice(0, 30).map((row) => (
-              <Button
-                key={String(row.value)}
-                type="button"
-                variant="ghost"
-                size="sm"
-                aria-pressed={valueFilter === String(row.value)}
-                onClick={() => setValueFilter(String(row.value))}
-              >
-                <Badge
-                  variant={valueFilter === String(row.value) ? 'primary' : 'secondary'}
-                  size="sm"
-                  appearance="light"
-                >
-                  {readableValue(row.value, unit ?? undefined, valueLabels)} ·{' '}
-                  {row.count.toLocaleString()}
-                </Badge>
-              </Button>
-            ))}
-          </div>
-        )}
-        {data && data.by_class.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="w-14 shrink-0 uppercase tracking-wide text-muted-foreground">
-              Class
-            </span>
-            {data.by_class.slice(0, 30).map((row) => (
-              <Badge key={String(row.class)} variant="outline" size="sm" appearance="light">
-                {row.class ?? 'unclassed'} · {row.count.toLocaleString()}
-              </Badge>
-            ))}
-          </div>
-        )}
-        {data && data.by_source.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="w-14 shrink-0 uppercase tracking-wide text-muted-foreground">
-              Source
-            </span>
-            {data.by_source.slice(0, 30).map((row) => (
-              <Badge key={String(row.source)} variant="outline" size="sm" appearance="light">
-                {SOURCE_LABEL[String(row.source)] ?? row.source ?? 'unknown'} ·{' '}
-                {row.count.toLocaleString()}
-              </Badge>
-            ))}
-          </div>
-        )}
-      </div>
-
       <DataGrid
         table={table}
-        recordCount={total}
+        recordCount={filteringPage ? filteredProducts.length : total}
         isLoading={isLoading}
         rowHref={productHref}
         tableLayout={{ width: 'fixed', columnsResizable: true }}
         emptyMessage={total === 0 && !isLoading ? emptyState : undefined}
       >
         <Card>
-          <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3">
-            <ListSearchInput
-              className="w-full sm:w-72"
-              value={search}
-              onChange={setSearch}
-              isSettling={isSearchInFlight(isSettling, isFetching, query)}
-              placeholder={`Find a code or description in ${label}`}
+          <CardHeader className="block">
+            <DataGridListToolbar
+              table={table}
+              searchSlot={
+                <ListSearchInput
+                  className="w-full sm:w-72"
+                  value={search}
+                  onChange={setSearch}
+                  isSettling={isSearchInFlight(isSettling, isFetching, query)}
+                  placeholder={`Find a code or description in ${label}`}
+                />
+              }
+              filters={{
+                kind: 'custom',
+                active: filtersActiveCount > 0,
+                activeCount: filtersActiveCount,
+                content: (
+                  <div className="space-y-3">
+                    <SearchableSelect
+                      value={valueFilter ?? ''}
+                      onChange={(v) => setValueFilter(v || undefined)}
+                      clearable
+                      placeholder="Value"
+                      options={(data?.by_value ?? []).map((row) => ({
+                        value: String(row.value),
+                        label: `${readableValue(row.value, unit ?? undefined, valueLabels)} (${row.count.toLocaleString()})`,
+                      }))}
+                    />
+                    <SearchableSelect
+                      value={classFilter ?? ''}
+                      onChange={(v) => setClassFilter(v || undefined)}
+                      clearable
+                      placeholder="Class"
+                      options={(data?.by_class ?? []).map((row) => ({
+                        value: String(row.class ?? ''),
+                        label: `${row.class ?? 'unclassed'} (${row.count.toLocaleString()})`,
+                      }))}
+                    />
+                    <SearchableSelect
+                      value={sourceFilter ?? ''}
+                      onChange={(v) => setSourceFilter(v || undefined)}
+                      clearable
+                      placeholder="Source"
+                      options={(data?.by_source ?? []).map((row) => ({
+                        value: String(row.source ?? ''),
+                        label: `${SOURCE_LABEL[String(row.source)] ?? row.source ?? 'unknown'} (${row.count.toLocaleString()})`,
+                      }))}
+                    />
+                  </div>
+                ),
+              }}
             />
           </CardHeader>
           <CardTable>

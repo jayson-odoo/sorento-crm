@@ -1,11 +1,11 @@
 /**
- * AC-B.5, item 6 - Seen in products.
+ * AC-B.5, D17 - Seen in products.
  *
- * The Value column and the value facets read the same value_labels the record's
- * own Values and words tab does (readableValue), the facet strip is always mounted
- * (an empty one says "No facets yet" rather than vanishing), the facet pills are
- * the shared `Button`, and a row opens the product via `rowHref` (a real link
- * carrying `back=`) rather than a click handler with no href underneath it.
+ * The Value column and the Value filter option read the same value_labels the
+ * record's own Values and words tab does (readableValue). The facets are toolbar
+ * filters (Value/Class/Source `SearchableSelect`s, "{name} (count)"), not a pill
+ * strip. A row opens the product via `rowHref` (a real link carrying `back=`)
+ * rather than a click handler with no href underneath it.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -82,7 +82,17 @@ afterEach(() => {
   cleanup();
 });
 
-describe('SeenInProductsTab - value labels (item 6)', () => {
+// The three filter triggers carry no accessible name (role=combobox takes its
+// name from `aria-label`/`aria-labelledby` only, never content) - so tests reach
+// them by JSX order: Value, Class, Source (the same order the filter panel lists
+// them in).
+function openFilters() {
+  fireEvent.pointerDown(screen.getByRole('button', { name: /Filters/i }), { button: 0 });
+  const [valueCombobox, classCombobox, sourceCombobox] = screen.getAllByRole('combobox');
+  return { valueCombobox, classCombobox, sourceCombobox };
+}
+
+describe('SeenInProductsTab - value labels (D17)', () => {
   it('the Value column reads the label, not the slug', () => {
     renderTab({ valueLabels: { pp: 'PP' } });
 
@@ -90,32 +100,51 @@ describe('SeenInProductsTab - value labels (item 6)', () => {
     expect(screen.queryByText('pp')).not.toBeInTheDocument();
   });
 
-  it('the value facet pill reads the label too', () => {
+  it('the Value filter option reads the label too', () => {
     renderTab({ valueLabels: { pp: 'PP' } });
 
-    expect(screen.getByText('PP · 3')).toBeInTheDocument();
+    const { valueCombobox } = openFilters();
+    fireEvent.click(valueCombobox);
+
+    expect(screen.getByText('PP (3)')).toBeInTheDocument();
   });
 
   it('falls back to the automatic wording with no label', () => {
     renderTab();
 
-    expect(screen.getByText('Pp · 3')).toBeInTheDocument();
+    const { valueCombobox } = openFilters();
+    fireEvent.click(valueCombobox);
+
+    expect(screen.getByText('Pp (3)')).toBeInTheDocument();
   });
 });
 
-describe('SeenInProductsTab - facet strip (item 6)', () => {
-  it('shows "No facets yet" rather than disappearing when there are none', () => {
-    queryData = { ...queryData, by_value: [], by_class: [], by_source: [] };
+describe('SeenInProductsTab - toolbar filters, not a pill strip (D17)', () => {
+  it('offers Value, Class and Source as clearable filter selects', () => {
+    queryData = {
+      ...queryData,
+      by_class: [{ class: 'Sinks', count: 2 }],
+      by_source: [{ source: 'derived', count: 3 }],
+    };
     renderTab();
 
-    expect(screen.getByText('No facets yet')).toBeInTheDocument();
+    const { valueCombobox, classCombobox, sourceCombobox } = openFilters();
+    expect(valueCombobox).toBeInTheDocument();
+    expect(classCombobox).toBeInTheDocument();
+    expect(sourceCombobox).toBeInTheDocument();
+
+    fireEvent.click(classCombobox);
+    expect(screen.getByText('Sinks (2)')).toBeInTheDocument();
   });
 
-  it('the value pill is a real button, pressed when it is the active filter', () => {
+  it('choosing a Value option selects it on the combobox', () => {
     renderTab();
 
-    const pill = screen.getByRole('button', { name: /Pp · 3/ });
-    expect(pill).toHaveAttribute('aria-pressed', 'false');
+    const { valueCombobox } = openFilters();
+    fireEvent.click(valueCombobox);
+    fireEvent.click(screen.getByText('Pp (3)'));
+
+    expect(screen.getByText('Pp (3)', { selector: '[data-slot="searchable-select-trigger"] span' })).toBeInTheDocument();
   });
 });
 
