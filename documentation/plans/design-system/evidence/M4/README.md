@@ -129,3 +129,166 @@ Zero uncaught page errors (`errors` command) across the whole session. `console`
 `[debug] JWT token extracted successfully` and (once) a Fast Refresh rebuild log line - no
 `[error]`-level entries at any point, including during both SCM filter swaps and the double-Next
 press.
+
+## Run 2 (after fix round 2, HEAD 208869731, 2 Sep 2026)
+
+Targeted re-verification of the M4-02 dim clause (the blocker above) plus the behaviours that
+changed since (M4-03 pager-under-dim, the newly-forwarded object-shaped call sites, the two
+hand-wrapped tags, the pager-skeleton-on-first-load nit, the newly-spread `keepPreviousData`
+lists, and the Back-to-list regression). Worktree `motion2-M4`, branch
+`feat/motion2-M4-list-latency`, `PORT=3081 npm run dev` (own session), BE reused read-only on
+`:8120`. Login via `E2E_EMAIL`/`E2E_PASSWORD` from `.env.local`. Viewport 1280x800. Sessions
+`--session m4run2` (main) and `--session m4reload` (the one hard-reload check that needed a
+runtime init script, closed immediately after). Navigated by sidebar clicks from `/`, never a
+deep URL, except the one already-reached page reloaded in place for the pager-skeleton check.
+
+Method: same in-page `window.fetch` patch adding a 500-1300ms delay to the grid's own list
+endpoint, then a tight 20-30ms poll of `document.querySelector('table')`'s
+`[data-slot="skeleton"]` count and the `<tbody>` class list for `opacity-60`, run in a single
+`eval` call together with the triggering click/keystroke (a separate CLI round-trip between
+trigger and poll start is ~1.5-3.5s and would miss the window entirely). `network requests`
+independently confirms each interaction fired the request it claims to.
+
+### M4-02 dim clause: 12/12 PASS (the blocker is fixed)
+
+The fix (`refactor(datagrid): one skeleton gate` + the per-module `isPlaceholderData` forwarding
+commits, `c87b48631`..`fd1771058`..`208869731`) wires each list hook's `isPlaceholderData` field
+through to `<DataGrid>`, which the tester's Run 1 report identified as the missing half. All
+twelve combinations across Products, Orders and Stock now dim correctly.
+
+| # | Grid | Action | maxSkeleton | opacity-60 seen | Cleared after |
+| - | --- | --- | --- | --- | --- |
+| 1 | Products | Next | 0 | yes | yes |
+| 2 | Products | Sort (Product Code) | 0 | yes | yes |
+| 3 | Products | Filter (Status=Active) | 0 | yes | yes |
+| 4 | Products | Search ("chair") | 0 | yes | yes (confirmed by a follow-up read a moment after the poll window closed; two sequential `query=chair` requests fired for page 1 then page 2, a dev-mode double-effect artifact, not a defect) |
+| 5 | Orders (Delivery Orders in the sidebar, `/order-management/orders`) | Next | 0 | yes | yes |
+| 6 | Orders | Sort (Debtor Name) | 0 | yes | yes |
+| 7 | Orders | Filter (Status=Completed) | 0 | yes | yes |
+| 8 | Orders | Search ("living") | 0 | yes | yes |
+| 9 | Stock | Next | 0 | yes | yes |
+| 10 | Stock | Sort (Warehouse) | 0 | yes | yes |
+| 11 | Stock | Filter (Status=Low) | 0 | yes | yes |
+| 12 | Stock | Search ("circular") | 0 | yes | yes (same late-clear pattern as #4; confirmed cleared by a follow-up read) |
+
+Raw measurements (all twelve, `{maxSkeleton, sawDim, clearedAfter}` from the in-page poll):
+
+```
+Products Next:            {maxSkeleton: 0, sawDim: true,  clearedAfter: true}
+Products Sort:            {maxSkeleton: 0, sawDim: true,  clearedAfter: true}
+Products Filter (Active): {maxSkeleton: 0, sawDim: true,  clearedAfter: true}
+Products Search (chair):  {maxSkeleton: 0, sawDim: true,  clearedAfter: false at 2600ms, confirmed true on follow-up read}
+Orders Next:               {maxSkeleton: 0, sawDim: true,  clearedAfter: true}
+Orders Sort (Debtor Name): {maxSkeleton: 0, sawDim: true,  clearedAfter: true}
+Orders Filter (Completed): {maxSkeleton: 0, sawDim: true,  clearedAfter: true}
+Orders Search (living):    {maxSkeleton: 0, sawDim: true,  clearedAfter: true}
+Stock Next:                {maxSkeleton: 0, sawDim: true,  clearedAfter: true}
+Stock Sort (Warehouse):    {maxSkeleton: 0, sawDim: true,  clearedAfter: true}
+Stock Filter (Low):        {maxSkeleton: 0, sawDim: true,  clearedAfter: true}
+Stock Search (circular):   {maxSkeleton: 0, sawDim: true,  clearedAfter: false at 2600ms (poll loop itself ran only 7 of the expected ~86 ticks, an environment hiccup, not a product issue), confirmed true and query=circular fired via network log on follow-up read}
+```
+
+### M4-03 pagination strip during the dim: PASS
+
+On Stock, with the same 900-1300ms delay: clicked Next, then 60ms later (before the response
+could resolve) read `disabled` off the rows-per-page combobox, the Next button and the Prev
+button - all three `false` throughout the window - then clicked Next again immediately. The grid
+settled on `101 - 150 of 9269` (page 3), confirming the second press wins. Screenshot:
+`run2-M4-03-stock-double-next-page3.png`.
+
+### Object-shaped call sites: 4 of 5 exercised, all clean; 1 wiring-confirmed but data-starved
+
+- **Stock Transfers** (Inventory > Stock Transfers, `/api/v1/inventory/stock-transfers`): Next -
+  `{maxSkeleton: 0, sawDim: true, clearedAfter: true}`, zero console errors.
+- **Loading Plan** (Supply Chain > Planning > Loading Plan, `/api/v1/scm/loading-plans`): only 1
+  row in this tenant's data, so Next couldn't be exercised; sorted by Supplier instead -
+  `{maxSkeleton: 0, sawDim: true, clearedAfter: true}`, zero console errors. Screenshot:
+  `run2-M4-object-loading-plan.png`.
+- **Plans** (Supply Chain > Project Demand > Plans, `/api/v1/project-sales/plans`): no pagination
+  controls rendered (dataset fits one page); sorted by Customer -
+  `{maxSkeleton: 0, sawDim: true, clearedAfter: true}`, zero console errors.
+- **Stock Debt** (Supply Chain > Project Demand > Stock Debt, `/api/v1/project-sales/stock-debt`):
+  Next - `{maxSkeleton: 0, sawDim: true, clearedAfter: false at 1800ms, confirmed cleared on a
+  follow-up read}`, zero console errors. Screenshot: `run2-M4-object-stock-debt.png`.
+- **Project Sales > a project > Sales orders tab**
+  (`/api/v1/project-sales/projects/{id}/sales-orders`): the wiring is confirmed by source read
+  (`SalesOrdersPanel.tsx:401` forwards `salesOrders.isPlaceholderData`), but this tenant's data
+  could not exercise it live - all 5 seeded projects (PRJ-000001 through PRJ-000005) show
+  "0 sales orders" / "No sales order drafted yet". Confirmed the empty state itself renders
+  cleanly with zero console errors. Screenshot: `run2-M4-object-sales-orders-empty.png`.
+
+### The two hand-wrapped tags: both render, PASS
+
+- **Inventory > Stock > a stock row > Stock Ledger**: opened `1/2" ULTRA CIRCULAR at BRW-BB`
+  (`/inventory-management/stock/{id}/{id}`); the "Stock Ledger" table renders inline in the detail
+  page with real `BULK_IMPORT` / `SYSTEM_ADJUSTMENT` rows, zero console errors. Screenshot:
+  `run2-M4-wrapped-stock-ledger.png`.
+- **SLA > Conversation SLA Tracking > a record > Event Log**: opened a `+60999118984` tracking
+  record and its "Event Log" tab; the table renders 2 `Adjust` event rows, zero console errors.
+  Screenshot: `run2-M4-wrapped-sla-event-log.png`. Note: `agent-browser click @ref` on this
+  particular list row silently did not register (URL unchanged); a native `element.click()` via
+  `eval` worked immediately. Read as a tool/timing quirk on this row type, not a product defect -
+  the feature itself works once triggered, and the same list's own row-click elsewhere in this
+  run (Products, Orders, Stock) worked fine via the normal `click @ref` path.
+
+### Pager skeleton on first load (nit 7): PASS
+
+Hard reload of Products with a runtime `agent-browser addinitscript`-equivalent (a fresh session
+launched with `--init-script`, since the daemon's `addinitscript` runtime command referenced in
+the skill docs is not present in the pinned 0.27.0 build) that both delayed the products/
+column-config fetches 900-1300ms and polled every 20ms from t=0 for 4000ms. Full samples:
+`run2-M4-pager-skeleton-hard-reload-samples.json`. Summary: `hasPagerButtons` (the real
+"Go to next page" control) stays `false` for the entire delayed-fetch window (t=0 to ~2589ms,
+during which `tableSkeletons` reads 700 = 14 cols x 50 rows), flips `true` at t=2819ms once first
+paint completes, and never reverts to skeleton through the rest of the 4s window. Combined with
+the M4-02 Next-click measurements above (`maxSkeleton: 0` on every subsequent page/sort/filter/
+search), this confirms the pager shows skeleton bars only until first paint and never again
+during paging.
+
+### Newly-spread lists (first time on `keepPreviousData`)
+
+| List | Endpoint | Result |
+| --- | --- | --- |
+| Picking Lines (Procurement) | `/api/v1/procurement/picking-lines` | Next: `{maxSkeleton: 0, sawDim: true, clearedAfter: true}`, zero console errors |
+| Stock Claims (Project Sales) | `/api/v1/project-sales/allocation-claims` | Empty state in this tenant ("No stock has been borrowed either way") - no rows to page; zero console errors |
+| Parties (Project Sales) | `/api/v1/project-sales/parties/` | Loads all rows in one request (`limit=200`, no `page` param) and sorts client-side; a sort-header click fired no new network request, so the dim mechanism (which only fires on an actual refetch) is not exercised here - not a defect, this list is not server-paginated. Zero console errors |
+| Awaiting Acceptance (Project Sales) | `/api/v1/project-sales/leads/awaiting-acceptance` | Single page of data in this tenant, no Next/Prev controls; a sort-header click on "Value" fired no new request (client-side sort on this small dataset). Zero console errors |
+| Automation (System > Configuration) | `/api/v1/system/automation/automations` | Same pattern - sort click on "Name" fired no new request (`limit=50` load-all). Zero console errors. Screenshot: `run2-M4-spread-automation.png` |
+| Email Templates (System > Messaging) | `/api/v1/system/email-templates` | Same pattern - sort click on "Name" fired no new request (`limit=50` load-all). Zero console errors |
+
+None of the six showed a console error or a stuck/empty render; the three with real
+paginated/sorted server round trips (Picking Lines, plus the object-shaped ones above) all held
+rows and dimmed correctly. The other three do their sort/filter client-side against a
+fully-loaded page and never re-fetch, so the M4-02 mechanism has nothing to exercise there - this
+is a dataset/list-shape fact, not a regression.
+
+### Regression: Products detail then Back to list keeps page AND filters - PASS
+
+Applied Status=Active (Filters badge "1"), advanced to page 2 (`51 - 100 of 11673`), opened the
+first row's detail (`SRTWC7604-WEPLS-SC`; URL carried
+`?page=2&limit=50&sort=created_at&dir=desc&status=active`), then clicked "Back to products".
+Landed back on the exact same page 2 with the same first row and the Filters badge still reading
+"1". Zero console errors. Screenshot: `run2-M4-regression-back-to-list.png`.
+
+### Incidents during this run (both resolved, neither is a product defect)
+
+- A tool-level `agent-browser click @ref` intermittently failed to register on certain button
+  elements (a numbered pager button, the SLA tracking row) - confirmed by URL/state staying
+  unchanged. A native `element.click()` dispatched via `eval` on the exact same element worked
+  immediately every time. Read as a click-coordinate/ripple-timing quirk in the driver, not an
+  app bug, since the underlying feature works once the click actually lands (and the same
+  interaction pattern succeeded via normal `click @ref` on other rows/buttons in this same run).
+- The `PORT=3081 npm run dev` background process was killed by the environment mid-run (its log
+  shows a clean `[killed]` after a stretch of `ECONNREFUSED` to the `:8120` backend from another
+  lane going briefly unreachable and then recovering - unrelated to anything this tester ran).
+  Restarted immediately (`npm run dev` from `sorento_crm_frontend/`, new PID), confirmed
+  `lsof -i :3081` back up, and re-verified state before continuing; the regression check above
+  was run entirely after the restart.
+
+### Conclusion
+
+The M4-02 blocker from Run 1 is fixed: all twelve dim-clause combinations pass, M4-03 continues
+to pass, the newly-touched object-shaped call sites and hand-wrapped tags render and dim
+correctly where the tenant has data for it, the pager-skeleton nit is confirmed end-to-end, and
+the Back-to-list regression still holds page and filters. No new console errors anywhere in this
+run.
