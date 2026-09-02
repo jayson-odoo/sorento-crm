@@ -8,7 +8,7 @@
  * not merely "loading".
  */
 import React from 'react';
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { useReactTable, getCoreRowModel, type ColumnDef } from '@tanstack/react-table';
 
@@ -21,9 +21,14 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
+const prefsGate = vi.hoisted(() => ({ isLoading: false }));
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
-  useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
+  useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: prefsGate.isLoading }),
 }));
+
+afterEach(() => {
+  prefsGate.isLoading = false;
+});
 
 type Row = { id: string; name: string };
 
@@ -78,6 +83,18 @@ describe('DataGridPagination on a placeholder page (M4-03)', () => {
     // pressed again lands two pages on, not one.
     fireEvent.click(nextButton);
     expect(screen.getByTestId('page-index')).toHaveTextContent('2');
+  });
+
+  it('shows the skeleton while column preferences are still resolving, rows or not', () => {
+    // The pager and the body read the same gate, so they cannot disagree about
+    // what a first load is. Column preferences decide the column set, and a
+    // pager drawn beside a body that is still a skeleton says the page is
+    // ready when it is not.
+    prefsGate.isLoading = true;
+    const { container } = render(<Harness isLoading={false} rows={[{ id: '1', name: 'Alpha' }]} />);
+
+    expect(container.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText('Rows per page')).toBeNull();
   });
 
   it('renders the live controls once loading finishes', () => {
