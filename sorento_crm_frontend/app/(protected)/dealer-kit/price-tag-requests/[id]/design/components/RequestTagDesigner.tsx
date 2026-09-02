@@ -19,6 +19,13 @@
  * Arranging the sheets is a consequence rather than a chore: on save every
  * line's tag is laid out in line order, quantity times, and the Arrange half is
  * there to look at it and to drag a copy if somebody wants to.
+ *
+ * Autosave (D22, S8): every committed change - a layer edit, an arranged
+ * pin - re-runs the `doc` memo below, and an effect on THAT schedules a
+ * debounced save through the same `onSave` the manual Save button calls.
+ * `flush()` (the debounce's own pending value, sent now) covers the three
+ * moments a ~1s wait is too slow to trust: switching Design/Arrange,
+ * switching lines, and leaving the page (`beforeunload` and the back link).
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -72,6 +79,7 @@ import {
 import { formatTagPrice } from '@/lib/dealer-kit/price-badge';
 import { TagCanvasEditor } from '@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor';
 import { useKitLibrary } from '@/app/(protected)/dealer-kit/tag-templates/components/useTagBindings';
+import { useAutosave } from '@/hooks/useAutosave';
 import { ArrangeSheetView } from './ArrangeSheetView';
 import { TemplatePickDialog } from './TemplatePickDialog';
 import {
@@ -83,6 +91,7 @@ import {
 } from '../../../../services/priceTagRequestService';
 import { listPublishedTemplates } from '../../../../services/tagTemplateService';
 import { FocusShell, FocusToggle } from '../../../../components/FocusMode';
+import { AutosaveIndicator } from '../../../../components/AutosaveIndicator';
 
 let idSeq = 0;
 function newTagId(): string {
@@ -349,6 +358,44 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
     [arrangeItems, imposition, pinned],
   );
 
+  // -- Autosave (D22, S8) ------------------------------------------------------
+
+  const autosave = useAutosave<TagSheetDoc>(onSave);
+
+  // Every REAL change to `doc` schedules a debounced save - a layer edit
+  // (through `tags`), an arranged pin, an imposition change. The very first
+  // firing is the initial `doc` itself (whatever `initialDoc` seeded, or the
+  // empty starting point), not an edit, so it is skipped rather than
+  // autosaving data that is already exactly what the server has.
+  //
+  // Guards on the VALUE, not a boolean "have I run yet" flag: dev's
+  // StrictMode fires a fresh mount's effects twice (mount, cleanup, mount
+  // again) to catch effects that are not idempotent, and a boolean flag
+  // would already read "yes" on that second firing, autosaving the
+  // unchanged initial doc a second time. Comparing against the last `doc`
+  // this effect actually saw covers both: an unmoved re-fire is the same
+  // reference and is skipped either way.
+  const lastSeenDocRef = useRef<TagSheetDoc | undefined>(undefined);
+  useEffect(() => {
+    if (lastSeenDocRef.current === doc) return;
+    const isInitial = lastSeenDocRef.current === undefined;
+    lastSeenDocRef.current = doc;
+    if (isInitial) return;
+    autosave.schedule(doc);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doc, autosave.schedule]);
+
+  // beforeunload covers a refresh, a close and a jump out of the app - the
+  // debounce armed by the last edit otherwise never gets to run.
+  useEffect(() => {
+    const handler = () => {
+      void autosave.flush();
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autosave.flush]);
+
   const handleMoveTag = useCallback(
     (sheetIndex: number, tag: PlacedTag, x_mm: number, y_mm: number) => {
       setPinned((prev) => ({
@@ -406,6 +453,34 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
   const canMarkProofReady =
     request.status === 'designing' || request.status === 'changes_requested';
 
+  /** Switching a line never LOSES a committed change (AC-S8-3) - flush the
+   *  autosave's own pending value before the switch, rather than leaving it
+   *  to the ~1s debounce that might not have fired yet. */
+  const handleSelectLine = useCallback(
+    (lineId: string) => {
+      if (lineId !== selectedLineId) void autosave.flush();
+      setSelectedLineId(lineId);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectedLineId, autosave.flush],
+  );
+
+  /** Same idea for Design <-> Arrange (AC-S8-3). */
+  const handleModeChange = useCallback(
+    (value: 'design' | 'arrange') => {
+      if (value !== mode) void autosave.flush();
+      setMode(value);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [mode, autosave.flush],
+  );
+
+  const handleBack = useCallback(() => {
+    void autosave.flush();
+    router.push(`/dealer-kit/price-tag-requests/${request.id}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autosave.flush, router, request.id]);
+
   // -- Render ----------------------------------------------------------------
 
   const rail = (
@@ -414,7 +489,7 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
       resolved={resolved}
       tags={tags}
       selectedLineId={selectedLineId}
-      onSelect={setSelectedLineId}
+      onSelect={handleSelectLine}
       onUseTemplate={setPickerLineId}
     />
   );
@@ -434,7 +509,7 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
           variant="ghost"
           size="sm"
           className="h-7 px-2 text-xs"
-          onClick={() => router.push(`/dealer-kit/price-tag-requests/${request.id}`)}
+          onClick={handleBack}
         >
           <ChevronLeft className="mr-1 size-3.5" />
           {request.doc_number}
@@ -451,7 +526,7 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
                   ? 'bg-primary text-primary-foreground'
                   : 'text-muted-foreground hover:bg-muted',
               )}
-              onClick={() => setMode(value)}
+              onClick={() => handleModeChange(value)}
             >
               {value === 'design' ? 'Design' : 'Arrange'}
             </button>
@@ -459,6 +534,12 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
         </div>
 
         <div className="flex-1" />
+
+        <AutosaveIndicator
+          status={autosave.status}
+          savedAt={autosave.savedAt}
+          onRetry={autosave.retry}
+        />
 
         <FocusToggle
           active={focus}

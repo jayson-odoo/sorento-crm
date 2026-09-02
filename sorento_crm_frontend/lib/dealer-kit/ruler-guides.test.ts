@@ -9,7 +9,14 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { guideCrossedIntoRuler, moveGuide, removeGuide, type RulerGuide } from './ruler-guides';
+import {
+  guideCrossedIntoRuler,
+  guideForAxis,
+  moveGuide,
+  placeOrMoveGuide,
+  removeGuide,
+  type RulerGuide,
+} from './ruler-guides';
 
 function guide(overrides: Partial<RulerGuide> = {}): RulerGuide {
   return { id: 'g1', orientation: 'vertical', position_mm: 10, ...overrides };
@@ -57,5 +64,54 @@ describe('guideCrossedIntoRuler', () => {
     expect(guideCrossedIntoRuler('horizontal', { x: -1, y: 40 })).toBe(true);
     expect(guideCrossedIntoRuler('horizontal', { x: 0, y: 40 })).toBe(false);
     expect(guideCrossedIntoRuler('horizontal', { x: 50, y: -100 })).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Single guide per axis (D21, round 3, AC-S8-1)
+// ---------------------------------------------------------------------------
+
+describe('placeOrMoveGuide', () => {
+  it('places a fresh guide on an axis that has none', () => {
+    const result = placeOrMoveGuide([], 'vertical', 'new-id', 12);
+    expect(result).toEqual([{ id: 'new-id', orientation: 'vertical', position_mm: 12 }]);
+  });
+
+  it('moves the axis\'s existing guide instead of adding a second one', () => {
+    const guides = [guide({ id: 'v1', orientation: 'vertical', position_mm: 10 })];
+    const result = placeOrMoveGuide(guides, 'vertical', 'ignored-id', 40);
+    expect(result).toEqual([{ id: 'v1', orientation: 'vertical', position_mm: 40 }]);
+  });
+
+  it('leaves the OTHER axis untouched when placing a new guide', () => {
+    const guides = [guide({ id: 'h1', orientation: 'horizontal', position_mm: 5 })];
+    const result = placeOrMoveGuide(guides, 'vertical', 'v1', 30);
+    expect(result).toEqual([
+      { id: 'h1', orientation: 'horizontal', position_mm: 5 },
+      { id: 'v1', orientation: 'vertical', position_mm: 30 },
+    ]);
+  });
+
+  it('leaves the OTHER axis untouched when moving an existing guide', () => {
+    const guides = [
+      guide({ id: 'v1', orientation: 'vertical', position_mm: 10 }),
+      guide({ id: 'h1', orientation: 'horizontal', position_mm: 5 }),
+    ];
+    const result = placeOrMoveGuide(guides, 'vertical', 'ignored', 22);
+    expect(result).toEqual([
+      { id: 'v1', orientation: 'vertical', position_mm: 22 },
+      { id: 'h1', orientation: 'horizontal', position_mm: 5 },
+    ]);
+  });
+});
+
+describe('guideForAxis', () => {
+  it('returns the axis\'s one guide when placed', () => {
+    const guides = [guide({ id: 'v1', orientation: 'vertical', position_mm: 10 })];
+    expect(guideForAxis(guides, 'vertical')).toEqual(guides[0]);
+  });
+
+  it('returns null when that axis has no guide', () => {
+    expect(guideForAxis([], 'horizontal')).toBeNull();
   });
 });

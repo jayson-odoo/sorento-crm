@@ -92,8 +92,10 @@ import {
 import { reflowedTextSize } from '@/lib/dealer-kit/text-reflow';
 import {
   guideCrossedIntoRuler,
+  guideForAxis,
   moveGuide,
   newGuideId,
+  placeOrMoveGuide,
   removeGuide,
   type RulerGuide,
 } from '@/lib/dealer-kit/ruler-guides';
@@ -367,6 +369,14 @@ export function TagCanvasEditor({
   const [chipHoveredBlockId, setChipHoveredBlockId] = useState<string | null>(null);
   /** Session-only ruler guides (D9/D17). Never touch the document. */
   const [rulerGuides, setRulerGuides] = useState<RulerGuide[]>([]);
+  /**
+   * The one guide, if any, currently selected for Delete/Backspace (D21,
+   * AC-S8-2) - a plain click on it (not a drag) is what sets this. Kept
+   * separate from `selectedIds` (layer selection): the two are mutually
+   * exclusive, and mixing a guide id into that Set would make the Transformer
+   * try to attach to it.
+   */
+  const [selectedGuideId, setSelectedGuideId] = useState<string | null>(null);
 
   const bindings = useTagBindings(promotionId);
   const library = useKitLibrary();
@@ -1028,6 +1038,7 @@ export function TagCanvasEditor({
   const handleCanvasSelect = useCallback(
     (rawId: string, additive: boolean) => {
       const id = resolveTarget(rawId);
+      setSelectedGuideId(null);
       setSelectedIds((prev) => {
         if (additive) {
           const next = new Set(prev);
@@ -1156,6 +1167,10 @@ export function TagCanvasEditor({
     }),
     [rulerGuides],
   );
+
+  /** The axis's own one guide (D21) - what the ruler's x chip draws at. */
+  const verticalGuide = useMemo(() => guideForAxis(rulerGuides, 'vertical'), [rulerGuides]);
+  const horizontalGuide = useMemo(() => guideForAxis(rulerGuides, 'horizontal'), [rulerGuides]);
 
   const handleDragMove = useCallback(
     (id: string, rawX: number, rawY: number) => {
@@ -1354,12 +1369,13 @@ export function TagCanvasEditor({
   }, []);
 
   /**
-   * A guide-drop gesture started on a ruler (D9/D17). The guide is created
-   * IMMEDIATELY, right where the pointer went down - a plain click needs no
-   * separate "drop" step - and `guideDragRef` hands the rest of the gesture
-   * to the same window-level listener an existing guide's own drag reuses
-   * below, so a click that is followed by movement smoothly turns into a
-   * pull-out without two code paths to keep in sync.
+   * A guide-drop gesture started on a ruler (D9/D17). The guide is placed (or,
+   * if that axis already has one, MOVED - D21, AC-S8-1) IMMEDIATELY, right
+   * where the pointer went down - a plain click needs no separate "drop"
+   * step - and `guideDragRef` hands the rest of the gesture to the same
+   * window-level listener an existing guide's own drag reuses below, so a
+   * click that is followed by movement smoothly turns into a pull-out
+   * without two code paths to keep in sync.
    */
   const handleGuideStart = useCallback(
     (orientation: RulerGuide['orientation'], event: React.MouseEvent) => {
@@ -1372,11 +1388,15 @@ export function TagCanvasEditor({
       const point = stagePointFromClient(event.clientX, event.clientY);
       if (!point) return;
       const { x_mm, y_mm } = stageToMm(view, point.x, point.y);
-      const id = newGuideId();
-      setRulerGuides((prev) => [
-        ...prev,
-        { id, orientation, position_mm: orientation === 'vertical' ? x_mm : y_mm },
-      ]);
+      const position_mm = orientation === 'vertical' ? x_mm : y_mm;
+      // A fresh id in case this turns out to be a placement; a move reuses
+      // the axis's existing guide's own id instead (placeOrMoveGuide decides
+      // which), and the drag ref below has to track WHICHEVER one it was.
+      const freshId = newGuideId();
+      const existing = guideForAxis(rulerGuides, orientation);
+      const id = existing?.id ?? freshId;
+      setRulerGuides((prev) => placeOrMoveGuide(prev, orientation, freshId, position_mm));
+      setSelectedGuideId(null);
       guideDragRef.current = {
         id,
         orientation,
@@ -1386,7 +1406,7 @@ export function TagCanvasEditor({
         downClient: { x: event.clientX, y: event.clientY },
       };
     },
-    [stagePointFromClient, view],
+    [stagePointFromClient, view, rulerGuides],
   );
 
   /** An EXISTING guide picked up off the canvas: the same drag, a later start. */
@@ -1454,6 +1474,13 @@ export function TagCanvasEditor({
         guideCrossedIntoRuler(drag.orientation, point)
       ) {
         setRulerGuides((prev) => removeGuide(prev, drag.id));
+        setSelectedGuideId((id) => (id === drag.id ? null : id));
+      } else if (!drag.moved) {
+        // A plain click - placing/moving the axis's guide from the ruler, or
+        // picking an existing one back up off the canvas without dragging it
+        // anywhere - selects it (D21, AC-S8-2), the same way clicking a layer
+        // selects the layer.
+        setSelectedGuideId(drag.id);
       }
       guideDragRef.current = null;
     };
@@ -1465,6 +1492,22 @@ export function TagCanvasEditor({
       window.removeEventListener('mouseup', onUp);
     };
   }, [stagePointFromClient, view]);
+
+  /** The x chip at a guide's own ruler position was clicked (D21, AC-S8-2). */
+  const handleGuideRemove = useCallback(
+    (orientation: RulerGuide['orientation']) => {
+      const target = guideForAxis(rulerGuides, orientation);
+      if (!target) return;
+      setRulerGuides((prev) => removeGuide(prev, target.id));
+      setSelectedGuideId((id) => (id === target.id ? null : id));
+    },
+    [rulerGuides],
+  );
+
+  // Delete/Backspace removes the SELECTED guide (D21, AC-S8-2) - a second
+  // removal path alongside the x chip and the drag-back gesture above. Lives
+  // beside the layer keyboard shortcuts below rather than its own effect, so
+  // there is one keydown listener for the whole canvas, not two racing ones.
 
   // -- Viewport (D33, D34) ---------------------------------------------------
 
@@ -1602,10 +1645,12 @@ export function TagCanvasEditor({
     if (!dragged) {
       // A click on empty space deselects and leaves the group (D36).
       if (!band.additive) setSelectedIds(new Set());
+      setSelectedGuideId(null);
       return;
     }
     const hits = marqueeHits(layers, rect, { insideGroupId });
     setSelectedIds((prev) => (band.additive ? new Set([...prev, ...hits]) : new Set(hits)));
+    setSelectedGuideId(null);
   }, [view, scale, layers, insideGroupId]);
 
   // A mouseup outside the canvas would otherwise leave a band or a pan running.
@@ -1624,7 +1669,10 @@ export function TagCanvasEditor({
 
   const handleStageDoubleClick = useCallback(
     (e: Konva.KonvaEventObject<MouseEvent>) => {
-      if (isBackground(e)) setSelectedIds(new Set());
+      if (isBackground(e)) {
+        setSelectedIds(new Set());
+        setSelectedGuideId(null);
+      }
     },
     [isBackground],
   );
@@ -1786,6 +1834,13 @@ export function TagCanvasEditor({
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.size > 0) {
         e.preventDefault();
         deleteSelectedLayers();
+      } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedGuideId) {
+        // A selected GUIDE, not a layer (D21, AC-S8-2) - mutually exclusive
+        // with the branch above, the same way selecting either clears the
+        // other.
+        e.preventDefault();
+        setRulerGuides((prev) => removeGuide(prev, selectedGuideId));
+        setSelectedGuideId(null);
       }
       if (e.key === 'z' && modifier && !e.shiftKey) {
         e.preventDefault();
@@ -1857,6 +1912,7 @@ export function TagCanvasEditor({
     };
   }, [
     selectedIds,
+    selectedGuideId,
     deleteSelectedLayers,
     duplicateSelectedLayers,
     groupSelectedLayers,
@@ -2089,6 +2145,9 @@ export function TagCanvasEditor({
                 viewportWidth={stageWidth}
                 viewportHeight={stageHeight}
                 onGuideStart={handleGuideStart}
+                verticalGuideMm={verticalGuide?.position_mm ?? null}
+                horizontalGuideMm={horizontalGuide?.position_mm ?? null}
+                onGuideRemove={handleGuideRemove}
               />
 
               <div
@@ -2172,22 +2231,25 @@ export function TagCanvasEditor({
                       ),
                     )}
 
-                    {/* Ruler guides (D9/D17, S6). Dotted, and a different
-                        colour from the transient snap guides above so the
-                        two are never confused - these are placed on
-                        purpose and stay until dragged away.
+                    {/* Ruler guides (D9/D17, S6; D21 - one per axis, S8).
+                        Dotted, and a different colour from the transient
+                        snap guides above so the two are never confused -
+                        these are placed on purpose and stay until removed.
                         `listening={!handMode}` (S2) so the hand tool can pan
                         through them like everything else, and a narrower
                         `hitStrokeWidth` so a guide crossing a layer does not
-                        turn a whole strip of that layer unselectable. */}
+                        turn a whole strip of that layer unselectable. A
+                        SELECTED guide (D21, AC-S8-2) draws solid and thicker
+                        instead of dashed, so Delete/Backspace has a visible
+                        target to confirm against. */}
                     {rulerGuides.map((g) =>
                       g.orientation === 'vertical' ? (
                         <Line
                           key={g.id}
                           points={[g.position_mm * scale, 0, g.position_mm * scale, canvasHeightPx]}
                           stroke="#0ea5e9"
-                          strokeWidth={1}
-                          dash={[2, 3]}
+                          strokeWidth={g.id === selectedGuideId ? 2 : 1}
+                          dash={g.id === selectedGuideId ? undefined : [2, 3]}
                           listening={!handMode}
                           hitStrokeWidth={4}
                           onMouseDown={(e) => {
@@ -2200,8 +2262,8 @@ export function TagCanvasEditor({
                           key={g.id}
                           points={[0, g.position_mm * scale, canvasWidthPx, g.position_mm * scale]}
                           stroke="#0ea5e9"
-                          strokeWidth={1}
-                          dash={[2, 3]}
+                          strokeWidth={g.id === selectedGuideId ? 2 : 1}
+                          dash={g.id === selectedGuideId ? undefined : [2, 3]}
                           listening={!handMode}
                           hitStrokeWidth={4}
                           onMouseDown={(e) => {

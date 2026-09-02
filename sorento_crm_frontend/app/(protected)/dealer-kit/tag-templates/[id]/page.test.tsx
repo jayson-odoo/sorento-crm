@@ -11,7 +11,7 @@
  * stubbing heavy children).
  */
 import React from 'react';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -423,4 +423,71 @@ it('Restore from the viewer shows the restoring state and offers Undo', async ()
     'tmpl-1',
     expect.objectContaining({ layers: [{ id: 'l1' }] }),
   );
+});
+
+// ---------------------------------------------------------------------------
+// Autosave (D22, S8, AC-S8-4): the draft autosaves the same way the request
+// designer's tags do, through the existing draft PUT (`updateTemplate`).
+// ---------------------------------------------------------------------------
+
+describe('draft autosave (D22, AC-S8-4)', () => {
+  it('collapses rapid edits into a single autosave PUT, ~1s after the LAST one', async () => {
+    mockGet.mockResolvedValue(templateFixture());
+    mockUpdate.mockResolvedValue(templateFixture());
+    render(<TagTemplateEditorPage />);
+    await screen.findByTestId('canvas-editor');
+
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByText('Add a layer'));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(500);
+      });
+      // A second edit before the first's debounce fires resets the clock.
+      fireEvent.click(screen.getByText('Add a layer'));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(999);
+      });
+      expect(mockUpdate).not.toHaveBeenCalled();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      expect(mockUpdate).toHaveBeenCalledTimes(1);
+      expect(mockUpdate).toHaveBeenCalledWith(
+        'tmpl-1',
+        expect.objectContaining({ layers: [{ id: 'l1' }, { id: 'new-1' }, { id: 'new-2' }] }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('shows Save failed with Retry, and Retry resends the same draft', async () => {
+    mockGet.mockResolvedValue(templateFixture());
+    mockUpdate.mockRejectedValueOnce(new Error('network down'));
+    render(<TagTemplateEditorPage />);
+    await screen.findByTestId('canvas-editor');
+
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByText('Add a layer'));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      expect(mockUpdate).toHaveBeenCalledTimes(1);
+      expect(screen.getByText('Save failed')).toBeInTheDocument();
+
+      mockUpdate.mockResolvedValueOnce(templateFixture());
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(mockUpdate).toHaveBeenCalledTimes(2);
+      expect(screen.queryByText('Save failed')).not.toBeInTheDocument();
+      expect(screen.getByText(/^Saved/)).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

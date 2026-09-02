@@ -26,9 +26,16 @@
  * destructive-confirm dialog is a defect). The draft it overwrites is held
  * in memory first, so the success toast's Undo action can PUT it straight
  * back.
+ *
+ * Autosave (D22, S8): every committed draft change re-fires `onLayersChange`
+ * (`draftLayers` changes), and an effect on THAT schedules a debounced save
+ * through the same `updateTemplate` call the header's manual Save makes.
+ * Publish is unchanged - it already persists the draft itself before
+ * snapshotting it (S1 above), so it always sees the latest edit whether or
+ * not autosave has gotten to it yet.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { toast } from 'sonner';
 import { History, Save as SaveIcon, Upload } from 'lucide-react';
@@ -64,6 +71,8 @@ import {
 } from '../../services/tagTemplateService';
 import { TemplateVersionsSheet } from '../components/TemplateVersionsSheet';
 import { FocusShell, FocusToggle } from '../../components/FocusMode';
+import { AutosaveIndicator } from '../../components/AutosaveIndicator';
+import { useAutosave } from '@/hooks/useAutosave';
 
 const TagCanvasEditor = dynamic(
   () => import('../components/TagCanvasEditor').then((m) => ({ default: m.TagCanvasEditor })),
@@ -128,6 +137,58 @@ export default function TagTemplateEditorPage() {
       cancelled = true;
     };
   }, [params.id]);
+
+  // -- Autosave (D22, S8) -----------------------------------------------------
+
+  const templateAutosave = useAutosave<TagLayer[]>(async (layers) => {
+    if (!template) return;
+    const updated = await updateTemplate(template.id, { ...template.doc, layers });
+    setTemplate(updated);
+  });
+
+  // Every REAL edit to the draft schedules a debounced save. The first time
+  // this effect can fire with a LOADED template is the load itself (the
+  // `getTemplate().then()` above sets `template` and `draftLayers` together),
+  // not an edit - skipped the same way the request designer skips its own
+  // initial `doc`. Before the template has loaded, `template` is still null
+  // and nothing is scheduled at all (a restore also goes through here, and
+  // autosaving its already-persisted doc back is a harmless no-op overwrite,
+  // not a bug worth a special case).
+  //
+  // `template` itself is read through a REF, not a dependency: autosave's own
+  // `onSave` calls `setTemplate(updated)` when it lands, and putting `template`
+  // in the deps array would make that its own trigger - a successful save
+  // reschedules ANOTHER one for the same unchanged layers, forever. Only
+  // `draftLayers` changing is a reason to run this.
+  //
+  // The "is this the load, not an edit" guard compares the VALUE last seen,
+  // not a boolean "have I run yet" flag: dev's StrictMode fires a fresh
+  // mount's effects twice (mount, cleanup, mount again) to catch effects
+  // that are not idempotent, and a boolean flag would already read "yes" on
+  // that second firing, autosaving the freshly-loaded (unedited) draft a
+  // second time.
+  const templateRef = useRef<TagTemplate | null>(null);
+  templateRef.current = template;
+  const lastSeenLayersRef = useRef<TagLayer[] | undefined>(undefined);
+  useEffect(() => {
+    if (!templateRef.current) return;
+    if (lastSeenLayersRef.current === draftLayers) return;
+    const isInitial = lastSeenLayersRef.current === undefined;
+    lastSeenLayersRef.current = draftLayers;
+    if (isInitial) return;
+    templateAutosave.schedule(draftLayers);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftLayers, templateAutosave.schedule]);
+
+  // beforeunload covers a refresh, a close and a jump out of the app.
+  useEffect(() => {
+    const handler = () => {
+      void templateAutosave.flush();
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [templateAutosave.flush]);
 
   const handleSave = useCallback(async () => {
     if (!template) return;
@@ -290,6 +351,11 @@ export default function TagTemplateEditorPage() {
                   <History className="size-3.5" />
                   Versions
                 </Button>
+                <AutosaveIndicator
+                  status={templateAutosave.status}
+                  savedAt={templateAutosave.savedAt}
+                  onRetry={templateAutosave.retry}
+                />
                 <Button
                   variant="outline"
                   size="sm"

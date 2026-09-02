@@ -10,7 +10,7 @@
  */
 
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PRODUCT_BLOCK_SIZE } from '@/lib/dealer-kit/product-block';
@@ -558,5 +558,114 @@ describe('RequestTagDesigner - explicit canvas states (AC-S3-2, AC-S3-3)', () =>
       await screen.findByText('This request has no lines, so there is nothing to design.'),
     ).toBeInTheDocument();
     expect(screen.queryByTestId('canvas-editor')).not.toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Autosave (D22, S8, AC-S8-3)
+//
+// The initial starter-tag clone (cloning a line's first tag into `tags`) is
+// itself a committed change and queues its OWN autosave on a real ~1s
+// debounce - every test below drains that one first, with REAL timers,
+// before switching to fake ones for the behaviour under test. Mixing fake
+// timers in any earlier than that would race the initial async mount
+// (template/price loading, both plain Promises) against the fake clock.
+// ---------------------------------------------------------------------------
+
+describe('RequestTagDesigner - autosave (D22, AC-S8-3)', () => {
+  it('collapses rapid edits into a single autosave call, ~1s after the LAST one', async () => {
+    mockListTemplates.mockResolvedValue([]);
+    mockResolveRequestLines.mockResolvedValue([lineTagData()]);
+    const onSave = vi.fn(async () => {});
+
+    render(<RequestTagDesigner request={request()} initialDoc={null} onSave={onSave} />);
+    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+    await waitFor(() => expect(onSave).toHaveBeenCalled(), { timeout: 3000 });
+    onSave.mockClear();
+
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByRole('button', { name: 'Add layer' }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(500);
+      });
+      // A second edit before the first's debounce would have fired resets
+      // the clock rather than queuing a second save.
+      fireEvent.click(screen.getByRole('button', { name: 'Add layer' }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(999);
+      });
+      expect(onSave).not.toHaveBeenCalled();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      expect(onSave).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a mode switch (Design -> Arrange) flushes the pending autosave immediately', async () => {
+    mockListTemplates.mockResolvedValue([]);
+    mockResolveRequestLines.mockResolvedValue([lineTagData()]);
+    const onSave = vi.fn(async () => {});
+
+    render(<RequestTagDesigner request={request()} initialDoc={null} onSave={onSave} />);
+    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+    await waitFor(() => expect(onSave).toHaveBeenCalled(), { timeout: 3000 });
+    onSave.mockClear();
+
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByRole('button', { name: 'Add layer' }));
+      expect(onSave).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Arrange' }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(onSave).toHaveBeenCalledTimes(1);
+
+      // The debounce the flush cut short must not ALSO fire later.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+      expect(onSave).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('shows Save failed with Retry, and Retry resends the same doc', async () => {
+    mockListTemplates.mockResolvedValue([]);
+    mockResolveRequestLines.mockResolvedValue([lineTagData()]);
+    const onSave = vi.fn(async () => {});
+
+    render(<RequestTagDesigner request={request()} initialDoc={null} onSave={onSave} />);
+    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+    await waitFor(() => expect(onSave).toHaveBeenCalled(), { timeout: 3000 });
+    onSave.mockClear();
+    onSave.mockRejectedValueOnce(new Error('network down'));
+
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByRole('button', { name: 'Add layer' }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      expect(onSave).toHaveBeenCalledTimes(1);
+      expect(screen.getByText('Save failed')).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(onSave).toHaveBeenCalledTimes(2);
+      expect(screen.queryByText('Save failed')).not.toBeInTheDocument();
+      expect(screen.getByText(/^Saved/)).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
