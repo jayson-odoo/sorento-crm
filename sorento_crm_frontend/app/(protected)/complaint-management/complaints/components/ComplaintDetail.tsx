@@ -71,7 +71,7 @@ import {
   getOrCreateComplaintViewLink,
   displayComplaintTechnicalResponse,
 } from '../services/complaintService';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { recordActionItems } from '@/components/common/recordActions';
 import { useComplaintActions } from '../actions';

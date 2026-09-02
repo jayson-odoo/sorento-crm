@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Clipboard, Paperclip, Upload, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 interface ResponseAttachmentDropzoneProps {
   /** Staged files, not yet uploaded - committed only when the parent saves the response. */
