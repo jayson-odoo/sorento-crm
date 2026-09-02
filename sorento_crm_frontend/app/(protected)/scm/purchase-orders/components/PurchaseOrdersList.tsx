@@ -11,7 +11,7 @@ import {
   getCoreRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { LoaderCircle, RefreshCw, Upload } from 'lucide-react';
 import {
   AlertDialog,

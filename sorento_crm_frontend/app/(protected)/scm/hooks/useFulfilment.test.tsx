@@ -17,7 +17,7 @@ const sendContainerRequest = vi.fn();
 const getSupplierNotices = vi.fn();
 const deleteSpo = vi.fn();
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { success: (...a: unknown[]) => success(...a), error: (...a: unknown[]) => error(...a) },
 }));
 

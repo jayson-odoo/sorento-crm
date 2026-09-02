@@ -14,7 +14,7 @@ vi.mock('../services/simulationService', () => svc);
 
 const toastSuccess = vi.fn();
 const toastError = vi.fn();
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { success: (...a: unknown[]) => toastSuccess(...a), error: (...a: unknown[]) => toastError(...a) },
 }));
 

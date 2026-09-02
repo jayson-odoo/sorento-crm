@@ -7,7 +7,7 @@ const apiFetch = vi.fn();
 vi.mock('@/lib/api', () => ({ apiFetch: (...a: unknown[]) => apiFetch(...a) }));
 
 const toastError = vi.fn();
-vi.mock('sonner', () => ({ toast: { error: (...a: unknown[]) => toastError(...a) } }));
+vi.mock('@/lib/toast', () => ({ toast: { error: (...a: unknown[]) => toastError(...a) } }));
 
 import { useCustomerOrders, useLocationStock, useReorderRun, useTodayRun } from './useReorderRun';
 

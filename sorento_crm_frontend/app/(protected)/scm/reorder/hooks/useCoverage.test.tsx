@@ -23,7 +23,7 @@ vi.mock('../services/coverageService', () => ({
 }));
 
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
-vi.mock('sonner', () => ({ toast }));
+vi.mock('@/lib/toast', () => ({ toast }));
 
 import { coverageKey, useAcceptCoverageTransfer, useCoverageTimeline } from './useCoverage';
 

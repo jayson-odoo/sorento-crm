@@ -8,7 +8,7 @@ const acceptSuggestedLevel = vi.fn();
 vi.mock('../services/reorderRunService', () => ({
   acceptSuggestedLevel: (...a: unknown[]) => acceptSuggestedLevel(...a),
 }));
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock('@/hooks/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ isLoading: false, columnOrder: [], columnVisibility: {} }),
 }));

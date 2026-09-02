@@ -17,7 +17,7 @@ vi.mock('@/lib/api', () => ({ apiFetch: (...a: unknown[]) => apiFetch(...a) }));
 
 const toastError = vi.fn();
 const toastSuccess = vi.fn();
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: {
     error: (...a: unknown[]) => toastError(...a),
     success: (...a: unknown[]) => toastSuccess(...a),

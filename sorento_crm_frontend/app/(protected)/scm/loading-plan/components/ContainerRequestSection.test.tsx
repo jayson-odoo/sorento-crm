@@ -39,7 +39,7 @@ if (!window.ResizeObserver) {
 }
 Element.prototype.scrollIntoView = Element.prototype.scrollIntoView ?? (() => {});
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
 }));
 
