@@ -447,7 +447,7 @@ export default function AIAssistantBubble() {
           data-testid="ai-assistant-tab"
           aria-label="Open AI assistant"
           aria-expanded={false}
-          className={`flex w-8 flex-col items-center justify-center gap-2 rounded-s-lg border border-e-0 border-primary/20 bg-primary py-3 text-primary-foreground shadow-lg transition-all hover:w-9 ${isSending ? 'animate-pulse' : ''}`}
+          className={`flex w-8 flex-col items-center justify-center gap-2 rounded-s-lg border border-e-0 border-primary/20 bg-primary py-3 text-primary-foreground shadow-lg ${isSending ? 'animate-pulse' : ''}`}
           onClick={() => setOpenPersisted(true)}
         >
           <Sparkles className="size-4 shrink-0" />

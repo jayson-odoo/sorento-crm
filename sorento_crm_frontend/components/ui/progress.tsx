@@ -20,7 +20,7 @@ function Progress({
     >
       <ProgressPrimitive.Indicator
         data-slot="progress-indicator"
-        className={cn('h-full w-full flex-1 bg-primary transition-all', indicatorClassName)}
+        className={cn('h-full w-full flex-1 bg-primary transition-transform', indicatorClassName)}
         style={{ transform: `translateX(-${100 - (value || 0)}%)` }}
       />
     </ProgressPrimitive.Root>
@@ -95,7 +95,7 @@ function ProgressCircle({
           strokeDasharray={circumference}
           strokeDashoffset={offset}
           strokeLinecap="round"
-          className={cn('text-primary transition-all duration-(--duration-slow) ease-(--ease-standard)', indicatorClassName)}
+          className={cn('text-primary transition-[stroke-dashoffset] duration-(--duration-base) ease-(--ease-standard)', indicatorClassName)}
         />
       </svg>
       {children && (
@@ -209,7 +209,7 @@ function ProgressRadial({
           strokeWidth={strokeWidth}
           fill="none"
           strokeLinecap="round"
-          className={cn('text-primary transition-all duration-(--duration-slow) ease-(--ease-standard)', indicatorClassName)}
+          className={cn('text-primary transition-[stroke-dashoffset] duration-(--duration-base) ease-(--ease-standard)', indicatorClassName)}
         />
       </svg>
       {(showLabel || children) && (
