@@ -447,8 +447,12 @@ def reservations_by_target(
 
     Two rules, in this order, and both are needed - the first stops one sales order double
     -booking itself across documents, the second stops several sales orders double-booking
-    one document between them (B2 + S-1, review of PR #490; captain's ruling on the
-    arithmetic, PENDING CONFIRM).
+    one document between them (B2 + S-1, review of PR #490).
+
+    CONFIRMED by the captain, 2 Sep 2026, in his own words: the dedicated quantity for a
+    sales order is that SO line's REMAINING NEED, counted ONCE across every document naming
+    it, and on a shared line the OLDER sales order is served first, up to the line's real
+    free capacity. `PLAN-scm-reorder-oi-feedback-1sep.md` G16.
 
     **1. A sales order LINE's unplaced need is reserved ONCE, across all of its
     documents.** A claim carries no quantity of its own, so the figure is derived, and

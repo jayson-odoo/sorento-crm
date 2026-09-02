@@ -75,7 +75,9 @@ UAC: `scm-reorder-oi-feedback-1sep-acceptance-criteria.md`
   and there is no double-buy. (`scm.on_order_v` alone is SPO-only and has been since
   migration 337; that is a different fact and not the one this rests on.)
   The import result + PO view surface the unclaimed-project-bin count so Joey
-  backfills FromSODocList in AutoCount.
+  backfills FromSODocList in AutoCount. WHAT THE SEGMENT ACTUALLY DECIDES: see R-1's
+  four-case table below - attribution decides ownership, location only decides the
+  fallback for a line nobody has attributed.
   - WRITE-TIME CLAIMING (captain, 2 Sep 2026 - this SUPERSEDES the withdrawn
     "born claimed" mechanism, which is deleted, not disabled). The rule, stated
     strictly: the automatic pass may take (a) POOL-location documents and (b)
@@ -109,7 +111,11 @@ UAC: `scm-reorder-oi-feedback-1sep-acceptance-criteria.md`
     stops a claim being subtracted twice once its own SO has placed part of it - now
     measured off `OrderInquiryLink.claim_id` rather than guessed from the claim's
     source (`_reserved_for_netting`).
-- G16 (2 Sep, review rounds 2 + 3) HOW MUCH A CLAIM RESERVES - TWO RULES, IN THIS ORDER.
+- G16 (2 Sep, review rounds 2 + 3; CONFIRMED by the captain 2 Sep) HOW MUCH A CLAIM
+  RESERVES. The captain's own words: **the dedicated quantity for a sales order is that SO
+  line's REMAINING NEED, counted ONCE across every document naming it, and on a shared line
+  the OLDER sales order is served first, up to the line's real free capacity.** That is the
+  two rules below, which is what ships.
   A claim carries no quantity of its own, so the figure is derived; deriving it per CLAIM
   over-reserved in both directions at once.
   1. A SALES ORDER LINE'S UNPLACED NEED IS RESERVED ONCE, ACROSS ALL OF ITS DOCUMENTS.
@@ -132,14 +138,7 @@ UAC: `scm-reorder-oi-feedback-1sep-acceptance-criteria.md`
   was already placed while the document with room read free.
   `order_link_service.reservations_by_target` returns both figures - `reserved` (the
   rationed share, what every netting consumer reads) and `outstanding` (the raw live
-  outstanding, kept because AC-6.9 reports it as the audit figure). PENDING CAPTAIN
-  CONFIRM.
-- OPEN RULING R-1 (raised 2 Sep, review round 3, NOT decided): do G7 reservations apply on
-  POOL lines at all? A pool line is shared supply by definition, yet every placement writes
-  an audit claim, so one order's partial take reserves the rest of its need against that
-  same pool line and can read it down to nothing for everybody else. Left exactly as it
-  behaves today until the captain rules; the rationing above bounds the damage (a line can
-  never promise more than it holds) but does not answer the question.
+  outstanding, kept because AC-6.9 reports it as the audit figure).
 - G17 (2 Sep, review round 2) ATTRIBUTION IS FILLED, NEVER REPOINTED. A claim's identity is
   document-level - (company, SO, PO, item) - while `po_line_id` names one line of it. A
   placement on a DIFFERENT line of the same order used to move the book's pointer off the
@@ -197,6 +196,21 @@ UAC: `scm-reorder-oi-feedback-1sep-acceptance-criteria.md`
   justified. Prod sequence: deploy -> captain re-uploads the book -> run `--scope legacy
   --apply`. Dev (2 Sep): `today` applied, 22 links + 11 claims deleted; `legacy` dry-run
   then reported 2 links / 1 row / 2 claims still to go, awaiting the book upload.
+- R-1 (raised 2 Sep review round 3, RESOLVED by the captain the same day): do G7
+  reservations apply on POOL lines? YES - **as built, no code change.** ATTRIBUTION
+  decides who a quantity belongs to; LOCATION only decides what happens to a line nobody
+  has attributed. The whole rule, in four cases:
+
+  | Line's destination | Names a sales order? | What happens |
+  | --- | --- | --- |
+  | Pool | yes | Dedicated to that SO. NOT shared. |
+  | Pool | no | Shared, first-come. |
+  | Project bin | yes | Dedicated; only that SO auto-takes it. |
+  | Project bin | no | LOCKED - manual link only (G12). |
+
+  So a pool line is not "shared by definition": it is shared only while nobody has said
+  whose it is. The only thing the project segment changes is the fallback - an unattributed
+  pool line is up for grabs, an unattributed bin line is nobody's to take automatically.
 - G8 Re-plan: Plan until AND warehouse/product scope editable. New run supersedes old;
   decisions carry for products present in both runs with unchanged suggestion; leaving scope
   drops them; entering arrives undecided; changed suggestions return flagged "re-check".
