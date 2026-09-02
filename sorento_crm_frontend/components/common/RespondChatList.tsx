@@ -925,9 +925,16 @@ export default function RespondChatList({
             ? getOutgoingSenderLabel(sourceNorm, getRespondSenderName(item))
             : null;
 
-          const bubbleClass = isOutgoing
-            ? 'bg-[#d9fdd3] text-zinc-900 dark:bg-[#005c4b] dark:text-zinc-50'
-            : 'bg-white text-zinc-900 dark:bg-[#202c33] dark:text-zinc-50';
+          // M6-01: the optimistic bubble (`usePendingThreadItems`) is the same
+          // shape as a real message, so it renders through this exact path -
+          // the ONLY thing that marks it as not-yet-real is the dim, the same
+          // `opacity-60` a placeholder row uses in the DataGrid.
+          const isPending = (item as { source?: string }).source === 'pending';
+          const bubbleClass =
+            (isOutgoing
+              ? 'bg-[#d9fdd3] text-zinc-900 dark:bg-[#005c4b] dark:text-zinc-50'
+              : 'bg-white text-zinc-900 dark:bg-[#202c33] dark:text-zinc-50') +
+            (isPending ? ' opacity-60' : '');
 
           const options = extractSelectionOptions(item);
           const templateButtons = extractTemplateButtons(item);
