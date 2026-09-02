@@ -387,7 +387,7 @@ class ProjectOrderInquiryService:
         self._linked_by_target_cache: Optional[Tuple[Dict[str, Decimal], Dict[str, Decimal]]] = None
         # The same links, keyed by the CLAIM each was written under: what a claim's own
         # reservation and its own placements overlap on (`_reserved_for_netting`).
-        self._linked_by_claim_cache: Optional[Dict[Tuple[str, str], Decimal]] = None
+        self._linked_by_claim_cache: Optional[Dict[str, Decimal]] = None
         # Ladder v4's availability reader (`app.services.scm.group_netting`), over the
         # products this instance has been asked about. A candidate walk needs to know what
         # the group it would link into already owes, and a listing asks the same question
@@ -2993,31 +2993,36 @@ class ProjectOrderInquiryService:
         reserved = sum((c["outstanding"] for c in others), _ZERO)
         return reserved, others[0]["so_number"], own_claim
 
-    def _linked_by_claim(self) -> Dict[Tuple[str, str], Decimal]:
-        """What each claim's OWN links already take off its target, keyed by
-        `(claim id, target id)`.
+    def _linked_by_claim(self) -> Dict[str, Decimal]:
+        """How much every claim has ALREADY had placed under it, keyed by claim id.
 
         A link carries the id of the claim it was written under (`OrderInquiryLink.
         claim_id`, stamped by `_write_link` whether it CREATED the claim or found one an
         earlier feed had already made), so this is the exact overlap between "what a claim
-        reserves" and "what a link already occupies" - the two figures `_reserved_for_
-        netting` must not count twice. Cached and dropped with the rest on every write, the
-        same way `_linked_by_target` is.
+        reserves" and "what has already been taken against it" - the two figures
+        `_reserved_for_netting` must not count twice. Cached and dropped with the rest on
+        every write, the same way `_linked_by_target` is.
+
+        Keyed by the CLAIM ALONE, never by `(claim, line)`. A claim's identity is
+        (company, SO number, PO number, item), which is a DOCUMENT-level pairing - so one
+        claim backs every placement that sales order makes on that document, and a row
+        whose need is spread over two lines of it writes two links under the SAME claim
+        while the claim's own `po_line_id` can only name one of them. Keyed per line, the
+        line the claim happens to name looked as though only part of the reservation had
+        been taken, and the rest was subtracted a second time off whatever was left there
+        (`test_po_confirm_links_the_sizing_rows.py::test_a_purchase_order_naming_two_runs_
+        falls_back_to_the_latest_completed`: a 5-need spread as 3 + 2 over two lines of one
+        order left the second row's only candidate reading 0 remaining, half the time).
         """
         if self._linked_by_claim_cache is not None:
             return self._linked_by_claim_cache
-        out: Dict[Tuple[str, str], Decimal] = {}
-        for claim_id, po_line_id, spo_allocation_id, qty in self.db.query(
-            OrderInquiryLink.claim_id,
-            OrderInquiryLink.po_line_id,
-            OrderInquiryLink.spo_allocation_id,
-            OrderInquiryLink.qty,
-        ).filter(OrderInquiryLink.claim_id.isnot(None)):
-            target_id = str(po_line_id or spo_allocation_id or "")
-            if not target_id:
-                continue
-            key = (str(claim_id), target_id)
-            out[key] = out.get(key, _ZERO) + _dec(qty)
+        out: Dict[str, Decimal] = {}
+        for claim_id, qty in self.db.query(
+            OrderInquiryLink.claim_id, func.sum(OrderInquiryLink.qty)
+        ).filter(OrderInquiryLink.claim_id.isnot(None)).group_by(
+            OrderInquiryLink.claim_id
+        ):
+            out[str(claim_id)] = _dec(qty)
         self._linked_by_claim_cache = out
         return out
 
@@ -3055,9 +3060,7 @@ class ProjectOrderInquiryService:
         for claim in claims:
             if own_so_number is not None and claim["so_number"] == own_so_number:
                 continue
-            outstanding = claim["outstanding"] - linked.get(
-                (claim["claim_id"], target_id), _ZERO
-            )
+            outstanding = claim["outstanding"] - linked.get(claim["claim_id"], _ZERO)
             if outstanding > _ZERO:
                 total += outstanding
         return total

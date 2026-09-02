@@ -524,16 +524,21 @@ class PurchaseOrderService:
         reservations = order_link_service.reservations_by_target(
             self.db, target_ids=list(lines)
         )
+        # Summed per CLAIM across every line it backs, never per (claim, line): a claim's
+        # identity is (company, SO number, PO number, item), a DOCUMENT-level pairing, so
+        # one row whose need is spread over two lines of the same order writes two links
+        # under one claim while the claim's own `po_line_id` names only one of them. Per
+        # line, the rest of the reservation reads as untaken and comes off `free` twice.
+        # Scoped to the claims THIS panel is about (`reservations`), so the sum is over a
+        # handful of rows rather than the whole link table.
         linked_by_claim: dict[str, float] = {}
-        if reservations:
+        claim_ids = [c["claim_id"] for claims in reservations.values() for c in claims]
+        if claim_ids:
             for claim_id, qty in (
                 self.db.query(
                     OrderInquiryLink.claim_id, func.sum(OrderInquiryLink.qty)
                 )
-                .filter(
-                    OrderInquiryLink.po_line_id.in_(list(lines)),
-                    OrderInquiryLink.claim_id.isnot(None),
-                )
+                .filter(OrderInquiryLink.claim_id.in_(claim_ids))
                 .group_by(OrderInquiryLink.claim_id)
                 .all()
             ):

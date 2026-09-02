@@ -311,6 +311,56 @@ def test_the_cascade_never_claims_a_project_bin_line_it_did_not_create(db):
     )
 
 
+def test_one_claim_backing_two_links_on_one_document_is_netted_once(db):
+    """The netting that decides how much of a claim is still to come.
+
+    A claim's identity is (company, SO number, PO number, item) - a DOCUMENT-level
+    pairing - so a row whose need is spread over TWO lines of one purchase order writes
+    two links under the SAME claim, while the claim's own `po_line_id` names only one of
+    them. Netting per (claim, line) rather than per CLAIM left the rest of the
+    reservation reading as untaken and subtracted it a second time off whatever was left
+    on that line, which is how a second sales order's row found its only candidate at 0
+    remaining (`test_po_confirm_links_the_sizing_rows.py::test_a_purchase_order_naming_
+    two_runs_falls_back_to_the_latest_completed`, half the time - the two lines tie on
+    every sort key, so which one the first row starts on is a coin flip).
+
+    Both lines at a POOL here on purpose: this is G7's arithmetic, not G12's lock.
+    """
+    from tests.scm.test_channel_read_model import _confirmed_leg
+    from tests.scm.test_m3_run import _mk_product, _mk_warehouse
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    actor = seed_user(db, None)
+    pool = _mk_warehouse(db, f"{MARKER}POOL{uuid.uuid4().hex[:5].upper()}")
+    pid = _mk_product(db, f"{MARKER}-{uuid.uuid4().hex[:6].upper()}")
+    first = _confirmed_leg(db, product_id=pid, warehouse_id=pool, buy_qty=5)
+    second = _confirmed_leg(db, product_id=pid, warehouse_id=pool, buy_qty=3)
+
+    po_id, _ = _draft_line(db, product_id=pid, warehouse_id=pool, qty=5)
+    _draft_line(db, product_id=pid, warehouse_id=pool, qty=3, po_id=po_id,
+                number="already")
+
+    PurchaseOrderService(db).bulk_confirm([po_id], actor=actor)
+
+    assert _linked(db, first["inquiry_row"].id) == 5.0
+    assert _linked(db, second["inquiry_row"].id) == 3.0, (
+        "the first row's own claim was subtracted a second time from what it had already "
+        "taken, and the second row found nothing left"
+    )
+    claims = [
+        r[0]
+        for r in db.execute(
+            text(
+                "SELECT count(*) FROM scm.order_link_claim c "
+                "  JOIN purchase_orders p ON p.po_number = c.po_number "
+                " WHERE p.id = :i"
+            ),
+            {"i": po_id},
+        )
+    ]
+    assert claims == [2], "one claim per sales order, whatever the line count"
+
+
 # ------------------------------------------------------------------------------- D2
 
 
