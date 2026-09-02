@@ -26,6 +26,7 @@ from app.schemas.price_tag import (
     PriceTagRequestCreate,
     PriceTagRequestResponse,
     PriceTagRequestUpdate,
+    PromotionLookupItem,
     TagItemLookupItem,
 )
 from app.services.dealer_kit.tag_sheet_export_service import latest_completed_export
@@ -413,6 +414,33 @@ def portal_lookup_tag_items(
     return [
         TagItemLookupItem(**item)
         for item in PriceTagRequestService.lookup_tag_items(db, q, limit=limit)
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Promotion lookup
+# ---------------------------------------------------------------------------
+
+
+@router.get("/lookups/promotions", response_model=list[PromotionLookupItem])
+def portal_lookup_promotions(
+    q: Optional[str] = Query(None),
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    """Active-window, audience-gated promotions for the portal form's promotion
+    dropdown (S4, #477).
+
+    Gated the same way as every other price tag route: a contact who cannot see
+    the form cannot browse the promotion book through it either. Beyond that,
+    the promotions returned are only the ones this contact's own access codes
+    are entitled to (``PriceTagRequestService.lookup_promotions``) - the same
+    audience rule a promotion's price is gated by everywhere else.
+    """
+    _assert_visible(db, token.contact_id)
+    return [
+        PromotionLookupItem(**item)
+        for item in PriceTagRequestService.lookup_promotions(db, token.contact_id, q)
     ]
 
 

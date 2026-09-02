@@ -716,6 +716,60 @@ class PriceTagRequestService:
         return items
 
     @staticmethod
+    def lookup_promotions(
+        db: Session, contact_id: str, query: str | None = None
+    ) -> list[dict]:
+        """Active-window, audience-gated promotions for the portal's promotion
+        dropdown (S4, #477).
+
+        The active-window half mirrors ``resolve_prices``' ``_offer_prices``:
+        switched-on (``is_active``) AND inside an inclusive ``[start_date,
+        end_date]`` window, either end open. Company scoping is not written here
+        on purpose - ``Promotion`` carries ``CompanyScopedMixin`` and the ordinary
+        ORM scope filter already keeps another company's promotion off this list,
+        the same way it already keeps it out of a price.
+
+        The audience half is applied too - a first cut of this lookup shipped
+        without it, so a dealer-only promotion showed up in every contact's
+        dropdown. It intersects the contact's own access codes
+        (``ContactAccessTypeService.get_contact_access_codes``) against
+        ``Promotion.access_levels``, same rule ``pricing._may_see_offer``
+        enforces: an empty ``access_levels`` reaches nobody. It deliberately does
+        NOT call ``_may_see_offer`` itself, though, because that helper's other
+        half does not apply here - an empty ``ViewerContext.access_codes`` there
+        falls back to the PUBLIC access code, because the anonymous public
+        catalogue is a real, intentional viewer. A portal contact is never
+        anonymous: one with no assigned access code is missing data, not a
+        member of the public, so it fails closed instead of widening to the
+        public audience.
+        """
+        from app.models.marketing import Promotion
+        from app.services.contact_access_type_service import ContactAccessTypeService
+        from app.services.dealer_kit.pricing import business_today
+
+        contact_codes = set(
+            ContactAccessTypeService(db).get_contact_access_codes(contact_id)
+        )
+        if not contact_codes:
+            return []
+
+        today = business_today()
+        q = (
+            db.query(Promotion)
+            .filter(Promotion.is_active.is_(True))
+            .filter(or_(Promotion.start_date.is_(None), Promotion.start_date <= today))
+            .filter(or_(Promotion.end_date.is_(None), Promotion.end_date >= today))
+        )
+        if query:
+            q = q.filter(Promotion.description.ilike(f"%{query}%"))
+        rows = q.order_by(Promotion.description).all()
+        return [
+            {"id": row.id, "name": row.description or ""}
+            for row in rows
+            if row.access_levels and contact_codes & set(row.access_levels)
+        ]
+
+    @staticmethod
     def lookup_debtors_for_agent(
         db: Session,
         contact_id: str,

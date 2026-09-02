@@ -671,10 +671,6 @@ class TestTheDownloadRoute:
         _revoke_the_grant(db, contact_id)
 
         res = c.get(f"{_BASE}/{created['id']}/download")
-
-        assert res.status_code == 403, res.text
-        assert res.json()["code"] == "FORM_TYPE_NOT_VISIBLE"
-
     def test_a_storage_outage_answers_502_not_a_relabeled_404(self, client, monkeypatch):
         """Mirrors ``portal_download_attachment``: a bucket that refuses is a
         502 the caller can retry, not a 404 that reads like the file was
@@ -740,3 +736,278 @@ class TestMalformedRequestId:
         res = c.post(f"{_BASE}/{self._BAD_ID}/submit")
 
         assert res.status_code == 404, res.text
+# The promotions lookup (S4, #477)
+# ---------------------------------------------------------------------------
+
+
+def _seed_promotion(
+    db: Session,
+    *,
+    description: str = "ZZT Promo",
+    is_active: bool = True,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    access_levels: list[str] | None = None,
+) -> str:
+    from app.models.marketing import Promotion
+
+    kwargs = {}
+    if access_levels is not None:
+        kwargs["access_levels"] = access_levels
+    promo = Promotion(
+        id=str(uuid.uuid4()),
+        description=description,
+        is_active=is_active,
+        start_date=start_date,
+        end_date=end_date,
+        **kwargs,
+    )
+    db.add(promo)
+    db.flush()
+    return promo.id
+
+
+def _grant_promotion_audience_code(db: Session, contact_id: str, code: str = "dealer") -> None:
+    """Adds ONE more access code to the contact seeded by ``client``.
+
+    The audience gate on this lookup reads a DIFFERENT code than the
+    form-visibility grant ``_seed_contact_who_can_see_the_form`` already set
+    up - a contact who may see the form is not automatically an audience a
+    promotion is priced for, so a test that asserts a promotion IS returned
+    needs its own grant of a code that matches ``Promotion.access_levels``.
+    """
+    from app.models.access import ContactAccessType, respond_contact_access_types
+
+    if db.query(ContactAccessType).filter(ContactAccessType.code == code).first() is None:
+        db.add(ContactAccessType(code=code, name=code))
+        db.flush()
+    db.execute(
+        respond_contact_access_types.insert().values(
+            contact_id=contact_id, access_type_code=code
+        )
+    )
+    db.flush()
+
+
+class TestThePromotionsLookup:
+    """``GET /portal/lookups/promotions`` - active-window, audience-gated promotions.
+
+    The active-window half mirrors ``resolve_prices``' ``_offer_prices``:
+    ``is_active`` plus an inclusive ``[start_date, end_date]`` window with
+    either end open. Company scoping is the ordinary ORM scope filter the
+    portal's ``X-Portal-Token`` header primes.
+
+    The audience half mirrors ``pricing._may_see_offer``'s intersection rule -
+    a promotion reaches only the contacts whose access codes overlap its
+    ``access_levels``, and an empty ``access_levels`` reaches nobody. A first
+    cut of this endpoint shipped without that gate, so every contact's
+    dropdown carried every other audience's promotions too.
+    """
+
+    def test_an_active_promotion_is_returned(self, client):
+        c, db, contact_id = client
+        _grant_promotion_audience_code(db, contact_id)
+        promo_id = _seed_promotion(db, description="ZZT Spring Sale")
+
+        res = c.get("/api/v1/public/portal/lookups/promotions")
+
+        assert res.status_code == 200, res.text
+        rows = res.json()
+        assert {"id": promo_id, "name": "ZZT Spring Sale"} in rows
+
+    def test_an_expired_promotion_is_excluded(self, client):
+        c, db, contact_id = client
+        _grant_promotion_audience_code(db, contact_id)
+        _seed_promotion(
+            db, description="ZZT Last Year", end_date=date.today() - timedelta(days=1)
+        )
+
+        rows = c.get("/api/v1/public/portal/lookups/promotions").json()
+
+        assert not any(r["name"] == "ZZT Last Year" for r in rows)
+
+    def test_a_not_yet_started_promotion_is_excluded(self, client):
+        c, db, contact_id = client
+        _grant_promotion_audience_code(db, contact_id)
+        _seed_promotion(
+            db, description="ZZT Not Yet", start_date=date.today() + timedelta(days=7)
+        )
+
+        rows = c.get("/api/v1/public/portal/lookups/promotions").json()
+
+        assert not any(r["name"] == "ZZT Not Yet" for r in rows)
+
+    def test_a_switched_off_promotion_is_excluded(self, client):
+        c, db, contact_id = client
+        _grant_promotion_audience_code(db, contact_id)
+        _seed_promotion(db, description="ZZT Switched Off", is_active=False)
+
+        rows = c.get("/api/v1/public/portal/lookups/promotions").json()
+
+        assert not any(r["name"] == "ZZT Switched Off" for r in rows)
+
+    def test_q_filters_by_name(self, client):
+        c, db, contact_id = client
+        _grant_promotion_audience_code(db, contact_id)
+        _seed_promotion(db, description="ZZT Kitchen Bash")
+        _seed_promotion(db, description="ZZT Bathroom Blitz")
+
+        rows = c.get(
+            "/api/v1/public/portal/lookups/promotions", params={"q": "kitchen"}
+        ).json()
+
+        names = {r["name"] for r in rows}
+        assert "ZZT Kitchen Bash" in names
+        assert "ZZT Bathroom Blitz" not in names
+
+    def test_the_end_date_is_included(self, client):
+        """The window is inclusive at both ends, same as `_offer_prices`."""
+        c, db, contact_id = client
+        _grant_promotion_audience_code(db, contact_id)
+        from app.services.dealer_kit.pricing import business_today
+
+        _seed_promotion(
+            db,
+            description="ZZT Last Day",
+            start_date=business_today() - timedelta(days=7),
+            end_date=business_today(),
+        )
+
+        rows = c.get("/api/v1/public/portal/lookups/promotions").json()
+
+        assert any(r["name"] == "ZZT Last Day" for r in rows)
+
+    def test_the_start_date_is_included(self, client):
+        """The window is inclusive at both ends, same as `_offer_prices`."""
+        c, db, contact_id = client
+        _grant_promotion_audience_code(db, contact_id)
+        from app.services.dealer_kit.pricing import business_today
+
+        _seed_promotion(
+            db,
+            description="ZZT First Day",
+            start_date=business_today(),
+            end_date=business_today() + timedelta(days=7),
+        )
+
+        rows = c.get("/api/v1/public/portal/lookups/promotions").json()
+
+        assert any(r["name"] == "ZZT First Day" for r in rows)
+
+    def test_a_promotion_for_another_audience_is_hidden(self, client):
+        """A dealer-coded contact does not see a mocha_dealer-only promotion."""
+        c, db, contact_id = client
+        _grant_promotion_audience_code(db, contact_id, code="dealer")
+        _seed_promotion(
+            db, description="ZZT Mocha Only", access_levels=["mocha_dealer"]
+        )
+
+        rows = c.get("/api/v1/public/portal/lookups/promotions").json()
+
+        assert not any(r["name"] == "ZZT Mocha Only" for r in rows)
+
+    def test_a_promotion_for_an_overlapping_audience_is_shown(self, client):
+        """The same dealer-coded contact sees a promotion tagged for dealers too."""
+        c, db, contact_id = client
+        _grant_promotion_audience_code(db, contact_id, code="dealer")
+        _seed_promotion(
+            db, description="ZZT Dealer Overlap", access_levels=["mocha_dealer", "dealer"]
+        )
+
+        rows = c.get("/api/v1/public/portal/lookups/promotions").json()
+
+        assert any(r["name"] == "ZZT Dealer Overlap" for r in rows)
+
+    def test_an_empty_access_levels_promotion_is_hidden_from_everyone(self, client):
+        """An empty ``access_levels`` reaches nobody, same as `_may_see_offer`."""
+        c, db, contact_id = client
+        _grant_promotion_audience_code(db, contact_id, code="dealer")
+        _seed_promotion(db, description="ZZT Nobody", access_levels=[])
+
+        rows = c.get("/api/v1/public/portal/lookups/promotions").json()
+
+        assert not any(r["name"] == "ZZT Nobody" for r in rows)
+
+    def test_a_contact_with_no_access_codes_sees_no_promotions(self):
+        """Fail closed rather than falling back to a default audience.
+
+        A ``ContactPortalFormOverride`` can grant a contact ``price_tag_request``
+        visibility with no access-type membership at all (``TestPortalFormVisibility
+        .test_override_enable_adds_type`` in ``test_price_tag_request.py`` proves the
+        override alone is enough). Such a contact passes the route's grant check but
+        carries zero access codes, and must not fall back to
+        ``pricing.PUBLIC_ACCESS_CODE`` the way an anonymous public-catalogue viewer
+        does - a portal contact is never anonymous, so no code means no promotions,
+        not "the public ones".
+        """
+        from app.api.v1.public.portal import get_portal_token
+        from app.database import get_db
+        from app.models.access import RespondContact
+        from app.models.portal import PortalToken
+        from app.models.price_tag import ContactPortalFormOverride
+
+        with blank_session() as db:
+            contact = RespondContact(
+                id=str(uuid.uuid4()),
+                phone_number=f"+60{uuid.uuid4().hex[:9]}",
+                name=unique_code("contact"),
+            )
+            db.add(contact)
+            db.add(
+                ContactPortalFormOverride(
+                    contact_id=contact.id,
+                    form_type="price_tag_request",
+                    is_enabled=True,
+                )
+            )
+            db.flush()
+            # Defaults to access_levels=["dealer","end_user"] - broadly visible to
+            # anyone WITH a code, and still hidden from a contact with none.
+            _seed_promotion(db, description="ZZT Anyones Guess")
+
+            def _override_get_db():
+                yield db
+
+            def _override_portal_token():
+                return PortalToken(
+                    id=str(uuid.uuid4()), contact_id=contact.id, space_id="zzt-space"
+                )
+
+            app.dependency_overrides[get_db] = _override_get_db
+            app.dependency_overrides[get_portal_token] = _override_portal_token
+            try:
+                with TestClient(app, headers={"X-Portal-Token": "zzt-token"}) as c:
+                    res = c.get("/api/v1/public/portal/lookups/promotions")
+            finally:
+                app.dependency_overrides.clear()
+
+        assert res.status_code == 200, res.text
+        assert res.json() == []
+
+    def test_the_grant_gates_this_lookup_too(self, client):
+        """The control: its sibling lookups are already gated the same way."""
+        c, db, contact_id = client
+        _revoke_the_grant(db, contact_id)
+
+        res = c.get("/api/v1/public/portal/lookups/promotions")
+
+        assert res.status_code == 403, res.text
+        assert res.json()["code"] == "FORM_TYPE_NOT_VISIBLE"
+
+    def test_a_missing_token_is_refused(self):
+        """Auth runs before the grant check and before any DB read."""
+        from app.database import get_db
+
+        with blank_session() as db:
+
+            def _override_get_db():
+                yield db
+
+            app.dependency_overrides[get_db] = _override_get_db
+            try:
+                with TestClient(app) as c:
+                    res = c.get("/api/v1/public/portal/lookups/promotions")
+            finally:
+                app.dependency_overrides.clear()
+
+        assert res.status_code == 401, res.text

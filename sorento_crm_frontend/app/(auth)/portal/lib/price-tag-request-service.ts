@@ -146,10 +146,13 @@ export async function lookupDebtors(query?: string): Promise<DebtorOption[]> {
   }));
 }
 
-// TODO: No portal promotions lookup endpoint exists yet. Keep client-side stub.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export async function lookupPromotions(query?: string): Promise<PromotionOption[]> {
-  return [];
+  const usp = new URLSearchParams();
+  if (query) usp.set('q', query);
+  const qs = usp.toString();
+  const url = qs ? `${LOOKUPS}/promotions?${qs}` : `${LOOKUPS}/promotions`;
+  const res = await portalFetch(url);
+  return unwrap<PromotionOption[]>(res, 'Failed to load promotions');
 }
 
 export async function lookupProducts(query?: string): Promise<ProductOption[]> {
