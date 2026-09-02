@@ -377,6 +377,26 @@ def test_stock_list_validate_has_no_warning_when_no_name_occurs():
         assert result["summary"]["supplier_check"]["other_supplier_name"] is None
 
 
+def test_the_apply_path_does_not_pay_for_the_supplier_scan():
+    """The check answers a VERDICT question, and only the verdict card asks it.
+
+    `supplier_check` scans every active supplier for this company; running it again while
+    writing the snapshot buys nothing, since by then the operator has already been shown the
+    warning and pressed Confirm anyway (it is a warning, not a refusal).
+    """
+    with pg_session() as db:
+        tag = _tag()
+        chosen = _supplier(db, f"{MARKER} chosen {tag}")
+        other = _supplier(db, f"{MARKER} JINBAICHUAN {tag}")
+        data = _stock_workbook(f"{other.supplier_name} CO.,LTD", [(f"{MARKER}-A", 10)])
+
+        verdict = stock_svc.validate(db, data, supplier_id=str(chosen.id))
+        applied = stock_svc.apply(db, data, supplier_id=str(chosen.id))
+
+        assert verdict["summary"]["supplier_check"]["other_supplier_name"] == other.supplier_name
+        assert applied["summary"]["supplier_check"] is None
+
+
 # --------------------------------------------------------------------------------- #
 # The verdict-card counts (AC-G4's numbers; the fixture read alone, no live catalogue)
 # --------------------------------------------------------------------------------- #

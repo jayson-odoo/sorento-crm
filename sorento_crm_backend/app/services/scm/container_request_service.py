@@ -1368,6 +1368,10 @@ def build(
     behind the demand rows (CHANGE 2), one extra query, off by default because most callers
     (e.g. the send flow) only need the aggregate.
 
+    ``plan`` is the record this build belongs to, and every shipped caller passes one
+    (`build_for_plan`): a plan reads its OWN statement (S6). Called without it, the read is
+    the supplier-wide one that predates 454 - the service-level tests, and nothing else.
+
     ``plan_horizon_date`` is "Plan until" (captain, 20 Aug): "SOs needed in 2030 a buyer never
     asked about should not distort a plan they only want through December" - the same request
     the reorder run answers with its own `plan_horizon_date` column

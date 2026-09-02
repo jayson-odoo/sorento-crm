@@ -108,12 +108,20 @@ def _supplier_label(db: Session, supplier_id: str) -> Optional[str]:
 
 
 def _summarise(
-    db: Session, parsed: InventoryReadResult, supplier_id: Optional[str] = None
+    db: Session,
+    parsed: InventoryReadResult,
+    supplier_id: Optional[str] = None,
+    *,
+    check_supplier: bool = True,
 ) -> dict[str, Any]:
     """What the file holds, described. `rows` is what the verdict card calls "L rows" and
     `items_unmatched` is its "U codes unknown" (AC-G4) - both already computed below.
     `supplier_check` (AC-G3) is `{letterhead, chosen_supplier_name, other_supplier_name |
     null}`, or `None` when the file states no letterhead above its header row.
+
+    `check_supplier=False` skips that check, which scans every active supplier for the
+    company: only the VERDICT card asks the question, and by the time `apply` runs, the
+    warning has already been shown and Confirm pressed anyway (it warns, it never refuses).
     """
     codes = {r.item_code for r in parsed.rows}
     known = _products_by_code(db, codes, supplier_id=supplier_id, remember=False)
@@ -142,7 +150,11 @@ def _summarise(
         "unmeasured_item_codes": sorted(set(unmeasured))[:50],
         "unmapped_headers": parsed.unmapped_headers,
         "unreadable_rows": len(parsed.problems),
-        "supplier_check": _supplier_check(db, parsed.letterhead, supplier_id=supplier_id),
+        "supplier_check": (
+            _supplier_check(db, parsed.letterhead, supplier_id=supplier_id)
+            if check_supplier
+            else None
+        ),
     }
 
 
@@ -243,7 +255,9 @@ def apply(
     WHOSE snapshot is what `loading_plan_id` decides (S6, AC-F3). Stated, this replaces only
     that plan's rows and stamps the new ones with it, so a re-upload into the same plan is
     still a replace and no other plan's figures move. Absent - the standalone stock-list page
-    - it keeps the supplier-wide replace it always did.
+    - it replaces the rows no plan owns (`loading_plan_id IS NULL`), which is what "the
+    supplier's snapshot" has meant since 454: a plan's rows belong to that plan, and a
+    standalone upload must not delete them.
     """
     parsed = _parse(db, data)
     if not parsed.ok:
@@ -255,7 +269,7 @@ def apply(
             "summary": {},
         }
 
-    summary = _summarise(db, parsed, supplier_id)
+    summary = _summarise(db, parsed, supplier_id, check_supplier=False)
     stamp = as_of or datetime.now().date()
     known = _products_by_code(
         db, {r.item_code for r in parsed.rows}, supplier_id=supplier_id, actor=actor
