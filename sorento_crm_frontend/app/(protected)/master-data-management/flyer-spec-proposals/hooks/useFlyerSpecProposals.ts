@@ -41,7 +41,6 @@ export function useFlyerSpecBatchesQuery() {
       (query.state.data ?? []).some((row) => row.status === 'proposing')
         ? PROPOSING_POLL_MS
         : false,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -74,7 +73,6 @@ export function useFlyerSpecProposalsQuery(
     refetchInterval: (query) =>
       query.state.data?.status === 'proposing' ? PROPOSING_POLL_MS : false,
     staleTime: 0,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

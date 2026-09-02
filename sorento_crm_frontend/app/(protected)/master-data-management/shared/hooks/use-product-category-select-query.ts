@@ -25,7 +25,6 @@ export const useProductCategorySelectQuery = () => {
     queryFn: fetchCategoryList,
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60, // 60 minutes
-    refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: 1,
   });

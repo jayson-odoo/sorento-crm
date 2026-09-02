@@ -13,7 +13,6 @@ export function useProductSetProposals() {
     queryKey: KEY,
     queryFn: () => getProductSetProposals(),
     retry: 1,
-    refetchOnWindowFocus: false,
   });
 }
 

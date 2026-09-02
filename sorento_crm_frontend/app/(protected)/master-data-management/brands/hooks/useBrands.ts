@@ -3,14 +3,15 @@ import { toast } from 'sonner';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import { getBrands, getBrand, createBrand, updateBrand } from '../services/brandService';
 import type { BrandFormData } from '../types/brand.types';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export function useBrands(params: DataGridApiFetchParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['brands', params.pageIndex, params.pageSize, params.sorting, params.searchQuery],
     queryFn: () => getBrands(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

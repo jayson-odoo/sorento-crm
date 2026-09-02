@@ -48,7 +48,6 @@ export function useProductSets(params: DataGridApiFetchParams) {
     queryFn: () => getProductSets(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

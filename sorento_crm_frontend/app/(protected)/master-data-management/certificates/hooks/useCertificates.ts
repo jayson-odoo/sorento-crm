@@ -76,7 +76,6 @@ export function useCertificates(params: CertificatesListParams) {
     queryFn: () => getCertificates(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

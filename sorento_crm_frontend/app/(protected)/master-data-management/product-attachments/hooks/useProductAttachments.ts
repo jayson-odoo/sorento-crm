@@ -10,14 +10,15 @@ import {
   getProductAttachmentsByProduct,
 } from '../services/productAttachmentService';
 import type { ProductAttachment, ProductAttachmentFormData } from '../types/productAttachment.types';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export function useProductAttachments(params: DataGridApiFetchParams & { product_id?: string; attachment_id?: string }) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['product-attachments', params.pageIndex, params.pageSize, params.sorting, params.searchQuery, params.product_id, params.attachment_id],
     queryFn: () => getProductAttachments(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -29,7 +30,6 @@ export function useProductAttachment(id: string | null) {
     enabled: !!id,
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -91,7 +91,6 @@ export function useProductAttachmentsByProduct(productId: string | null) {
     enabled: !!productId,
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

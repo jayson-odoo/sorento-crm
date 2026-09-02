@@ -230,7 +230,6 @@ const ProductsList = () => {
     queryFn: () => fetchProductsPage(listParams),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60, // 60 minutes
-    refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: 1,
   });
@@ -730,7 +729,6 @@ const ProductsList = () => {
   // toolbar, and the empty state's next step (S5-06).
   const listPrimaryAction = (
     <Button
-      disabled={isLoading}
       onClick={() => router.push('/master-data-management/products/new')}
     >
       <Plus className="size-4" />
@@ -786,7 +784,6 @@ const ProductsList = () => {
                   <SearchableSelect
                     value={selectedCategory || 'all'}
                     onChange={handleCategorySelection}
-                    disabled={isLoading}
                     placeholder="Category"
                     options={[
                       { value: 'all', label: 'All categories' },
@@ -799,7 +796,6 @@ const ProductsList = () => {
                   <SearchableSelect
                     value={selectedBrand || 'all'}
                     onChange={handleBrandSelection}
-                    disabled={isLoading}
                     placeholder="Brand"
                     options={[
                       { value: 'all', label: 'All brands' },
@@ -812,7 +808,6 @@ const ProductsList = () => {
                   <SearchableSelect
                     value={selectedStatus || 'all'}
                     onChange={handleStatusSelection}
-                    disabled={isLoading}
                     placeholder="Status"
                     options={[
                       { value: 'all', label: 'All status' },
@@ -823,7 +818,6 @@ const ProductsList = () => {
                   <SearchableSelect
                     value={selectedVariantFilter}
                     onChange={handleVariantFilterSelection}
-                    disabled={isLoading}
                     placeholder="Variant"
                     options={[
                       { value: 'all', label: 'All products' },
