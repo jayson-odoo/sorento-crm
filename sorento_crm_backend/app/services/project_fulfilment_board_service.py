@@ -791,8 +791,12 @@ class FulfilmentBoardService:
             )
         # The bins this read covers: one, or the whole set. Codes by id, so every document
         # row can say where it sits without a second lookup.
-        if group:
-            codes = self._set_locations(str(product.id), group)
+        set_position = self._set_position(str(product.id), group) if group else None
+        if set_position is not None:
+            codes = {
+                str(entry.warehouse_id): entry.location
+                for entry in set_position.by_location
+            }
         else:
             codes = {str(warehouse.id): warehouse.warehouse_code or ""}
         target_ids = list(codes)
@@ -976,39 +980,46 @@ class FulfilmentBoardService:
             # number there would invite the client to apply the rule where it does not hold.
             **(
                 {
-                    "five_pool_net": qty_text(
-                        self.supply.netting().pools_net(str(product.id)).net
-                    ),
+                    # The SET's own net, off the position this read's membership came from
+                    # (D1) - never `supply.netting()`, whose pile span is the products a
+                    # REQUEST has asked about and is therefore empty on a drill-down.
+                    "five_pool_net": qty_text(set_position.net),
                     "pool_share_pct": self._pool_share_pct(),
                 }
-                if (group or "").strip().lower() == POOLS_SET
+                if (group or "").strip().lower() == POOLS_SET and set_position is not None
                 else {}
             ),
         }
 
-    def _set_locations(self, product_id: str, group: str) -> Dict[str, str]:
-        """Every bin of one set, by id: the ownership group's, or the five site pools'.
+    def _set_position(self, product_id: str, group: str) -> Any:
+        """One set's whole netted POSITION: the ownership group's, or the five site pools'.
 
         Read through `group_netting` - the SAME reader the cell's subtotal prints its net
-        from - so the documents the drill lists and the number it is expanded from are over
-        one membership. `planning_only` because the flag decides who is in a group (R17): a
-        bin flagged out holds stock no proposal may draw, and listing its documents under
-        the group's balance would show a pile the ladder cannot spend.
+        from - so the documents the drill lists, the membership it lists them over and the
+        NET it caps its running column by are all one reading. `planning_only` because the
+        flag decides who is in a group (R17): a bin flagged out holds stock no proposal may
+        draw, and listing its documents under the group's balance would show a pile the
+        ladder cannot spend.
 
-        An unknown group answers with no bins, which is the honest reading: nothing was
-        found to look at.
+        THE POSITION, not just its bins (D1, captain 3 Sep). `stock_detail` used to take the
+        membership from here and then read the NET back off `supply.netting()` - a reader
+        whose pile span is the products the REQUEST has already asked about
+        (`ProjectSupplyService._pile_facts`). A drill-down asks about no line, so that span
+        was empty, every pile read as three zeroes, and `five_pool_net` came back 0 while the
+        subtotal beside it printed 142 off the same stock. The ledger then capped "Available
+        for Project" at 0 on every row under a subtotal reading 71.
+
+        An unknown group answers with no bins and a zero net, which is the honest reading:
+        nothing was found to look at.
         """
         from app.services.scm.group_netting import netting_for_products
 
         netting = netting_for_products(self.db, [product_id], planning_only=True)
-        position = (
+        return (
             netting.pools_net(product_id)
             if (group or "").strip().lower() == POOLS_SET
             else netting.group_net(product_id, group)
         )
-        return {
-            str(entry.warehouse_id): entry.location for entry in position.by_location
-        }
 
     def pile_queue(
         self,

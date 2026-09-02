@@ -6848,3 +6848,128 @@ def test_the_proof_never_offers_the_units_own_floor_twice():
     assert spent["note"] is None, (
         "and the row's own note must not list a location the walk has emptied"
     )
+
+
+# --------------------------------------------------------------------------- #
+# D1 (captain, 3 Sep, on SO381895 / B2155-NL-BLUE) - one five-pool net, two readers
+#
+# The cell's site pool subtotal read Available 142 / Available for Project 71 while the
+# EXPANDED ledger under it read Available for Project 0 on every row. The ledger's cap is
+# `stock-detail`'s `five_pool_net`, which is a different reader from the one the board gave
+# the cell - and R-K says the two never disagree.
+# --------------------------------------------------------------------------- #
+
+
+def _pool_ledger_world(db):
+    """One product, one site pool holding 152, and a DEALER order at the pool wanted long
+    after the board's own window.
+
+    The dealer line is the point: it is netted by the whole book and by the board alike (the
+    netting is not windowed), so a disagreement between the two readers cannot be blamed on
+    the window - and its 10 is what makes the pool's net a number worth stating.
+    """
+    product = _product(db, f"ZZT-{_uid()[:6]}")
+    own, pool = _pooled_warehouses(db)
+    _stock(db, product, own, on_hand=0)
+    _stock(db, product, pool, on_hand=152)
+    dealer = _order(
+        db, so_number=f"ZZT-SO-DLR{_uid()[:5]}", order_date=date(2026, 1, 1),
+        demand_class="dealer",
+    )
+    _line(db, dealer, product, qty="10", required_date=date(2027, 6, 1), warehouse=pool)
+    order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+    _line(db, order, product, qty="10", required_date=date(2026, 9, 3), warehouse=own)
+    return product, own, pool, order
+
+
+def test_the_stock_drill_states_the_same_five_pool_net_the_cell_did():
+    """D1. `stock_detail` read the net through `supply.netting()` on a service that had been
+    asked about no product at all, so the pile span was empty and every pool netted 0 - the
+    ledger then capped "Available for Project" at 0 on every row while the subtotal beside it
+    printed 71 off the same pile.
+
+    The board's own reader is spanned by the products the request is about; this one has to
+    be spanned by the product it was opened for.
+    """
+    from app.services.scm.front_planning_engine import available_for_project
+
+    with blank_session() as db:
+        product, _own, pool, order = _pool_ledger_world(db)
+
+        service = _service(db)
+        board = service.build([order.so_number], granularity="week", as_of=TODAY)
+        cell = _cell(board, product.product_code, "2026-08-31")
+        subtotal = next(
+            row for row in cell["locations"] if row["location"] == pool.warehouse_code
+        )
+        detail = _service(db).stock_detail(
+            str(product.id), None, group="pools",
+            line_ids=[cell["contributions"][0]["line_id"]],
+        )
+        share = board["pool_share_pct"]
+
+    # 152 on hand at the pool, 10 owed there by the dealer order: the pile nets 142.
+    assert subtotal["net"] == "142"
+    assert detail["five_pool_net"] == subtotal["net"], (
+        "the ledger's cap and the subtotal beside it are one number",
+        detail["five_pool_net"],
+    )
+    assert detail["pool_share_pct"] == share == 50
+    # And the cap actually admits a share, which is the symptom: the ledger's first row
+    # (the pool's on hand) reads 76, not 0.
+    assert available_for_project(
+        Decimal("152"), Decimal(detail["five_pool_net"]), share
+    ) == Decimal("76")
+    # The row the BOARD computed was right all along, and still is.
+    assert subtotal["available_for_project"] == "71"
+
+
+def test_the_pools_drill_lists_every_site_pool_even_for_an_agent_with_no_group():
+    """D6 (captain, 3 Sep, SO374906, agent LEENA). The line's agent carries no location
+    group at all, and the expanded pools ledger came back with nothing in it - no on-hand
+    row, no documents - under a subtotal reading On hand 77.
+
+    The set a `group=pools` drill covers is the FIVE SITE POOLS, which is a fact about the
+    warehouses and not about who sold the line: the same rows the board's own site pool
+    section is built from. So every pool is listed, an empty one included, and the pool
+    holding the stock states it.
+    """
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        # Two site pools exist; only one holds anything, and the asking line's own bin is
+        # ungrouped - the shape an agent with no location group leaves behind.
+        _own1, brw = _pooled_warehouses(db)
+        _own2, empty_pool = _pooled_warehouses(db)
+        lonely = _warehouse(db, f"ZZTL{_uid()[:6]}"[:20])
+        _stock(db, product, lonely, on_hand=0)
+        _stock(db, product, brw, on_hand=77)
+        _stock(db, product, empty_pool, on_hand=0)
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="10", required_date=date(2026, 9, 3), warehouse=lonely)
+
+        service = _service(db)
+        board = service.build([order.so_number], granularity="week", as_of=TODAY)
+        cell = _cell(board, product.product_code, "2026-08-31")
+        subtotal = next(
+            row for row in cell["locations"] if row["location"] == brw.warehouse_code
+        )
+        detail = _service(db).stock_detail(
+            str(product.id), None, group="pools",
+            line_ids=[cell["contributions"][0]["line_id"]],
+        )
+        codes = {row["location"] for row in detail["bins"]}
+        brw_code, empty_code = brw.warehouse_code, empty_pool.warehouse_code
+
+    assert {brw_code, empty_code} <= codes, (
+        "the drill covers the SITE POOLS, whatever group the asking line's agent carries",
+        codes,
+    )
+    assert detail["qty_on_hand"] == "77", "and the pool holding the stock states it"
+    assert next(row for row in detail["bins"] if row["location"] == brw_code)[
+        "qty_on_hand"
+    ] == "77"
+    assert next(row for row in detail["bins"] if row["location"] == empty_code)[
+        "qty_on_hand"
+    ] == "0", "a pool holding nothing is LISTED reading 0, never left out"
+    assert detail["five_pool_net"] == subtotal["net"] == "77"
+    assert detail["available_qty"] == "77"
