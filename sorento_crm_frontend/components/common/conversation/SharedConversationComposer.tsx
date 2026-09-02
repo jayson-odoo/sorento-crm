@@ -401,8 +401,12 @@ export default function SharedConversationComposer({
     stagedPreviewItems.findIndex((entry) => entry.fileIndex === previewFileIndex),
   );
 
+  // M6-01: staging a file is NOT one of the controls a send freezes - the
+  // buttons read enabled, so a file added or pasted mid-send has to actually
+  // stage, not silently vanish. It lands after whatever THIS send is
+  // carrying; the post-send restage below is additive against it rather than
+  // overwriting the array outright.
   const addFiles = (picked: FileList | File[] | null | undefined) => {
-    if (sending) return;
     if (!picked?.length) return;
     setFiles((prev) => [...prev, ...Array.from(picked)]);
     if (fileInputRef.current) fileInputRef.current.value = '';
@@ -465,7 +469,14 @@ export default function SharedConversationComposer({
       // long. The text itself did go out, so only the files stay staged.
       const attachmentsDropped = sentFiles.length > 0 && !failed && deliveredCount === 0;
       setReplyText('');
-      setFiles(failed ? sentFiles.slice(deliveredCount) : attachmentsDropped ? sentFiles : []);
+      // Additive, not a replace: `addFiles` stays live during the send (M6-01),
+      // so anything staged after `sentFiles` was captured is still sitting in
+      // state past that index and must survive this restage, not be clobbered
+      // by it.
+      setFiles((cur) => [
+        ...(failed ? sentFiles.slice(deliveredCount) : attachmentsDropped ? sentFiles : []),
+        ...cur.slice(sentFiles.length),
+      ]);
       setFailedFileName(failed?.filename ?? null);
       if (attachmentsDropped) {
         toast.error(
@@ -547,7 +558,7 @@ export default function SharedConversationComposer({
    * Text pastes are untouched: the handler only intervenes when there are files.
    */
   const handlePaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    if (!attachmentsEnabled || sending) return;
+    if (!attachmentsEnabled) return;
     const pasted = Array.from(event.clipboardData?.files ?? []);
     if (pasted.length === 0) return;
     event.preventDefault();

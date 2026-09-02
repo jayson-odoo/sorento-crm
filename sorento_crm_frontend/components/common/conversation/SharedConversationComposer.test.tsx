@@ -384,12 +384,18 @@ describe('SharedConversationComposer', () => {
     const removeC = screen.getByRole('button', { name: 'Remove c.pdf' });
     expect(removeC).toBeDisabled();
     // M6-01: Attach itself stays enabled through a send (only the per-file
-    // remove is frozen, for the positional reason above) - `addFiles` already
-    // no-ops while `sending` is true, so nothing actually gets staged either way.
+    // remove is frozen, for the positional reason above), and `addFiles` no
+    // longer no-ops while `sending` is true - a file picked mid-send actually
+    // stages, it just cannot be removed until the send settles.
     expect(screen.getByRole('button', { name: /attach/i })).not.toBeDisabled();
 
     fireEvent.click(removeC);
     expect(screen.getByTestId('composer-attachments').textContent).toContain('c.pdf');
+
+    // A file added while the earlier three are still in flight must survive
+    // the restage below, not be clobbered by it.
+    attach(['d.pdf']);
+    expect(screen.getByTestId('composer-attachments').textContent).toContain('d.pdf');
 
     resolveSend({
       sent_as: 'attachment',
@@ -404,9 +410,67 @@ describe('SharedConversationComposer', () => {
       expect(staged).not.toContain('a.pdf');
       expect(staged).toContain('b.pdf');
       expect(staged).toContain('c.pdf');
+      expect(staged).toContain('d.pdf');
     });
     // Removal is available again once the send settles.
     expect(screen.getByRole('button', { name: 'Remove c.pdf' })).not.toBeDisabled();
+  });
+
+  it('a file added mid-send is staged, not dropped, and survives the post-send restage', async () => {
+    let resolveSend: (v: unknown) => void = () => {};
+    const sendAdapter = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSend = resolve;
+        }),
+    );
+    renderComposer({ mode: 'conversation', attachmentsEnabled: true, sendAdapter });
+    await waitFor(() => expect(screen.getByTestId('composer-file-input')).toBeInTheDocument());
+
+    fireEvent.change(screen.getByPlaceholderText('Type your message...'), {
+      target: { value: 'hello' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^Send$/i }));
+    await waitFor(() => expect(sendAdapter).toHaveBeenCalled());
+
+    attach(['mid-send.pdf']);
+    expect(screen.getByTestId('composer-attachments').textContent).toContain('mid-send.pdf');
+
+    resolveSend({ sent_as: 'text', rendered_text: 'hello', attachments: null });
+
+    await waitFor(() =>
+      expect(screen.getByTestId('composer-attachments').textContent).toContain('mid-send.pdf'),
+    );
+  });
+
+  it('a paste mid-send stages the pasted file instead of dropping it', async () => {
+    let resolveSend: (v: unknown) => void = () => {};
+    const sendAdapter = vi.fn().mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveSend = resolve;
+        }),
+    );
+    renderComposer({ mode: 'conversation', attachmentsEnabled: true, sendAdapter });
+    await waitFor(() => expect(screen.getByTestId('composer-file-input')).toBeInTheDocument());
+
+    fireEvent.change(screen.getByPlaceholderText('Type your message...'), {
+      target: { value: 'hello' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^Send$/i }));
+    await waitFor(() => expect(sendAdapter).toHaveBeenCalled());
+
+    const pastedFile = new File(['x'], 'pasted.png', { type: 'image/png' });
+    fireEvent.paste(screen.getByPlaceholderText('Type your message...'), {
+      clipboardData: { files: [pastedFile] },
+    });
+    expect(screen.getByTestId('composer-attachments').textContent).toContain('pasted.png');
+
+    resolveSend({ sent_as: 'text', rendered_text: 'hello', attachments: null });
+
+    await waitFor(() =>
+      expect(screen.getByTestId('composer-attachments').textContent).toContain('pasted.png'),
+    );
   });
 
   // ------------------------------------------------- template send attribution
