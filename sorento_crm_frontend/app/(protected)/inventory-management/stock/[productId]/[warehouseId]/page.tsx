@@ -27,6 +27,7 @@ import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { getStockDetail, getStockLedgerByStock, exportStockBalance } from '../../services/stockService';
 import type { Stock } from '../../types/stock.types';
 import type { StockLedgerEntry } from '../../../stock-ledger/types/stockLedger.types';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 type StockDetailPageProps = {
   params: Promise<{ productId: string; warehouseId: string }>;
@@ -41,15 +42,14 @@ export default function StockDetailPage({ params }: StockDetailPageProps) {
     queryKey: ['stock-detail', productId, warehouseId],
     queryFn: () => getStockDetail(productId, warehouseId),
     staleTime: 1000 * 60 * 5,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 
   const ledgerQuery = useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['stock-ledger-detail', productId, warehouseId, pagination.pageIndex, pagination.pageSize],
     queryFn: () => getStockLedgerByStock(productId, warehouseId, pagination),
     staleTime: 1000 * 60 * 5,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 
@@ -58,7 +58,6 @@ export default function StockDetailPage({ params }: StockDetailPageProps) {
     queryKey: ['stock-navigation'],
     queryFn: () => exportStockBalance(),
     staleTime: 1000 * 60 * 5,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
   const navigationItems = navigationQuery.data ?? [];
