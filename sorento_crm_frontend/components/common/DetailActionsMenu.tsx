@@ -32,6 +32,14 @@ interface DetailActionsMenuProps {
   /** Optional class for the trigger button. */
   className?: string;
   disabled?: boolean;
+  /**
+   * Controlled open state, for a caller that needs to close the menu itself
+   * once an in-flight action finishes (e.g. a download) rather than leaving it
+   * open until the next outside click. Uncontrolled (internal state) when
+   * omitted - every existing caller keeps working unchanged.
+   */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }
 
 /**
@@ -79,12 +87,18 @@ export function DetailActionsMenu({
   ariaLabel = 'Actions',
   className,
   disabled,
+  open: controlledOpen,
+  onOpenChange,
 }: DetailActionsMenuProps) {
   const TriggerIcon = trigger === 'ellipsis' ? MoreHorizontal : Cog;
   const items = actions ? null : orderChildren(children);
   // Controlled so a confirmable item (Copy link's tick) can hold the menu open
   // through its own click and close it again once the confirmation has shown.
-  const [open, setOpen] = useState(false);
+  // A caller may instead control it directly (`open`/`onOpenChange`) to close
+  // the menu once its own async action finishes.
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen ?? internalOpen;
+  const setOpen = onOpenChange ?? setInternalOpen;
 
   // Nothing to show is not an empty menu, it is no menu at all: an entity whose
   // actions are all permission-filtered away must not leave a dead button behind.

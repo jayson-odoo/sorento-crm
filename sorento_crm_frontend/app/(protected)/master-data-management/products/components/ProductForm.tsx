@@ -83,6 +83,7 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
       description: '',
       category_id: '',
       brand_id: null,
+      barcode: '',
       item_type: null,
       is_active: true,
       is_searchable: true,
@@ -140,6 +141,7 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
       description: product.description || '',
       category_id: categoryId,
       brand_id: brandId,
+      barcode: product.barcode || '',
       item_type: product.item_type || null,
       is_active: product.is_active,
       is_searchable: product.is_searchable ?? true,
@@ -190,6 +192,7 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
         description: data.description || undefined,
         category_id: data.category_id,
         brand_id: data.brand_id ?? (isEditMode ? null : undefined),
+        barcode: data.barcode ? data.barcode : isEditMode ? null : undefined,
         base_uom_id: data.base_uom_id,
         list_price: typeof data.list_price === 'number' ? data.list_price : Number(data.list_price),
         cost_price: toOptionalNumber(data.cost_price, isEditMode),
@@ -431,6 +434,24 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
                     )}
                   />
                 </div>
+
+                <FormField
+                  control={form.control}
+                  name="barcode"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Barcode</FormLabel>
+                      <FormControl>
+                        <Input
+                          placeholder="e.g. 1234567890123"
+                          {...field}
+                          value={field.value || ''}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <FormField

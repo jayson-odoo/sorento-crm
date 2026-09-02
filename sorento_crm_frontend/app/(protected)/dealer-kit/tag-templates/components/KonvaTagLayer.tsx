@@ -16,10 +16,16 @@
 import { useEffect, useState } from 'react';
 import { Ellipse, Group, Image as KonvaImage, Line, Rect, Text } from 'react-konva';
 import type Konva from 'konva';
+import JsBarcode from 'jsbarcode';
 import type { TagLayer, TagLayerProps } from '@/lib/dealer-kit/tag-template-types';
 import type { PriceBadgeInput } from '@/lib/dealer-kit/price-badge';
 import { priceBadgeParts } from '@/lib/dealer-kit/price-badge';
 import type { TagLayerDisplay } from '@/lib/dealer-kit/product-block';
+import {
+  barcodePlateGeometry,
+  barcodeSymbologyFor,
+  humanReadableBarcode,
+} from '@/lib/dealer-kit/barcode';
 
 // `TagLayerDisplay` is resolved by whoever owns the data (the editor, the
 // designer) and handed DOWN: the canvas draws layers and knows nothing about
@@ -95,6 +101,12 @@ interface KonvaTagLayerProps {
   onDragStart?: (id: string) => void;
   onDragMove?: (id: string, x_mm: number, y_mm: number) => void;
   onDragEnd?: (id: string) => void;
+  /**
+   * The pointer entered/left this layer's own bounds (S6, D10). Used to show
+   * a previewable block's eye chip on hover - a plain pass-through, the host
+   * resolves which BLOCK a hovered child belongs to.
+   */
+  onHoverChange?: (id: string, hovering: boolean) => void;
 }
 
 /** Convert mm to canvas pixels. */
@@ -118,6 +130,7 @@ export function KonvaTagLayer({
   onDragStart,
   onDragMove,
   onDragEnd,
+  onHoverChange,
 }: KonvaTagLayerProps) {
   if (!layer.visible) return null;
 
@@ -177,6 +190,8 @@ export function KonvaTagLayer({
       onDragStart={handleDragStart}
       onDragMove={handleDragMove}
       onDragEnd={handleDragEnd}
+      onMouseEnter={() => onHoverChange?.(layer.id, true)}
+      onMouseLeave={() => onHoverChange?.(layer.id, false)}
     >
       <LayerContent props={layer.props} w={w} h={h} scale={scale} display={display} />
     </Group>
@@ -318,6 +333,18 @@ function LayerContent({
             fontStyle="bold"
           />
         </>
+      );
+
+    case 'barcode':
+      return (
+        <BarcodeContent
+          w={w}
+          h={h}
+          scale={scale}
+          showCode={props.show_code}
+          value={display?.text ?? null}
+          code={display?.code ?? null}
+        />
       );
 
     case 'group':
@@ -480,6 +507,186 @@ function ImageContent({
   }
 
   return body;
+}
+
+// ---------------------------------------------------------------------------
+// Barcode (D18, S7)
+// ---------------------------------------------------------------------------
+
+/** Whether the offscreen canvas has been drawn, is still to be drawn, or
+ * `jsbarcode` threw drawing it. Distinct from `pending` so the renderer can
+ * tell "still loading" apart from "cannot encode this value" - the two used
+ * to share one `null`, which drew "Loading" forever on a genuine failure. */
+type BarcodeCanvasState =
+  | { status: 'pending' }
+  | { status: 'failed' }
+  | { status: 'ready'; canvas: HTMLCanvasElement };
+
+/**
+ * Generates the bars onto an offscreen canvas via `jsbarcode`, the same
+ * symbology decision `humanReadableBarcode` and the print page's DOM
+ * renderer use (`barcodeSymbologyFor`). Konva takes any `CanvasImageSource`
+ * as an Image's `image` prop, so the generated canvas is used directly -
+ * no data-URL round trip.
+ */
+function useBarcodeCanvas(value: string | null): BarcodeCanvasState {
+  const [state, setState] = useState<BarcodeCanvasState>({ status: 'pending' });
+
+  useEffect(() => {
+    const symbology = barcodeSymbologyFor(value);
+    if (!symbology || !value) {
+      setState({ status: 'pending' });
+      return;
+    }
+    const element = document.createElement('canvas');
+    try {
+      JsBarcode(element, value.trim(), {
+        format: symbology,
+        displayValue: false,
+        margin: 0,
+        height: 160,
+      });
+      setState({ status: 'ready', canvas: element });
+    } catch {
+      setState({ status: 'failed' });
+    }
+  }, [value]);
+
+  return state;
+}
+
+/**
+ * The label plate (D18): white rounded backing, an optional black
+ * product-code strip on top, the bars, then the guard-split human-readable
+ * digits. Empty binding draws the same dashed placeholder every unbound
+ * slot draws, so a designer sees the same "nothing here yet" language across
+ * layer types. Band heights, padding and font sizes come from
+ * `barcodePlateGeometry` (mm of plate), converted to canvas px by `scale` -
+ * the SAME numbers the print page reaches by converting to `pt` instead, so
+ * the two cannot draw a differently-proportioned plate.
+ */
+function BarcodeContent({
+  w,
+  h,
+  scale,
+  showCode,
+  value,
+  code,
+}: {
+  w: number;
+  h: number;
+  scale: number;
+  showCode: boolean;
+  value: string | null;
+  code: string | null | undefined;
+}) {
+  const symbology = barcodeSymbologyFor(value);
+  const barsState = useBarcodeCanvas(value);
+
+  if (!value || !symbology) {
+    return (
+      <>
+        <Rect
+          width={w}
+          height={h}
+          fill="transparent"
+          stroke="#3b82f6"
+          strokeWidth={1}
+          dash={[4, 4]}
+        />
+        <Text
+          width={w}
+          height={h}
+          text="barcode"
+          align="center"
+          verticalAlign="middle"
+          fontSize={Math.min(11, w / 6)}
+          fill="#3b82f6"
+        />
+      </>
+    );
+  }
+
+  const geo = barcodePlateGeometry(px2mm(w, scale), px2mm(h, scale), showCode && !!code);
+  const strip = mm2px(geo.stripHeight_mm, scale);
+  const humanH = mm2px(geo.humanHeight_mm, scale);
+  const barsY = mm2px(geo.barsY_mm, scale);
+  const barsH = mm2px(geo.barsHeight_mm, scale);
+
+  return (
+    <>
+      <Rect width={w} height={h} fill="#ffffff" cornerRadius={mm2px(geo.cornerRadius_mm, scale)} />
+      {strip > 0 && (
+        <>
+          <Rect width={w} height={strip} fill="#000000" />
+          <Text
+            width={w}
+            height={strip}
+            text={code ?? ''}
+            align="center"
+            verticalAlign="middle"
+            fontSize={mm2px(geo.stripFontSize_mm, scale)}
+            fontStyle="bold"
+            fill="#ffffff"
+          />
+        </>
+      )}
+      {barsState.status === 'ready' ? (
+        <KonvaImage
+          image={barsState.canvas}
+          x={mm2px(geo.barsX_mm, scale)}
+          y={barsY}
+          width={mm2px(geo.barsWidth_mm, scale)}
+          height={barsH}
+        />
+      ) : barsState.status === 'failed' ? (
+        <>
+          <Rect
+            x={mm2px(geo.barsX_mm, scale)}
+            y={barsY}
+            width={mm2px(geo.barsWidth_mm, scale)}
+            height={barsH}
+            fill="transparent"
+            stroke="#dc2626"
+            strokeWidth={1}
+            dash={[4, 4]}
+          />
+          <Text
+            width={w}
+            y={barsY}
+            height={barsH}
+            text="cannot encode"
+            align="center"
+            verticalAlign="middle"
+            fontSize={9}
+            fill="#dc2626"
+          />
+        </>
+      ) : (
+        <Text
+          width={w}
+          y={barsY}
+          height={barsH}
+          text="Loading"
+          align="center"
+          verticalAlign="middle"
+          fontSize={9}
+          fill="#999999"
+        />
+      )}
+      <Text
+        width={w}
+        y={h - humanH}
+        height={humanH}
+        text={humanReadableBarcode(value, symbology)}
+        align="center"
+        verticalAlign="middle"
+        fontSize={mm2px(geo.humanFontSize_mm, scale)}
+        fontFamily="monospace"
+        fill="#000000"
+      />
+    </>
+  );
 }
 
 // ---------------------------------------------------------------------------

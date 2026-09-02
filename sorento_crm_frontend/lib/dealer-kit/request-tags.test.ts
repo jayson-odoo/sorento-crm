@@ -11,12 +11,14 @@ import { describe, expect, it } from 'vitest';
 
 import type {
   ImpositionConfig,
+  LineTagData,
   PlacedTag,
   TagLayer,
   TagTemplate,
   TagTemplateFamily,
 } from './tag-template-types';
 import { IMPOSITION_PRESETS, defaultTextProps } from './tag-template-types';
+import { PRODUCT_BLOCK_SIZE, SET_BLOCK_SIZE } from './product-block';
 import {
   autoArrange,
   copiesOf,
@@ -25,7 +27,13 @@ import {
   pinKeyForPlacement,
   pinnedFromDoc,
   placementKey,
+  resizeAllTags,
+  resizeTag,
+  resolveTagSize,
+  starterTemplateFor,
   tagForLine,
+  tagSizeBounds,
+  tagSizePresets,
 } from './request-tags';
 
 // ---------------------------------------------------------------------------
@@ -112,6 +120,9 @@ function setLine(id: string, quantity = 1) {
 const A4_3UP: ImpositionConfig = { preset: 'a4_3up', ...IMPOSITION_PRESETS.a4_3up };
 const A4_2X2: ImpositionConfig = { preset: 'a4_2x2', ...IMPOSITION_PRESETS.a4_2x2 };
 
+let layerSeq = 0;
+const newId = () => `layer-${(layerSeq += 1)}`;
+
 // ---------------------------------------------------------------------------
 // defaultTemplateFor
 // ---------------------------------------------------------------------------
@@ -138,6 +149,160 @@ describe('defaultTemplateFor', () => {
 
   it('answers null when there is no template at all', () => {
     expect(defaultTemplateFor(productLine('l6'), [], 'SRTKS2435')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// starterTemplateFor
+// ---------------------------------------------------------------------------
+
+function lineTagData(overrides: Partial<LineTagData> = {}): LineTagData {
+  return {
+    line_id: 'l1',
+    code: 'SRT-1234',
+    name: 'Kitchen Sink',
+    dimensions: '800 x 500 x 220 mm',
+    spec_lines: 'Stainless steel\nOverflow included',
+    specs: [],
+    set_members: '',
+    images: [],
+    list_price: 1599,
+    sell_price: null,
+    show_promo_price: false,
+    included_accessories: '',
+    quantity: 1,
+    ...overrides,
+  };
+}
+
+describe('starterTemplateFor', () => {
+  it('builds the product block layer set - and slots - from the resolved line', () => {
+    const line = productLine('l1');
+    const data = lineTagData();
+    const source = starterTemplateFor(line, data, newId);
+
+    // image, code, name, dimensions, spec_lines, price_badge + the wrapping group.
+    expect(source.doc.layers).toHaveLength(7);
+
+    const slots = source.doc.layers.map((l) => l.slot_binding).filter(Boolean);
+    expect(slots).toEqual(
+      expect.arrayContaining(['product_image', 'code', 'name', 'dimensions', 'spec_lines', 'list_price']),
+    );
+
+    const codeLayer = source.doc.layers.find((l) => l.slot_binding === 'code');
+    expect(codeLayer?.props).toMatchObject({ kind: 'text', text: 'SRT-1234' });
+    const nameLayer = source.doc.layers.find((l) => l.slot_binding === 'name');
+    expect(nameLayer?.props).toMatchObject({ kind: 'text', text: 'Kitchen Sink' });
+    const dimensionsLayer = source.doc.layers.find((l) => l.slot_binding === 'dimensions');
+    expect(dimensionsLayer?.props).toMatchObject({ kind: 'text', text: '800 x 500 x 220 mm' });
+    const specLayer = source.doc.layers.find((l) => l.slot_binding === 'spec_lines');
+    expect(specLayer?.props).toMatchObject({
+      kind: 'text',
+      text: 'Stainless steel\nOverflow included',
+    });
+  });
+
+  it('never throws on a line whose price data has not resolved yet', () => {
+    const line = productLine('l2');
+    expect(() => starterTemplateFor(line, undefined, newId)).not.toThrow();
+
+    const source = starterTemplateFor(line, undefined, newId);
+    const codeLayer = source.doc.layers.find((l) => l.slot_binding === 'code');
+    expect(codeLayer?.props).toMatchObject({ kind: 'text', text: '' });
+    // Still a complete block: an unresolved line must not draw fewer layers.
+    expect(source.doc.layers).toHaveLength(7);
+  });
+
+  it('draws the promo price only when the line is showing its promo price AND has one', () => {
+    const line = productLine('l3');
+
+    const promo = starterTemplateFor(
+      line,
+      lineTagData({ show_promo_price: true, sell_price: 899 }),
+      newId,
+    );
+    const promoBadge = promo.doc.layers.find((l) => l.props.kind === 'price_badge');
+    expect(promoBadge).toMatchObject({
+      slot_binding: 'sell_price',
+      props: { variant: 'promo' },
+    });
+
+    const noPromoValue = starterTemplateFor(
+      line,
+      lineTagData({ show_promo_price: true, sell_price: null }),
+      newId,
+    );
+    const listBadge1 = noPromoValue.doc.layers.find((l) => l.props.kind === 'price_badge');
+    expect(listBadge1).toMatchObject({
+      slot_binding: 'list_price',
+      props: { variant: 'list_only' },
+    });
+
+    const promoSwitchedOff = starterTemplateFor(
+      line,
+      lineTagData({ show_promo_price: false, sell_price: 899 }),
+      newId,
+    );
+    const listBadge2 = promoSwitchedOff.doc.layers.find((l) => l.props.kind === 'price_badge');
+    expect(listBadge2).toMatchObject({
+      slot_binding: 'list_price',
+      props: { variant: 'list_only' },
+    });
+  });
+
+  it('is always the ala carte family - a starter has no family of its own', () => {
+    const source = starterTemplateFor(productLine('l4'), lineTagData(), newId);
+    expect(source.family).toBe('ala_carte');
+  });
+
+  it('is sized at the default product block footprint, not any template size', () => {
+    const source = starterTemplateFor(productLine('l5'), lineTagData(), newId);
+    expect(source.print_size).toEqual(PRODUCT_BLOCK_SIZE);
+    expect(source.doc.width_mm).toBe(PRODUCT_BLOCK_SIZE.width_mm);
+    expect(source.doc.height_mm).toBe(PRODUCT_BLOCK_SIZE.height_mm);
+  });
+
+  it('binds the group to the LINE\'S REAL product id, never the line id itself', () => {
+    const line = productLine('l7');
+    const source = starterTemplateFor(line, lineTagData(), newId);
+    const group = source.doc.layers.find((l) => l.props.kind === 'group');
+    expect(group?.props).toMatchObject({ binding: { product_id: 'p-l7' } });
+    // The line id and the product id are deliberately different strings in
+    // this fixture, so a binding of { product_id: 'l7' } - the line id
+    // masquerading as the product id - would fail this assertion too.
+    expect(group?.props).not.toMatchObject({ binding: { product_id: 'l7' } });
+  });
+
+  it('a set line gets a SET block - set_members text, no empty product-only slots - not buildProductBlock', () => {
+    const line = setLine('l6');
+    const data = lineTagData({
+      code: 'BF-SET-01',
+      name: 'Bathroom Furniture Set',
+      set_members: '- A1 (Basin)\n- A2 (Tap)',
+    });
+    const source = starterTemplateFor(line, data, newId);
+
+    expect(source.print_size).toEqual(SET_BLOCK_SIZE);
+    expect(source.doc.width_mm).toBe(SET_BLOCK_SIZE.width_mm);
+    expect(source.doc.height_mm).toBe(SET_BLOCK_SIZE.height_mm);
+
+    const membersLayer = source.doc.layers.find((l) => l.slot_binding === 'set_members');
+    expect(membersLayer?.props).toMatchObject({
+      kind: 'text',
+      text: '- A1 (Basin)\n- A2 (Tap)',
+    });
+
+    // A set has no product photo, dimensions or spec lines of its own - a
+    // set-line starter must not carry the empty boxes buildProductBlock would
+    // draw for them.
+    const slots = source.doc.layers.map((l) => l.slot_binding).filter(Boolean);
+    expect(slots).not.toEqual(
+      expect.arrayContaining(['product_image', 'dimensions', 'spec_lines']),
+    );
+
+    // Bound to the set, not the line id and not a product id.
+    const group = source.doc.layers.find((l) => l.props.kind === 'group');
+    expect(group?.props).toMatchObject({ binding: { product_set_id: 's-l6' } });
   });
 });
 
@@ -446,5 +611,121 @@ describe('a saved sheet reopens still arrangeable', () => {
     const positions = bumped
       .flatMap((sheet, index) => sheet.tags.map((t) => `${index}:${t.x_mm},${t.y_mm}`));
     expect(new Set(positions).size).toBe(positions.length);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tag size control (D24, S9, AC-S9-3)
+// ---------------------------------------------------------------------------
+
+describe('resizeTag', () => {
+  it('sets the tag footprint used by the sheet layout, leaving everything else alone', () => {
+    const tag = placed('a', 'l1');
+    const resized = resizeTag(tag, 95, 44.5);
+
+    expect(resized).toMatchObject({ width_mm: 95, height_mm: 44.5 });
+    expect(resized.id).toBe(tag.id);
+    expect(resized.layers).toBe(tag.layers);
+  });
+});
+
+describe('resizeAllTags', () => {
+  it('applies one size to every line, in "Apply to all lines" (AC-S9-3)', () => {
+    const tags = {
+      l1: placed('a', 'l1'),
+      l2: placed('b', 'l2'),
+    };
+
+    const resized = resizeAllTags(tags, 95, 44.5);
+
+    expect(resized.l1).toMatchObject({ width_mm: 95, height_mm: 44.5 });
+    expect(resized.l2).toMatchObject({ width_mm: 95, height_mm: 44.5 });
+  });
+
+  it('leaves an empty map empty', () => {
+    expect(resizeAllTags({}, 95, 44.5)).toEqual({});
+  });
+});
+
+describe('tagSizePresets', () => {
+  it('offers every published template print size, deduped, plus the starter size', () => {
+    const presets = tagSizePresets(TEMPLATES);
+
+    // TEMPLATES fixture: t-sink/t-wc/t-set all 60x40, t-plain also 60x40 -
+    // one preset for that size, not four.
+    expect(presets.filter((p) => p.width_mm === 60 && p.height_mm === 40)).toHaveLength(1);
+    expect(presets).toContainEqual(
+      expect.objectContaining({ width_mm: PRODUCT_BLOCK_SIZE.width_mm, height_mm: PRODUCT_BLOCK_SIZE.height_mm }),
+    );
+  });
+
+  it('still offers the starter size when there are no templates at all', () => {
+    const presets = tagSizePresets([]);
+    expect(presets).toEqual([
+      expect.objectContaining({ width_mm: PRODUCT_BLOCK_SIZE.width_mm, height_mm: PRODUCT_BLOCK_SIZE.height_mm }),
+    ]);
+  });
+});
+
+describe('autoArrange with resized tags (AC-S9-3)', () => {
+  it('re-lays out unpinned copies at the new size, and leaves a pinned copy exactly where it was dragged', () => {
+    const items = [
+      { tag: placed('a', 'l1'), quantity: 1 },
+      { tag: resizeTag(placed('b', 'l2'), 95, 44.5), quantity: 1 },
+    ];
+
+    const dragged = { [placementKey('l2', 0)]: { sheet: 0, x_mm: 12, y_mm: 34 } };
+    const sheets = autoArrange(items, A4_3UP, dragged);
+
+    const line2Tag = sheets[0].tags.find((t) => t.request_line_id === 'l2');
+    expect(line2Tag).toMatchObject({ x_mm: 12, y_mm: 34, width_mm: 95, height_mm: 44.5 });
+
+    // The unpinned line still flows through the slot grid, unaffected by the
+    // other line's resize.
+    const line1Tag = sheets[0].tags.find((t) => t.request_line_id === 'l1');
+    expect(line1Tag?.pinned).not.toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tag size bounds + refusal (S9 review S3): a size has to fit the CURRENT
+// imposition sheet, refused with a reason rather than silently redrawn.
+// ---------------------------------------------------------------------------
+
+describe('tagSizeBounds', () => {
+  it('is the usable page area after bleed, on both axes', () => {
+    // A4_3UP: 210x297mm page, 3mm bleed each side.
+    expect(tagSizeBounds(A4_3UP)).toEqual({
+      min_mm: 10,
+      max_width_mm: 204,
+      max_height_mm: 291,
+    });
+  });
+});
+
+describe('resolveTagSize', () => {
+  const bounds = tagSizeBounds(A4_3UP);
+
+  it('accepts a size that fits, unchanged', () => {
+    expect(resolveTagSize(95, 44.5, bounds)).toEqual({
+      ok: true,
+      width_mm: 95,
+      height_mm: 44.5,
+    });
+  });
+
+  it('clamps a value below the minimum up to it', () => {
+    expect(resolveTagSize(5, 5, bounds)).toEqual({ ok: true, width_mm: 10, height_mm: 10 });
+  });
+
+  it('refuses a width that does not fit the sheet, with a reason (400mm refused)', () => {
+    const result = resolveTagSize(400, 44.5, bounds);
+    expect(result.ok).toBe(false);
+    expect((result as { ok: false; reason: string }).reason.length).toBeGreaterThan(0);
+  });
+
+  it('refuses a height that does not fit the sheet, with a reason', () => {
+    const result = resolveTagSize(95, 400, bounds);
+    expect(result.ok).toBe(false);
   });
 });

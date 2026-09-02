@@ -102,6 +102,32 @@ class PriceTagRequestUpdate(BaseModel):
     lines: Optional[list[PriceTagRequestLineCreate]] = None
 
 
+class PriceTagRequestAttachment(BaseModel):
+    """One row of ``entity_attachment_service.list_attachments_for_entity``'s
+    output, typed rather than left as a bare ``dict`` - an untyped field is
+    exactly how the CRM FE's own copy of this shape (`priceTagRequestService
+    .ts`) drifted from the real one (id/created_at that were never sent) with
+    nothing catching it. Both the CRM and the portal detail routes answer with
+    this shape (D49); the portal side additionally needs uploader attribution
+    to gate its own unlink control, which is why every field the service emits
+    is declared here too rather than trimmed to what the CRM screen shows.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    link_id: str
+    attachment_id: str
+    filename: Optional[str] = None
+    size: Optional[int] = None
+    url: Optional[str] = None
+    content_type: Optional[str] = None
+    uploaded_at: Optional[str] = None
+    uploader_kind: Optional[str] = None
+    uploaded_by_name: str = "Unknown"
+    uploaded_by_role: str = "unknown"
+    can_unlink: bool = True
+
+
 class PriceTagRequestResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -137,6 +163,23 @@ class PriceTagRequestResponse(BaseModel):
     contact_name: Optional[str] = None
     promotion_name: Optional[str] = None
     line_count: int = 0
+
+    # The PO files the salesperson attached, in
+    # ``entity_attachment_service.list_attachments_for_entity``'s shape
+    # (link_id, attachment_id, filename, size, url, content_type, ...). Filled
+    # by ``response_with_resolved_lines`` for both the CRM and the portal
+    # detail routes (D49) - declared here for the same reason as the four
+    # fields above it: an undeclared field is dropped by ``response_model``
+    # without a word (AC-S1-5).
+    attachments: list[PriceTagRequestAttachment] = Field(default_factory=list)
+
+    # Whether a completed (READY) tag sheet PDF export exists for this request.
+    # Filled by ``response_with_resolved_lines`` from ``user_downloads``, same as
+    # the four fields above - the portal read-only view's gear needs to know
+    # whether to enable Download PDF without a second round trip, and an
+    # undeclared field is dropped by ``response_model`` without a word
+    # (PLAN-price-tag-feedback-r2 S2).
+    has_completed_export: bool = False
 
 
 class PriceTagRequestListItem(BaseModel):
@@ -399,6 +442,47 @@ class TagTemplateResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    # The live pointer (PLAN D7). Absent = never published, so the request
+    # designer's list never sees this row. Filled by the route, not by
+    # ``from_attributes`` alone, because the published branch of the list
+    # route substitutes a VERSION's doc/print_size for the draft above.
+    published_version_id: Optional[str] = None
+    published_version_no: Optional[int] = None
+
+
+# ---------------------------------------------------------------------------
+# Tag template versions (S5)
+# ---------------------------------------------------------------------------
+
+
+class TagTemplatePublishIn(BaseModel):
+    note: Optional[str] = Field(default=None, max_length=500)
+
+
+class TagTemplateVersionResponse(BaseModel):
+    """One row of the Versions sheet. No ``doc`` - the list is deliberately
+    light; a version's document is fetched only when View is clicked."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    template_id: str
+    version_no: int
+    note: Optional[str] = None
+    created_by: Optional[str] = None
+    # Resolved, not stored - a version row holds a user id and nothing a
+    # person can read (no UUIDs in the UI). Filled by the route.
+    created_by_name: Optional[str] = None
+    created_at: datetime
+
+
+class TagTemplateVersionDetailResponse(TagTemplateVersionResponse):
+    """A past version's full document, for View (D16) - read-only on the
+    canvas, never mutated."""
+
+    doc: dict
+    print_size: dict
+
 
 # ---------------------------------------------------------------------------
 # Tag sheet design doc
@@ -416,6 +500,14 @@ class TagSheetDocResponse(BaseModel):
     page_id: str
     version: int
     doc: Optional[dict] = None
+    # WHICH of the two documents this answer came from (B1): ``draft`` is the
+    # autosaved work in progress, ``version`` the last deliberate save. The
+    # caller has to be able to tell them apart - reopening the designer on a
+    # draft and reopening it on the last saved version look identical
+    # otherwise, and only one of them is what the user was last looking at.
+    # ``version`` above stays the number of the latest immutable version either
+    # way, so a draft still reports the version it is sitting on top of.
+    source: Literal["draft", "version"] = "version"
 
 
 # ---------------------------------------------------------------------------
@@ -505,6 +597,19 @@ class TagItemLookupItem(BaseModel):
     name: str
 
 
+class PromotionLookupItem(BaseModel):
+    """One row of the portal promotion dropdown (S4, #477).
+
+    ``name`` is ``promotions.description`` - the column the rest of the price
+    tag request already reads it off (``PriceTagRequestSummary.promotion_name``,
+    ``resolved_labels``), so the portal and the CRM never disagree about what a
+    promotion is called.
+    """
+
+    id: str
+    name: str
+
+
 class TagImage(BaseModel):
     """One photo of a bound product, signed for the viewer that asked."""
 
@@ -543,6 +648,11 @@ class ProductTagData(BaseModel):
     list_price: Optional[float] = None
     offer_price: Optional[float] = None
     promotion_id: Optional[str] = None
+    # The product's own `products.barcode` (PLAN D14, price-tag-feedback-r2),
+    # for the tag editor's barcode layer (S7). Null when the product carries
+    # none, which the layer renders as an editor placeholder / nothing on
+    # print.
+    barcode: Optional[str] = None
 
 
 class ProductSetMemberTagData(BaseModel):
@@ -597,6 +707,8 @@ class ResolvedLineData(BaseModel):
     show_promo_price: bool
     included_accessories: str = ""
     quantity: int
+    # Empty for a set line: a set has no barcode of its own (S7).
+    barcode: Optional[str] = None
 
 
 class TagFont(BaseModel):

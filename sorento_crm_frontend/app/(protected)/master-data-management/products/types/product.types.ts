@@ -48,6 +48,9 @@ export interface Product {
   category_id: string;
   brand_id?: string | null;
   base_uom_id: string;
+  // CRM-owned (PLAN D14): manual entry here, or a non-empty AutoCount sync
+  // value. Printed by the tag designer's barcode layer (S7).
+  barcode?: string | null;
   list_price: number;
   cost_price?: number | null;
   invoice_price?: number | null;
@@ -188,6 +191,7 @@ export interface ProductFormData {
   category_id: string;
   brand_id?: string | null;
   base_uom_id: string;
+  barcode?: string | null;
   list_price: number;
   cost_price?: number | null;
   invoice_price?: number | null;

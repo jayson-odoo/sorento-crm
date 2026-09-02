@@ -46,6 +46,7 @@ const SLOT_BINDING_OPTIONS = [
   { value: 'badges', label: 'Badges' },
   { value: 'alternatives', label: 'Alternatives' },
   { value: 'set_members', label: 'Set Members' },
+  { value: 'barcode', label: 'Barcode' },
 ];
 
 /**
@@ -375,6 +376,15 @@ export function InspectorPanel({
               layerId={layer.id}
               props={layer.props}
               onChooseBadge={onChooseBadge}
+            />
+          )}
+          {layer.props.kind === 'barcode' && (
+            <BarcodeInspector
+              layer={layer}
+              props={layer.props}
+              onChange={updateProps}
+              onUpdate={update}
+              resolvedText={resolvedText ?? null}
             />
           )}
         </div>
@@ -744,9 +754,10 @@ function PriceBadgeInspector({
 /**
  * Preview THIS block, from wherever the selection is inside it.
  *
- * The toolbar asks about the whole tag; a designer working on one alternative
- * wants that alternative, and going back to the toolbar to pick it out of a
- * list of four is a longer way round than the block already selected.
+ * A block also carries its own eye chip on the canvas itself, shown on hover
+ * or select (D10, S6); this is the same action from the sidebar, for a
+ * designer who already has the block selected and does not want to go
+ * hunting for its outline.
  */
 function PreviewBlockInspector({
   groupId,
@@ -935,6 +946,77 @@ function BadgeInspector({
         >
           Choose badge
         </Button>
+      </div>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Barcode inspector (D18, S7)
+// ---------------------------------------------------------------------------
+
+function BarcodeInspector({
+  layer,
+  props,
+  onChange,
+  onUpdate,
+  resolvedText,
+}: {
+  layer: TagLayer;
+  props: Extract<TagLayerProps, { kind: 'barcode' }>;
+  onChange: (changes: Partial<TagLayerProps>) => void;
+  onUpdate: (changes: Partial<TagLayer>) => void;
+  resolvedText: string | null;
+}) {
+  // Same pattern as the text layer's `text_override` (D23): the barcode
+  // layer is always bound to slot 'barcode', so an override here works the
+  // same way - value in, binding survives, Relink clears it again. The
+  // product master stays the source of truth; the override lives in the doc
+  // only.
+  const overridden = layer.text_override != null;
+  const shown = layer.text_override ?? resolvedText ?? '';
+
+  return (
+    <section>
+      <h4 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        Barcode
+      </h4>
+      <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center justify-between">
+            <Label className="text-xs text-muted-foreground">Barcode value</Label>
+            {overridden && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-6 px-1.5 text-2xs"
+                onClick={() => onUpdate({ text_override: null })}
+              >
+                <Link2 className="mr-1 size-3" />
+                Relink
+              </Button>
+            )}
+          </div>
+          <Input
+            value={shown}
+            placeholder={resolvedText ?? 'No barcode on the product'}
+            onChange={(e) => onUpdate({ text_override: e.target.value || null })}
+          />
+          {overridden && (
+            <span className="flex items-center gap-1 text-2xs text-amber-600">
+              <Link2Off className="size-3" />
+              Unlinked from product data
+            </span>
+          )}
+        </div>
+        <label className="flex items-center gap-1.5 text-xs">
+          <Checkbox
+            checked={props.show_code}
+            onCheckedChange={(v) => onChange({ ...props, show_code: !!v })}
+          />
+          Show product code
+        </label>
       </div>
     </section>
   );

@@ -337,6 +337,10 @@ def product_tag_data(
         "list_price": prices.list_price if prices else None,
         "offer_price": prices.offer_price if prices else None,
         "promotion_id": prices.promotion_id if prices else None,
+        # PLAN D14 (price-tag-feedback-r2): CRM-owned, manual entry or a
+        # non-empty AutoCount sync. Null renders an editor placeholder and
+        # nothing on print (S7).
+        "barcode": product.barcode or None,
     }
 
 
@@ -468,8 +472,10 @@ def resolve_request_line_data(db: Session, request) -> list[dict]:
             set_members = _set_member_text(data["members"])
             code, name = data["set_code"], data["name"]
             # A set has no spec row of its own: the specs belong to its members,
-            # and a set tag lists the members rather than their materials.
+            # and a set tag lists the members rather than their materials. Same
+            # for barcode - a set has no single EAN either (S7).
             dimensions, specs, images, spec_values = "", "", [], []
+            barcode = None
         elif line.product_id:
             product = get_product(db, line.product_id)
             if product is None:
@@ -480,6 +486,7 @@ def resolve_request_line_data(db: Session, request) -> list[dict]:
             specs = "\n".join(data["spec_lines"])
             images = data["images"]
             spec_values = data["specs"]
+            barcode = data["barcode"]
         else:
             continue
 
@@ -502,6 +509,7 @@ def resolve_request_line_data(db: Session, request) -> list[dict]:
                 "show_promo_price": line.show_promo_price,
                 "included_accessories": line.included_accessories or "",
                 "quantity": line.quantity,
+                "barcode": barcode,
             }
         )
 

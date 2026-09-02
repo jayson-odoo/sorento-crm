@@ -131,6 +131,10 @@ class CanonicalProduct(_Canonical):
     category_code: Optional[str] = Field(None, max_length=100)
     uom_code: Optional[str] = Field(None, max_length=100)
     brand_code: Optional[str] = Field(None, max_length=100)
+    # CRM-owned (PLAN D14, price-tag-feedback-r2). Overwrites the stored value
+    # only when non-empty; empty/absent leaves a manually entered barcode
+    # untouched - see `master_ingest_service._product_columns`.
+    bar_code: Optional[str] = Field(None, max_length=100)
     list_price: Optional[Decimal] = Field(None, ge=0)
     cost_price: Optional[Decimal] = Field(None, ge=0)
     is_active: bool = True

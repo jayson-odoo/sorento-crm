@@ -159,6 +159,11 @@ class Product(Base, CompanyScopedMixin):
     variant_link_manual = Column(Boolean, nullable=False, server_default="false", default=False)
     base_uom_id = Column(UUID(as_uuid=False), ForeignKey("units_of_measure.id"), nullable=False)
     item_type = Column(String(50), nullable=True)
+    # CRM-owned (PLAN D14, price-tag-feedback-r2): manual entry on the product
+    # master, printed by the tag designer's barcode layer. AutoCount's
+    # `bar_code` overwrites it only when the incoming value is non-empty - see
+    # `master_ingest_service._product_columns`.
+    barcode = Column(String(100), nullable=True)
     list_price = Column(Numeric(12, 2), nullable=False)
     cost_price = Column(Numeric(12, 2), nullable=True)
     invoice_price = Column(Numeric(12, 2), nullable=True)
@@ -229,6 +234,7 @@ class Product(Base, CompanyScopedMixin):
         Index("ix_products_base_uom_id", "base_uom_id"),
         Index("ix_products_is_active", "is_active"),
         Index("ix_products_product_code", "product_code"),
+        Index("ix_products_barcode", "barcode"),
         Index("ix_products_variant_of_id", "variant_of_id"),
         Index(
             "ix_products_variant_link_manual",

@@ -17,6 +17,11 @@ export const ProductSchema = z.object({
   description: z.string().max(2000, { message: 'Description must not exceed 2000 characters.' }).optional().nullable(),
   category_id: z.string().uuid({ message: 'Category is required.' }),
   brand_id: z.string().uuid().optional().nullable(),
+  barcode: z
+    .string()
+    .max(100, { message: 'Barcode must not exceed 100 characters.' })
+    .optional()
+    .nullable(),
   item_type: z.enum(['product', 'bundle', 'service', 'other']).optional().nullable(),
   is_active: z.boolean(),
   is_searchable: z.boolean(),
