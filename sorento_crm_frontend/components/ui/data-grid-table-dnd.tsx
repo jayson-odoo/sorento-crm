@@ -18,6 +18,7 @@ import {
   DataGridTableHeadRowCellResize,
   DataGridTableRowSpacer,
   headerRowSpan,
+  useBodySkeleton,
   skipMergedLeafHeader,
 } from '@/components/ui/data-grid-table';
 import {
@@ -131,8 +132,9 @@ function DataGridTableDndCell<TData>({ cell }: { cell: Cell<TData, unknown> }) {
 }
 
 function DataGridTableDnd<TData>({ handleDragEnd }: { handleDragEnd: (event: DragEndEvent) => void }) {
-  const { table, isLoading, props } = useDataGrid();
+  const { table, props } = useDataGrid();
   const pagination = table.getState().pagination;
+  const showBodySkeleton = useBodySkeleton();
 
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
@@ -181,7 +183,7 @@ function DataGridTableDnd<TData>({ handleDragEnd }: { handleDragEnd: (event: Dra
           {(props.tableLayout?.stripped || !props.tableLayout?.rowBorder) && <DataGridTableRowSpacer />}
 
           <DataGridTableBody>
-            {props.loadingMode === 'skeleton' && isLoading && pagination?.pageSize ? (
+            {showBodySkeleton && pagination?.pageSize ? (
               Array.from({ length: pagination.pageSize }).map((_, rowIndex) => (
                 <DataGridTableBodyRowSkeleton key={rowIndex}>
                   {/* LEAF columns, as in DataGridTable: the flat list includes a group

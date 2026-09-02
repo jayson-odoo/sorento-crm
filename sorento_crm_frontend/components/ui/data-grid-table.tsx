@@ -307,22 +307,49 @@ function DataGridTableRowSpacer() {
 }
 
 function DataGridTableBody({ children }: { children: ReactNode }) {
-  const { props } = useDataGrid();
+  const { props, table, isLoading } = useDataGrid();
+
+  // The rows on screen are the PREVIOUS page's while the next one loads
+  // (M4 list latency) - dimmed rather than replaced by a skeleton.
+  //
+  // Rows still in the model while `isLoading` IS that state, so the dim is
+  // derived here rather than asked of 186 call sites: a grid gets it without
+  // wiring anything. `isPlaceholderData` stays as the explicit override for a
+  // caller that knows better.
+  const holdingRows = Boolean(props.isPlaceholderData || (isLoading && table.getRowModel().rows.length > 0));
 
   return (
     <tbody
       className={cn(
         '[&_tr:last-child]:border-0',
         props.tableLayout?.rowRounded && '[&_td:first-child]:rounded-s-lg [&_td:last-child]:rounded-e-lg',
-        // The rows on screen are the PREVIOUS page's while the next one loads
-        // (M4 list latency) - dimmed rather than replaced by a skeleton.
-        props.isPlaceholderData &&
-          'opacity-60 transition-opacity duration-(--duration-fast) ease-(--ease-standard)',
+        holdingRows && 'opacity-60 transition-opacity duration-(--duration-fast) ease-(--ease-standard)',
         props.tableClassNames?.body,
       )}
     >
       {children}
     </tbody>
+  );
+}
+
+/**
+ * True while the body should draw skeleton rows: a FIRST load, with nothing on
+ * screen yet.
+ *
+ * Once a page has rendered, a reload holds those rows - dimmed by
+ * `DataGridTableBody` - rather than throwing them away, which is the same gate
+ * `DataGridPagination` uses to keep its own controls live (M4-02, M4-03). It
+ * lives here, not at the call sites, so all three body render paths (plain,
+ * column-drag, row-drag) and every grid built on them behave the same.
+ */
+function useBodySkeleton(): boolean {
+  const { table, isLoading, props } = useDataGrid();
+
+  return Boolean(
+    props.loadingMode === 'skeleton' &&
+      isLoading &&
+      table.getState().pagination?.pageSize &&
+      table.getRowModel().rows.length === 0,
   );
 }
 
@@ -892,8 +919,9 @@ function DataGridScroller({ children }: { children: ReactNode }) {
 }
 
 function DataGridTable<TData>() {
-  const { table, isLoading, props } = useDataGrid();
+  const { table, props } = useDataGrid();
   const pagination = table.getState().pagination;
+  const showBodySkeleton = useBodySkeleton();
   // A phone does NOT pin the identifier column. S1 pinned it under `sm` so the
   // row stayed labelled while the grid scrolled sideways; the user tried it and
   // found a column that refuses to move with the rest weirder than losing sight
@@ -968,7 +996,7 @@ function DataGridTable<TData>() {
         {(props.tableLayout?.stripped || !props.tableLayout?.rowBorder) && <DataGridTableRowSpacer />}
 
         <DataGridTableBody>
-          {props.loadingMode === 'skeleton' && isLoading && pagination?.pageSize ? (
+          {showBodySkeleton && pagination?.pageSize ? (
             Array.from({ length: pagination.pageSize }).map((_, rowIndex) => (
               <DataGridTableBodyRowSkeleton key={rowIndex}>
                 {/* LEAF columns: the flat list includes a group PARENT, which is not a
@@ -1073,4 +1101,5 @@ export {
   DataGridTableRowSelect,
   DataGridTableRowSelectAll,
   DataGridTableRowSpacer,
+  useBodySkeleton,
 };
