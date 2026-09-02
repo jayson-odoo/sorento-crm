@@ -50,7 +50,6 @@ export function useProducts(params: GetProductsParams) {
       params.discontinued_batch_id,
     ],
     queryFn: () => getProducts(params),
-    staleTime: Infinity,
     gcTime: 1000 * 60 * 60, // 60 minutes
     refetchOnReconnect: false,
     retry: 1,

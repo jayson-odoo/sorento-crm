@@ -64,6 +64,7 @@ import type { ColumnOption } from '@/lib/excel-utils';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 const PRODUCT_IMPORT_COLUMNS: ColumnOption[] = [
   { key: 'Item Code', label: 'Item Code', selected: true },
@@ -226,9 +227,9 @@ const ProductsList = () => {
   );
 
   const { data, isLoading, isFetching, isError, error } = useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: productsListQueryKey(listParams),
     queryFn: () => fetchProductsPage(listParams),
-    staleTime: Infinity,
     gcTime: 1000 * 60 * 60, // 60 minutes
     refetchOnReconnect: false,
     retry: 1,
