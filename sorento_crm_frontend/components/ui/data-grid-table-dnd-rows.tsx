@@ -140,7 +140,7 @@ function DataGridTableDndRows<TData>({
           {(props.tableLayout?.stripped || !props.tableLayout?.rowBorder) && <DataGridTableRowSpacer />}
 
           <DataGridTableBody>
-            {showBodySkeleton && pagination?.pageSize ? (
+            {showBodySkeleton ? (
               Array.from({ length: pagination.pageSize }).map((_, rowIndex) => (
                 <DataGridTableBodyRowSkeleton key={rowIndex}>
                   {table.getVisibleFlatColumns().map((column, colIndex) => {

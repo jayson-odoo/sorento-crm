@@ -313,10 +313,12 @@ function DataGridTableBody({ children }: { children: ReactNode }) {
   // The rows on screen are the PREVIOUS page's while the next one loads
   // (M4 list latency) - dimmed rather than replaced by a skeleton.
   //
-  // Rows still in the model while `isLoading` IS that state, so the dim is
-  // derived here rather than asked of 186 call sites: a grid gets it without
-  // wiring anything. `isPlaceholderData` stays as the explicit override for a
-  // caller that knows better.
+  // `isPlaceholderData` is the load-bearing clause: TanStack reports a
+  // `keepPreviousData` window as `isLoading: false, isFetching: true`, so a
+  // list that does not forward the flag never dims, however many rows it is
+  // holding. `lib/list-query/options.inventory.test.ts` is what keeps every
+  // list forwarding it. The `isLoading`-with-rows clause stays for the grids
+  // whose call site feeds `isLoading || isFetching` instead.
   const holdingRows = Boolean(
     !showSkeleton && (props.isPlaceholderData || (isLoading && table.getRowModel().rows.length > 0)),
   );
@@ -347,10 +349,14 @@ function DataGridTableBody({ children }: { children: ReactNode }) {
  *   second answer either.
  *
  * With both settled, a reload holds the rows it has - dimmed by
- * `DataGridTableBody` - rather than throwing them away, which is the same gate
- * `DataGridPagination` uses to keep its own controls live (M4-02, M4-03). It
- * lives here, not at the call sites, so all three body render paths (plain,
- * column-drag, row-drag) and every grid built on them behave the same.
+ * `DataGridTableBody` - rather than throwing them away. `DataGridPagination`
+ * calls this same hook to decide whether to draw its own two skeleton bars, so
+ * the pager and the rows cannot disagree about what a first load is (M4-02,
+ * M4-03). It lives here, not at the call sites, so all three body render paths
+ * (plain, column-drag, row-drag) and every grid built on them behave the same.
+ *
+ * The `pageSize` clause is what makes the three render paths safe to write
+ * `Array.from({ length: pagination.pageSize })` without re-testing it.
  */
 function useBodySkeleton(): boolean {
   const { table, isLoading, isColumnPreferencesLoading, props } = useDataGrid();
@@ -1019,7 +1025,7 @@ function DataGridTable<TData>() {
         {(props.tableLayout?.stripped || !props.tableLayout?.rowBorder) && <DataGridTableRowSpacer />}
 
         <DataGridTableBody>
-          {showBodySkeleton && pagination?.pageSize ? (
+          {showBodySkeleton ? (
             Array.from({ length: pagination.pageSize }).map((_, rowIndex) => (
               <DataGridTableBodyRowSkeleton key={rowIndex}>
                 {/* LEAF columns: the flat list includes a group PARENT, which is not a
