@@ -25,7 +25,10 @@ export function ClientProviders({ children }: { children: ReactNode }) {
               <TooltipsProvider>
                 <ModulesProvider>
                   {children}
-                  <Toaster />
+                  {/* M6-04: one mount, one position - every toast (query errors,
+                      mutation success/failure, every per-feature call) lands
+                      top-center. Per-call `position` overrides are gone. */}
+                  <Toaster position="top-center" />
                 </ModulesProvider>
               </TooltipsProvider>
             </I18nProvider>
