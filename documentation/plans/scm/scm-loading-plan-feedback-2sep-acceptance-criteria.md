@@ -58,10 +58,13 @@ the match.
 - **AC-A5** `[FE]` On a plan with a sent request, Delete plan is disabled in both menus with the
   reason "Sent plans are cancelled, not deleted". Cancel plan stays enabled on a sent plan and
   is disabled only on a cancelled one ("Already cancelled").
-- **AC-A6** `[FE]` `ConfirmActionDialog` and `ConfirmDeleteDialog` are no longer imported by
-  anything under `scm/loading-plan/`. Refresh suggestion with edits present keeps its prompt
-  ("Drop your N typed quantities?") because it is a data-loss question, not a destructive record
-  action (the D7 carve-out).
+- **AC-A6** `[FE]` Nothing under `scm/loading-plan/` imports `ConfirmDeleteDialog` or a raw
+  `AlertDialog`: Cancel and Delete are deferred countdowns and reach for no dialog at all.
+  The three DATA-LOSS prompts (Refresh suggestion with edits present - "Drop your N typed
+  quantities?" - a new cut-off, and leaving with typed quantities) keep asking, through the
+  SHARED `ConfirmActionDialog`, because they are data-loss questions rather than destructive
+  record actions (the D7 carve-out). A local copy of that dialog is not an alternative: one
+  component, one place for its behaviour to live (SF-2, 3 Sep).
 - **AC-A7** `[BE][T]` The deferred-action engine knows `loading_plan.cancel` (5s) and
   `loading_plan.delete` (10s); a delete parked on a plan that has `sent_at` is refused at park
   time with 409 `plan_sent`; a cancel on a cancelled plan is refused with 409 `plan_cancelled`.
@@ -209,8 +212,11 @@ the match.
 
 ## I. Guardrails
 
-- **AC-I1** `[T]` A vitest asserts `scm/loading-plan/` imports neither `ConfirmActionDialog`
-  nor `ConfirmDeleteDialog`.
+- **AC-I1** `[T]` A vitest asserts that no import statement under `scm/loading-plan/` names
+  `ConfirmDeleteDialog` or `@/components/ui/alert-dialog` (the two ways a destructive dialog
+  gets built), reading whole import STATEMENTS rather than single lines so a multi-line
+  import cannot slip past it (SF-7). `ConfirmActionDialog` is allow-listed: it is the vehicle
+  for the three data-loss prompts AC-A6 names.
 - **AC-I2** `[T]` Existing loading-plan, container-request, proforma and alias pytest/vitest
   suites stay green except the tests that pinned p4 AC-A17 (older plan's figures move on a
   newer upload), which are rewritten to AC-F6 and the p4 UAC line is marked superseded.

@@ -4,14 +4,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 import { ArrowLeft, LoaderCircle, Save } from 'lucide-react';
-import {
-  AlertDialog,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -55,6 +47,7 @@ import {
   type LoadingPlanStatus,
 } from '../../services/fulfilmentService';
 import { useLoadingPlanActions } from '../actions';
+import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
 import { SupplierCodesTab } from './SupplierCodesTab';
 import { ContainerRequestSection } from './ContainerRequestSection';
 import { SendRequestDialog } from './SendRequestDialog';
@@ -102,50 +95,14 @@ const STATUS_VARIANT: Record<LoadingPlanStatus, 'warning' | 'primary' | 'seconda
 };
 
 /**
- * A data-loss prompt (Refresh suggestion, a new cut-off, leaving with typed quantities) -
- * the D7 carve-out AC-A6 names: these ask because something TYPED would vanish, not
- * because the record itself is on its way out, so the record-action dialog retired for
- * Cancel and Delete (`ConfirmActionDialog`, `scm/components/ConfirmActionDialog.tsx`) is
- * deliberately not reached for here; this is its own small, local, non-destructive
- * confirmation instead (AC-I1: nothing under `scm/loading-plan/` imports it any more).
+ * The three DATA-LOSS prompts below (Refresh suggestion, a new cut-off, leaving with typed
+ * quantities) are `ConfirmActionDialog`, the shared non-destructive confirmation - the D7
+ * carve-out AC-A6 names. They ask because something TYPED would vanish, not because the
+ * record itself is on its way out: Cancel and Delete are deferred countdowns and reach for
+ * no dialog at all. A local copy of the shared component briefly stood here to keep the
+ * AC-I1 guard quiet; a second copy of a dialog is a second place for its behaviour to
+ * drift, so the guard bans the destructive vehicles instead (SF-2).
  */
-function DataLossPrompt({
-  open,
-  onOpenChange,
-  title,
-  description,
-  confirmLabel,
-  onConfirm,
-  isBusy,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  title: string;
-  description: React.ReactNode;
-  confirmLabel: string;
-  onConfirm: () => void;
-  isBusy: boolean;
-}) {
-  return (
-    <AlertDialog open={open} onOpenChange={onOpenChange}>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>{title}</AlertDialogTitle>
-          <AlertDialogDescription>{description}</AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isBusy}>
-            Cancel
-          </Button>
-          <Button onClick={onConfirm} disabled={isBusy}>
-            {isBusy ? <LoaderCircle className="size-4 animate-spin" /> : null}
-            {confirmLabel}
-          </Button>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
-  );
-}
 
 export function LoadingPlanView({ planId }: { planId: string }) {
   const router = useRouter();
@@ -561,7 +518,7 @@ export function LoadingPlanView({ planId }: { planId: string }) {
         }
       />
 
-      <DataLossPrompt
+      <ConfirmActionDialog
         open={refreshOpen}
         onOpenChange={setRefreshOpen}
         title={`Drop your ${editedCount} typed ${editedCount === 1 ? 'quantity' : 'quantities'}?`}
@@ -578,7 +535,7 @@ export function LoadingPlanView({ planId }: { planId: string }) {
         }}
       />
 
-      <DataLossPrompt
+      <ConfirmActionDialog
         open={cutOffDropOpen}
         onOpenChange={setCutOffDropOpen}
         title={`Drop your ${editedCount} typed ${editedCount === 1 ? 'quantity' : 'quantities'}?`}
@@ -588,7 +545,7 @@ export function LoadingPlanView({ planId }: { planId: string }) {
         onConfirm={() => void applyCutOff()}
       />
 
-      <DataLossPrompt
+      <ConfirmActionDialog
         open={leaveOpen}
         onOpenChange={setLeaveOpen}
         title="Leave without saving?"
