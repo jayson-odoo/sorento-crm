@@ -194,6 +194,9 @@ def test_the_payload_carries_this_company_and_no_other(db: Session, client: Test
     # This company's line is there...
     assert line_ids[mine.id] in resolved
     assert resolved[line_ids[mine.id]]["code"] == mine.product_code
+    # `_resolved_payload` builds this dict by hand (not a `response_model`), so
+    # nothing catches a field dropped on a future edit except a test naming it.
+    assert "barcode" in resolved[line_ids[mine.id]]
     # ...and the other company's is not, by id or by code.
     assert line_ids[theirs.id] not in resolved
     assert theirs.product_code not in response.text

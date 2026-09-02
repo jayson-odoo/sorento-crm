@@ -19,11 +19,34 @@
  * Arranging the sheets is a consequence rather than a chore: on save every
  * line's tag is laid out in line order, quantity times, and the Arrange half is
  * there to look at it and to drag a copy if somebody wants to.
+ *
+ * Autosave (D22, S8): every committed change - a layer edit, an arranged
+ * pin - re-runs the `doc` memo below, and an effect on THAT schedules a
+ * debounced save through `onAutosave`, which writes the request's DRAFT.
+ * `onSave` - the manual button, Mark proof ready, Print sheet - is a
+ * different act on a different route: it snapshots the design into an
+ * immutable version, which is what export and proof rendering read (B1).
+ * Autosaving through that route wrote a version per second and buried the
+ * deliberate saves in noise.
+ *
+ * `flush()` (the debounce's own pending value, sent now, awaited) covers every
+ * moment a ~1s wait is too slow to trust: switching Design/Arrange, switching
+ * lines, the manual Save button making sure it is not racing an autosave, and
+ * leaving the page - which is this component unmounting (the back link, the
+ * sidebar, the browser's own Back) plus `pagehide` for a refresh or a close.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { ChevronLeft, Check, LayoutTemplate, Loader2, Eye, Save } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import {
+  ChevronLeft,
+  Check,
+  LayoutTemplate,
+  Loader2,
+  Eye,
+  Save,
+  RefreshCw,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import {
   AlertDialog,
@@ -37,6 +60,10 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
+import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
 import { cn } from '@/lib/utils';
 import type {
   ImpositionConfig,
@@ -55,14 +82,22 @@ import {
   defaultTemplateFor,
   pinKeyForPlacement,
   pinnedFromDoc,
+  resizeAllTags,
+  resizeTag,
+  resolveTagSize,
+  starterTemplateFor,
   tagForLine,
+  tagSizeBounds,
+  tagSizePresets,
   tagsFromDoc,
   type ArrangeItem,
   type PinnedPlacement,
+  type TagSizePreset,
 } from '@/lib/dealer-kit/request-tags';
 import { formatTagPrice } from '@/lib/dealer-kit/price-badge';
 import { TagCanvasEditor } from '@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor';
 import { useKitLibrary } from '@/app/(protected)/dealer-kit/tag-templates/components/useTagBindings';
+import { useAutosave } from '@/hooks/useAutosave';
 import { ArrangeSheetView } from './ArrangeSheetView';
 import { TemplatePickDialog } from './TemplatePickDialog';
 import {
@@ -72,7 +107,9 @@ import {
   type PriceTagRequestDetail,
   type PriceTagRequestLine,
 } from '../../../../services/priceTagRequestService';
-import { listTemplates } from '../../../../services/tagTemplateService';
+import { listPublishedTemplates } from '../../../../services/tagTemplateService';
+import { FocusShell, FocusToggle } from '../../../../components/FocusMode';
+import { AutosaveIndicator } from '../../../../components/AutosaveIndicator';
 
 let idSeq = 0;
 function newTagId(): string {
@@ -83,15 +120,34 @@ function newTagId(): string {
 interface Props {
   request: PriceTagRequestDetail;
   initialDoc: TagSheetDoc | null;
+  /** The deliberate save: snapshots a new version, toasts, rethrows (B1/B3). */
   onSave: (doc: TagSheetDoc) => Promise<void>;
+  /** The autosave: writes the draft, silent, rethrows so the indicator can
+   *  report a failure. `keepalive` is set only on the page-teardown flush. */
+  onAutosave: (doc: TagSheetDoc, options?: { keepalive?: boolean }) => Promise<void>;
 }
 
-export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
+export function RequestTagDesigner({
+  request,
+  initialDoc,
+  onSave,
+  onAutosave,
+}: Props) {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
 
   const [mode, setMode] = useState<'design' | 'arrange'>('design');
+  /** Full screen (D11, AC-S6-1): the same `FocusShell` the room designer uses.
+   *  Both Design and Arrange sit inside it - the toggle is one control for
+   *  either half, not a per-mode setting. */
+  const [focus, setFocus] = useState(false);
   const [templates, setTemplates] = useState<TagTemplate[]>([]);
+  const [templatesStatus, setTemplatesStatus] = useState<'loading' | 'loaded' | 'error'>(
+    'loading',
+  );
   const [resolvedRows, setResolvedRows] = useState<LineTagData[] | null>(null);
+  const [pricesStatus, setPricesStatus] = useState<'loading' | 'loaded' | 'error'>('loading');
 
   /** One tag per line, keyed by line id. The live layers live here. */
   const [tags, setTags] = useState<Record<string, PlacedTag>>(() => {
@@ -105,6 +161,17 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
   const [imposition, setImposition] = useState<ImpositionConfig>(
     initialDoc?.imposition ?? { preset: 'a4_3up', ...IMPOSITION_PRESETS.a4_3up },
   );
+  /**
+   * The size "Apply to all lines" (D24, S9) last set, persisted in the doc
+   * (S9 review B2) so it also applies to a line that has not been opened
+   * yet: without this, `applyTemplate` below would clone a not-yet-opened
+   * line at its TEMPLATE's own print size, silently undoing what Apply to
+   * all just did the moment somebody opened line 3.
+   */
+  const [defaultTagSize, setDefaultTagSize] = useState<{
+    width_mm: number;
+    height_mm: number;
+  } | null>(initialDoc?.default_tag_size ?? null);
 
   const [selectedLineId, setSelectedLineId] = useState<string | null>(null);
   const [activeSheetIndex, setActiveSheetIndex] = useState(0);
@@ -124,26 +191,39 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
 
   // -- Loading ---------------------------------------------------------------
 
-  useEffect(() => {
-    listTemplates()
-      .then(setTemplates)
-      .catch(() => toast.error('Failed to load tag templates'));
+  // A failed fetch gets an explicit, stays-put error state with Retry (AC-S3-3)
+  // rather than a toast that vanishes and leaves the canvas silent. Only
+  // PUBLISHED templates are eligible for request design (AC-S5-2).
+  const loadTemplates = useCallback(() => {
+    setTemplatesStatus('loading');
+    listPublishedTemplates()
+      .then((rows) => {
+        setTemplates(rows);
+        setTemplatesStatus('loaded');
+      })
+      .catch(() => setTemplatesStatus('error'));
   }, []);
 
   useEffect(() => {
-    let live = true;
+    loadTemplates();
+  }, [loadTemplates]);
+
+  // Same mechanism as loadTemplates just above: a failed resolve gets an
+  // explicit, stays-put error state with Retry, not a toast that vanishes and
+  // leaves the canvas open on blank data with no visible cause.
+  const loadPrices = useCallback(() => {
+    setPricesStatus('loading');
     resolveRequestLines(request.id)
       .then((rows) => {
-        if (live) setResolvedRows(rows);
+        setResolvedRows(rows);
+        setPricesStatus('loaded');
       })
-      .catch((error: unknown) => {
-        if (live) setResolvedRows([]);
-        toast.error(error instanceof Error ? error.message : 'Failed to resolve prices');
-      });
-    return () => {
-      live = false;
-    };
+      .catch(() => setPricesStatus('error'));
   }, [request.id]);
+
+  useEffect(() => {
+    loadPrices();
+  }, [loadPrices]);
 
   const resolved = useMemo(() => {
     const map = new Map<string, LineTagData>();
@@ -153,40 +233,76 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
 
   // -- Tags ------------------------------------------------------------------
 
-  const applyTemplate = useCallback((line: PriceTagRequestLine, template: TagTemplate) => {
-    setTags((prev) => ({
-      ...prev,
-      [line.id]: tagForLine(line, template, newTagId()),
-    }));
-  }, []);
+  // A request-level default (S9 review B2) wins over the template's own
+  // print size the moment a line clones one - "Apply to all lines" is
+  // supposed to mean every line, including one nobody has opened yet.
+  const applyTemplate = useCallback(
+    (line: PriceTagRequestLine, template: TagTemplate) => {
+      setTags((prev) => {
+        let tag = tagForLine(line, template, newTagId());
+        if (defaultTagSize) {
+          tag = resizeTag(tag, defaultTagSize.width_mm, defaultTagSize.height_mm);
+        }
+        return { ...prev, [line.id]: tag };
+      });
+    },
+    [defaultTagSize],
+  );
 
   // The first line opens by itself: this page exists to design, and a canvas
-  // waiting to be told which line is a click nobody needs to make.
+  // waiting to be told which line is a click nobody needs to make. A row's own
+  // Design action on the detail page's Lines tab (S10) preselects THAT line via
+  // `?line=<lineId>` instead - honoured only on the initial pick, same as the
+  // fallback it replaces.
   useEffect(() => {
     if (selectedLineId || request.lines.length === 0) return;
-    setSelectedLineId(request.lines[0].id);
-  }, [selectedLineId, request.lines]);
+    const requestedLineId = searchParams.get('line');
+    const preselected =
+      requestedLineId && request.lines.some((line) => line.id === requestedLineId)
+        ? requestedLineId
+        : request.lines[0].id;
+    setSelectedLineId(preselected);
+    // The link did its job the moment it picked a line - a refresh from here
+    // on should land on whatever line is actually open (Design/Arrange can
+    // move it), not snap back to the one the URL named. `pathname` alone has
+    // no query string, so this is a plain drop of `?line=`.
+    if (requestedLineId) router.replace(pathname, { scroll: false });
+  }, [selectedLineId, request.lines, searchParams, router, pathname]);
 
   // A line with no tag yet is cloned from its family's default template. It
-  // waits for BOTH the templates and the resolved lines: the family comes off
-  // the resolved code, so cloning early would pick the ala carte fallback for
-  // everything.
+  // waits for BOTH the templates and the prices to settle (loaded OR error -
+  // an error state has its own Retry, not a silent stall): the family comes
+  // off the resolved code, so cloning early would pick the ala carte fallback
+  // for everything.
+  //
+  // Zero PUBLISHED templates is not an error: the line starts from a
+  // product-block (or, for a set line, a set block) starter bound to its own
+  // item instead of dead-ending on "Preparing this line..." forever
+  // (D6/D13, #476).
+  //
+  // This clone is NOT a user change (S3), so it only moves the autosave's
+  // baseline - see the autosave effect below for why. `autoCloneRef` is how it
+  // says so: set immediately before the state update whose `doc` the autosave
+  // effect will then see.
+  const autoCloneRef = useRef(false);
   useEffect(() => {
     if (!selectedLineId || tags[selectedLineId]) return;
-    if (templates.length === 0 || resolvedRows === null) return;
+    if (templatesStatus === 'loading' || templatesStatus === 'error') return;
+    if (pricesStatus === 'loading' || pricesStatus === 'error') return;
     const line = request.lines.find((l) => l.id === selectedLineId);
     if (!line) return;
-    const template = defaultTemplateFor(line, templates, resolved.get(line.id)?.code);
-    if (!template) {
-      toast.error('There are no tag templates yet. Design one under Tag Templates first.');
-      return;
-    }
+    const lineData = resolved.get(line.id);
+    const template =
+      defaultTemplateFor(line, templates, lineData?.code) ??
+      starterTemplateFor(line, lineData, newTagId);
+    autoCloneRef.current = true;
     applyTemplate(line, template);
   }, [
     selectedLineId,
     tags,
     templates,
-    resolvedRows,
+    templatesStatus,
+    pricesStatus,
     resolved,
     request.lines,
     applyTemplate,
@@ -195,27 +311,44 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
   const selectedTag = selectedLineId ? tags[selectedLineId] ?? null : null;
 
   /**
-   * The document the canvas opens on, rebuilt only when the TAG changes.
+   * The LAYERS the canvas opens on, rebuilt only when the tag's IDENTITY
+   * changes (its id - a template swap or a line switch). The editor reads
+   * its document once, on mount, and keeps the layers in its own state from
+   * then on, so this has to be the tag's layers AS THEY STAND when the
+   * canvas mounts on it - a fresh object per keystroke would be ignored, and
+   * a snapshot taken when the tag was first created would throw every edit
+   * away the moment somebody looked at another line and came back. That is
+   * exactly what it did until this was measured on the lane.
    *
-   * The editor reads its document once, on mount, and keeps the layers in its
-   * own state from then on. So this has to be the tag's layers AS THEY STAND
-   * when the canvas mounts on it - a fresh object per keystroke would be
-   * ignored, and a snapshot taken when the tag was first created would throw
-   * every edit away the moment somebody looked at another line and came back.
-   * That is exactly what it did until this was measured on the lane.
+   * Width/height are deliberately NOT part of this identity (S9 review B1):
+   * a resize must reach the on-screen artboard WITHOUT remounting the
+   * editor, because the editor reads `doc.width_mm`/`height_mm` straight off
+   * its `doc` PROP on every render (only `layers` is frozen into local
+   * state) - `selectedDoc` below always takes the tag's CURRENT size, and a
+   * key on tag id alone means resizing never unmounts a focused input in
+   * the Tag Size control (B1's actual bug: keying on size remounted
+   * `TagSizeControl`, and with it whatever input the designer was mid-typing
+   * into).
    */
-  const docRef = useRef<{ tagId: string; doc: TagTemplateDoc } | null>(null);
-  if (selectedTag && docRef.current?.tagId !== selectedTag.id) {
-    docRef.current = {
-      tagId: selectedTag.id,
-      doc: {
-        layers: selectedTag.layers,
-        width_mm: selectedTag.width_mm,
-        height_mm: selectedTag.height_mm,
-      },
-    };
+  const docRef = useRef<{ key: string; layers: TagLayer[] } | null>(null);
+  // The editor is unmounted whenever Arrange is showing (the mode ternary
+  // below), so a snapshot taken before that switch is stale by the time
+  // Design remounts it - dropping the ref here forces a rebuild off the
+  // live `tags` state instead of replaying the layers as they stood before
+  // the switch and losing whatever Arrange-side or since-mount edits
+  // happened in between.
+  if (mode !== 'design') docRef.current = null;
+  if (selectedTag && docRef.current?.key !== selectedTag.id) {
+    docRef.current = { key: selectedTag.id, layers: selectedTag.layers };
   }
-  const selectedDoc = selectedTag ? docRef.current?.doc ?? null : null;
+  const selectedDoc: TagTemplateDoc | null =
+    selectedTag && docRef.current
+      ? {
+          layers: docRef.current.layers,
+          width_mm: selectedTag.width_mm,
+          height_mm: selectedTag.height_mm,
+        }
+      : null;
 
   /** What the canvas draws against: the LINE, with its marketing override. */
   const boundData: TagBindingData | null = useMemo(() => {
@@ -223,6 +356,31 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
     const row = resolved.get(selectedLineId);
     return row ? { kind: 'line', line: row } : null;
   }, [selectedLineId, resolved]);
+
+  // -- Tag size control (D24, S9) ---------------------------------------------
+
+  const sizePresets = useMemo(() => tagSizePresets(templates), [templates]);
+
+  const handleResizeTag = useCallback(
+    (width_mm: number, height_mm: number) => {
+      const lineId = selectedLineId;
+      if (!lineId) return;
+      setTags((prev) => {
+        const tag = prev[lineId];
+        if (!tag) return prev;
+        return { ...prev, [lineId]: resizeTag(tag, width_mm, height_mm) };
+      });
+    },
+    [selectedLineId],
+  );
+
+  // Resizes every ALREADY-CLONED tag now, and remembers the size as the
+  // request's default (S9 review B2) so a line opened later clones at this
+  // size too, via `applyTemplate` above - not the template's own print size.
+  const handleResizeAllTags = useCallback((width_mm: number, height_mm: number) => {
+    setTags((prev) => resizeAllTags(prev, width_mm, height_mm));
+    setDefaultTagSize({ width_mm, height_mm });
+  }, []);
 
   const handleLayersChange = useCallback(
     (layers: TagLayer[]) => {
@@ -300,9 +458,85 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
       kind: 'tag_sheet',
       imposition,
       sheets: autoArrange(arrangeItems, imposition, pinned),
+      default_tag_size: defaultTagSize,
     }),
-    [arrangeItems, imposition, pinned],
+    [arrangeItems, imposition, pinned, defaultTagSize],
   );
+
+  // -- Autosave (D22, S8) ------------------------------------------------------
+
+  // Set the moment the page is going away, and read by the save below so ONLY
+  // the teardown request is sent `keepalive` (a keepalive body is capped at
+  // 64KB, which a busy tag sheet exceeds - see the service).
+  const teardownRef = useRef(false);
+  const { status, savedAt, schedule, flush, retry } = useAutosave<TagSheetDoc>(
+    useCallback(
+      (next: TagSheetDoc) => onAutosave(next, { keepalive: teardownRef.current }),
+      [onAutosave],
+    ),
+  );
+
+  // Every REAL change to `doc` schedules a debounced save - a layer edit
+  // (through `tags`), an arranged pin, an imposition change. Two changes are
+  // NOT edits and must persist nothing:
+  //
+  //  * the very first `doc` (whatever `initialDoc` seeded, or the empty
+  //    starting point) - already exactly what the server has;
+  //  * the starter/template CLONE the effect above performs for a line that
+  //    has no tag yet (S3). That is the page deciding what to draw, not the
+  //    user deciding anything, so merely OPENING a request with undesigned
+  //    lines - or clicking down the rail to look at them - used to write a
+  //    design for every one of them. The clone announces itself through
+  //    `autoCloneRef` and only moves the baseline. Choosing a template from
+  //    the picker goes through `chooseTemplate`, never through here, so a real
+  //    choice still saves.
+  //
+  // Guards on the VALUE, not a boolean "have I run yet" flag: dev's
+  // StrictMode fires a fresh mount's effects twice (mount, cleanup, mount
+  // again) to catch effects that are not idempotent, and a boolean flag
+  // would already read "yes" on that second firing, autosaving the
+  // unchanged initial doc a second time. Comparing against the last `doc`
+  // this effect actually saw covers both: an unmoved re-fire is the same
+  // reference and is skipped either way.
+  const lastSeenDocRef = useRef<TagSheetDoc | undefined>(undefined);
+  useEffect(() => {
+    if (lastSeenDocRef.current === doc) return;
+    const isInitial = lastSeenDocRef.current === undefined;
+    const isAutoClone = autoCloneRef.current;
+    autoCloneRef.current = false;
+    lastSeenDocRef.current = doc;
+    if (isInitial || isAutoClone) return;
+    schedule(doc);
+  }, [doc, schedule]);
+
+  // Leaving the page, both ways it can happen (S1/S2).
+  //
+  // A route change inside the app - the back link, a sidebar click, the
+  // browser's own Back - unmounts this component, so the cleanup below is
+  // where that edit gets its last chance. `pagehide` covers what no React
+  // lifecycle sees: a refresh, a closed tab, a jump to another site. It
+  // replaces `beforeunload`, which fires too early to be the whole story and
+  // is throttled or skipped outright on mobile Safari, where a backgrounded
+  // tab is discarded without one.
+  //
+  // Both set `teardownRef` first so the request goes out `keepalive` and
+  // survives the document it was made from.
+  useEffect(() => {
+    // A mounted page is not tearing down. StrictMode's mount/cleanup/mount
+    // pass would otherwise leave the flag set for the whole session, and
+    // every ordinary autosave after it would go out keepalive - which fails
+    // outright once the document passes 64KB.
+    teardownRef.current = false;
+    const handler = () => {
+      teardownRef.current = true;
+      void flush();
+    };
+    window.addEventListener('pagehide', handler);
+    return () => {
+      window.removeEventListener('pagehide', handler);
+      handler();
+    };
+  }, [flush]);
 
   const handleMoveTag = useCallback(
     (sheetIndex: number, tag: PlacedTag, x_mm: number, y_mm: number) => {
@@ -314,19 +548,40 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
     [],
   );
 
+  /**
+   * The deliberate save: one version, and never racing the autosave (S4).
+   *
+   * `flush()` first - it cancels the armed debounce and waits for anything on
+   * the wire, so a draft write cannot land AFTER this version snapshot and
+   * resurrect a draft the snapshot just cleared. With nothing pending it is a
+   * no-op, which is the ordinary case: this stays one request.
+   *
+   * The toast lives in the host's `onSave` (B3), and so does the error one -
+   * which is also why the rejection is swallowed here rather than reported
+   * twice.
+   */
+  const saveNow = useCallback(async () => {
+    await flush();
+    await onSave(doc);
+  }, [flush, doc, onSave]);
+
   const save = useCallback(async () => {
     setSaving(true);
     try {
-      await onSave(doc);
+      await saveNow();
+    } catch {
+      // Already reported by `onSave`.
     } finally {
       setSaving(false);
     }
-  }, [doc, onSave]);
+  }, [saveNow]);
 
   const handleMarkProofReady = useCallback(async () => {
     setTransitioning(true);
     try {
-      await onSave(doc);
+      // A failed save now ABORTS rather than marking a proof ready off a
+      // design the server never received (B3: `onSave` rethrows).
+      await saveNow();
       // A STATUS, not an action name: see the note on the detail page.
       await transitionPriceTagRequest(request.id, 'proof_ready');
       toast.success('Proof marked as ready');
@@ -336,7 +591,7 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
     } finally {
       setTransitioning(false);
     }
-  }, [doc, onSave, request.id, router]);
+  }, [saveNow, request.id, router]);
 
   const handlePrintSheet = useCallback(
     async (sheetIndex: number) => {
@@ -344,9 +599,9 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
       if (!sheet) return;
       setPrinting(true);
       try {
-        // Saved first: the worker prints what the document says, and an unsaved
+        // Saved first: the worker prints the latest VERSION, and an unsaved
         // arrangement would print the previous one.
-        await onSave(doc);
+        await saveNow();
         await exportTagSheet(request.id, [sheet.id]);
         toast.success(`Sheet ${sheetIndex + 1} export queued. Check My Downloads.`);
       } catch {
@@ -355,35 +610,78 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
         setPrinting(false);
       }
     },
-    [doc, onSave, request.id],
+    [doc.sheets, saveNow, request.id],
   );
 
   const canMarkProofReady =
     request.status === 'designing' || request.status === 'changes_requested';
 
+  /** Switching a line never LOSES a committed change (AC-S8-3) - flush the
+   *  autosave's own pending value before the switch, rather than leaving it
+   *  to the ~1s debounce that might not have fired yet. */
+  const handleSelectLine = useCallback(
+    (lineId: string) => {
+      if (lineId !== selectedLineId) void flush();
+      setSelectedLineId(lineId);
+    },
+    [selectedLineId, flush],
+  );
+
+  /** Same idea for Design <-> Arrange (AC-S8-3). */
+  const handleModeChange = useCallback(
+    (value: 'design' | 'arrange') => {
+      if (value !== mode) void flush();
+      setMode(value);
+    },
+    [mode, flush],
+  );
+
+  // The unmount cleanup flushes too, so this is only about being EARLY: the
+  // save leaves before the route change rather than after it.
+  const handleBack = useCallback(() => {
+    void flush();
+    router.push(`/dealer-kit/price-tag-requests/${request.id}`);
+  }, [flush, router, request.id]);
+
   // -- Render ----------------------------------------------------------------
 
   const rail = (
-    <LinesRail
-      lines={request.lines}
-      resolved={resolved}
-      tags={tags}
-      selectedLineId={selectedLineId}
-      onSelect={setSelectedLineId}
-      onUseTemplate={setPickerLineId}
-    />
+    <>
+      <LinesRail
+        lines={request.lines}
+        resolved={resolved}
+        pricesStatus={pricesStatus}
+        tags={tags}
+        selectedLineId={selectedLineId}
+        onSelect={handleSelectLine}
+        onUseTemplate={setPickerLineId}
+      />
+      <TagSizeControl
+        tag={selectedTag}
+        presets={sizePresets}
+        imposition={imposition}
+        onResize={handleResizeTag}
+        onResizeAll={handleResizeAllTags}
+      />
+    </>
   );
 
   return (
-    <div className="flex h-full flex-col">
+    <FocusShell active={focus} onExit={() => setFocus(false)}>
+    <div className="flex h-full min-h-0 flex-1 flex-col">
       {/* Request bar: what this is, which half is showing, and the two actions
-          that leave the page in a different state. */}
-      <div className="flex h-10 shrink-0 items-center gap-2 border-b bg-background px-3">
+          that leave the page in a different state.
+          `flex-wrap` (S6): at 375px the back button, mode toggle, Full
+          screen, Save and (for a designing request) Mark proof ready do not
+          fit one row - the same fix the template page's own action row
+          carries. `min-h-10` rather than a fixed `h-10` so the row can
+          actually grow into a second line instead of clipping it. */}
+      <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-2 border-b bg-background px-3 py-1.5">
         <Button
           variant="ghost"
           size="sm"
           className="h-7 px-2 text-xs"
-          onClick={() => router.push(`/dealer-kit/price-tag-requests/${request.id}`)}
+          onClick={handleBack}
         >
           <ChevronLeft className="mr-1 size-3.5" />
           {request.doc_number}
@@ -400,7 +698,7 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
                   ? 'bg-primary text-primary-foreground'
                   : 'text-muted-foreground hover:bg-muted',
               )}
-              onClick={() => setMode(value)}
+              onClick={() => handleModeChange(value)}
             >
               {value === 'design' ? 'Design' : 'Arrange'}
             </button>
@@ -408,6 +706,16 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
         </div>
 
         <div className="flex-1" />
+
+        <AutosaveIndicator status={status} savedAt={savedAt} onRetry={retry} />
+
+        <FocusToggle
+          active={focus}
+          onToggle={setFocus}
+          label="tags"
+          className="h-7 text-xs"
+          iconClassName="size-3.5"
+        />
 
         <Button
           variant="outline"
@@ -444,7 +752,27 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
 
       <div className="flex-1 overflow-hidden">
         {mode === 'design' ? (
-          selectedTag && selectedDoc ? (
+          request.lines.length === 0 ? (
+            <CanvasMessage text="This request has no lines, so there is nothing to design." />
+          ) : templatesStatus === 'loading' ? (
+            <CanvasMessage text="Loading templates..." />
+          ) : templatesStatus === 'error' ? (
+            <CanvasMessage text="Failed to load tag templates.">
+              <Button variant="outline" size="sm" onClick={loadTemplates}>
+                <RefreshCw className="mr-1.5 size-3.5" />
+                Retry
+              </Button>
+            </CanvasMessage>
+          ) : pricesStatus === 'loading' ? (
+            <CanvasMessage text="Resolving prices..." />
+          ) : pricesStatus === 'error' ? (
+            <CanvasMessage text="Failed to resolve prices.">
+              <Button variant="outline" size="sm" onClick={loadPrices}>
+                <RefreshCw className="mr-1.5 size-3.5" />
+                Retry
+              </Button>
+            </CanvasMessage>
+          ) : selectedTag && selectedDoc ? (
             <TagCanvasEditor
               key={selectedTag.id}
               doc={selectedDoc}
@@ -459,13 +787,7 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
               hideSaveBar
             />
           ) : (
-            <div className="flex h-full items-center justify-center px-6 text-center">
-              <p className="text-sm text-muted-foreground">
-                {request.lines.length === 0
-                  ? 'This request has no lines, so there is nothing to design.'
-                  : 'Preparing this line...'}
-              </p>
-            </div>
+            <CanvasMessage text="Preparing this line..." />
           )
         ) : (
           <ArrangeSheetView
@@ -532,6 +854,28 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+    </FocusShell>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The canvas's own placeholder states (loading / resolving / error) - the
+// design page must always say what it is waiting for rather than sitting on
+// a bare, permanent "Preparing this line..." (#476).
+// ---------------------------------------------------------------------------
+
+function CanvasMessage({
+  text,
+  children,
+}: {
+  text: string;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+      <p className="text-sm text-muted-foreground">{text}</p>
+      {children}
+    </div>
   );
 }
 
@@ -542,6 +886,7 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
 function LinesRail({
   lines,
   resolved,
+  pricesStatus,
   tags,
   selectedLineId,
   onSelect,
@@ -549,6 +894,7 @@ function LinesRail({
 }: {
   lines: PriceTagRequestLine[];
   resolved: Map<string, LineTagData>;
+  pricesStatus: 'loading' | 'loaded' | 'error';
   tags: Record<string, PlacedTag>;
   selectedLineId: string | null;
   onSelect: (lineId: string) => void;
@@ -570,6 +916,11 @@ function LinesRail({
           <div className="divide-y">
             {lines.map((line) => {
               const row = resolved.get(line.id);
+              // Prices resolution finished and this line still has no row: its
+              // product could not be resolved in this request's company (a
+              // cross-company reference, or a genuinely deleted product) - not
+              // "still loading". See `457_ptag_line_xco_repair`.
+              const notFound = pricesStatus === 'loaded' && !row;
               const code = row?.code ?? '';
               const name = row?.name ?? '';
               const designed = Boolean(tags[line.id]);
@@ -590,7 +941,7 @@ function LinesRail({
                     <div className="flex items-center gap-1.5">
                       <Badge
                         variant="secondary"
-                        className="shrink-0 px-1 py-0 text-[10px]"
+                        className="shrink-0 px-1 py-0 text-2xs"
                       >
                         {line.line_type === 'product' ? 'P' : 'Set'}
                       </Badge>
@@ -598,23 +949,35 @@ function LinesRail({
                         className="truncate font-mono text-xs text-muted-foreground"
                         title={code}
                       >
-                        {code || 'Resolving...'}
+                        {code || (notFound ? 'Not found' : 'Resolving...')}
                       </span>
                       {designed && (
                         <Check className="size-3 shrink-0 text-emerald-600" />
                       )}
                     </div>
-                    <p className="mt-0.5 truncate text-xs" title={name}>
-                      {name}
-                    </p>
-                    <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
-                      Qty {line.quantity} / {family}
-                      {row && row.show_promo_price && row.sell_price != null
-                        ? ` / SP ${formatTagPrice(row.sell_price)}`
-                        : row && row.list_price != null
-                          ? ` / LP ${formatTagPrice(row.list_price)}`
-                          : ''}
-                    </p>
+                    {notFound ? (
+                      <Badge
+                        variant="destructive"
+                        appearance="light"
+                        className="mt-1 px-1.5 py-0 text-2xs font-normal"
+                      >
+                        Product not found in this company
+                      </Badge>
+                    ) : (
+                      <>
+                        <p className="mt-0.5 truncate text-xs" title={name}>
+                          {name}
+                        </p>
+                        <p className="mt-0.5 truncate text-2xs text-muted-foreground">
+                          Qty {line.quantity} / {family}
+                          {row && row.show_promo_price && row.sell_price != null
+                            ? ` / SP ${formatTagPrice(row.sell_price)}`
+                            : row && row.list_price != null
+                              ? ` / LP ${formatTagPrice(row.list_price)}`
+                              : ''}
+                        </p>
+                      </>
+                    )}
                   </button>
                   <button
                     type="button"
@@ -631,6 +994,163 @@ function LinesRail({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Tag size control (D24, S9): W x H mm for the SELECTED line's tag
+// ---------------------------------------------------------------------------
+
+/** Key one preset is looked up under. */
+function sizeKey(width_mm: number, height_mm: number): string {
+  return `${width_mm}x${height_mm}`;
+}
+
+/**
+ * Never a real option in the SELECT - a size nobody picked from the list has
+ * nothing to select TO (S9 review nit). `value` is set to this whenever the
+ * tag's current size matches no preset, so the trigger falls through to
+ * `placeholder="Custom"` the same way every other unselected SearchableSelect
+ * shows its placeholder: muted, and un-clickable in the list.
+ */
+const CUSTOM_SIZE_VALUE = '__custom__';
+
+function TagSizeControl({
+  tag,
+  presets,
+  imposition,
+  onResize,
+  onResizeAll,
+}: {
+  tag: PlacedTag | null;
+  presets: TagSizePreset[];
+  imposition: ImpositionConfig;
+  onResize: (width_mm: number, height_mm: number) => void;
+  onResizeAll: (width_mm: number, height_mm: number) => void;
+}) {
+  // Held as TEXT and committed on blur/Enter, not on every keystroke (S9
+  // review B1): the control used to call `onResize` per keystroke, which
+  // changed `tags` -> changed a doc key the canvas was mounted on -> remounted
+  // the whole editor (this control's own DOM included) after the first
+  // digit, so "95" typed as fast as anyone can type landed as "9". `null`
+  // means "nothing typed right now" - the field shows the tag's live value,
+  // which is what lets a preset pick or an Apply-to-all elsewhere update the
+  // boxes without an effect fighting whatever is mid-typed in them.
+  const [wDraft, setWDraft] = useState<string | null>(null);
+  const [hDraft, setHDraft] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!tag) {
+    return (
+      <div className="shrink-0 border-b border-r p-3">
+        <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+          Tag Size
+        </span>
+        <p className="mt-1 text-2xs text-muted-foreground">
+          Select a line to set its tag size.
+        </p>
+      </div>
+    );
+  }
+
+  const bounds = tagSizeBounds(imposition);
+
+  const commit = (axis: 'w' | 'h') => {
+    const draft = axis === 'w' ? wDraft : hDraft;
+    const setDraft = axis === 'w' ? setWDraft : setHDraft;
+    if (draft === null) return;
+    const n = parseFloat(draft);
+    if (Number.isNaN(n)) {
+      setDraft(null);
+      setError(null);
+      return;
+    }
+    const candidateW = axis === 'w' ? n : tag.width_mm;
+    const candidateH = axis === 'h' ? n : tag.height_mm;
+    const result = resolveTagSize(candidateW, candidateH, bounds);
+    if (!result.ok) {
+      // Keep the typed value on screen next to the reason - reverting it
+      // silently would read as the edit never happened (S9 review S3).
+      setError(result.reason);
+      return;
+    }
+    setError(null);
+    onResize(result.width_mm, result.height_mm);
+    setDraft(null);
+  };
+
+  const onEnter = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') e.currentTarget.blur();
+  };
+
+  const options: SearchableSelectOption[] = presets.map((p) => ({
+    value: sizeKey(p.width_mm, p.height_mm),
+    label: p.label,
+  }));
+  const matchingPreset = presets.find(
+    (p) => p.width_mm === tag.width_mm && p.height_mm === tag.height_mm,
+  );
+
+  return (
+    <div className="flex shrink-0 flex-col gap-2 border-b border-r p-3">
+      <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+        Tag Size
+      </span>
+      <SearchableSelect
+        value={matchingPreset ? sizeKey(matchingPreset.width_mm, matchingPreset.height_mm) : CUSTOM_SIZE_VALUE}
+        onChange={(value) => {
+          const preset = presets.find((p) => sizeKey(p.width_mm, p.height_mm) === value);
+          if (!preset) return;
+          const result = resolveTagSize(preset.width_mm, preset.height_mm, bounds);
+          if (!result.ok) {
+            setError(result.reason);
+            return;
+          }
+          setError(null);
+          onResize(result.width_mm, result.height_mm);
+        }}
+        options={options}
+        placeholder="Custom"
+      />
+      <div className="grid grid-cols-2 gap-2">
+        <div className="flex flex-col gap-1">
+          <Label className="text-xs text-muted-foreground">W (mm)</Label>
+          <Input
+            type="number"
+            className="h-7 px-2 text-xs"
+            aria-label="Tag width (mm)"
+            value={wDraft ?? tag.width_mm}
+            step={0.5}
+            onChange={(e) => setWDraft(e.target.value)}
+            onBlur={() => commit('w')}
+            onKeyDown={onEnter}
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <Label className="text-xs text-muted-foreground">H (mm)</Label>
+          <Input
+            type="number"
+            className="h-7 px-2 text-xs"
+            aria-label="Tag height (mm)"
+            value={hDraft ?? tag.height_mm}
+            step={0.5}
+            onChange={(e) => setHDraft(e.target.value)}
+            onBlur={() => commit('h')}
+            onKeyDown={onEnter}
+          />
+        </div>
+      </div>
+      {error && <p className="text-2xs text-destructive">{error}</p>}
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="h-7 text-xs"
+        onClick={() => onResizeAll(tag.width_mm, tag.height_mm)}
+      >
+        Apply to all lines
+      </Button>
     </div>
   );
 }

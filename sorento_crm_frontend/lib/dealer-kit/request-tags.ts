@@ -13,12 +13,20 @@
  * around it.
  */
 
-import { bindTemplateLayers } from './product-block';
+import {
+  bindTemplateLayers,
+  buildProductBlock,
+  buildSetStarterBlock,
+  PRODUCT_BLOCK_SIZE,
+  SET_BLOCK_SIZE,
+} from './product-block';
 import { lineFamily } from './line-family';
 import type {
   GroupBinding,
   ImpositionConfig,
+  LineTagData,
   PlacedTag,
+  ProductTagData,
   TagLayer,
   TagSheet,
   TagSheetDoc,
@@ -64,16 +72,92 @@ export function defaultTemplateFor(
   );
 }
 
-// ---------------------------------------------------------------------------
-// The tag itself
-// ---------------------------------------------------------------------------
-
 /** What the tag's groups are about: this line's product, or its set. */
 export function bindingForLine(line: TagRequestLine): GroupBinding {
   return line.line_type === 'product_set'
     ? { product_set_id: line.product_set_id ?? undefined }
     : { product_id: line.product_id ?? undefined };
 }
+
+/**
+ * The synthetic `TagTemplate.id` a starter carries. Never a real
+ * `tag_templates` row, so anything that treats a template id as a foreign key
+ * - the versions/publish machinery included - has to special-case this one.
+ */
+export const STARTER_TEMPLATE_ID = 'starter';
+
+/**
+ * The starter a line opens on when there is not one PUBLISHED template to
+ * clone from (D6/D13): a product block - or, for a set line, a set block - at
+ * the default block footprint, bound to the line's real product/set. The
+ * design page must never dead-end on a silent "Preparing this line..."
+ * (#476), so this stands in for a real template: a synthetic doc built from
+ * the already-resolved line and never written back as a `tag_templates` row.
+ *
+ * `buildProductBlock`/`buildSetStarterBlock` do not know the line, so
+ * whatever binding they seed their group with is provisional; `bindTemplateLayers`
+ * below re-binds it to `bindingForLine(line)` the same way `tagForLine` binds
+ * a real template's clone, so the starter's binding is never a stand-in id
+ * (e.g. the line's own id) masquerading as a product/set id.
+ */
+export function starterTemplateFor(
+  line: TagRequestLine,
+  data: LineTagData | undefined,
+  newId: () => string,
+): TagTemplate {
+  const opts = { newId, x_mm: 0, y_mm: 0, z_index: 0 };
+  const isSet = line.line_type === 'product_set';
+
+  const layers = isSet
+    ? buildSetStarterBlock(
+        {
+          code: data?.code ?? '',
+          name: data?.name ?? '',
+          set_members: data?.set_members ?? '',
+          list_price: data?.list_price ?? null,
+          offer_price: data?.show_promo_price ? (data?.sell_price ?? null) : null,
+        },
+        opts,
+      )
+    : buildProductBlock(
+        {
+          // Never read for binding purposes - bindTemplateLayers below
+          // overwrites the group's binding with the line's real product id.
+          id: '',
+          code: data?.code ?? '',
+          name: data?.name ?? '',
+          dimensions: data?.dimensions ?? '',
+          spec_lines: data?.spec_lines ? data.spec_lines.split('\n') : [],
+          specs: data?.specs ?? [],
+          images: data?.images ?? [],
+          list_price: data?.list_price ?? null,
+          offer_price: data?.show_promo_price ? (data?.sell_price ?? null) : null,
+          promotion_id: null,
+          barcode: data?.barcode ?? null,
+        } satisfies ProductTagData,
+        opts,
+      );
+
+  const size = isSet ? SET_BLOCK_SIZE : PRODUCT_BLOCK_SIZE;
+
+  return {
+    id: STARTER_TEMPLATE_ID,
+    name: 'Starter',
+    family: 'ala_carte',
+    doc: {
+      layers: bindTemplateLayers(layers, bindingForLine(line)),
+      width_mm: size.width_mm,
+      height_mm: size.height_mm,
+    },
+    print_size: { width_mm: size.width_mm, height_mm: size.height_mm },
+    created_at: '',
+    updated_at: '',
+  };
+}
+
+// ---------------------------------------------------------------------------
+// The tag itself
+// ---------------------------------------------------------------------------
 
 /**
  * A fresh tag for this line, cloned from `template`.
@@ -98,6 +182,127 @@ export function tagForLine(
     width_mm: template.print_size.width_mm,
     height_mm: template.print_size.height_mm,
     layers: bindTemplateLayers(layers, bindingForLine(line)),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Tag size control (D24, S9)
+// ---------------------------------------------------------------------------
+
+/** One choice in the tag-size control's dropdown. */
+export interface TagSizePreset {
+  label: string;
+  width_mm: number;
+  height_mm: number;
+}
+
+/**
+ * The size choices offered in the request designer's tag-size control (D24):
+ * every PUBLISHED template's print size (`templates` is already
+ * `listPublishedTemplates()`'s result, so no separate published filter is
+ * needed here), deduped by size, plus the starter block's own footprint -
+ * always present, so the list is never empty even before any template has
+ * loaded. "Custom" is not a member of this list; the control itself offers
+ * it alongside these as the escape hatch for typing an arbitrary size.
+ */
+export function tagSizePresets(templates: TagTemplate[]): TagSizePreset[] {
+  const seen = new Set<string>();
+  const presets: TagSizePreset[] = [];
+  const add = (label: string, width_mm: number, height_mm: number) => {
+    const key = `${width_mm}x${height_mm}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    presets.push({ label, width_mm, height_mm });
+  };
+
+  for (const t of templates) {
+    add(
+      `${t.name} (${t.print_size.width_mm} x ${t.print_size.height_mm} mm)`,
+      t.print_size.width_mm,
+      t.print_size.height_mm,
+    );
+  }
+  add(
+    `Starter (${PRODUCT_BLOCK_SIZE.width_mm} x ${PRODUCT_BLOCK_SIZE.height_mm} mm)`,
+    PRODUCT_BLOCK_SIZE.width_mm,
+    PRODUCT_BLOCK_SIZE.height_mm,
+  );
+
+  return presets;
+}
+
+/**
+ * Resize one line's tag footprint - the outer plate size `autoArrange` lays
+ * sheets out with, not the layers inside it. Every copy of the line shares
+ * this one `PlacedTag` (`copiesOf`), so a single update here is what "changing
+ * it applies to all copies of that line" means; a pinned copy's position is
+ * untouched because `autoArrange` looks it up by line+copy-index regardless
+ * of size (AC-S9-3).
+ */
+export function resizeTag(tag: PlacedTag, width_mm: number, height_mm: number): PlacedTag {
+  return { ...tag, width_mm, height_mm };
+}
+
+/** "Apply to all lines" (AC-S9-3): one size, every line's tag. */
+export function resizeAllTags(
+  tags: Record<string, PlacedTag>,
+  width_mm: number,
+  height_mm: number,
+): Record<string, PlacedTag> {
+  const next: Record<string, PlacedTag> = {};
+  for (const [lineId, tag] of Object.entries(tags)) {
+    next[lineId] = resizeTag(tag, width_mm, height_mm);
+  }
+  return next;
+}
+
+/** The floor every tag size control clamps up to (S9 review S3). */
+export const MIN_TAG_SIZE_MM = 10;
+
+/** The bounds a tag's own size may be set to on the given sheet. */
+export interface TagSizeBounds {
+  min_mm: number;
+  max_width_mm: number;
+  max_height_mm: number;
+}
+
+/**
+ * The size bounds a tag may be set to on the CURRENT imposition sheet
+ * (D24, S9 review S3): the usable page area after bleed on each axis, so a
+ * size that could never physically fit is refused rather than drawn wrong.
+ */
+export function tagSizeBounds(imposition: ImpositionConfig): TagSizeBounds {
+  return {
+    min_mm: MIN_TAG_SIZE_MM,
+    max_width_mm: imposition.page_width_mm - 2 * imposition.bleed_mm,
+    max_height_mm: imposition.page_height_mm - 2 * imposition.bleed_mm,
+  };
+}
+
+/**
+ * Resolve a typed size against `bounds`.
+ *
+ * Below the minimum clamps UP to it - a benign floor, the same as every
+ * other mm field in this editor. Above what the sheet can hold is REFUSED
+ * outright rather than silently shrunk to fit: a designer who typed 400mm
+ * asked for something specific, and drawing a different number than the one
+ * they typed without saying so is the worse failure of the two.
+ */
+export function resolveTagSize(
+  width_mm: number,
+  height_mm: number,
+  bounds: TagSizeBounds,
+): { ok: true; width_mm: number; height_mm: number } | { ok: false; reason: string } {
+  if (width_mm > bounds.max_width_mm || height_mm > bounds.max_height_mm) {
+    return {
+      ok: false,
+      reason: `Largest that fits this sheet is ${bounds.max_width_mm} x ${bounds.max_height_mm} mm`,
+    };
+  }
+  return {
+    ok: true,
+    width_mm: Math.max(bounds.min_mm, width_mm),
+    height_mm: Math.max(bounds.min_mm, height_mm),
   };
 }
 

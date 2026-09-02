@@ -27,10 +27,22 @@ export function FocusToggle({
   active,
   onToggle,
   label = 'canvas',
+  className,
+  iconClassName = 'size-4',
 }: {
   active: boolean;
   onToggle: (next: boolean) => void;
   label?: string;
+  /**
+   * A host whose own action bar runs smaller than the others (S6) - the
+   * request designer's is `h-7 text-xs` throughout - can match its own
+   * buttons this way, without changing what every OTHER host already relies
+   * on: the default stays `size="sm"` (`h-7 text-xs` already) for the room
+   * designer, the page editor and the template page.
+   */
+  className?: string;
+  /** Same idea, for the icon - default matches the other three hosts. */
+  iconClassName?: string;
 }) {
   return (
     <Button
@@ -39,8 +51,13 @@ export function FocusToggle({
       aria-pressed={active}
       aria-label={active ? `Exit full screen ${label}` : `Full screen ${label}`}
       onClick={() => onToggle(!active)}
+      className={className}
     >
-      {active ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
+      {active ? (
+        <Minimize2 className={iconClassName} />
+      ) : (
+        <Maximize2 className={iconClassName} />
+      )}
       {active ? 'Exit full screen' : 'Full screen'}
     </Button>
   );

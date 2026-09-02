@@ -90,6 +90,8 @@ export function resolveSlotText(
         return data.line.set_members;
       case 'included_accessories':
         return data.line.included_accessories;
+      case 'barcode':
+        return data.line.barcode;
       default:
         return null;
     }
@@ -103,6 +105,7 @@ export function resolveSlotText(
         return data.set.name;
       case 'set_members':
         return data.set.members.map(formatSetMemberLine).join('\n');
+      // A set has no barcode of its own (S7) - falls through to null.
       default:
         return null;
     }
@@ -118,9 +121,29 @@ export function resolveSlotText(
       return product.dimensions;
     case 'spec_lines':
       return product.spec_lines.join('\n');
+    case 'barcode':
+      return product.barcode;
     default:
       return null;
   }
+}
+
+/**
+ * The value a `barcode` layer draws: a typed override wins, else the bound
+ * product/line's own barcode, else null (D23, S9).
+ *
+ * Mirrors the text layer's `text_override` pattern exactly - the override
+ * lives in the SAME `text_override` field every layer already carries, it
+ * just holds a barcode string instead of a sentence. One function so the
+ * Konva editor (`layerDisplay` below) and the print page's
+ * `TagSheetRenderer` cannot resolve an override two different ways; both call
+ * this instead of reading `text_override` themselves.
+ */
+export function resolveBarcodeValue(
+  layer: Pick<TagLayer, 'text_override'>,
+  data: TagBindingData | null | undefined,
+): string | null {
+  return layer.text_override ?? resolveSlotText({ slot_binding: 'barcode' }, data);
 }
 
 /** The photo a product leads with: the one marked primary, else the first. */
@@ -480,6 +503,85 @@ export function buildSetBlock(
   return [...children, group];
 }
 
+/** The already-formatted text a set-line starter draws - no member array. */
+export interface SetStarterData {
+  code: string;
+  name: string;
+  /** Pre-joined, one line per member - what a request line resolves to,
+   *  unlike `ProductSetTagData.members` which `buildSetBlock` still formats
+   *  itself for the template editor's own "add a set" picker. */
+  set_members: string;
+  list_price: number | null;
+  offer_price: number | null;
+}
+
+/**
+ * The set-line starter (D6/D13): same layout as `buildSetBlock` - code, name,
+ * one line per member, price badge - but reads a request line's ALREADY
+ * resolved `set_members` string instead of a `ProductSetTagData.members`
+ * array, since that is the shape `starterTemplateFor` has on hand and forcing
+ * a fake member list just to re-derive the same string back out would be
+ * make-work.
+ *
+ * The group's binding is not this function's job: the caller re-binds every
+ * group to the real line afterward (`bindTemplateLayers`), so what is passed
+ * to `groupLayers` here is a placeholder.
+ */
+export function buildSetStarterBlock(
+  set: SetStarterData,
+  opts: BuildOptions,
+): TagLayer[] {
+  const promo = set.offer_price != null;
+
+  const children = materialise(
+    [
+      {
+        type: 'text',
+        x: 0,
+        y: 0,
+        w: 85,
+        h: 6,
+        slot: 'code',
+        props: text(set.code, { fontSize: 11, fontWeight: 700 }),
+      },
+      {
+        type: 'text',
+        x: 0,
+        y: 6.5,
+        w: 85,
+        h: 8,
+        slot: 'name',
+        props: text(set.name, { fontSize: 9, fontWeight: 600 }),
+      },
+      {
+        type: 'text',
+        x: 0,
+        y: 15,
+        w: 85,
+        h: 28,
+        slot: 'set_members',
+        props: text(set.set_members, { fontSize: 8, lineHeight: 1.35 }),
+      },
+      {
+        type: 'price_badge',
+        x: 40,
+        y: 45,
+        w: 45,
+        h: 17,
+        slot: promo ? 'sell_price' : 'list_price',
+        props: defaultPriceBadgeProps(promo ? 'promo' : 'list_only'),
+      },
+    ],
+    opts,
+  );
+
+  const group = groupLayers(children, {}, {
+    newId: opts.newId,
+    z_index: opts.z_index + children.length,
+  });
+  return [...children, group];
+}
+
 // ---------------------------------------------------------------------------
 // Presets (D28)
 // ---------------------------------------------------------------------------
@@ -660,6 +762,12 @@ export interface TagLayerDisplay {
   text?: string;
   imageUrl?: string | null;
   price?: PriceBadgeInput;
+  /**
+   * The bound product/line's own CODE, for the barcode layer's optional
+   * product-code strip (D18). Distinct from `text`, which for a barcode
+   * layer carries the barcode VALUE itself, not the product code.
+   */
+  code?: string | null;
 }
 
 /**
@@ -687,6 +795,8 @@ export function layerDisplayName(layer: TagLayer): string {
       return layer.props.variant === 'promo' ? 'Price (promo)' : 'Price (list)';
     case 'badge':
       return 'Badge';
+    case 'barcode':
+      return 'Barcode';
     case 'group': {
       const binding = layer.props.binding;
       const what = binding?.product_set_id
@@ -720,6 +830,12 @@ export function layerDisplay(
 
     case 'badge':
       return { imageUrl: assetUrls[layer.props.assetId] ?? null };
+
+    case 'barcode':
+      return {
+        text: resolveBarcodeValue(layer, data) ?? undefined,
+        code: resolveSlotText({ slot_binding: 'code' }, data),
+      };
 
     case 'image': {
       const source = imageSourceOf(layer.props);
@@ -803,14 +919,26 @@ export function rebindImageLayers(
  * family, not for one item. Dropping a line fills it in, and the binding is
  * written onto the group so the tag can later be re-bound or relinked the same
  * way one built in the editor can.
+ *
+ * A barcode layer's `text_override` (D23) is cleared on the way through, same
+ * guard class as `rebindImageLayers` clearing a stale attachment id above: a
+ * template author may type an override into the DRAFT canvas to preview a
+ * symbology, but that one string must not survive into every request line
+ * that ever clones this template and print on every product the line's tag
+ * binds to. The template's own layers are untouched - this only ever runs on
+ * the CLONE (`tagForLine`/`starterTemplateFor` both `structuredClone` first).
  */
 export function bindTemplateLayers(
   layers: TagLayer[],
   binding: GroupBinding,
 ): TagLayer[] {
-  return layers.map((layer) =>
-    layer.props.kind === 'group'
-      ? { ...layer, props: { ...layer.props, binding } }
-      : layer,
-  );
+  return layers.map((layer) => {
+    if (layer.props.kind === 'group') {
+      return { ...layer, props: { ...layer.props, binding } };
+    }
+    if (layer.props.kind === 'barcode' && layer.text_override != null) {
+      return { ...layer, text_override: null };
+    }
+    return layer;
+  });
 }

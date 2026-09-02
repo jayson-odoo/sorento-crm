@@ -15,6 +15,7 @@ import type {
   TagLayer,
 } from './tag-template-types';
 import {
+  bindTemplateLayers,
   buildAccessoriesStrip,
   buildAlternativesRow,
   buildProductBlock,
@@ -25,6 +26,7 @@ import {
   layerText,
   priceBadgeInput,
   primaryImageOf,
+  resolveBarcodeValue,
   resolveSlotText,
   slotImageAttachmentId,
 } from './product-block';
@@ -47,6 +49,7 @@ function product(overrides: Partial<ProductTagData> = {}): ProductTagData {
     list_price: 1599,
     offer_price: null,
     promotion_id: null,
+    barcode: null,
     ...overrides,
   };
 }
@@ -352,6 +355,17 @@ function slotLayer(fieldKey: string): TagLayer {
   } as TagLayer;
 }
 
+function barcodeLayer(overrides: Partial<TagLayer> = {}): TagLayer {
+  return {
+    ...imageLayer(),
+    id: 'bc',
+    type: 'barcode',
+    slot_binding: 'barcode',
+    props: { kind: 'barcode', show_code: true },
+    ...overrides,
+  } as TagLayer;
+}
+
 const IMAGES = product().images;
 
 describe('primaryImageOf', () => {
@@ -460,6 +474,7 @@ describe('layerDisplay', () => {
         show_promo_price: true,
         included_accessories: '',
         quantity: 1,
+        barcode: null,
       },
     };
 
@@ -483,5 +498,132 @@ describe('layerDisplay', () => {
     expect(layerDisplay(slotLayer('product_image'), null, {})).toEqual({
       imageUrl: null,
     });
+  });
+
+  // -------------------------------------------------------------------------
+  // Barcode value override (D23, S9) - the text layer's text_override pattern
+  // -------------------------------------------------------------------------
+
+  it('draws the bound product barcode when no override is set', () => {
+    const barcodeData = { kind: 'product' as const, product: product({ barcode: '4006381333931' }) };
+    expect(layerDisplay(barcodeLayer(), barcodeData, {})).toEqual({
+      text: '4006381333931',
+      code: 'SK-1234',
+    });
+  });
+
+  it('draws the override instead of the bound barcode when both exist', () => {
+    const barcodeData = { kind: 'product' as const, product: product({ barcode: '4006381333931' }) };
+    const layer = barcodeLayer({ text_override: '111222333' });
+    expect(layerDisplay(layer, barcodeData, {})).toEqual({
+      text: '111222333',
+      code: 'SK-1234',
+    });
+  });
+
+  it('draws the override even while no product is bound', () => {
+    const layer = barcodeLayer({ text_override: '111222333' });
+    expect(layerDisplay(layer, null, {})).toEqual({
+      text: '111222333',
+      code: null,
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveBarcodeValue (D23, S9): the ONE resolver the Konva editor and the
+// print page both call, so an override cannot draw differently in the two
+// places - override wins, then the bound product/line's barcode, else null.
+// ---------------------------------------------------------------------------
+
+describe('resolveBarcodeValue', () => {
+  const barcodeData = { kind: 'product' as const, product: product({ barcode: '4006381333931' }) };
+
+  it('resolves the bound product barcode when unoverridden', () => {
+    expect(resolveBarcodeValue(barcodeLayer(), barcodeData)).toBe('4006381333931');
+  });
+
+  it('prefers the override over the bound barcode', () => {
+    expect(
+      resolveBarcodeValue(barcodeLayer({ text_override: '111222333' }), barcodeData),
+    ).toBe('111222333');
+  });
+
+  it('returns the override even while unbound', () => {
+    expect(resolveBarcodeValue(barcodeLayer({ text_override: '111222333' }), null)).toBe(
+      '111222333',
+    );
+  });
+
+  it('returns null with no override and nothing bound', () => {
+    expect(resolveBarcodeValue(barcodeLayer(), null)).toBeNull();
+  });
+
+  it('clearing the override (Relink) falls back to the bound barcode again', () => {
+    const overridden = barcodeLayer({ text_override: '111222333' });
+    const relinked = { ...overridden, text_override: null };
+    expect(resolveBarcodeValue(relinked, barcodeData)).toBe('4006381333931');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// bindTemplateLayers clears a template-level barcode override on clone
+// (S9 review S5): a template author may type an override into the draft
+// canvas to preview a symbology (D23), but that string must not survive
+// into a request line's clone and print on every product the line's tag
+// ever binds to - same guard class as rebindImageLayers clearing a stale
+// attachment id above.
+// ---------------------------------------------------------------------------
+
+describe('bindTemplateLayers clears a barcode override on clone (S9 review S5)', () => {
+  it('drops a barcode layer\'s text_override when binding the clone to a line', () => {
+    const layers = [barcodeLayer({ text_override: '111222333' })];
+    const bound = bindTemplateLayers(layers, { product_id: 'p1' });
+
+    expect(bound[0].text_override).toBeNull();
+  });
+
+  it('leaves an unoverridden barcode layer alone', () => {
+    const layers = [barcodeLayer()];
+    const bound = bindTemplateLayers(layers, { product_id: 'p1' });
+
+    expect(bound[0].text_override).toBeNull();
+    expect(bound[0]).toBe(layers[0]);
+  });
+
+  it('still writes the group binding, unaffected by the barcode guard', () => {
+    const group = {
+      id: 'g1',
+      type: 'group' as const,
+      x_mm: 0,
+      y_mm: 0,
+      width_mm: 10,
+      height_mm: 10,
+      rotation_deg: 0,
+      z_index: 1,
+      locked: false,
+      visible: true,
+      slot_binding: null,
+      text_override: null,
+      props: { kind: 'group' as const, children: [], binding: undefined },
+    };
+    const bound = bindTemplateLayers([group], { product_id: 'p1' });
+
+    expect(bound[0].props).toMatchObject({ binding: { product_id: 'p1' } });
+  });
+
+  it('a template-level override does not survive into a fresh clone (end-to-end guard)', () => {
+    // The scenario the review flagged: a designer types an override into
+    // the TEMPLATE draft to see it render, saves, and every future request
+    // line that clones this template must start unoverridden.
+    const overriddenTemplateLayers = [barcodeLayer({ text_override: '4006381333931' })];
+    const clone = bindTemplateLayers(structuredClone(overriddenTemplateLayers), {
+      product_id: 'p2',
+    });
+    expect(clone[0].text_override).toBeNull();
+    // The template's own layers (what the editor still shows) are untouched -
+    // bindTemplateLayers is only ever called on a COPY (tagForLine clones
+    // via structuredClone before calling it).
+    expect(overriddenTemplateLayers[0].text_override).toBe('4006381333931');
   });
 });

@@ -356,3 +356,177 @@ class TestTheQueuePagesOnTheServer:
 def _rows_of(body):
     """The listing rows, whether the body is a bare list or a paged envelope."""
     return body["data"] if isinstance(body, dict) else body
+
+
+# ---------------------------------------------------------------------------
+# AC-S1-5 (CRM half): the detail route answers with real attachments
+#
+# response_model drops any field the schema does not declare, silently
+# (LESSONS-LEARNT.md) - this is that trap, exercised on the wire rather than
+# on the service, same as the rest of this file.
+# ---------------------------------------------------------------------------
+
+
+def _link_attachment_to_request(db, request_id: str, *, filename: str = "ZZT-po.pdf") -> str:
+    import uuid as _uuid
+
+    from app.models.entity_attachment import EntityAttachmentLink
+    from app.models.resources import Attachment
+
+    att = Attachment(
+        id=str(_uuid.uuid4()),
+        original_filename=filename,
+        stored_filename=filename,
+        file_path=f"portal/zzt/{_uuid.uuid4()}.pdf",
+        mime_type="application/pdf",
+        uploader_kind="contact",
+    )
+    db.add(att)
+    db.flush()
+    link = EntityAttachmentLink(
+        entity_type="price_tag_request", entity_id=request_id, attachment_id=att.id
+    )
+    db.add(link)
+    db.commit()
+    return str(att.id)
+
+
+class TestTheCRMDetailCarriesPOAttachments:
+    def test_the_detail_route_lists_the_po_attachments(self, api):
+        client, db = api
+        request, _contact = _submitted_request(db)
+        attachment_id = _link_attachment_to_request(db, request.id)
+
+        body = client.get(f"{_BASE}/{request.id}").json()
+
+        assert len(body["attachments"]) == 1
+        att = body["attachments"][0]
+        assert att["attachment_id"] == attachment_id
+        assert att["filename"] == "ZZT-po.pdf"
+        assert att["content_type"] == "application/pdf"
+        assert "url" in att
+
+    def test_a_request_with_no_attachments_still_answers_with_an_empty_list(self, api):
+        client, db = api
+        request, _contact = _submitted_request(db)
+
+        body = client.get(f"{_BASE}/{request.id}").json()
+
+        assert body["attachments"] == []
+
+
+# ---------------------------------------------------------------------------
+# has_completed_export: the same response_model trap, on the CRM detail route
+#
+# The portal detail route has its own assertion of this
+# (``test_portal_price_tag_routes.py::TestTheDownloadRoute``); this is the
+# CRM twin. `get_price_tag_request` answers with `response_model=
+# PriceTagRequestResponse` (LESSONS-LEARNT.md: an undeclared field is dropped
+# silently), so a schema change on the portal side that missed this route
+# would pass every portal test and still ship a marketing screen that always
+# reads "no export".
+# ---------------------------------------------------------------------------
+
+
+def _seed_completed_export(db, request_id: str, *, filename: str = "ZZT-tags.pdf") -> None:
+    from app.models.download import DownloadStatus, UserDownload
+    from app.services.dealer_kit.tag_sheet_export_service import KIND
+
+    db.add(
+        UserDownload(
+            id=str(uuid.uuid4()),
+            user_id=_MARKETER_ID,
+            kind=KIND,
+            source_entity_type="price_tag_request",
+            source_entity_id=str(request_id),
+            status=DownloadStatus.READY.value,
+            filename=filename,
+            storage_provider="s3",
+            storage_key=f"zzt/{uuid.uuid4()}.pdf",
+        )
+    )
+    db.commit()
+
+
+class TestTheDetailCarriesHasCompletedExport:
+    def test_a_completed_export_flips_the_flag(self, api):
+        client, db = api
+        request, _contact = _submitted_request(db)
+        assert client.get(f"{_BASE}/{request.id}").json()["has_completed_export"] is False
+
+        _seed_completed_export(db, request.id)
+
+        assert client.get(f"{_BASE}/{request.id}").json()["has_completed_export"] is True
+
+
+# ---------------------------------------------------------------------------
+# The design route only writes from a status the FE's own Lines tab /
+# header would offer Design from (PLAN-price-tag-feedback-r2 S10 review):
+# ``save_tag_sheet_design`` wrote a PageVersion in ANY status before this,
+# so a stale tab on an approved/void/ready request could still overwrite
+# the tag sheet doc after the record had moved on.
+# ---------------------------------------------------------------------------
+
+
+class TestTheDesignRouteOnlySavesFromADesignableStatus:
+    @staticmethod
+    def _page_version_count(db, request_id: str) -> int:
+        from app.models.dealer_kit import PageVersion
+        from app.models.price_tag import PriceTagRequest
+
+        row = (
+            db.query(PriceTagRequest).filter(PriceTagRequest.id == request_id).first()
+        )
+        db.expire(row)
+        return (
+            db.query(PageVersion)
+            .filter(PageVersion.page_id == row.page_id)
+            .count()
+        )
+
+    def test_designing_may_save(self, api):
+        """Claim moves the request to ``designing`` and creates its page - the
+        one status every request reaches this route through in practice."""
+        client, db = api
+        request, _contact = _submitted_request(db)
+        assert client.post(f"{_BASE}/{request.id}/claim").status_code == 200
+
+        resp = client.put(
+            f"{_BASE}/{request.id}/design",
+            json={"doc": {"kind": "tag_sheet", "sheets": []}},
+        )
+
+        assert resp.status_code == 200, resp.text
+        assert self._page_version_count(db, request.id) == 1
+
+    @pytest.mark.parametrize(
+        "target_status",
+        ["void", "approved", "ready"],
+    )
+    def test_refuses_to_save_once_the_request_has_moved_past_designing(
+        self, api, target_status
+    ):
+        client, db = api
+        request, _contact = _submitted_request(db)
+        assert client.post(f"{_BASE}/{request.id}/claim").status_code == 200
+
+        # Walk the real transition graph to the target status rather than
+        # writing the column directly, so this exercises exactly the states a
+        # request can actually be in.
+        path = {
+            "void": ["void"],
+            "approved": ["proof_ready", "approved"],
+            "ready": ["proof_ready", "approved", "ready"],
+        }[target_status]
+        for status in path:
+            PriceTagRequestService.transition_status(db, request.id, status)
+        db.commit()
+
+        before = self._page_version_count(db, request.id)
+        resp = client.put(
+            f"{_BASE}/{request.id}/design",
+            json={"doc": {"kind": "tag_sheet", "sheets": []}},
+        )
+
+        assert resp.status_code == 409, resp.text
+        assert self._page_version_count(db, request.id) == before
