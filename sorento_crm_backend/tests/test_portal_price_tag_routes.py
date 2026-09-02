@@ -14,6 +14,7 @@ service call can prove.
 from __future__ import annotations
 
 import uuid
+from contextlib import contextmanager
 from datetime import date, timedelta
 
 import pytest
@@ -785,3 +786,249 @@ class TestThePromotionsLookup:
                 app.dependency_overrides.clear()
 
         assert res.status_code == 401, res.text
+
+
+# ---------------------------------------------------------------------------
+# Picker company scope (#485): products are cloned per company (Sorento and a
+# second company can share the same product_code), and a contact who belongs
+# to BOTH companies gets a company scope covering both. Left unscoped, the two
+# pickers below would return the same code twice - and let a salesperson pick
+# the other company's row onto a request ``_resolve_company`` is about to stamp
+# with THIS company.
+# ---------------------------------------------------------------------------
+
+
+def _seed_two_company_contact(db: Session):
+    """A contact granted the form, mapped to Sorento AND a second company, with
+    a REAL, persisted ``PortalToken`` row.
+
+    The company-scope resolver (``app.services.company_scope_resolver``) reads
+    ``PortalToken`` straight off the database by its ``token`` column - it does
+    not go through ``get_portal_token``'s dependency override the way the route's
+    own auth does - so a test that wants a genuine multi-company scope has to
+    persist the row rather than override the dependency the way ``client`` does.
+
+    Returns ``(contact_id, access_type_code, second_company_id, token_value)``.
+    """
+    from datetime import datetime, timedelta as _timedelta
+
+    from app.models.access import (
+        ContactAccessType,
+        RespondContact,
+        respond_contact_access_types,
+    )
+    from app.models.company import Company, RespondContactCompany
+    from app.models.portal import PortalToken
+
+    contact = RespondContact(
+        id=str(uuid.uuid4()),
+        phone_number=f"+60{uuid.uuid4().hex[:9]}",
+        name=unique_code("contact"),
+    )
+    db.add(contact)
+    access_type = ContactAccessType(
+        code=unique_code("at"),
+        name=unique_code("Access Type"),
+        portal_form_types=["price_tag_request"],
+    )
+    db.add(access_type)
+    second_company = Company(
+        id=str(uuid.uuid4()),
+        name=unique_code("Second Co"),
+        code=unique_code("co")[:20],
+    )
+    db.add(second_company)
+    db.flush()
+    db.execute(
+        respond_contact_access_types.insert().values(
+            contact_id=contact.id, access_type_code=access_type.code
+        )
+    )
+    db.add_all(
+        [
+            RespondContactCompany(
+                id=str(uuid.uuid4()),
+                respond_contact_id=contact.id,
+                company_id=_SORENTO_COMPANY_ID,
+            ),
+            RespondContactCompany(
+                id=str(uuid.uuid4()),
+                respond_contact_id=contact.id,
+                company_id=second_company.id,
+            ),
+        ]
+    )
+    token_value = f"zzt-token-{uuid.uuid4().hex}"
+    db.add(
+        PortalToken(
+            id=str(uuid.uuid4()),
+            token=token_value,
+            contact_id=contact.id,
+            space_id="zzt-space",
+            expires_at=datetime.utcnow() + _timedelta(days=1),
+        )
+    )
+    db.flush()
+    return contact.id, access_type.code, second_company.id, token_value
+
+
+def _seed_product_in_company(
+    db: Session, company_id: str, *, code: str, class_label: str = "Kitchen Sink"
+) -> str:
+    from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
+
+    category = ProductCategory(
+        id=str(uuid.uuid4()),
+        company_id=company_id,
+        category_code=unique_code("cat"),
+        category_name=unique_code("Category"),
+        class_label=class_label,
+    )
+    brand = Brand(
+        id=str(uuid.uuid4()),
+        company_id=company_id,
+        brand_code=unique_code("br"),
+        brand_name=unique_code("Brand"),
+    )
+    uom = UnitOfMeasure(
+        id=str(uuid.uuid4()),
+        company_id=company_id,
+        uom_code=unique_code("uom"),
+        uom_name="Each",
+    )
+    db.add_all([category, brand, uom])
+    db.flush()
+    product = Product(
+        id=str(uuid.uuid4()),
+        company_id=company_id,
+        product_code=code,
+        product_name=unique_code("Product"),
+        category_id=category.id,
+        brand_id=brand.id,
+        base_uom_id=uom.id,
+        list_price=100.00,
+    )
+    db.add(product)
+    db.flush()
+    return product.id
+
+
+def _seed_promotion_in_company(
+    db: Session, company_id: str, *, description: str, access_levels: list[str]
+) -> str:
+    from app.models.marketing import Promotion
+
+    promo = Promotion(
+        id=str(uuid.uuid4()),
+        company_id=company_id,
+        description=description,
+        is_active=True,
+        access_levels=access_levels,
+    )
+    db.add(promo)
+    db.flush()
+    return promo.id
+
+
+@contextmanager
+def _multi_company_client(db: Session, token_value: str):
+    """A TestClient authenticated with a REAL, persisted portal token, so the
+    router-level company-scope dependency (``apply_company_scope``) resolves the
+    same multi-company membership the route's own auth sees."""
+    from app.api.v1.public.portal import get_portal_token
+    from app.database import get_db
+    from app.models.portal import PortalToken
+
+    token_row = db.query(PortalToken).filter(PortalToken.token == token_value).one()
+
+    def _override_get_db():
+        yield db
+
+    def _override_portal_token():
+        return token_row
+
+    app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_portal_token] = _override_portal_token
+    try:
+        with TestClient(app, headers={"X-Portal-Token": token_value}) as c:
+            yield c
+    finally:
+        app.dependency_overrides.clear()
+
+
+class TestPickerCompanyScope:
+    """A contact shared between two companies must see exactly ONE row per
+    duplicated code, and it must be the row belonging to the SAME company
+    ``_resolve_company`` will stamp the request with (#485).
+    """
+
+    def test_item_lookup_returns_the_request_companys_row_only(self):
+        from app.api.v1.public.portal_price_tag import _resolve_company
+        from app.models.portal import PortalToken
+
+        with blank_session() as db:
+            _contact_id, _access_code, second_company_id, token_value = (
+                _seed_two_company_contact(db)
+            )
+            token_row = db.query(PortalToken).filter(PortalToken.token == token_value).one()
+            expected_company_id = _resolve_company(db, token_row)
+            other_company_id = (
+                second_company_id
+                if expected_company_id != second_company_id
+                else _SORENTO_COMPANY_ID
+            )
+
+            shared_code = unique_code("shared")
+            product_a_id = _seed_product_in_company(db, expected_company_id, code=shared_code)
+            product_b_id = _seed_product_in_company(db, other_company_id, code=shared_code)
+
+            with _multi_company_client(db, token_value) as c:
+                res = c.get(
+                    "/api/v1/public/portal/lookups/price-tag-items",
+                    params={"q": shared_code},
+                )
+
+        assert res.status_code == 200, res.text
+        rows = [r for r in res.json() if r["code"] == shared_code]
+        assert len(rows) == 1, rows
+        assert rows[0]["id"] == product_a_id
+        assert rows[0]["id"] != product_b_id
+
+    def test_promotions_lookup_returns_the_request_companys_row_only(self):
+        from app.api.v1.public.portal_price_tag import _resolve_company
+        from app.models.portal import PortalToken
+
+        with blank_session() as db:
+            _contact_id, access_code, second_company_id, token_value = (
+                _seed_two_company_contact(db)
+            )
+            token_row = db.query(PortalToken).filter(PortalToken.token == token_value).one()
+            expected_company_id = _resolve_company(db, token_row)
+            other_company_id = (
+                second_company_id
+                if expected_company_id != second_company_id
+                else _SORENTO_COMPANY_ID
+            )
+
+            same_name = unique_code("Shared Promo")
+            promo_a_id = _seed_promotion_in_company(
+                db,
+                expected_company_id,
+                description=same_name,
+                access_levels=[access_code],
+            )
+            promo_b_id = _seed_promotion_in_company(
+                db, other_company_id, description=same_name, access_levels=[access_code]
+            )
+
+            with _multi_company_client(db, token_value) as c:
+                res = c.get(
+                    "/api/v1/public/portal/lookups/promotions",
+                    params={"q": same_name},
+                )
+
+        assert res.status_code == 200, res.text
+        rows = [r for r in res.json() if r["name"] == same_name]
+        assert len(rows) == 1, rows
+        assert rows[0]["id"] == promo_a_id
+        assert rows[0]["id"] != promo_b_id
