@@ -29,8 +29,10 @@ import {
   placementKey,
   resizeAllTags,
   resizeTag,
+  resolveTagSize,
   starterTemplateFor,
   tagForLine,
+  tagSizeBounds,
   tagSizePresets,
 } from './request-tags';
 
@@ -682,5 +684,48 @@ describe('autoArrange with resized tags (AC-S9-3)', () => {
     // other line's resize.
     const line1Tag = sheets[0].tags.find((t) => t.request_line_id === 'l1');
     expect(line1Tag?.pinned).not.toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tag size bounds + refusal (S9 review S3): a size has to fit the CURRENT
+// imposition sheet, refused with a reason rather than silently redrawn.
+// ---------------------------------------------------------------------------
+
+describe('tagSizeBounds', () => {
+  it('is the usable page area after bleed, on both axes', () => {
+    // A4_3UP: 210x297mm page, 3mm bleed each side.
+    expect(tagSizeBounds(A4_3UP)).toEqual({
+      min_mm: 10,
+      max_width_mm: 204,
+      max_height_mm: 291,
+    });
+  });
+});
+
+describe('resolveTagSize', () => {
+  const bounds = tagSizeBounds(A4_3UP);
+
+  it('accepts a size that fits, unchanged', () => {
+    expect(resolveTagSize(95, 44.5, bounds)).toEqual({
+      ok: true,
+      width_mm: 95,
+      height_mm: 44.5,
+    });
+  });
+
+  it('clamps a value below the minimum up to it', () => {
+    expect(resolveTagSize(5, 5, bounds)).toEqual({ ok: true, width_mm: 10, height_mm: 10 });
+  });
+
+  it('refuses a width that does not fit the sheet, with a reason (400mm refused)', () => {
+    const result = resolveTagSize(400, 44.5, bounds);
+    expect(result.ok).toBe(false);
+    expect((result as { ok: false; reason: string }).reason.length).toBeGreaterThan(0);
+  });
+
+  it('refuses a height that does not fit the sheet, with a reason', () => {
+    const result = resolveTagSize(95, 400, bounds);
+    expect(result.ok).toBe(false);
   });
 });

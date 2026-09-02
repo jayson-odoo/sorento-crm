@@ -33,6 +33,7 @@ vi.mock('react-konva', () => {
   return {
     Stage: passthrough('stage'),
     Layer: passthrough('layer'),
+    Group: passthrough('group'),
     Rect: passthrough('rect'),
     Line: passthrough('line'),
     Transformer: passthrough('transformer'),

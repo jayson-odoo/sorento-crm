@@ -318,6 +318,15 @@ export interface TagSheetDoc {
   kind: 'tag_sheet';
   imposition: ImpositionConfig;
   sheets: TagSheet[];
+  /**
+   * The size "Apply to all lines" (D24, S9) set, applied to every line's tag
+   * AND remembered for a line that has not been opened yet - without this a
+   * line opened after the fact would clone at its template's own print size
+   * instead of the size the designer just chose for the whole request.
+   * Absent/null means no request-level default has been set (a document
+   * saved before this field, or one where nobody has used Apply to all yet).
+   */
+  default_tag_size?: { width_mm: number; height_mm: number } | null;
 }
 
 export interface TagSheet {

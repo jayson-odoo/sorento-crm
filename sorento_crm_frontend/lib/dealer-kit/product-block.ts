@@ -919,14 +919,26 @@ export function rebindImageLayers(
  * family, not for one item. Dropping a line fills it in, and the binding is
  * written onto the group so the tag can later be re-bound or relinked the same
  * way one built in the editor can.
+ *
+ * A barcode layer's `text_override` (D23) is cleared on the way through, same
+ * guard class as `rebindImageLayers` clearing a stale attachment id above: a
+ * template author may type an override into the DRAFT canvas to preview a
+ * symbology, but that one string must not survive into every request line
+ * that ever clones this template and print on every product the line's tag
+ * binds to. The template's own layers are untouched - this only ever runs on
+ * the CLONE (`tagForLine`/`starterTemplateFor` both `structuredClone` first).
  */
 export function bindTemplateLayers(
   layers: TagLayer[],
   binding: GroupBinding,
 ): TagLayer[] {
-  return layers.map((layer) =>
-    layer.props.kind === 'group'
-      ? { ...layer, props: { ...layer.props, binding } }
-      : layer,
-  );
+  return layers.map((layer) => {
+    if (layer.props.kind === 'group') {
+      return { ...layer, props: { ...layer.props, binding } };
+    }
+    if (layer.props.kind === 'barcode' && layer.text_override != null) {
+      return { ...layer, text_override: null };
+    }
+    return layer;
+  });
 }

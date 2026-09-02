@@ -11,7 +11,9 @@
 
 import React from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { toast } from 'sonner';
 
 import { PRODUCT_BLOCK_SIZE } from '@/lib/dealer-kit/product-block';
 import type { TagLayer, TagTemplateDoc } from '@/lib/dealer-kit/tag-template-types';
@@ -51,6 +53,12 @@ vi.mock('@/app/(protected)/dealer-kit/tag-templates/components/useTagBindings', 
 // `doc.layers` directly would never reproduce a stale remount snapshot.
 type TagSheetDocCapture = { doc: TagTemplateDoc };
 const canvasDocs: TagSheetDocCapture[] = [];
+// A MOUNT counter (S9 review B1) - distinct from `canvasDocs.length`, which
+// grows on every RE-RENDER too. Only the mount-only effect below increments
+// this, so a test can prove a resize (or anything else) re-rendered the
+// stand-in with new props WITHOUT unmounting and remounting a fresh one -
+// which is exactly what keying the editor on tag size used to do.
+let canvasMountCount = 0;
 vi.mock('@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor', () => ({
   TagCanvasEditor: ({
     doc,
@@ -64,6 +72,7 @@ vi.mock('@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor',
     canvasDocs.push({ doc });
     const [layers, setLayers] = React.useState<TagLayer[]>(doc.layers);
     React.useEffect(() => {
+      canvasMountCount += 1;
       onLayersChange?.(doc.layers);
       // Mount-only, matching "reads its document once, on mount" - doc is
       // deliberately excluded from the deps so a doc PROP update after mount
@@ -285,6 +294,7 @@ function renderDesigner(req: PriceTagRequestDetail = request()) {
 
 beforeEach(() => {
   canvasDocs.length = 0;
+  canvasMountCount = 0;
   mockListTemplates.mockReset();
   mockResolveRequestLines.mockReset();
   searchParams = new URLSearchParams();
@@ -793,8 +803,12 @@ describe('RequestTagDesigner - tag size control (D24, AC-S9-3)', () => {
     );
     await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
 
-    fireEvent.change(screen.getByLabelText('Tag width (mm)'), { target: { value: '95' } });
-    fireEvent.change(screen.getByLabelText('Tag height (mm)'), { target: { value: '44.5' } });
+    const wInput = screen.getByLabelText('Tag width (mm)');
+    const hInput = screen.getByLabelText('Tag height (mm)');
+    fireEvent.change(wInput, { target: { value: '95' } });
+    fireEvent.blur(wInput);
+    fireEvent.change(hInput, { target: { value: '44.5' } });
+    fireEvent.blur(hInput);
 
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(onSave).toHaveBeenCalled());
@@ -827,8 +841,12 @@ describe('RequestTagDesigner - tag size control (D24, AC-S9-3)', () => {
       expect(canvasDocs[canvasDocs.length - 1].doc.width_mm).toBe(60),
     );
 
-    fireEvent.change(screen.getByLabelText('Tag width (mm)'), { target: { value: '95' } });
-    fireEvent.change(screen.getByLabelText('Tag height (mm)'), { target: { value: '44.5' } });
+    const wInput = screen.getByLabelText('Tag width (mm)');
+    const hInput = screen.getByLabelText('Tag height (mm)');
+    fireEvent.change(wInput, { target: { value: '95' } });
+    fireEvent.blur(wInput);
+    fireEvent.change(hInput, { target: { value: '44.5' } });
+    fireEvent.blur(hInput);
     fireEvent.click(screen.getByRole('button', { name: 'Apply to all lines' }));
 
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
@@ -840,5 +858,134 @@ describe('RequestTagDesigner - tag size control (D24, AC-S9-3)', () => {
     for (const tag of allTags) {
       expect(tag).toMatchObject({ width_mm: 95, height_mm: 44.5 });
     }
+  });
+
+  // ---------------------------------------------------------------------
+  // S9 review B1: typing must commit on blur, never per keystroke - the
+  // control used to call onResize on every change, which changed a doc key
+  // the editor was mounted on and remounted it (and this very input) mid-
+  // keystroke, dropping characters ("95" -> "9").
+  // ---------------------------------------------------------------------
+
+  it('typing into H commits on blur, never remounts the editor, and never loses focus (S9 review B1)', async () => {
+    mockListTemplates.mockResolvedValue([realTemplate()]);
+    mockResolveRequestLines.mockResolvedValue([
+      lineTagData({ line_id: 'line-a', code: 'AAA-1' }),
+    ]);
+    const onSave = vi.fn<(doc: TagSheetDoc) => Promise<void>>(async () => {});
+
+    render(
+      <RequestTagDesigner
+        request={request({ lines: [lineA] })}
+        initialDoc={null}
+        onSave={onSave}
+      />,
+    );
+    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+
+    const mountsBeforeTyping = canvasMountCount;
+    const hInput = screen.getByLabelText('Tag height (mm)');
+
+    await userEvent.clear(hInput);
+    await userEvent.type(hInput, '44.5');
+
+    // The SAME DOM node, still focused, still mid-edit - a remount partway
+    // through typing (keying the editor on width/height, B1's actual bug)
+    // would have swapped this element out from under the keystrokes.
+    expect(screen.getByLabelText('Tag height (mm)')).toBe(hInput);
+    expect(document.activeElement).toBe(hInput);
+    expect(canvasMountCount).toBe(mountsBeforeTyping);
+    expect(hInput).toHaveValue(44.5);
+
+    fireEvent.blur(hInput);
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+
+    const doc = onSave.mock.calls[onSave.mock.calls.length - 1][0];
+    const tag = doc.sheets[0].tags.find((t) => t.request_line_id === 'line-a');
+    expect(tag?.height_mm).toBe(44.5);
+    // Committing the resize (a live prop update, not a remount) still must
+    // not have unmounted/remounted the editor.
+    expect(canvasMountCount).toBe(mountsBeforeTyping);
+  });
+
+  // ---------------------------------------------------------------------
+  // S9 review B2: "Apply to all lines" must also reach a line that has not
+  // been opened yet - resizeAllTags alone only touches already-cloned tags.
+  // ---------------------------------------------------------------------
+
+  it('applying a size to all lines also sets the default for a line opened LATER (S9 review B2)', async () => {
+    mockListTemplates.mockResolvedValue([realTemplate()]);
+    const lineC = line({ id: 'line-c', product_id: 'prod-c', code: 'CCC-3' });
+    mockResolveRequestLines.mockResolvedValue([
+      lineTagData({ line_id: 'line-a', code: 'AAA-1' }),
+      lineTagData({ line_id: 'line-b', code: 'BBB-2' }),
+      lineTagData({ line_id: 'line-c', code: 'CCC-3' }),
+    ]);
+    const onSave = vi.fn<(doc: TagSheetDoc) => Promise<void>>(async () => {});
+
+    render(
+      <RequestTagDesigner
+        request={request({ lines: [lineA, lineB, lineC] })}
+        initialDoc={null}
+        onSave={onSave}
+      />,
+    );
+    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+    // Only line A has opened so far - B and C are untouched.
+
+    const wInput = screen.getByLabelText('Tag width (mm)');
+    const hInput = screen.getByLabelText('Tag height (mm)');
+    fireEvent.change(wInput, { target: { value: '95' } });
+    fireEvent.blur(wInput);
+    fireEvent.change(hInput, { target: { value: '44.5' } });
+    fireEvent.blur(hInput);
+    fireEvent.click(screen.getByRole('button', { name: 'Apply to all lines' }));
+
+    // Open line C for the FIRST time - it must clone at the request's
+    // default size (95x44.5), not its template's own print_size (60x40).
+    fireEvent.click(screen.getByText('CCC-3'));
+    await waitFor(() => {
+      const drawn = canvasDocs[canvasDocs.length - 1].doc;
+      expect(drawn.width_mm).toBe(95);
+      expect(drawn.height_mm).toBe(44.5);
+    });
+  });
+
+  // ---------------------------------------------------------------------
+  // S9 review S3: a size has to fit the CURRENT imposition sheet - refused
+  // inline (no toast), not silently redrawn to something else.
+  // ---------------------------------------------------------------------
+
+  it('refuses a size that does not fit the sheet, with an inline reason and no toast (400mm refused)', async () => {
+    mockListTemplates.mockResolvedValue([realTemplate()]);
+    mockResolveRequestLines.mockResolvedValue([
+      lineTagData({ line_id: 'line-a', code: 'AAA-1' }),
+    ]);
+    const onSave = vi.fn<(doc: TagSheetDoc) => Promise<void>>(async () => {});
+
+    render(
+      <RequestTagDesigner
+        request={request({ lines: [lineA] })}
+        initialDoc={null}
+        onSave={onSave}
+      />,
+    );
+    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+
+    const wInput = screen.getByLabelText('Tag width (mm)');
+    fireEvent.change(wInput, { target: { value: '400' } });
+    fireEvent.blur(wInput);
+
+    expect(await screen.findByText(/largest that fits this sheet/i)).toBeInTheDocument();
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+    const doc = onSave.mock.calls[onSave.mock.calls.length - 1][0];
+    const tag = doc.sheets[0].tags.find((t) => t.request_line_id === 'line-a');
+    // Refused - the tag keeps its ORIGINAL width (the template's print_size).
+    expect(tag?.width_mm).toBe(60);
   });
 });

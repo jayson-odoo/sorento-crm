@@ -1,6 +1,7 @@
 # PLAN - Price Tag Feedback R2
 
-Status: Approved 1 Sep 2026 - implementation starting
+Status: Approved 1 Sep 2026 - Lane A + Lane B + round 3 S8/S10/S11 merged; S9
+(PR #519) in review
 UAC: `documentation/plans/dealer-kit/price-tag-feedback-r2-acceptance-criteria.md`
 Predecessor: `documentation/plans/dealer-kit/PLAN-price-tag-request.md` (shipped, PR #289)
 
@@ -245,5 +246,37 @@ S7 independent; its connector half ships whenever the AutoCount side sends
 
 ### S8 - guides single-per-axis + autosave (D21, D22)
 ### S9 - barcode override + tag size control (D23, D24)
+
+PR #519. Barcode layers reuse the SAME `text_override` field a text layer's
+Relink pattern already carries - `resolveBarcodeValue` (product-block.ts) is
+the one resolver both the Konva editor and the print page call, so an
+override cannot print differently than it previewed. Cloning a template
+into a request line clears a template-level override (`bindTemplateLayers`)
+so a value typed to preview a symbology in the DRAFT never survives onto
+every product a line's tag ever binds to.
+
+Tag size control lives in the request designer as a "Tag Size" panel under
+the Lines rail: W/H mm inputs (draft-until-blur/Enter, never per keystroke -
+committing on every change used to key the editor's remount off the tag's
+own size and drop characters mid-typing), a preset select (published
+templates' print sizes + the starter size, deduped; "Custom" is a display-
+only label, never a pickable option), and "Apply to all lines". A size is
+clamped to a 10mm floor and refused outright (inline reason, no toast) if it
+would not fit the current imposition sheet's usable area.
+
+"Apply to all lines" writes a request-level `default_tag_size` into the tag
+sheet doc (`TagSheetDoc.default_tag_size`) in addition to resizing every
+already-cloned tag - a line that has not been opened yet clones at this
+default (via `applyTemplate`) instead of its template's own print size, so
+the default survives past the immediate resize.
+
+The editor's artboard clips its layers to the tag's own bounds (a Konva
+`Group` + `clipFunc`), matching `TagSheetRenderer`'s `overflow: hidden` -
+what shrinks on screen is what prints.
+
+Follow-ups (not built): "Apply to all lines" through the deferred-action/
+Undo pattern (D26's style) rather than an immediate irreversible resize; the
+Tag Size panel is hidden below the `md` breakpoint the same way the Layers
+panel is, rather than fully responsive at 375px.
 ### S10 - request detail tabs + per-line Design (D25)
 ### S11 - tag templates bulk delete, deferred action (D26)

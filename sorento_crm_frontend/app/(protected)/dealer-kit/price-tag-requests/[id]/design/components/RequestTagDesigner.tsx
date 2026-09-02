@@ -76,8 +76,10 @@ import {
   pinnedFromDoc,
   resizeAllTags,
   resizeTag,
+  resolveTagSize,
   starterTemplateFor,
   tagForLine,
+  tagSizeBounds,
   tagSizePresets,
   tagsFromDoc,
   type ArrangeItem,
@@ -142,6 +144,17 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
   const [imposition, setImposition] = useState<ImpositionConfig>(
     initialDoc?.imposition ?? { preset: 'a4_3up', ...IMPOSITION_PRESETS.a4_3up },
   );
+  /**
+   * The size "Apply to all lines" (D24, S9) last set, persisted in the doc
+   * (S9 review B2) so it also applies to a line that has not been opened
+   * yet: without this, `applyTemplate` below would clone a not-yet-opened
+   * line at its TEMPLATE's own print size, silently undoing what Apply to
+   * all just did the moment somebody opened line 3.
+   */
+  const [defaultTagSize, setDefaultTagSize] = useState<{
+    width_mm: number;
+    height_mm: number;
+  } | null>(initialDoc?.default_tag_size ?? null);
 
   const [selectedLineId, setSelectedLineId] = useState<string | null>(null);
   const [activeSheetIndex, setActiveSheetIndex] = useState(0);
@@ -203,12 +216,21 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
 
   // -- Tags ------------------------------------------------------------------
 
-  const applyTemplate = useCallback((line: PriceTagRequestLine, template: TagTemplate) => {
-    setTags((prev) => ({
-      ...prev,
-      [line.id]: tagForLine(line, template, newTagId()),
-    }));
-  }, []);
+  // A request-level default (S9 review B2) wins over the template's own
+  // print size the moment a line clones one - "Apply to all lines" is
+  // supposed to mean every line, including one nobody has opened yet.
+  const applyTemplate = useCallback(
+    (line: PriceTagRequestLine, template: TagTemplate) => {
+      setTags((prev) => {
+        let tag = tagForLine(line, template, newTagId());
+        if (defaultTagSize) {
+          tag = resizeTag(tag, defaultTagSize.width_mm, defaultTagSize.height_mm);
+        }
+        return { ...prev, [line.id]: tag };
+      });
+    },
+    [defaultTagSize],
+  );
 
   // The first line opens by itself: this page exists to design, and a canvas
   // waiting to be told which line is a click nobody needs to make. A row's own
@@ -265,22 +287,26 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
   const selectedTag = selectedLineId ? tags[selectedLineId] ?? null : null;
 
   /**
-   * The document the canvas opens on, rebuilt only when the TAG's IDENTITY
-   * changes - its id, or its own footprint (D24, S9): a resize has to reach
-   * the artboard the same way a template swap does, because the editor never
-   * re-reads `width_mm`/`height_mm` off a `doc` prop update on its own.
+   * The LAYERS the canvas opens on, rebuilt only when the tag's IDENTITY
+   * changes (its id - a template swap or a line switch). The editor reads
+   * its document once, on mount, and keeps the layers in its own state from
+   * then on, so this has to be the tag's layers AS THEY STAND when the
+   * canvas mounts on it - a fresh object per keystroke would be ignored, and
+   * a snapshot taken when the tag was first created would throw every edit
+   * away the moment somebody looked at another line and came back. That is
+   * exactly what it did until this was measured on the lane.
    *
-   * The editor reads its document once, on mount, and keeps the layers in its
-   * own state from then on. So this has to be the tag's layers AS THEY STAND
-   * when the canvas mounts on it - a fresh object per keystroke would be
-   * ignored, and a snapshot taken when the tag was first created would throw
-   * every edit away the moment somebody looked at another line and came back.
-   * That is exactly what it did until this was measured on the lane.
+   * Width/height are deliberately NOT part of this identity (S9 review B1):
+   * a resize must reach the on-screen artboard WITHOUT remounting the
+   * editor, because the editor reads `doc.width_mm`/`height_mm` straight off
+   * its `doc` PROP on every render (only `layers` is frozen into local
+   * state) - `selectedDoc` below always takes the tag's CURRENT size, and a
+   * key on tag id alone means resizing never unmounts a focused input in
+   * the Tag Size control (B1's actual bug: keying on size remounted
+   * `TagSizeControl`, and with it whatever input the designer was mid-typing
+   * into).
    */
-  const docKey = selectedTag
-    ? `${selectedTag.id}:${selectedTag.width_mm}x${selectedTag.height_mm}`
-    : null;
-  const docRef = useRef<{ key: string; doc: TagTemplateDoc } | null>(null);
+  const docRef = useRef<{ key: string; layers: TagLayer[] } | null>(null);
   // The editor is unmounted whenever Arrange is showing (the mode ternary
   // below), so a snapshot taken before that switch is stale by the time
   // Design remounts it - dropping the ref here forces a rebuild off the
@@ -288,17 +314,17 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
   // the switch and losing whatever Arrange-side or since-mount edits
   // happened in between.
   if (mode !== 'design') docRef.current = null;
-  if (docKey && docRef.current?.key !== docKey) {
-    docRef.current = {
-      key: docKey,
-      doc: {
-        layers: selectedTag!.layers,
-        width_mm: selectedTag!.width_mm,
-        height_mm: selectedTag!.height_mm,
-      },
-    };
+  if (selectedTag && docRef.current?.key !== selectedTag.id) {
+    docRef.current = { key: selectedTag.id, layers: selectedTag.layers };
   }
-  const selectedDoc = selectedTag ? docRef.current?.doc ?? null : null;
+  const selectedDoc: TagTemplateDoc | null =
+    selectedTag && docRef.current
+      ? {
+          layers: docRef.current.layers,
+          width_mm: selectedTag.width_mm,
+          height_mm: selectedTag.height_mm,
+        }
+      : null;
 
   /** What the canvas draws against: the LINE, with its marketing override. */
   const boundData: TagBindingData | null = useMemo(() => {
@@ -324,8 +350,12 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
     [selectedLineId],
   );
 
+  // Resizes every ALREADY-CLONED tag now, and remembers the size as the
+  // request's default (S9 review B2) so a line opened later clones at this
+  // size too, via `applyTemplate` above - not the template's own print size.
   const handleResizeAllTags = useCallback((width_mm: number, height_mm: number) => {
     setTags((prev) => resizeAllTags(prev, width_mm, height_mm));
+    setDefaultTagSize({ width_mm, height_mm });
   }, []);
 
   const handleLayersChange = useCallback(
@@ -404,8 +434,9 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
       kind: 'tag_sheet',
       imposition,
       sheets: autoArrange(arrangeItems, imposition, pinned),
+      default_tag_size: defaultTagSize,
     }),
-    [arrangeItems, imposition, pinned],
+    [arrangeItems, imposition, pinned, defaultTagSize],
   );
 
   // -- Autosave (D22, S8) ------------------------------------------------------
@@ -546,6 +577,7 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
       <TagSizeControl
         tag={selectedTag}
         presets={sizePresets}
+        imposition={imposition}
         onResize={handleResizeTag}
         onResizeAll={handleResizeAllTags}
       />
@@ -664,7 +696,7 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
             </CanvasMessage>
           ) : selectedTag && selectedDoc ? (
             <TagCanvasEditor
-              key={docKey ?? selectedTag.id}
+              key={selectedTag.id}
               doc={selectedDoc}
               onChange={() => void save()}
               promotionId={request.promotion_id}
@@ -873,27 +905,48 @@ function LinesRail({
 // Tag size control (D24, S9): W x H mm for the SELECTED line's tag
 // ---------------------------------------------------------------------------
 
-/** Key one preset (or the current custom size) is looked up under. */
+/** Key one preset is looked up under. */
 function sizeKey(width_mm: number, height_mm: number): string {
   return `${width_mm}x${height_mm}`;
 }
 
+/**
+ * Never a real option in the SELECT - a size nobody picked from the list has
+ * nothing to select TO (S9 review nit). `value` is set to this whenever the
+ * tag's current size matches no preset, so the trigger falls through to
+ * `placeholder="Custom"` the same way every other unselected SearchableSelect
+ * shows its placeholder: muted, and un-clickable in the list.
+ */
 const CUSTOM_SIZE_VALUE = '__custom__';
 
 function TagSizeControl({
   tag,
   presets,
+  imposition,
   onResize,
   onResizeAll,
 }: {
   tag: PlacedTag | null;
   presets: TagSizePreset[];
+  imposition: ImpositionConfig;
   onResize: (width_mm: number, height_mm: number) => void;
   onResizeAll: (width_mm: number, height_mm: number) => void;
 }) {
+  // Held as TEXT and committed on blur/Enter, not on every keystroke (S9
+  // review B1): the control used to call `onResize` per keystroke, which
+  // changed `tags` -> changed a doc key the canvas was mounted on -> remounted
+  // the whole editor (this control's own DOM included) after the first
+  // digit, so "95" typed as fast as anyone can type landed as "9". `null`
+  // means "nothing typed right now" - the field shows the tag's live value,
+  // which is what lets a preset pick or an Apply-to-all elsewhere update the
+  // boxes without an effect fighting whatever is mid-typed in them.
+  const [wDraft, setWDraft] = useState<string | null>(null);
+  const [hDraft, setHDraft] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
   if (!tag) {
     return (
-      <div className="border-b p-3">
+      <div className="shrink-0 border-b border-r p-3">
         <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
           Tag Size
         </span>
@@ -904,27 +957,64 @@ function TagSizeControl({
     );
   }
 
-  const options: SearchableSelectOption[] = [
-    ...presets.map((p) => ({ value: sizeKey(p.width_mm, p.height_mm), label: p.label })),
-    { value: CUSTOM_SIZE_VALUE, label: 'Custom' },
-  ];
+  const bounds = tagSizeBounds(imposition);
+
+  const commit = (axis: 'w' | 'h') => {
+    const draft = axis === 'w' ? wDraft : hDraft;
+    const setDraft = axis === 'w' ? setWDraft : setHDraft;
+    if (draft === null) return;
+    const n = parseFloat(draft);
+    if (Number.isNaN(n)) {
+      setDraft(null);
+      setError(null);
+      return;
+    }
+    const candidateW = axis === 'w' ? n : tag.width_mm;
+    const candidateH = axis === 'h' ? n : tag.height_mm;
+    const result = resolveTagSize(candidateW, candidateH, bounds);
+    if (!result.ok) {
+      // Keep the typed value on screen next to the reason - reverting it
+      // silently would read as the edit never happened (S9 review S3).
+      setError(result.reason);
+      return;
+    }
+    setError(null);
+    onResize(result.width_mm, result.height_mm);
+    setDraft(null);
+  };
+
+  const onEnter = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') e.currentTarget.blur();
+  };
+
+  const options: SearchableSelectOption[] = presets.map((p) => ({
+    value: sizeKey(p.width_mm, p.height_mm),
+    label: p.label,
+  }));
   const matchingPreset = presets.find(
     (p) => p.width_mm === tag.width_mm && p.height_mm === tag.height_mm,
   );
 
   return (
-    <div className="flex flex-col gap-2 border-b p-3">
+    <div className="flex shrink-0 flex-col gap-2 border-b border-r p-3">
       <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
         Tag Size
       </span>
       <SearchableSelect
         value={matchingPreset ? sizeKey(matchingPreset.width_mm, matchingPreset.height_mm) : CUSTOM_SIZE_VALUE}
         onChange={(value) => {
-          if (value === CUSTOM_SIZE_VALUE) return;
           const preset = presets.find((p) => sizeKey(p.width_mm, p.height_mm) === value);
-          if (preset) onResize(preset.width_mm, preset.height_mm);
+          if (!preset) return;
+          const result = resolveTagSize(preset.width_mm, preset.height_mm, bounds);
+          if (!result.ok) {
+            setError(result.reason);
+            return;
+          }
+          setError(null);
+          onResize(result.width_mm, result.height_mm);
         }}
         options={options}
+        placeholder="Custom"
       />
       <div className="grid grid-cols-2 gap-2">
         <div className="flex flex-col gap-1">
@@ -933,13 +1023,11 @@ function TagSizeControl({
             type="number"
             className="h-7 px-2 text-xs"
             aria-label="Tag width (mm)"
-            value={tag.width_mm}
+            value={wDraft ?? tag.width_mm}
             step={0.5}
-            min={1}
-            onChange={(e) => {
-              const n = parseFloat(e.target.value);
-              if (!Number.isNaN(n)) onResize(n, tag.height_mm);
-            }}
+            onChange={(e) => setWDraft(e.target.value)}
+            onBlur={() => commit('w')}
+            onKeyDown={onEnter}
           />
         </div>
         <div className="flex flex-col gap-1">
@@ -948,16 +1036,15 @@ function TagSizeControl({
             type="number"
             className="h-7 px-2 text-xs"
             aria-label="Tag height (mm)"
-            value={tag.height_mm}
+            value={hDraft ?? tag.height_mm}
             step={0.5}
-            min={1}
-            onChange={(e) => {
-              const n = parseFloat(e.target.value);
-              if (!Number.isNaN(n)) onResize(tag.width_mm, n);
-            }}
+            onChange={(e) => setHDraft(e.target.value)}
+            onBlur={() => commit('h')}
+            onKeyDown={onEnter}
           />
         </div>
       </div>
+      {error && <p className="text-2xs text-destructive">{error}</p>}
       <Button
         type="button"
         variant="outline"

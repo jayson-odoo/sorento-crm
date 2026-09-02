@@ -133,6 +133,7 @@ export function starterTemplateFor(
           list_price: data?.list_price ?? null,
           offer_price: data?.show_promo_price ? (data?.sell_price ?? null) : null,
           promotion_id: null,
+          barcode: data?.barcode ?? null,
         } satisfies ProductTagData,
         opts,
       );
@@ -253,6 +254,56 @@ export function resizeAllTags(
     next[lineId] = resizeTag(tag, width_mm, height_mm);
   }
   return next;
+}
+
+/** The floor every tag size control clamps up to (S9 review S3). */
+export const MIN_TAG_SIZE_MM = 10;
+
+/** The bounds a tag's own size may be set to on the given sheet. */
+export interface TagSizeBounds {
+  min_mm: number;
+  max_width_mm: number;
+  max_height_mm: number;
+}
+
+/**
+ * The size bounds a tag may be set to on the CURRENT imposition sheet
+ * (D24, S9 review S3): the usable page area after bleed on each axis, so a
+ * size that could never physically fit is refused rather than drawn wrong.
+ */
+export function tagSizeBounds(imposition: ImpositionConfig): TagSizeBounds {
+  return {
+    min_mm: MIN_TAG_SIZE_MM,
+    max_width_mm: imposition.page_width_mm - 2 * imposition.bleed_mm,
+    max_height_mm: imposition.page_height_mm - 2 * imposition.bleed_mm,
+  };
+}
+
+/**
+ * Resolve a typed size against `bounds`.
+ *
+ * Below the minimum clamps UP to it - a benign floor, the same as every
+ * other mm field in this editor. Above what the sheet can hold is REFUSED
+ * outright rather than silently shrunk to fit: a designer who typed 400mm
+ * asked for something specific, and drawing a different number than the one
+ * they typed without saying so is the worse failure of the two.
+ */
+export function resolveTagSize(
+  width_mm: number,
+  height_mm: number,
+  bounds: TagSizeBounds,
+): { ok: true; width_mm: number; height_mm: number } | { ok: false; reason: string } {
+  if (width_mm > bounds.max_width_mm || height_mm > bounds.max_height_mm) {
+    return {
+      ok: false,
+      reason: `Largest that fits this sheet is ${bounds.max_width_mm} x ${bounds.max_height_mm} mm`,
+    };
+  }
+  return {
+    ok: true,
+    width_mm: Math.max(bounds.min_mm, width_mm),
+    height_mm: Math.max(bounds.min_mm, height_mm),
+  };
 }
 
 // ---------------------------------------------------------------------------

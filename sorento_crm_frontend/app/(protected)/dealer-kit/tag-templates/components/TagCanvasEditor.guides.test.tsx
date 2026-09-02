@@ -35,6 +35,7 @@ vi.mock('react-konva', () => {
   return {
     Stage: passthrough('stage'),
     Layer: passthrough('layer'),
+    Group: passthrough('group'),
     Rect: passthrough('rect'),
     // A ruler guide's `stroke` is the one prop a component test can tell it
     // apart BY - it already differs from the snap guides in the real file

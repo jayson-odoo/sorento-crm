@@ -150,7 +150,7 @@ interface PreviewChoice {
 }
 
 // This component is loaded with ssr:false by the page, so direct imports are safe.
-import { Stage, Layer as KonvaLayer, Rect, Line, Transformer } from 'react-konva';
+import { Stage, Layer as KonvaLayer, Group, Rect, Line, Transformer } from 'react-konva';
 import { KonvaTagLayer } from './KonvaTagLayer';
 
 // ---------------------------------------------------------------------------
@@ -2177,26 +2177,37 @@ export function TagCanvasEditor({
                       strokeWidth={1}
                     />
 
-                    {/* Layers */}
-                    {sortedLayers.map((layer) => (
-                      <KonvaTagLayer
-                        key={layer.id}
-                        layer={layer}
-                        scale={scale}
-                        display={layerDisplay(layer, dataOf(layer), library.assetUrls)}
-                        draggable={!handMode}
-                        listening={
-                          !handMode &&
-                          !(layer.props.kind === 'group' && entered.has(layer.id))
-                        }
-                        onSelect={handleCanvasSelect}
-                        onDoubleClick={handleLayerDoubleClick}
-                        onDragStart={handleDragStart}
-                        onDragMove={handleDragMove}
-                        onDragEnd={handleDragEnd}
-                        onHoverChange={handleLayerHoverChange}
-                      />
-                    ))}
+                    {/* Layers, clipped to the artboard (S9 review S4): a
+                        layer dragged or resized past the tag's own edge is
+                        hidden on screen exactly the way TagSheetRenderer's
+                        `overflow: hidden` clips it on the printed sheet -
+                        WYSIWYG after a shrink, not a canvas that still shows
+                        what the PDF will not. */}
+                    <Group
+                      clipFunc={(ctx) => {
+                        ctx.rect(0, 0, canvasWidthPx, canvasHeightPx);
+                      }}
+                    >
+                      {sortedLayers.map((layer) => (
+                        <KonvaTagLayer
+                          key={layer.id}
+                          layer={layer}
+                          scale={scale}
+                          display={layerDisplay(layer, dataOf(layer), library.assetUrls)}
+                          draggable={!handMode}
+                          listening={
+                            !handMode &&
+                            !(layer.props.kind === 'group' && entered.has(layer.id))
+                          }
+                          onSelect={handleCanvasSelect}
+                          onDoubleClick={handleLayerDoubleClick}
+                          onDragStart={handleDragStart}
+                          onDragMove={handleDragMove}
+                          onDragEnd={handleDragEnd}
+                          onHoverChange={handleLayerHoverChange}
+                        />
+                      ))}
+                    </Group>
 
                     {/* Snap guides */}
                     {guides.map((g, i) =>

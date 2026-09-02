@@ -1001,7 +1001,7 @@ function BarcodeInspector({
           <Input
             value={shown}
             placeholder={resolvedText ?? 'No barcode on the product'}
-            onChange={(e) => onUpdate({ text_override: e.target.value })}
+            onChange={(e) => onUpdate({ text_override: e.target.value || null })}
           />
           {overridden && (
             <span className="flex items-center gap-1 text-2xs text-amber-600">

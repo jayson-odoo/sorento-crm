@@ -94,6 +94,7 @@ vi.mock('react-konva', () => {
       return <div data-konva="stage">{children}</div>;
     },
     Layer: passthrough('layer'),
+    Group: passthrough('group'),
     Rect: passthrough('rect'),
     Line: passthrough('line'),
     Transformer: ({
