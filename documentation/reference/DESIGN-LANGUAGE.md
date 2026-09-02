@@ -46,29 +46,64 @@ arrives - see the file's own "Materials" comment for the precedent.
 
 ## 3. Motion (`sorento_crm_frontend/lib/motion.ts`)
 
-- `SURFACE_SPRING`: `{ type: 'spring', bounce: 0, visualDuration: 0.3 }`. Critically damped
-  (`bounce: 0`) because these are not driven by a flick or drag; `visualDuration` is tuned to
-  `--duration-slow` so a JS spring and a CSS transition read at the same pace. A spring
-  re-targets from wherever the value currently sits, so re-opening a surface mid-close
-  continues live instead of jumping back to 0 (interruptible).
+- `SURFACE_SPRING`: `{ type: 'spring', bounce: 0, visualDuration: 0.3 }`. The lightbox family's
+  entry (Dialog, Sheet, AlertDialog). Critically damped (`bounce: 0`) because these are not
+  driven by a flick or drag; `visualDuration` is tuned to `--duration-slow` so a JS spring and a
+  CSS transition read at the same pace. A spring re-targets from wherever the value currently
+  sits, so re-opening a surface mid-close continues live instead of jumping back to 0
+  (interruptible).
+- `MENU_SPRING`: `{ type: 'spring', bounce: 0, visualDuration: 0.2 }` (M2-03). The menu family's
+  entry (Popover, DropdownMenu, ContextMenu, HoverCard, Menubar) - tuned to `--duration-base`
+  since a menu is a quick lookup next to its trigger, not a surface that takes over the screen.
+- `SURFACE_SPRING_EXIT`: `{ type: 'spring', bounce: 0, visualDuration: 0.2 }` (M2-03). What
+  EVERY surface exits on, lightbox or menu alike - a close only has to get out of the way, not
+  announce itself, so there is no reason to hold a lightbox's slower entry on the way out.
 - `REDUCED_MOTION_TRANSITION`: `{ duration: 0.01 }` - a same-frame opacity change, no scale,
   no travel, no overshoot.
-- `surfaceTransition(prefersReducedMotion)`: picks between the two above.
+- `surfaceTransition(prefersReducedMotion, kind?: 'lightbox' | 'menu')`: `kind` defaults to
+  `'lightbox'` (`SURFACE_SPRING`); pass `'menu'` for `MENU_SPRING`. Reduced motion collapses
+  either kind to `REDUCED_MOTION_TRANSITION`.
+- `surfaceExitTransition(prefersReducedMotion)`: `SURFACE_SPRING_EXIT`, or
+  `REDUCED_MOTION_TRANSITION` under reduced motion. A caller passes it as the `exit` variant's
+  own `transition` (motion's `TargetAndTransition.transition` override, e.g.
+  `exit={{ ...variants.exit, transition: exitTransition }}`) so entry and exit can run different
+  responses under the ONE shared `transition` prop that otherwise governs both.
 - `surfaceVariants(prefersReducedMotion)`: fade + scale 0.96 -> 1 in (never scale 0); reduced
   motion drops the scale and keeps only the fade.
 - `useOpenState()`: mirrors a Radix root's open state into plain React state so a sibling
   `Content` can gate an `<AnimatePresence>` - Radix's own Presence unmounts on a CSS animation
-  it can detect, which a JS spring is not.
-- Origin anchoring: the inner `motion.div` uses
-  `origin-(--radix-popper-content-transform-origin)` (Radix sets it to the trigger side) or a
-  fixed `origin-*` utility for a surface with no Radix popper. Modals stay centered.
+  it can detect, which a JS spring is not. A primitive with no controlled `open` prop of its own
+  (ContextMenu's Root, MenubarMenu) tracks the same signal off `onOpenChange` alone, or - for
+  MenubarMenu, which exposes neither - is not gated at all (see the Menubar row below).
+- Origin anchoring: the inner `motion.div` uses the primitive's own Radix transform-origin
+  variable (`--radix-popover-content-transform-origin`,
+  `--radix-dropdown-menu-content-transform-origin` (shared by its `SubContent`),
+  `--radix-context-menu-content-transform-origin` (shared by its `SubContent`),
+  `--radix-hover-card-content-transform-origin`, `--radix-menubar-content-transform-origin`
+  (shared by its `SubContent`)) or a fixed `origin-*` utility for a surface with no Radix popper.
+  Modals stay centered.
+- **Keyboard-triggered surfaces never animate (M2-01).** `DialogContent` takes `motion?: boolean`
+  (default `true`); `motion={false}` makes initial/animate/exit identical (nothing for the spring
+  to interpolate) and marks the content `data-motion="off"`. `CommandDialog` forwards the prop;
+  `search-dialog.tsx` (Cmd/Ctrl+Shift+K) passes `motion={false}`. The scrim still fades, on a
+  plain 150ms (`--duration-fast`) tween rather than the shared spring - it is not what the
+  shortcut asked to see.
+- **One `TooltipProvider`, app-wide (M2-07).** `Tooltip` (`components/ui/tooltip.tsx`) is a bare
+  `Root` with no provider of its own; exactly one `<TooltipProvider delayDuration={700}
+  skipDelayDuration={300}>` mounts in `components/ClientProviders.tsx`. A second one anywhere
+  below it shadows the shared rhythm for its own subtree - which is what several toolbar buttons
+  did before this shipped, each with its own `delayDuration={300}` or `{0}`, so the
+  skipDelayDuration grouping never applied across siblings. `TooltipContent` animates opacity
+  only, via a plain CSS transition on `data-state` (`duration-(--duration-fast)
+  ease-(--ease-standard)`) - no zoom, no `animate-in`. Radix only tracks `animationend` for its
+  exit-wait, not `transitionend`, so a tooltip's close is instant; its entry is the fade.
 
 ### Rulings (2 Sep 2026)
 
 | Topic | Ruling |
 | --- | --- |
 | Easing curve | `--ease-standard` stays. It is already a custom curve; do not introduce a second one. A stronger ease-out is an ADR, not a PR. |
-| Duration per surface | Lightboxes (Dialog, Sheet, AlertDialog) = `--duration-slow` 300ms. Menus and popovers (DropdownMenu, Popover, Select, Tooltip) = `--duration-base` 200ms. Pressed feedback = `--duration-fast` 150ms. `lib/motion.ts` currently runs one 300ms spring for all surfaces; the 200ms menu preset is follow-up work, not part of this docs slice. |
+| Duration per surface | Lightboxes (Dialog, Sheet, AlertDialog) = `--duration-slow` 300ms in, 200ms out (`SURFACE_SPRING` / `SURFACE_SPRING_EXIT`). Menus and popovers (DropdownMenu, Popover, ContextMenu, HoverCard, Menubar) = `--duration-base` 200ms in and out (`MENU_SPRING` / `SURFACE_SPRING_EXIT`). Tooltip = `--duration-fast` 150ms in (CSS transition, not a spring), instant out. Pressed feedback = `--duration-fast` 150ms. Shipped M2-03/M2-06/M2-07. |
 | Frequency gate | Adopt the emil-design-eng frequency table verbatim: 100+ times/day (keyboard shortcuts, command palette toggle) = no animation; tens/day (hover, list navigation, row expand/collapse, tab switch) = none or `--duration-fast` opacity only; occasional (lightboxes, toasts, drawers) = standard surface spring; rare (onboarding, celebration) = may add delight. Keyboard-initiated actions never animate. |
 
 ### Hard-fails in review
