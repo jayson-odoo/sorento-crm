@@ -24,7 +24,11 @@ vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
-import { getWindowState, sendConversationMessage } from '@/services/whatsappTemplateService';
+import {
+  getWindowState,
+  sendConversationMessage,
+  type SendMessageResult,
+} from '@/services/whatsappTemplateService';
 import { toast } from '@/lib/toast';
 
 if (!Element.prototype.scrollIntoView) {
@@ -44,6 +48,15 @@ function renderComposer(
 
 const OPEN = { open: true, last_incoming_at: null, checked_at: '2026-07-01T00:00:00Z' };
 
+/** A plain-text send result - only `sent_as` matters to these tests, the rest
+ *  is here to satisfy `SendMessageResult`'s shape. */
+const TEXT_SENT: SendMessageResult = {
+  sent_as: 'text',
+  rendered_text: '',
+  flattened: false,
+  window_state: OPEN,
+};
+
 describe('SharedConversationComposer - optimistic send (M6-01)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -51,9 +64,9 @@ describe('SharedConversationComposer - optimistic send (M6-01)', () => {
   });
 
   it('never disables the textarea while sending; focus and caret survive the send', async () => {
-    let resolveSend: (v: unknown) => void = () => {};
+    let resolveSend: (v: SendMessageResult) => void = () => {};
     vi.mocked(sendConversationMessage).mockImplementation(
-      () => new Promise((resolve) => { resolveSend = resolve; }),
+      () => new Promise<SendMessageResult>((resolve) => { resolveSend = resolve; }),
     );
     renderComposer();
     await waitFor(() => expect(getWindowState).toHaveBeenCalled());
@@ -73,7 +86,7 @@ describe('SharedConversationComposer - optimistic send (M6-01)', () => {
     // The Send button IS disabled while sending - the guard is the button, not the field.
     expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
 
-    resolveSend({ sent_as: 'text' });
+    resolveSend(TEXT_SENT);
     await waitFor(() => expect(toast.success).toHaveBeenCalled());
 
     // Refocused after the send settles (the queueMicrotask pattern at :195).
@@ -86,9 +99,9 @@ describe('SharedConversationComposer - optimistic send (M6-01)', () => {
   });
 
   it('a second Enter while sending is ignored (re-entry guard)', async () => {
-    let resolveSend: (v: unknown) => void = () => {};
+    let resolveSend: (v: SendMessageResult) => void = () => {};
     vi.mocked(sendConversationMessage).mockImplementation(
-      () => new Promise((resolve) => { resolveSend = resolve; }),
+      () => new Promise<SendMessageResult>((resolve) => { resolveSend = resolve; }),
     );
     renderComposer();
     await waitFor(() => expect(getWindowState).toHaveBeenCalled());
@@ -103,15 +116,15 @@ describe('SharedConversationComposer - optimistic send (M6-01)', () => {
     fireEvent.change(textarea, { target: { value: 'one more' } });
     fireEvent.keyDown(textarea, { key: 'Enter', shiftKey: false });
 
-    resolveSend({ sent_as: 'text' });
+    resolveSend(TEXT_SENT);
     await waitFor(() => expect(toast.success).toHaveBeenCalled());
     expect(sendConversationMessage).toHaveBeenCalledTimes(1);
   });
 
   it('shows an optimistic bubble immediately and clears it once the send settles', async () => {
-    let resolveSend: (v: unknown) => void = () => {};
+    let resolveSend: (v: SendMessageResult) => void = () => {};
     vi.mocked(sendConversationMessage).mockImplementation(
-      () => new Promise((resolve) => { resolveSend = resolve; }),
+      () => new Promise<SendMessageResult>((resolve) => { resolveSend = resolve; }),
     );
     const add = vi.fn().mockReturnValue('pending-1');
     const remove = vi.fn();
@@ -126,7 +139,7 @@ describe('SharedConversationComposer - optimistic send (M6-01)', () => {
     await waitFor(() => expect(add).toHaveBeenCalledWith({ text: 'on my way', files: [] }));
     expect(remove).not.toHaveBeenCalled();
 
-    resolveSend({ sent_as: 'text' });
+    resolveSend(TEXT_SENT);
     await waitFor(() => expect(remove).toHaveBeenCalledWith('pending-1'));
   });
 
@@ -147,7 +160,7 @@ describe('SharedConversationComposer - optimistic send (M6-01)', () => {
   });
 
   it('waits for an async onSent to settle before clearing the bubble', async () => {
-    vi.mocked(sendConversationMessage).mockResolvedValue({ sent_as: 'text' });
+    vi.mocked(sendConversationMessage).mockResolvedValue(TEXT_SENT);
     const add = vi.fn().mockReturnValue('pending-3');
     const remove = vi.fn();
     let resolveOnSent: () => void = () => {};
