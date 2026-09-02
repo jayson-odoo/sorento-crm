@@ -437,7 +437,11 @@ def test_a_cancelled_plan_takes_no_more_edits(scm_app):
     r = client.put(f"{PLANS_URL}/{plan['id']}/edits", json={"line_edits": {"x": 1}})
 
     assert r.status_code == 409, r.text
-    assert r.json()["detail"]["code"] == "plan_cancelled"
+    # One 409 shape on this router (SF-5): `AppException`, whose handler puts the code at the
+    # TOP level. `refuse_if_sent` has always answered that way, and a caller reading
+    # `body.code` for one refusal and `body.detail.code` for the other is how a stale tab
+    # ends up showing "something went wrong" instead of the reason.
+    assert r.json()["code"] == "plan_cancelled"
 
 
 def test_saving_edits_requires_the_operator_permission(scm_app):
@@ -796,9 +800,9 @@ def test_a_cancelled_plan_can_no_longer_be_sent_or_downloaded(scm_app):
     )
 
     assert send.status_code == 409, send.text
-    assert send.json()["detail"]["code"] == "plan_cancelled"
+    assert send.json()["code"] == "plan_cancelled"
     assert document.status_code == 409, document.text
-    assert document.json()["detail"]["code"] == "plan_cancelled"
+    assert document.json()["code"] == "plan_cancelled"
     assert (
         db.query(SupplierNotice).filter(SupplierNotice.loading_plan_id == plan["id"]).count()
         == 0

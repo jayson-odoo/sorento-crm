@@ -103,14 +103,18 @@ def _plan_for_upload(
 
 
 def _refuse_cancelled(plan: LoadingPlan) -> None:
-    """A cancelled plan is a record of what was asked, not a form (AC-A8)."""
+    """A cancelled plan is a record of what was asked, not a form (AC-A8).
+
+    `AppException`, like every other refusal this router raises: its handler puts `code` at
+    the top level of the body, where `refuse_if_sent` has always put it. A bare
+    `HTTPException` nested the same field under `detail`, so one of the two 409s a stale tab
+    can provoke was read by the client and the other was not (SF-5).
+    """
     if plan.status == "cancelled":
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "code": "plan_cancelled",
-                "message": "This plan is cancelled, so it can no longer be changed.",
-            },
+            message="This plan is cancelled, so it can no longer be changed.",
+            code="plan_cancelled",
         )
 
 
