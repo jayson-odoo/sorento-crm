@@ -150,6 +150,7 @@ describe('PlanContainerDialog', () => {
         plan_horizon_date: null,
         document_kind: 'none',
         source_attachment_id: null,
+        source_attachment_filename: null,
       }),
     );
     await waitFor(() => expect(push).toHaveBeenCalledWith('/scm/loading-plan/plan-9'));
@@ -193,6 +194,7 @@ describe('PlanContainerDialog', () => {
         // The server points the plan at the sheet while it retains it, so the dialog has
         // nothing to look up between the two calls.
         source_attachment_id: null,
+        source_attachment_filename: null,
       }),
     );
     // The apply carries the plan it belongs to, which is what stamps the rows.

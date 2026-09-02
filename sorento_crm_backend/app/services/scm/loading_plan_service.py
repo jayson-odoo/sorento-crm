@@ -655,6 +655,32 @@ def _file_stem(source_ref: Optional[str]) -> Optional[str]:
     return stem.rsplit(".", 1)[0] if "." in stem else stem
 
 
+def _source_filenames(db: Session, attachment_ids: list[str]) -> dict[str, str]:
+    """`{attachment id: filename}` for the sheets these plans were started from (BL-3).
+
+    The record's "View uploaded list" opens THIS plan's file, and the preview picks its
+    viewer off the file name's extension - so the name has to travel with the id or an xlsx
+    opens as "no preview available". One query for a page, like every other batch here.
+    """
+    from app.models.resources import Attachment
+
+    ids = [str(a) for a in attachment_ids if a]
+    if not ids:
+        return {}
+    rows = (
+        db.query(Attachment.id, Attachment.original_filename, Attachment.stored_filename)
+        .filter(Attachment.id.in_(ids), Attachment.is_deleted.is_(False))
+        .all()
+    )
+    # `stored_filename` first, exactly as `latest_stock_list_attachment` reads it: it holds
+    # the name as the operator typed it, and `original_filename` the storage-sanitised one.
+    return {
+        str(r.id): r.stored_filename or r.original_filename
+        for r in rows
+        if (r.stored_filename or r.original_filename)
+    }
+
+
 def _proforma_numbers(db: Session, supplier_ids: list[str]) -> dict[str, str]:
     """The newest un-converted proforma per supplier, for the Document label.
 
@@ -724,6 +750,7 @@ def record_dict(
     notice: Optional[dict] = None,
     pi_number: Any = _UNSET,
     statement: Any = _UNSET,
+    source_filename: Any = _UNSET,
 ) -> dict[str, Any]:
     """One plan, in the shape the list and the record page both read.
 
@@ -755,6 +782,10 @@ def record_dict(
             if plan.document_kind in ("stock_list", "proforma")
             else None
         )
+    if source_filename is _UNSET:
+        source_filename = _source_filenames(db, [plan.source_attachment_id]).get(
+            str(plan.source_attachment_id)
+        )
     as_of = (statement or {}).get("as_of")
     return {
         "id": str(plan.id),
@@ -775,6 +806,9 @@ def record_dict(
         "source_attachment_id": (
             str(plan.source_attachment_id) if plan.source_attachment_id else None
         ),
+        # The file's own name, so the record can preview it as the spreadsheet it is (BL-3):
+        # the viewer is chosen off the extension.
+        "source_attachment_filename": source_filename or None,
         "status": plan.status,
         "supplier_email": supplier_email,
         "sent_channel": (notice or {}).get("channel"),
@@ -842,6 +876,7 @@ def list_records(
     statements = _plan_statements(
         db, [str(p.id) for p in plans if p.document_kind in ("stock_list", "proforma")]
     )
+    filenames = _source_filenames(db, [p.source_attachment_id for p in plans])
     return {
         "data": [
             record_dict(
@@ -852,6 +887,7 @@ def list_records(
                 notice=notices.get(str(p.id)) or {},
                 pi_number=numbers.get(str(p.supplier_id)),
                 statement=statements.get(str(p.id)),
+                source_filename=filenames.get(str(p.source_attachment_id)),
             )
             for p, name, email in rows
         ],

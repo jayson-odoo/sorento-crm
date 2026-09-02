@@ -355,7 +355,11 @@ export interface LoadingPlanRecord {
    *  latest invoice date across its bound invoices. Null on a "No file" plan, which reads
    *  no statement at all (AC-G1). */
   statement_as_of: string | null;
+  /** The stored copy of the sheet THIS plan was started from, stamped at apply time (S6).
+   *  Null on a plan started with no file, and on every plan that predates the stamp. */
   source_attachment_id: string | null;
+  /** That file's own name - the preview picks its viewer off the extension. */
+  source_attachment_filename: string | null;
   status: LoadingPlanStatus;
   /** The latest notice for this plan, so the list can say how and when it went out. */
   sent_channel: 'email' | 'chat' | null;

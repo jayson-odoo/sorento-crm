@@ -102,6 +102,7 @@ const PLANNING = {
   document_kind: 'stock_list' as const,
   document_label: 'Stock list 27/07/2026',
   source_attachment_id: null,
+  source_attachment_filename: null,
   status: 'planning' as const,
   sent_channel: null,
   sent_at: null,

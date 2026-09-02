@@ -174,9 +174,19 @@ export function LoadingPlanView({ planId }: { planId: string }) {
   // Scoped to THIS plan (R3/R11): the same supplier's other open plan has its own live
   // link and its own history, and neither belongs on this record.
   const notices = useSupplierNotices(supplierId || null, planId);
-  const stockListFile = useSupplierStockListFile(
-    plan?.document_kind === 'stock_list' ? supplierId : null,
-  );
+  // The sheet THIS plan was started from (BL-3). S6 stamps it on the plan at apply time, so
+  // the record opens its own file rather than whatever the supplier last uploaded from some
+  // other plan. A plan that predates the stamp has none, and for a stock-list plan the
+  // supplier's latest is still the file it was started from, so the old lookup survives for
+  // exactly that case - and runs at all only in it.
+  const legacyStockList =
+    plan?.document_kind === 'stock_list' && !plan?.source_attachment_id ? supplierId : null;
+  const stockListFile = useSupplierStockListFile(legacyStockList || null);
+  const uploadedListId = plan?.source_attachment_id ?? stockListFile.data?.attachment_id ?? null;
+  const uploadedListName =
+    (plan?.source_attachment_id
+      ? plan.source_attachment_filename
+      : stockListFile.data?.filename) ?? null;
   // The same action `RefreshMatchingButton` runs on the Supplier codes tab - the tab's
   // "Needs a decision" group empties out and that is exactly the state somebody is trying
   // to reach after adding the missing products (R18), so it is also reachable from up here.
@@ -259,17 +269,16 @@ export function LoadingPlanView({ planId }: { planId: string }) {
   }, [unsaved]);
 
   const stockListPreviewItems = useMemo<AttachmentPreviewItem[]>(() => {
-    const id = stockListFile.data?.attachment_id;
-    if (!id) return [];
+    if (!uploadedListId) return [];
     return [
       {
-        id,
-        name: stockListFile.data?.filename || 'Stock list',
+        id: uploadedListId,
+        name: uploadedListName || 'Stock list',
         url: '',
-        downloadUrl: `/api/v1/resource-management/attachments/${id}/download`,
+        downloadUrl: `/api/v1/resource-management/attachments/${uploadedListId}/download`,
       },
     ];
-  }, [stockListFile.data]);
+  }, [uploadedListId, uploadedListName]);
 
   const requestNotices = (notices.data ?? []).filter((n) => n.notice_type === 'container_request');
   // Only one of THIS PLAN's tokens is ever live (each send retires the plan's last), so the
@@ -326,9 +335,7 @@ export function LoadingPlanView({ planId }: { planId: string }) {
       disabled: lines.length === 0 || download.isPending,
       run: () => download.mutate({ lines, format: 'pdf' }),
     },
-    ...(stockListFile.data?.attachment_id
-      ? { viewUploadedList: { run: () => setPreviewOpen(true) } }
-      : {}),
+    ...(uploadedListId ? { viewUploadedList: { run: () => setPreviewOpen(true) } } : {}),
   });
 
   /**

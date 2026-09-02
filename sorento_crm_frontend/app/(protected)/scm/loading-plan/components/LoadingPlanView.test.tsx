@@ -135,6 +135,7 @@ const PLAN: LoadingPlanRecord = {
   document_label: 'Stock list 27/07/2026',
   statement_as_of: '2026-07-27',
   source_attachment_id: 'att-1',
+  source_attachment_filename: 'plan-own-list.xlsx',
   status: 'planning',
   sent_channel: null,
   sent_at: null,
@@ -160,6 +161,9 @@ const state = {
   unmatchedCodes: [] as unknown[],
   /** The Sent tab's badge count and body (S2). */
   notices: [] as unknown[],
+  /** Which supplier the legacy stock-list lookup was asked about, or null when the record
+   *  read the plan's own stamped file instead (BL-3). */
+  stockListFileAskedAbout: null as string | null,
 };
 
 const saveEdits = vi.fn();
@@ -218,10 +222,13 @@ vi.mock('../../hooks/useFulfilment', () => ({
   useDownloadContainerRequestDocument: () => ({ mutate: vi.fn(), isPending: false }),
   useLoadingPlanList: () => ({ data: { data: [{ id: 'plan-1' }], total: 1 } }),
   useSupplierNotices: () => ({ data: state.notices }),
-  useSupplierStockListFile: () => ({
-    data: { attachment_id: 'att-1', filename: 'stock.xlsx' },
-    isLoading: false,
-  }),
+  useSupplierStockListFile: (supplierId: string | null) => {
+    state.stockListFileAskedAbout = supplierId;
+    return {
+      data: supplierId ? { attachment_id: 'att-supplier', filename: 'supplier.xlsx' } : null,
+      isLoading: false,
+    };
+  },
 }));
 
 vi.mock('../../hooks/useSupplierCodeAliases', () => ({
@@ -248,6 +255,7 @@ describe('LoadingPlanView (the record)', () => {
     state.saveFails = false;
     state.unmatchedCodes = [];
     state.notices = [];
+    state.stockListFileAskedAbout = null;
     currentSearchParams = new URLSearchParams();
   });
 
@@ -293,6 +301,38 @@ describe('LoadingPlanView (the record)', () => {
     ];
     const buttons = Array.from(menu.querySelectorAll('button')).map((b) => b.textContent);
     expect(buttons).toEqual(labels);
+  });
+
+  // BL-3: "View uploaded list" opened the SUPPLIER's latest sheet, whoever uploaded it and
+  // for whichever plan. S6 stamps the file a plan was started from on the plan itself, so
+  // that is what the record reads - and a plan with no file of its own offers nothing.
+  it("opens the plan's OWN uploaded list, never the supplier's latest (BL-3)", () => {
+    renderView();
+
+    const menu = screen.getByTestId('menu-content');
+    expect(within(menu).getByRole('button', { name: 'View uploaded list' })).toBeTruthy();
+    // The supplier-wide lookup is not consulted at all once the plan names its own file.
+    expect(state.stockListFileAskedAbout).toBeNull();
+  });
+
+  it('offers no uploaded list on a plan that has no file of its own (BL-3)', () => {
+    state.plan = { ...PLAN, document_kind: 'proforma', source_attachment_id: null };
+    renderView();
+
+    const menu = screen.getByTestId('menu-content');
+    expect(within(menu).queryByRole('button', { name: 'View uploaded list' })).toBeNull();
+    expect(state.stockListFileAskedAbout).toBeNull();
+  });
+
+  it("falls back to the supplier's sheet only on a legacy stock-list plan (BL-3)", () => {
+    // Every plan open when 454 landed has no stamped file; blanking their only way back to
+    // the sheet they were started from would be a worse answer than today's lookup.
+    state.plan = { ...PLAN, document_kind: 'stock_list', source_attachment_id: null };
+    renderView();
+
+    const menu = screen.getByTestId('menu-content');
+    expect(within(menu).getByRole('button', { name: 'View uploaded list' })).toBeTruthy();
+    expect(state.stockListFileAskedAbout).toBe('sup-1');
   });
 
   it('says why Copy link cannot act when nothing has been sent', () => {
@@ -520,6 +560,7 @@ describe('LoadingPlanView - the tab strip (S2, AC-B1-B4)', () => {
     state.saveFails = false;
     state.unmatchedCodes = [];
     state.notices = [];
+    state.stockListFileAskedAbout = null;
     currentSearchParams = new URLSearchParams();
   });
 

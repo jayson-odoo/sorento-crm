@@ -156,6 +156,50 @@ def test_the_document_label_names_the_file_the_plan_was_started_from(scm_app):
     assert without["document_label"] == "No file"
 
 
+def test_the_record_names_the_file_this_plan_was_started_from(scm_app):
+    """BL-3: the record's "View uploaded list" opens the plan's OWN sheet, and the preview
+    picks its viewer off the file name - so `source_attachment_filename` travels with the id.
+
+    It used to read the supplier's LATEST retained sheet instead, whichever plan uploaded it.
+    """
+    from app.models.resources import Attachment
+
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = _world(db)
+    client = TestClient(app)
+    plan = _create(client, str(w.supplier.id), document_kind="stock_list").json()
+    attachment = Attachment(
+        id=str(uuid.uuid4()),
+        original_filename=f"{MARKER}-stock-list.xlsx",
+        stored_filename=f"{MARKER} stock list.xlsx",
+        file_path="s3://test/stock-list.xlsx",
+        entity_type="supplier_stock_list",
+        entity_id=str(w.supplier.id),
+    )
+    db.add(attachment)
+    row = db.query(LoadingPlan).filter(LoadingPlan.id == plan["id"]).one()
+    row.source_attachment_id = str(attachment.id)
+    db.flush()
+
+    record = client.get(f"{PLANS_URL}?status=active&limit=100").json()
+    listed = next(p for p in record["data"] if p["id"] == plan["id"])
+
+    assert listed["source_attachment_id"] == str(attachment.id)
+    assert listed["source_attachment_filename"] == f"{MARKER} stock list.xlsx"
+
+
+def test_a_plan_started_with_no_file_names_none(scm_app):
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = _world(db)
+
+    plan = _create(TestClient(app), str(w.supplier.id), document_kind="none").json()
+
+    assert plan["source_attachment_id"] is None
+    assert plan["source_attachment_filename"] is None
+
+
 def test_creating_a_plan_for_a_supplier_that_does_not_exist_is_a_404(scm_app):
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk)
