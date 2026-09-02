@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.public.portal import get_portal_token
 from app.database import get_db
+from app.models.base import company_scope
 from app.models.portal import PortalToken
 from app.schemas.price_tag import (
     DebtorForAgentItem,
@@ -409,12 +410,19 @@ def portal_lookup_tag_items(
 
     Gated the same way as every other price tag route: a contact who cannot see the
     form cannot search the catalogue through it either.
+
+    Scoped to the SAME company ``_resolve_company`` will stamp the request with -
+    the ordinary portal-token company scope covers every company the contact
+    belongs to, so a contact shared between two companies (a duplicated product
+    catalogue) would otherwise see each code twice, and could pick the wrong
+    company's row onto a request already stamped with the other one.
     """
     _assert_visible(db, token.contact_id)
-    return [
-        TagItemLookupItem(**item)
-        for item in PriceTagRequestService.lookup_tag_items(db, q, limit=limit)
-    ]
+    with company_scope(db, frozenset({_resolve_company(db, token)})):
+        return [
+            TagItemLookupItem(**item)
+            for item in PriceTagRequestService.lookup_tag_items(db, q, limit=limit)
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -436,12 +444,18 @@ def portal_lookup_promotions(
     the promotions returned are only the ones this contact's own access codes
     are entitled to (``PriceTagRequestService.lookup_promotions``) - the same
     audience rule a promotion's price is gated by everywhere else.
+
+    Scoped to the SAME company ``_resolve_company`` will stamp the request with,
+    same reasoning as ``portal_lookup_tag_items``: a contact who belongs to more
+    than one company would otherwise be offered the other company's promotion
+    alongside this one.
     """
     _assert_visible(db, token.contact_id)
-    return [
-        PromotionLookupItem(**item)
-        for item in PriceTagRequestService.lookup_promotions(db, token.contact_id, q)
-    ]
+    with company_scope(db, frozenset({_resolve_company(db, token)})):
+        return [
+            PromotionLookupItem(**item)
+            for item in PriceTagRequestService.lookup_promotions(db, token.contact_id, q)
+        ]
 
 
 # ---------------------------------------------------------------------------
