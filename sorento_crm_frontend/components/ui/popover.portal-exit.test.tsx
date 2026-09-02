@@ -72,4 +72,36 @@ describe('PopoverPortal lets the exit run (M2-04)', () => {
     expect(inner.closest('[data-slot="popover-trigger"]')).toBeNull();
     expect(document.body.contains(inner)).toBe(true);
   });
+
+  /**
+   * The portal signal is context, so it reaches every PopoverContent below it,
+   * not just the one the caller wrapped. A popover opened from inside a
+   * portalled popover's body would inherit the signal and portal itself out to
+   * the document root, away from the surface it belongs to - so PopoverContent
+   * resets the context around its own children.
+   */
+  it('does not pass the portal signal on to a popover nested in its body', async () => {
+    render(
+      <Popover open onOpenChange={() => {}}>
+        <PopoverTrigger>Open outer</PopoverTrigger>
+        <PopoverPortal>
+          <PopoverContent>
+            Outer body
+            <Popover open onOpenChange={() => {}}>
+              <PopoverTrigger>Open nested</PopoverTrigger>
+              <PopoverContent>Nested body</PopoverContent>
+            </Popover>
+          </PopoverContent>
+        </PopoverPortal>
+      </Popover>,
+    );
+
+    const outer = (await screen.findByText(/Outer body/)).closest(
+      '[data-slot="popover-content"]',
+    ) as HTMLElement;
+    const nested = await screen.findByText('Nested body');
+
+    expect(outer).not.toBeNull();
+    expect(outer.contains(nested)).toBe(true);
+  });
 });

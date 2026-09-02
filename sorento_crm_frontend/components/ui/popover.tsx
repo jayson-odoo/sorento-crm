@@ -85,7 +85,10 @@ function PopoverContent({
         exit={{ ...variants.exit, transition: exitTransition }}
         transition={transition}
       >
-        {children}
+        {/* The portal signal is context, so it would otherwise reach a
+            PopoverContent nested in this one's body and portal that one out to
+            the document root too, away from the surface it belongs to. */}
+        <PopoverPortalContext.Provider value={null}>{children}</PopoverPortalContext.Provider>
       </motion.div>
     </PopoverPrimitive.Content>
   );
@@ -124,8 +127,14 @@ function PopoverContent({
  * spring, and adding `forceMount` here instead would keep an empty portal div - plus a mounted
  * PopoverContent - alive for every closed popover on the page, which the packing-list schedule
  * matrix has one of per cell.
+ *
+ * The props are narrowed to what the signal can actually carry: anything else Radix's Portal
+ * takes (`forceMount`, `asChild`) would be silently dropped here, so it is a type error instead.
  */
-function PopoverPortal({ children, container }: React.ComponentProps<typeof PopoverPrimitive.Portal>) {
+function PopoverPortal({
+  children,
+  container,
+}: Pick<React.ComponentProps<typeof PopoverPrimitive.Portal>, 'children' | 'container'>) {
   const value = React.useMemo(() => ({ container }), [container]);
   return <PopoverPortalContext.Provider value={value}>{children}</PopoverPortalContext.Provider>;
 }
