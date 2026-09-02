@@ -4,7 +4,7 @@
 > Governs: `PRINCIPLES.md` + `documentation/reference/ADR-PRODUCT-STANDARDS.md` + `documentation/reference/DESIGN-LANGUAGE.md` (PR #498).
 
 **Slug:** `spec-workbench-redesign` | **Domain:** master-data
-**Status:** S1 (Group A, registry list page) done at `c21422438` - old tabbed shell deleted, registry DataGrid + freshness line + Add specification / Try a phrase lightboxes built against react-query hooks, Catalogue tab and its exceptions/derived-specs endpoints removed (D6); S2 (record page) is next, browser verification deferred to the tester.
+**Status:** S1 (Group A, registry list page) done at `c21422438`. S2 (Group B record page + E.1/E.2 value labels, `value_labels` mocked per D9) done at `769c8d7d4` - record page (`[specKey]/page.tsx`) with the three tabs sharing one view/edit layout, `useSpecKeyRecord`'s one-PATCH save, Delete wired to `useDeferredAction` (needs a backend `spec_key.delete` record-action handler before it can actually commit - not registered here, out of scope for a Phase 1 FE slice), `readableValue`/`readableEntry` take value labels and every E.2-listed consumer reads them; `SpecKeyEditor.tsx`/`SpecKeyProducts.tsx` deleted. S3 (Search ranking in Settings) is next; browser verification for S2 deferred to the tester.
 **Lane:** worktree `.claude/worktrees/spec-workbench-redesign`, branch `feat/spec-workbench-redesign` from `origin/main` (f09532f6c). PR #498 (design-language reference) merged 2 Sep and merged into this lane.
 **Folds in:** `PLAN-spec-value-labels.md` (#423), now SUPERSEDED.
 **Pilot for:** the design slots added to `/feature` by #498 (design brief, `[UX]` ACs, animate gate, emil-design-eng review table).

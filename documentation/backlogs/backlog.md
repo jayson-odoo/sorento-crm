@@ -57,3 +57,47 @@ Format: `ID · Title · Source plan · Priority · Status`. IDs are `BL-<NNN>`, 
 - **BL-042** (2026-08-21, deflake sweep): `db.query(ProductCategory.id).first()` (and any other first query against a `CompanyScopedMixin` table) on a freshly-opened `SessionLocal()` returns 0 rows even though matching data exists, because `tests/conftest.py`'s `after_begin` listener (which defaults an unset company scope to Sorento for the test process) fires AFTER `do_orm_execute` has already built the SELECT's company predicate off the still-unset scope - the scope is set in `session.info` in time for the NEXT query, not the one that triggered the autobegin. `tests/test_product_neighbours.py::_fk_ids` hits this on literally the first operation of a fresh session (a bare FK lookup before any insert warms the session), so every test in that file fails locally against a real dev DB that has categories/UoMs (confirmed pre-existing on `main`, unrelated to any of the neighbours-race fixes above - warming the session with one throwaway query before `_fk_ids` makes the whole file pass). Not fixed here: the fix is in shared `conftest.py` fixture plumbing, not a single test file, and is a fourth flake shape distinct from the RNG/wall-clock/xdist-count trio this sweep targeted.
 - **BL-043** (2026-08-21, PR #237): the outstanding PO upload's PREVIEW does not show which CRM-raised POs the apply would retire - `apply()` supersedes matching active `scm_recommendation` POs (captain ruling a, closes line + PO with the AutoCount number on record) but `preview()` was not given parity, so the buyer first learns of the retirement from the post-apply summary's `superseded_documents`. Add the would-be-superseded set to the preview payload + dialog.
 - **BL-044** (2026-08-21, PR #237): the order-inquiry auto-place "import" trigger is still unwired - `auto_place_for_products` documents three triggers but only `po_confirm`, decision confirm and the worklist button exist; after an outstanding import supersedes a CRM PO, the freed rows sit `raised` until a human hits the worklist button or a later PO confirm fires. Wire the import path to call auto-place (trigger="import") after apply commits, best-effort.
+
+## Outline guide: Product Specifications workbench (raw material)
+
+Prose removed from the Product Specifications routes in `PLAN-spec-workbench-redesign.md`
+(S2), per D3/AC-G.1 - no explanation lives in the UI, but the how-to for the Outline
+guide has to come from somewhere. Verbatim from the deleted `SpecKeyEditor.tsx`
+(the retired inline row editor; its logic is now `record/ValuesAndWordsTab.tsx` and
+`record/RulesTab.tsx`) and `SpecKeyProducts.tsx` (now `record/SeenInProductsTab.tsx`).
+
+- Suppressing a shipped value: "Removing one that ships with the product stops this
+  business using it. It stays here, struck through, until you put it back."
+- A key with no closed value list (brand, class, and any numeric key): "This key has
+  no fixed list of values - whatever the catalogue holds becomes one. Name a value
+  below to give it wording."
+- Trying the rules on a real product or pasted text: "Pick a product or paste text to
+  see what each rule below reads from it." (this one line survives, in
+  `SpecTryItPanel.tsx`, as the one-line field hint D3 allows.)
+- An empty rule list: "No rules yet, so nothing will ever fill this in. Add one
+  below." (survives too, inside `SpecRuleEditor.tsx`, which the redesign keeps.)
+- Reading every product a key is seen on as a reviewable list rather than a count:
+  "A count is not reviewable. 'Seen in 106' says something happened without saying to
+  what, and the only way to know a rule did what you meant is to look at the rows - a
+  drainer board on 74 bathtubs is invisible in a number and obvious the moment the
+  classes are tallied."
+
+**Also out of the new record page, not just its prose** - the UAC's B.2 field list
+(`label, unit, max_value, user_values, suppressed_values, user_synonyms,
+suppressed_synonyms, value_labels, derivation_rules`) has no room for the per-key
+tuning `SpecKeyEditor.tsx` used to expose: match `Weight`, `Exact within` /
+`No match beyond` (`match_tolerance` / `match_decay`), `Values nobody searches for`
+(`excluded_values`), `Applies to` (the `applies_when` class gate) and `Prefer these
+values` (`value_weights`). These are not global ranking knobs (Group C's Search
+ranking tab is `/spec-registry/policy`, a different set of numbers) - they are
+per-specification, and the redesign's grill narrowed the record page to the fields
+above without naming this drop explicitly. The backend columns and their API
+contract (`updateSpecKey`'s `rank_weight` / `match_tolerance` / `match_decay` /
+`excluded_values` / `applies_when` / `value_weights`) are untouched and still work
+by direct API call; there is simply no UI for them after this redesign ships. Their
+removed copy, for whoever restores a UI for them:
+  - Preferences field hint: "A standing thumb on the scale, applied whether or not
+    the customer asked for it."
+  - Preference-outranks-class warning: "{weight} is more than a matching product
+    class is worth ({class match worth, 5}), so this preference outranks what the
+    customer asked for. Below {5} it breaks ties instead."
