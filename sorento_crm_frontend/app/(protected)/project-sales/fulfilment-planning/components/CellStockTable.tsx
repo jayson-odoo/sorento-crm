@@ -4,12 +4,18 @@ import * as React from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { PillOverflow, type PillItem } from '@/components/common/PillOverflow';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
 import {
   availableForProject,
   DEFAULT_POOL_SHARE_PCT,
   POOLS_SET,
 } from '../../_shared/lib/poolShare';
+import {
+  PILL_TONE,
+  SHORT_LABELS,
+  type SupplyKind,
+} from '../../_shared/lib/supplyVocabulary';
 import { StockDocumentsPanel } from './StockDocumentsPanel';
 import type {
   BoardCellLocation,
@@ -44,6 +50,9 @@ const NOT_STATED_TITLE =
 
 /** Nothing drawn: every row reads 0. Module-level, so it is not a new object per render. */
 const EMPTY_TAKEN: Map<string, string> = new Map();
+/** Nothing drawn, kept apart by kind: every Taken cell renders the number alone. */
+const EMPTY_TAKEN_KINDS: Map<string, { kind: SupplyKind; qty: string }[]> =
+  new Map();
 
 const WHERE_LABELS: Record<BoardLocationWhere, string> = {
   own: 'Own location',
@@ -100,6 +109,12 @@ export interface CellStockTableProps {
    * the table come to disagree about a line the planner has just amended.
    */
   taken?: Map<string, string>;
+  /**
+   * `taken`'s own breakdown by kind (S3b, R-J: `supplyVocabulary.takenKindsByLocation`) - one
+   * pill per part under the Taken figure, when a location was drawn on by more than one kind.
+   * A location with no entry, or one entry, renders the number alone; the number never moves.
+   */
+  takenKinds?: Map<string, { kind: SupplyKind; qty: string }[]>;
   /**
    * The cell's own contributing lines, passed down to the expanded documents panel so their
    * rows are tagged there. The table itself does not read them.
@@ -160,6 +175,7 @@ export const CellStockTable = React.forwardRef<
     locations,
     groupNote,
     taken,
+    takenKinds,
     lineIds,
     forLine,
     donor,
@@ -171,6 +187,7 @@ export const CellStockTable = React.forwardRef<
   ref,
 ) {
   const drawn = taken ?? EMPTY_TAKEN;
+  const drawnKinds = takenKinds ?? EMPTY_TAKEN_KINDS;
   /**
    * Which locations stand open. Several at once on purpose: a cell that draws on its own
    * location and on the shared pool is opened precisely to compare the two, and an accordion
@@ -441,6 +458,14 @@ export const CellStockTable = React.forwardRef<
                         // Signed and never clamped: a negative Available IS the shortfall, and the
                         // colour is what makes it the number the eye lands on.
                         const negative = column.signed && isNegative(value);
+                        // The Taken figure's own breakdown by kind (S3b, R-J): a location
+                        // this cell draws on from more than one kind - a Reserve off the
+                        // floor AND a borrow, say - gets a pill per part under the number.
+                        // One kind or none renders the number alone; the number never moves.
+                        const kinds =
+                          column.key === 'taken' && entry.location
+                            ? (drawnKinds.get(entry.location) ?? [])
+                            : [];
                         return (
                           <td
                             key={column.key}
@@ -457,6 +482,25 @@ export const CellStockTable = React.forwardRef<
                             >
                               {value ?? BLANK}
                             </span>
+                            {kinds.length > 1 && (
+                              <PillOverflow
+                                items={kinds.map((part, index) => ({
+                                  key: `${entry.location}-${part.kind}-${index}`,
+                                  label: `${SHORT_LABELS[part.kind]} ${part.qty}`,
+                                  tone: PILL_TONE[part.kind],
+                                }))}
+                                ariaLabel="Taken from"
+                                testId={`stock-taken-pills-${testKey}`}
+                                className="mt-0.5"
+                                renderPopover={(items: PillItem[]) => (
+                                  <div className="space-y-1">
+                                    {items.map((item) => (
+                                      <p key={item.key}>{item.label}</p>
+                                    ))}
+                                  </div>
+                                )}
+                              />
+                            )}
                           </td>
                         );
                       })}

@@ -443,8 +443,18 @@ describe('BoardCellBreakdownDialog: the table', () => {
     // SECTION 2'S word for the rung, off `SHORT_LABELS` - the same word the bar, the
     // legend and the Suggestion card use for this quantity. The strip used to speak
     // ladder v2's own names (Group take) beside a card saying "Own" about the same 40.
-    expect(screen.getByText(/Own 40/)).toBeInTheDocument();
-    expect(screen.getByText(/Buy 60/)).toBeInTheDocument();
+    // Scoped to the VISIBLE pill row (`sources-pills-<key>`), never to the whole document -
+    // `PillOverflow`'s own hidden measuring row repeats the same pill text off-screen so it
+    // can size itself, and a plain `getByText` finds that copy too.
+    const sourceTestId = `sources-pills-${key}`;
+    const sourcePills = within(screen.getByTestId(sourceTestId));
+    expect(sourcePills.getByText(/Own 40/)).toBeInTheDocument();
+    // At this width (jsdom's own zero) only the first pill shows; the rest folds behind
+    // "+1", which opens the SAME popover every pill does and states the whole composition.
+    fireEvent.click(sourcePills.getByText('+1'));
+    expect(screen.getByTestId(`${sourceTestId}-popover`).textContent).toContain(
+      'Buy60',
+    );
     // The rule's own sentence is behind the info icon now, not a plain `title` - so the
     // numbers above stay directly readable and only the prose needs a hover.
     expect(await sourceNoteOf(key)).toContain(
@@ -1358,7 +1368,7 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
    * It has to read as incoming stock rather than falling through to a bare code.
    */
   it('renders a timely SPO source as Incoming', () => {
-    renderServerCell([
+    const cell = renderServerCell([
       {
         kind: 'timely_spo',
         qty: '15',
@@ -1371,7 +1381,11 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
     ]);
     openLines();
 
-    expect(screen.getByText(/Incoming 15/)).toBeInTheDocument();
+    expect(
+      within(
+        screen.getByTestId(`sources-pills-${cell.contributions[0].key}`),
+      ).getByText(/Incoming 15/),
+    ).toBeInTheDocument();
   });
 
   /**
@@ -1465,7 +1479,7 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
 
   /** Deviation 8: Pool and Borrow never reach the board; they cross locations. */
   it('reads a timely SPO as Incoming in the row strip, not as a Reserve', () => {
-    renderServerCell([
+    const cell = renderServerCell([
       {
         kind: 'timely_spo',
         qty: '10',
@@ -1481,10 +1495,16 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
     ]);
     openLines();
 
-    expect(
-      screen.getByText('Incoming 10 at BRW-BB · Buy 5'),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/Reserve 10/)).not.toBeInTheDocument();
+    const sourceTestId = `sources-pills-${cell.contributions[0].key}`;
+    const sourcePills = within(screen.getByTestId(sourceTestId));
+    expect(sourcePills.getByText('Incoming 10 at BRW-BB')).toBeInTheDocument();
+    expect(sourcePills.queryByText(/Reserve 10/)).not.toBeInTheDocument();
+    // At this width (jsdom's own zero) only the first pill shows; the rest folds behind
+    // "+1", which opens the SAME popover every pill does and states the whole composition.
+    fireEvent.click(sourcePills.getByText('+1'));
+    expect(screen.getByTestId(`${sourceTestId}-popover`).textContent).toContain(
+      'Buy5',
+    );
   });
 });
 
@@ -1616,7 +1636,11 @@ describe('BoardCellBreakdownDialog: what was left for this line', () => {
     openLines();
 
     // A bare site code is the shared pool, whatever the line's own location is.
-    expect(screen.getByText(/BRW 9 at BRW/)).toBeInTheDocument();
+    expect(
+      within(
+        screen.getByTestId(`sources-pills-${cell.contributions[0].key}`),
+      ).getByText(/BRW 9 at BRW/),
+    ).toBeInTheDocument();
     const note = await shareNoteOf(cell);
     expect(note).toContain(
       '12 lines ahead wanting 1015 · 0 left for this line at BRW-BB',
@@ -2164,7 +2188,11 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     renderDialog(lines, freeStock);
     openLines();
 
-    expect(screen.getByText(/Own 100/)).toBeInTheDocument();
+    expect(
+      within(
+        screen.getByTestId(`sources-pills-${cell.contributions[0].key}`),
+      ).getByText(/Own 100/),
+    ).toBeInTheDocument();
     // The word is gone from the screen (the captain, 27 Aug); the flag stays on the row.
     expect(screen.queryByText('Contested')).toBeNull();
     // Both rows still carry a share sentence, now behind the icon rather than always visible.
@@ -2495,9 +2523,17 @@ describe('BoardCellBreakdownDialog: a line a decision already covers', () => {
     renderDialog([covered()]);
     openLines();
 
+    const testId = 'sources-pills-so-a|1|WESERP10B|2026-08-31';
+    const sourcePills = within(screen.getByTestId(testId));
     expect(
-      screen.getByText('Borrow (other) 10 from MWH-IB · Buy 33'),
+      sourcePills.getByText('Borrow (other) 10 from MWH-IB'),
     ).toBeInTheDocument();
+    // At this width (jsdom's own zero) only the first pill shows; the rest folds behind
+    // "+1", which opens the SAME popover every pill does and states the whole composition.
+    fireEvent.click(sourcePills.getByText('+1'));
+    expect(screen.getByTestId(`${testId}-popover`).textContent).toContain(
+      'Buy33',
+    );
   });
 
   it('says nothing about a queue it is not in', async () => {

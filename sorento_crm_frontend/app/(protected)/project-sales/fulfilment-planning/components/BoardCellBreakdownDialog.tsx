@@ -23,6 +23,7 @@ import {
 } from '@/components/ui/tooltip';
 import { StatCard } from '@/components/scm/StatCard';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { PillOverflow, type PillItem } from '@/components/common/PillOverflow';
 import {
   isSearchInFlight,
   useDebouncedSearch,
@@ -32,6 +33,7 @@ import { formatDateInMalaysia } from '@/lib/helpers';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
 import { OrderInquiryStatePill } from '../../_shared/components/OrderInquiryVerbPill';
 import {
+  PILL_TONE,
   SHORT_LABELS,
   contributionSuggestion,
   decisionBreakdown,
@@ -41,6 +43,7 @@ import {
   rowText,
   suggestionBreakdown,
   takenByLocation,
+  takenKindsByLocation,
 } from '../../_shared/lib/supplyVocabulary';
 import type { SuggestionRow } from '../../_shared/lib/supplyVocabulary';
 import { LADDER_VERSION } from '../../_shared/lib/supplyVocabulary';
@@ -58,11 +61,13 @@ import type {
   BoardContribution,
   BoardDecision,
   BoardDraft,
+  BoardLadderOption,
   BoardSource,
   CellStockTableHandle,
   StockDocumentMatch,
   StockDonorMatch,
 } from '../../_shared/types/fulfilmentPlanning.types';
+import type { SupplyKind } from '../../_shared/lib/supplyVocabulary';
 
 /**
  * The breakdown behind one cell, and the decision on it (PLAN 13, journey step 4).
@@ -170,6 +175,14 @@ export function BoardCellBreakdownDialog({
    */
   const taken = React.useMemo(
     () => takenByLocation(cell, draft),
+    [cell, draft],
+  );
+  /**
+   * The SAME draw, kept apart by kind (S3b, R-J), so the Taken cell can show a pill per part
+   * rather than folding a Reserve and a borrow at one location into one number.
+   */
+  const takenKinds = React.useMemo(
+    () => takenKindsByLocation(cell, draft),
     [cell, draft],
   );
   /**
@@ -620,40 +633,91 @@ export function BoardCellBreakdownDialog({
           <DataGridColumnHeader title="Sourced from" column={column} />
         ),
         cell: ({ row }) => {
-          // Merged per label AND location, in the order the ladder drew them. Question 1
+          const contribution = row.original;
+          // Merged per KIND (the ladder v8 SupplyKind, off `rowOf`) AND location, in the
+          // order the ladder drew them - one pill per merged source (S3b, R-J). Question 1
           // hands over TWO components at one location whenever part of the group's offer is
           // on the water (a `reserve` off the floor and a `timely_spo` off the SPO): both
-          // read "Use own location", so an unmerged strip printed the same words twice with
-          // two quantities, which reads as a defect rather than as one draw in two forms.
-          const merged: { label: string; at: string; minor: number }[] = [];
-          for (const source of row.original.sources) {
-            const label = sourceLabel(source, row.original.fulfilment_location);
+          // read "Own", so an unmerged strip printed the same word twice with two
+          // quantities, which reads as a defect rather than as one draw in two forms.
+          const merged: {
+            kind: SupplyKind | null;
+            label: string;
+            at: string;
+            minor: number;
+            representative: BoardSource;
+          }[] = [];
+          for (const source of contribution.sources) {
+            const kind = rowOf(source, contribution.fulfilment_location);
+            const label = kind ? SHORT_LABELS[kind] : 'Cannot be sourced';
             const at = sourceAt(source);
             const seen = merged.find((m) => m.label === label && m.at === at);
             if (seen) seen.minor += toMinor(source.qty);
-            else merged.push({ label, at, minor: toMinor(source.qty) });
+            else merged.push({ kind, label, at, minor: toMinor(source.qty), representative: source });
           }
-          const strip = merged
-            .map((m) => `${m.label} ${fromMinor(m.minor)}${m.at}`)
-            .join(' · ');
+          const pills: PillItem[] = merged.map((m, index) => ({
+            key: `${contribution.key}-source-${index}`,
+            label: `${m.label} ${fromMinor(m.minor)}${m.at}`,
+            tone: m.kind ? PILL_TONE[m.kind] : 'neutral',
+          }));
           // The engine's own sentences. `spo_number` and `arrival_date` are always null
           // because the SPO and its date are INSIDE the sentence (deviation 2), so the
           // sentence is the only place the fact exists and it may never be dropped - it moves
           // BEHIND the info icon rather than out of the row.
-          const why = row.original.sources
+          const why = contribution.sources
             .map((source) => source.reason)
             .join(' ');
-          const share = shareNote(row.original);
-          const unit = unitNote(row.original);
+          const share = shareNote(contribution);
+          const unit = unitNote(contribution);
           return (
             <div className="min-w-0">
-              <div className="flex items-start gap-1">
-                <span
-                  className="min-w-0 flex-1 truncate text-sm tabular-nums"
-                  title={strip}
-                >
-                  {strip}
-                </span>
+              <div className="flex items-center gap-1">
+                {pills.length === 0 ? (
+                  <span className="text-sm text-muted-foreground">
+                    Cannot be sourced
+                  </span>
+                ) : (
+                  <PillOverflow
+                    items={pills}
+                    ariaLabel="Sourced from"
+                    testId={`sources-pills-${contribution.key}`}
+                    className="min-w-0 flex-1"
+                    renderPopover={() => (
+                      <div className="space-y-2">
+                        {merged.map((m, index) => {
+                          const option = optionForRung(
+                            m.representative.rung,
+                            contribution.options ?? [],
+                          );
+                          return (
+                            <div
+                              key={index}
+                              data-testid={`source-popover-row-${contribution.key}-${index}`}
+                              className="space-y-0.5 border-b border-border pb-2 last:border-0 last:pb-0"
+                            >
+                              <div className="flex items-center justify-between gap-2 font-medium">
+                                <span>{m.label}</span>
+                                <span className="tabular-nums">
+                                  {fromMinor(m.minor)}
+                                </span>
+                              </div>
+                              {m.at.trim() && (
+                                <p className="text-muted-foreground">
+                                  {m.at.trim()}
+                                </p>
+                              )}
+                              {option && (
+                                <p className="text-muted-foreground">
+                                  {option.label}
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  />
+                )}
                 {/* The two prose sentences behind the numbers above - why this rung fired,
                     and what was left for this line at its own pile - under one visible icon
                     rather than a silent `title` nobody hovers or two lines of wrapped text
@@ -998,6 +1062,7 @@ export function BoardCellBreakdownDialog({
                 locations={shownLocations}
                 groupNote={cell.location_group_note}
                 taken={taken}
+                takenKinds={takenKinds}
                 lineIds={askingLineIds}
                 forLine={
                   cell.contributions.length > 1 && shownContribution
@@ -1329,6 +1394,36 @@ export function sourceAt(source: BoardContribution['sources'][number]): string {
   return source.kind === 'borrow'
     ? ` from ${source.location}`
     : ` at ${source.location}`;
+}
+
+/**
+ * The option row a source's pill "came from", for the Sourced-from popover (S3b, R-J: "the
+ * option row it came from").
+ *
+ * `source.rung` is the ENGINE'S OWN RUNG CONSTANT (`rowOf`'s vocabulary: `group_take`,
+ * `order_borrow`, `pool`, ...) and `options[].step` is the FIVE-ROW LADDER v8 vocabulary
+ * (`BoardLadderStep`); the two predate each other and do not share every spelling, so this is
+ * a best-effort match rather than a lookup - `group_take` reads as the `use` step (both
+ * halves of it), a `pool` rung reads as `pool_share` (falling back to the legacy `pool` step a
+ * frozen v7.1 trail may still carry), and everything else already spells the same word in
+ * both vocabularies. A rung with no matching step (the retired `cross_group_borrow` /
+ * `group_borrow`, frozen-snapshot only) returns nothing rather than a wrong guess.
+ */
+function optionForRung(
+  rung: string | null | undefined,
+  options: BoardLadderOption[],
+): BoardLadderOption | undefined {
+  if (!rung) return undefined;
+  const step =
+    rung === 'group_take'
+      ? 'use'
+      : rung === 'pool'
+        ? 'pool_share'
+        : rung;
+  const found = options.find((option) => option.step === step);
+  if (found) return found;
+  if (step === 'pool_share') return options.find((option) => option.step === 'pool');
+  return undefined;
 }
 
 /**
