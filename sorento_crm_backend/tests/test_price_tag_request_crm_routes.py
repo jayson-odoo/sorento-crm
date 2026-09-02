@@ -457,3 +457,76 @@ class TestTheDetailCarriesHasCompletedExport:
         _seed_completed_export(db, request.id)
 
         assert client.get(f"{_BASE}/{request.id}").json()["has_completed_export"] is True
+
+
+# ---------------------------------------------------------------------------
+# The design route only writes from a status the FE's own Lines tab /
+# header would offer Design from (PLAN-price-tag-feedback-r2 S10 review):
+# ``save_tag_sheet_design`` wrote a PageVersion in ANY status before this,
+# so a stale tab on an approved/void/ready request could still overwrite
+# the tag sheet doc after the record had moved on.
+# ---------------------------------------------------------------------------
+
+
+class TestTheDesignRouteOnlySavesFromADesignableStatus:
+    @staticmethod
+    def _page_version_count(db, request_id: str) -> int:
+        from app.models.dealer_kit import PageVersion
+        from app.models.price_tag import PriceTagRequest
+
+        row = (
+            db.query(PriceTagRequest).filter(PriceTagRequest.id == request_id).first()
+        )
+        db.expire(row)
+        return (
+            db.query(PageVersion)
+            .filter(PageVersion.page_id == row.page_id)
+            .count()
+        )
+
+    def test_designing_may_save(self, api):
+        """Claim moves the request to ``designing`` and creates its page - the
+        one status every request reaches this route through in practice."""
+        client, db = api
+        request, _contact = _submitted_request(db)
+        assert client.post(f"{_BASE}/{request.id}/claim").status_code == 200
+
+        resp = client.put(
+            f"{_BASE}/{request.id}/design",
+            json={"doc": {"kind": "tag_sheet", "sheets": []}},
+        )
+
+        assert resp.status_code == 200, resp.text
+        assert self._page_version_count(db, request.id) == 1
+
+    @pytest.mark.parametrize(
+        "target_status",
+        ["void", "approved", "ready"],
+    )
+    def test_refuses_to_save_once_the_request_has_moved_past_designing(
+        self, api, target_status
+    ):
+        client, db = api
+        request, _contact = _submitted_request(db)
+        assert client.post(f"{_BASE}/{request.id}/claim").status_code == 200
+
+        # Walk the real transition graph to the target status rather than
+        # writing the column directly, so this exercises exactly the states a
+        # request can actually be in.
+        path = {
+            "void": ["void"],
+            "approved": ["proof_ready", "approved"],
+            "ready": ["proof_ready", "approved", "ready"],
+        }[target_status]
+        for status in path:
+            PriceTagRequestService.transition_status(db, request.id, status)
+        db.commit()
+
+        before = self._page_version_count(db, request.id)
+        resp = client.put(
+            f"{_BASE}/{request.id}/design",
+            json={"doc": {"kind": "tag_sheet", "sheets": []}},
+        )
+
+        assert resp.status_code == 409, resp.text
+        assert self._page_version_count(db, request.id) == before

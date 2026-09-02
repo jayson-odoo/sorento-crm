@@ -303,7 +303,12 @@ def save_tag_sheet_design(
     user: dict = Depends(_PROCESS),
 ):
     """Save a new page_version for the request's tag_sheet page."""
-    _req, page = _require_request_page(db, request_id)
+    req, page = _require_request_page(db, request_id)
+    # The FE only ever reaches this route from a status the Lines tab / header
+    # already gated Design on (review: this route wrote a PageVersion in ANY
+    # status, so a stale tab on an approved/void/ready request could still
+    # save a design over the record).
+    PriceTagRequestService.validate_designable(req)
 
     current_max = (
         db.query(func.max(PageVersion.version))

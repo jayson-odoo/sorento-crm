@@ -19,8 +19,14 @@ import type { TagLayer, TagTemplateDoc } from '@/lib/dealer-kit/tag-template-typ
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 const push = vi.fn();
+const replace = vi.fn();
+// Empty by default; the ?line= preselection tests below build their own
+// URLSearchParams and stub this per-test.
+let searchParams = new URLSearchParams();
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push, replace: vi.fn(), refresh: vi.fn(), prefetch: vi.fn() }),
+  useRouter: () => ({ push, replace, refresh: vi.fn(), prefetch: vi.fn() }),
+  usePathname: () => '/dealer-kit/price-tag-requests/req-1/design',
+  useSearchParams: () => searchParams,
 }));
 
 vi.mock('@/app/(protected)/dealer-kit/tag-templates/components/useTagBindings', () => ({
@@ -281,6 +287,9 @@ beforeEach(() => {
   canvasDocs.length = 0;
   mockListTemplates.mockReset();
   mockResolveRequestLines.mockReset();
+  searchParams = new URLSearchParams();
+  push.mockReset();
+  replace.mockReset();
 });
 
 // ---------------------------------------------------------------------------
@@ -667,5 +676,95 @@ describe('RequestTagDesigner - autosave (D22, AC-S8-3)', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ?line= preselection (S10): the detail page's Lines tab opens the designer
+// on a SPECIFIC line rather than whichever one this page would default to.
+// ---------------------------------------------------------------------------
+
+describe('RequestTagDesigner - ?line= preselection', () => {
+  const lineA = line({ id: 'line-a', product_id: 'prod-a', code: 'AAA-1' });
+  const lineB = line({ id: 'line-b', product_id: 'prod-b', code: 'BBB-2' });
+
+  it('defaults to the first line when there is no ?line= param', async () => {
+    mockListTemplates.mockResolvedValue([]);
+    mockResolveRequestLines.mockResolvedValue([
+      lineTagData({ line_id: 'line-a', code: 'AAA-1' }),
+      lineTagData({ line_id: 'line-b', code: 'BBB-2' }),
+    ]);
+
+    renderDesigner(request({ lines: [lineA, lineB] }));
+
+    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+    const group = canvasDocs[canvasDocs.length - 1].doc.layers.find(
+      (l) => l.props.kind === 'group',
+    );
+    expect(group?.props).toMatchObject({ binding: { product_id: 'prod-a' } });
+  });
+
+  it('preselects the line named by ?line=, not the first one', async () => {
+    searchParams = new URLSearchParams('line=line-b');
+    mockListTemplates.mockResolvedValue([]);
+    mockResolveRequestLines.mockResolvedValue([
+      lineTagData({ line_id: 'line-a', code: 'AAA-1' }),
+      lineTagData({ line_id: 'line-b', code: 'BBB-2' }),
+    ]);
+
+    renderDesigner(request({ lines: [lineA, lineB] }));
+
+    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+    const group = canvasDocs[canvasDocs.length - 1].doc.layers.find(
+      (l) => l.props.kind === 'group',
+    );
+    expect(group?.props).toMatchObject({ binding: { product_id: 'prod-b' } });
+  });
+
+  it('falls back to the first line when ?line= names a line not on this request', async () => {
+    searchParams = new URLSearchParams('line=not-a-real-line');
+    mockListTemplates.mockResolvedValue([]);
+    mockResolveRequestLines.mockResolvedValue([
+      lineTagData({ line_id: 'line-a', code: 'AAA-1' }),
+      lineTagData({ line_id: 'line-b', code: 'BBB-2' }),
+    ]);
+
+    renderDesigner(request({ lines: [lineA, lineB] }));
+
+    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+    const group = canvasDocs[canvasDocs.length - 1].doc.layers.find(
+      (l) => l.props.kind === 'group',
+    );
+    expect(group?.props).toMatchObject({ binding: { product_id: 'prod-a' } });
+  });
+
+  it('strips ?line= from the URL once applied, so a refresh does not snap back to it', async () => {
+    searchParams = new URLSearchParams('line=line-b');
+    mockListTemplates.mockResolvedValue([]);
+    mockResolveRequestLines.mockResolvedValue([
+      lineTagData({ line_id: 'line-a', code: 'AAA-1' }),
+      lineTagData({ line_id: 'line-b', code: 'BBB-2' }),
+    ]);
+
+    renderDesigner(request({ lines: [lineA, lineB] }));
+
+    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+    expect(replace).toHaveBeenCalledWith(
+      '/dealer-kit/price-tag-requests/req-1/design',
+      { scroll: false },
+    );
+  });
+
+  it('leaves the URL alone when there was no ?line= to strip', async () => {
+    mockListTemplates.mockResolvedValue([]);
+    mockResolveRequestLines.mockResolvedValue([
+      lineTagData({ line_id: 'line-a', code: 'AAA-1' }),
+      lineTagData({ line_id: 'line-b', code: 'BBB-2' }),
+    ]);
+
+    renderDesigner(request({ lines: [lineA, lineB] }));
+
+    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+    expect(replace).not.toHaveBeenCalled();
   });
 });
