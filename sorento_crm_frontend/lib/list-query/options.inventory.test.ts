@@ -306,6 +306,22 @@ describe('every paginated list hook spreads LIST_QUERY_OPTIONS (M4-01)', () => {
     expect(blocks).toHaveLength(1);
     expect(extractQueryKeyValue(blocks[0].block)).toBe('ordersListQueryKey(params)');
   });
+
+  it('every allowlist entry still exists', () => {
+    for (const rel of Object.keys(ALLOWLIST)) {
+      const full = path.join(ROOT, rel);
+      expect(fs.existsSync(full), `${rel} is allowlisted but gone`).toBe(true);
+    }
+
+    // useMcpAdmin's reason is an unpaginated catalogue - if it ever gained
+    // `manualPagination`, it would no longer be one, and the M4-01b walk
+    // below would need to own this grid instead of this file staying silent.
+    const mcpAdmin = fs.readFileSync(
+      path.join(ROOT, 'app/(protected)/system-management/mcp-tools/hooks/useMcpAdmin.ts'),
+      'utf8',
+    );
+    expect(mcpAdmin).not.toContain('manualPagination');
+  });
 });
 
 /**
@@ -529,6 +545,17 @@ describe('every server-paged grid forwards isPlaceholderData (M4-01b)', () => {
       expect(fs.existsSync(full), `${rel} is allowlisted but gone`).toBe(true);
       expect(fs.readFileSync(full, 'utf8')).toContain('manualPagination: true');
     }
+
+    // PriceTagRequestsList's reason is "fetches in a useEffect, not
+    // react-query" - pin that claim too, not just that paging stays off.
+    const priceTagRaw = fs.readFileSync(
+      path.join(
+        ROOT,
+        'app/(protected)/dealer-kit/price-tag-requests/components/PriceTagRequestsList.tsx',
+      ),
+      'utf8',
+    );
+    expect(priceTagRaw).not.toContain('useQuery');
   });
 
   it('the two spec grids are allowlisted on a claim the code still makes', () => {

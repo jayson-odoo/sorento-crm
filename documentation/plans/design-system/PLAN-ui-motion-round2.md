@@ -6,7 +6,7 @@
 > `documentation/reference/DESIGN-LANGUAGE.md` (outranks the installed design skills).
 
 **Slug:** `ui-motion-round2` | **Domain:** design-system (cross-cutting)
-**Status:** IN PROGRESS - M4 built, three fix rounds applied, browser run 2 green (evidence/M4), ready for review. Audit 2 Sep 2026
+**Status:** IN PROGRESS - M4 built, three fix rounds, browser runs 2 and 3 green (evidence/M4), PR open. Audit 2 Sep 2026
 (three read-only sweeps of `origin/main` e1adad4d2 with `review-animations`,
 `find-animation-opportunities`, `emil-design-eng`, `apple-design`); user
 approved all seven slices on the lavish review page 2 Sep 2026, order M4, M1+M2, M3, M5, M6, M7.
@@ -76,7 +76,7 @@ query, and the inventory tests are what keep both halves true.
   placeholderData: keepPreviousData } as const satisfies Partial<UseQueryOptions>`.
   Every paginated list hook spreads it: `useQuery({ ...LIST_QUERY_OPTIONS,
   queryKey, queryFn })`. The 3 hooks that already set it (e.g.
-  `useIntegrationLogs.ts:62`) use the constant instead. Shipped: 128 spread
+  `useIntegrationLogs.ts:62`) use the constant instead. Shipped: 126 spread
   sites across 101 files, with 2 allowlisted refusals (`hooks/useListPager.ts`,
   `mcp-tools/hooks/useMcpAdmin.ts` - see the walk descriptions below).
 - **`isPlaceholderData` is forwarded at the call site, always.** The spread
@@ -135,7 +135,7 @@ query, and the inventory tests are what keep both halves true.
     no query to report a placeholder window, so it is allowlisted rather than
     converted. Moving those to react-query is its own piece of work.
 - `providers/query-provider.tsx`: `defaultOptions.queries = { retry: 1, staleTime:
-  30_000, refetchOnWindowFocus: false }`. The 176 per-hook `refetchOnWindowFocus: false`
+  30_000, refetchOnWindowFocus: false }`. The 173 per-hook `refetchOnWindowFocus: false`
   repeats are deleted in the same PR (mechanical, one module per commit).
   `useProducts.ts:52` and `useOrders.ts:108` drop `staleTime: Infinity` (the default
   now applies).

@@ -13,7 +13,7 @@ Baseline measured on `origin/main` e1adad4d2, 2 Sep 2026.
 - **M4-01** `[vitest]` A shared `LIST_QUERY_OPTIONS` exists in `lib/list-query/` and every list
   hook whose `queryKey` carries page, size, sort, filter or search state spreads it. An
   inventory test enumerates the hooks and fails on any miss. Baseline: 3 of 63 with
-  `placeholderData`; shipped: 128 spread sites across 101 files. This walk reads
+  `placeholderData`; shipped: 126 spread sites across 101 files. This walk reads
   `queryKey` text, so it is the hook-side FLOOR, not the whole rule - a hook keyed on a
   bare `filters` or `query` identifier names nothing it can see, and widening it to those
   two words would flag every report and detail query that keys on the same nouns. M4-01b's
