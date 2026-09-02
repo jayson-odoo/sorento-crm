@@ -352,10 +352,11 @@ function DataGridTableBody({ children }: { children: ReactNode }) {
  * `DataGridTableBody` - rather than throwing them away. `DataGridPagination`
  * calls this same hook to decide whether to draw its own two skeleton bars, so
  * the pager and the rows cannot disagree about what a first load is (M4-02,
- * M4-03). It lives here, not at the call sites, so all three body render paths
- * (plain, column-drag, row-drag) and every grid built on them behave the same.
+ * M4-03). It lives here, not at the call sites, so all four body render paths
+ * (plain, column-drag, row-drag, and the drive's own list body) and every grid
+ * built on them behave the same.
  *
- * The `pageSize` clause is what makes the three render paths safe to write
+ * The `pageSize` clause is what makes those render paths safe to write
  * `Array.from({ length: pagination.pageSize })` without re-testing it.
  */
 function useBodySkeleton(): boolean {

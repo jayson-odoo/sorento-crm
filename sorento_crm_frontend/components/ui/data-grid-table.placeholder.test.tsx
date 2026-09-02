@@ -223,3 +223,40 @@ describe('DataGridTable gates the body skeleton on having no rows (M4-02)', () =
     expect(tbody.className).not.toContain('opacity-60');
   });
 });
+
+/**
+ * The skeleton gate is defined once, and nothing outside this file re-states it.
+ *
+ * `useBodySkeleton` exists because the same decision was being made at four
+ * render paths, and the two that were written by hand did not carry the
+ * column-preferences clause: they painted rows under the default layout and
+ * re-laid them out a tick later. A grep is the only check that catches the
+ * FIFTH copy, on the day it is written, before it has drifted.
+ */
+describe('the body skeleton gate lives in exactly one place', () => {
+  it('no file re-states loadingMode === skeleton outside data-grid-table.tsx', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const root = path.resolve(__dirname, '..', '..');
+
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name === 'node_modules' || entry.name === '.next') continue;
+          walk(full);
+        } else if (/\.(ts|tsx)$/.test(entry.name) && !/\.(test|spec)\./.test(entry.name)) {
+          files.push(full);
+        }
+      }
+    };
+    for (const dir of ['app', 'components']) walk(path.join(root, dir));
+
+    const restated = files
+      .filter((f) => fs.readFileSync(f, 'utf8').includes("loadingMode === 'skeleton'"))
+      .map((f) => path.relative(root, f));
+
+    expect(restated).toEqual(['components/ui/data-grid-table.tsx']);
+  });
+});
