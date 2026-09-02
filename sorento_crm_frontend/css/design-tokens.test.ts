@@ -400,3 +400,151 @@ describe('S2-06 motion tokens', () => {
     expect(sheet).toContain('surfaceTransition(');
   });
 });
+
+/**
+ * M1-02 .. M1-04 - motion perimeter hygiene, widened from `components/ui`
+ * (S2-06 above) out to `app/**`, `components/**` and `css/**`. The audit that
+ * sized this slice found 12 `transition-all` sites and 10 literal `duration-N`
+ * classes outside `components/ui`; this is the guardrail that keeps both at
+ * zero (or explicitly, narrowly allowlisted) from here on.
+ *
+ * Same reasoning as the other inventory tests in this repo: these are source
+ * scans, not renders, because the property being asserted ("nothing in the
+ * whole tree does X") is not one a mounted component can speak for.
+ */
+describe('M1 motion perimeter hygiene', () => {
+  /**
+   * `app/components/layouts/demo2` through `demo10` are vendor Metronic shells
+   * with zero live routes - see the identical exclusion, and its justification,
+   * in `components/ui/a11y-guardrails.inventory.test.ts`. Scanning them here
+   * would force a "fix" on dead markup nothing in the app can reach; `demo1` (the
+   * layout `app/(protected)/layout.tsx` actually mounts) is NOT excluded.
+   */
+  const DEAD_LAYOUT_PREFIX = /^app\/components\/layouts\/demo(?:[2-9]|10)\//;
+
+  function sourceFiles(): string[] {
+    const out: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of fs.readdirSync(path.join(root, dir), { withFileTypes: true })) {
+        const rel = path.posix.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name === 'node_modules' || entry.name === '.next') continue;
+          walk(rel);
+        } else if (/\.(tsx?|css)$/.test(entry.name) && !entry.name.includes('.test.')) {
+          if (DEAD_LAYOUT_PREFIX.test(rel)) continue;
+          out.push(rel);
+        }
+      }
+    };
+    walk('app');
+    walk('components');
+    walk('css');
+    return out;
+  }
+
+  const files = sourceFiles();
+
+  /**
+   * A comment MENTIONING a class token (the OTP caret note) must not read as the
+   * class itself. Blanks out comment bodies char-by-char rather than deleting
+   * them, so every line number below the comment stays what `grep`/the editor
+   * would report - a multi-line `/* ... *\/` collapsed by a plain `.replace(..., '')`
+   * shifts every later match's reported line by the comment's own height.
+   */
+  function stripBlockComments(src: string): string {
+    return src.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '));
+  }
+
+  describe('M1-02 no transition-all, no bare `transition` shorthand', () => {
+    it('leaves zero transition-all sites (audit baseline: 12)', () => {
+      const offenders: string[] = [];
+      for (const file of files) {
+        const src = stripBlockComments(read(file));
+        src.split('\n').forEach((line, i) => {
+          if (/\btransition-all\b/.test(line) || /transition:\s*all\b/.test(line)) {
+            offenders.push(`${file}:${i + 1}`);
+          }
+        });
+      }
+      expect(offenders).toEqual([]);
+    });
+
+    it('leaves zero bare `transition` (multi-property shorthand) utility classes', () => {
+      // A bare `transition` is only a Tailwind utility, not the English word (a
+      // "status transition", a destructured `transition` value from useSortable /
+      // motion), when the same line also names one of its own steps - `duration-`
+      // or `ease-`. Every real class-string site pairs the two; nothing else does.
+      const offenders: string[] = [];
+      for (const file of files) {
+        const src = stripBlockComments(read(file));
+        src.split('\n').forEach((line, i) => {
+          const isBareTransitionToken = /(^|[\s'"`])transition($|[\s'"`])/.test(line);
+          const namesItsOwnStep = /\bduration-|\bease-/.test(line);
+          if (isBareTransitionToken && namesItsOwnStep) offenders.push(`${file}:${i + 1}`);
+        });
+      }
+      expect(offenders).toEqual([]);
+    });
+  });
+
+  describe('M1-03 no literal duration-<N>, no ease-in on an entering element', () => {
+    /**
+     * Every entry here is a documented exception, not a miss: the OTP caret's
+     * blink PERIOD (not a transition), and the three countdown/panel bars M3
+     * converts to a `scaleX` transform on the tokens.
+     */
+    const DURATION_ALLOWLIST: Record<string, string> = {
+      'components/ui/input-otp.tsx:54': 'OTP caret blink PERIOD, not a transition duration',
+      'app/(protected)/sla-management/conversation-sla-tracking/components/TakeoverCountdown.tsx:85':
+        'M3 converts this bar to a scaleX transform on the tokens',
+      'components/common/DeferredActionButton.tsx:99':
+        'M3 converts this bar to a scaleX transform on the tokens',
+      'components/common/ActivitiesNotesPanel/EntityActivitiesLayout.tsx:144':
+        'M3 stops animating margin here; the literal duration is untouched by M1',
+    };
+
+    it('leaves zero literal duration-<N> classes outside the allowlist (audit baseline: 10)', () => {
+      const offenders: string[] = [];
+      for (const file of files) {
+        // css/** is out of scope for this assertion (M1-03 globs are app/** and
+        // components/**); css/** literal timings are covered by M1-02 and the
+        // ease-in check below instead.
+        if (!file.startsWith('app/') && !file.startsWith('components/')) continue;
+        const src = stripBlockComments(read(file));
+        src.split('\n').forEach((line, i) => {
+          if (/\bduration-\d+\b/.test(line)) {
+            const key = `${file}:${i + 1}`;
+            if (!DURATION_ALLOWLIST[key]) offenders.push(key);
+          }
+        });
+      }
+      expect(offenders).toEqual([]);
+    });
+
+    /** The two accepted alternating pulses - guide-spotlight and takeover-flash - repeat
+     * forever and never "enter", which is what the hard-fail in DESIGN-LANGUAGE.md
+     * section 3 actually bans. */
+    const EASE_IN_ALLOWLIST = new Set(['css/styles.css:49', 'css/styles.css:73']);
+
+    it('leaves zero ease-in/ease-in-out on an entering element outside the allowlist', () => {
+      const offenders: string[] = [];
+      for (const file of files) {
+        const src = stripBlockComments(read(file));
+        src.split('\n').forEach((line, i) => {
+          if (/\bease-in\b/.test(line)) {
+            const key = `${file}:${i + 1}`;
+            if (!EASE_IN_ALLOWLIST.has(key)) offenders.push(key);
+          }
+        });
+      }
+      expect(offenders).toEqual([]);
+    });
+  });
+
+  describe('M1-04 raw cubic-bezier stays in config.reui.css only', () => {
+    it('leaves zero raw cubic-bezier( outside css/config.reui.css', () => {
+      const offenders = files.filter((file) => file !== 'css/config.reui.css' && read(file).includes('cubic-bezier('));
+      expect(offenders).toEqual([]);
+    });
+  });
+});
