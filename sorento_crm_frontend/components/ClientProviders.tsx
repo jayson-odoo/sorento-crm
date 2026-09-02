@@ -6,8 +6,8 @@ import { AuthProvider } from '@/providers/auth-provider';
 import { SettingsProvider } from '@/providers/settings-provider';
 import { ThemeProvider } from '@/providers/theme-provider';
 import { I18nProvider } from '@/providers/i18n-provider';
-import { TooltipsProvider } from '@/providers/tooltips-provider';
 import { ModulesProvider } from '@/providers/modules-provider';
+import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
 
 /**
@@ -22,12 +22,15 @@ export function ClientProviders({ children }: { children: ReactNode }) {
         <SettingsProvider>
           <ThemeProvider>
             <I18nProvider>
-              <TooltipsProvider>
+              {/* The ONE TooltipProvider for the whole app (M2-07) - a second
+                  one anywhere below this shadows the shared 700ms-first/
+                  300ms-sibling rhythm for its own subtree. */}
+              <TooltipProvider delayDuration={700} skipDelayDuration={300}>
                 <ModulesProvider>
                   {children}
                   <Toaster />
                 </ModulesProvider>
-              </TooltipsProvider>
+              </TooltipProvider>
             </I18nProvider>
           </ThemeProvider>
         </SettingsProvider>

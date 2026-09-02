@@ -23,7 +23,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { ListQueryExportDialog } from '@/components/list/ListQueryExportDialog';
 import { ListQueryFilterDialog } from '@/components/list/ListQueryFilterDialog';
 import { generateExcelFile, type ColumnOption } from '@/lib/excel-utils';
@@ -407,7 +407,7 @@ export function DataGridListToolbar<TData extends object>({
     );
 
   return (
-    <TooltipProvider>
+    <>
      <div data-slot="data-grid-list-toolbar" className="flex w-full flex-col gap-2 py-5">
       {/* `flex-wrap`: at a narrow desktop width the two clusters used to push each
           other past the viewport edge instead of stacking, so Quick filters and
@@ -702,6 +702,6 @@ export function DataGridListToolbar<TData extends object>({
           workflowDefinitionId={filters.workflowDefinitionId}
         />
       ) : null}
-    </TooltipProvider>
+    </>
   );
 }

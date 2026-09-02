@@ -1,12 +1,7 @@
 'use client';
 
 import { Star } from 'lucide-react';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useQuickAccess, useAddQuickAccess } from '@/hooks/useQuickAccess';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { cn } from '@/lib/utils';
@@ -45,33 +40,31 @@ export function MenuItemPinButton({ path, title, className, size = 'default' }: 
   };
 
   return (
-    <TooltipProvider delayDuration={300}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span
-            role="button"
-            tabIndex={0}
-            aria-label={isPinned ? 'In Quick Access' : 'Add to Quick Access'}
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          role="button"
+          tabIndex={0}
+          aria-label={isPinned ? 'In Quick Access' : 'Add to Quick Access'}
+          className={cn(
+            'inline-flex shrink-0 items-center justify-center rounded-md opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+            size === 'sm' ? 'size-6' : 'size-7',
+            className
+          )}
+          onClick={handleClick}
+          onKeyDown={handleKeyDown}
+        >
+          <Star
             className={cn(
-              'inline-flex shrink-0 items-center justify-center rounded-md opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
-              size === 'sm' ? 'size-6' : 'size-7',
-              className
+              iconSize,
+              isPinned ? 'fill-primary text-primary' : 'text-muted-foreground'
             )}
-            onClick={handleClick}
-            onKeyDown={handleKeyDown}
-          >
-            <Star
-              className={cn(
-                iconSize,
-                isPinned ? 'fill-primary text-primary' : 'text-muted-foreground'
-              )}
-            />
-          </span>
-        </TooltipTrigger>
-        <TooltipContent side="right">
-          {isPinned ? 'In Quick Access' : 'Add to Quick Access'}
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+          />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="right">
+        {isPinned ? 'In Quick Access' : 'Add to Quick Access'}
+      </TooltipContent>
+    </Tooltip>
   );
 }
