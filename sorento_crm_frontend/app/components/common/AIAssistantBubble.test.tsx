@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 /**
  * UAC AC-N5(c): the global assistant launcher is a slim edge tab pinned to the
@@ -105,14 +105,16 @@ describe('AIAssistantBubble collapse to the side', () => {
     expect(screen.queryByRole('heading', { name: 'AI assistant' })).toBeNull();
   });
 
-  it('expands on click, replacing the handle with the panel', () => {
+  it('expands on click, replacing the handle with the panel', async () => {
     render(<AIAssistantBubble />);
     fireEvent.click(handle());
 
     expect(screen.getByTestId('ai-assistant-panel')).toBeDefined();
     expect(screen.getByRole('heading', { name: 'AI assistant' })).toBeDefined();
-    // The handle unmounts while expanded, so the two can never overlap.
-    expect(screen.queryByTestId('ai-assistant-tab')).toBeNull();
+    // The handle now fades out over --duration-fast (M3-07) rather than
+    // unmounting on the same tick, so it stays mounted for its own exit -
+    // it still unmounts once that exit completes, and the two never overlap.
+    await waitFor(() => expect(screen.queryByTestId('ai-assistant-tab')).toBeNull());
     expect(collapseButton().getAttribute('aria-expanded')).toBe('true');
   });
 
@@ -139,12 +141,15 @@ describe('AIAssistantBubble collapse to the side', () => {
     expect(window.localStorage.getItem(OPEN_STORAGE_KEY)).toBe('0');
   });
 
-  it('restores the expanded panel from localStorage', () => {
+  it('restores the expanded panel from localStorage', async () => {
     window.localStorage.setItem(OPEN_STORAGE_KEY, '1');
     render(<AIAssistantBubble />);
 
+    // `open` starts false and flips true from an effect reading localStorage,
+    // so the handle briefly mounts before exiting (M3-07's fade) - same
+    // "expands" path as a click, just effect-driven instead of user-driven.
     expect(screen.getByTestId('ai-assistant-panel')).toBeDefined();
-    expect(screen.queryByTestId('ai-assistant-tab')).toBeNull();
+    await waitFor(() => expect(screen.queryByTestId('ai-assistant-tab')).toBeNull());
   });
 
   it('stays collapsed when localStorage says collapsed', () => {
@@ -162,5 +167,69 @@ describe('AIAssistantBubble collapse to the side', () => {
 
     fireEvent.click(collapseButton());
     expect(document.activeElement).toBe(handle());
+  });
+});
+
+describe('AIAssistantBubble resize (M3-07)', () => {
+  beforeEach(() => {
+    hasPermission.mockReturnValue(true);
+    window.localStorage.clear();
+  });
+
+  it('does not re-render on pointermove, only once on pointerup', () => {
+    const onRender = vi.fn();
+    render(
+      <React.Profiler id="ai-bubble" onRender={onRender}>
+        <AIAssistantBubble />
+      </React.Profiler>,
+    );
+    fireEvent.click(handle());
+    const corner = screen.getByTestId('ai-assistant-resize-corner');
+    onRender.mockClear();
+
+    fireEvent.pointerDown(corner, { clientX: 100, clientY: 100, pointerId: 1 });
+    // pointerdown only arms local listeners - no state write, so no render.
+    expect(onRender).not.toHaveBeenCalled();
+
+    fireEvent.pointerMove(corner, { clientX: 90, clientY: 90, pointerId: 1 });
+    fireEvent.pointerMove(corner, { clientX: 70, clientY: 60, pointerId: 1 });
+    fireEvent.pointerMove(corner, { clientX: 40, clientY: 30, pointerId: 1 });
+    // Every move so far wrote straight to the panel's own DOM style, rAF-
+    // throttled - none of it went through React state.
+    expect(onRender).not.toHaveBeenCalled();
+
+    fireEvent.pointerUp(corner, { clientX: 40, clientY: 30, pointerId: 1 });
+    // The one point a re-render is needed - to persist the final size.
+    expect(onRender).toHaveBeenCalledTimes(1);
+  });
+
+  it('writes the dragged size to the panel element during the move', async () => {
+    render(<AIAssistantBubble />);
+    fireEvent.click(handle());
+    const panel = screen.getByTestId('ai-assistant-panel');
+    const corner = screen.getByTestId('ai-assistant-resize-corner');
+    const startWidth = panel.style.width;
+
+    fireEvent.pointerDown(corner, { clientX: 100, clientY: 100, pointerId: 1 });
+    fireEvent.pointerMove(corner, { clientX: 40, clientY: 40, pointerId: 1 });
+    // The write is rAF-throttled - real timers here, so wait one real frame.
+    await act(async () => {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+    });
+
+    // Dragging the corner up-left grows both dimensions - written directly
+    // onto the panel's style, independent of whether React has re-rendered.
+    expect(panel.style.width).not.toBe(startWidth);
+
+    fireEvent.pointerUp(corner, { clientX: 40, clientY: 40, pointerId: 1 });
+  });
+
+  it('renders the collapsed handle as a motion element with an opacity exit', () => {
+    render(<AIAssistantBubble />);
+    // React 19's dev warning aside, the underlying DOM node is still a real
+    // <button> - motion.button renders one. The exit behaviour itself
+    // (fading rather than vanishing) is covered by the "expands on click"
+    // test above, which has to `waitFor` the unmount.
+    expect(handle().tagName).toBe('BUTTON');
   });
 });

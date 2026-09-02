@@ -253,6 +253,14 @@ export default function AIAssistantBubble() {
   // keeps the move/up pair routed to this handle even once the finger/pointer
   // has left it - the resize tracks 1:1 the whole way, not just while directly
   // over a 6px strip.
+  //
+  // M3-07: `onMove` writes straight to the panel's own DOM style, rAF-throttled -
+  // it does NOT call `setBubbleSize` on every pointer move. A resize can fire
+  // pointermove dozens of times a second, and every one of those used to
+  // re-render this whole component (a long message transcript included) just to
+  // resize a `<div>`; state only commits once, on pointerup, which is also the
+  // one point a re-render is actually needed (to persist the size and let the
+  // rest of the tree see the final value).
   const startResize = useCallback(
     (axis: 'top' | 'left' | 'corner') => (e: React.PointerEvent<HTMLDivElement>) => {
       e.preventDefault();
@@ -266,6 +274,16 @@ export default function AIAssistantBubble() {
       const prevUserSelect = document.body.style.userSelect;
       document.body.style.userSelect = 'none';
 
+      let raf = 0;
+      let latest: BubbleSize | null = null;
+      const flush = () => {
+        raf = 0;
+        const panel = panelRef.current;
+        if (!latest || !panel) return;
+        panel.style.width = `${latest.width}px`;
+        panel.style.height = `${latest.height}px`;
+      };
+
       const onMove = (ev: PointerEvent) => {
         // Dragging up (decreasing Y) increases height; left (decreasing X) increases width.
         const dx = startX - ev.clientX;
@@ -274,15 +292,17 @@ export default function AIAssistantBubble() {
         let nextH = startH;
         if (axis === 'left' || axis === 'corner') nextW = startW + dx;
         if (axis === 'top' || axis === 'corner') nextH = startH + dy;
-        setBubbleSize(clampSize({ width: nextW, height: nextH }));
+        latest = clampSize({ width: nextW, height: nextH });
+        if (!raf) raf = requestAnimationFrame(flush);
       };
       const onUp = (ev: PointerEvent) => {
         handle.releasePointerCapture(ev.pointerId);
         handle.removeEventListener('pointermove', onMove);
         handle.removeEventListener('pointerup', onUp);
         document.body.style.userSelect = prevUserSelect;
+        if (raf) cancelAnimationFrame(raf);
         setBubbleSize((prev) => {
-          const clamped = clampSize(prev);
+          const clamped = clampSize(latest ?? prev);
           persistSize(clamped);
           return clamped;
         });
@@ -439,27 +459,39 @@ export default function AIAssistantBubble() {
           so the page beneath keeps its bottom-right corner (the old horizontal
           pill was ~130px wide and sat on table rows). The label rotates into the
           handle from sm up; at phone width it is the icon alone. Expanding
-          replaces the handle with the panel, so the two never overlap. */}
-      {open ? null : (
-        <button
-          ref={handleRef}
-          type="button"
-          data-testid="ai-assistant-tab"
-          aria-label="Open AI assistant"
-          aria-expanded={false}
-          className={`flex w-8 flex-col items-center justify-center gap-2 rounded-s-lg border border-e-0 border-primary/20 bg-primary py-3 text-primary-foreground shadow-lg transition-all hover:w-9 ${isSending ? 'animate-pulse' : ''}`}
-          onClick={() => setOpenPersisted(true)}
-        >
-          <Sparkles className="size-4 shrink-0" />
-          <span className="hidden text-xs font-medium [writing-mode:vertical-rl] sm:inline">
-            AI assistant
-          </span>
-        </button>
-      )}
+          replaces the handle with the panel, so the two never overlap.
 
-      <AnimatePresence>
+          Both live in the SAME `AnimatePresence` (M3-07): the handle fades out
+          over `--duration-fast` (150ms) while the panel springs in, rather than
+          vanishing on the same tick `open` flips - `AnimatePresence` keeps an
+          exiting child mounted for its own exit, which a plain `open ? null : ...`
+          conditional cannot do. Only the exit is animated; the handle's own
+          re-appearance (panel closing) stays instant, matching this file's
+          existing "collapses again" test. */}
+      <AnimatePresence initial={false}>
+        {!open && (
+          <motion.button
+            key="ai-assistant-handle"
+            ref={handleRef}
+            type="button"
+            data-testid="ai-assistant-tab"
+            aria-label="Open AI assistant"
+            aria-expanded={false}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            className={`flex w-8 flex-col items-center justify-center gap-2 rounded-s-lg border border-e-0 border-primary/20 bg-primary py-3 text-primary-foreground shadow-lg transition-all hover:w-9 ${isSending ? 'animate-pulse' : ''}`}
+            onClick={() => setOpenPersisted(true)}
+          >
+            <Sparkles className="size-4 shrink-0" />
+            <span className="hidden text-xs font-medium [writing-mode:vertical-rl] sm:inline">
+              AI assistant
+            </span>
+          </motion.button>
+        )}
+
         {open && (
         <motion.div
+          key="ai-assistant-panel"
           ref={panelRef}
           tabIndex={-1}
           data-testid="ai-assistant-panel"
@@ -492,6 +524,7 @@ export default function AIAssistantBubble() {
           />
           <div
             onPointerDown={startResize('corner')}
+            data-testid="ai-assistant-resize-corner"
             className="absolute left-0 top-0 z-20 h-[12px] w-[12px] touch-none cursor-nwse-resize hover:bg-primary/30"
             aria-hidden="true"
           />
