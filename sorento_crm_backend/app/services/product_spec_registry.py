@@ -1791,6 +1791,7 @@ def applicable_keys_for_code(db: Session, product_code: str) -> list[dict]:
                 "unit": row.unit,
                 "allowed_values": merged_allowed_values(row),
                 "synonyms": merged_synonyms(row),
+                "value_labels": dict(row.value_labels or {}),
                 "applicable": applicable,
                 "held": row.spec_key in held,
             }

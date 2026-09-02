@@ -237,6 +237,22 @@ def test_applicable_keys_404s_an_unknown_code(api):
     assert response.status_code == 404, response.text
 
 
+def test_applicable_keys_carries_value_labels(api):
+    """AC-E.2: the product page's only registry source must carry `value_labels`
+    too, or a labelled value renders its slug there while the registry list (which
+    already carries the field) renders the label."""
+    db, _as = api
+    _as(_MERCHANDISER)
+    client = TestClient(app)
+    _key(db, "zzt_finish", allowed_values=["pp"], value_labels={"pp": "PP"})
+    product = _product(db)
+
+    response = client.get(f"{_BASE}/applicable-keys", params={"code": product.product_code})
+    assert response.status_code == 200, response.text
+    keys = {row["spec_key"]: row for row in response.json()["keys"]}
+    assert keys["zzt_finish"]["value_labels"] == {"pp": "PP"}
+
+
 # --------------------------------------------------------------------------- #
 # AC-A.13 - the two relaxations
 # --------------------------------------------------------------------------- #
