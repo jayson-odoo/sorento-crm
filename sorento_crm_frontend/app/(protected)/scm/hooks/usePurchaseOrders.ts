@@ -22,6 +22,13 @@ export interface UsePurchaseOrdersParams {
   outstanding?: boolean | null;
   /** true = something is linked to it, false = nothing is, null/undefined = every order. */
   allocated?: boolean | null;
+  /**
+   * G12 (AC-6.11): true = only orders carrying an OPEN project-bin line no sales order
+   * claims, false = the complement, null/undefined = every order. What Joey filters the
+   * list by to backfill `FromSODocList` in AutoCount - the count on the upload result
+   * from the other side.
+   */
+  unclaimedProjectBin?: boolean | null;
   /** Only these order numbers - the book one upload wrote (AC-H13). */
   documents?: string[] | null;
 }

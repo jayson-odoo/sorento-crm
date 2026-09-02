@@ -83,6 +83,12 @@ export interface PurchaseOrderListQuery {
    */
   allocated?: boolean | null;
   /**
+   * true = carries an open line at a project-segment warehouse no `scm.order_link_claim`
+   * names (G12, `PLAN-scm-reorder-oi-feedback-1sep.md` S6) - the backfill Joey works
+   * from `FromSODocList` in AutoCount; false = the complement; omitted = every order.
+   */
+  unclaimedProjectBin?: boolean | null;
+  /**
    * Keep only these purchase order NUMBERS. What the Order Inquiries page hands over when
    * the buyer asks to see the book they have just uploaded (AC-H13); omitted on every
    * other read of this list.
@@ -147,6 +153,7 @@ export async function getPurchaseOrders(
       product_code: params.productCode || undefined,
       outstanding: params.outstanding ?? undefined,
       allocated: params.allocated ?? undefined,
+      unclaimed_project_bin: params.unclaimedProjectBin ?? undefined,
       documents: params.documents?.length ? params.documents.join(',') : undefined,
     },
   );

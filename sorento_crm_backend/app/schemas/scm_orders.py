@@ -448,6 +448,23 @@ class PurchaseOrderPlacement(BaseModel):
     location_differs: bool = False
 
 
+class PurchaseOrderDedication(BaseModel):
+    """One sales order's claim on a purchase-order line (G7 dedication, AC-6.16)."""
+
+    #: The sales order document number - never an id.
+    so_number: str
+    #: What the claiming sales order line still owes in full, its LIVE outstanding.
+    reserved: float = 0.0
+    #: What of that this document is holding, and therefore what comes off `free`: the
+    #: claim's share after everything already placed under it and everything reserved on
+    #: an earlier document of the same sales order line (B2).
+    unplaced: float = 0.0
+    #: Which feed stated it: the purchase book (`po_history` / `po_upload`), the buy that
+    #: created the line (`crm_supply`), a person in the Link dialog (`manual`), or the
+    #: placement's own audit row (`order_inquiry`).
+    source: Optional[str] = None
+
+
 class PurchaseOrderLineAllocation(BaseModel):
     """One purchase-order line's occupancy: the three figures, then who is on it (AC-G1)."""
 
@@ -460,9 +477,17 @@ class PurchaseOrderLineAllocation(BaseModel):
     outstanding: float = 0.0
     #: The sum of every live order-inquiry link on this line.
     allocated: float = 0.0
-    #: `outstanding - allocated`, floored at 0. A line promised more than it has left is
-    #: over-committed, which is a finding for the buyer, not a credit to spend twice.
+    #: `outstanding - allocated - what other sales orders' CLAIMS still reserve`, floored
+    #: at 0 (G7 dedication, B2). A claim reserves its sales order line's still-unplaced
+    #: need, capped at this document's capacity, so a line the AutoCount book dedicates
+    #: elsewhere is not free to buy against even where nothing is linked to it yet. A line
+    #: promised more than it has left is over-committed, which is a finding for the buyer,
+    #: not a credit to spend twice.
     free: float = 0.0
+    #: WHO the line is dedicated to, in sales-order date order - the book, the buy that
+    #: created the line, or a person. Empty on an ordinary undedicated line. DECLARED
+    #: HERE or `response_model` drops it on the way out and the panel never sees it.
+    dedicated_to: List[PurchaseOrderDedication] = Field(default_factory=list)
     placements: List[PurchaseOrderPlacement] = Field(default_factory=list)
 
 

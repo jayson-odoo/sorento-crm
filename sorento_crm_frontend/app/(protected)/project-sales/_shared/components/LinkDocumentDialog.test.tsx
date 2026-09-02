@@ -354,6 +354,79 @@ describe('LinkDocumentDialog: the candidate expand (section G, unchanged by G2)'
 });
 
 /**
+ * G7 / G12 dedication (S6, `PLAN-scm-reorder-oi-feedback-1sep.md`, AC-6.5): a candidate
+ * another SO has claimed, or - project-bin only - that nobody has claimed at all, greys
+ * in the dialog rather than disappearing - a manual link is still possible and audited,
+ * which is what the row stays in the list to allow.
+ */
+describe('LinkDocumentDialog: G7 / G12 dedication (AC-6.5)', () => {
+  it('greys a line dedicated to another SO and names it', async () => {
+    const dedicated: OrderInquiryPoCandidate = {
+      ...EARLY,
+      dedicated_to: 'SO2026009',
+      default_take: '0',
+    };
+    getOrderInquiryPoCandidates.mockResolvedValue([dedicated]);
+
+    renderDialog(
+      <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
+    );
+
+    const row = await screen.findByTestId('po-candidate-po:po-line-early');
+    expect(row.className).toContain('bg-muted/40');
+    expect(
+      screen.getByTestId('po-candidate-dedicated-po:po-line-early'),
+    ).toHaveTextContent('Dedicated to SO SO2026009');
+    expect(screen.queryByTestId('po-candidate-unattributed-po:po-line-early')).toBeNull();
+  });
+
+  it('greys an unattributed project-bin line and still allows a manual take', async () => {
+    const unattributed: OrderInquiryPoCandidate = {
+      ...EARLY,
+      unattributed: true,
+      default_take: '0',
+    };
+    getOrderInquiryPoCandidates.mockResolvedValue([unattributed]);
+    placeOrderInquiryRowOnPoAllocations.mockResolvedValue({ id: 'row-1', state: 'placed' });
+
+    renderDialog(
+      <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
+    );
+
+    const row = await screen.findByTestId('po-candidate-po:po-line-early');
+    expect(row.className).toContain('bg-muted/40');
+    expect(
+      screen.getByTestId('po-candidate-unattributed-po:po-line-early'),
+    ).toHaveTextContent('Unattributed - link manually');
+    expect(screen.queryByTestId('po-candidate-dedicated-po:po-line-early')).toBeNull();
+
+    // Greyed is a hint, not a refusal: a person may still take it by hand.
+    const input = screen.getByLabelText('Take off ZZT-PO-0001');
+    fireEvent.change(input, { target: { value: '10' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Link' }));
+
+    await waitFor(() =>
+      expect(placeOrderInquiryRowOnPoAllocations).toHaveBeenCalledWith('row-1', [
+        { po_line_id: 'po-line-early', qty: '10' },
+      ]),
+    );
+  });
+
+  it('shows neither badge and no grey background on an ordinary candidate', async () => {
+    getOrderInquiryPoCandidates.mockResolvedValue([EARLY]);
+
+    renderDialog(
+      <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
+    );
+
+    const row = await screen.findByTestId('po-candidate-po:po-line-early');
+    expect(row.className).not.toContain('bg-muted/40');
+    expect(screen.queryByTestId('po-candidate-dedicated-po:po-line-early')).toBeNull();
+    expect(screen.queryByTestId('po-candidate-unattributed-po:po-line-early')).toBeNull();
+  });
+});
+
+/**
  * The LINK HORIZON in the dialog (AC-LH3, `PLAN-scm-oi-handshake.md` section 11).
  *
  * The same date the page's presses run to, shown at the top so a hand-made link is made

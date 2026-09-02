@@ -432,6 +432,23 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
                     )}
                   </div>
                 )}
+                {/* G12 (`PLAN-scm-reorder-oi-feedback-1sep.md` S6, AC-6.11): open
+                    project-bin PO/SPO lines no claim names, company-wide as of this
+                    upload's own claim-resolution pass - what Joey backfills
+                    FromSODocList in AutoCount against. */}
+                {typeof job.result.unclaimed_project_bin_lines === 'number' && (
+                  <div className="flex flex-wrap gap-2 text-sm">
+                    <span
+                      className={
+                        job.result.unclaimed_project_bin_lines > 0
+                          ? 'rounded bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400 px-2 py-1'
+                          : 'rounded bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-400 px-2 py-1'
+                      }
+                    >
+                      Unclaimed project-bin lines: {job.result.unclaimed_project_bin_lines}
+                    </span>
+                  </div>
+                )}
                 {Array.isArray(job.result.successful_rows_detail) && job.result.successful_rows_detail.length > 0 && (
                   <div>
                     <p className="text-sm font-medium text-emerald-600 dark:text-emerald-400 mb-2">

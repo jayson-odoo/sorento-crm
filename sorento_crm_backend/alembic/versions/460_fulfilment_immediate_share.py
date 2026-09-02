@@ -18,13 +18,13 @@ shared dev database is a prod copy whose `alembic_version` points at another lan
 this is applied there by hand and re-running it has to be a no-op rather than a failure.
 
 Revision ID: 460_fulfilment_immediate_share
-Revises: 456_reorder_perf_quickwins
+Revises: 459_outstanding_from_so
 """
 import sqlalchemy as sa
 from alembic import op
 
 revision = "460_fulfilment_immediate_share"
-down_revision = "456_reorder_perf_quickwins"
+down_revision = "459_outstanding_from_so"
 branch_labels = None
 depends_on = None
 

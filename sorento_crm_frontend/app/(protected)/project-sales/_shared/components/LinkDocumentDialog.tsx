@@ -372,10 +372,20 @@ function CandidateRow({
   const remaining = toNumber(candidate.remaining);
   const taken = toNumber(take);
   const overLine = taken > remaining;
+  // G7 / G12 (`PLAN-scm-reorder-oi-feedback-1sep.md` S6): a line explicitly claimed by
+  // another SO, or - project-bin only - claimed by nobody at all. Greyed rather than
+  // hidden: the automatic cascade never touches either, but a manual link still does,
+  // and writes (or reassigns) the claim behind it.
+  const dedicated = Boolean(candidate.dedicated_to);
+  const unattributed = Boolean(candidate.unattributed);
+  const greyed = dedicated || unattributed;
 
   return (
     <>
-      <tr data-testid={`po-candidate-${candidateKey(candidate)}`}>
+      <tr
+        data-testid={`po-candidate-${candidateKey(candidate)}`}
+        className={cn(greyed && 'bg-muted/40 text-muted-foreground')}
+      >
         <td className={cn(CHEVRON_COL, BODY_CELL)}>
           <button
             type="button"
@@ -408,6 +418,22 @@ function CandidateRow({
             {candidate.cited && (
               <span className="mt-0.5 me-1 inline-block rounded-sm bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
                 Cited
+              </span>
+            )}
+            {dedicated && (
+              <span
+                data-testid={`po-candidate-dedicated-${candidateKey(candidate)}`}
+                className="mt-0.5 me-1 inline-block rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+              >
+                {`Dedicated to SO ${candidate.dedicated_to}`}
+              </span>
+            )}
+            {unattributed && (
+              <span
+                data-testid={`po-candidate-unattributed-${candidateKey(candidate)}`}
+                className="mt-0.5 me-1 inline-block rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+              >
+                Unattributed - link manually
               </span>
             )}
             {toNumber(candidate.default_take) > 0 && (

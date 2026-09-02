@@ -116,7 +116,11 @@ def _pooled(world) -> Warehouse:
     location the rows already carry in step with it.
     """
     tag = uuid.uuid4().hex[:6].upper()
-    pool = _warehouse(world.db, f"ZZP{tag}", segment="project")
+    # No `segment`, so this really is a SITE POOL: `pool_predicate.is_site_pool` reads
+    # the segment, and a pool tagged `project` is a contradiction the fixture used to
+    # carry - it made every SPO candidate at "the pool" a project-bin line G12 refuses to
+    # the automatic pass (corrected 2 Sep 2026).
+    pool = _warehouse(world.db, f"ZZP{tag}")
     world.warehouse.warehouse_code = f"ZZP{tag}-IB"
     world.warehouse.pool_warehouse_id = pool.id
     world.db.flush()

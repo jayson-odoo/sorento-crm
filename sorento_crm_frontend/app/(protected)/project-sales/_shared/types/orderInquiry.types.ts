@@ -602,6 +602,19 @@ export interface OrderInquiryPoCandidate {
    * can never disagree. `"0"` when the cascade never reaches this line.
    */
   default_take: string;
+  /**
+   * G7 dedication (`PLAN-scm-reorder-oi-feedback-1sep.md` S6): the SO NUMBER another
+   * claim names on this line, when that SO is not this row's own. `remaining` already
+   * nets it out; this is what the dialog greys the row with - "Dedicated to SO xxxx".
+   * Null on the ordinary line, or when this row's own SO is the one holding it.
+   */
+  dedicated_to?: string | null;
+  /**
+   * G12's project-bin lock: this line sits at a project-segment warehouse and NO SO has
+   * claimed it, not even this row's own - "Unattributed - link manually". A manual link
+   * still succeeds and writes the claim; always false on a pool-destination line.
+   */
+  unattributed?: boolean;
 }
 
 /**
