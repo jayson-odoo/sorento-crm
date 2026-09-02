@@ -990,6 +990,41 @@ def _delete_loading_plan(db: Session, payload: dict):
     return loading_plan_service.delete_record(db, _entity_id(payload))
 
 
+def _loading_plan_or_404(db: Session, payload: dict):
+    from app.models.scm import LoadingPlan
+    from app.services.error_handler import handle_not_found
+
+    plan_id = _entity_id(payload)
+    plan = db.query(LoadingPlan).filter(LoadingPlan.id == plan_id).first()
+    if plan is None:
+        raise handle_not_found("Loading plan", plan_id)
+    return plan
+
+
+def _capture_loading_plan_cancel(db: Session, payload: dict) -> dict:
+    """Refuse an already-cancelled plan at PARK time, not ten seconds later.
+
+    `capture` is the one hook `dispatch` runs before anything is persisted, on both
+    the deferred and the immediate path, so it doubles as the premise check here: it
+    snapshots nothing (a record action is never undone) and instead raises the same
+    409 `refuse_if_cancelled` raises for the immediate route (AC-A7).
+    """
+    from app.services.scm import loading_plan_service
+
+    loading_plan_service.refuse_if_cancelled(_loading_plan_or_404(db, payload))
+    return {}
+
+
+def _cancel_loading_plan(db: Session, payload: dict):
+    from app.services.scm import loading_plan_service
+
+    out = loading_plan_service.cancel_record(
+        db, _loading_plan_or_404(db, payload), actor=_scm_actor(db, payload)
+    )
+    db.commit()
+    return out
+
+
 def _delete_market_topic(db: Session, payload: dict):
     from app.services.scm import market_research_service
 
@@ -1053,6 +1088,18 @@ register(
         window=WINDOW_DESTRUCTIVE,
         permission="scm.reorder.run",
         label="Delete loading plan",
+    )
+)
+
+register(
+    FormAction(
+        key="loading_plan.cancel",
+        entity_types=("loading_plan",),
+        execute=_cancel_loading_plan,
+        capture=_capture_loading_plan_cancel,
+        window=WINDOW_REVERSIBLE,
+        permission="scm.reorder.run",
+        label="Cancel loading plan",
     )
 )
 

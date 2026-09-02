@@ -842,6 +842,24 @@ def delete_record(db: Session, plan_id: str) -> None:
     db.commit()
 
 
+def refuse_if_cancelled(plan: LoadingPlan) -> None:
+    """A plan cancelled once cannot be cancelled again (AC-A7).
+
+    Shared by the immediate `POST /loading-plans/{id}/cancel` route (through
+    `cancel_record` below) and the deferred `loading_plan.cancel` record action's
+    `capture`, so a second cancel refuses at the CLICK on the immediate path and at
+    PARK time on the deferred one - never a silent re-stamp of `cancelled_at`.
+    """
+    from app.services.error_handler import AppException
+
+    if plan.status == "cancelled":
+        raise AppException(
+            status_code=409,
+            message="This plan is already cancelled.",
+            code="plan_cancelled",
+        )
+
+
 def cancel_record(db: Session, plan: LoadingPlan, *, actor: Optional[str] = None) -> LoadingPlan:
     """Cancel, and retire the link THIS PLAN's supplier still holds for it (Q4, R3/R11).
 
@@ -851,6 +869,7 @@ def cancel_record(db: Session, plan: LoadingPlan, *, actor: Optional[str] = None
     """
     from app.services.scm import supplier_notice_service
 
+    refuse_if_cancelled(plan)
     plan.status = "cancelled"
     plan.cancelled_at = datetime.utcnow()
     plan.cancelled_by = actor
