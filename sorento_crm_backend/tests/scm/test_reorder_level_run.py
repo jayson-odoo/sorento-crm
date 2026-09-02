@@ -68,7 +68,8 @@ def _recs(db, run_id: str, pid: str) -> list[dict]:
 def _plan(db, code: str, *, on_hand: float, level: float | None,
           demand_rate: float = 0.0, moq=None, mult=None) -> list[dict]:
     wid = _mk_warehouse(db, code)
-    pid = _mk_product(db, f"ZZTP-LVL-{uuid.uuid4().hex[:6]}")
+    pcode = f"ZZTP-LVL-{uuid.uuid4().hex[:6]}"
+    pid = _mk_product(db, pcode)
     _mk_stock(db, pid, wid, on_hand)
     _mk_demand(db, pid, wid, demand_rate)
     _link(db, pid, _mk_supplier(db, f"ZZT Lvl Supplier {code}"), moq=moq, mult=mult)
@@ -77,7 +78,12 @@ def _plan(db, code: str, *, on_hand: float, level: float | None,
     else:
         _no_master_level(db, pid)
     db.flush()
-    created = svc.create_run(db, [code], enqueue=False)
+    # G1/G10 (`PLAN-scm-reorder-oi-feedback-1sep.md`): the daily run plans committed
+    # demand only; a named product (G10) bypasses that gate, which is what every caller
+    # here wants - this file proves reorder_level ARITHMETIC on the exact `on_hand` it
+    # seeded, not the run's committed-demand universe (that lives in
+    # `test_reorder_run_product_scope.py` and the S2 goldens).
+    created = svc.create_run(db, [code], product_codes=[pcode], enqueue=False)
     svc.run_reorder(created["run_id"], db=db)
     return _recs(db, created["run_id"], pid)
 
@@ -167,7 +173,8 @@ def test_a_suggestion_is_never_planned_as_a_level(scm_app):
     _, db, _, _ = scm_app
     _use_level_basis(db)
     wid = _mk_warehouse(db, "ZZTW-LVL-SUGG")
-    pid = _mk_product(db, f"ZZTP-SUGG-{uuid.uuid4().hex[:6]}")
+    pcode = f"ZZTP-SUGG-{uuid.uuid4().hex[:6]}"
+    pid = _mk_product(db, pcode)
     _mk_stock(db, pid, wid, 0)
     _mk_demand(db, pid, wid, 1.0)
     _link(db, pid, _mk_supplier(db, "ZZT Sugg Supplier"), moq=None, mult=None)
@@ -176,7 +183,7 @@ def test_a_suggestion_is_never_planned_as_a_level(scm_app):
                         basis={"avg_monthly": 49.5, "cover_months": 2, "months_studied": 3})
     db.flush()
 
-    created = svc.create_run(db, ["ZZTW-LVL-SUGG"], enqueue=False)
+    created = svc.create_run(db, ["ZZTW-LVL-SUGG"], product_codes=[pcode], enqueue=False)
     svc.run_reorder(created["run_id"], db=db)
     rows = _recs(db, created["run_id"], pid)
     assert {r["rec_type"] for r in rows} == {"needs_level"}
@@ -210,7 +217,8 @@ def test_a_dealer_row_reads_a_dealer_purchase(scm_app):
     svc.eng.ensure_reorder_policy_defaults(db)
     wid = _mk_warehouse(db, "ZZTW-SEG-D")
     db.execute(text("UPDATE warehouses SET segment = 'dealer' WHERE id = :w"), {"w": wid})
-    pid = _mk_product(db, f"ZZTP-SEGD-{uuid.uuid4().hex[:6]}")
+    pcode = f"ZZTP-SEGD-{uuid.uuid4().hex[:6]}"
+    pid = _mk_product(db, pcode)
     _mk_stock(db, pid, wid, 8)
     # A rate, so the forecast basis has something to trigger against.
     _mk_demand(db, pid, wid, 1.0)
@@ -218,7 +226,7 @@ def test_a_dealer_row_reads_a_dealer_purchase(scm_app):
     _po_line(db, pid, wid, 33.0)
     db.flush()
 
-    created = svc.create_run(db, ["ZZTW-SEG-D"], enqueue=False)
+    created = svc.create_run(db, ["ZZTW-SEG-D"], product_codes=[pcode], enqueue=False)
     svc.run_reorder(created["run_id"], db=db)
     inp = next(r for r in _recs(db, created["run_id"], pid)
                if r["rec_type"] == "buy")["inputs"]
@@ -240,7 +248,8 @@ def test_a_project_row_is_not_shown_the_dealer_price(scm_app):
     project = _mk_warehouse(db, "ZZTW-SEG-PP")
     db.execute(text("UPDATE warehouses SET segment = 'dealer' WHERE id = :w"), {"w": dealer})
     db.execute(text("UPDATE warehouses SET segment = 'project' WHERE id = :w"), {"w": project})
-    pid = _mk_product(db, f"ZZTP-SEGP-{uuid.uuid4().hex[:6]}")
+    pcode = f"ZZTP-SEGP-{uuid.uuid4().hex[:6]}"
+    pid = _mk_product(db, pcode)
     for w in (dealer, project):
         _mk_stock(db, pid, w, 8)
         # A rate, so the forecast basis has something to trigger against.
@@ -249,7 +258,8 @@ def test_a_project_row_is_not_shown_the_dealer_price(scm_app):
     _po_line(db, pid, dealer, 33.0)
     db.flush()
 
-    created = svc.create_run(db, ["ZZTW-SEG-DD", "ZZTW-SEG-PP"], enqueue=False)
+    created = svc.create_run(db, ["ZZTW-SEG-DD", "ZZTW-SEG-PP"],
+                             product_codes=[pcode], enqueue=False)
     svc.run_reorder(created["run_id"], db=db)
     rows = [r for r in _recs(db, created["run_id"], pid) if r["rec_type"] == "buy"]
     by_segment = {r["inputs"]["segment"]: r["inputs"] for r in rows}
@@ -267,7 +277,8 @@ def test_a_purchase_with_no_destination_is_never_relabelled(scm_app):
     _use_level_basis(db)
     wid = _mk_warehouse(db, "ZZTW-SEG-U")
     db.execute(text("UPDATE warehouses SET segment = 'dealer' WHERE id = :w"), {"w": wid})
-    pid = _mk_product(db, f"ZZTP-SEGU-{uuid.uuid4().hex[:6]}")
+    pcode = f"ZZTP-SEGU-{uuid.uuid4().hex[:6]}"
+    pid = _mk_product(db, pcode)
     _mk_stock(db, pid, wid, 8)
     _mk_demand(db, pid, wid, 0.0)
     _link(db, pid, _mk_supplier(db, "ZZT Seg U"), moq=None, mult=None)
@@ -275,7 +286,7 @@ def test_a_purchase_with_no_destination_is_never_relabelled(scm_app):
     _po_line(db, pid, None, 21.0)
     db.flush()
 
-    created = svc.create_run(db, ["ZZTW-SEG-U"], enqueue=False)
+    created = svc.create_run(db, ["ZZTW-SEG-U"], product_codes=[pcode], enqueue=False)
     svc.run_reorder(created["run_id"], db=db)
     inp = next(r for r in _recs(db, created["run_id"], pid)
                if r["rec_type"] == "buy")["inputs"]
@@ -287,14 +298,15 @@ def test_never_purchased_says_so_rather_than_showing_nothing(scm_app):
     _, db, _, _ = scm_app
     _use_level_basis(db)
     wid = _mk_warehouse(db, "ZZTW-SEG-N")
-    pid = _mk_product(db, f"ZZTP-SEGN-{uuid.uuid4().hex[:6]}")
+    pcode = f"ZZTP-SEGN-{uuid.uuid4().hex[:6]}"
+    pid = _mk_product(db, pcode)
     _mk_stock(db, pid, wid, 8)
     _mk_demand(db, pid, wid, 0.0)
     _link(db, pid, _mk_supplier(db, "ZZT Seg N"), moq=None, mult=None)
     _set_level(db, pid, 20)
     db.flush()
 
-    created = svc.create_run(db, ["ZZTW-SEG-N"], enqueue=False)
+    created = svc.create_run(db, ["ZZTW-SEG-N"], product_codes=[pcode], enqueue=False)
     svc.run_reorder(created["run_id"], db=db)
     inp = next(r for r in _recs(db, created["run_id"], pid)
                if r["rec_type"] == "buy")["inputs"]
@@ -316,7 +328,8 @@ def test_a_grouped_buy_row_still_carries_the_checklist(scm_app):
     bin_ = _mk_warehouse(db, "ZZTW-POOL-B")
     db.execute(text("UPDATE warehouses SET pool_warehouse_id = :r WHERE id = :b"),
                {"r": root, "b": bin_})
-    pid = _mk_product(db, f"ZZTP-POOL-{uuid.uuid4().hex[:6]}")
+    pcode = f"ZZTP-POOL-{uuid.uuid4().hex[:6]}"
+    pid = _mk_product(db, pcode)
     _mk_stock(db, pid, root, 4)
     _mk_stock(db, pid, bin_, 6)
     _mk_demand(db, pid, root, 0.0)
@@ -326,7 +339,8 @@ def test_a_grouped_buy_row_still_carries_the_checklist(scm_app):
     _po_line(db, pid, bin_, 7.5)
     db.flush()
 
-    created = svc.create_run(db, ["ZZTW-POOL-R", "ZZTW-POOL-B"], enqueue=False)
+    created = svc.create_run(db, ["ZZTW-POOL-R", "ZZTW-POOL-B"],
+                             product_codes=[pcode], enqueue=False)
     svc.run_reorder(created["run_id"], db=db)
     buys = [r for r in _recs(db, created["run_id"], pid) if r["rec_type"] == "buy"]
     assert buys, "10 across the two locations against a level of 100 is a shortage"
@@ -347,7 +361,8 @@ def test_a_product_where_nobody_set_a_level_buys_nothing(scm_app):
     bin_ = _mk_warehouse(db, "ZZTW-POOL-NL-B")
     db.execute(text("UPDATE warehouses SET pool_warehouse_id = :r WHERE id = :b"),
                {"r": root, "b": bin_})
-    pid = _mk_product(db, f"ZZTP-POOLNL-{uuid.uuid4().hex[:6]}")
+    pcode = f"ZZTP-POOLNL-{uuid.uuid4().hex[:6]}"
+    pid = _mk_product(db, pcode)
     _mk_stock(db, pid, root, 0)
     _mk_stock(db, pid, bin_, 0)
     _mk_demand(db, pid, root, 3.0)
@@ -356,7 +371,8 @@ def test_a_product_where_nobody_set_a_level_buys_nothing(scm_app):
     _no_master_level(db, pid)
     db.flush()
 
-    created = svc.create_run(db, ["ZZTW-POOL-NL-R", "ZZTW-POOL-NL-B"], enqueue=False)
+    created = svc.create_run(db, ["ZZTW-POOL-NL-R", "ZZTW-POOL-NL-B"],
+                             product_codes=[pcode], enqueue=False)
     svc.run_reorder(created["run_id"], db=db)
     rows = _recs(db, created["run_id"], pid)
     kinds = {r["rec_type"] for r in rows}
@@ -373,14 +389,16 @@ def _pool_pair(db, code_root: str, root_stock: float, bin_stock: float,
     bin_ = _mk_warehouse(db, f"{code_root}-B")
     db.execute(text("UPDATE warehouses SET pool_warehouse_id = :r WHERE id = :b"),
                {"r": root, "b": bin_})
-    pid = _mk_product(db, f"ZZTP-{code_root}-{uuid.uuid4().hex[:6]}")
+    pcode = f"ZZTP-{code_root}-{uuid.uuid4().hex[:6]}"
+    pid = _mk_product(db, pcode)
     _mk_stock(db, pid, root, root_stock)
     _mk_stock(db, pid, bin_, bin_stock)
     _mk_demand(db, pid, root, 0.0)
     _mk_demand(db, pid, bin_, demand)
     _link(db, pid, _mk_supplier(db, f"ZZT {code_root} Supplier"), moq=None, mult=None)
     db.flush()
-    created = svc.create_run(db, [f"{code_root}-R", f"{code_root}-B"], enqueue=False)
+    created = svc.create_run(db, [f"{code_root}-R", f"{code_root}-B"],
+                             product_codes=[pcode], enqueue=False)
     svc.run_reorder(created["run_id"], db=db)
     return _recs(db, created["run_id"], pid)
 

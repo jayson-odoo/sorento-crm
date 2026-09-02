@@ -46,6 +46,7 @@ import uuid
 from datetime import date, datetime, timedelta
 from typing import Optional
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.inventory import Warehouse
@@ -101,6 +102,77 @@ def _assert_not_legacy(db: Session, run_id: str) -> None:
     supposed to be immutable.
     """
     plan_grain.assert_not_legacy(_run_or_404(db, run_id))
+
+
+def _refresh_run_counts(db: Session, run_id: str) -> None:
+    """Keep `scm.reorder_run.{planned,decided,confirmed}_count` current (S3 perf,
+    AC-3.3) so the plans list and its Decided sort read a stored column instead of
+    re-joining `purchase_order_lines` on every page load. Same shape (by DISTINCT
+    product, R14) the plans-list read used to run itself, just scoped to one run and
+    run at write time rather than at every read.
+
+    Called from every write that can move one of the three counts:
+    `record_plan_row_decision`, `clear_plan_row_decision`, `confirm_decisions`,
+    `reset_run_decisions`, `reject_recommendation` (review finding S1 - a rec can
+    reach a draft line through the LEGACY accept/adjust status alone, via
+    `_confirm_location_grain`'s legacy loop, with no `plan_row_decision` involved, so
+    a reject can pull that line and move `confirmed_count`). `accept_recommendation` /
+    `adjust_recommendation` do NOT call this: staging an accept/adjust writes neither
+    `plan_row_decision` nor a `purchase_order_lines` row by itself - nothing this
+    query reads moves until the run is actually confirmed - so a call there would be
+    a correct but pointless no-op.
+
+    `SELECT ... FOR UPDATE` on the run row first (review finding S4): every caller
+    here does read-the-aggregate-then-UPDATE, and this function is reachable from
+    concurrent writers on the SAME run - the FE's own `decide()`/`clear()` fan a
+    single row's decision out to several recs via `Promise.allSettled`, and two
+    buyers working the same run at once is a real scenario. Without a lock, two
+    concurrent calls can each read the counts before the other's write lands, then
+    each write its own (by then stale) computed figure - a classic lost update, the
+    later call silently overwriting the earlier one's more current count. The lock
+    serializes every caller on this `run_id`: a second call blocks until the first's
+    transaction commits, then reads a state that already reflects it."""
+    db.execute(
+        text("SELECT id FROM scm.reorder_run WHERE id = CAST(:run_id AS uuid) FOR UPDATE"),
+        {"run_id": run_id},
+    )
+    row = db.execute(
+        text(
+            """
+            SELECT count(DISTINCT r.product_id) AS planned,
+                   count(DISTINCT r.product_id)
+                     FILTER (WHERE d.id IS NOT NULL) AS decided,
+                   count(DISTINCT r.product_id)
+                     FILTER (WHERE pol.id IS NOT NULL) AS confirmed
+              FROM scm.reorder_recommendation r
+              LEFT JOIN scm.plan_row_decision d ON d.recommendation_id = r.id
+              LEFT JOIN purchase_order_lines pol
+                     ON pol.source_ref = r.id::text
+                    AND pol.source_system IN (:src, :src_product)
+             WHERE r.run_id = CAST(:run_id AS uuid)
+               AND r.rec_type = ANY(:kinds)
+            """
+        ),
+        {
+            "run_id": run_id,
+            "src": _SRC,
+            "src_product": _SRC_PRODUCT,
+            "kinds": sorted(_PLAN_ROW_DECIDABLE_TYPES),
+        },
+    ).mappings().first()
+    db.execute(
+        text(
+            "UPDATE scm.reorder_run "
+            "SET planned_count = :p, decided_count = :d, confirmed_count = :c "
+            "WHERE id = CAST(:run_id AS uuid)"
+        ),
+        {
+            "p": int((row or {}).get("planned") or 0),
+            "d": int((row or {}).get("decided") or 0),
+            "c": int((row or {}).get("confirmed") or 0),
+            "run_id": run_id,
+        },
+    )
 
 
 def _get_buy_rec(db: Session, rec_id: str) -> ReorderRecommendation:
@@ -460,7 +532,13 @@ def reject_recommendation(
     db: Session, rec_id: str, reason_text: str, actor: Optional[str]
 ) -> dict:
     """Reject (M4-D8) → rec dismissed, reason stored (feedback trigger). Any draft PO
-    line the rec previously landed in is pulled back out."""
+    line the rec previously landed in is pulled back out.
+
+    A rec reaches a draft line through the LEGACY accept/adjust status alone, with no
+    ``plan_row_decision`` involved (``_confirm_location_grain``'s own legacy loop), so
+    a reject that follows an accept-then-confirm genuinely moves `confirmed_count` -
+    `_refresh_run_counts` is called here for exactly that reason (review finding S1:
+    it never was, and `confirmed_count` went stale after a reject)."""
     rec = _get_buy_rec(db, rec_id)
     _assert_location_grain(db, str(rec.run_id))
     if not (reason_text or "").strip():
@@ -483,6 +561,7 @@ def reject_recommendation(
     )
     rec.status = "dismissed"
     db.flush()
+    _refresh_run_counts(db, str(rec.run_id))
     return {}
 
 
@@ -515,9 +594,15 @@ def confirm_decisions(
     it is a read of the same decisions, not the only route to a PO any more."""
     run = _run_or_404(db, run_id)
     plan_grain.assert_not_legacy(run)
-    if plan_grain.decision_grain_of(run) == plan_grain.PRODUCT_GRAIN:
-        return _confirm_product_grain(db, run_id, ids, actor)
-    return _confirm_location_grain(db, run_id, ids, actor)
+    result = (
+        _confirm_product_grain(db, run_id, ids, actor)
+        if plan_grain.decision_grain_of(run) == plan_grain.PRODUCT_GRAIN
+        else _confirm_location_grain(db, run_id, ids, actor)
+    )
+    # Confirm is the write that moves `confirmed_count` (S3 perf, AC-3.3) - a draft PO
+    # line just landed or was pulled, on either grain.
+    _refresh_run_counts(db, run_id)
+    return result
 
 
 def _confirm_location_grain(
@@ -1034,6 +1119,9 @@ def reset_run_decisions(db: Session, run_id: str, actor: Optional[str]) -> dict:
     for rec in recs:
         rec.status = "proposed"
     db.flush()
+    # Back to as-generated (S3 perf, AC-3.3): every draft-PO line and row decision this
+    # just cleared moves `decided_count` / `confirmed_count` back toward 0.
+    _refresh_run_counts(db, run_id)
     return {
         "run_id": run_id,
         "decisions_cleared": decisions_cleared,
@@ -1361,6 +1449,8 @@ def record_plan_row_decision(
     existing.decided_by = actor
     existing.decided_at = datetime.utcnow()
     db.flush()
+    # A row decision is the write that moves `decided_count` (S3 perf, AC-3.3).
+    _refresh_run_counts(db, str(rec.run_id))
     return _plan_row_decision_dict(db, existing, _po_for_rec(db, rec.id))
 
 
@@ -1386,6 +1476,9 @@ def clear_plan_row_decision(db: Session, rec_id: str, actor: Optional[str]) -> d
     _remove_rec_line(db, rec.id)
     _remove_product_lines(db, str(rec.product_id))
     db.flush()
+    # Clearing moves `decided_count` back down and may pull a draft line, moving
+    # `confirmed_count` too (S3 perf, AC-3.3).
+    _refresh_run_counts(db, str(rec.run_id))
     return {"cleared": bool(deleted)}
 
 
@@ -1400,6 +1493,13 @@ def list_plan_row_decisions(db: Session, run_id: str) -> dict:
     recommendations read a product held in three bins as three decisions out of three rows
     when the buyer had made one (plan fact F2 - `decided_count = len(data)`). The rows
     stay per recommendation because that is what each pill reads.
+
+    **Constant query count (S3 perf, AC-3.2).** The per-row version of this called
+    `_plan_row_decision_dict`, which ran a supplier lookup, a product-suppliers lead-time
+    lookup and a draft/active-PO lookup PER DECISION - three-plus queries per row, so a
+    1,500-decision run made 4,500+ round trips. Every one of those is batched here into
+    one query apiece, keyed by what the row needs (supplier id, `(product_id,
+    supplier_id)`, recommendation id) rather than re-run per row.
     """
     total = (
         db.query(ReorderRecommendation.product_id)
@@ -1410,19 +1510,151 @@ def list_plan_row_decisions(db: Session, run_id: str) -> dict:
         .distinct()
         .count()
     )
-    triples = (
+    quads = (
         db.query(PlanRowDecision, ReorderRecommendation.id,
-                 ReorderRecommendation.product_id)
+                 ReorderRecommendation.product_id, ReorderRecommendation.inputs)
         .join(ReorderRecommendation, ReorderRecommendation.id == PlanRowDecision.recommendation_id)
         .filter(ReorderRecommendation.run_id == run_id)
         .all()
     )
+    if not quads:
+        return {"data": [], "decided_count": 0, "total_count": total}
+
+    rec_ids = [rid for _d, rid, _pid, _inp in quads]
+    supplier_ids = {d.supplier_id for d, _rid, _pid, _inp in quads if d.supplier_id}
+    suppliers_by_id = _suppliers_by_id(db, supplier_ids)
+    lead_pairs = {
+        (str(pid), str(d.supplier_id)) for d, _rid, pid, _inp in quads if d.supplier_id
+    }
+    leads_by_pair = _product_supplier_leads_batch(db, lead_pairs)
+    po_by_rec = _pos_for_recs(db, rec_ids)
+
     data = [
-        _plan_row_decision_dict(db, decision, _po_for_rec(db, rec_id))
-        for decision, rec_id, _pid in triples
+        _plan_row_decision_dict_batched(
+            decision, product_id, inputs, suppliers_by_id, leads_by_pair,
+            po_by_rec.get(rec_id),
+        )
+        for decision, rec_id, product_id, inputs in quads
     ]
-    decided = {str(pid) for _d, _rid, pid in triples}
+    decided = {str(pid) for _d, _rid, pid, _inp in quads}
     return {"data": data, "decided_count": len(decided), "total_count": total}
+
+
+def _suppliers_by_id(db: Session, ids: set) -> dict:
+    if not ids:
+        return {}
+    return {s.id: s for s in db.query(Supplier).filter(Supplier.id.in_(ids)).all()}
+
+
+def _product_supplier_leads_batch(
+    db: Session, pairs: set[tuple[str, str]]
+) -> dict[tuple[str, str], dict]:
+    """Batched `_product_supplier_choice`, keyed `(product_id, supplier_id)` (both text).
+
+    One query for every `(product, supplier)` pair the page needs, via a parallel-array
+    unnest join rather than a per-pair lookup - `IN` over composite tuples has no simple
+    parameter-array form in this driver, and this is the same shape."""
+    if not pairs:
+        return {}
+    pids = [p for p, _s in pairs]
+    sids = [s for _p, s in pairs]
+    rows = db.execute(
+        text(
+            """
+            SELECT ps.product_id::text AS product_id, ps.supplier_id::text AS supplier_id,
+                   s.supplier_name, ps.unit_cost, ps.standard_lead_time_days AS lead
+            FROM product_suppliers ps
+            JOIN suppliers s ON s.id = ps.supplier_id
+            JOIN (SELECT unnest(CAST(:pids AS uuid[])) AS product_id,
+                         unnest(CAST(:sids AS uuid[])) AS supplier_id) pairs
+              ON pairs.product_id = ps.product_id AND pairs.supplier_id = ps.supplier_id
+            """
+        ),
+        {"pids": pids, "sids": sids},
+    ).mappings().all()
+    return {
+        (r["product_id"], r["supplier_id"]): {
+            "supplier_name": r["supplier_name"],
+            "unit_cost": _f(r["unit_cost"]),
+            "lead_time_days": _f(r["lead"]),
+        }
+        for r in rows
+    }
+
+
+def _pos_for_recs(db: Session, rec_ids: list[str]) -> dict[str, PurchaseOrder]:
+    """Batched `_po_for_rec` (both source systems, AC-3.1: hits
+    `ix_purchase_order_lines_source_ref_system`). Ordered
+    `(source_ref, created_at DESC, id DESC)` so the FIRST row seen per rec id is the
+    latest one - same "most recent line wins" rule the single-row lookup applies via
+    `.order_by(created_at.desc()).first()`. `id` is the final tiebreak (nit from
+    review): several lines confirmed in the SAME transaction share one `now()`, and
+    without it "most recent" is not deterministic across runs (the standing "now()
+    ties in a transaction, end orderings with id" lesson)."""
+    if not rec_ids:
+        return {}
+    lines = (
+        db.query(PurchaseOrderLine)
+        .options(joinedload(PurchaseOrderLine.purchase_order))
+        .filter(
+            PurchaseOrderLine.source_ref.in_(rec_ids),
+            PurchaseOrderLine.source_system.in_((_SRC, _SRC_PRODUCT)),
+        )
+        .order_by(
+            PurchaseOrderLine.source_ref,
+            PurchaseOrderLine.created_at.desc(),
+            PurchaseOrderLine.id.desc(),
+        )
+        .all()
+    )
+    out: dict[str, PurchaseOrder] = {}
+    for line in lines:
+        if line.source_ref not in out:
+            out[line.source_ref] = line.purchase_order
+    return out
+
+
+def _plan_row_decision_dict_batched(
+    decision: PlanRowDecision,
+    product_id,
+    inputs: Optional[dict],
+    suppliers_by_id: dict,
+    leads_by_pair: dict[tuple[str, str], dict],
+    po: Optional[PurchaseOrder],
+) -> dict:
+    """Same shape as `_plan_row_decision_dict`, reading pre-fetched batches instead of
+    issuing its own queries (S3 perf, AC-3.2)."""
+    supplier = suppliers_by_id.get(decision.supplier_id) if decision.supplier_id else None
+    lead = None
+    if supplier is not None:
+        ps = leads_by_pair.get((str(product_id), str(decision.supplier_id))) or {}
+        lead = ps.get("lead_time_days")
+        if lead is None:
+            # The frozen candidate the UI offered carries the lead time when
+            # `product_suppliers` has none of its own.
+            inp = inputs or {}
+            for cand in [inp.get("supplier") or {}] + list(inp.get("alternatives") or []):
+                if cand and cand.get("supplier_code") == supplier.supplier_code:
+                    lead = cand.get("lead_time_days")
+                    break
+    return {
+        "recommendation_id": decision.recommendation_id,
+        "kind": decision.kind,
+        "buy_qty": _f(decision.buy_qty),
+        "stock_takes": decision.stock_takes or [],
+        "po_qty": _f(decision.po_qty),
+        "po_refs": decision.po_refs or [],
+        "reason_text": decision.reason_text,
+        # The buyer's price + supplier calls (AC-R13 / AC-R14). No UUID on the wire: the
+        # supplier travels as its code, the way a stock take travels as a warehouse code.
+        "price_mode": decision.price_mode or DEFAULT_PRICE_MODE,
+        "supplier_code": supplier.supplier_code if supplier else None,
+        "supplier_name": supplier.supplier_name if supplier else None,
+        "unit_cost": _f(decision.unit_cost),
+        "lead_time_days": _f(lead),
+        "draft_po_number": po.po_number if po else None,
+        "draft_po_id": po.id if po else None,
+    }
 
 
 def _plan_row_decision_dict(

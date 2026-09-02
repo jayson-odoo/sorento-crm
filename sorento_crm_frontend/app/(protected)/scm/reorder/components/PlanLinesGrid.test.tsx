@@ -8,7 +8,7 @@
  */
 import React, { useState } from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { render, screen, fireEvent, within, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ReorderRecommendation } from '../types/reorder.types';
 import { recToPlanLine, type PlanLine } from '../lib/planLine';
@@ -19,6 +19,7 @@ import { coverForLine, NO_COVER, type CoverSource } from '../lib/coverPlan';
 import type { PoReceipt } from '../lib/poCover';
 import type { LevelSuggestion } from '../lib/levelSuggestion';
 import type { ProductEconomics } from '../lib/productHealth';
+import type { SavedViews } from '@/services/savedViewsService';
 
 class ResizeObserverStub { observe() {} unobserve() {} disconnect() {} }
 (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = ResizeObserverStub;
@@ -65,6 +66,40 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
     return { resetToDefaults: vi.fn(), isLoading: false };
   },
 }));
+
+// S4's <SavedViewsMenu> (segments dropdown, AC-4.4) reads permissions through
+// next-auth's `useSession`, which throws outside a `<SessionProvider>` - this file has
+// no session context and is not about publish permissions, so it is stubbed the same way
+// the column layout above is. `SavedViewsMenu.test.tsx` and the AC-4.5 reusability file
+// own its own behaviour; this file only needs it not to crash the grid it now sits in.
+vi.mock('@/hooks/usePermissions', () => ({ useHasPermission: () => false }));
+vi.mock('@/hooks/useDeferredRowAction', () => ({
+  useDeferredRowAction: () => ({ run: vi.fn(), targetId: null, isPending: false }),
+}));
+// S8 (PR #489 review round): a controllable fetch so the segments describe block below
+// can render one real saved view and drive the dropdown - every other describe block
+// gets the empty default, matching the pre-S8 behaviour exactly.
+const fetchSavedViewsMock = vi.fn<(listingKey: string) => Promise<SavedViews>>(
+  async () => ({ mine: [], shared: [] }),
+);
+vi.mock('@/services/savedViewsService', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/services/savedViewsService')>();
+  return {
+    ...actual,
+    fetchSavedViews: (listingKey: string) => fetchSavedViewsMock(listingKey),
+    createSavedView: vi.fn(),
+    publishSavedView: vi.fn(),
+    setDefaultSavedView: vi.fn(),
+  };
+});
+vi.mock('@/lib/listing-column-preferences/listColumnPreferencesService', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/listing-column-preferences/listColumnPreferencesService')>();
+  return {
+    ...actual,
+    getUserListColumnConfig: vi.fn(async () => ({ listing_key: '', config: null })),
+    upsertUserListColumnConfig: vi.fn(),
+  };
+});
 
 // The filter popover uses the standard SearchableSelect. A native <select> keeps the
 // options in the DOM without driving a cmdk popover.
@@ -129,6 +164,7 @@ function renderGrid(
     readOnlyReason?: string | null;
     toolbarPrimary?: React.ReactNode;
     live?: boolean;
+    groupByChannel?: boolean;
   } = {},
 ) {
   const onRowEdit = vi.fn();
@@ -165,6 +201,7 @@ function renderGrid(
         economicsFor={opts.economicsFor}
         decisionsReadOnly={opts.decisionsReadOnly}
         readOnlyReason={opts.readOnlyReason ?? null}
+        groupByChannel={opts.groupByChannel}
       />
     );
   }
@@ -455,6 +492,67 @@ describe('PlanLinesGrid - the toolbar (C2)', () => {
   });
 });
 
+describe('PlanLinesGrid - the Decided filter reads GROUPED rows (S3 perf, AC-3.5)', () => {
+  // Two per-warehouse rows of the SAME product, grouped into one product row
+  // (`groupByChannel`) - `groupPlanLinesByChannel` runs off decision-independent
+  // filters only, and the Decided/Undecided filter + sort run AFTER grouping, against
+  // `isRowDecided`'s "any member carries a decision" rule.
+  const memberA = line({
+    id: 'a', product_id: 'p1', warehouse_id: 'w-brw', warehouse_code: 'BRW',
+    warehouse_name: 'Butterworth', sku: 'SKU-GROUP',
+  });
+  const memberB = line({
+    id: 'b', product_id: 'p1', warehouse_id: 'w-pj', warehouse_code: 'PJ',
+    warehouse_name: 'Petaling Jaya', sku: 'SKU-GROUP',
+  });
+
+  const openFilters = () => {
+    const trigger = screen.getByRole('button', { name: /Filters/i });
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false, pointerType: 'mouse' });
+  };
+
+  it('renders ONE row for the group when only one member is decided, not two', () => {
+    renderGrid([memberA, memberB], {
+      groupByChannel: true,
+      decisions: { a: { buy: 10 } },
+    });
+    // One collapsed group row for the product, not a row per member warehouse.
+    expect(screen.getAllByText('SKU-GROUP')).toHaveLength(1);
+  });
+
+  it('a partially-decided group counts as DECIDED under "Already decided" (any member rule)', async () => {
+    renderGrid([memberA, memberB], {
+      groupByChannel: true,
+      decisions: { a: { buy: 10 } }, // only member 'a' decided, 'b' is not
+    });
+    openFilters();
+    fireEvent.change(await screen.findByLabelText('Decision'), {
+      target: { value: 'decided' },
+    });
+    expect(screen.getByText('SKU-GROUP')).toBeInTheDocument();
+  });
+
+  it('the SAME partially-decided group disappears under "Still to decide"', async () => {
+    renderGrid([memberA, memberB], {
+      groupByChannel: true,
+      decisions: { a: { buy: 10 } },
+    });
+    openFilters();
+    fireEvent.change(await screen.findByLabelText('Decision'), {
+      target: { value: 'undecided' },
+    });
+    expect(screen.queryByText('SKU-GROUP')).not.toBeInTheDocument();
+  });
+
+  it('a group with NO member decided is undecided, and vanishes from "Already decided"', async () => {
+    renderGrid([memberA, memberB], { groupByChannel: true, decisions: {} });
+    openFilters();
+    fireEvent.change(await screen.findByLabelText('Decision'), {
+      target: { value: 'decided' },
+    });
+    expect(screen.queryByText('SKU-GROUP')).not.toBeInTheDocument();
+  });
+});
 
 describe('PlanLinesGrid - saved column layout belongs to the screen (A1)', () => {
   it('keys the column preferences on the listing, never on the plan id', () => {
@@ -464,5 +562,78 @@ describe('PlanLinesGrid - saved column layout belongs to the screen (A1)', () =>
     // Defaulted, `DataGrid` keys off the pathname - `/scm/reorder/{run_id}` - so every
     // plan started from the defaults and a buyer's own layout was never seen twice.
     expect(listingKeys).not.toContain('/scm/reorder/run-1');
+  });
+});
+
+describe('PlanLinesGrid - S4 segments (B1, AC-4.2, AC-4.4, S4 shortfall)', () => {
+  const SEGMENT_VIEW = {
+    id: 'view-1',
+    name: 'Buys only',
+    is_shared: false,
+    is_default: false,
+    owner_name: 'Views Caller',
+    view: {
+      filters: null,
+      sort: [],
+      // A subset of the ungrouped grid's own column ids (`enableHiding: false` on
+      // `sku`/`decision` means they would stay visible regardless, so both are
+      // included deliberately - the point under test is `warehouse` and the rest
+      // DROPPING OUT).
+      columns: ['rank', 'sku', 'decision'],
+      column_order: [
+        'rank', 'sku', 'warehouse', 'suggested', 'reorder_level', 'reorder_qty',
+        'project_need', 'retail_need', 'on_hand', 'incoming_spo', 'outstanding_po',
+        'decision', 'cost', 'needed', 'net', 'days_cover',
+      ],
+      // `status` is deliberately left "all": `PlanLinesGrid.statusFilter` only reacts
+      // when its caller wires `onStatusFilterChange` (the reorder page does; this
+      // harness does not), whereas `decidedFilter` falls back to grid-owned state
+      // even uncontrolled - so `decided` is what proves the restore actually landed.
+      quick_filters: { status: 'all', decided: 'undecided', price: 'all', action: 'all', level: 'all' },
+    },
+  };
+
+  beforeEach(() => {
+    fetchSavedViewsMock.mockResolvedValue({ mine: [SEGMENT_VIEW], shared: [] });
+  });
+
+  /** Opens the segments dropdown from whatever its current trigger label reads. */
+  const openSegmentsMenu = async (currentLabel: RegExp) => {
+    const trigger = await screen.findByRole('button', { name: currentLabel });
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false, pointerType: 'mouse' });
+  };
+
+  it('applying a segment narrows the columns to exactly what it saved (AC-4.2)', async () => {
+    renderGrid([line()]);
+    await openSegmentsMenu(/No segment/i);
+    fireEvent.click(await screen.findByText('Buys only'));
+
+    await waitFor(() => expect(headerNames()).toEqual(['#', 'Product', 'Decision']));
+  });
+
+  it('"No segment" restores the EXACT pre-segment column layout (B1)', async () => {
+    renderGrid([line()]);
+    const before = headerNames();
+
+    await openSegmentsMenu(/No segment/i);
+    fireEvent.click(await screen.findByText('Buys only'));
+    await waitFor(() => expect(headerNames()).not.toEqual(before));
+
+    // The trigger now shows the applied segment's own name.
+    await openSegmentsMenu(/Buys only/i);
+    fireEvent.click(await screen.findByText('No segment'));
+
+    await waitFor(() => expect(headerNames()).toEqual(before));
+  });
+
+  it('a segment restores the FIXED quick filters too, counted in the Filters badge (S4 shortfall)', async () => {
+    renderGrid([line()]);
+    await openSegmentsMenu(/No segment/i);
+    fireEvent.click(await screen.findByText('Buys only'));
+
+    // The segment's `quick_filters.decided = 'undecided'` is one active fixed filter
+    // with no dynamic-builder condition alongside it - the toolbar badge reads "1".
+    const filtersButton = await screen.findByRole('button', { name: /Filters/i });
+    await waitFor(() => expect(within(filtersButton).getByText('1')).toBeInTheDocument());
   });
 });

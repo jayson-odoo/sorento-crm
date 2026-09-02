@@ -9,7 +9,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { flexRender, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import type { ColumnDef } from '@tanstack/react-table';
 import { describe, expect, it } from 'vitest';
@@ -28,16 +28,29 @@ function worklistRow(over: Partial<OrderInquiryWorklistRow> = {}): OrderInquiryW
   } as OrderInquiryWorklistRow;
 }
 
-/** Just the "Outstanding PO/SPO" column - the bar and the draft mark live entirely in
- * this one cell, and nothing else on this row is under test here. */
-function LinkedToOnly({ rows }: { rows: OrderInquiryWorklistRow[] }) {
+/** One named column at a time - the bar/draft-mark/rejected-note/Was-Now live entirely
+ * in their own cell, and nothing else on the row is under test in any of these files. */
+function OneColumnOnly({
+  rows,
+  columnId,
+}: {
+  rows: OrderInquiryWorklistRow[];
+  columnId: string;
+}) {
   const allColumns = useOrderInquiryWorklistColumns();
-  const linkedColumn = allColumns.find(
-    (column) => (column as ColumnDef<OrderInquiryWorklistRow> & { id?: string }).id === 'po_number',
-  )!;
+  const named = allColumns.find((column) => {
+    const withKeys = column as ColumnDef<OrderInquiryWorklistRow> & {
+      id?: string;
+      accessorKey?: string;
+    };
+    // A column's `id` on the RAW def is only set when given explicitly (`po_number`);
+    // one built off a bare `accessorKey` (`qty`) only gets an `id` once react-table
+    // resolves the column internally, so the lookup has to try both.
+    return withKeys.id === columnId || withKeys.accessorKey === columnId;
+  })!;
   const table = useReactTable({
     data: rows,
-    columns: [linkedColumn],
+    columns: [named],
     getCoreRowModel: getCoreRowModel(),
   });
   return (
@@ -57,13 +70,17 @@ function LinkedToOnly({ rows }: { rows: OrderInquiryWorklistRow[] }) {
   );
 }
 
-function renderRows(rows: OrderInquiryWorklistRow[]) {
+function renderRows(rows: OrderInquiryWorklistRow[], columnId = 'po_number') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <LinkedToOnly rows={rows} />
+      <OneColumnOnly rows={rows} columnId={columnId} />
     </QueryClientProvider>,
   );
+}
+
+function renderQtyCell(rows: OrderInquiryWorklistRow[]) {
+  return renderRows(rows, 'qty');
 }
 
 describe('the "Outstanding PO/SPO" column: the bar (AC-I14)', () => {
@@ -261,5 +278,121 @@ describe('AC-D16/AC-D17: the per-document summary reads location first, late N d
     const row = screen.getByTestId('row-row-late');
     const badge = within(row).getByTestId('link-late-202607-S0105');
     expect(badge).toHaveTextContent('late 12 d');
+  });
+});
+
+describe('the qty cell: rejected reason and Was/Now (S1 AC-1.5, S7 review of PR #471)', () => {
+  it('prints only the quantity for the ordinary acknowledged row - nothing extra', () => {
+    renderQtyCell([worklistRow({ id: 'row-plain', qty: '10', ack_state: 'acknowledged' })]);
+    const row = screen.getByTestId('row-row-plain');
+    expect(within(row).getByText('10')).toBeInTheDocument();
+    expect(within(row).queryByText(/Rejected/)).not.toBeInTheDocument();
+    expect(within(row).queryByTestId('board-change-row-plain')).not.toBeInTheDocument();
+  });
+
+  it('prints the reason under the qty for a rejected row, with who refused it', () => {
+    renderQtyCell([
+      worklistRow({
+        id: 'row-rejected',
+        qty: '12',
+        ack_state: 'rejected',
+        rejected_by_name: 'Joey Ang',
+        rejected_reason: 'No supplier until November',
+      }),
+    ]);
+    const row = screen.getByTestId('row-row-rejected');
+    expect(within(row).getByText('12')).toBeInTheDocument();
+    expect(
+      within(row).getByText('Joey Ang: No supplier until November'),
+    ).toBeInTheDocument();
+  });
+
+  it('prints "Rejected by <name>" alone when no reason survives', () => {
+    renderQtyCell([
+      worklistRow({
+        id: 'row-rejected-blank',
+        qty: '3',
+        ack_state: 'rejected',
+        rejected_by_name: 'Joey Ang',
+        rejected_reason: '   ',
+      }),
+    ]);
+    const row = screen.getByTestId('row-row-rejected-blank');
+    expect(within(row).getByText('Rejected by Joey Ang')).toBeInTheDocument();
+  });
+
+  it('shows only the qty and a Changed badge for a settled row - the table is behind a lightbox now', () => {
+    // Driven by `previous_qty`, NOT `ack_state === 'changed'` (S1): a settle
+    // auto-acknowledges the instant it stamps `changed_at` (G4), so the row this cell
+    // reads is `acknowledged`, never `changed`, by the time the wire carries it.
+    //
+    // The Was/Now table used to render inline here; it now lives behind a lightbox
+    // (captain, 1 Sep - the inline table crowded the qty cell), so the row's own cell
+    // carries only the figure and the clickable badge, not the table's own "10"/"25".
+    renderQtyCell([
+      worklistRow({
+        id: 'row-settled',
+        qty: '25',
+        ack_state: 'acknowledged',
+        changed_at: '2026-09-01T10:00:00',
+        previous_qty: '10',
+        previous_delivery_date: '2026-08-10',
+        delivery_date: '2026-09-20',
+      }),
+    ]);
+    const row = screen.getByTestId('row-row-settled');
+    expect(within(row).getByText('25')).toBeInTheDocument();
+    expect(within(row).getByText(/Changed/)).toBeInTheDocument();
+    expect(within(row).queryByText('10')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('board-change-row-settled')).not.toBeInTheDocument();
+  });
+
+  it('opens the lightbox with the Was/Now table when the Changed badge is clicked', () => {
+    renderQtyCell([
+      worklistRow({
+        id: 'row-settled',
+        qty: '25',
+        ack_state: 'acknowledged',
+        changed_at: '2026-09-01T10:00:00',
+        previous_qty: '10',
+        previous_delivery_date: '2026-08-10',
+        delivery_date: '2026-09-20',
+      }),
+    ]);
+
+    fireEvent.click(screen.getByTestId('change-badge-trigger-row-settled'));
+
+    // Rendered via a portal (Radix `Dialog`), so it is read off `screen`, not `row`.
+    const table = screen.getByTestId('board-change-row-settled');
+    // "25" appears twice once open - the qty cell's own figure and the table's own Now
+    // column - which is the point: both read the row's current qty and can never
+    // disagree.
+    expect(screen.getAllByText('25').length).toBeGreaterThanOrEqual(2);
+    expect(within(table).getByText('10')).toBeInTheDocument();
+  });
+
+  it('never shows the Was/Now table on a rejected row, even if it once carried a previous value', () => {
+    renderQtyCell([
+      worklistRow({
+        id: 'row-rejected-with-history',
+        qty: '4',
+        ack_state: 'rejected',
+        rejected_by_name: 'Joey Ang',
+        rejected_reason: 'No stock',
+        previous_qty: '8',
+        previous_delivery_date: '2026-08-01',
+      }),
+    ]);
+    const row = screen.getByTestId('row-row-rejected-with-history');
+    expect(
+      within(row).queryByTestId('board-change-row-rejected-with-history'),
+    ).not.toBeInTheDocument();
+    expect(within(row).getByText(/No stock/)).toBeInTheDocument();
+  });
+
+  it('shows no Was/Now table for a row that has never been settled', () => {
+    renderQtyCell([worklistRow({ id: 'row-untouched', qty: '6', ack_state: 'acknowledged' })]);
+    const row = screen.getByTestId('row-row-untouched');
+    expect(within(row).queryByTestId('board-change-row-untouched')).not.toBeInTheDocument();
   });
 });

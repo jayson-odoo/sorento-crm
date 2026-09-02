@@ -29,10 +29,13 @@ export default function SpecExtractPanel({
   productId,
   productCode,
   canEdit,
+  valueLabels,
 }: {
   productId: string;
   productCode: string;
   canEdit: boolean;
+  /** `{spec_key: value_labels}` (E.2), from the registry the tab already loaded. */
+  valueLabels?: Record<string, Record<string, string>>;
 }) {
   /** Component state only. Nothing reads it back and nothing stores it. */
   const [text, setText] = useState('');
@@ -138,6 +141,7 @@ export default function SpecExtractPanel({
                 selectedKeys={selectedKeys}
                 onSelectionChange={extraction.setSelectedKeys}
                 disabled={isApplying}
+                valueLabels={valueLabels}
               />
               <div className="flex flex-wrap items-center gap-2">
                 <Button

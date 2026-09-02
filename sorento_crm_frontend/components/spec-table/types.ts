@@ -25,6 +25,9 @@ export interface SpecKeyDefinition {
    * for `black`, so adding it as a value of its own would create one nothing can match.
    */
   synonyms?: Record<string, string[]>;
+  /** How each value reads on screen, when the slug does not already read as one
+   *  (#423, folded into the spec workbench redesign). Keyed by the stored slug. */
+  value_labels?: Record<string, string>;
 }
 
 /**
@@ -53,6 +56,9 @@ export interface SpecTableRow {
   evidence: string | null;
   /** Stored on the row but no longer in the registry: shown, never edited. */
   unknownKey: boolean;
+  /** This key's `value_labels` (E.2) - carried on the row so the cell needs no
+   *  registry lookup of its own. */
+  valueLabels: Record<string, string>;
   /**
    * An open `human_override_conflict`: the rules now read something else and the
    * authored value is holding. Setting the right value is what answers it - there is

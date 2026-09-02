@@ -29,8 +29,9 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useHasPermission, usePermissions } from '@/hooks/usePermissions';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
-import { readable, readableValue } from '@/lib/spec-readable';
+import { readable, readableValue, valueLabelsByKey } from '@/lib/spec-readable';
 
+import { useSpecRegistryQuery } from '../../product-specifications/hooks/useSpecRegistryQuery';
 import {
   useAddFlyerSpecProposalRow,
   useApplyFlyerSpecProposals,
@@ -112,6 +113,10 @@ export function FlyerSpecReviewScreen({ readingId }: { readingId: string }) {
   const editValue = useEditFlyerSpecProposal(readingId);
   const addRow = useAddFlyerSpecProposalRow(readingId);
   const dismiss = useDismissFlyerSpecProposal(readingId);
+  // `{spec_key: value_labels}` (E.2) - the registry is small and ETag-cached
+  // (D9), so this costs no round trip beyond what the list page already pays.
+  const { data: registryKeys } = useSpecRegistryQuery();
+  const valueLabels = useMemo(() => valueLabelsByKey(registryKeys), [registryKeys]);
 
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [shown, setShown] = useState(PRODUCTS_PER_PAGE);
@@ -504,6 +509,7 @@ export function FlyerSpecReviewScreen({ readingId }: { readingId: string }) {
                 group={group}
                 selectedIds={selected}
                 disabled={!canWriteMaster || apply.isPending}
+                valueLabels={valueLabels}
                 onSelectionChange={(idsForThisProduct) => {
                   const own = new Set(group.proposals.map((row) => row.id));
                   setSelected((previous) => {
@@ -590,7 +596,7 @@ export function FlyerSpecReviewScreen({ readingId }: { readingId: string }) {
             </Button>
           )}
 
-          {result && <ApplyResult result={result} />}
+          {result && <ApplyResult result={result} valueLabels={valueLabels} />}
 
           {canWriteMaster && (
             // Sticky, because the count of what is about to be written has to
@@ -660,8 +666,10 @@ export function FlyerSpecReviewScreen({ readingId }: { readingId: string }) {
                   {readableValue(
                     row.stored_value,
                     row.stored_unit ?? undefined,
+                    valueLabels[row.spec_key],
                   ) || 'Not recorded'}{' '}
-                  becomes {readableValue(row.value, row.unit ?? undefined)}
+                  becomes{' '}
+                  {readableValue(row.value, row.unit ?? undefined, valueLabels[row.spec_key])}
                 </span>
               </li>
             ))}
@@ -690,7 +698,13 @@ export function FlyerSpecReviewScreen({ readingId }: { readingId: string }) {
  * three rows that silently did not land leaves three products wrong for as long
  * as it takes somebody to notice, which is usually never.
  */
-function ApplyResult({ result }: { result: FlyerSpecApplyResult }) {
+function ApplyResult({
+  result,
+  valueLabels,
+}: {
+  result: FlyerSpecApplyResult;
+  valueLabels: Record<string, Record<string, string>>;
+}) {
   const wrote = result.applied.length > 0;
 
   return (
@@ -716,7 +730,8 @@ function ApplyResult({ result }: { result: FlyerSpecApplyResult }) {
               <span className="font-mono text-foreground">
                 {entry.product_code}
               </span>{' '}
-              {readable(entry.spec_key)} {readableValue(entry.value)}
+              {readable(entry.spec_key)}{' '}
+              {readableValue(entry.value, undefined, valueLabels[entry.spec_key])}
             </li>
           ))}
         </ul>

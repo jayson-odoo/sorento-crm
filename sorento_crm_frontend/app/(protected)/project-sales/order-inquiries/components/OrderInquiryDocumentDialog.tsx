@@ -3,7 +3,6 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { ExternalLink } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
 import {
   Dialog,
   DialogBody,
@@ -19,7 +18,6 @@ import {
   useOrderInquiryPoDetail,
   useOrderInquirySpoDetail,
 } from '../../_shared/hooks/useOrderInquiry';
-import { ackStateOf } from '../../_shared/lib/orderInquiryAck';
 import { formatInquiryQty } from '../../_shared/lib/orderInquiryWorklist';
 import type { OrderInquiryDocumentAllocation } from '../../_shared/types/orderInquiry.types';
 
@@ -136,10 +134,9 @@ function NotStated() {
 }
 
 /**
- * Who this document's quantity is spoken for by, and on what footing (plan section 4.3).
- * A draft allocation reads Proposed - purchasing has not confirmed the row it hangs off -
- * and one on a confirmed row reads Confirmed. The two are the same table because they are
- * the same claim on the same units; only the word differs.
+ * Who this document's quantity is spoken for by (plan section 4.3). No Standing column
+ * any more (nit, review of PR #471): a row is born acknowledged (S1), so every allocation
+ * reads Confirmed and the column said nothing a person could act on.
  */
 function AllocationsPanel({
   allocations,
@@ -168,53 +165,36 @@ function AllocationsPanel({
                 <th className="px-2 py-1.5 text-end font-medium uppercase tracking-wide">
                   Qty
                 </th>
-                <th className="px-3 py-1.5 text-start font-medium uppercase tracking-wide">
-                  Standing
-                </th>
               </tr>
             </thead>
             <tbody>
-              {allocations.map((allocation, index) => {
-                const confirmed =
-                  ackStateOf({ ack_state: allocation.ack_state ?? undefined }) ===
-                  'acknowledged';
-                return (
-                  <tr
-                    key={`${allocation.inquiry_no ?? 'allocation'}-${allocation.item_code ?? ''}-${index}`}
-                    className="border-b last:border-b-0"
-                  >
-                    <td className="px-3 py-1.5">
-                      {allocation.inquiry_no || (
-                        <span className="text-muted-foreground">Not numbered</span>
+              {allocations.map((allocation, index) => (
+                <tr
+                  key={`${allocation.inquiry_no ?? 'allocation'}-${allocation.item_code ?? ''}-${index}`}
+                  className="border-b last:border-b-0"
+                >
+                  <td className="px-3 py-1.5">
+                    {allocation.inquiry_no || (
+                      <span className="text-muted-foreground">Not numbered</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-1.5">
+                    {allocation.so_number || (
+                      <span className="text-muted-foreground">Not numbered</span>
+                    )}
+                  </td>
+                  <td className="max-w-[180px] px-3 py-1.5">
+                    <span className="block truncate" title={allocation.item_code ?? ''}>
+                      {allocation.item_code || (
+                        <span className="text-muted-foreground">Unresolved</span>
                       )}
-                    </td>
-                    <td className="px-3 py-1.5">
-                      {allocation.so_number || (
-                        <span className="text-muted-foreground">Not numbered</span>
-                      )}
-                    </td>
-                    <td className="max-w-[180px] px-3 py-1.5">
-                      <span className="block truncate" title={allocation.item_code ?? ''}>
-                        {allocation.item_code || (
-                          <span className="text-muted-foreground">Unresolved</span>
-                        )}
-                      </span>
-                    </td>
-                    <td className="px-2 py-1.5 text-end font-medium">
-                      {formatInquiryQty(allocation.qty)}
-                    </td>
-                    <td className="px-3 py-1.5">
-                      <Badge
-                        variant={confirmed ? 'success' : 'secondary'}
-                        appearance="light"
-                        size="sm"
-                      >
-                        {confirmed ? 'Confirmed' : 'Proposed'}
-                      </Badge>
-                    </td>
-                  </tr>
-                );
-              })}
+                    </span>
+                  </td>
+                  <td className="px-2 py-1.5 text-end font-medium">
+                    {formatInquiryQty(allocation.qty)}
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>

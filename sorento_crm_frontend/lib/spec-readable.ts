@@ -52,15 +52,25 @@ export function readable(key: string): string {
  * The slug is the shared vocabulary the ranker and the n8n parser agree on, so it has
  * to stay exactly as it is in the data. It just has no business being the thing a
  * human reads off a product page.
+ *
+ * `labels` is the key's `value_labels` (#423, folded into the spec workbench
+ * redesign): a staff-written override, keyed by the exact stored slug, read BEFORE
+ * the automatic title-case fallback below. `readableValue('pp', undefined, {pp:
+ * 'PP'})` -> `'PP'`; the same call with no `labels` entry for it falls through to the
+ * automatic `'Pp'`.
  */
-export function readableValue(value: unknown, unit?: string): string {
+export function readableValue(
+  value: unknown,
+  unit?: string,
+  labels?: Record<string, string>,
+): string {
   // A key a product may hold more than one of (a two-tone finish) is stored as a LIST,
   // by derivation and by an accepted proposal alike. Each element is read exactly as a
   // single value would be, so "Rose Gold + Matt Black" comes back as the two words a
   // person recognises rather than as the array Javascript would print.
   if (Array.isArray(value)) {
     return value
-      .map((item) => readableValue(item, unit))
+      .map((item) => readableValue(item, unit, labels))
       .filter((text) => text !== '')
       .join(', ');
   }
@@ -69,6 +79,8 @@ export function readableValue(value: unknown, unit?: string): string {
   if (typeof value === 'number') return unit ? `${value} ${unit}` : String(value);
   const text = String(value ?? '');
   if (!text) return '';
+  const label = labels?.[text];
+  if (label) return unit ? `${label} ${unit}` : label;
   // Left alone when it is already prose or a code: only slugs get rewritten.
   if (!/^[a-z0-9]+(_[a-z0-9]+)*$/.test(text)) return unit ? `${text} ${unit}` : text;
   const words = text.replace(/_/g, ' ');
@@ -90,12 +102,41 @@ export function readableValue(value: unknown, unit?: string): string {
  * Returns the empty string for "there was nothing here", so the caller picks its own
  * word for absence ("nothing", a dash) rather than having one imposed.
  */
-export function readableEntry(entry: unknown): string {
+export function readableEntry(
+  entry: unknown,
+  labels?: Record<string, string>,
+): string {
   if (entry === null || entry === undefined) return '';
   if (typeof entry === 'object') {
     const { value, unit } = entry as { value?: unknown; unit?: unknown };
     if (value === null || value === undefined) return '';
-    return readableValue(value, typeof unit === 'string' && unit ? unit : undefined);
+    return readableValue(
+      value,
+      typeof unit === 'string' && unit ? unit : undefined,
+      labels,
+    );
   }
-  return readableValue(entry);
+  return readableValue(entry, undefined, labels);
+}
+
+/**
+ * `{spec_key: value_labels}` out of any registry-shaped array (E.2).
+ *
+ * One helper rather than five copies of the same `Object.fromEntries` at every
+ * screen that reads a spec registry: `SpecRegistryKey[]` (the record page) and
+ * `SpecKeyDefinition[]` (the product page's applicable-keys registry) both carry
+ * `spec_key` + `value_labels`, so one function serves both.
+ */
+export function valueLabelsByKey(
+  registry:
+    | readonly { spec_key: string; value_labels?: Record<string, string> | null }[]
+    | undefined,
+): Record<string, Record<string, string>> {
+  const map: Record<string, Record<string, string>> = {};
+  for (const key of registry ?? []) {
+    if (key.value_labels && Object.keys(key.value_labels).length > 0) {
+      map[key.spec_key] = key.value_labels;
+    }
+  }
+  return map;
 }

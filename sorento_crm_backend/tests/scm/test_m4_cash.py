@@ -253,7 +253,7 @@ def test_run_cash_stage_persists_rank_score_and_rank(scm_app):
     _, db, _, _ = scm_app
     _, a, b = _seed_two_buys(db)
 
-    created = svc.create_run(db, ["M4W-CASH"], "warehouse", enqueue=False)
+    created = svc.create_run(db, ["M4W-CASH"], "warehouse", product_codes=["M4P-URGENT", "M4P-CALM"], enqueue=False)
     assert svc.run_reorder(created["run_id"], db=db)["status"] == "completed"
 
     rows = db.execute(text(
@@ -279,7 +279,7 @@ def test_get_recommendations_budget_is_live_and_non_mutating(scm_app):
     budget funds all, budget 0 defers all - and the stored funding_status stays null."""
     app, db = _client(scm_app, "purchasing")
     _, a, b = _seed_two_buys(db)
-    created = svc.create_run(db, ["M4W-CASH"], "warehouse", enqueue=False)
+    created = svc.create_run(db, ["M4W-CASH"], "warehouse", product_codes=["M4P-URGENT", "M4P-CALM"], enqueue=False)
     svc.run_reorder(created["run_id"], db=db)
     rid = created["run_id"]
 
@@ -318,7 +318,7 @@ def test_put_budget_persists_and_is_reflected(scm_app):
     WITHOUT a budget then reflects the persisted split."""
     app, db = _client(scm_app, "purchasing")
     _, a, b = _seed_two_buys(db)
-    created = svc.create_run(db, ["M4W-CASH"], "warehouse", enqueue=False)
+    created = svc.create_run(db, ["M4W-CASH"], "warehouse", product_codes=["M4P-URGENT", "M4P-CALM"], enqueue=False)
     svc.run_reorder(created["run_id"], db=db)
     rid = created["run_id"]
 
@@ -422,11 +422,11 @@ def test_run_include_market_shifts_rank_not_qty(scm_app):
             ).mappings()
         }
 
-    r0 = svc.create_run(db, ["M4W-CASH"], "warehouse", enqueue=False)
+    r0 = svc.create_run(db, ["M4W-CASH"], "warehouse", product_codes=["M4P-URGENT", "M4P-CALM"], enqueue=False)
     assert svc.run_reorder(r0["run_id"], db=db)["status"] == "completed"
     base = _by_pid(r0["run_id"])
 
-    r1 = svc.create_run(db, ["M4W-CASH"], "warehouse", enqueue=False, include_market=True)
+    r1 = svc.create_run(db, ["M4W-CASH"], "warehouse", product_codes=["M4P-URGENT", "M4P-CALM"], enqueue=False, include_market=True)
     assert svc.run_reorder(r1["run_id"], db=db)["status"] == "completed"
     mkt = _by_pid(r1["run_id"])
 
