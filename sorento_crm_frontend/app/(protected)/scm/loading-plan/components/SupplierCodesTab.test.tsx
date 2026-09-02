@@ -252,6 +252,18 @@ describe('SupplierCodesTab - names the statement (AC-G2)', () => {
   });
 });
 
+describe('SupplierCodesTab - Remembered reads the clock the record reads', () => {
+  it('renders When in Malaysia wall-clock, like every other datetime on the record', () => {
+    // Stored naive UTC (`2026-08-27T02:00:00`); Malaysia is +8, so the memory was written
+    // at 10:00 on the 27th. `new Date(iso)` on a string with no zone reads it as LOCAL and
+    // printed 02:00, which disagreed with the plan's own "Started" line on the same screen.
+    state.aliases = [alias({ created_at: '2026-08-27T02:00:00' })];
+    renderTab();
+
+    expect(screen.getByText('27/08/2026, 10:00 am')).toBeInTheDocument();
+  });
+});
+
 describe('SupplierCodesTab - Needs a decision', () => {
   it('names the code, what the supplier called it, and what is behind it', () => {
     renderTab();

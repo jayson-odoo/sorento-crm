@@ -30,8 +30,8 @@ import type {
 } from '../../services/supplierCodeAliasService';
 import { RefreshMatchingButton } from './RefreshMatchingButton';
 import type { PlanDocumentKind } from '../../services/fulfilmentService';
-import { EM_DASH, fmtDateTime, fmtInt } from '../../lib/format';
-import { formatDateInMalaysia } from '@/lib/helpers';
+import { EM_DASH, fmtInt } from '../../lib/format';
+import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 
 /**
  * The Supplier codes tab (S3): what this supplier's file names that our catalogue does not
@@ -393,7 +393,10 @@ export function SupplierCodesTab({
         header: 'When',
         size: 180,
         cell: ({ row }) => {
-          const when = fmtDateTime(row.original.created_at);
+          // The record's own clock (`PRINCIPLES.md`): stored naive UTC, rendered as Malaysia
+          // wall-clock. `fmtDateTime` reads a zone-less string as LOCAL, so this column sat
+          // eight hours behind the "Started" line on the same screen.
+          const when = formatDateTimeInMalaysia(row.original.created_at);
           return (
             <span className="block truncate text-sm text-muted-foreground" title={when}>
               {when}
