@@ -13,17 +13,35 @@ Baseline measured on `origin/main` e1adad4d2, 2 Sep 2026.
 - **M4-01** `[vitest]` A shared `LIST_QUERY_OPTIONS` exists in `lib/list-query/` and every list
   hook whose `queryKey` carries page, size, sort, filter or search state spreads it. An
   inventory test enumerates the hooks and fails on any miss. Baseline: 3 of 63 with
-  `placeholderData`. One allowlisted exception, with its reason in the test:
-  `hooks/useListPager.ts` re-runs the LIST query in the background from a DETAIL page,
-  purely to find the current record's neighbours, and renders no rows - with
+  `placeholderData`; shipped: 128 spread sites across 101 files. This walk reads
+  `queryKey` text, so it is the hook-side FLOOR, not the whole rule - a hook keyed on a
+  bare `filters` or `query` identifier names nothing it can see, and widening it to those
+  two words would flag every report and detail query that keys on the same nouns. M4-01b's
+  third walk is the ceiling that covers them. Two allowlisted exceptions, each with its
+  reason in the test: `hooks/useListPager.ts` re-runs the LIST query in the background from
+  a DETAIL page, purely to find the current record's neighbours, and renders no rows - with
   `keepPreviousData` it would answer from the previous page's items while a new page
-  loads, so prev/next would step through neighbours the reader is not on. It is the
-  absence of rows on screen that makes it different from every other entry.
-- **M4-01b** `[vitest]` Every `<DataGrid>` in a file fed by one of those hooks forwards
-  `isPlaceholderData` from that query. A second inventory test walks hook to consumer to
-  tag and fails on any miss. This is what M4-02 depends on: TanStack reports the
-  placeholder window as `isLoading: false, isFetching: true, isPlaceholderData: true`, so
-  a grid that does not receive the flag never dims, whatever the hook spreads.
+  loads, so prev/next would step through neighbours the reader is not on; and
+  `system-management/mcp-tools/hooks/useMcpAdmin.ts` reads an unpaginated 500-row catalogue
+  whose only key change is an Active-only toggle, so keeping the previous answer would show
+  inactive rows to a reader who just asked for active ones, which reads as a broken toggle.
+- **M4-01b** `[vitest]` Every `<DataGrid>` that pages on the server forwards
+  `isPlaceholderData` from its list query. Two inventory walks, because there are two ways
+  to reach a grid: one walks hook to consumer to tag by imports, and one starts from the
+  honest population - every non-test file under `app/` and `components/` that sets
+  `manualPagination: true`, which is the code declaring that the server owns the page. The
+  second is the grid-side CEILING and is what a new list has to get past; the import walk
+  structurally cannot see a grid fed by props from its parent (`LeadsGrid`, `ProjectsGrid`)
+  or one whose `useQuery` is inline. Shipped: 106 of the 190 `<DataGrid>` tags forward it,
+  being 94 of the 97 server-paged files plus 12 client-paged grids fed by a spreading hook.
+  Three allowlisted, with reasons in the test: `PriceTagRequestsList` (fetches in a
+  `useEffect`, not react-query, so no query reports a placeholder window), `SpecTable` and
+  `SpecProposalReview` (`manualPagination` with `pageCount: 1` is how they turn client
+  paging OFF on prop-fed rows). A list fetched outside react-query is out of M4's scope:
+  moving it onto a query is its own piece of work, not a flag to forward. This is what
+  M4-02 depends on: TanStack reports the placeholder window as `isLoading: false,
+  isFetching: true, isPlaceholderData: true`, so a grid that does not receive the flag
+  never dims, whatever the hook spreads.
 - **M4-02** `[browser]` On Products, Orders and Stock at 1280: pressing Next, changing sort,
   changing a filter and typing a search word each keep the current rows on screen (dimmed) until
   the new page arrives. No skeleton rows appear once a first page has loaded.

@@ -6,7 +6,7 @@
 > `documentation/reference/DESIGN-LANGUAGE.md` (outranks the installed design skills).
 
 **Slug:** `ui-motion-round2` | **Domain:** design-system (cross-cutting)
-**Status:** IN PROGRESS - M4 built, two fix rounds applied, dim re-verification pending. Audit 2 Sep 2026
+**Status:** IN PROGRESS - M4 built, three fix rounds applied, browser run 2 green (evidence/M4), ready for review. Audit 2 Sep 2026
 (three read-only sweeps of `origin/main` e1adad4d2 with `review-animations`,
 `find-animation-opportunities`, `emil-design-eng`, `apple-design`); user
 approved all seven slices on the lavish review page 2 Sep 2026, order M4, M1+M2, M3, M5, M6, M7.
@@ -76,7 +76,9 @@ query, and the inventory tests are what keep both halves true.
   placeholderData: keepPreviousData } as const satisfies Partial<UseQueryOptions>`.
   Every paginated list hook spreads it: `useQuery({ ...LIST_QUERY_OPTIONS,
   queryKey, queryFn })`. The 3 hooks that already set it (e.g.
-  `useIntegrationLogs.ts:62`) use the constant instead.
+  `useIntegrationLogs.ts:62`) use the constant instead. Shipped: 128 spread
+  sites across 101 files, with 2 allowlisted refusals (`hooks/useListPager.ts`,
+  `mcp-tools/hooks/useMcpAdmin.ts` - see the walk descriptions below).
 - **`isPlaceholderData` is forwarded at the call site, always.** The spread
   alone keeps the previous page's ROWS; it does not dim them. TanStack 5.90
   reports the window as `isLoading: false, isFetching: true,
@@ -85,7 +87,11 @@ query, and the inventory tests are what keep both halves true.
   was caught in the browser. So each list reads the flag off its query
   (`const { data, isLoading, isPlaceholderData } = useOrders(params)`) and passes
   it: `<DataGrid ... isLoading={isLoading} isPlaceholderData={isPlaceholderData}>`.
-  100 grids do this.
+  Shipped: 106 of the 190 `<DataGrid>` tags in `app/` and `components/` forward
+  it, which is 94 of the 97 that page on the SERVER plus 12 client-paged grids
+  fed by a hook that spreads the constant. The remaining tags page in the
+  browser off rows they already hold, so there is no placeholder window for them
+  to report and forwarding the flag would dim rows that are not placeholders.
 - **Skeleton only when there is nothing worth showing.** `useBodySkeleton()` in
   `data-grid-table.tsx` is the single gate: `loadingMode === 'skeleton'` AND
   `isLoading` AND a page size AND (no rows yet OR column preferences are still
@@ -96,14 +102,38 @@ query, and the inventory tests are what keep both halves true.
   wrong columns first does not trust the second answer either.
   `DataGridTableBody` keeps a second dim clause, `isLoading && rows.length > 0`,
   for the grids whose call site feeds it `isLoading || isFetching`.
-- **Two guardrail tests, in `lib/list-query/options.inventory.test.ts`:**
-  M4-01 walks every `useQuery` in `app/`, `components/`, `hooks/` and `services/`
-  and fails on a list key that does not spread the constant. A list key is one
-  that (1) names page/size/sort/filter/search state inline, (2) comes from a
-  named list-key builder, or (3) carries a `params` / `listParams` bag - trigger
-  3 is what caught the ten hooks whose key names none of the words. M4-02 walks
-  from each spreading declaration to the files that import it, and fails on any
-  `<DataGrid>` there that does not pass `isPlaceholderData`.
+- **Three guardrail walks, in `lib/list-query/options.inventory.test.ts` - a
+  hook-side floor, and a grid-side ceiling.**
+  - **Walk 1 (M4-01), the floor.** Every `useQuery` in `app/`, `components/`,
+    `hooks/` and `services/`; fails on a list key that does not spread the
+    constant. A list key is one that (1) names page/size/sort/filter/search
+    state inline, (2) comes from a named list-key builder, or (3) carries a
+    `params` / `listParams` bag - trigger 3 is what caught the ten hooks whose
+    key names none of the words. It reads queryKeys, so it is a floor and not
+    the whole rule: a hook keyed on a bare `filters` or `query` identifier names
+    nothing it can see, and widening the regex to those two words would flag
+    every report and detail query that keys on the same nouns. Allowlist (2):
+    `hooks/useListPager.ts` (background neighbour lookup, renders no rows) and
+    `mcp-tools/hooks/useMcpAdmin.ts` (unpaginated 500-row catalogue whose only
+    key change is a filter toggle, so keeping the previous answer would show
+    inactive rows to a reader who just asked for active ones).
+  - **Walk 2 (M4-01b, import side).** From each spreading declaration to the
+    files that import it; fails on any `<DataGrid>` there that does not pass
+    `isPlaceholderData`.
+  - **Walk 3 (M4-01b, the ceiling).** Every non-test file under `app/` and
+    `components/` that sets `manualPagination: true` - the code declaring that
+    the SERVER owns the page - must pass `isPlaceholderData` on every
+    `<DataGrid>` tag in it. 97 files qualify. This is the check a new list
+    actually has to get past, and it is what caught the four prop-fed and
+    inline-query grids walk 2 structurally cannot reach (`LeadsGrid`,
+    `ProjectsGrid`, `api-call-logs/page.tsx`, `MessageSnippetsList`,
+    `ReorderResultsGrid`, `ReorderPolicyGrid`). Allowlist (3):
+    `PriceTagRequestsList` (fetches in a `useEffect`, not react-query),
+    `SpecTable` and `SpecProposalReview` (both `manualPagination` with
+    `pageCount: 1`, which is how they turn client paging OFF on prop-fed rows).
+  - **Out of M4's scope, stated once:** a list fetched outside react-query has
+    no query to report a placeholder window, so it is allowlisted rather than
+    converted. Moving those to react-query is its own piece of work.
 - `providers/query-provider.tsx`: `defaultOptions.queries = { retry: 1, staleTime:
   30_000, refetchOnWindowFocus: false }`. The 176 per-hook `refetchOnWindowFocus: false`
   repeats are deleted in the same PR (mechanical, one module per commit).
