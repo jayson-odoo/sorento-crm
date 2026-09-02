@@ -14,6 +14,7 @@ import { collectMenuPaths, matchesMenuPath } from '@/lib/menu-path-match';
 import { usePermissions, useHasAnyPermission } from '@/hooks/usePermissions';
 import { WORKFLOW_PUBLISHED_FOR_SUBMISSION_PERMISSIONS } from '@/config/workflow-forms-dynamic-menu';
 import { useTenantModules } from '@/hooks/useTenantModules';
+import { usePrefetchOnce } from '@/hooks/usePrefetchOnce';
 import {
   AccordionMenu,
   AccordionMenuClassNames,
@@ -108,6 +109,9 @@ export function SidebarMenu() {
   const isSuperadmin = status === 'loading' ? null : isSuperadminUser(session?.user);
   const { permissionSet, isLoading } = usePermissions();
   const { enabledModuleKeys, isLoading: modulesLoading } = useTenantModules();
+  // A viewport prefetch of ~100 sidebar links is why every menu item carried
+  // `prefetch={false}`; hover is the middle ground (M4 list latency).
+  const prefetchOnce = usePrefetchOnce();
   const wfModuleEnabled = enabledModuleKeys?.has('workflow_forms') ?? false;
   /** Avoid calling published-for-submission without RBAC - global QueryCache onError would toast 403 on every page. */
   const canFetchPublishedWorkflowForms = useHasAnyPermission(
@@ -203,6 +207,7 @@ export function SidebarMenu() {
           <Link
             href={item.path || '#'}
             prefetch={false}
+            onPointerEnter={() => item.path && prefetchOnce(item.path)}
             className="flex items-center grow gap-2 min-w-0"
           >
             {item.icon && <item.icon data-slot="accordion-menu-icon" className="shrink-0" />}
@@ -300,7 +305,12 @@ export function SidebarMenu() {
           className="text-[13px] group"
         >
           <div className="flex items-center gap-1 min-w-0 w-full">
-            <Link href={item.path || '#'} prefetch={false} className="flex-1 min-w-0 truncate">
+            <Link
+              href={item.path || '#'}
+              prefetch={false}
+              onPointerEnter={() => item.path && prefetchOnce(item.path)}
+              className="flex-1 min-w-0 truncate"
+            >
               {item.title}
             </Link>
             {item.path && (
