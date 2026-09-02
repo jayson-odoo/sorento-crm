@@ -75,6 +75,10 @@ arrives - see the file's own "Materials" comment for the precedent.
   it can detect, which a JS spring is not. A primitive with no controlled `open` prop of its own
   (ContextMenu's Root, MenubarMenu) tracks the same signal off `onOpenChange` alone, or - for
   MenubarMenu, which exposes neither - is not gated at all (see the Menubar row below).
+- Portalling a gated surface: `PopoverPortal` no longer renders Radix's `Portal` itself, it is a
+  context signal, and `PopoverContent` renders `<PopoverPrimitive.Portal forceMount>` from INSIDE
+  its own `AnimatePresence` (M2-04) - a Portal wrapped around the content from the outside drops
+  the whole subtree the instant the root's `open` flips false, taking the exit spring with it.
 - Origin anchoring: the inner `motion.div` uses the primitive's own Radix transform-origin
   variable (`--radix-popover-content-transform-origin`,
   `--radix-dropdown-menu-content-transform-origin` (shared by its `SubContent`),
@@ -83,11 +87,18 @@ arrives - see the file's own "Materials" comment for the precedent.
   (shared by its `SubContent`)) or a fixed `origin-*` utility for a surface with no Radix popper.
   Modals stay centered.
 - **Keyboard-triggered surfaces never animate (M2-01).** `DialogContent` takes `motion?: boolean`
-  (default `true`); `motion={false}` makes initial/animate/exit identical (nothing for the spring
-  to interpolate) and marks the content `data-motion="off"`. `CommandDialog` forwards the prop;
-  `search-dialog.tsx` (Cmd/Ctrl+Shift+K) passes `motion={false}`. The scrim still fades, on a
-  plain 150ms (`--duration-fast`) tween rather than the shared spring - it is not what the
-  shortcut asked to see.
+  (default `true`); `motion={false}` marks the content `data-motion="off"` and drops the scale:
+  `initial` and `animate` both sit at `opacity: 1` (the panel is simply THERE on the frame after
+  the keydown), and `exit` is a real `{ opacity: 0 }` on a `{ duration: 0 }` transition. Exit is
+  NOT a copy of `animate`: identical variants give `AnimatePresence` nothing to run, so the
+  fragment stays mounted at full opacity for as long as the scrim beside it takes to fade, then
+  pops (the tester measured content alive ~150-185ms at opacity 1). Zero duration removes the
+  panel on the closing frame instead. `CommandDialog` forwards the prop; `search-dialog.tsx`
+  (Cmd/Ctrl+Shift+K) passes `motion={false}`. The scrim is the one carve-out: it still fades, on
+  a plain 150ms (`--duration-fast`) tween rather than the shared spring, because a scrim is not
+  what the shortcut asked to see and reads worse snapping on and off than the panel does - and
+  under `prefers-reduced-motion` even the scrim collapses to `REDUCED_MOTION_TRANSITION`, the
+  same same-frame change every other surface takes.
 - **One `TooltipProvider`, app-wide (M2-07).** `Tooltip` (`components/ui/tooltip.tsx`) is a bare
   `Root` with no provider of its own; exactly one `<TooltipProvider delayDuration={700}
   skipDelayDuration={300}>` mounts in `components/ClientProviders.tsx`. A second one anywhere
@@ -114,7 +125,7 @@ arrives - see the file's own "Materials" comment for the precedent.
 | --- | --- |
 | Easing curve | `--ease-standard` stays. It is already a custom curve; do not introduce a second one. A stronger ease-out is an ADR, not a PR. |
 | Duration per surface | Lightboxes (Dialog, Sheet, AlertDialog) = `--duration-slow` 300ms in, 200ms out (`SURFACE_SPRING` / `SURFACE_SPRING_EXIT`). Menus and popovers (DropdownMenu, Popover, ContextMenu, HoverCard, Menubar) = `--duration-base` 200ms in and out (`MENU_SPRING` / `SURFACE_SPRING_EXIT`). Tooltip = instant in and out (see the tooltip bullet above: the 150ms CSS fade this table used to claim could not run in either direction). Pressed feedback = `--duration-fast` 150ms. Shipped M2-03/M2-06/M2-07. |
-| Frequency gate | Adopt the emil-design-eng frequency table verbatim: 100+ times/day (keyboard shortcuts, command palette toggle) = no animation; tens/day (hover, list navigation, row expand/collapse, tab switch) = none or `--duration-fast` opacity only; occasional (lightboxes, toasts, drawers) = standard surface spring; rare (onboarding, celebration) = may add delight. Keyboard-initiated actions never animate. |
+| Frequency gate | Adopt the emil-design-eng frequency table verbatim: 100+ times/day (keyboard shortcuts, command palette toggle) = no animation; tens/day (hover, list navigation, row expand/collapse, tab switch) = none or `--duration-fast` opacity only; occasional (lightboxes, toasts, drawers) = standard surface spring; rare (onboarding, celebration) = may add delight. Keyboard-initiated actions never animate - with the one carve-out named in the M2-01 bullet above, the dialog scrim, which keeps a 150ms fade behind a static panel. |
 
 ### Hard-fails in review
 
