@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import type { PendingAction } from '@/services/pendingActionService';
@@ -43,23 +43,61 @@ export function DeferredCountdown({
   className,
 }: DeferredCountdownProps) {
   const target = pending ? Date.parse(asUtc(pending.commit_at)) : 0;
-  const windowMs = Math.max(1000, (pending?.window_seconds ?? 0) * 1000);
   const [now, setNow] = useState(() => Date.now());
-  // The window is short (5-10s), so the bar has to move visibly, not step.
+  // The fill itself no longer needs a fast tick (see the transform effect
+  // below) - this one only redraws the `role="timer"` label, so once a
+  // second is plenty (M3-01).
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     if (!pending) return;
-    tickRef.current = setInterval(() => setNow(Date.now()), 100);
+    tickRef.current = setInterval(() => setNow(Date.now()), 1000);
     return () => {
       if (tickRef.current) clearInterval(tickRef.current);
+    };
+  }, [pending]);
+
+  // The fill's own CSS transition, armed ONCE per parked action rather than
+  // recomputed on every tick: it starts at scaleX(1) with no transition (so
+  // the first paint does not animate), then a double rAF flips it to
+  // scaleX(0) over the remaining window - one frame has to land at scaleX(1)
+  // before the flip, or there is nothing for the transition to run FROM. A
+  // `transform` transition runs on the compositor and never touches layout,
+  // unlike the old `width` tween this replaces, which is what let a
+  // ResizeObserver on the fill fire once per 100ms tick.
+  const [fillStyle, setFillStyle] = useState<CSSProperties>({ transform: 'scaleX(1)' });
+  const armedKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!pending) {
+      armedKeyRef.current = null;
+      return;
+    }
+    const key = `${pending.id}:${pending.commit_at}`;
+    if (armedKeyRef.current === key) return;
+    armedKeyRef.current = key;
+    setFillStyle({ transform: 'scaleX(1)' });
+    const remaining = Math.max(0, Date.parse(asUtc(pending.commit_at)) - Date.now());
+    let raf2 = 0;
+    const raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => {
+        setFillStyle({
+          transform: 'scaleX(0)',
+          transitionProperty: 'transform',
+          transitionDuration: `${remaining}ms`,
+          transitionTimingFunction: 'linear',
+        });
+      });
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      if (raf2) cancelAnimationFrame(raf2);
     };
   }, [pending]);
 
   if (!pending) return null;
 
   const remainingMs = Math.max(0, target - now);
-  const pct = Math.max(0, Math.min(100, (remainingMs / windowMs) * 100));
   const lapsed = remainingMs <= 0;
   const label = lapsed ? `${verb}…` : `${verb} in ${Math.ceil(remainingMs / 1000)}s`;
 
@@ -96,10 +134,13 @@ export function DeferredCountdown({
         <div
           data-testid="deferred-countdown-bar"
           className={cn(
-            'h-full rounded-full transition-[width] duration-100 ease-linear motion-reduce:transition-none',
+            'h-full origin-left rounded-full motion-reduce:transition-none',
             lapsed ? 'bg-muted-foreground/40' : 'bg-destructive',
           )}
-          style={{ width: lapsed ? '100%' : `${pct}%` }}
+          // Lapsed flatlines the bar full (matches the pre-M3 behaviour) rather
+          // than letting the transition's own end value (scaleX(0), empty) show:
+          // "the window is over" reads as a full grey bar, not a vanished one.
+          style={lapsed ? { transform: 'scaleX(1)' } : fillStyle}
         />
       </div>
     </div>
