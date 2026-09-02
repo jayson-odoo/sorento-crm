@@ -4,6 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { createPortal } from 'react-dom';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 
 export interface AsyncComboboxProps<T> {
   value: string;
@@ -72,8 +73,13 @@ export function AsyncCombobox<T>({
   const [activeIndex, setActiveIndex] = useState(-1);
   const containerRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastQueryRef = useRef<string>('');
+  // M6-06: the shared debounce standard, not a hand-rolled 300ms timer. `text`
+  // stays the source (it also carries the picked label, the focus-triggered
+  // fetch, the external sync), so it is fed IN via `setValue` rather than
+  // handed to the hook as an initial value.
+  const { setValue: seedDebounce, debouncedValue: debouncedText, isSettling } =
+    useDebouncedSearch();
   // Dropdown is portaled to <body> so it escapes ancestor overflow clipping
   // (e.g. the products table's overflow-x-auto). Position tracks the input rect.
   const [rect, setRect] = useState<{ top: number; left: number; width: number } | null>(null);
@@ -122,17 +128,16 @@ export function AsyncCombobox<T>({
     [fetchOptions],
   );
 
-  // Debounced fetch on text changes while open
+  // Keep the debounce hook's own value in step with `text`.
+  useEffect(() => {
+    seedDebounce(text);
+  }, [text, seedDebounce]);
+
+  // Debounced fetch once `text` has settled, while open (M6-06).
   useEffect(() => {
     if (!open) return;
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => {
-      void runFetch(text);
-    }, 300);
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
-  }, [text, open, runFetch]);
+    void runFetch(debouncedText);
+  }, [debouncedText, open, runFetch]);
 
   // Click-outside to close
   useEffect(() => {
@@ -286,13 +291,17 @@ export function AsyncCombobox<T>({
           className="z-[100] max-h-[200px] overflow-auto border rounded-md bg-background shadow"
           role="listbox"
         >
-          {loading && (
+          {/* M6-06: `isSettling` covers the debounce window itself, `loading`
+              the network request after it - both read as "still searching",
+              the way ListSearchInput's spinner does. */}
+          {(loading || isSettling) && (
             <div className="px-3 py-2 text-sm text-muted-foreground">Searching...</div>
           )}
-          {!loading && options.length === 0 && (
+          {!loading && !isSettling && options.length === 0 && (
             <div className="px-3 py-2 text-sm text-muted-foreground">No matches</div>
           )}
           {!loading &&
+            !isSettling &&
             options.map((opt, i) => {
               const v = optionValue(opt);
               const label = optionLabel(opt);

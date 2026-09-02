@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { Input } from '@/components/ui/input';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 
 export interface AsyncMultiComboboxProps<T> {
   value: string[];
@@ -42,8 +43,10 @@ export function AsyncMultiCombobox<T>({
   const [loading, setLoading] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
   const containerRef = useRef<HTMLDivElement>(null);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastQueryRef = useRef<string>('');
+  // M6-06: the shared debounce standard, not a hand-rolled 300ms timer.
+  const { setValue: seedDebounce, debouncedValue: debouncedText, isSettling } =
+    useDebouncedSearch();
 
   const runFetch = useCallback(
     async (q: string) => {
@@ -65,16 +68,16 @@ export function AsyncMultiCombobox<T>({
     [fetchOptions],
   );
 
+  // Keep the debounce hook's own value in step with `text`.
+  useEffect(() => {
+    seedDebounce(text);
+  }, [text, seedDebounce]);
+
+  // Fetch once `text` has settled, while open (M6-06).
   useEffect(() => {
     if (!open) return;
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => {
-      void runFetch(text);
-    }, 300);
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
-  }, [text, open, runFetch]);
+    void runFetch(debouncedText);
+  }, [debouncedText, open, runFetch]);
 
   useEffect(() => {
     if (!open) return;
@@ -191,15 +194,18 @@ export function AsyncMultiCombobox<T>({
           className="absolute z-50 mt-1 left-0 right-0 max-h-[200px] overflow-auto border rounded-md bg-background shadow"
           role="listbox"
         >
-          {loading && (
+          {/* M6-06: `isSettling` covers the debounce window, `loading` the
+              network request after it - both read as "still searching". */}
+          {(loading || isSettling) && (
             <div className="px-3 py-2 text-sm text-muted-foreground">Searching...</div>
           )}
-          {!loading && options.length === 0 && (
+          {!loading && !isSettling && options.length === 0 && (
             <div className="px-3 py-2 text-sm text-muted-foreground">
               {allowFreeText ? 'Press Enter to add free text' : 'No matches'}
             </div>
           )}
           {!loading &&
+            !isSettling &&
             options.map((opt, i) => {
               const v = optionValue(opt);
               const label = optionLabel(opt);
