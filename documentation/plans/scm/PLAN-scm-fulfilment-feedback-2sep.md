@@ -1,6 +1,6 @@
 # PLAN: Fulfilment planning feedback batch, 2 Sep (BRW first, per-line walk, saved decisions, upload speed)
 
-Status: IN REVIEW - S1 to S5 are all in PR #553 (the ONE final PR, captain 2 Sep), every slice delivered. S1 DONE; S2 Phase 1 + Phase 2 DONE (ladder v8 live on the lane); S3 and S3b Phase 1 + Phase 2 DONE, plus a first-pill-truncation fix (3 Sep); S4 Phase 1 + Phase 2 DONE (3 Sep - `projects.so_supply_decision_drafts`, the two draft routes and the confirm-time promotion are live on the lane, the Phase 1 mock is deleted); S5 DONE (folded in from #546). Code review round 3 fix batch (3 Sep, two coordinator messages) folded in: B1/B2/C1/S1-S3/N1-N7/C4-C8 and nits - `stale` rewritten to judge the LINE's own facts rather than the proposal (S1), the pill/Undo-all race fixes (B1/C1), the availability echo fix (B2), 422 line validation (S3), the `changed` count (C4), ladder v8 wiring gaps (C5/C8) and import-failure audit accuracy (C6). Second review round pending.
+Status: IN REVIEW - S1 to S5 are all in PR #553 (the ONE final PR, captain 2 Sep), every slice delivered. S1 DONE; S2 Phase 1 + Phase 2 DONE (ladder v8 live on the lane); S3 and S3b Phase 1 + Phase 2 DONE, plus a first-pill-truncation fix (3 Sep); S4 Phase 1 + Phase 2 DONE (3 Sep - `projects.so_supply_decision_drafts`, the two draft routes and the confirm-time promotion are live on the lane, the Phase 1 mock is deleted); S5 DONE (folded in from #546). Code review round 3 fix batch (3 Sep, two coordinator messages) folded in: B1/B2/C1/S1-S3/N1-N7/C4-C8 and nits - `stale` rewritten to judge the LINE's own facts rather than the proposal (S1), the pill/Undo-all race fixes (B1/C1), the availability echo fix (B2), 422 line validation (S3), the `changed` count (C4), ladder v8 wiring gaps (C5/C8) and import-failure audit accuracy (C6). Code review round 4 folded in: C2 - a saved decision is now keyed by the CORE sales order line rather than by the board's line number, because that number is positional on any order whose lines are not all mirrored (see S4's deviation note) - and C3 - the board's proof now reads the walk's own share and own-bin ledgers, so it stops offering a line stock an earlier line of the same walk already took. Captain's 3 Sep testing round folded in: D1 (the stock drill's five-pool net, see R-K), D2 (Available for Project outside a site pool, see R-K), D3 (the expanded ledger's own header sticks under the outer one - `PanelDataGrid` gains `stickyTop`, and the shared `DataGrid` gains the `headerStyle` and scroller-class seams it needs) and D4 (the Save button stays Saved, see S4). Next review round pending.
 Captain rulings: 2 Sep 2026 user test on SO419208 / SO419370 / SO418324 (screenshots on the session)
 Probe: `scratchpad/probe_brw_first.md` (read-only, worktree `.claude/worktrees/scm-brw-first`, branch `probe/scm-brw-first` off `origin/main cf255833d`)
 Lane: engine lane `.claude/worktrees/scm-fulfilment-2sep` branch `feat/scm-fulfilment-feedback-2sep` FE :3080 BE :8080 (S1, S2, then S3, S3b, S4); import lane `.claude/worktrees/scm-upload-2sep` branch `feat/scm-upload-speed-2sep` BE :8090, no FE server (S5). Both off origin/main. Own `.env` per lane (API_PORT, NEXTAUTH_URL, FASTAPI_INTERNAL_URL), venv symlinked to the primary checkout, node_modules cloned from it.
@@ -106,6 +106,24 @@ Verified facts this plan stands on:
   capped by the five-pool net (markup round 4); group sections keep Balance after. The pool
   summary row keeps Available (dealers) and gains Available for Project. The five-pool net
   must reach the Stock tab (today it lives only on the board's `BoardCellLocation.net`).
+  **One net, one reader (D1, captain 3 Sep):** the ledger's cap comes from `stock-detail`,
+  which read it off `ProjectSupplyService.netting()` - a reader whose pile span is the
+  products the REQUEST has asked about, and a drill-down asks about none, so every pool
+  netted 0 and the ledger printed Available for Project 0 on every row under a subtotal
+  reading 71. It now states the net of the SAME position its own membership came from.
+  **A row with no dealer share prints its Available (D2, captain 3 Sep):** on `own`,
+  `group` and `other_group` rows and on the GROUP subtotal, Available for Project IS
+  Available (the same signed figure, negative included) - nothing is kept back outside a
+  site pool - and the Total row's is the signed sum of the group and site pool subtotals.
+  The column is never blank and never a dash: "-" read as missing data.
+  **The ledger's own header stacks under the table's (D3, captain 3 Sep):** the drill expands
+  inside `CellStockTable`'s scroll container, so scrolling it left the ledger's rows under the
+  OUTER header's columns. `PanelDataGrid` takes a `stickyTop` (px) - `CellStockTable`'s own
+  `<thead>` height, MEASURED with a `ResizeObserver` because that header wraps at 375px - and
+  pins its header there, one z-index under the outer one, on a solid background. The shared
+  `DataGrid` gained the two seams that needs: `headerStyle` (a measured offset is not a class)
+  and `tableClassNames.scroller` (the grid's own `overflow-x: auto` is a scroll container on
+  both axes, so a header sticking inside it sticks to a box that never scrolls).
 
 - R-L. **Other site pools still supply the remainder (ruled 2 Sep, "B, the current
   behaviour").** Step 0 asks the asking bin's own site pool. When own locations and both
@@ -212,7 +230,9 @@ Verified facts this plan stands on:
   Board GET returns drafts in `contributions[].draft` and the panel seeds `draft` state
   from them on load.
 - Feedback: pill goes `Suggested` to `Saved` on the row (plain "Saved", markup 2 Sep; the
-  saver's name lives in the popover), the button shows a 600 ms check state, a sonner toast
+  saver's name lives in the popover), the button shows a check state and KEEPS it, disabled,
+  until the line is edited again (D4, captain 3 Sep: the old 600 ms flash read as the save
+  reverting - "shows saved then jumps back"), a sonner toast
   "Line 3 saved · 4 to confirm", the header counter updates as today.
   Leaving with unsaved edits in an OPEN panel keeps the existing `UnsavedDecisionPrompt`.
 - Drafts are shared, not per user (one planning team; a second planner sees the same saved
@@ -238,7 +258,8 @@ shape) showing "Saved by \<name\> · \<absolute timestamp\>" (`formatDateTimeInM
 relative label - this codebase's own `describeLastActivity` states why one screen over: a
 relative stamp "changes meaning depending on when the page happened to be loaded", so the
 brief's "relative time" wording is not followed here). `BoardLineDecisionPanel.tsx`'s Save
-button shows a 600 ms `CheckCircle2` state after `onDecide` resolves. "Undo all" (the only
+button shows a `CheckCircle2` state after `onDecide` resolves and holds it, disabled, while
+the line is untouched (D4). "Undo all" (the only
 existing clear path - a per-key Undo control does not exist in this UI) now calls
 `decide(key, null)` per key instead of a bare local `setDraft({})`, so a discarded draft is
 actually deleted server-side and does not re-seed on the next board read.
@@ -277,11 +298,22 @@ above, each because the code says otherwise:
   `_Row.key` is built from `str(order.id)` where `order` is a core `SalesOrder`, and a line
   whose order nobody has adopted still has a key and is still saveable. Confirm reaches it
   through `order.so_id`.
-- **Uniqueness is `(company_id, sales_order_id, line_no, item_code)` - the bucket is stored,
-  not matched on.** `bucket_key` is derived from the board's GRANULARITY as well as the
-  line's date (`bucket_key_for`), so the same line is `2026-09-07` at week and `2026-09-09`
-  at day: keyed on all four, a planner switching the view would watch every saved line
-  disappear.
+- **Identity is the CORE SALES ORDER LINE, and every part of the key is stored display**
+  (`core_line_id`, NOT NULL, FK to `sales_order_lines` ON DELETE CASCADE, unique per
+  `(company_id, core_line_id)`; revised at code review round 4, C2, from the round-3 key of
+  `(company_id, sales_order_id, line_no, item_code)`). NONE of the key's four parts is
+  durable. `bucket_key` is derived from the board's GRANULARITY as well as the line's date
+  (`bucket_key_for`), so the same line is `2026-09-07` at week and `2026-09-09` at day, and
+  a planner switching the view would have watched every saved line disappear. `line_no` is
+  worse: `FulfilmentBoardService._line_numbers` falls back to the POSITIONAL index for the
+  WHOLE order whenever any of its board rows lacks a mirror line, so (a) a re-upload that
+  moves an earlier line's required date renumbers every line after it and the draft stopped
+  attaching, and (b) on such an order the mirror numbers the same physical line differently
+  again - and `_write_decision` deleted the promoted drafts by the MIRROR's `line_no`, so
+  nothing matched and the draft survived its own confirmation to re-attach beside the frozen
+  decision. `sales_order_id`, `line_no`, `item_code` and `bucket_key` are kept as stored
+  lookup and display columns, re-stamped on every save: they are what the line was CALLED,
+  never what it is.
 - **The `proposed` snapshot is sent by the CLIENT on the PUT** (`{decision, proposed}`),
   rather than recomputed on the server. A proposal depends on which orders share the board
   (`compose_lines` draws the shared piles down once for the whole walk), on its granularity

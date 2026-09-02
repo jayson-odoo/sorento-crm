@@ -83,8 +83,11 @@ or a rule: those live once on the Policies page.
 
 ## S4 saved decisions
 
-- AC-4.1 Save decision on a line: pill Suggested to Saved within the interaction, button
-  shows a check for about 600 ms, toast "Line N saved · K to confirm".
+- AC-4.1 Save decision on a line: pill Suggested to Saved within the interaction, the button
+  shows a check and STAYS "Saved" (disabled) until the line is edited again, toast "Line N
+  saved · K to confirm". A line opened on somebody's existing saved draft reads Saved too.
+  (Amended 3 Sep, D4: it used to revert after about 600 ms, which read as the save undoing
+  itself - "shows saved then jumps back".)
 - AC-4.2 Reload the page, or open the same board on another device: the line is still
   Saved with its composition; the pill reads "Saved" only, the saver's name is in the popover.
 - AC-4.3 Undo on a saved line deletes the draft; the pill returns to Suggested.
