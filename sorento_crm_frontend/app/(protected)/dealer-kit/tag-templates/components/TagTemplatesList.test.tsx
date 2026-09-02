@@ -120,6 +120,19 @@ async function renderList() {
   );
   // Let the initial `listTemplates()` fetch resolve and the grid re-render.
   await screen.findByText(/New Template/i);
+  // `New Template` sits in the toolbar and renders on mount regardless of the
+  // fetch, so on a loaded CI runner it can resolve before `listTemplates()`
+  // has and before the two mocked rows (and their checkboxes) exist. Every
+  // test below either clicks a row checkbox or "Select all rows on this
+  // page" - the latter selects whatever rows are CURRENTLY in the table
+  // model, so firing it early silently selects nothing rather than failing
+  // loudly. Wait for both rows to actually be in `tbody` before any test
+  // interacts with them.
+  await waitFor(() => {
+    const tbody = document.querySelector('tbody');
+    expect(tbody).not.toBeNull();
+    expect(within(tbody as HTMLElement).getAllByRole('checkbox')).toHaveLength(2);
+  });
   return utils;
 }
 
@@ -179,7 +192,7 @@ describe('TagTemplatesList - bulk delete (AC-S11-1, D26)', () => {
   it('shows Delete once a row is selected', async () => {
     await renderList();
 
-    fireEvent.click(rows().getAllByRole('checkbox')[0]);
+    fireEvent.click((await rows().findAllByRole('checkbox'))[0]);
 
     expect(await screen.findByRole('button', { name: /^Delete$/i })).toBeInTheDocument();
   });
@@ -187,7 +200,7 @@ describe('TagTemplatesList - bulk delete (AC-S11-1, D26)', () => {
   it('parks ONE bulk action carrying every selected id, and clears the selection', async () => {
     await renderList();
 
-    fireEvent.click(screen.getByLabelText('Select all rows on this page'));
+    fireEvent.click(await screen.findByLabelText('Select all rows on this page'));
     fireEvent.click(await screen.findByRole('button', { name: /^Delete$/i }));
 
     await waitFor(() => expect(createPendingAction).toHaveBeenCalledTimes(1));
@@ -208,7 +221,7 @@ describe('TagTemplatesList - bulk delete (AC-S11-1, D26)', () => {
   it('asks NOTHING: no dialog is opened by Delete, only a countdown (D26)', async () => {
     await renderList();
 
-    fireEvent.click(screen.getByLabelText('Select all rows on this page'));
+    fireEvent.click(await screen.findByLabelText('Select all rows on this page'));
     fireEvent.click(await screen.findByRole('button', { name: /^Delete$/i }));
 
     await waitFor(() => expect(createPendingAction).toHaveBeenCalledTimes(1));
@@ -219,7 +232,7 @@ describe('TagTemplatesList - bulk delete (AC-S11-1, D26)', () => {
   it("the countdown names the COUNT, because a selection has no single record's name", async () => {
     await renderList();
 
-    fireEvent.click(screen.getByLabelText('Select all rows on this page'));
+    fireEvent.click(await screen.findByLabelText('Select all rows on this page'));
     fireEvent.click(await screen.findByRole('button', { name: /^Delete$/i }));
 
     await waitFor(() => expect(raisedToasts).toHaveLength(1));
@@ -229,7 +242,7 @@ describe('TagTemplatesList - bulk delete (AC-S11-1, D26)', () => {
   it('dims EVERY selected row for the length of the window (D26)', async () => {
     await renderList();
 
-    fireEvent.click(screen.getByLabelText('Select all rows on this page'));
+    fireEvent.click(await screen.findByLabelText('Select all rows on this page'));
     fireEvent.click(await screen.findByRole('button', { name: /^Delete$/i }));
 
     await waitFor(() =>
@@ -249,7 +262,7 @@ describe('TagTemplatesList - bulk delete (AC-S11-1, D26)', () => {
   it('Cancel takes the dimming off every row it put it on', async () => {
     await renderList();
 
-    fireEvent.click(screen.getByLabelText('Select all rows on this page'));
+    fireEvent.click(await screen.findByLabelText('Select all rows on this page'));
     fireEvent.click(await screen.findByRole('button', { name: /^Delete$/i }));
     await waitFor(() =>
       expect(pendingEntityStore.getKeys().has(pendingEntityKey('tag_template', 'tmpl-1'))).toBe(
@@ -269,7 +282,7 @@ describe('TagTemplatesList - bulk delete (AC-S11-1, D26)', () => {
   it('a one-row selection says "1 template", not "1 templates"', async () => {
     await renderList();
 
-    fireEvent.click(rows().getAllByRole('checkbox')[0]);
+    fireEvent.click((await rows().findAllByRole('checkbox'))[0]);
     fireEvent.click(await screen.findByRole('button', { name: /^Delete$/i }));
 
     await waitFor(() => expect(raisedToasts).toHaveLength(1));
@@ -281,7 +294,7 @@ describe('TagTemplatesList - the per-row Delete (D7)', () => {
   it('parks the single-record action for that row, with no dialog', async () => {
     await renderList();
 
-    fireEvent.click(rows().getAllByLabelText('Delete template')[0]);
+    fireEvent.click((await rows().findAllByLabelText('Delete template'))[0]);
 
     await waitFor(() => expect(createPendingAction).toHaveBeenCalledTimes(1));
     const body = parkedBody();
@@ -295,7 +308,7 @@ describe('TagTemplatesList - the per-row Delete (D7)', () => {
   it('names the template in its countdown, and dims only that row', async () => {
     await renderList();
 
-    fireEvent.click(rows().getAllByLabelText('Delete template')[0]);
+    fireEvent.click((await rows().findAllByLabelText('Delete template'))[0]);
 
     await waitFor(() => expect(raisedToasts).toHaveLength(1));
     expect(raisedToasts[0]).toEqual({ verb: 'Deleting', subject: 'Toilet tag' });
