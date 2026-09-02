@@ -49,7 +49,7 @@ vi.mock('../../email-templates/hooks/useEmailTemplates', () => ({
   }),
 }));
 
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 
 vi.mock('./RecipientPicker', () => ({
   default: ({

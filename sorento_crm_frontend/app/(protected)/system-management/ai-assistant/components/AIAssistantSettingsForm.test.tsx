@@ -51,7 +51,7 @@ vi.mock('@/hooks/useProviderModels', () => ({
   }),
 }));
 
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 beforeEach(() => {
   mutateConfig.mockClear();

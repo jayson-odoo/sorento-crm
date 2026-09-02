@@ -22,7 +22,7 @@ import { useCancelImportJob, useImportJobStatus } from '../hooks/useImportJobs';
 import { OutcomeBreakdownCard } from '../components/OutcomeBreakdownCard';
 import { ImportJobRowsCard } from '../components/ImportJobRowsCard';
 import { PlanningChangeOutcomeCard } from '../components/PlanningChangeOutcomeCard';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import type { OutstandingPlanningChangeBatch } from '../../../scm/reorder/services/outstandingImportService';
 
 const JOB_TYPE_LABELS: Record<string, string> = {

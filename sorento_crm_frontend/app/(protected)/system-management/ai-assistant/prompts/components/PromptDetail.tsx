@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { ArrowLeft, GitCompare, Loader2, Save } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { cn } from '@/lib/utils';
 import {
