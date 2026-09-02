@@ -1,8 +1,14 @@
 """`FromSODocList` resolves on the OUTSTANDING purchase book too (G12/D2, 2 Sep 2026).
 
-Revision ID: 456_outstanding_from_so
-Revises: 455_claim_crm_supply
+Revision ID: 459_outstanding_from_so
+Revises: 458_claim_crm_supply
 Create Date: 2026-09-02
+
+BATCH CHAIN (S6 merges LAST): 454 (S1) -> 455 (S4) -> 456 (S3) -> 457 (S5) -> 458 / 459
+(S6, this pair); merge order #471 -> #488 -> #489 -> #491 -> #493 -> #490. This revision
+chains onto its own sibling and needs no change at merge time; 458 is the one whose
+`down_revision` is flipped to `457_reorder_replan` immediately before #490 merges - see
+its docstring.
 
 The captain's "PO & SPO outstanding.xlsx" is the same AutoCount export shape the history
 book is, `FromSODocList` column and all - and that column is the ONLY place either file
@@ -27,8 +33,8 @@ than reported as unmapped, and reading it is a decision nobody has taken yet.
 import sqlalchemy as sa
 from alembic import op
 
-revision = "456_outstanding_from_so"
-down_revision = "455_claim_crm_supply"
+revision = "459_outstanding_from_so"
+down_revision = "458_claim_crm_supply"
 branch_labels = None
 depends_on = None
 

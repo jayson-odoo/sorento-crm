@@ -432,15 +432,15 @@ def seed_scm_module_data() -> None:
     )
     module_436 = importlib.util.module_from_spec(spec_436)
     spec_436.loader.exec_module(module_436)
-    # 456 adds `FromSODocList` to the `outstanding_po` doc type. Same create_all gap as
+    # 459 adds `FromSODocList` to the `outstanding_po` doc type. Same create_all gap as
     # every alias block above, and this one decides whether a re-uploaded purchase book can
     # seed any DEDICATION at all: G12's project-bin lock refuses an unattributed line to the
     # automatic pass, and this column is where the attribution comes from.
-    spec_456 = importlib.util.spec_from_file_location(
-        "_scm_seed_456", versions / "456_outstanding_po_from_so_alias.py"
+    spec_459 = importlib.util.spec_from_file_location(
+        "_scm_seed_459", versions / "459_outstanding_po_from_so_alias.py"
     )
-    module_456 = importlib.util.module_from_spec(spec_456)
-    spec_456.loader.exec_module(module_456)
+    module_459 = importlib.util.module_from_spec(spec_459)
+    spec_459.loader.exec_module(module_459)
 
     # 440 seeds the `inbound_shipment_draft` numbering rule (`PL-{YYMM}-{NNN}`). Nothing in
     # the ORM produces a `document_numbering_rules` ROW, and without it every packing list
@@ -464,7 +464,7 @@ def seed_scm_module_data() -> None:
         aliases += module_428.seed(conn)
         aliases += module_435.seed(conn)
         aliases += module_436.seed(conn)
-        aliases += module_456.seed(conn)
+        aliases += module_459.seed(conn)
         module_440.seed_inbound_shipment_draft_rule(conn)
         for field, alias in module_347._ALIASES:
             conn.execute(_text(
