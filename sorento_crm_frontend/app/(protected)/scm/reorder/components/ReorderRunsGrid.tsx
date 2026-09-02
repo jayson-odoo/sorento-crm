@@ -129,6 +129,13 @@ export function ReorderRunsGrid({ autoOpenRun = false }: { autoOpenRun?: boolean
                 daily
               </Badge>
             ) : null}
+            {/* AC-5.4: the superseded run stays readable and labelled here - a Re-plan
+                (S5, G8) never hides its history, it only says a newer one replaced it. */}
+            {row.original.superseded_by_run_id ? (
+              <Badge variant="secondary" appearance="light" size="sm">
+                superseded
+              </Badge>
+            ) : null}
           </div>
         ),
         size: 190,

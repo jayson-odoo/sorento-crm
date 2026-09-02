@@ -143,7 +143,7 @@ def api():
 # ---------------------------------------------------------------------------
 
 
-def _product(db, *, list_price="1599.00"):
+def _product(db, *, list_price="1599.00", barcode=None):
     from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
 
     stem = unique_code("ZZTR")
@@ -170,6 +170,7 @@ def _product(db, *, list_price="1599.00"):
         dimensions_height=Decimal("220"),
         is_active=True,
         is_discontinued=False,
+        barcode=barcode,
     )
     db.add(product)
     db.flush()
@@ -335,7 +336,7 @@ def test_product_set_search_returns_id_code_and_name(api):
 def test_product_tag_data_keeps_every_field(api):
     """`response_model` drops what it does not declare. Assert the whole shape."""
     db, _as = api
-    product = _product(db)
+    product = _product(db, barcode="1234567890123")
     attachment = _image(db, product)
     promotion = _promotion(db, product)
 
@@ -358,6 +359,7 @@ def test_product_tag_data_keeps_every_field(api):
         "list_price",
         "offer_price",
         "promotion_id",
+        "barcode",
     }
     assert body["code"] == product.product_code
     assert body["name"] == product.product_name
@@ -374,6 +376,7 @@ def test_product_tag_data_keeps_every_field(api):
     assert body["list_price"] == 1599.0
     assert body["offer_price"] == 599.0
     assert body["promotion_id"] == promotion.id
+    assert body["barcode"] == "1234567890123"
 
 
 def test_unknown_product_is_404(api):
@@ -482,7 +485,7 @@ def test_resolve_prices_for_lines_returns_engine_prices(api):
     from app.models.access import RespondContact
     from app.services.price_tag_request_service import PriceTagRequestService
 
-    product = _product(db)
+    product = _product(db, barcode="4567891234567")
     promotion = _promotion(db, product)
 
     contact = RespondContact(
@@ -531,6 +534,7 @@ def test_resolve_prices_for_lines_returns_engine_prices(api):
     assert row["sell_price"] == 599.0
     assert row["dimensions"] == "800 x 500 x 220 mm"
     assert row["spec_lines"] == "One line\nAnother line"
+    assert row["barcode"] == "4567891234567"
 
 
 # ---------------------------------------------------------------------------

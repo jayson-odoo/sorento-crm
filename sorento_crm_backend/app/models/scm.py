@@ -310,6 +310,17 @@ class ReorderRun(Base, CompanyScopedMixin):
     planned_count = Column(Integer, nullable=False, default=0, server_default=text("0"))
     decided_count = Column(Integer, nullable=False, default=0, server_default=text("0"))
     confirmed_count = Column(Integer, nullable=False, default=0, server_default=text("0"))
+    # Re-plan supersede link (plan 5.1 / G8). Two columns rather than one, so the RQ worker
+    # can find the OLD run's decisions the moment it starts (`supersedes_run_id`, stamped at
+    # creation) without waiting on the reverse pointer, which is only written once THIS run
+    # actually completes (`superseded_by_run_id`, stamped on the OLD row) - a still-running
+    # or failed re-plan must never make a still-valid old run look superseded.
+    supersedes_run_id = Column(
+        UUID(as_uuid=False), ForeignKey("scm.reorder_run.id", ondelete="SET NULL"), nullable=True
+    )
+    superseded_by_run_id = Column(
+        UUID(as_uuid=False), ForeignKey("scm.reorder_run.id", ondelete="SET NULL"), nullable=True
+    )
 
     recommendations = relationship(
         "ReorderRecommendation",

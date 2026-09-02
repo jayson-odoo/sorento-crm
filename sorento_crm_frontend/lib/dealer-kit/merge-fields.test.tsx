@@ -52,6 +52,7 @@ function product(overrides: Partial<ProductTagData> = {}): TagBindingData {
       list_price: 1599,
       offer_price: 599,
       promotion_id: null,
+      barcode: null,
       ...overrides,
     },
   };
@@ -105,6 +106,7 @@ function lineData(overrides: Partial<LineTagData> = {}): LineTagData {
     show_promo_price: true,
     included_accessories: 'Waste and trap',
     quantity: 3,
+    barcode: null,
     ...overrides,
   };
 }

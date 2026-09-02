@@ -30,6 +30,12 @@ export interface SnapResult {
   guides: GuideLine[];
 }
 
+/** Ruler guide positions to also snap against, split by axis (S6, D9). */
+export interface GuideSnapTargets {
+  vertical: number[];
+  horizontal: number[];
+}
+
 export interface SnapGuides {
   /** Compute snap for a layer being dragged to (x_mm, y_mm). */
   computeSnap: (
@@ -41,6 +47,7 @@ export interface SnapGuides {
     allLayers: TagLayer[],
     canvasWidth: number,
     canvasHeight: number,
+    guideTargets?: GuideSnapTargets,
   ) => SnapResult;
   /** Active guide lines (render these on the canvas). */
   guides: GuideLine[];
@@ -61,10 +68,23 @@ export function useSnapGuides(): SnapGuides {
       allLayers: TagLayer[],
       canvasWidth: number,
       canvasHeight: number,
+      guideTargets?: GuideSnapTargets,
     ): SnapResult => {
       // Collect snap targets (horizontal = y positions, vertical = x positions).
-      const hTargets: number[] = [0, canvasHeight / 2, canvasHeight];
-      const vTargets: number[] = [0, canvasWidth / 2, canvasWidth];
+      // Ruler guides join in cheaply (D9): they are just more numbers in the
+      // same two lists, no different from the canvas edges already there.
+      const hTargets: number[] = [
+        0,
+        canvasHeight / 2,
+        canvasHeight,
+        ...(guideTargets?.horizontal ?? []),
+      ];
+      const vTargets: number[] = [
+        0,
+        canvasWidth / 2,
+        canvasWidth,
+        ...(guideTargets?.vertical ?? []),
+      ];
 
       for (const layer of allLayers) {
         if (layer.id === layerId || !layer.visible) continue;

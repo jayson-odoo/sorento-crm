@@ -60,6 +60,13 @@ vi.mock('../hooks/useFlyerSpecProposals', () => ({
   useApplicableSpecKeysQuery,
 }));
 
+// The registry query (E.2, value labels) - mocked the same way as the batch hooks
+// above rather than wrapped in a real `QueryClientProvider`, so this suite's shape
+// stays "the hooks are mocked, not the service".
+vi.mock('../../product-specifications/hooks/useSpecRegistryQuery', () => ({
+  useSpecRegistryQuery: () => ({ data: [] }),
+}));
+
 vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: (slug: string) => hasPermission(slug),
   useHasAnyPermission: () => true,

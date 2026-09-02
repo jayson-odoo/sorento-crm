@@ -352,3 +352,65 @@ describe('groupPlanLinesByChannel - the product row IS the group row', () => {
     expect(group.order_qty).toBe(5);
   });
 });
+
+describe('needs_recheck survives grouping (review B2, S5 re-plan)', () => {
+  // The bug: `buildGroupRec` built a fresh synthetic `ReorderRecommendation` with no
+  // `needs_recheck` field at all, so the flag - true on the underlying stored rec - read
+  // `undefined` (falsy) the moment `PlanLinesGrid` looked at the GROUP row instead of a
+  // member, and grouped is the default view. `buildProductGroupedLine` spreads the
+  // product row's own `rec` through, which should already carry the flag, but is fixed
+  // explicitly too (review's exact ask) so a future refactor of that spread cannot regress
+  // it silently.
+  it('buildGroupRec (multi-location sum): true when ANY member needs a recheck', () => {
+    const a = line({ id: 'x', product_id: 'p-loc', sku: 'LOC-1', warehouse_id: 'w1',
+                     warehouse_code: 'BRW', on_hand: 4, order_qty: 2 });
+    const b = line({ id: 'y', product_id: 'p-loc', sku: 'LOC-1', warehouse_id: 'w2',
+                     warehouse_code: 'MWH', on_hand: 6, order_qty: 3,
+                     needs_recheck: true });
+    const [group] = groupPlanLinesByChannel([a, b]);
+    expect(group.__group.productLine).toBeNull(); // takes the buildGroupRec path
+    expect(group.rec.needs_recheck).toBe(true);
+  });
+
+  it('buildGroupRec: false when no member needs a recheck', () => {
+    const a = line({ id: 'x', product_id: 'p-loc', sku: 'LOC-1', warehouse_id: 'w1',
+                     warehouse_code: 'BRW', on_hand: 4, order_qty: 2 });
+    const b = line({ id: 'y', product_id: 'p-loc', sku: 'LOC-1', warehouse_id: 'w2',
+                     warehouse_code: 'MWH', on_hand: 6, order_qty: 3 });
+    const [group] = groupPlanLinesByChannel([a, b]);
+    expect(group.rec.needs_recheck).toBeFalsy();
+  });
+
+  it('buildProductGroupedLine (product row IS the group row): carries the flag through', () => {
+    const productRow = line({
+      id: 'rec-product', product_id: 'p-srt', sku: 'SRTWT7408', type: 'covered',
+      warehouse_id: null, warehouse_code: null, warehouse_name: null, is_network: true,
+      policy_type: 'reorder_level', order_qty: 7, on_hand: 5495,
+      needs_recheck: true,
+    });
+    const brwDisposition = line({
+      id: 'rec-disposition', product_id: 'p-srt', sku: 'SRTWT7408', type: 'disposition',
+      warehouse_id: 'w-brw', warehouse_code: 'BRW', warehouse_name: 'Butterworth',
+      policy_type: 'reorder_level', disposition_action: 'hold', order_qty: 0, on_hand: 1296,
+    });
+    const [group] = groupPlanLinesByChannel([productRow, brwDisposition]);
+    expect(group.__group.productLine?.id).toBe('rec-product'); // takes the product-row path
+    expect(group.rec.needs_recheck).toBe(true);
+  });
+
+  it('buildProductGroupedLine: also true when a NON-representative member carries the flag', () => {
+    const productRow = line({
+      id: 'rec-product', product_id: 'p-srt', sku: 'SRTWT7408', type: 'covered',
+      warehouse_id: null, warehouse_code: null, warehouse_name: null, is_network: true,
+      policy_type: 'reorder_level', order_qty: 7, on_hand: 5495,
+    });
+    const brwDisposition = line({
+      id: 'rec-disposition', product_id: 'p-srt', sku: 'SRTWT7408', type: 'disposition',
+      warehouse_id: 'w-brw', warehouse_code: 'BRW', warehouse_name: 'Butterworth',
+      policy_type: 'reorder_level', disposition_action: 'hold', order_qty: 0, on_hand: 1296,
+      needs_recheck: true,
+    });
+    const [group] = groupPlanLinesByChannel([productRow, brwDisposition]);
+    expect(group.rec.needs_recheck).toBe(true);
+  });
+});

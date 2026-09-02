@@ -137,6 +137,7 @@ export function SpecTable({
       source: null,
       evidence: null,
       unknownKey: false,
+      valueLabels: definition.value_labels ?? {},
       conflict: null,
     };
     // Sorted in, not appended: the reader is scanning labels, and a row that arrives
@@ -171,10 +172,12 @@ export function SpecTable({
                 aria-label={`The rules now read ${readableValue(
                   row.original.conflict.proposed,
                   row.original.conflict.proposedUnit ?? undefined,
+                  row.original.valueLabels,
                 )}. Correct the value to settle it.`}
                 title={`The rules now read ${readableValue(
                   row.original.conflict.proposed,
                   row.original.conflict.proposedUnit ?? undefined,
+                  row.original.valueLabels,
                 )}. Correct the value to settle it.`}
                 data-spec-conflict={row.original.specKey}
                 className="shrink-0"

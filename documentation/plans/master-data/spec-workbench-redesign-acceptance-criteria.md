@@ -1,0 +1,183 @@
+# UAC - Spec workbench redesign (Product Specifications + Spec Verification)
+
+**Companion to:** `PLAN-spec-workbench-redesign.md`
+**Status:** Built (PR #520), hands-on feedback round 1 on 2 Sep folded in as D13-D17. Grill closed 2 Sep 2026 (record page, registry first, Try a phrase in Actions, no explainer prose, value labels folded in, ranking to Settings, Spec Verification in scope, no new motion).
+**Folds in:** `spec-value-labels-acceptance-criteria.md` (#423) as Groups D and E. That file is SUPERSEDED by this one.
+**Design language:** `documentation/reference/DESIGN-LANGUAGE.md` (PR #498, merged 2 Sep). First feature to run the design slots of `/feature` end to end.
+**Legend:** `[BE]` pytest · `[FE]` vitest · `[E2E]` agent-browser evidence · `[MIG]` migration · `[UX]` design-language check (measurable in the browser) · `[T]` CI guard.
+
+## Journey
+
+**Actor:** master-data staff with `master_data.spec_registry.view` (and `.edit` to change anything), on a laptop, a few times a week. They arrive from the sidebar, Master Data > Product Specifications, because search or a flyer derived a spec wrong, or a new product family needs a key.
+
+1. The first screen is the registry: one row per specification (label, type, unit, values, rules, seen in, source). A status line above the grid says when the catalogue was last read and whether rules changed since. They find the specification with the list search, by its label, a customer word, or a product code (which narrows the list to what that product carries).
+2. They click the row and land on the key's record page. The header carries the label, the type and unit, the source pill, a prev/next pager over the list they came from, a gear icon (Delete, user-made specifications only) and one primary button, Edit.
+3. Three underline tabs: **Values and words**, **Rules**, **Seen in products**. Edit swaps every read-only value for an input in place, on every tab at once; Save sends one update; Cancel restores. In Values and words each value row has a display label input (folded #423), its customer words, and suppression with undo.
+4. In Rules they read each rule as a sentence, reorder or add one while editing, and can try the rules on a product code or pasted text without leaving the page.
+5. Back on the list, the primary button is **Add specification**; **Actions** holds Try a phrase and Reread catalogue. Try a phrase opens a lightbox: they type what a customer would say and see what the engine understood and which products it would rank, each product a link.
+6. Catalogue exceptions ("needs a human") are not a tab here; they show as a warning pill on the Spec Verification row, where that work already happens.
+7. Ranking weights live under System Settings > Search ranking, not on this page.
+8. On Spec Verification the flow is unchanged; Unverify no longer asks a question, the button becomes a countdown they can cancel.
+
+They leave with one key corrected and, if rules changed, a catalogue reread queued. Nobody else needs telling. Nothing on the screen explains itself in prose; the how-to lives in the Outline guide.
+
+## Decisions (locked 2 Sep 2026)
+
+- **D1** Key = record page `/master-data-management/product-specifications/[specKey]`, view and edit share one layout (ADR 3). Inline row expansion is removed.
+- **D2** First screen = registry DataGrid. Search preview moves into a lightbox behind Actions > Try a phrase.
+- **D3** Every explanatory paragraph in the two routes is removed. Field-level helper text stays only where ADR 1e allows it (a unit hint, a placeholder). The how-to goes to an Outline guide (backlog).
+- **D4** `spec-value-labels` (#423) is folded in as Groups D and E; its migration ships in this lane.
+- **D5** Ranking tab moves to System Settings as a `search-ranking` tab rendering the existing editor. It keeps `master_data.spec_registry.*` on the API side.
+- **D6** The Catalogue tab is removed entirely: the derived-specs table (per-product values live on the product Specifications tab and the Spec Verification worklist) and the exceptions table.
+- **D11** Catalogue exceptions show as a warning pill in the Coverage cell of the Spec Verification row (`open_exceptions` is already in the worklist payload). No Needs a human tab, no new endpoint consumer.
+- **D7** No new motion. Row expand no longer exists; tab switches and edit-mode toggles do not animate; lightboxes use the shared surface spring only. `find-animation-opportunities` was skipped by ruling.
+- **D8** Spec Verification is in scope for the design pass and one behaviour change: Unverify (row and bulk) becomes a deferred action (5s reversible window) instead of an AlertDialog. Verify stays immediate.
+- **D10** Plain words: the type pill reads Choice / Number / Yes or no / Text (never enum, string, boolean); UI copy says "specification", never "key"; the gear is a gear icon (Settings2), not three dots.
+- **D12** `is_active` stays on the record card as a labelled switch in both modes (the seed-key delete refusal tells the user to switch the key off instead).
+- **D13** The list toolbar is structurally identical to the Products list: `DataGridListToolbar` with the same slots (search, filters, primary Add, secondary Actions, bulk strip).
+- **D14** Rows have a select checkbox and a "..." menu; bulk delete is a deferred bulk action that skips seed rows and reports the skip count.
+- **D15b** The record card is never editable; identity fields live on a Header tab, first in the tab order.
+- **D16** One Edit button per record page. No per-tab Edit, no "Using the shipped rules" card.
+- **D17** Seen in products facets are toolbar filters (Value, Class, Source), not a pill strip.
+- **D9** No single-key GET is added. The record page reads the key from the registry list query (ETag-cached, small) and the pager is page-scoped from that cache (design language D4).
+
+## Group A - Registry list page (S1)
+
+### AC-A.1 [FE] Page shell
+`page.tsx` renders `PageHeader` (title "Product Specifications", crumbs derived from `MENU_SIDEBAR`) and the grid toolbar is `DataGridListToolbar` (`components/ui/data-grid-list-toolbar.tsx`) configured exactly like the Products list (`master-data-management/products/page.tsx`): `primaryAction` = "Add specification" (hidden without `master_data.spec_registry.add`), secondary `actions` = Try a phrase, Reread catalogue (the latter hidden without `.edit`), the search box in the toolbar's search slot. Structurally the two pages read the same: same slots, same placement (D13). The word "key" never appears in a label, button or column header; the entity is a "specification" (D10).
+
+### AC-A.2 [FE] Registry grid
+The Specifications tab is a `DataGrid` (`tableLayout: { width: 'fixed', columnsResizable: true }`, explicit `size` per column, `truncate` + `title` on Label). Columns in order: Label, Code (the slug, muted monospace), Type (pill reading Choice / Number / Yes or no / Text, D10), Unit, Values (count), Rules (count), Seen in (`measured_coverage`), Source (pill seed/user). Sorted by Label. `ListSearchInput` filters on label, key and synonyms client-side; when the trimmed query is a product code known to `GET /spec-registry/keys-for-product?code=` (debounced, one call per query), the grid narrows to that product's specifications and a dismissible pill above the grid reads "Specifications of {code}"; an unknown code falls back to the text filter. Row click navigates to the record page carrying the list state in the URL. The grid has the select checkbox column (`buildSelectColumn`) and a row "..." menu holding the entity's `recordActions` (D15: the same set as the record gear; today that is Delete, disabled on seed rows). Bulk strip: "Delete selected" runs the deferred bulk delete (`useDeferredBulkAction`, 10s destructive window, aggregate toast with cancel-all); seed rows in the selection are skipped and the toast says how many were skipped (D14).
+
+### AC-A.3 [FE] Freshness line
+Above the grid one line: "Catalogue read {formatDateTimeInMalaysia(finished_at)}" plus a warning pill "Rules changed since" when `rules_changed_since_last_read`; "Never read" when `!ever_read`; "Reading..." with a spinner while `status == running` (poll every 3s until idle, the existing `CatalogueFreshness` logic moved into a hook). No paragraph of explanation.
+
+### AC-A.4 [FE] No second tab
+The list page has no tabs. The catalogue exceptions list (`ProductSpecsList`, the "Stored" JSON column included) is deleted with the Catalogue tab; exceptions surface on the Spec Verification worklist instead (AC-F.4, D11). `getSpecExceptions` in the service and its types are removed if no consumer remains.
+
+### AC-A.5 [FE] Add specification
+The primary button opens a `Dialog` (lightbox) with Label, Type (`SearchableSelect`), Unit; the key slug previews below the label; `/similar` near-duplicate warning stays. Submit POSTs, closes, toasts, and navigates to the new record page. `AddSpecKey.tsx`'s inline form and its duplicated type list are deleted; the dialog is the one in `components/spec-table/AddSpecificationDialog.tsx` reused, or that dialog's type list extracted to one module both import.
+
+### AC-A.6 [FE] Try a phrase
+Actions > Try a phrase opens a `Dialog` holding today's `SpecSearchPreview` body: phrase input, "what was understood" chips, ranked candidates with score and matched keys, each product a link to its record. Empty result renders "No product matched" with the phrase echoed. Closing clears nothing until the page unmounts (re-open shows the last run).
+
+### AC-A.7 [FE] Data layer
+All fetches move to react-query hooks in `hooks/`: `useSpecRegistryQuery` (list, `staleTime` 60s to match the ETag), `useKeysForProductQuery`, `useCatalogueStatusQuery`, `useSpecRegistryMutations` (create, update, delete, addValue, rereadCatalogue). Components hold no `useEffect` + `useState` fetch pairs. Mutations invalidate the registry query and toast via `extractApiError`.
+
+### AC-A.8 [E2E] Sidebar walk
+From `/`, sidebar Master Data > Product Specifications: grid renders the seeded keys, search narrows, Needs a human tab shows the toolbar matches the Products list slot for slot, a row has a "..." menu, selecting two rows shows the bulk strip. 375px and 1280px.
+
+## Group B - Key record page (S2)
+
+### AC-B.1 [FE] Route and header
+`[specKey]/page.tsx` renders `PageHeader` (crumb trail ends in the key label) and a record card: label as title, the code slug as secondary text, pills for type (D10 wording) and source, unit as a field. `DetailActions` in the design-language order: `ListPager` (page-scoped from the registry list cache, "n / N"), gear, primary. Gear holds Delete only, and only when `source == user` and the user has `master_data.spec_registry.delete`; seed keys show no gear.
+
+### AC-B.2 [FE] View and edit share one layout
+Tabs, in order: Header, Values and words, Rules, Seen in products (`TabsList variant="line"`, scrolls at 375px). The Header tab holds the editable identity fields as a form: Label, Unit, Active, and for numeric keys "Ignore values above" (`max_value`, moved here from Values and words). Primary button "Edit" (the ONLY edit entry on the page) swaps every editable field on every tab for its input in place; the button becomes Save with a Cancel beside it. Nothing moves, appears or disappears between the two modes except the inputs, with one named exception: the pager and the gear are disabled (still mounted, same place) while editing, because a client-side route change fires no `beforeunload` and would drop the draft. Save sends ONE `PATCH /spec-registry/{spec_key}` with `user_values`, `suppressed_values`, `user_synonyms`, `suppressed_synonyms`, `value_labels`, `derivation_rules`, `label`, `unit`, `max_value`; Cancel restores the last loaded row. Unsaved changes prompt via the browser `beforeunload` only (no custom dialog).
+
+### AC-B.3 [FE] Values and words tab
+One row per merged allowed value: display label input (Group E) with the automatic wording as placeholder, the slug in a muted `code` span, the customer words as `TokenInput` chips, suppress / restore per value. Suppressed values render struck through with an Undo chip. A value the user added carries the "user" pill. Empty state when the key has no values: "No values yet" + CTA "Add value" (opens the same add-value input). Boolean keys render the single "When true" row.
+
+### AC-B.4 [FE] Rules tab
+Each effective rule as a sentence (`lib/ruleSentence.ts`), shipped rules tagged with a "default" pill. Edit mode: every rule is editable in place (its fields become inputs / `SearchableSelect`s inside the sentence), dnd-kit reorder by handle, "+ Add rule" appends a blank sentence, a remove button per row. All of it is part of the one Save (B.2). "Try on a product" is available in both modes: a product code or pasted text, POST `/{spec_key}/try`, result rendered as "Would set {value} from {evidence}" or "No match". "Preview impact" (edit mode, after a rule change) POSTs `/{spec_key}/preview` and polls `/preview/{job_id}`, rendering changed counts. No "Using the shipped rules" card and no per-tab Edit button (D16): when `rules_are_default` the shipped rules are listed with their "default" pill and nothing else; a key with no rules at all shows the empty state "No rules yet" with no CTA (the page's Edit button is the entry).
+
+### AC-B.5 [FE] Seen in products tab
+A `DataGridListToolbar` with the search box (product code or description, debounced, the `q=` param) and `filters` = three clearable `SearchableSelect`s, Value, Class, Source, whose options come from the facet payload (`by_value`, `by_class`, `by_source`, label "{name} ({count})"); no facet pill strip (D17). Then a `DataGrid` of products (Code, Description, Class, Value, Source, Evidence) with `DataGridPagination` over `limit`/`offset` (25/50/100). Choosing a filter narrows the grid (`value=` / `q=` params; class and source filter client-side on the page if the endpoint has no param, and the PR says which). Row click opens the product's Specifications tab with `back=`. Empty state: "Not seen on any product yet" with CTA "Reread catalogue" (when `.edit`).
+
+### AC-B.6 [FE] Delete
+Gear > Delete runs through the deferred-action engine (`useDeferredAction`, 10s hard-delete window, System Settings governs) and on commit navigates back to the list with a toast; seed keys never expose it (backend also refuses).
+
+### AC-B.7 [FE] Deep link and cache miss
+Opening `/product-specifications/{specKey}` directly (no list in cache) fetches the registry list once, selects the key, and renders; an unknown key renders the standard not-found state with "Back to Product Specifications".
+
+### AC-B.8 [E2E] Round trip
+Sidebar walk to a key, Edit, change one value's words and its label, Save, reload: both persist (label persists after S4; in Phase 1 the mock echoes it). Pager walks to the next key and back. 375px and 1280px.
+
+## Group C - Search ranking in System Settings (S3)
+
+### AC-C.1 [FE] Tab
+System Settings gains a `search-ranking` tab ("Search ranking") registered in `layout.tsx` `navRoutes`, page at `user-management/settings/search-ranking/page.tsx`, rendering the existing ranking editor moved to `components/SearchRankingSettings.tsx` (per-row numeric input, "Changed from {default}" pill, per-row Save). It uses `useSearchPolicyQuery` / `useSearchPolicyMutations` (react-query) against `/spec-registry/policy`. Without `master_data.spec_registry.view` the API 403 renders the standard error state; the tab is still listed.
+
+### AC-C.2 [FE] Removal
+The Ranking tab and `SearchTuning.tsx` are gone from Product Specifications. `config/menu.config.test.ts` and any test naming the Ranking tab updated.
+
+### AC-C.3 [E2E] Sidebar walk
+User Management > Settings > Search ranking: change `class_boost`, Save, reload, value persists; the pill shows "Changed from 5".
+
+## Group D - Value labels storage and API (S4, from #423 AC-A)
+
+### AC-D.1 [MIG] Column
+`product_spec_registry.value_labels JSONB NOT NULL DEFAULT '{}'`. Existing rows read `{}`. `down_revision` = the head of origin/main at branch time (run `alembic heads` in the venv; must be exactly one). Downgrade drops it.
+
+### AC-D.2 [BE] Read
+`GET /master-data/spec-registry` rows carry `value_labels` as `{ "<slug>": "<label>" }`. A test asserts the field on the serialised response (lesson: undeclared fields vanish).
+
+### AC-D.3 [BE] Write
+`PATCH /spec-registry/{spec_key}` accepts `value_labels: dict[str, str]`. Editable on seed AND user rows (staff-owned, like `user_synonyms`). Labels are trimmed; an empty label drops the key; a key that is not one of the row's merged allowed values (or a synonym key for keys without a closed list) is rejected 422 `spec_registry_label_unknown_value`; length cap 60. The dict is reassigned on write (JSONB in-place mutation is not tracked).
+
+### AC-D.4 [BE] Seed repair leaves labels alone
+Given a seed row with `value_labels = {"pp": "PP"}`, when the startup seed repair runs, the label survives.
+
+### AC-D.6 [BE] Delete is a registered record action
+`record_actions.py` registers `spec_key.delete` (`WINDOW_DESTRUCTIVE`, `master_data.spec_registry.delete`) whose execute path is the same service call `DELETE /spec-registry/{spec_key}` uses, refusing seed-sourced keys. pytest covers commit (row gone), cancel (row stays), and a seed key (refused, row stays). Without it the record gear's Delete (B.6) returns 400 "Unknown action".
+
+### AC-D.5 [BE] Permission
+`value_labels` in the PATCH body needs `master_data.spec_registry.edit` (the in-body re-check the route already performs for fields outside `user_values`); 403 without.
+
+## Group E - Value labels in the UI (S2 mock, S4 real)
+
+### AC-E.1 [FE] `readableValue` / `readableEntry` take labels
+`readableValue('pp', undefined, {pp: 'PP'})` -> `PP`; `readableValue('pp')` -> `Pp`; list values map element-wise; unit still appended; numbers and booleans unaffected.
+
+### AC-E.2 [FE] Every value display uses the label
+Every registry payload the readers consume carries `value_labels`: the list AND `GET /spec-registry/applicable-keys` (the product page's only registry source), each asserted by a pytest. Product Specifications tab (`SpecTable` -> `SpecValueCell`, including enum option labels), `ProductProposalGroup`, `FlyerSpecReviewScreen`, `SpecVerificationList` (invalidation diff `title`), `SpecProposalReview`: a value with a label renders the label. Each screen reads labels from the registry it already loads, or `useSpecRegistryQuery`.
+
+### AC-E.3 [E2E]
+Set `PP` on Seat cover material, Save; open a Water Closet product whose seat material is `pp`; Specifications tab shows `PP`. Clear the label, Save, reload: `Pp`.
+
+## Group F - Spec Verification alignment (S5)
+
+### AC-F.1 [FE] Unverify is a deferred action
+Row Unverify and "Unverify selected" no longer open an `AlertDialog`. Row: `useDeferredRowAction` (toast surface, the row dims while pending; the inline `DeferredActionButton` surface on a list row races the pending query, measured 2 Sep, and every list-row precedent uses the toast); bulk: `useDeferredBulkAction` with the aggregate toast and cancel-all. 5s reversible window. On commit the existing unverify path runs and patches the worklist cache as today.
+
+### AC-F.2 [BE] Engine registration
+The deferred-action engine parks every action server-side (`app/services/record_actions.py`, committed lazily or by the scheduler sweep), so `spec_verification.unverify` is registered there with `WINDOW_REVERSIBLE` and `master_data.products.edit`; pytest covers commit and cancel (`tests/test_record_actions_s6b.py`).
+
+### AC-F.4 [FE] Exceptions pill
+When a worklist row has `open_exceptions > 0`, the Coverage cell shows a warning pill "{n} need a human" beside the coverage count; the hover card lists the exception reasons if the payload carries them, otherwise the count only. Zero renders nothing. A test covers 0 and 2.
+
+### AC-F.3 [FE] Design pass only
+No other behaviour change. The design pass (Group G) runs over `SpecVerificationList.tsx`; findings are fixed in-branch only when they are Group G hard-fails, otherwise filed.
+
+## Group G - Design language, both routes (cross-cutting, verified at S6)
+
+### AC-G.1 [UX] No explainer prose
+Grep of both routes for muted paragraphs (`text-muted-foreground` on a `<p>`) returns only: empty-state sublines, error details, and a field hint of one line. Count before: about 44 on product-specifications. Count after: at most 8 across both routes, each one named in the PR.
+
+### AC-G.2 [UX] Primitives from the roster
+No `<table` outside `DataGridTable`; no hand-rolled pager (`SpecKeyProducts` Prev/Next gone); every select is `SearchableSelect` (optional ones `clearable`); every list search is `ListSearchInput`; every popup is `Dialog`/`Sheet`; every page has `PageHeader`.
+
+### AC-G.3 [UX] Empty states
+Every grid and every tab body renders an explicit empty state with one CTA (A.2, B.3, B.4, B.5, A.6). No section is hidden on missing data.
+
+### AC-G.4 [UX] No motion added
+`git diff` of the lane contains no new `transition`, `animate-`, `motion.` or `cubic-bezier` outside `components/ui`. Tab switch and edit toggle are instant. Lightboxes open with the shared surface spring (inherited, not configured).
+
+### AC-G.5 [UX] Breakpoints
+Screenshots at 375px and 1280px for: list, record page (three tabs, view and edit), Try a phrase dialog, Add specification dialog, Search ranking tab, Spec Verification list. Nothing clipped; grids scroll sideways inside their container; tab strips scroll.
+
+### AC-G.6 [UX] Identity and copy
+No UUID visible (product ids only inside hrefs). Datetimes through `formatDateTimeInMalaysia`. Status and source as `Badge` pills. No `text-[Npx]`, `z-[N]`, `duration-[N]`.
+
+### AC-G.7 [UX] Review artefact
+The reviewer's report includes the `emil-design-eng` Before / After / Why table for the UI diff, and lists which findings were fixed in-branch versus filed.
+
+### AC-G.8 [T] Tests
+vitest: registry grid renders + filters + row href; record page view/edit toggle keeps field order (snapshot of field labels in both modes is identical); Values tab label input + payload; Rules tab try-on-product; Seen-in pagination params; Add specification dialog; Try a phrase dialog empty state; Search ranking tab save; Spec Verification unverify countdown commit + cancel. pytest: D.2 to D.5, F.2 if applicable. Existing 54 Spec Verification tests stay green.
+
+## Out of scope
+- Six per-key tuning fields the retired editor exposed (`rank_weight`, `match_tolerance`, `match_decay`, `applies_when`, `excluded_values`, `value_weights`) are not on the record page in this lane; restoring them is issue #528 (S2b), awaiting the user's call.
+- Outline user guide for the workbench (backlog; the prose removed in D3 is its raw material).
+- Chatbot / MCP presenters keep slug wording (#423 out-of-scope carried over).
+- A server GET for one key (D9); revisit when the registry exceeds one page.
+- Motion improvements to either route (D7).

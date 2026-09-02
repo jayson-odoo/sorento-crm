@@ -425,3 +425,81 @@ class TestCategoriesAndUnitsOfMeasure:
             ],
         )
         assert result.created == 1
+
+
+class TestBarcodeOverwritePolicy:
+    """AC-S7-2 (PLAN D14): `products.barcode` is CRM-owned.
+
+    A non-empty incoming `bar_code` overwrites the stored value; an
+    empty/absent one leaves whatever is already there - manually typed on the
+    product master, or set by an earlier sync - untouched. Each case ingests
+    the STORED value first (a real create, exercising the same code path a
+    manual entry or an earlier sync would have used), then re-pushes the same
+    `source_ref` with the INCOMING value and asserts what lands.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _parents(self, svc):
+        svc.ingest(
+            "product_categories",
+            [{"source_ref": "DK-BC-CAT", "code": "ZZT-BC-CAT", "name": "Barcode Test"}],
+        )
+        svc.ingest(
+            "units_of_measure",
+            [{"source_ref": "DK-BC-UOM", "code": "ZZT-BC-UOM", "name": "Each"}],
+        )
+
+    def _push(self, svc, *, bar_code=None, ref="DK-BC-P1"):
+        payload = {
+            "source_ref": ref,
+            "code": "ZZT-BC-PRD-1",
+            "name": "Barcode Bolt",
+            "category_code": "ZZT-BC-CAT",
+            "uom_code": "ZZT-BC-UOM",
+        }
+        if bar_code is not None:
+            payload["bar_code"] = bar_code
+        return svc.ingest("products", [payload])
+
+    @pytest.mark.parametrize(
+        "stored,incoming,expected",
+        [
+            # (stored first, incoming second) -> what the column holds after.
+            (None, "1234567890123", "1234567890123"),  # unset -> incoming sets it
+            ("OLDCODE123", "NEWCODE456", "NEWCODE456"),  # non-empty overwrites
+            ("OLDCODE123", None, "OLDCODE123"),  # absent leaves it alone
+            ("OLDCODE123", "", "OLDCODE123"),  # empty string leaves it alone
+            ("OLDCODE123", "   ", "OLDCODE123"),  # whitespace-only leaves it alone
+            (None, None, None),  # never set, stays unset
+            (None, "", None),  # empty string never sets it
+        ],
+        ids=[
+            "unset-to-value",
+            "value-to-new-value",
+            "value-absent-unchanged",
+            "value-empty-unchanged",
+            "value-whitespace-unchanged",
+            "unset-absent-stays-unset",
+            "unset-empty-stays-unset",
+        ],
+    )
+    def test_overwrite_table(self, db, svc, stored, incoming, expected):
+        self._push(svc, bar_code=stored)
+        self._push(svc, bar_code=incoming)
+
+        assert (
+            db.execute(
+                text("SELECT barcode FROM products WHERE product_code = 'ZZT-BC-PRD-1'")
+            ).scalar()
+            == expected
+        )
+
+    def test_a_new_product_with_no_barcode_creates_with_null(self, db, svc):
+        result = self._push(svc)
+        assert result.created == 1
+        assert (
+            db.execute(
+                text("SELECT barcode FROM products WHERE product_code = 'ZZT-BC-PRD-1'")
+            ).scalar()
+            is None
+        )

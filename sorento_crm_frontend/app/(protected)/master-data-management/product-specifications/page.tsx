@@ -1,14 +1,10 @@
-import { Metadata } from 'next';
+'use client';
+
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
-import SpecWorkbench from './components/SpecWorkbench';
+import { SpecRegistryPage } from './components/SpecRegistryPage';
 
-export const metadata: Metadata = {
-  title: 'Product Specifications',
-  description: 'Derived product specifications and the spec-search preview.',
-};
-
-export default async function ProductSpecificationsPage() {
+export default function ProductSpecificationsPage() {
   return (
     <>
       <Container>
@@ -16,7 +12,7 @@ export default async function ProductSpecificationsPage() {
       </Container>
 
       <Container>
-        <SpecWorkbench />
+        <SpecRegistryPage />
       </Container>
     </>
   );

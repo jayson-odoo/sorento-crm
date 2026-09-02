@@ -500,6 +500,99 @@ def _safe_presigned_url(file_path: Optional[str], provider: Optional[str] = None
         return None
 
 
+def list_attachments_for_entity(db: Session, entity_type: str, entity_id: str) -> list[dict]:
+    """Attachments linked to one entity, in the portal's attachment shape:
+    ``link_id``, ``attachment_id``, ``filename``, ``size``, ``url``,
+    ``content_type``, ``uploaded_at``, ``uploader_kind``, ``uploaded_by_name``,
+    ``uploaded_by_role``, ``can_unlink``.
+
+    One implementation for every surface that reads this shape - moved here
+    (was ``app/api/v1/public/portal.py::_list_attachments_for``) so the price
+    tag request's CRM detail route can call it too, alongside the portal's own
+    legacy-kind detail routes, without a service module reaching up into a
+    route module (PLAN-price-tag-feedback-r2 S1 / D49).
+    """
+    rows = (
+        db.query(EntityAttachmentLink, Attachment)
+        .join(Attachment, Attachment.id == EntityAttachmentLink.attachment_id)
+        .filter(
+            EntityAttachmentLink.entity_type == entity_type,
+            EntityAttachmentLink.entity_id == entity_id,
+        )
+        .order_by(
+            EntityAttachmentLink.sort_order.asc().nulls_last(),
+            EntityAttachmentLink.created_at.asc(),
+        )
+        .all()
+    )
+
+    # Batch-resolve uploader names in two queries rather than one per row - a
+    # submission can carry up to the type's per-record cap (10-20) attachments.
+    from app.models.access import RespondContact
+    from app.models.user import User
+
+    contact_ids = {att.uploaded_by_contact_id for _, att in rows if att.uploaded_by_contact_id}
+    user_ids = {att.uploaded_by for _, att in rows if att.uploaded_by}
+    contacts_by_id: dict[str, RespondContact] = {}
+    if contact_ids:
+        contacts_by_id = {
+            c.id: c
+            for c in db.query(RespondContact).filter(RespondContact.id.in_(contact_ids)).all()
+        }
+    users_by_id: dict[str, User] = {}
+    if user_ids:
+        users_by_id = {
+            u.id: u for u in db.query(User).filter(User.id.in_(user_ids)).all()
+        }
+
+    out: list[dict] = []
+    for link, att in rows:
+        uploader_kind = att.uploader_kind
+        uploaded_by_name = "Unknown"
+        uploaded_by_role = "unknown"
+        if uploader_kind == "contact" and att.uploaded_by_contact_id:
+            contact = contacts_by_id.get(att.uploaded_by_contact_id)
+            name = (
+                (
+                    (contact.name or "").strip()
+                    or " ".join(
+                        p for p in [(contact.first_name or "").strip(), (contact.last_name or "").strip()] if p
+                    ).strip()
+                    or (contact.phone_number or "").strip()
+                )
+                if contact is not None
+                else ""
+            )
+            if name:
+                uploaded_by_name = name
+                uploaded_by_role = "contact"
+        elif uploader_kind == "user" and att.uploaded_by:
+            user = users_by_id.get(att.uploaded_by)
+            name = ((user.name or "").strip() or (user.email or "").strip()) if user is not None else ""
+            if name:
+                uploaded_by_name = name
+                uploaded_by_role = "staff"
+        out.append(
+            {
+                "link_id": str(link.id),
+                "attachment_id": str(att.id),
+                "filename": att.original_filename,
+                "size": att.file_size_bytes,
+                "url": _safe_presigned_url(att.file_path, getattr(att, "storage_provider", None)) or att.file_path,
+                "content_type": att.mime_type if hasattr(att, "mime_type") else None,
+                "uploaded_at": att.uploaded_at.isoformat() if att.uploaded_at else None,
+                "uploader_kind": uploader_kind,
+                "uploaded_by_name": uploaded_by_name,
+                "uploaded_by_role": uploaded_by_role,
+                # A staff (`user`) upload has no unlink control in the portal -
+                # server-enforced in portal_delete_attachment, this just matches
+                # the FE's gating so it never renders a control that would 403.
+                "can_unlink": uploader_kind != "user",
+            }
+        )
+    return out
+
+
 def create_response_attachment(
     db: Session,
     *,

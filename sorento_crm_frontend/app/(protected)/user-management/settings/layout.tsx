@@ -15,6 +15,7 @@ import {
   Plug,
   Settings,
   Share2,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -284,6 +285,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         title: 'Stock Visibility',
         icon: Eye,
         path: '/user-management/settings/stock-visibility',
+      },
+      'search-ranking': {
+        title: 'Search ranking',
+        icon: SlidersHorizontal,
+        path: '/user-management/settings/search-ranking',
       },
       'system-health': {
         title: 'System Health',

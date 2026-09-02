@@ -36,6 +36,15 @@ export interface PreviewableBlock {
 export type PreviewMap = Record<string, GroupBinding>;
 
 /**
+ * The synthesized block over every loose (ungrouped) bound layer (D10, S6).
+ *
+ * Never a real layer id, so it can never collide with one - `groupId` on a
+ * real block always comes off a `TagLayer.id`, which this deliberately is
+ * not.
+ */
+export const WHOLE_TAG_BLOCK_ID = '__whole_tag__';
+
+/**
  * The slots that make a block ABOUT a product or a set.
  *
  * `badges`, `alternatives` and `accessories` are missing on purpose: they name
@@ -52,6 +61,7 @@ const PRODUCT_SLOTS: SlotBinding[] = [
   'sell_price',
   'set_members',
   'included_accessories',
+  'barcode',
 ];
 
 /** The `binding` a group carries. Null in the document means "not bindable". */
@@ -115,6 +125,40 @@ function blockLabel(group: TagLayer, children: TagLayer[], ordinal: number): str
   return `${layerDisplayName(group)} - block ${ordinal}${trailing}`;
 }
 
+/** Every layer with a bindable slot that no group has claimed. */
+function looseBoundLayers(layers: TagLayer[]): TagLayer[] {
+  const claimed = new Set<string>();
+  for (const layer of layers) {
+    if (layer.props.kind !== 'group') continue;
+    for (const childId of layer.props.children) claimed.add(childId);
+  }
+  return layers.filter(
+    (layer) =>
+      layer.props.kind !== 'group' &&
+      !claimed.has(layer.id) &&
+      layer.slot_binding !== null &&
+      PRODUCT_SLOTS.includes(layer.slot_binding),
+  );
+}
+
+/**
+ * ONE implicit block over every loose (ungrouped) bound layer (D10).
+ *
+ * A template built without `Ctrl+G` still deserves an eye: the frame carries
+ * it, standing in for a group that was never made. Absent when nothing on
+ * the tag is bindable at all - not every unbound layer, only slot-bound ones
+ * (`PRODUCT_SLOTS`) count, the same rule a real block is held to.
+ */
+export function wholeTagBlock(layers: TagLayer[]): PreviewableBlock | null {
+  const loose = looseBoundLayers(layers);
+  if (loose.length === 0) return null;
+  return {
+    groupId: WHOLE_TAG_BLOCK_ID,
+    label: 'Whole tag',
+    mode: loose.some((layer) => layer.slot_binding === 'set_members') ? 'set' : 'product',
+  };
+}
+
 /** The previewable block a layer belongs to, itself included. */
 export function previewBlockOf(
   layer: TagLayer,
@@ -135,21 +179,19 @@ export function previewBlockOf(
  * what lets the request designer keep drawing its line while one block of the
  * tag is previewed against something else.
  *
- * A slot-bound layer that belongs to no block follows the FIRST previewed block
- * in document order. Those are the loose ends of a tag - a price line beside
- * the block, a code repeated in a corner - and leaving them blank while the
- * block beside them shows a real product looks like a bug rather than a rule.
+ * A slot-bound layer that belongs to no group follows the implicit
+ * `WHOLE_TAG_BLOCK_ID` entry (D10, S6) - one product choice for every loose
+ * end of the tag, from the frame's own eye, rather than piggy-backing on
+ * whichever real block happened to be previewed first.
  */
 export function previewBindingFor(
   layer: TagLayer,
   previews: PreviewMap,
   groupOfChild: Map<string, TagLayer>,
-  layers: TagLayer[],
 ): GroupBinding | undefined {
   const owner = layer.props.kind === 'group' ? layer : groupOfChild.get(layer.id);
   if (owner) return previews[owner.id];
 
   if (!layer.slot_binding || !PRODUCT_SLOTS.includes(layer.slot_binding)) return undefined;
-  const first = previewableBlocks(layers).find((block) => previews[block.groupId]);
-  return first ? previews[first.groupId] : undefined;
+  return previews[WHOLE_TAG_BLOCK_ID];
 }

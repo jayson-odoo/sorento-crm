@@ -12,8 +12,11 @@ segments) built on `feat/dynamic-filter-segments`, PR #489 - review round 2 Sep 
 company-scoping to `saved_views` and a fail-closed permission default on its routes,
 pending captain confirm. S3 (perf quick wins) built on `feat/reorder-perf-quickwins`, PR
 #491 - review fix round amended AC-3.4's `plan_basis` claim to the measured numbers (see
-S3 below). All six slices built, PRs open as of 2 Sep 2026: S1 #471, S2 #488, S3 #491,
-S4 #489, S5 #493, S6 #490. Merge order: #471 -> #488 -> #489 -> #491 -> #490 -> #493 -
+S3 below). S5 (plan detail Header/Lines tabs + Re-plan supersede) built on
+`feat/reorder-replan`, PR #493 (stacked on S2), review round 1 addressed - see the S5
+section's own note on the one OPEN ruling (confirmed/keyed decisions block a Re-plan
+outright; captain confirm pending). All six slices built, PRs open as of 2 Sep 2026:
+S1 #471, S2 #488, S3 #491, S4 #489, S5 #493, S6 #490. Merge order: #471 -> #488 -> #489 -> #491 -> #490 -> #493 -
 S3/S4/S5/S6 each stack a migration onto 453/454/455 in turn (see
 `456_reorder_perf_quickwins`'s own docstring for the two-round renumbering this caused).
 UAC: `scm-reorder-oi-feedback-1sep-acceptance-criteria.md`
@@ -229,6 +232,14 @@ review round's own two items, not the OI-slice S1/S2 elsewhere in this document.
 - Editing Plan until OR scope offers Re-plan (G8): POST creates a NEW run, supersedes the
   old (two-way link, list label), carries decisions per G8's rule, "re-check" flag on
   changed suggestions.
+- OPEN RULING (review round 1, flagged for captain confirm - built conservative pending
+  the answer): `replan_run` currently REJECTS (422) a run carrying any CONFIRMED (draft PO
+  line already written) or KEYED (`keyed_status`/`OrderSummaryRow.chosen_qty`) decision -
+  re-planning it would hand `confirm_decisions` a run whose recs carry brand-new ids,
+  orphaning the existing draft line and inviting a double-key into AutoCount from two
+  different plans. The captain may instead want that state CARRIED forward onto the new
+  run rather than blocked outright - not built; `decision_service.has_confirmed_or_keyed_decisions`
+  is the one call site to change if so.
 
 ### S6 - Dedication-aware OI takes (claims)
 - `_candidates_for_row` consults `scm.order_link_claim` per G7: other-SO claims subtract

@@ -64,14 +64,18 @@ const KIND_PILL_KEY: Record<SpecProposalKind, string> = {
 };
 
 /** Exactly the copy the contract names. The value is the sentence, not a legend. */
-export function proposalBadgeText(proposal: SpecProposal): string {
+export function proposalBadgeText(
+  proposal: SpecProposal,
+  labels?: Record<string, string>,
+): string {
   const stored = readableValue(
     proposal.stored_value,
     proposal.stored_unit ?? undefined,
+    labels,
   );
   switch (proposal.kind) {
     case 'change':
-      return `Changes ${stored} to ${readableValue(proposal.value, proposal.unit ?? undefined)}`;
+      return `Changes ${stored} to ${readableValue(proposal.value, proposal.unit ?? undefined, labels)}`;
     case 'conflict':
       // A tombstone conflicts with a REMOVAL, not with a value: the person said this
       // product does not carry this spec, so there is no stored value to name. Through
@@ -105,6 +109,7 @@ export function SpecProposalReview({
   selectableKinds = DEFAULT_SELECTABLE_KINDS,
   renderValue,
   rowActions,
+  valueLabels,
 }: SpecProposalReviewProps) {
   const canSelect = useCallback(
     (kind: SpecProposalKind) =>
@@ -174,6 +179,7 @@ export function SpecProposalReview({
           const value = readableValue(
             row.original.value,
             row.original.unit ?? undefined,
+            valueLabels?.[row.original.spec_key],
           );
           const read = (
             <span className="flex min-w-0 items-center gap-1.5">
@@ -213,7 +219,7 @@ export function SpecProposalReview({
         enableSorting: false,
         meta: { headerTitle: 'Against what is stored' },
         cell: ({ row }) => {
-          const text = proposalBadgeText(row.original);
+          const text = proposalBadgeText(row.original, valueLabels?.[row.original.spec_key]);
           return (
             <span
               // `cn` and not a template string: the shared pill base carries
@@ -272,7 +278,7 @@ export function SpecProposalReview({
           ]
         : []),
     ],
-    [canSelect, renderValue, rowActions],
+    [canSelect, renderValue, rowActions, valueLabels],
   );
 
   const table = useReactTable({

@@ -1437,6 +1437,32 @@ def seed_spec_registry(db: Session, *, commit: bool = False) -> dict:
     return {"created": created, "updated": updated}
 
 
+def delete_registry_key(db: Session, spec_key: str) -> None:
+    """Delete a user-created key. Seeded keys are deactivated, never deleted.
+
+    A seeded key would simply reappear on the next deploy, so offering "delete" for one
+    would be a button that silently does nothing. Shared by `DELETE /spec-registry/
+    {spec_key}` and the `spec_key.delete` record action (D.6, PLAN-spec-workbench-
+    redesign.md) - one refusal, not two copies of it drifting apart.
+    """
+    from app.services.error_handler import AppException, handle_not_found
+
+    row = db.query(ProductSpecRegistry).filter_by(spec_key=spec_key).first()
+    if row is None:
+        raise handle_not_found("Spec key", spec_key)
+    if (row.source or "seed") == "seed":
+        raise AppException(
+            status_code=400,
+            message=(
+                "This key ships with the product and would come back on the next "
+                "deploy. Switch it off instead."
+            ),
+            code="spec_registry_seed_undeletable",
+        )
+    db.delete(row)
+    db.commit()
+
+
 def merged_allowed_values(row: ProductSpecRegistry) -> list:
     """The shipped values plus the ones staff added, minus the ones they took away.
 
@@ -1765,6 +1791,7 @@ def applicable_keys_for_code(db: Session, product_code: str) -> list[dict]:
                 "unit": row.unit,
                 "allowed_values": merged_allowed_values(row),
                 "synonyms": merged_synonyms(row),
+                "value_labels": dict(row.value_labels or {}),
                 "applicable": applicable,
                 "held": row.spec_key in held,
             }
