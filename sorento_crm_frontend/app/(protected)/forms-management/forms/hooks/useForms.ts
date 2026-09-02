@@ -5,6 +5,7 @@ import { getForms, getForm, createForm, updateForm, deleteForm, bulkDeleteForms,
 import type { FormsListParams } from '../services/formService';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 import type { FormFormData } from '../types/form.types';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 
 /**
@@ -49,6 +50,7 @@ export const formsPagerQuery = {
 
 export function useForms(params: FormsListParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: formsListQueryKey(params),
     queryFn: () => getForms(params),
     staleTime: Infinity,
