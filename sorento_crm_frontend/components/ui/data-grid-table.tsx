@@ -14,6 +14,7 @@ import { mergeColumnOrderWithLeafColumns } from '@/lib/listing-column-preference
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { toAbsoluteUrl } from '@/lib/helpers';
 import { useHorizontalOverflow } from '@/hooks/use-horizontal-overflow';
+import { usePrefetchOnce } from '@/hooks/usePrefetchOnce';
 import { cn } from '@/lib/utils';
 
 /**
@@ -313,6 +314,10 @@ function DataGridTableBody({ children }: { children: ReactNode }) {
       className={cn(
         '[&_tr:last-child]:border-0',
         props.tableLayout?.rowRounded && '[&_td:first-child]:rounded-s-lg [&_td:last-child]:rounded-e-lg',
+        // The rows on screen are the PREVIOUS page's while the next one loads
+        // (M4 list latency) - dimmed rather than replaced by a skeleton.
+        props.isPlaceholderData &&
+          'opacity-60 transition-opacity duration-(--duration-fast) ease-(--ease-standard)',
         props.tableClassNames?.body,
       )}
     >
@@ -465,6 +470,7 @@ function LinkableBodyRow({
   children: ReactNode;
 }) {
   const router = useRouter();
+  const prefetchOnce = usePrefetchOnce();
 
   const openRecord = (newTab = false) => {
     if (newTab) {
@@ -480,7 +486,14 @@ function LinkableBodyRow({
     // `rowOpenProps` BEFORE the dnd listeners `rowProps` carries: a future
     // list that is both draggable and openable would otherwise have its
     // keyboard-drag onKeyDown replaced by this one, silently.
-    <tr {...rowOpenProps({ opensUrl: true, open: openRecord })} {...rowProps}>
+    <tr
+      {...rowOpenProps({ opensUrl: true, open: openRecord })}
+      {...rowProps}
+      // Hover is the signal, not the viewport: 151 lists render up to 100
+      // rows, and a viewport-triggered prefetch would fetch a page's worth of
+      // detail chunks the reader never opens (M4 list latency).
+      onPointerEnter={() => prefetchOnce(href)}
+    >
       {children}
     </tr>
   );
