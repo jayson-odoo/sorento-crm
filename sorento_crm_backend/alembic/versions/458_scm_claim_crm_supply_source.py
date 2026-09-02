@@ -1,7 +1,7 @@
 """`crm_supply` joins the order-link claim's source vocabulary (G12, 2 Sep 2026).
 
 Revision ID: 458_claim_crm_supply
-Revises: 457_reorder_replan
+Revises: 462_merge_xco_spec_labels
 Create Date: 2026-09-02
 
 BATCH CHAIN (S6 merges LAST). The 1 Sep feedback batch numbers its migrations in slice
@@ -18,6 +18,12 @@ order, and this pair was renumbered on 2 Sep when S3 and S4 pushed theirs first:
 `down_revision` flipped from `454_order_inquiry_born_ack` (the standalone-green value
 while #490 wasn't merged yet) to `457_reorder_replan` in the merge that landed #490 -
 that was the whole handover, and skipping it would have left two Alembic heads on main.
+
+It flipped again, to `462_merge_xco_spec_labels`, because #549 and #550 each landed a
+mergepoint of their own over `457_reorder_replan` (458_merge_xco_reorder_specs and
+460_merge_spec_labels_replan), and hotfix #554 then joined those two mergepoints into
+462_merge_xco_spec_labels. Chaining onto 457 directly would have opened a second head
+again; chaining onto 462 keeps main at one head once #554 and this PR both merge.
 
 G12 says a PO/SPO line destined for a project bin is auto-taken ONLY by the sales order
 that claims it, and the captain's 2 September reading closed the last hole in that: the
@@ -45,7 +51,7 @@ is allowed cannot invalidate anything already stored.
 from alembic import op
 
 revision = "458_claim_crm_supply"
-down_revision = "457_reorder_replan"
+down_revision = "462_merge_xco_spec_labels"
 branch_labels = None
 depends_on = None
 
