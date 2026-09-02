@@ -154,6 +154,30 @@
   .jump-flash {
     animation: none !important;
   }
+
+  /* M3-04 (`ui-motion-round2`): the reduced-motion block above only reaches
+     surfaces carrying a `-content` data-slot or a Radix popper wrapper - it
+     never touches the demo1 shell's own `width`/`padding`/`inset` transitions
+     (css/demos/demo1.css), vaul's own drag-tracked drawer animation, or any
+     one-off `transition-[...]` utility a component reaches for directly (the
+     countdown/budget fills this round converts to `transform`, and a future
+     one the gpu-properties guardrail lets through). `transition-duration: 0`
+     on the shell would leave a `!important` `0s` sitting in the cascade for
+     every OTHER media query too - `1ms` reads as instant to a person and
+     still counts as "has a duration" to code that keys off one. */
+  .demo1 .sidebar,
+  .demo1 .wrapper,
+  .demo1 .header {
+    transition: none !important;
+  }
+
+  [data-vaul-drawer] {
+    transition-duration: 1ms !important;
+  }
+
+  [class*='transition-['] {
+    transition-duration: 1ms !important;
+  }
 }
 
 /* Reduced transparency: no material, no scrim blur, and a heavier scrim so the
