@@ -1,5 +1,8 @@
 # Supply Chain & Inventory Optimisation - Module Build Plan (PoC-as-Module)
 
+**See also:** `documentation/reference/SCM-UPLOAD-FORMATS.md` for what the supplier stock
+list, proforma invoice and packing list uploads accept, column by column.
+
 **For:** Claude Code build + `/grill` adversarial review
 **Status:** Draft for interrogation. Every section marked `GRILL` is a decision I want pressure-tested, not a settled answer.
 **Author context:** Sorento Phase 2, Requirement #27. This is a decision-support co-pilot that replaces AutoCount's naive min/max reorder logic with cash-aware, judgment-augmented planning. It is NOT autopilot.
