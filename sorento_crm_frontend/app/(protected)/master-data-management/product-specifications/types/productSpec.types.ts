@@ -13,21 +13,7 @@ export interface SpecProvenance {
   evidence: string;
 }
 
-export interface ProductSpecRow {
-  product_id: string;
-  product_code: string;
-  class_label: string | null;
-  brand_hint: string | null;
-  spec_count: number;
-  /** The code-free sentence that gets embedded. This is what search matches. */
-  rendered_text: string | null;
-  status: string;
-  is_discontinued: boolean;
-  open_exceptions: number;
-  values: Record<string, SpecValue>;
-  provenance: Record<string, SpecProvenance>;
-}
-
+/** One `human_override_conflict` on a product's own Specifications tab. */
 export interface SpecException {
   id: string;
   /** Absent when the exception is already scoped to one product. */

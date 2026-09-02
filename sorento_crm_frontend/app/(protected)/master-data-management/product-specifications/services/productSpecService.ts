@@ -174,60 +174,9 @@ import type {
   SpecSearchPolicyRow,
   SpecTryResult,
   ProductSpecDetail,
-  ProductSpecRow,
-  SpecException,
   SpecPreviewResult,
   SpecRegistryKey,
 } from '../types/productSpec.types';
-
-interface Paged<T> {
-  data: T[];
-  pagination: { total: number; page: number; limit: number };
-}
-
-export async function getProductSpecs(params: {
-  page?: number;
-  limit?: number;
-  query?: string;
-  status?: string;
-}): Promise<Paged<ProductSpecRow>> {
-  const search = new URLSearchParams({
-    page: String(params.page ?? 1),
-    limit: String(params.limit ?? 25),
-    ...(params.query ? { query: params.query } : {}),
-    ...(params.status ? { status: params.status } : {}),
-  });
-
-  const response = await apiFetch(
-    `/api/v1/master-data/product-specifications/?${search.toString()}`,
-  );
-  if (!response.ok) {
-    throw new Error(
-      await extractApiError(response, 'Failed to load product specifications'),
-    );
-  }
-  return response.json();
-}
-
-export async function getSpecExceptions(params: {
-  page?: number;
-  limit?: number;
-}): Promise<Paged<SpecException>> {
-  const search = new URLSearchParams({
-    page: String(params.page ?? 1),
-    limit: String(params.limit ?? 25),
-  });
-
-  const response = await apiFetch(
-    `/api/v1/master-data/product-specifications/exceptions?${search.toString()}`,
-  );
-  if (!response.ok) {
-    throw new Error(
-      await extractApiError(response, 'Failed to load spec exceptions'),
-    );
-  }
-  return response.json();
-}
 
 /**
  * One product's derived specs, or the reason there are none. Used by the
