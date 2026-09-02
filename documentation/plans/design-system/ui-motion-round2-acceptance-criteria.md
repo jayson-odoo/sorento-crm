@@ -76,26 +76,33 @@ Baseline measured on `origin/main` e1adad4d2, 2 Sep 2026.
   `--default-transition-timing-function: var(--ease-standard)` and
   `--default-transition-duration: var(--duration-fast)`.
 - **M1-02** `[vitest]` Zero `transition-all` and zero bare `transition ` (the multi-property
-  shorthand) in `app/**`, `components/**` and `css/**` outside test files. Baseline: 12.
+  shorthand) in `app/**`, `components/**` and `css/**` outside test files. Baseline: 12
+  `transition-all`, and 19 bare `transition` (measured 2 Sep once the guard scanned class
+  string literals instead of lines; every one of the 19 is in `app/**`).
 - **M1-03** `[vitest]` Zero literal `duration-<N>` and zero `ease-in`/`ease-in-out` on an
   entering element in `app/**` and `components/**`, outside an allowlist that starts with only
   the two accepted alternating pulses in `css/styles.css` and the OTP caret period. Baseline: 10.
 - **M1-04** `[vitest]` `css/design-tokens.test.ts` globs include `app/**` and
   `components/common/**`, and it asserts M1-02 and M1-03.
-- **M1-05** `[vitest] [browser]` `DropdownMenuItem`, `ContextMenuItem`, `MenubarItem`,
-  `CommandItem` carry `PRESSED_CLASS`; the sidebar menu items use `PRESSED_CLASS` and no longer
-  carry `duration-75` or `active:scale-[0.98]`; a clickable `DataGrid` row darkens on
-  pointer-down (`active:bg-muted/60`).
+- **M1-05** `[vitest] [browser]` `DropdownMenuItem` carries `PRESSED_CLASS`; `ContextMenuItem`,
+  `MenubarItem` and `CommandItem` carry `PRESSED_TRANSFORM_CLASS` instead - the shrink with no
+  colour transition, because their highlight is moved by the arrow keys and motion on a
+  keyboard-initiated action is a hard-fail. The sidebar menu items use `PRESSED_CLASS` and no
+  longer carry `duration-75` or `active:scale-[0.98]`. A `DataGrid` row darkens on pointer-down
+  (`active:bg-muted/60`) only where the row is clickable (`rowHref` or `onRowClick`) and the
+  grid is not stripped; the loading skeleton row does not.
 - **M1-06** `[vitest]` The 16 named unused motion components are deleted; `npm run build` is
   green; no file imports them.
 - **M1-07** `[review]` `navigation-menu.tsx` viewport uses `origin-top`; `screen-loader.tsx`
   has no transition classes; `EntityActivitiesLayout.tsx` launcher has no `animate-pulse` and
   no raw `bg-red-600`; `drawer.tsx` overlay is `OVERLAY_CLASS_STATIC`;
   `AIAssistantBubble.tsx:450` has no `hover:w-9`.
-- **M1-08** `[vitest]` A test enumerates every file under `app/(protected)` that renders a raw
-  `<button` and fails unless the file imports `Button` or the element carries `PRESSED_CLASS`.
-  The test is allowed to be red at the end of M1 with the count recorded (127 baseline); M7-01
-  turns it green.
+- **M1-08** `[vitest]` A test enumerates every raw `<button` under `app/(protected)` and fails
+  unless that element's own opening tag carries `PRESSED_CLASS`. The check is PER TAG and a
+  file's `Button` import is ignored: a `<Button>` element never reaches the `<button` matcher,
+  so importing the primitive says nothing about the hand-rolled buttons beside it. The test is
+  allowed to be red at the end of M1 with the count recorded (baseline: 182 tags across 128
+  files, measured 2 Sep); M7-01 turns it green.
 
 ## M2 Keyboard and timing
 
@@ -209,8 +216,9 @@ Baseline measured on `origin/main` e1adad4d2, 2 Sep 2026.
 
 ## M7 Motion additions
 
-- **M7-01** `[UX] [vitest]` The press-class inventory test from M1-08 is green: every raw
-  `<button` under `app/(protected)` carries `PRESSED_CLASS` or is a `Button`.
+- **M7-01** `[UX] [vitest]` The press-class inventory test from M1-08 is green: all 182 raw
+  `<button` tags under `app/(protected)` carry `PRESSED_CLASS` on their own opening tag (or the
+  element is replaced by the shared `Button`, which removes it from the inventory entirely).
 - **M7-02** `[UX] [vitest] [browser]` A pending row-level delete dims the row over
   `--duration-fast` on `--ease-standard` (the `<tr>` carries `transition-opacity`); under
   reduced motion the dim is instant but present.
