@@ -5,19 +5,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { getProductSuppliersByProductId } from '../../../../procurement-management/product-suppliers/services/productSupplierService';
-import type { ProductSupplier } from '../../../../procurement-management/product-suppliers/types/productSupplier.types';
 
 interface ProductSuppliersTabProps {
   productId: string;
-}
-
-// PHASE 1 MOCK (S4, AC-D2): the backend does not read `supplier_item_code` off the alias
-// table yet - Phase 2 joins `scm.supplier_product_code_alias` on the by-product route. Stands
-// in for one row so both the value and the empty-state dash (ADR 1e) are visible; deleted
-// with this comment once the real field is on the wire.
-function mockTheirCode(ps: ProductSupplier, index: number): string | null {
-  if (ps.supplier_item_code !== undefined) return ps.supplier_item_code ?? null;
-  return index === 0 ? 'JBC-9042' : null;
 }
 
 /** A dash is "not on file", which is a different fact from zero and must not read as it. */
@@ -75,7 +65,7 @@ export default function ProductSuppliersTab({ productId }: ProductSuppliersTabPr
           </div>
         ) : (
           <div className="space-y-3">
-            {suppliers.map((ps, index) => (
+            {suppliers.map((ps) => (
               <div key={ps.id} className="rounded-lg border p-4">
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge variant="secondary">{ps.supplier?.supplier_code || 'N/A'}</Badge>
@@ -101,7 +91,7 @@ export default function ProductSuppliersTab({ productId }: ProductSuppliersTabPr
                   <Term label="Currency" value={fmtTerm(ps.currency)} />
                   <Term label="Minimum order" value={fmtTerm(ps.moq)} />
                   <Term label="Order multiple" value={fmtTerm(ps.order_multiple)} />
-                  <Term label="Their code" value={fmtTerm(mockTheirCode(ps, index))} />
+                  <Term label="Their code" value={fmtTerm(ps.supplier_item_code)} />
                 </dl>
               </div>
             ))}
