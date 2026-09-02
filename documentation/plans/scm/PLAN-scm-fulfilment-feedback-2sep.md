@@ -82,17 +82,24 @@ Verified facts this plan stands on:
   pool included, can be added to Reserve by hand; the server's on-hand check stays the
   guard.
 - R-H. **Upload commits per document and reports live.** Minutes, not hours; the card
-  counts up while the job runs.
-- R-I. **Duplicate SPO rows are found by the system, not by eye.** One identity across the
-  three feeds; a listing of suspected duplicates with delete.
+  counts up while the job runs. Completed books are welcome on the SO and PO channels.
+- R-I. **Dropped (markup 2 Sep: "this one don't need handling").** SPO duplicates get no
+  slice; the three-writer finding stays recorded under Why for the day it matters.
 - R-J. **Sourced-from is pills, not prose.** One pill per component ("BRW 325", "Buy
   325", "Own 23 BRW-IB"); the cell shows as many as its width fits and folds the rest into
   a "+N" pill; clicking any pill, "+N" included, opens the composition with each part's
   location, quantity, kind and the option row it came from. A wide column shows every pill.
-- R-K. **The BRW allowance is visible in the lightbox (2 Sep, "let's go").** The Stock tab's
-  site pool rows gain a "Can spare" column = free minus the kept share, capped by the
-  five-pool net (BRW 47 free reads Can spare 23). The Suggestion card names it in one line
-  under the pills: "BRW can spare 23 of 47 · due in 2 days". Numbers only, no rule text.
+- R-K. **The BRW allowance is visible in the lightbox as "Available for Project" (markup
+  2 Sep).** The Stock tab gains an "Available for Project" column on EVERY site pool row and
+  on the site pool subtotal = Available minus the kept share, capped by the five-pool net
+  (BRW 47 free reads 23). The Suggestion card is pills only (markup round 2: "no
+  information overload"), no sub-line. The expanded ledger's running column is client-side
+  `Balance after` (`StockDocumentsPanel.tsx:107-235`: on hand rows first, then S/O minus,
+  SPO plus, Hold minus, sorted by date, supply before demand). Under a SITE POOL section
+  that column becomes `Available for Project` = floor(Balance after x (100 - share) / 100)
+  capped by the five-pool net (markup round 4); group sections keep Balance after. The pool
+  summary row keeps Available (dealers) and gains Available for Project. The five-pool net
+  must reach the Stock tab (today it lives only on the board's `BoardCellLocation.net`).
 
 ## Slices
 
@@ -125,10 +132,9 @@ Verified facts this plan stands on:
   one. The unit cell shows the sum; each contributing line shows its own composition.
   `_pile_order` gains `qty` ascending between date and SO number so the Stock tab's
   running Available reads the same order (135 then 1305).
-- Lightbox (R-K): `stock-detail` returns `can_spare` per site pool row (the same allowance
-  the walk used, so the two never disagree); Stock tab column "Can spare" after Available;
-  Suggestion card sub-line "BRW can spare 23 of 47 · due in 2 days" (window state named by
-  days, never by the setting).
+- Lightbox (R-K): `stock-detail` returns `available_for_project` per site pool row and on
+  the site pool subtotal (the same allowance the walk used, so the two never disagree);
+  Stock tab column "Available for Project" after Available; no Suggestion sub-line.
 - `LADDER_VERSION = "v8"` both sides. Tests: rewrite the step-order assertion in
   `test_ladder_v7_borrow.py:1392`, re-bless `front_planning_golden.py` (AC-L2 becomes "site
   pool share before the group"), add the six walks in the UAC as new golden cases.
@@ -162,8 +168,9 @@ Verified facts this plan stands on:
   keys it confirms (same write as today, reading the draft when the body carries no
   composition). Board GET returns drafts in `contributions[].draft` and the panel seeds
   `draft` state from them on load.
-- Feedback: pill goes `Suggested` to `Saved` on the row, the button shows a 600 ms check
-  state, a sonner toast "Line 3 saved · 4 to confirm", the header counter updates as today.
+- Feedback: pill goes `Suggested` to `Saved` on the row (plain "Saved", markup 2 Sep; the
+  saver's name lives in the popover), the button shows a 600 ms check state, a sonner toast
+  "Line 3 saved · 4 to confirm", the header counter updates as today.
   Leaving with unsaved edits in an OPEN panel keeps the existing `UnsavedDecisionPrompt`.
 - Drafts are shared, not per user (one planning team; a second planner sees the same saved
   lines and the pill names who saved).
@@ -182,24 +189,18 @@ Verified facts this plan stands on:
   the outcome rows say where it stopped.
 - `ImportOutcome.flush` bumps the job's `processed_rows` on every buffer flush (every
   importer that uses it inherits the live card).
-- Upload screen: a full-book "Completed" file is refused up front with the message that the
-  outstanding channel wants the outstanding book (every row had Qty = Transfered Qty); the
-  history channel is the place for it.
+- No refusal, no redirect (markup round 3: "none of our file uploads distinguish
+  outstanding or completed, both types are welcome, this applies to PO as well"). The
+  Outstanding SO and PO uploads accept a completed book; delivered rows settle their lines
+  through the same prefetch, and the 82,257-row completed book must complete in minutes.
 
-### S6 - SPO duplicates (investigate on prod first)
+### S6 - dropped
 
-- One identity across feeds: `(spo_number, product_id, location_code, allocated_quantity,
-  expected_date)`; a second writer that matches an open row from another source adopts it
-  (updates `source_system` to the newest feed) instead of inserting.
-- Listing `Suspected duplicates` under the SPO document list (#473 lane): groups with two or
-  more open rows sharing that identity, bulk delete with the deferred countdown.
-- Prod check before build: the local copy shows 160 multi-row groups but only 3 identical
-  ones; the inflation users saw needs a prod count to size the cleanup.
+SPO duplicates: no slice (R-I). Issue #544 closed 2 Sep.
 
 ## Order
 
-S1, S2 (one lane, engine), then S3 + S4 (board lane), S5 (import lane), S6 after the prod
-count. S2 is the only slice that changes numbers on existing decisions; the probe's 38 of 79
+S1, S2 (one lane, engine), then S3 + S4 (board lane), S5 (import lane). S2 is the only slice that changes numbers on existing decisions; the probe's 38 of 79
 SO381895 lines are the expected shape.
 
 ## What this supersedes

@@ -45,9 +45,14 @@ or a rule: those live once on the Policies page.
   unit cell reads 1440 with both compositions summed. Stock tab running Available reads
   135, 0, then negative, in that order.
 - AC-2.6b **Allowance visible (R-K).** SRTWCX8840-S-RL lightbox: BRW row reads On hand 102,
-  Available 590 (as today), Can spare = min(590 x 50 %, five-pool net) as a new column after
-  Available; the Suggestion card reads pills "BRW 1" and the sub-line "BRW can spare 295 of
-  590 · due in 2 days". A pool row with 0 to spare reads 0, never blank.
+  Available 590 (as today), Available for Project = min(590 x 50 %, five-pool net) as a new
+  column after Available, on every site pool row and on the site pool subtotal; the
+  Suggestion card reads pills "BRW 1" and nothing else. A pool row with 0 to give reads 0,
+  never blank. Expanding BRW (site pool section) shows the ledger with the running column
+  headed Available for Project = floor(Balance after x 50 %) capped by the five-pool net:
+  On hand 102 reads 51, after the first 1-unit dealer SO 50, after the 510 SPO 295 (the
+  last row equals the summary row's Available for Project). Expanding a GROUP section still
+  reads Balance after, unchanged.
 - AC-2.7 Dealer hot-selling product with pool free 6,500 (WESERP10B): reads pool, not Buy.
 - AC-2.8 Every option row still carries fulfil date and days late (R36); `ladder` on the
   board and the drawer is "v8".
@@ -81,19 +86,20 @@ or a rule: those live once on the Policies page.
 - AC-4.1 Save decision on a line: pill Suggested to Saved within the interaction, button
   shows a check for about 600 ms, toast "Line N saved · K to confirm".
 - AC-4.2 Reload the page, or open the same board on another device: the line is still
-  Saved with its composition and the saver's name.
+  Saved with its composition; the pill reads "Saved" only, the saver's name is in the popover.
 - AC-4.3 Undo on a saved line deletes the draft; the pill returns to Suggested.
 - AC-4.4 Confirm promotes every saved line to active in one write; the confirm summary
   counts saved lines; a line saved but then re-suggested by a new upload shows the
   "suggestion changed" state and is not silently confirmed.
 - AC-4.5 A second planner sees the first planner's saved lines; saving over one replaces
-  it and names the newer saver.
+  it (popover names the newer saver).
 
 ## S5 upload
 
 - AC-5.1 The 22,111-row outstanding file completes in under 5 minutes on the dev machine
-  (was 18 min and counting); the 82,257-row completed book is refused before enqueue with
-  the message naming the history channel.
+  (was 18 min and counting); the 82,257-row completed book (every row delivered) completes
+  in under 10 minutes on the SO channel and settles its lines; the PO channel accepts a
+  completed book the same way.
 - AC-5.2 The activity card counts up during the run (at least every 1,000 rows), matching
   the outcomes page count.
 - AC-5.3 Killing the worker mid-run leaves documents committed up to the last batch and
@@ -102,11 +108,6 @@ or a rule: those live once on the Policies page.
   query count for a 200-row apply stays under 60 (no per-row SELECT) and that no statement
   carries more than 1,000 bound parameters (the prod trace shipped 13,519 per row).
 
-## S6 SPO duplicates
+## S6
 
-- AC-6.1 Prod count of open rows sharing `(spo_number, product, location, qty,
-  expected_date)` across two source systems is recorded in the plan before build.
-- AC-6.2 Re-uploading the same SPO through a second feed updates the existing open row
-  instead of adding one; `on_order_v` for the product does not change.
-- AC-6.3 "Suspected duplicates" lists the groups, bulk delete counts down before it runs,
-  the incoming figure on the board drops by the deleted quantity.
+Dropped 2 Sep (R-I). No criteria.
