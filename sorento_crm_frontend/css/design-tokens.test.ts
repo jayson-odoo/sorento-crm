@@ -568,4 +568,38 @@ describe('M1 motion perimeter hygiene', () => {
       expect(themeVars['--default-transition-duration']).toBe('var(--duration-fast)');
     });
   });
+
+  /**
+   * One more widening, after every fix above: no `transition-[...]` naming a
+   * layout-affecting property (`width`, `height`, `margin*`, `padding*`,
+   * `inset*`) outside a narrow allowlist. Every entry is M3 work - the
+   * countdown/budget bars there become `scaleX` transforms instead. The three
+   * accordion/collapsible content sites never reach this list: their
+   * transition was DROPPED outright in M1-02 (their height comes from the
+   * animate-accordion and animate-collapsible keyframes, not a transition).
+   */
+  describe('M1 no transition-[width|height|margin|padding|inset] outside M3', () => {
+    const PROPERTY_ALLOWLIST: Record<string, string> = {
+      'app/(protected)/sla-management/conversation-sla-tracking/components/TakeoverCountdown.tsx:85': 'M3',
+      'app/(protected)/scm/reorder/components/CashBudgetPanel.tsx:120': 'M3',
+      'components/common/ActivitiesNotesPanel/EntityActivitiesLayout.tsx:144': 'M3',
+      'components/common/DeferredActionButton.tsx:99': 'M3',
+    };
+    const LAYOUT_PROPERTY =
+      /transition-\[[^\]]*\b(width|height|margin(?:-[a-z]+)?|padding(?:-[a-z]+)?|inset(?:-[a-z]+)?)\b[^\]]*\]/;
+
+    it('leaves zero transition-[width|height|margin|padding|inset] outside the M3 allowlist', () => {
+      const offenders: string[] = [];
+      for (const file of files) {
+        const src = stripBlockComments(read(file));
+        src.split('\n').forEach((line, i) => {
+          if (LAYOUT_PROPERTY.test(line)) {
+            const key = `${file}:${i + 1}`;
+            if (!PROPERTY_ALLOWLIST[key]) offenders.push(key);
+          }
+        });
+      }
+      expect(offenders).toEqual([]);
+    });
+  });
 });
