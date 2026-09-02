@@ -119,12 +119,6 @@ class ProductSupplierSourcingTerms(BaseModel):
     # padding rather than trimming it. The validator owns the whole rule.
     currency: Optional[str] = None
     is_primary_supplier: Optional[bool] = None
-    # Read off `scm.supplier_product_code_alias` (product + supplier, non-dismissed), not a
-    # column on this table (S4, AC-D2): the alias is the single writer, so a manual match and
-    # this field can never drift apart. Declared here, not only on the response, so every
-    # `ProductSupplierResponse` route carries it without a second declaration; a create/update
-    # payload naming it is a no-op (nothing on `product_suppliers` reads it back).
-    supplier_item_code: Optional[str] = None
 
     @field_validator("currency")
     @classmethod
@@ -155,6 +149,11 @@ class ProductSupplierUpdate(ProductSupplierSourcingTerms):
 class ProductSupplierResponse(ProductSupplierBase):
     id: str
     created_at: datetime
+    # Read off `scm.supplier_product_code_alias` (product + supplier, non-dismissed), not a
+    # column on this table (S4, AC-D2): the alias is the single writer, so a manual match and
+    # this field can never drift apart. Declared on the RESPONSE only - a create or update
+    # payload naming it would be dropped in silence, since nothing here writes it back.
+    supplier_item_code: Optional[str] = None
     product: Optional[ProductSimple] = None
     supplier: Optional[SupplierSimple] = None
 

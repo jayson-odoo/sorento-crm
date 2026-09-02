@@ -273,6 +273,25 @@ def test_the_newest_alias_wins_when_a_product_has_been_matched_on_two_codes():
         assert rows[0].supplier_item_code == w.supplier_code("NEW-CODE")
 
 
+def test_the_write_schemas_do_not_offer_a_field_they_would_drop():
+    """S4 review: `ProductSupplierCreate` / `Update` inherited `supplier_item_code` from the
+    shared sourcing terms and dropped it silently.
+
+    `product_suppliers` has no such column - the alias table is the single writer (AC-D2) -
+    so a payload field nothing reads back is a promise the API cannot keep. The declaration
+    belongs on the RESPONSE, which is the only side that answers it.
+    """
+    from app.schemas.procurement import (
+        ProductSupplierCreate,
+        ProductSupplierResponse,
+        ProductSupplierUpdate,
+    )
+
+    assert "supplier_item_code" not in ProductSupplierCreate.model_fields
+    assert "supplier_item_code" not in ProductSupplierUpdate.model_fields
+    assert "supplier_item_code" in ProductSupplierResponse.model_fields
+
+
 def test_ac_d2_the_field_survives_the_response_model():
     """`response_model` silently drops undeclared fields - asserted explicitly, since a field
     that reaches the ORM row perfectly can still never reach the frontend."""
