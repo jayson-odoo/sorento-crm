@@ -119,7 +119,7 @@ export interface PoWorklistViewProps {
 
 export function PoWorklistView({ runId = null, onBack }: PoWorklistViewProps) {
   const query = { run_id: runId };
-  const { data, isLoading, isError, error, refetch } = usePoWorklist(query);
+  const { data, isLoading, isPlaceholderData, isError, error, refetch } = usePoWorklist(query);
   const setStatus = useSetKeyedStatus(query);
 
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
@@ -587,6 +587,7 @@ export function PoWorklistView({ runId = null, onBack }: PoWorklistViewProps) {
         </Card>
       ) : (
         <DataGrid
+          isPlaceholderData={isPlaceholderData}
           table={table}
           recordCount={table.getFilteredRowModel().rows.length}
           listingKey={NO_COLUMN_PERSISTENCE}

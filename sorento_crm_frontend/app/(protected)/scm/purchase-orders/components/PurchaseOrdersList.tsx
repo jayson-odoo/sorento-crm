@@ -144,7 +144,7 @@ export default function PurchaseOrdersList() {
   // it, until AutoCount is integrated.
   const [uploadOpen, setUploadOpen] = useState(false);
 
-  const { data, isLoading, isFetching, refetch } = usePurchaseOrders({
+  const { data, isLoading, isPlaceholderData, isFetching, refetch } = usePurchaseOrders({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -439,6 +439,7 @@ export default function PurchaseOrdersList() {
         table={table}
         recordCount={data?.pagination.total || 0}
         isLoading={isLoading}
+        isPlaceholderData={isPlaceholderData}
         tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
         emptyMessage={emptyMessage}
         // The whole row opens the order, the same as the sales-order list. The PO-number

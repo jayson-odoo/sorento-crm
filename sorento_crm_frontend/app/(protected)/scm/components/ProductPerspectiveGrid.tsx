@@ -89,7 +89,7 @@ export function ProductPerspectiveGrid({
   // Product search now lives in the shared filter bar (present in every
   // perspective), so this grid reads it from `filters.productSearch`. Health
   // (incl. overstock) + ABC/XYZ filtering + pagination are all server-side.
-  const { data, isLoading, isFetching, isError, refetch } = useNetPosition(
+  const { data, isLoading, isPlaceholderData, isFetching, isError, refetch } = useNetPosition(
     filters,
     pagination,
     sorting,
@@ -377,6 +377,7 @@ export function ProductPerspectiveGrid({
         table={table}
         recordCount={recordCount}
         isLoading={isLoading}
+        isPlaceholderData={isPlaceholderData}
         tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       >
         <Card>

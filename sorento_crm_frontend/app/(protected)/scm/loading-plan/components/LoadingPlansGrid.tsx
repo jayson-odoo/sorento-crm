@@ -341,6 +341,7 @@ export function LoadingPlansGrid() {
         table={table}
         recordCount={total}
         isLoading={list.isLoading}
+        isPlaceholderData={list.isPlaceholderData}
         emptyMessage={
           searchQuery || status !== 'active'
             ? 'No plan matches this search and filter.'

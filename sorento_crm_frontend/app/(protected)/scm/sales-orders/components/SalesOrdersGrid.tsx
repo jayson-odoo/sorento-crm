@@ -300,7 +300,7 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
   // A pinned agent wins over the filter, which is not offered while it is pinned.
   const effectiveAgentId = salesAgentId ?? (agentFilter || null);
 
-  const { data, isLoading, isFetching, refetch } = useSalesOrders({
+  const { data, isLoading, isPlaceholderData, isFetching, refetch } = useSalesOrders({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -810,6 +810,7 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
         table={table}
         recordCount={data?.pagination.total || 0}
         isLoading={isLoading}
+        isPlaceholderData={isPlaceholderData}
         emptyMessage={emptyMessage}
         // The whole row opens the order. The SO-number link stays a real anchor so
         // middle-click and copy-link still work, and stops its own click propagating.
