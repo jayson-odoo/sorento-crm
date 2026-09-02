@@ -17,6 +17,7 @@ from typing import Optional
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.models.procurement import ProductSupplier
 from app.models.product import Product
 from app.models.product_set import ProductSet
 from app.models.scm import (
@@ -114,6 +115,7 @@ def create(
     product = _product_or_404(db, str(product_id))
     written = _record(db, supplier_id, code, str(product.id), None, _MANUAL, actor)
     rebound = _rebind(db, supplier_id, code, str(product.id), None)
+    _ensure_product_supplier_link(db, supplier_id, str(product.id))
     return {
         "id": str(written.id),
         "supplier_code": written.supplier_code,
@@ -170,6 +172,59 @@ def dismiss(
         "matched_by": written.matched_by,
         **rebound,
     }
+
+
+def _ensure_product_supplier_link(db: Session, supplier_id: str, product_id: str) -> None:
+    """A manual match is a statement of what the supplier makes for us (ruling, section 2 of
+    the plan), so it reaches `product_suppliers` - the very link that puts a product in a
+    plan's universe on its own, with no statement or alias needed (AC-D1).
+
+    No-op when the link exists. `ProductSupplierService.create_product_supplier` is NOT
+    called: it 409s on a duplicate and demands a full sourcing payload this call does not
+    have, where a match dialog is naming a product, not pricing a relationship.
+
+    Lead time is the MODE of the supplier's existing links, ties broken toward the larger
+    figure - an honest "what this supplier usually takes" read off their own book, never
+    invented. A supplier with no existing link at all gets no row: there is no honest lead
+    time to write, and the alias alone already carries the product into the universe (AC-D3);
+    this link is sourcing data on top of it, not a requirement for it.
+
+    Only called from the manual match path (`create`, product target). Never from the
+    ladder's own remember (`supplier_code_matcher._remember`, an automatic guess, not a
+    ruling) and never for a set target (a set is not a row `product_suppliers` can hold).
+    """
+    existing = (
+        db.query(ProductSupplier)
+        .filter(
+            ProductSupplier.product_id == product_id,
+            ProductSupplier.supplier_id == supplier_id,
+        )
+        .first()
+    )
+    if existing is not None:
+        return
+    mode_lead_time = (
+        db.query(ProductSupplier.standard_lead_time_days)
+        .filter(ProductSupplier.supplier_id == supplier_id)
+        .group_by(ProductSupplier.standard_lead_time_days)
+        .order_by(
+            func.count(ProductSupplier.standard_lead_time_days).desc(),
+            ProductSupplier.standard_lead_time_days.desc(),
+        )
+        .first()
+    )
+    if mode_lead_time is None:
+        return
+    db.add(
+        ProductSupplier(
+            id=_uuid(),
+            product_id=product_id,
+            supplier_id=supplier_id,
+            standard_lead_time_days=mode_lead_time[0],
+            is_primary_supplier=False,
+        )
+    )
+    db.flush()
 
 
 def _record(

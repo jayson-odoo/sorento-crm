@@ -228,8 +228,13 @@ def _linked_products(db: Session, supplier_id: str) -> set[str]:
     supplier's `SRTWC8354-SH` is our product, that ruling is a statement of what they make,
     and it has to outlive the file it was answered on - otherwise a plan with no statement of
     its own (S6) forgets every code the supplier has ever been matched on. A DISMISSED code
-    names nothing and is excluded; a code naming one of our SETS is not a product id and does
-    not belong in this set.
+    names nothing and is excluded.
+
+    A code ruled onto one of our SETS (AC-D3) is not a product id itself, so it joins through
+    the set's DRIVER - the same member whose figures a statement-named set row reads (R19).
+    Without this leg, ruling a code onto a set the supplier has never shipped a stock row for
+    left the driver, and therefore the whole set, out of the universe entirely: the ruling
+    was on file but nothing on screen ever asked about it.
     """
     rows = (
         db.query(ProductSupplier.product_id)
@@ -246,7 +251,23 @@ def _linked_products(db: Session, supplier_id: str) -> set[str]:
         )
         .all()
     )
-    return {str(r.product_id) for r in rows} | {str(r.product_id) for r in aliased}
+    aliased_set_ids = [
+        str(r.product_set_id)
+        for r in db.query(SupplierProductCodeAlias.product_set_id)
+        .filter(
+            SupplierProductCodeAlias.supplier_id == supplier_id,
+            SupplierProductCodeAlias.product_set_id.isnot(None),
+        )
+        .all()
+    ]
+    from app.services.product_set_service import driver_members
+
+    drivers = driver_members(db, aliased_set_ids) if aliased_set_ids else {}
+    return (
+        {str(r.product_id) for r in rows}
+        | {str(r.product_id) for r in aliased}
+        | {str(member.product_id) for member in drivers.values()}
+    )
 
 
 def _standin_proforma(db: Session, supplier_id: str) -> Optional[dict]:

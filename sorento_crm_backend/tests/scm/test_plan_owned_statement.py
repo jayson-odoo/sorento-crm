@@ -34,6 +34,7 @@ from sqlalchemy import text
 
 from app.models.procurement import ProductSupplier, Supplier
 from app.models.product import Product, ProductCategory, UnitOfMeasure
+from app.models.product_set import ProductSet, ProductSetMember
 from app.models.scm import ProformaInvoice, ProformaInvoiceLine, SupplierInventory
 from app.services.error_handler import AppException
 from app.services.scm import container_request_service as build_svc
@@ -567,6 +568,10 @@ def test_a_no_file_plans_universe_is_links_aliases_and_drivers():
     A plan with no statement still has a universe - what we buy from this supplier, and what
     we have ever ruled one of their codes to mean. A product with open demand and neither
     membership belongs to somebody else's supplier and is not asked of this one.
+
+    S4/AC-D3 widens the alias leg to SETS: a code ruled onto one of our sets joins through the
+    set's DRIVER, exactly as a set named by an actual statement would - the driver's own row
+    is what "membership" resolves to when nothing on file has holdings for the set yet.
     """
     with pg_session() as db:
         w = World(db)
@@ -578,8 +583,28 @@ def test_a_no_file_plans_universe_is_links_aliases_and_drivers():
             product_id=str(w.product("ALIASED").id),
             actor="Ms Tee",
         )
+        driver = w.product("SET-DRIVER")
+        product_set = ProductSet(
+            id=_uid(), set_code=f"{MARKER}-SET-{w.tag}", name="Aliased set", is_active=True
+        )
+        db.add(product_set)
+        db.flush()
+        db.add(
+            ProductSetMember(
+                id=_uid(), product_set_id=product_set.id, product_id=driver.id,
+                quantity=1, sort_order=0,
+            )
+        )
+        db.flush()
+        alias_svc.create(
+            db,
+            supplier_id=str(w.supplier.id),
+            supplier_code=f"{MARKER}-SETCODE",
+            product_set_id=str(product_set.id),
+            actor="Ms Tee",
+        )
         # Owed to a customer, and this supplier makes none of it - somebody else's product.
-        for key in ("LINKED", "ALIASED", "STRANGER"):
+        for key in ("LINKED", "ALIASED", "STRANGER", "SET-DRIVER"):
             _retail_need(db, w, key, 10)
 
         out = build_svc.build(db, supplier_id=str(w.supplier.id), plan=w.plan("none"))
@@ -587,6 +612,7 @@ def test_a_no_file_plans_universe_is_links_aliases_and_drivers():
         codes = _codes(out["rows"])
         assert w.code("LINKED") in codes
         assert w.code("ALIASED") in codes
+        assert w.code("SET-DRIVER") in codes
         assert w.code("STRANGER") not in codes
 
 
