@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type React from 'react';
+
+type MockToastFn = ReturnType<typeof vi.fn> & Record<string, ReturnType<typeof vi.fn>>;
 
 vi.mock('sonner', () => {
-  const fn = vi.fn() as any;
+  const fn = vi.fn() as unknown as MockToastFn;
   fn.success = vi.fn();
   fn.error = vi.fn();
   fn.info = vi.fn();
@@ -50,7 +53,7 @@ describe('lib/toast (M6-04)', () => {
     toast.warning('warn');
     toast.dismiss('id-1');
     toast.loading('loading');
-    const jsx = () => null as any;
+    const jsx = (() => null) as unknown as () => React.ReactElement;
     toast.custom(jsx);
     const promise = Promise.resolve('x');
     toast.promise(promise, { loading: 'l', success: 's', error: 'e' });
