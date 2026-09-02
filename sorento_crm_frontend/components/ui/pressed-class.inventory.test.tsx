@@ -1,8 +1,16 @@
 /**
  * M1-08 - the press-class inventory: every raw `<button` under `app/(protected)`
- * either renders the shared `Button` primitive (which already carries
- * `PRESSED_CLASS` unconditionally, see `button.tsx`) or names `PRESSED_CLASS`
- * itself. The 2 Sep audit found 127 files that do neither.
+ * names `PRESSED_CLASS` on its own opening tag. Measured 2 Sep: 182 tags across
+ * 128 files do not.
+ *
+ * The check is PER TAG, and a file's `Button` import is ignored. The first cut
+ * skipped any file that imported the shared `Button` primitive, on the reasoning
+ * that `Button` already carries `PRESSED_CLASS` unconditionally (`button.tsx`) -
+ * but a `<Button>` element is never scanned by the `<button` matcher in the first
+ * place, so that skip proved nothing about the raw `<button>` elements sitting
+ * next to it. It reported 58 uncovered tags in 45 files and hid the other 124,
+ * across 83 files - and those were the files most likely to have them, the ones
+ * already mixing the primitive with hand-rolled buttons.
  *
  * THIS TEST IS ALLOWED TO STAY RED AT THE END OF M1 - the UAC says so
  * explicitly (M1-08). M7-01 is the slice that turns it green, file by file.
@@ -46,9 +54,10 @@ function sourceFiles(): string[] {
 /**
  * The `sm` dense-cluster carve-out documented at `button.tsx:41-45` - a file
  * whose raw `<button>` sits in a strip packed tight enough that even the
- * shared `Button` declines the coarse hit target there. The 2 Sep audit named
- * none; kept as the mechanism the UAC asks for, so a real one has somewhere to
- * go with its reason on record rather than a silent skip.
+ * shared `Button` declines the coarse hit target there. Keyed by file, and it
+ * exempts every tag in that file. The 2 Sep audit named none; kept as the
+ * mechanism the UAC asks for, so a real one has somewhere to go with its reason
+ * on record rather than a silent skip.
  */
 const ALLOWLIST: Record<string, string> = {};
 
@@ -70,31 +79,25 @@ function tagCarriesPressedClass(lines: string[], start: number): boolean {
 }
 
 describe.skipIf(process.env.M1_PRESS_INVENTORY !== '1')(
-  'M1-08 press-class inventory (audit baseline: 127 files)',
+  'M1-08 press-class inventory (audit baseline: 182 tags in 128 files)',
   () => {
-    it('every raw <button under app/(protected) imports Button or carries PRESSED_CLASS', () => {
+    it('every raw <button under app/(protected) carries PRESSED_CLASS on its own tag', () => {
       const offenders: string[] = [];
+      const offendingFiles = new Set<string>();
       for (const file of sourceFiles()) {
         const rel = path.relative(process.cwd(), file).split(path.sep).join('/');
         if (ALLOWLIST[rel]) continue;
 
-        const src = read(file);
-        if (!/<button(\s|>|$)/.test(src)) continue;
-
-        // No `s` (dotAll) flag needed or wanted here: `[^}]` already spans
-        // newlines on its own, and the target build's TS lib predates es2018.
-        const importsButton = /import\s*\{[^}]*\bButton\b[^}]*\}\s*from\s*['"][^'"]*components\/ui\/button['"]/.test(
-          src,
-        );
-        if (importsButton) continue;
-
-        const lines = src.split('\n');
-        const everyTagCovered = lines.every((line, i) => !opensOnLine(line) || tagCarriesPressedClass(lines, i));
-        if (!everyTagCovered) offenders.push(rel);
+        const lines = read(file).split('\n');
+        lines.forEach((line, i) => {
+          if (!opensOnLine(line) || tagCarriesPressedClass(lines, i)) return;
+          offenders.push(`${rel}:${i + 1}`);
+          offendingFiles.add(rel);
+        });
       }
 
       if (process.env.M1_PRESS_INVENTORY === '1') {
-        console.log(`M1-08 press-class inventory misses: ${offenders.length}`);
+        console.log(`M1-08 press-class inventory misses: ${offenders.length} tags in ${offendingFiles.size} files`);
         console.log(offenders.join('\n'));
       }
 
