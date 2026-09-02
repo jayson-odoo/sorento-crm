@@ -547,4 +547,17 @@ describe('M1 motion perimeter hygiene', () => {
       expect(offenders).toEqual([]);
     });
   });
+
+  describe('M1-01 the shared press token carries the house curve', () => {
+    it('PRESSED_CLASS names duration-fast and ease-standard', () => {
+      const primitiveClasses = read('components/ui/primitive-classes.ts');
+      expect(primitiveClasses).toContain('duration-(--duration-fast)');
+      expect(primitiveClasses).toContain('ease-(--ease-standard)');
+    });
+
+    it('@theme points the Tailwind transition-* utility defaults at the same tokens', () => {
+      expect(themeVars['--default-transition-timing-function']).toBe('var(--ease-standard)');
+      expect(themeVars['--default-transition-duration']).toBe('var(--duration-fast)');
+    });
+  });
 });

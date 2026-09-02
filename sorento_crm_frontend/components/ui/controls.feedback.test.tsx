@@ -80,6 +80,13 @@ describe('Pressed states (S1-09)', () => {
       render(renderControl());
       expect(classOf(document.querySelector(selector))).toContain('motion-reduce:active:scale-100');
     });
+
+    it(`M1-01: the ${name} runs the press on duration-fast / ease-standard`, () => {
+      render(renderControl());
+      const className = classOf(document.querySelector(selector));
+      expect(className).toContain('duration-(--duration-fast)');
+      expect(className).toContain('ease-(--ease-standard)');
+    });
   }
 });
 

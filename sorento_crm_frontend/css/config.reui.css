@@ -231,6 +231,17 @@
 @theme {
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
 
+  /**
+   * M1-01: the Tailwind v4 defaults every `transition-*` utility falls back to
+   * when a class string names no duration/timing-function of its own
+   * (`node_modules/tailwindcss/theme.css` ships `150ms` / a different
+   * `cubic-bezier`). Pointed at the house tokens so an untouched `transition-colors`
+   * or `transition-opacity` somewhere in the tree runs on the same curve as
+   * `PRESSED_CLASS` instead of Tailwind's stock ease-in-out.
+   */
+  --default-transition-timing-function: var(--ease-standard);
+  --default-transition-duration: var(--duration-fast);
+
   --text-2sm: 0.8125rem;
   --text-2sm--line-height: calc(1.075 / 0.8125);
   --text-2sm--letter-spacing: 0em;

@@ -42,10 +42,15 @@ export const OVERLAY_CLASS_STATIC =
  * Pressed feedback: the control answers on pointer DOWN, not on release.
  *
  * A 3% shrink is enough to read as a physical press at every control size, and
- * it is suppressed for anyone who asked for less motion.
+ * it is suppressed for anyone who asked for less motion. `duration-fast` and
+ * `ease-standard` are named explicitly (M1-01) rather than left to inherit the
+ * Tailwind default, even though `css/config.reui.css` now points that default
+ * at the same two tokens - a reader of just this file should not have to go
+ * looking for the theme to know what curve a press runs on.
  */
 export const PRESSED_CLASS =
   'transition-[transform,color,background-color,border-color,box-shadow] ' +
+  'duration-(--duration-fast) ease-(--ease-standard) ' +
   'active:scale-[0.97] motion-reduce:active:scale-100';
 
 /**
