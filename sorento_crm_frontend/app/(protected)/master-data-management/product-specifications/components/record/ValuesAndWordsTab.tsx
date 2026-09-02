@@ -49,6 +49,7 @@ function ValueRow({
   isSuppressed,
   isUserAdded,
   label,
+  valueLabels,
   words,
   seedWords,
   droppedWords,
@@ -66,6 +67,9 @@ function ValueRow({
   isSuppressed: boolean;
   isUserAdded: boolean;
   label: string;
+  /** The key's whole value_labels dict, so the heading reads the same label the
+   *  "Display label" input is editing - one source of truth (item 3). */
+  valueLabels: Record<string, string>;
   words: string[];
   seedWords: string[];
   droppedWords: string[];
@@ -77,7 +81,8 @@ function ValueRow({
   onRestore?: () => void;
   onRemove?: () => void;
 }) {
-  const displayName = value === 'true' && isBoolean ? 'When true' : readableValue(value);
+  const displayName =
+    value === 'true' && isBoolean ? 'When true' : readableValue(value, undefined, valueLabels);
 
   return (
     <div
@@ -131,8 +136,10 @@ function ValueRow({
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <Field label="Display label">
-          {mode === 'edit' ? (
+        {/* The heading above already reads the label (item 3) - a read-only
+            "Display label" span in view mode would just repeat it. */}
+        {mode === 'edit' && (
+          <Field label="Display label">
             <Input
               value={label}
               placeholder={readableValue(value)}
@@ -142,10 +149,8 @@ function ValueRow({
               aria-label={`Display label for ${displayName}`}
               disabled={isSuppressed}
             />
-          ) : (
-            <span className="text-sm">{label || readableValue(value)}</span>
-          )}
-        </Field>
+          </Field>
+        )}
         <Field label="Words customers say">
           {mode === 'edit' ? (
             <TokenInput
@@ -255,6 +260,7 @@ export function ValuesAndWordsTab({
             !droppedValues.includes(value)
           }
           label={valueLabels[value] ?? ''}
+          valueLabels={valueLabels}
           words={words[value] ?? []}
           seedWords={seedWordsFor(row, value)}
           droppedWords={draft?.droppedWords[value] ?? []}
@@ -353,19 +359,29 @@ export function ValuesAndWordsTab({
         />
       )}
 
-      {mode === 'edit' && row.data_type === 'numeric' && (
+      {row.data_type === 'numeric' && (
         <Field label={`Ignore values above${row.unit ? ` (${row.unit})` : ''}`}>
-          <Input
-            type="number"
-            step="1"
-            min="0"
-            placeholder="no cap"
-            className="h-8 w-40"
-            value={draft?.maxValue ?? ''}
-            onChange={(event) =>
-              setDraft((d) => ({ ...d, maxValue: event.target.value }))
-            }
-          />
+          {mode === 'edit' ? (
+            <Input
+              type="number"
+              step="1"
+              min="0"
+              placeholder="no cap"
+              className="h-8 w-40"
+              value={draft?.maxValue ?? ''}
+              onChange={(event) =>
+                setDraft((d) => ({ ...d, maxValue: event.target.value }))
+              }
+            />
+          ) : (
+            <span className="text-sm">
+              {row.max_value === null || row.max_value === undefined
+                ? 'No cap'
+                : row.unit
+                  ? `${row.max_value} ${row.unit}`
+                  : row.max_value}
+            </span>
+          )}
         </Field>
       )}
     </div>

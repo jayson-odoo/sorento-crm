@@ -119,22 +119,59 @@ describe('ValuesAndWordsTab - display label (E.1, E.2)', () => {
 });
 
 describe('ValuesAndWordsTab - view and edit share field labels (G.8)', () => {
-  it('renders the same field labels in both modes', () => {
+  // "Display label" is the one named exception (item 3): the row heading already
+  // IS the label (`readableValue(value, undefined, valueLabels)`), so a second,
+  // read-only "Display label" span in view mode would just repeat it - it renders
+  // only in edit mode, where it is an input. Every other field label matches.
+  it('renders the same shared-field labels in both modes, Display label edit-only', () => {
     const row = finishWithASuppressedValue();
     const { unmount } = render(
       <ValuesAndWordsTab row={row} mode="view" draft={null} setDraft={() => {}} onEnterEdit={() => {}} />,
     );
-    const viewLabels = screen.getAllByText(/Display label|Words customers say/).map(
-      (el) => el.textContent,
-    );
+    expect(screen.queryByText('Display label')).not.toBeInTheDocument();
+    const viewLabels = screen.getAllByText(/Words customers say/).map((el) => el.textContent);
     unmount();
 
     render(<EditHarness row={row} />);
-    const editLabels = screen.getAllByText(/Display label|Words customers say/).map(
-      (el) => el.textContent,
-    );
+    expect(screen.getAllByText('Display label')).toHaveLength(2);
+    const editLabels = screen.getAllByText(/Words customers say/).map((el) => el.textContent);
 
     expect(editLabels).toEqual(viewLabels);
+  });
+});
+
+describe('ValuesAndWordsTab - max_value (item 4)', () => {
+  it('view mode shows the stored cap, numeric keys only', () => {
+    const row: SpecRegistryKey = {
+      ...finishWithASuppressedValue(),
+      spec_key: 'dim_height',
+      data_type: 'numeric',
+      unit: 'mm',
+      max_value: 5000,
+    };
+    render(<ValuesAndWordsTab row={row} mode="view" draft={null} setDraft={() => {}} onEnterEdit={() => {}} />);
+
+    expect(screen.getByText('Ignore values above (mm)')).toBeInTheDocument();
+    expect(screen.getByText('5000 mm')).toBeInTheDocument();
+  });
+
+  it('view mode shows No cap when unset', () => {
+    const row: SpecRegistryKey = {
+      ...finishWithASuppressedValue(),
+      spec_key: 'dim_height',
+      data_type: 'numeric',
+      unit: 'mm',
+      max_value: null,
+    };
+    render(<ValuesAndWordsTab row={row} mode="view" draft={null} setDraft={() => {}} onEnterEdit={() => {}} />);
+
+    expect(screen.getByText('No cap')).toBeInTheDocument();
+  });
+
+  it('is absent on a non-numeric key in either mode', () => {
+    const row = finishWithASuppressedValue();
+    render(<ValuesAndWordsTab row={row} mode="view" draft={null} setDraft={() => {}} onEnterEdit={() => {}} />);
+    expect(screen.queryByText(/Ignore values above/)).not.toBeInTheDocument();
   });
 });
 
