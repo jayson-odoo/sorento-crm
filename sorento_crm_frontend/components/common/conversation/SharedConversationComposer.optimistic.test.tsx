@@ -27,8 +27,8 @@ vi.mock('@/lib/toast', () => ({
 import { getWindowState, sendConversationMessage } from '@/services/whatsappTemplateService';
 import { toast } from '@/lib/toast';
 
-if (!(Element.prototype as any).scrollIntoView) {
-  (Element.prototype as any).scrollIntoView = vi.fn();
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = vi.fn();
 }
 
 function renderComposer(
@@ -47,12 +47,12 @@ const OPEN = { open: true, last_incoming_at: null, checked_at: '2026-07-01T00:00
 describe('SharedConversationComposer - optimistic send (M6-01)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    (getWindowState as any).mockResolvedValue(OPEN);
+    vi.mocked(getWindowState).mockResolvedValue(OPEN);
   });
 
   it('never disables the textarea while sending; focus and caret survive the send', async () => {
     let resolveSend: (v: unknown) => void = () => {};
-    (sendConversationMessage as any).mockImplementation(
+    vi.mocked(sendConversationMessage).mockImplementation(
       () => new Promise((resolve) => { resolveSend = resolve; }),
     );
     renderComposer();
@@ -87,7 +87,7 @@ describe('SharedConversationComposer - optimistic send (M6-01)', () => {
 
   it('a second Enter while sending is ignored (re-entry guard)', async () => {
     let resolveSend: (v: unknown) => void = () => {};
-    (sendConversationMessage as any).mockImplementation(
+    vi.mocked(sendConversationMessage).mockImplementation(
       () => new Promise((resolve) => { resolveSend = resolve; }),
     );
     renderComposer();
@@ -110,7 +110,7 @@ describe('SharedConversationComposer - optimistic send (M6-01)', () => {
 
   it('shows an optimistic bubble immediately and clears it once the send settles', async () => {
     let resolveSend: (v: unknown) => void = () => {};
-    (sendConversationMessage as any).mockImplementation(
+    vi.mocked(sendConversationMessage).mockImplementation(
       () => new Promise((resolve) => { resolveSend = resolve; }),
     );
     const add = vi.fn().mockReturnValue('pending-1');
@@ -131,7 +131,7 @@ describe('SharedConversationComposer - optimistic send (M6-01)', () => {
   });
 
   it('removes the bubble and toasts on failure', async () => {
-    (sendConversationMessage as any).mockRejectedValue(new Error('Network down'));
+    vi.mocked(sendConversationMessage).mockRejectedValue(new Error('Network down'));
     const add = vi.fn().mockReturnValue('pending-2');
     const remove = vi.fn();
     renderComposer({ pendingBubble: { add, remove } });
@@ -147,7 +147,7 @@ describe('SharedConversationComposer - optimistic send (M6-01)', () => {
   });
 
   it('waits for an async onSent to settle before clearing the bubble', async () => {
-    (sendConversationMessage as any).mockResolvedValue({ sent_as: 'text' });
+    vi.mocked(sendConversationMessage).mockResolvedValue({ sent_as: 'text' });
     const add = vi.fn().mockReturnValue('pending-3');
     const remove = vi.fn();
     let resolveOnSent: () => void = () => {};

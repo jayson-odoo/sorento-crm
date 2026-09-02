@@ -44,13 +44,15 @@ export default function PurchaseRequestConversationPanel({
   const { data, isLoading, refetch, isRefetching } = usePurchaseRequestConversation(requestId, { limit: 50 });
   const queryClient = useQueryClient();
   const pending = usePendingThreadItems();
+  const { clearPending } = pending;
 
   // A different request is a different draft: never leave a stranger's
   // in-flight send dimmed in a thread that just mounted under a new id.
+  // `clearPending` is `useCallback`-stable (empty deps in the hook), so
+  // listing it here does not re-run this on every render.
   useEffect(() => {
-    pending.clearPending();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [requestId]);
+    clearPending();
+  }, [requestId, clearPending]);
 
   const items = [...(data?.items ?? []), ...pending.pendingItems];
 

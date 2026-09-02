@@ -12,6 +12,14 @@
  * in `app/(auth)/portal`. It does not fire on the OTHER `setTimeout` calls in
  * this tree (a blur-defer, a cooldown tick, a copy-feedback reset, an
  * object-URL revoke) because none of them share that delay.
+ *
+ * This is a REGRESSION guard for the specific figures that came back, not a
+ * ban on a hand-rolled debounce in general: `setTimeout(fn, DEBOUNCE_MS)` with
+ * the delay pulled into a named const passes the regex untouched. That is an
+ * accepted gap, not an oversight - a text-pattern scan over source cannot
+ * decide "is this a debounce" without parsing intent, and the four sites the
+ * literals actually caught are exactly the ones this round measured. A future
+ * reviver of 250/300 as a literal is what this floor is for.
  */
 import fs from 'node:fs';
 import path from 'node:path';
