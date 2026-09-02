@@ -1,6 +1,6 @@
 # PLAN: Fulfilment planning feedback batch, 2 Sep (BRW first, per-line walk, saved decisions, upload speed)
 
-Status: APPROVED 2 Sep 2026 ("yessir, correct ... let's go") - implementation starting S1+S2 engine lane and S5 import lane
+Status: APPROVED 2 Sep 2026 ("yessir, correct ... let's go"). S1 DONE; S2 Phase 1 + Phase 2 DONE (ladder v8 live on the lane, PR open, Phase 3 review outstanding); S3, S3b, S4, S5 outstanding.
 Captain rulings: 2 Sep 2026 user test on SO419208 / SO419370 / SO418324 (screenshots on the session)
 Probe: `scratchpad/probe_brw_first.md` (read-only, worktree `.claude/worktrees/scm-brw-first`, branch `probe/scm-brw-first` off `origin/main cf255833d`)
 Lane: engine lane `.claude/worktrees/scm-fulfilment-2sep` branch `feat/scm-fulfilment-feedback-2sep` FE :3080 BE :8080 (S1, S2, then S3, S3b, S4); import lane `.claude/worktrees/scm-upload-2sep` branch `feat/scm-upload-speed-2sep` BE :8090, no FE server (S5). Both off origin/main. Own `.env` per lane (API_PORT, NEXTAUTH_URL, FASTAPI_INTERNAL_URL), venv symlinked to the primary checkout, node_modules cloned from it.
@@ -117,19 +117,34 @@ Verified facts this plan stands on:
 
 ### S2 - engine v8: BRW share step + per-line walk (the change users asked for)
 
-- `walk_line` gains step 0 `pool_share`: `allowance = site pool free x (100 - share) / 100`,
-  `share_qty = min(open_qty, allowance, max(pools_net, 0))` inside the window; beyond the
-  window `share_qty = open_qty` if `open_qty <= allowance` else 0. When `share_qty >= open_qty` the step covers
-  the line whole (chosen `pool`). Otherwise the walk runs on `open_qty - share_qty` with the
-  pool step removed (the pile already answered) and the result is `pool share + remainder`.
-  Beyond-window and beyond-coverage bail (step 0 today) stays in front.
+- `walk_line` gains step 0 `pool_share`: `allowance = min(floor(site pool AVAILABLE x
+  (100 - share) / 100), max(pools_net, 0))`, `share_qty = min(open_qty, allowance)` inside
+  the window; beyond the window `share_qty = open_qty` if `open_qty <= allowance` else 0.
+  When `share_qty >= open_qty` the step covers the line whole (chosen `pool_share`).
+  Otherwise the walk runs on `open_qty - share_qty` with the pool step removed (the pile
+  already answered) and the result is `pool share + remainder`. Beyond-window and
+  beyond-coverage bail (step 0 today) stays in front.
+- **Amended in implementation (2 Sep, S2 Phase 2), three points:**
+  (a) the share's base is the pool's **Available** (`on hand - SO + SPO`), not its free
+  pile - that is the figure R-K's own AC-2.6b prints ("Available 590 ... Available for
+  Project = min(590 x 50 %, five-pool net)") and the figure the expanded ledger's running
+  column is a share of, so one base keeps the walk and the lightbox on one number; the
+  pool's FREE pile still bounds WHERE the units come from, exactly as `_draw_pool` always
+  did. (b) the allowance is a **running ledger per product across the walk**, not a fresh
+  reading per line: the share is a share of the PILE, and without the ledger a pool of 20
+  was offered as 10 to one line and 10 to the next and lent all of itself. (c) the
+  whole-line rule at CONFIRM gains one carve-out for exactly this composition (a Reserve at
+  a site pool, inside the allowance, beside a Buy), or the engine's own v8 proposals could
+  not be confirmed.
 - Options table: five rows in walk order become `Use BRW stock` (share or whole, with the
   quantity it can give), `Use our locations`, `Borrow on hand from a later order`,
   `Borrow incoming from a later order`, `Buy`. The pool borrow half (R34) stays inside the
   first row as today.
 - Per-line walk: `_proposals_for` / the board's unit walk iterate the unit's contributing
   lines in ascending `qty`, then line number, feeding each the piles left by the previous
-  one. The unit cell shows the sum; each contributing line shows its own composition.
+  one. Two ledgers were needed for that and are new: the unit's OWN ownership-group pile
+  (kept per bin AND per floor/water, or the second line is offered a floor the first
+  emptied) and the pool share above. The unit cell shows the sum; each contributing line shows its own composition.
   `_pile_order` gains `qty` ascending between date and SO number so the Stock tab's
   running Available reads the same order (135 then 1305).
 - Lightbox (R-K): `stock-detail` returns `available_for_project` per site pool row and on
