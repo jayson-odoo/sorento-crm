@@ -200,6 +200,15 @@ Baseline measured on `origin/main` e1adad4d2, 2 Sep 2026.
   (50 rows) is recorded under `evidence/M3/`. If it shows dropped frames, a follow-up ticket is
   filed for the transform rewrite and linked in the PR; if not, the transition is made instant
   and the trace justifies it. Either outcome is stated in the PR.
+  **Outcome (fix round): dropped frames, so the FIRST branch.** One collapse + expand cycle on
+  Orders at 1280x800 with 50 rows traced 34 layouts and 34 style recalcs; 19 of 54 sampled
+  frames ran over 16.7ms and 2 over 33ms (60.1ms and 59.6ms, about one per direction). Raw
+  trace `evidence/M3/M3-06-sidebar-collapse-trace.json` (6636 events), method in
+  `evidence/M3/README.md`. Follow-up ticket **#559** ("Sidebar collapse: transform-only
+  rewrite") is filed and linked in the PR; the transition is NOT made instant, and the decision
+  is recorded at the site in `css/demos/demo1.css`. A transform-only rewrite is not retried in
+  this slice: S8-03 tried it and reverted it for distorting both end states, so it needs its own
+  piece of work rather than a hurried second attempt.
 - **M3-07** `[browser]` Resizing the AI assistant panel with a long transcript loaded does not
   re-render the message list per pointer move (React DevTools highlight shows no message
   re-render until pointer-up); the handle fades out over `--duration-fast` while the panel
