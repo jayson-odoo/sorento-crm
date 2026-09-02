@@ -826,6 +826,27 @@ register(
     )
 )
 
+
+def _delete_spec_key(db: Session, payload: dict):
+    from app.services.product_spec_registry import delete_registry_key
+
+    # Keyed by the spec key ITSELF, not a uuid - `delete_registry_key` takes it and is
+    # the same refusal `DELETE /spec-registry/{spec_key}` runs (D.6, PLAN-spec-
+    # workbench-redesign.md): a seed-sourced key is refused, never deleted.
+    return delete_registry_key(db, _entity_id(payload))
+
+
+register(
+    FormAction(
+        key="spec_key.delete",
+        entity_types=("spec_key",),
+        execute=_delete_spec_key,
+        window=WINDOW_DESTRUCTIVE,
+        permission="master_data.spec_registry.delete",
+        label="Delete specification",
+    )
+)
+
 register(
     FormAction(
         key="stock_visibility_policy.remove",

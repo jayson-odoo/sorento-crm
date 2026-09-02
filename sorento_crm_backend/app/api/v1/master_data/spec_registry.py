@@ -33,7 +33,7 @@ from app.dependencies import (
 )
 from app.models.product_spec import ProductSpecRegistry, ProductSpecSearchPolicy
 from app.services import product_spec_preview, product_spec_rederive
-from app.services.error_handler import handle_internal_error, handle_not_found
+from app.services.error_handler import AppException, handle_internal_error, handle_not_found
 from app.services.product_spec_registry import (
     SEARCH_POLICY_SEED,
     active_registry,
@@ -120,6 +120,9 @@ def _serialise(row) -> dict:
         "match_tolerance": float(row.match_tolerance) if row.match_tolerance is not None else 0.0,
         "match_decay": float(row.match_decay) if row.match_decay is not None else 0.0,
         "is_active": bool(row.is_active),
+        # value -> display label ("pp" -> "PP"), purely cosmetic (#423, D/E). Editable
+        # on seed AND user rows, like user_synonyms.
+        "value_labels": row.value_labels or {},
     }
 
 
@@ -205,6 +208,9 @@ class SpecKeyUpdate(BaseModel):
     # without it a key created here can never be populated, which made the "add a spec"
     # button a promise the engine could not keep.
     derivation_rules: Optional[list[dict]] = None
+    # value -> display label ("pp" -> "PP"), purely cosmetic (#423). Editable on ANY
+    # row, seed or user - staff-owned like user_synonyms, never seed-repaired.
+    value_labels: Optional[dict[str, str]] = None
     # Which products may carry this key at all, as {other_key: [permitted values]}.
     # Calibration rather than vocabulary - "bowl count is not only for kitchen sinks"
     # is a merchandising call - so it is editable and no longer seed-repaired.
@@ -1163,6 +1169,39 @@ def update_spec_key(
                 data_type=row.data_type,
             )
 
+        if "value_labels" in fields:
+            # A closed list (allowed_values, merged with what staff added and minus
+            # what they took away) is what a label may name. Without one - `brand`,
+            # `class` - the words a synonym is keyed under are the only values the row
+            # knows by name.
+            valid_keys = {str(v) for v in merged_allowed_values(row)}
+            if not valid_keys:
+                valid_keys = set(merged_synonyms(row).keys())
+            cleaned_labels: dict[str, str] = {}
+            for value_key, label in (fields["value_labels"] or {}).items():
+                value_key = str(value_key).strip()
+                label = str(label or "").strip()
+                if not label:
+                    # An empty label drops the key rather than storing a blank one.
+                    continue
+                if value_key not in valid_keys:
+                    raise AppException(
+                        status_code=422,
+                        message=f"\"{value_key}\" is not one of {row.label}'s values.",
+                        code="spec_registry_label_unknown_value",
+                    )
+                if len(label) > 60:
+                    raise AppException(
+                        status_code=422,
+                        message=f"The label for \"{value_key}\" is too long (60 characters max).",
+                        code="spec_registry_label_too_long",
+                    )
+                cleaned_labels[value_key] = label
+            # Reassigned, never mutated in place: JSONB in-place mutation is not
+            # tracked by SQLAlchemy, so `row.value_labels[key] = ...` would silently
+            # not persist.
+            row.value_labels = cleaned_labels
+
         if "value_weights" in fields:
             row.value_weights = {
                 str(value).strip(): float(bonus)
@@ -1330,20 +1369,14 @@ async def delete_spec_key(
     """Delete a user-created key. Seeded keys are deactivated, never deleted.
 
     A seeded key would simply reappear on the next deploy, so offering "delete" for one
-    would be a button that silently does nothing.
+    would be a button that silently does nothing. The refusal lives in
+    `product_spec_registry.delete_registry_key`, shared with the `spec_key.delete`
+    record action (D.6) so the gear's Delete and this route can never disagree.
     """
     try:
-        row = db.query(ProductSpecRegistry).filter_by(spec_key=spec_key).first()
-        if row is None:
-            raise handle_not_found("Spec key", spec_key)
-        if (row.source or "seed") == "seed":
-            raise _reject(
-                "This key ships with the product and would come back on the next "
-                "deploy. Switch it off instead.",
-                "spec_registry_seed_undeletable",
-            )
-        db.delete(row)
-        db.commit()
+        from app.services.product_spec_registry import delete_registry_key
+
+        delete_registry_key(db, spec_key)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
     except Exception as e:
         if type(e).__name__ in {"AppException", "HTTPException"}:
