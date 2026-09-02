@@ -58,6 +58,7 @@ import UserInviteDialog from './user-add-dialog';
 import { toast } from 'sonner';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import type { Table as ReactTable } from '@tanstack/react-table';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 type UserFilterField = 'role' | 'status' | 'trashed';
 type UserFilterCondition = { id: string; field: UserFilterField; value: string };
@@ -404,6 +405,7 @@ const UserList = () => {
   );
 
   const { data, isLoading, isFetching } = useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: usersListQueryKey(listParams),
     queryFn: () => fetchUsersListPage(listParams),
     staleTime: Infinity,

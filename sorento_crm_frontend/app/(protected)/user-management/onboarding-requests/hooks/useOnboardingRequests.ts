@@ -37,6 +37,7 @@ import {
   type OnboardingRequestListParams,
 } from '../services/onboardingService';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export const ONBOARDING_LIST_KEY = 'onboarding-requests';
 export const ONBOARDING_DETAIL_KEY = 'onboarding-request';
@@ -81,6 +82,7 @@ export const onboardingPagerQuery = {
 
 export function useOnboardingRequests(params: OnboardingRequestListParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: onboardingListQueryKey(params),
     queryFn: () => listOnboardingRequests(params),
   });

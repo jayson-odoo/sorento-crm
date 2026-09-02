@@ -6,6 +6,7 @@ import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 import { getAccessAgents, getAccessAgent, createAccessAgent, updateAccessAgent, getContactAccessAgents, createContactAgentAccess, updateContactAgentAccess, deleteContactAgentAccess, getAgentTeams, setAgentTeams, getTeams, getAgentFieldAccess, setAgentFieldAccess } from '../services/accessAgentService';
 import type { AccessAgentFormData, ContactAgentAccessFormData } from '../types/accessAgent.types';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 
 export type AccessAgentsListParams = DataGridApiFetchParams & { status?: string };
@@ -48,6 +49,7 @@ export const accessAgentsPagerQuery = {
 
 export function useAccessAgents(params: AccessAgentsListParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: accessAgentsListQueryKey(params),
     queryFn: () => getAccessAgents(params),
     staleTime: Infinity,
