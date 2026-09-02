@@ -163,10 +163,7 @@ describe('useDrainingScaleXFill under prefers-reduced-motion', () => {
 
   it('renders the caller fraction with no transition, and never arms one', () => {
     const target = Date.now() + 10_000;
-    const { result, rerender } = renderHook(
-      ({ fraction }) => useDrainingScaleXFill(target, fraction),
-      { initialProps: { fraction: 1 } },
-    );
+    const { result } = renderHook(() => useDrainingScaleXFill(target, 1));
 
     expect(result.current.transform).toBe('scaleX(1)');
     expect(result.current.transitionDuration).toBeUndefined();

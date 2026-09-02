@@ -71,9 +71,9 @@ export function useDrainingScaleXFill(targetMs: number, startFraction: number): 
       // not fired yet - which is exactly the StrictMode replay's first pass.
       cancelAnimationFrame(second);
     };
-    // startFraction is read at arm time only (a re-arm happens on a new
-    // targetMs, which always carries its own fresh startFraction with it).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // startFraction is deliberately absent: this effect no longer reads it (the
+    // render does), so a caller ticking a live fraction cannot re-arm the
+    // transition by ticking. Only a new deadline re-arms.
   }, [targetMs, prefersReducedMotion]);
 
   // No transition for someone who asked for less motion: the caller's own tick
