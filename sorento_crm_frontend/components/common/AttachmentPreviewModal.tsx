@@ -161,8 +161,11 @@ export default function AttachmentPreviewModal({
 
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if (e.key === 'ArrowRight') api?.scrollNext();
-      else if (e.key === 'ArrowLeft') api?.scrollPrev();
+      // Arrow-key navigation jumps straight to the slide (M2-02, no
+      // animation) - only drag and the dot/arrow-button navigation still
+      // play Embla's own scroll (carousel.tsx, duration 20).
+      if (e.key === 'ArrowRight') api?.scrollNext(true);
+      else if (e.key === 'ArrowLeft') api?.scrollPrev(true);
       else if (e.key === '+' || e.key === '=') zoomBy(1.25);
       else if (e.key === '-') zoomBy(0.8);
     },
