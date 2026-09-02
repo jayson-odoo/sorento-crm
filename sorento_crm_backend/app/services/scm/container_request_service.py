@@ -151,7 +151,9 @@ def _set_id_of(key: str) -> Optional[str]:
     return key[len(_SET_PREFIX):] if key.startswith(_SET_PREFIX) else None
 
 
-def _stock_list(db: Session, supplier_id: str) -> tuple[Optional[Any], dict[str, dict]]:
+def _stock_list(
+    db: Session, supplier_id: str, *, loading_plan_id: Optional[str] = None
+) -> tuple[Optional[Any], dict[str, dict]]:
     """The supplier's identified goods: current stock, aggregated by what each row names.
 
     Keyed by product id, or by `set:<id>` for a row bound to one of our product SETS (R19) -
@@ -168,17 +170,24 @@ def _stock_list(db: Session, supplier_id: str) -> tuple[Optional[Any], dict[str,
     first row that states one (it is a per-unit measure, not a quantity - summing it would be
     wrong, and rows for one product rarely disagree on it), `row_as_of` as the latest, same
     rule as the list-level `as_of` above.
+
+    `loading_plan_id` is `plan_statement.stock_scope`'s to answer, not this function's own
+    filter (S6/BL fix): this is the LEGACY fallback `_statement` reads for a plan that has
+    nothing stamped, and without the scope it summed every row on file for the supplier -
+    this plan's pre-454 rows AND whatever a newer, unrelated plan has since stamped for the
+    same code - which double-counts a legacy plan's holdings the moment a second plan exists.
+    `None` (a build with no plan at all) keeps today's unrestricted read; that caller is
+    tracked in `_statement`'s own docstring.
     """
-    rows = (
-        db.query(SupplierInventory)
-        .filter(
-            SupplierInventory.supplier_id == supplier_id,
-            SupplierInventory.product_id.isnot(None)
-            | SupplierInventory.product_set_id.isnot(None),
-        )
-        .all()
+    query = db.query(SupplierInventory).filter(
+        SupplierInventory.supplier_id == supplier_id,
+        SupplierInventory.product_id.isnot(None)
+        | SupplierInventory.product_set_id.isnot(None),
     )
-    return _aggregate_stock(rows)
+    scope = plan_statement.stock_scope(db, loading_plan_id)
+    if scope is not None:
+        query = query.filter(scope)
+    return _aggregate_stock(query.all())
 
 
 def _aggregate_stock(rows: list) -> tuple[Optional[Any], dict[str, dict]]:
@@ -1348,8 +1357,12 @@ def _statement(
         # "No file" is a real answer, not a missing one: this plan reads no statement.
         return None, {}, None
 
-    # Legacy: nothing of this plan's own is on file, so it keeps today's supplier-wide rule.
-    as_of, stock = _stock_list(db, supplier_id)
+    # Legacy: nothing of this plan's own is on file. `loading_plan_id` routes the read
+    # through `plan_statement.stock_scope`, which - because `has_stock_rows` above already
+    # says this plan owns nothing - narrows to the pre-454 rows (`loading_plan_id IS NULL`)
+    # rather than every row on file for the supplier, so a newer plan's stamped snapshot for
+    # the same code cannot double-count into this one.
+    as_of, stock = _stock_list(db, supplier_id, loading_plan_id=str(plan.id))
     return as_of, stock, (_standin_proforma(db, supplier_id) if not stock else None)
 
 

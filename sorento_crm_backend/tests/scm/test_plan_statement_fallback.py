@@ -55,6 +55,35 @@ def test_a_stock_plan_whose_rows_matched_nothing_reads_no_holdings():
         assert w.code("STRANGER") not in {r["item_code"] for r in out["rows"]}
 
 
+def test_a_legacy_plan_does_not_double_count_a_newer_plans_stamped_rows():
+    """`container_request_service._stock_list` summed every row for the supplier, stamped or
+    not - so once a NEW plan uploads its own stock list for the same code, a legacy plan (one
+    that predates migration 454 and has nothing of its own stamped) read the pre-454 row AND
+    the newer plan's stamped one, added together.
+
+    The legacy fallback must route through `plan_statement.stock_scope`, which narrows to
+    `loading_plan_id IS NULL` the moment `has_stock_rows` says this plan owns nothing - so a
+    legacy plan reads only the pre-454 snapshot, never another plan's own rows.
+    """
+    with pg_session() as db:
+        w = World(db)
+        w.link("A")
+        legacy = w.plan("stock_list")
+        # The pre-454 supplier-wide row: unowned by any plan.
+        w.stock_row("A", packed=12, plan_id=None)
+        # A newer plan's OWN stamped snapshot for the same code - not the legacy plan's rows.
+        newer = w.plan("stock_list")
+        w.stock_row("A", packed=999, plan_id=str(newer.id))
+        _retail_need(db, w, "A", 10)
+
+        out = build_svc.build(db, supplier_id=str(w.supplier.id), plan=legacy)
+
+        row = _row(out, w.code("A"))
+        assert row["holding_source"] == "stock_list"
+        assert row["holding_qty"] == 12.0
+        assert row["qty_packed"] == 12.0
+
+
 def test_a_proforma_plan_whose_lines_matched_nothing_never_falls_back_to_a_stock_list():
     """The worse half: an all-unmatched proforma plan read the supplier's STOCK LIST.
 
