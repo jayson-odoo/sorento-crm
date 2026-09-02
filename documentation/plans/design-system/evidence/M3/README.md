@@ -312,3 +312,132 @@ opened a second browser. `.env.local` left in place per the brief. No destructiv
 every deferred-delete countdown armed for M3-01 (twice: a product, then a product category) was
 Cancelled well inside its window and confirmed intact via a hard page reload; no create, archive,
 or commit-through action was allowed to complete.
+
+## Run 2 (after fix round, HEAD c8467e6d3)
+
+Worktree `motion2-M3`, branch `feat/motion2-M3-gpu-preferences`, HEAD `c8467e6d3` (fix round:
+`4c23c9989` re-arm under StrictMode, `d65d40859` fill honours reduced motion, `b81596b3f` handle
+presses not widens, `e7b17d6f9` reduced motion reaches drawer + activities panel, `3394b34b8`
+collapsed rail holds under sticky tap-hover, `cc709648e` countdown edges, `ef602aa18` M3-06 docs,
+`c8467e6d3` lint). FE `PORT=3081 npm run dev` (npm run dev PID 23921, next dev child PID 23961),
+BE reused read-only on `:8120`. `lsof -i :3081`/`:3082` empty before starting; load average
+(1 min) 7.91, under the 12 guard. Login via `E2E_EMAIL`/`E2E_PASSWORD`. Session `--session
+m3run2`. Viewport 1280x800 default, 375x812 for the mobile drawer check. Navigated by sidebar
+clicks from `/`. `npx vitest run` on the four M3 test files (41 tests) was green before the
+browser pass.
+
+**Same tool quirks as run 1** (`click @ref` no-ops on sidebar toggles/menu items/row actions,
+worked around with a full `pointerdown/mousedown/pointerup/mouseup/click` dispatch via `eval
+--stdin`; coarse-pointer/touch emulation done via a Node/CDP script attached to
+`agent-browser get cdp-url`, single script per emulation state to avoid `agent-browser set media`
+wiping a custom feature). One new quirk this run: a synthetic `PointerEvent`/`MouseEvent`
+dispatched from page JS does **not** set CSS `:active` (`el.matches(':active')` reads `false`,
+`getComputedStyle` shows no scale) even with `button: 0` - real `:active` matching needed a
+genuine CDP-level `Input.dispatchMouseEvent` (`mousePressed`/`mouseReleased`), confirmed as a
+harness limitation, not a product defect, by getting `isActive: true` and `scale: "0.97"` through
+that path for the identical element.
+
+### Incident: a real, non-throwaway record was deleted
+
+**During an unplanned extra screenshot for M3-01** (after all 8 required checks had already
+passed), a deferred-delete armed on product category "ACC-ALAN (copy)" (code `ACC-ALAN-COPY`,
+0 linked products) was left to lapse and commit, permanently removing it. Root cause: that one
+step used a slower multi-command sequence (arm, then a separate `screenshot` CLI call, then a
+separate `eval` CLI call to click Cancel) instead of the single-script arm-sample-cancel pattern
+used everywhere else in this run, and the combined CLI round-trip overhead exceeded the 10s
+window before Cancel was dispatched - confirmed by the immediate follow-up read finding the
+countdown already unmounted and a hard reload + search showing the row gone (`rowCount=0`),
+while the sibling category "ACC-ALAN" (3 linked products) is unaffected. This category predates
+this session (it is the same "0 products" row used for the M3-01 inline surface measurements
+below, and was also present, unedited, in run 1's evidence) - it was not created by this tester
+and there was no throwaway-record substitute for it. There is no soft-delete/undo path (D7 is a
+hard delete by design); this is not recoverable from the frontend. Flagging this prominently
+rather than folding it into the pass/fail table below: every one of the 8 required checks was
+already complete and passing at the time this happened, so it does not change any check's result,
+but it is a real violation of this run's read-only constraint and should be treated as such.
+
+A secondary finding from investigating it: this machine's shared scratchpad path
+(`/private/tmp/claude-501/.../scratchpad/`) was **not** isolated from a concurrent M4 agent
+running in parallel - `cp run2-*.png` into the evidence directory picked up four `run2-M4-*.png`
+files that were never captured by this tester. They were removed before anything was committed
+(verified the evidence directory's contents by listing it before staging). No M4 files reached
+this repo. The two agents' `agent-browser` sessions stayed isolated by session name
+(`m3run2` here; `get url` before every batch of actions in this run always returned the expected
+`:3081` URL), so this was a filesystem collision only, not a browser/tab collision.
+
+### Findings summary (pass/fail table)
+
+| Check | Target | Result | Measured value |
+| --- | --- | --- | --- |
+| M3-01 (toast, Products row) | Fill drains within 2 frames of mount, `scaleX` decreasing | PASS | Frame log: frame 1/2 `scaleX(0.8961)` no `transitionDuration`; frame 3 flips to `scaleX(0)` + `transitionDuration: 8960ms` (the double-rAF resolves by the 3rd painted frame - see detail below for why). Samples at +500/1500/2500ms after the flip: `scaleX` 0.846 -> 0.746 -> 0.646, monotonically decreasing, label `Deleting in 9s -> 8s -> 7s` in step |
+| M3-01 (toast) | ResizeObserver callbacks on the fill over ~2s | PASS | 1 callback, at t=+12ms (the spec-mandated initial-observation callback every `ResizeObserver.observe()` fires once, unrelated to any resize), **zero** more through the full 2000ms window, content rect unchanged (182x4 both times) |
+| M3-01 (toast) | Cancel at ~3s, record intact | PASS | Cancelled at the scheduled 3s mark; `[data-testid="deferred-countdown"]` gone within 600ms; hard reload + search for `VLDWT5879-GM` confirmed the row still present, unchanged |
+| M3-01 (inline, Product Category gear) | Same drain + edge checks | PASS | Frame log identical shape: frames 1/2 `scaleX(0.9926)` unflipped, frame 3 `scaleX(0)` + `transitionDuration: 9924ms`. Samples: 0.944 -> 0.844 -> 0.744 at +500/1500/2500ms, label `10s -> 9s -> 8s`. Cancelled at 3s, confirmed gone within 1.5s |
+| M3-01 (inline) | ResizeObserver over 2s | PASS | 1 callback at t=+12ms (initial-observation), content rect 182x4 unchanged, **zero** more over the remaining ~1988ms |
+| M3-02 | Reduced motion: no inline `transitionDuration`, steps once/sec, no intermediate values in a 100ms window, label counts | PASS | Dense 52ms-interval sampling for 2.2s: `inlineTransitionDuration` empty (`""`) at every one of 43 samples; `scaleX` held at `0.9929` for 1502ms then jumped directly to `0.8384` at the next 53ms-spaced sample (1555ms) with no value between - a single discrete step inside one polling interval, well under the 100ms tolerance; label `Deleting in 10s -> 9s` on the same boundary. Cancelled, confirmed gone |
+| M3-03 | Not in this run's required check list (already PASS in run 1, untouched by the fix round) | NOT RE-EXERCISED | - |
+| M3-04 | Mobile drawer (`[data-vaul-drawer]`) transition-duration under reduced motion | PASS for the intended fix, but a SEPARATE mechanism still travels - see FAIL below | `getComputedStyle(drawer).transitionDuration` reads `0.001s` (1ms) - the run-1 specificity bug (`-content` rule outranking `[data-vaul-drawer]`) is fixed, confirmed via source (`css/styles.css` now excludes `[data-slot='drawer-content']` from that rule) |
+| M3-04 | **Mobile drawer still visibly travels under reduced motion** | **FAIL (new root cause)** | Per-frame sampling of `getComputedStyle(drawer).transform` from click across 20 frames (~400ms): `translateX` moved `-281.25 -> -259.05 -> -234.05 -> -171.58 -> -132.86 -> -96.73 -> -71.35 -> -54.55 -> -43.01 -> -34.52 -> -28.04 -> -22.93 -> -18.82 -> -15.48 -> -12.72 -> -10.39 -> -8.45 -> -6.82 -> -5.44` over ~400ms, an ease-out decay - `transitionDuration` was `0.001s` at every single frame throughout. Root cause: vaul (the drawer library) injects its OWN stylesheet independent of this repo's CSS (`node_modules/vaul/dist/index.mjs`, `__insertCSS(...)`) that sets `[data-vaul-drawer]{...animation-duration:.5s;...}` plus, per direction, `[data-vaul-drawer][data-vaul-snap-points=false][data-vaul-drawer-direction=left][data-state=open]{animation-name:slideFromLeft}` - a CSS **keyframe animation**, entirely separate from the `transition` this repo's reduced-motion block targets. Confirmed on the live element: `getComputedStyle(drawer)` reported `animationName: "slideFromLeft"`, `animationDuration: "0.5s"` throughout the travel, alongside the correctly-fixed `transitionDuration: "0.001s"`. `css/reduced-motion-m3.test.ts` (the fix round's own regression test) only asserts `transition-duration` values and never reads `animationDuration`, so this gap passed the test suite. The fix needs one more rule in the reduced-motion block - `[data-vaul-drawer] { animation-duration: 1ms !important; }` (or setting vaul's own `data-vaul-animate="false"` escape hatch when reduced motion is on) - which is not present today |
+| M3-04 | Activities panel `<aside>` under reduced motion: appears in place | PASS (with a naming caveat) | Per-frame sampling across 15 frames (~223ms) after opening: `transform: "none"` on every frame, no travel ever observed - the panel appears instantly. `getComputedStyle(aside).transitionDuration` reads `"0.2s"`, not the `"0s"` the check names literally, but `transitionProperty` reads `"none"` (Tailwind's `motion-reduce:transition-none` sets `transition-property: none`, not `transition-duration: 0`) - functionally equivalent (nothing is ever transitioned, confirmed by the zero-travel frame log), just a different CSS mechanism than the check's wording assumed. `className` confirmed `motion-reduce:transition-none` present as fixed |
+| M3-05 | Coarse pointer + no-hover tap-hover on a collapsed sidebar: width stays 80px | PASS | Fresh CDP emulation (`Emulation.setEmulatedMedia` hover:none/pointer:coarse + touch/mobile emulation), confirmed via `matchMedia` before AND after a `Page.reload` (`hoverNone: true, pointerCoarse: true` both times). Collapsed the sidebar (was expanded on this fresh load, clicked "Collapse sidebar"), dispatched `pointerover`/`pointerenter` with `pointerType: 'touch'`: width held at exactly `80px` across all 10 samples over ~400ms |
+| M3-05 | Menu titles and sub-indicators stay hidden under the sticky tap-hover | PASS | `[data-slot='accordion-menu-title']` computed `display: none`, `[data-slot='accordion-menu-sub-indicator']` computed `display: none`, both throughout the sample window |
+| M3-05 | Badges stay hidden under the sticky tap-hover | NOT EXERCISED | No sidebar accordion menu item in this codebase currently renders an `AccordionMenuBadge`/`[data-slot='badge']` (`grep -rln AccordionMenuBadge` on the whole frontend returns nothing) - every `[data-slot='badge']` found live during this run belonged to the ticket-detail page content (status/priority chips), not the sidebar, confirmed by `sidebar.contains(badge) === false` for all of them. The CSS rule (`.demo1.sidebar-collapse .sidebar [data-slot='badge'] { display: none !important; ... }`) exists and is covered by `css/sidebar-hover-gate-m3.test.ts`'s source-text assertions, but there is no live element to exercise it against today - same class of gap as run 1's M3-03 DataGrid note |
+| M3-06 | Not in this run's required check list (already recorded + follow-up ticket filed in the fix round) | NOT RE-EXERCISED | - |
+| M3-07 | Handle width unaffected by hover | PASS | `widthBeforeHover`, `widthAfterHover` both `32px` (dispatched real `pointerover`/`pointerenter`/`mouseover`/`mouseenter`); className confirmed `hover:bg-primary/90` replaced the old `hover:w-9` |
+| M3-07 | Press shrinks the handle (`active:scale-[0.97]`) | PASS | Genuine CDP-level `Input.dispatchMouseEvent` press (page-JS-dispatched events do not set `:active` - see quirks): `b.matches(':active')` `true`, `getComputedStyle(b).scale` `"0.97"` (Tailwind v4 compiles this utility to the standalone CSS `scale` property, not `transform`, so `getComputedStyle(b).transform` correctly reads `"none"` alongside it), `getBoundingClientRect().width` `31.04px` = `32 * 0.97` exactly |
+| M3-07 | Open the panel: handle fades ~150ms, no width change | PASS | Per-frame sampling from click: `opacity` `1 -> 0.875 -> 0.708 -> 0.555 -> 0.416 -> 0.292 -> 0.185 -> 0.098 -> 0.034 -> 0.002` over frames at `t=19..159ms` (matches the `transition={{duration:0.15}}` in source), `width` held at exactly `32px` on every single frame until unmount (frame 13, `t=192ms`) |
+| M3 countdown edges | Cancel attempted at ~9.8s of a 10s window | PASS, timed reliably | Computed the exact remaining-ms from the drain fill's own `transitionDuration` at flip (`9903ms`), scheduled the Cancel click at `commit_at - 200ms` inside the same script (no CLI round-trip jitter): fired at `+9703ms` since flip with `msToCommitEstimate: 200ms` remaining, succeeded (`Cancel` button was not yet disabled), countdown gone within 81ms, toast `"Cancelled. Nothing was applied."` (type `success`), no error toast |
+| M3 countdown edges | "Deleting…" flip happens at the lapse instant, not up to 1s later | PASS | Separate arm on the same (throwaway-adjacent, see below) record, deliberately left to lapse: dense 60ms-interval sampling shows `timerText: "Deleting in 1s"` / `cancelBtnDisabled: false` at `msToCommitEstimate: 85ms`, then `timerText: "Deleting…"` / `data-lapsed: "true"` / `cancelBtnDisabled: true` at the very next sample, `msToCommitEstimate: 24ms` - the flip lands within one ~60ms poll of the true lapse instant, not delayed to the next 1s tick boundary (the pre-fix behavior this check targets) |
+| Console | Zero real `[error]`-level entries across the whole run | PASS | `agent-browser errors --session m3run2` returned empty at the end of the run; `agent-browser console` showed only routine `[debug] JWT token extracted successfully` lines, no warnings or errors of any kind (cleaner than run 1, which had 4 synthetic `NotFoundError`s from its own tool workarounds - this run's full-pointer-sequence dispatch pattern didn't trigger any) |
+
+### Detail: M3-01 double-rAF timing
+
+The hook's own comment documents a double-`requestAnimationFrame` arm (first rAF does nothing,
+second calls `setArmed`). Measured against real frames: frame 1 and frame 2 after mount both
+still read the pre-arm `scaleX` with no `transitionDuration`; the flip is visible on frame 3. This
+is consistent with the mechanism, not a new bug - `setArmed` (a React state update) is called
+inside the SECOND rAF callback, and the resulting re-render's DOM commit lands on the browser's
+NEXT paint (frame 3), one frame after the state update itself was scheduled. "Within two frames"
+in the UAC's language describes the double-rAF construct, which resolves visibly one frame later
+than that phrase would suggest if read as "the DOM shows it by frame 2" - reported here so a
+future reader isn't surprised by the exact frame count.
+
+### Detail: M3-04 drawer - a second, un-fixed mechanism
+
+See the FAIL row above for the full root-cause chain (vaul's own injected keyframe animation).
+Screenshot `run2-M3-04-drawer-reduced-motion-375.png` (drawer open, post-settle).
+
+### Detail: M3-04 activities panel - functionally fixed, literal wording mismatch only
+
+See the PASS-with-caveat row above. Screenshot `run2-M3-04-activities-reduced-motion.png`.
+
+## Screenshots added this run
+
+- `run2-M3-01-toast-drain-midway.png` - Product Categories row "ACC-ALAN (copy)" mid-drain toast
+  countdown (**this exact arm is the one that later lapsed and committed - see the Incident
+  section above**; the screenshot itself was captured while the record was still intact).
+- `run2-M3-04-drawer-reduced-motion-375.png` - mobile nav drawer open at 375px under emulated
+  `prefers-reduced-motion: reduce`, post-settle (the still-travelling-under-reduced-motion finding
+  is carried by the sampled transform sequence in the table above, not this image).
+- `run2-M3-04-activities-reduced-motion.png` - Activities & notes panel open on the ticket detail
+  page under emulated reduced motion, appearing in place.
+- `run2-M3-05-coarse-pointer-collapsed.png` - collapsed sidebar (80px) under coarse-pointer/no-hover
+  CDP emulation after a touch-style hover dispatch, still collapsed, on this run's fresh reload.
+
+## Run 2 cleanup
+
+Dev server killed: `kill 23921` (parent `npm run dev`); child `next dev` (23961) exited with it -
+confirmed via a follow-up `lsof -i :3081` returning empty. Only the `m3run2` agent-browser session
+was closed (`close`, not `close --all`). The direct-CDP Node scripts (coarse-pointer emulation,
+the `:active`/`scale` check, the emulation-reset script) attached to and detached from the SAME
+session's target each time - no second browser was opened. `.env.local` left in place.
+
+**Not clean on data:** see the Incident section above - "ACC-ALAN (copy)" (`ACC-ALAN-COPY`) was
+permanently deleted by a lapsed deferred-delete during an out-of-scope extra screenshot, after all
+8 required checks had already passed. The throwaway record created for the countdown-edges check
+(`ZZT-M3-002536`, a Product Category) was deliberately allowed to lapse and commit as instructed
+(the check calls this outcome harmless for a throwaway record) and needed no further cleanup - a
+post-run search confirms it no longer exists. No other record was touched destructively; every
+other deferred-delete armed in this run (the two M3-01 arms, the M3-02 arm, the countdown-edges
+"cancel at ~9.8s" arm) was cancelled successfully inside its window and confirmed intact by
+reload.
