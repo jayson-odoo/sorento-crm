@@ -112,6 +112,9 @@ User Management > Settings > Search ranking: change `class_boost`, Save, reload,
 ### AC-D.4 [BE] Seed repair leaves labels alone
 Given a seed row with `value_labels = {"pp": "PP"}`, when the startup seed repair runs, the label survives.
 
+### AC-D.6 [BE] Delete is a registered record action
+`record_actions.py` registers `spec_key.delete` (`WINDOW_DESTRUCTIVE`, `master_data.spec_registry.delete`) whose execute path is the same service call `DELETE /spec-registry/{spec_key}` uses, refusing seed-sourced keys. pytest covers commit (row gone), cancel (row stays), and a seed key (refused, row stays). Without it the record gear's Delete (B.6) returns 400 "Unknown action".
+
 ### AC-D.5 [BE] Permission
 `value_labels` in the PATCH body needs `master_data.spec_registry.edit` (the in-body re-check the route already performs for fields outside `user_values`); 403 without.
 
@@ -129,10 +132,10 @@ Set `PP` on Seat cover material, Save; open a Water Closet product whose seat ma
 ## Group F - Spec Verification alignment (S5)
 
 ### AC-F.1 [FE] Unverify is a deferred action
-Row Unverify and "Unverify selected" no longer open an `AlertDialog`. Row: `DeferredActionButton` with the 5s reversible window; bulk: `useDeferredRowAction` + the aggregate `deferredToast` with cancel-all (the S6b bulk pattern). On commit the existing `unverifyBulk` mutation runs and patches the worklist cache as today.
+Row Unverify and "Unverify selected" no longer open an `AlertDialog`. Row: `useDeferredRowAction` (toast surface, the row dims while pending; the inline `DeferredActionButton` surface on a list row races the pending query, measured 2 Sep, and every list-row precedent uses the toast); bulk: `useDeferredBulkAction` with the aggregate toast and cancel-all. 5s reversible window. On commit the existing unverify path runs and patches the worklist cache as today.
 
 ### AC-F.2 [BE] Engine registration
-If the deferred-action engine needs a server-side handler for `spec_verification.unverify` (check `form_action_registry` for how S6b registered deletes), it is registered with the reversible window and a pytest covers commit and cancel. If the engine is client-timed for reversible actions, no backend change; say which in the PR.
+The deferred-action engine parks every action server-side (`app/services/record_actions.py`, committed lazily or by the scheduler sweep), so `spec_verification.unverify` is registered there with `WINDOW_REVERSIBLE` and `master_data.products.edit`; pytest covers commit and cancel (`tests/test_record_actions_s6b.py`).
 
 ### AC-F.4 [FE] Exceptions pill
 When a worklist row has `open_exceptions > 0`, the Coverage cell shows a warning pill "{n} need a human" beside the coverage count; the hover card lists the exception reasons if the payload carries them, otherwise the count only. Zero renders nothing. A test covers 0 and 2.

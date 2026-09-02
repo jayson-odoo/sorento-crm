@@ -75,7 +75,7 @@ Exactly the folded plan: one JSONB column `value_labels` on `product_spec_regist
 
 ### 3.7 Spec Verification (F)
 
-`SpecVerificationList.tsx`: the row Unverify becomes `DeferredActionButton` (reversible window); bulk uses `useDeferredRowAction` + `deferredToast`. The `AlertDialog` and its state go. The Coverage cell gains the `open_exceptions` warning pill (F.4, D11): the field is already fetched and typed, never rendered. Backend: read `app/services/form_action_registry.py` (or wherever S6b registered `delete` handlers) before deciding F.2; the plan's expectation is that reversible actions are client-timed and need no handler, in which case F.2 is a one-line PR note.
+`SpecVerificationList.tsx`: the row Unverify runs through `useDeferredRowAction` (toast surface); bulk through `useDeferredBulkAction`. The `AlertDialog` and its state go. The Coverage cell gains the `open_exceptions` warning pill (F.4, D11): the field is already fetched and typed, never rendered. Backend: read `app/services/form_action_registry.py` (or wherever S6b registered `delete` handlers) before deciding F.2; measured 2 Sep: the engine parks every action server-side, so `spec_verification.unverify` is registered in `record_actions.py` (F.2).
 
 ### 3.8 Copy (D3, D10, G.1)
 
@@ -94,7 +94,7 @@ None added. Inherited only: lightbox surface spring, pressed states from `PRESSE
 | S1 | 1 (FE, mocks only for `value_labels`) | Group A: list page, freshness line, Add specification + Try a phrase dialogs, react-query hooks; delete the old shell | coder (Sonnet), worktree = lane |
 | S2 | 1 | Group B + E.1/E.2 with `value_labels` mocked on the registry response: record page, three tabs, edit-in-place, pager, delete via deferred action | coder (Sonnet) |
 | S3 | 1 | Group C: Search ranking tab, remove Ranking tab | coder (Sonnet), can run with S2 if a second slot is free |
-| S4 | 2 (BE, test-first) | Group D: migration, model, serialise, PATCH validation, tests; swap the S2 mock; E.3 | coder (Sonnet) |
+| S4 | 2 (BE, test-first) | Group D: migration, model, serialise, PATCH validation, `spec_key.delete` record action (D.6), tests; swap the S2 mock; E.3 | coder (Sonnet) |
 | S5 | 1 + 2 | Group F: Spec Verification unverify countdown, exceptions pill (F.4) (+ F.2 handler if needed) | coder (Sonnet) |
 | S6 | 3 | Group G: reviewer (Opus) with the emil-design-eng table, browser evidence at both widths, DoD gate | reviewer + tester |
 
