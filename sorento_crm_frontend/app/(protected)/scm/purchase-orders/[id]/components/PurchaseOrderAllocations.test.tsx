@@ -24,6 +24,7 @@ const DC1_LINE: PurchaseOrderLineAllocation = {
   outstanding: 500,
   allocated: 500,
   free: 0,
+  dedicated_to: [],
   placements: [
     {
       inquiry_no: 'OI-000001',
@@ -106,12 +107,44 @@ describe('PurchaseOrderAllocations', () => {
     expect(screen.getByText('SRTWT2207')).toBeTruthy();
   });
 
+  it('names who a line is dedicated to, beside the three figures', () => {
+    // D3 (captain, 2 Sep 2026): 202607-S0067's BRW-IB line printed Free 69 while the
+    // AutoCount book dedicated the whole 114 to SO391853. `Free` nets the claim now, and
+    // the panel says whose it is - "0 free" and "0 free because SO391853 bought it" send
+    // the buyer to two different places.
+    render(
+      <PurchaseOrderAllocations
+        allocations={[
+          {
+            ...DC1_LINE,
+            outstanding: 114,
+            allocated: 0,
+            free: 0,
+            placements: [],
+            dedicated_to: [
+              { so_number: 'SO391853', reserved: 114, unplaced: 114, source: 'po_upload' },
+            ],
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText('Dedicated to')).toBeTruthy();
+    expect(screen.getByText('SO391853 114')).toBeTruthy();
+  });
+
+  it('says nothing about dedication on an ordinary undedicated line', () => {
+    render(<PurchaseOrderAllocations allocations={[DC1_LINE]} />);
+
+    expect(screen.queryByText('Dedicated to')).toBeNull();
+  });
+
   it('says so when nobody is waiting, rather than hiding the section', () => {
     render(<PurchaseOrderAllocations allocations={[]} />);
 
     expect(screen.getByText('Allocated to')).toBeTruthy();
     expect(
-      screen.getByText(/No order inquiry is linked to this purchase order yet/i),
+      screen.getByText(/No order inquiry is linked to this purchase order/i),
     ).toBeTruthy();
   });
 });

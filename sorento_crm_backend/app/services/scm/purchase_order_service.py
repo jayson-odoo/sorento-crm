@@ -35,7 +35,7 @@ from app.models.procurement import (
 from app.models.product import Product
 from app.services.error_handler import AppException
 from app.services.numbering_service import NumberingService
-from app.services.scm import priority
+from app.services.scm import order_link_service, priority, supply_claim
 from app.services.scm.history_sources import PO_HISTORY_SOURCE, SPO_HISTORY_SOURCE
 from app.services.scm.spo_conversion_service import SOURCE_SYSTEM as CRM_SPO_SOURCE
 
@@ -509,6 +509,56 @@ class PurchaseOrderService:
                 ),
             })
 
+        # G7 DEDICATION (captain, 2 Sep 2026). `Free` used to be outstanding less the
+        # LINKS on the line, which reads a line the AutoCount book dedicates to somebody
+        # else as free to buy against: 202607-S0067's BRW-IB line printed Free 69 while
+        # SO391853's own claim named the whole 114. A claim carries no quantity of its own
+        # and reserves the claiming order line's LIVE outstanding, read through the same
+        # `order_link_service.reservations_by_target` the cascade's own netting uses, so
+        # the panel and the walk cannot come to two answers.
+        #
+        # Netted against what each claim has ALREADY placed (`OrderInquiryLink.claim_id`),
+        # for the reason `_reserved_for_netting` gives on the other side: `allocated` above
+        # has counted those links once, and a reservation the same order has already taken
+        # up is not a second call on the line.
+        reservations = order_link_service.reservations_by_target(
+            self.db, target_ids=list(lines)
+        )
+        linked_by_claim: dict[str, float] = {}
+        if reservations:
+            for claim_id, qty in (
+                self.db.query(
+                    OrderInquiryLink.claim_id, func.sum(OrderInquiryLink.qty)
+                )
+                .filter(
+                    OrderInquiryLink.po_line_id.in_(list(lines)),
+                    OrderInquiryLink.claim_id.isnot(None),
+                )
+                .group_by(OrderInquiryLink.claim_id)
+                .all()
+            ):
+                linked_by_claim[str(claim_id)] = float(qty or 0)
+
+        dedications: dict[str, list[dict]] = {}
+        reserved: dict[str, float] = {}
+        for line_id, claims in reservations.items():
+            for claim in claims:
+                outstanding = float(claim["outstanding"])
+                if outstanding <= 0:
+                    # A claim whose sales order line has settled reserves nothing and is
+                    # not who the line is dedicated to any more (G7). The claim row stays.
+                    continue
+                still = max(outstanding - linked_by_claim.get(claim["claim_id"], 0.0), 0.0)
+                reserved[line_id] = reserved.get(line_id, 0.0) + still
+                dedications.setdefault(line_id, []).append({
+                    "so_number": claim["so_number"],
+                    # What the claim reserves in full, and what of it is still to be
+                    # placed. The buyer reads the first and acts on the second.
+                    "reserved": outstanding,
+                    "unplaced": still,
+                    "source": claim["source"],
+                })
+
         # NOT added to `allocated`. `spo_conversion_service.create` advances the source
         # line's own `qty_received` by exactly what it pulls - the same write a shipment
         # drawing down a PO makes - so the take is ALREADY out of `outstanding`. Counting
@@ -528,8 +578,12 @@ class PurchaseOrderService:
 
         blocks = []
         for line in sorted(po.lines, key=lambda ln: (_line_order(ln), str(ln.id))):
-            found = placements.get(str(line.id))
-            if not found:
+            found = placements.get(str(line.id)) or []
+            dedicated = dedications.get(str(line.id)) or []
+            # A line with no placement but a DEDICATION is still a block: "the book says
+            # this 114 is SO391853's" is the whole answer the buyer came for, and hiding it
+            # is what let the same line read Free 69 with nothing to explain it.
+            if not found and not dedicated:
                 continue
             outstanding = (
                 0.0 if not _is_open_line(line)
@@ -546,7 +600,11 @@ class PurchaseOrderService:
                 "allocated": claimed,
                 # Floored at 0: a line promised more than it has left is over-committed,
                 # which is a finding for the buyer, not a credit they may spend again.
-                "free": max(outstanding - claimed, 0.0),
+                "free": max(outstanding - claimed - reserved.get(str(line.id), 0.0), 0.0),
+                # WHO the line is dedicated to and for how much (G7), in SO-date order.
+                # Beside `free` rather than folded into it, because "0 free" and "0 free
+                # because SO391853 bought it" send the buyer to two different places.
+                "dedicated_to": dedicated,
                 "placements": found,
             })
         return blocks
@@ -1042,6 +1100,10 @@ class PurchaseOrderService:
         # drafted off different runs, and a run resolved once for the whole batch linked
         # every one of them under whichever plan came back first.
         bought: list[dict] = []
+        #: How many project-bin lines this confirm attributed to the rows that sized them
+        #: (G12 write-time claim). Reported so a confirm that could attribute nothing is
+        #: visible rather than silent.
+        claimed_lines = 0
         for pid in ids or []:
             po = (
                 self._base_query()
@@ -1072,6 +1134,18 @@ class PurchaseOrderService:
                     product_ids.add(str(ln.product_id))
                     cells.add((str(ln.product_id),
                                str(ln.warehouse_id) if ln.warehouse_id else None))
+            # G12 WRITE-TIME CLAIM (captain, 2 Sep 2026), in the SAME transaction that
+            # opens the lines, and deliberately NOT inside the best-effort block below.
+            # A purchase order raised off the plan is a buy FOR the order-inquiry rows
+            # that sized its cells, so every PROJECT-BIN line it carries is born claimed
+            # by their sales orders - which is what makes the cascade's first pass, two
+            # steps down, allowed to place them at all. Left to fail quietly the confirm
+            # would succeed and leave an unattributed bin line behind, which is exactly
+            # the state the lock exists to refuse: better to fail the confirm and have
+            # the buyer press it again (it is idempotent) than to open supply nobody owns.
+            claimed_lines += supply_claim.claim_purchase_order_for_sizing_rows(
+                self.db, po
+            )
             if product_ids:
                 bought.append(
                     {"product_ids": product_ids, "cells": cells,
@@ -1081,14 +1155,14 @@ class PurchaseOrderService:
         self.db.commit()
 
         if not bought:
-            return {"confirmed_count": confirmed}
+            return {"confirmed_count": confirmed, "claimed_lines": claimed_lines}
 
         if not actor:
             log.warning(
                 "purchase order(s) confirmed, but auto-place was skipped: no real "
                 "actor to attribute the placement to",
             )
-            return {"confirmed_count": confirmed}
+            return {"confirmed_count": confirmed, "claimed_lines": claimed_lines}
 
         try:
             from app.services.project_order_inquiry_service import (
@@ -1145,7 +1219,7 @@ class PurchaseOrderService:
                 "pass failed (%s)", exc,
             )
 
-        return {"confirmed_count": confirmed}
+        return {"confirmed_count": confirmed, "claimed_lines": claimed_lines}
 
     def _link_horizon_for(
         self, source_refs: set[str]

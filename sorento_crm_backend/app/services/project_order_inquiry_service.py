@@ -385,6 +385,9 @@ class ProjectOrderInquiryService:
         # `_invalidate_link_cache` on every write, so the cascade cannot read a total it
         # has already changed.
         self._linked_by_target_cache: Optional[Tuple[Dict[str, Decimal], Dict[str, Decimal]]] = None
+        # The same links, keyed by the CLAIM each was written under: what a claim's own
+        # reservation and its own placements overlap on (`_reserved_for_netting`).
+        self._linked_by_claim_cache: Optional[Dict[Tuple[str, str], Decimal]] = None
         # Ladder v4's availability reader (`app.services.scm.group_netting`), over the
         # products this instance has been asked about. A candidate walk needs to know what
         # the group it would link into already owes, and a listing asks the same question
@@ -403,7 +406,7 @@ class ProjectOrderInquiryService:
         # stale by the next row).
         self._claims_by_target_cache: Optional[Dict[str, List[Dict[str, Any]]]] = None
         # This service instance's own answer to "what SO does this row's claim identity
-        # name" (`_claim_identity`'s first element), memoised per row: the cascade calls
+        # name" (`claim_identity`'s first element), memoised per row: the cascade calls
         # `_candidates_for_row` once per row and the identity costs two queries to derive.
         self._so_number_cache: Dict[str, Optional[str]] = {}
 
@@ -2888,6 +2891,7 @@ class ProjectOrderInquiryService:
         across them.
         """
         self._linked_by_target_cache = None
+        self._linked_by_claim_cache = None
         self._awaiting_link_cache = {}
         # A write that resolves or creates a claim (`_write_link`, every placement) must
         # not leave the NEXT row in the same pass reading the dedication state as it was
@@ -2897,15 +2901,15 @@ class ProjectOrderInquiryService:
 
     def _row_so_number(self, row: OrderInquiryRow) -> Optional[str]:
         """This row's own SO number, the identity G7 dedication ranks a candidate's own
-        claim against - the same identity `_claim_identity` writes a claim under, so a
+        claim against - the same identity `claim_identity` writes a claim under, so a
         row can never be told its OWN document is "dedicated to" a different one.
 
         Memoised per row (`_so_number_cache`): the cascade calls `_candidates_for_row`
-        once per row and `_claim_identity` costs two queries to derive.
+        once per row and `claim_identity` costs two queries to derive.
         """
         key = str(row.id)
         if key not in self._so_number_cache:
-            so_number, _item_code, _core_line_id = self._claim_identity(row)
+            so_number, _item_code, _core_line_id = self.claim_identity(row)
             self._so_number_cache[key] = so_number
         return self._so_number_cache[key]
 
@@ -2917,78 +2921,17 @@ class ProjectOrderInquiryService:
         already uses and for the same reason: the cascade asks this once per row over a
         product-wide pass, and `scm.order_link_claim` does not change inside one.
 
-        Joined to the core sales order and its line so the reservation reads the SO
-        line's LIVE outstanding (G7) rather than a figure stored at claim time: a
-        fulfilled or cancelled SO line reserves nothing, whatever the claim itself still
-        names, and the claim row is never deleted to make that true.
-
-        `so_number` is read off the CLAIM's OWN column, never `SalesOrder.so_number` off
-        the join (bug found chasing PR #490's CI failures, 8 pre-existing files, 63
-        cases): `_claim_identity`/`_row_so_number` - the write side, and the ONLY "is
-        this MY claim" test `_dedication_for_target` runs - both read
-        `ProjectSalesOrder.autocount_doc_no or provisional_ref`, which is exactly what
-        gets written into `OrderLinkClaim.so_number` at claim time and is not always
-        equal to the reconciled CORE `sales_orders.so_number` this join can also reach
-        (a provisional order not yet carrying an AutoCount doc number, most test
-        fixtures that never set `autocount_doc_no` at all). Reading the join's column
-        instead compared two identities that were never the same value, so a row's own
-        placement was never recognised as its own claim - it reserved against itself a
-        second time on top of the real link, and G12's project-bin lock could never see
-        the claim its own write had just made either.
+        The read itself is `order_link_service.reservations_by_target` - the ONE spelling
+        of "what does this claim reserve", shared with the purchase order's "Allocated to"
+        panel, which asks the same question of one document's lines. It joins the core
+        sales order line so the reservation reads that line's LIVE outstanding (G7) rather
+        than a figure stored at claim time, and it reads `so_number` off the CLAIM's own
+        column rather than off the join.
         """
         if self._claims_by_target_cache is not None:
             return self._claims_by_target_cache
-        rows = (
-            self.db.query(
-                OrderLinkClaim.id,
-                OrderLinkClaim.po_line_id,
-                OrderLinkClaim.spo_allocation_id,
-                OrderLinkClaim.so_number,
-                OrderLinkClaim.source,
-                SalesOrder.order_date,
-                SalesOrderLine.qty_ordered,
-                SalesOrderLine.qty_delivered,
-                SalesOrderLine.line_status,
-            )
-            .join(SalesOrderLine, SalesOrderLine.id == OrderLinkClaim.so_line_id)
-            .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
-            .filter(
-                or_(
-                    OrderLinkClaim.po_line_id.isnot(None),
-                    OrderLinkClaim.spo_allocation_id.isnot(None),
-                )
-            )
-            .all()
-        )
-        out: Dict[str, List[Dict[str, Any]]] = {}
-        for (
-            claim_id,
-            po_line_id,
-            spo_allocation_id,
-            so_number,
-            source,
-            order_date,
-            qty_ordered,
-            qty_delivered,
-            line_status,
-        ) in rows:
-            key = str(po_line_id or spo_allocation_id)
-            outstanding = (
-                _ZERO
-                if (line_status or "open") != "open"
-                else max(_dec(qty_ordered) - _dec(qty_delivered), _ZERO)
-            )
-            out.setdefault(key, []).append(
-                {
-                    "claim_id": str(claim_id),
-                    "so_number": so_number,
-                    "source": source,
-                    "so_date": order_date,
-                    "outstanding": outstanding,
-                }
-            )
-        self._claims_by_target_cache = out
-        return out
+        self._claims_by_target_cache = order_link_service.reservations_by_target(self.db)
+        return self._claims_by_target_cache
 
     def _dedication_for_target(
         self,
@@ -3050,62 +2993,74 @@ class ProjectOrderInquiryService:
         reserved = sum((c["outstanding"] for c in others), _ZERO)
         return reserved, others[0]["so_number"], own_claim
 
+    def _linked_by_claim(self) -> Dict[Tuple[str, str], Decimal]:
+        """What each claim's OWN links already take off its target, keyed by
+        `(claim id, target id)`.
+
+        A link carries the id of the claim it was written under (`OrderInquiryLink.
+        claim_id`, stamped by `_write_link` whether it CREATED the claim or found one an
+        earlier feed had already made), so this is the exact overlap between "what a claim
+        reserves" and "what a link already occupies" - the two figures `_reserved_for_
+        netting` must not count twice. Cached and dropped with the rest on every write, the
+        same way `_linked_by_target` is.
+        """
+        if self._linked_by_claim_cache is not None:
+            return self._linked_by_claim_cache
+        out: Dict[Tuple[str, str], Decimal] = {}
+        for claim_id, po_line_id, spo_allocation_id, qty in self.db.query(
+            OrderInquiryLink.claim_id,
+            OrderInquiryLink.po_line_id,
+            OrderInquiryLink.spo_allocation_id,
+            OrderInquiryLink.qty,
+        ).filter(OrderInquiryLink.claim_id.isnot(None)):
+            target_id = str(po_line_id or spo_allocation_id or "")
+            if not target_id:
+                continue
+            key = (str(claim_id), target_id)
+            out[key] = out.get(key, _ZERO) + _dec(qty)
+        self._linked_by_claim_cache = out
+        return out
+
     def _reserved_for_netting(
         self, target_id: str, own_so_number: Optional[str]
     ) -> Decimal:
         """What `_dedication_for_target`'s `reserved` should ALSO subtract from
-        `remaining` once `by_po` / `by_spo` has already been - never the same claim's
-        quantity twice (bug found chasing PR #490's CI failures, `test_po_confirm_links_
-        the_sizing_rows.py` and the ladder v7 borrow suites).
+        `remaining` once `by_po` / `by_spo` has already been - never the same quantity
+        twice (bug found chasing PR #490's CI failures, `test_po_confirm_links_the_sizing_
+        rows.py` and the ladder v7 borrow suites).
 
-        `_write_link` writes a link AND its audit claim TOGETHER, in lockstep
-        (`source = 'order_inquiry'`) - so a claim of that source names a quantity that is
-        ALREADY counted, because it IS the same placement `by_po` / `by_spo` already
-        subtracted off `remaining`. Only an EXTERNAL claim - `po_history`'s FromSODocList
-        note, an `so_upload` / `po_upload` / `manual` claim - names a reservation with no
-        link behind it yet, and that is the ONLY kind this further subtraction is for
-        (AC-6.1's "PO 100, SO A 30 claimed -> 70 free" is exactly that shape: a claim
-        with nothing linked at all).
+        A claim reserves the claiming sales order line's LIVE outstanding (G7). Where that
+        order has ALREADY placed some of it, the placement is a LINK, and `by_po` / `by_spo`
+        has subtracted it off `remaining` before this is asked - so only the part of the
+        reservation nothing has taken yet is still to come off, which is
+        `max(outstanding - what this claim's own links already hold, 0)`.
 
-        `_dedication_for_target`'s own `reserved` stays as it reads today (AC-6.9 reads
-        it raw, unfiltered by source, as the audit figure) - this is a SEPARATE sum, for
-        the one caller that combines it with `by_po` / `by_spo` rather than reporting it
-        on its own.
+        Read off the LINK's own `claim_id` rather than off the claim's `source` (corrected
+        2 Sep 2026). The source test was right for exactly one case - a claim `_write_link`
+        wrote in lockstep with its link (`order_inquiry`) - and wrong for the two that
+        matter now: a `crm_supply` claim the reorder plan's own confirm wrote for the rows
+        that sized a bin line reserves 84 for SO Y AND is then linked by SO Y for 84, which
+        under the source test came off twice and cost SO Y most of its own buy; a
+        `po_history` claim a row has since linked did the same. `claim_id` names the ONE
+        claim a given link was written under, whichever feed first stated the pairing, so
+        the overlap is measured rather than inferred from a label.
+
+        `_dedication_for_target`'s own `reserved` stays as it reads today (AC-6.9 reads it
+        raw, as the audit figure) - this is a SEPARATE sum, for the one caller that
+        combines it with `by_po` / `by_spo` rather than reporting it on its own.
         """
         claims = self._claims_by_target().get(target_id, ())
+        linked = self._linked_by_claim()
         total = _ZERO
         for claim in claims:
             if own_so_number is not None and claim["so_number"] == own_so_number:
                 continue
-            if claim["source"] == "order_inquiry":
-                continue
-            if claim["outstanding"] > _ZERO:
-                total += claim["outstanding"]
+            outstanding = claim["outstanding"] - linked.get(
+                (claim["claim_id"], target_id), _ZERO
+            )
+            if outstanding > _ZERO:
+                total += outstanding
         return total
-
-    def _has_external_claim(self, target_id: str) -> bool:
-        """Does ANY claim on this target come from outside the cascade's own doing -
-        `po_history`'s FromSODocList note, an `so_upload` / `po_upload` / `manual` claim?
-
-        G12's own gate (`_candidate`'s `cascadable`) is unchanged for this - it reads
-        `own_claim` alone, exactly as shipped. This is `_born_claimed_takes`' OWN
-        question (`trial_cascadable`, `pass_unattributed`): whether a project-bin line
-        with REAL, netted capacity left (`remaining`, already excluding what an
-        `order_inquiry`-sourced claim double-counts, `_reserved_for_netting`) is fair
-        game for the automatic pass to claim its OWN share of, or whether some EXTERNAL
-        feed has already named a specific SO for it - the situation G12's own words
-        describe ("the import result + PO view surface the unclaimed-project-bin count
-        so Joey backfills FromSODocList in AutoCount"). Nothing but
-        the cascade's OWN prior automatic claims (this row's or another SO's own earlier
-        `_born_claimed_takes` write) never blocks a later SO's own automatic share -
-        G7's own wording is explicit that more than one SO may claim a line ("PO 100,
-        SO A 30 claimed -> 70 free; +SO B 50 -> 20 free"), and nothing in G12 narrows
-        that to "the first SO only" - but a claim naming REAL outside evidence does.
-        """
-        return any(
-            claim["source"] != "order_inquiry"
-            for claim in self._claims_by_target().get(target_id, ())
-        )
 
     def _pool_codes(self) -> set:
         """Every warehouse that is SOME location's pool, by code.
@@ -3224,6 +3179,22 @@ class ProjectOrderInquiryService:
         claimed by nobody are refused alike. Never a `remaining` cut: an unclaimed bin's
         whole quantity is still there for a manual link to take, which is what converts it
         to claimed (AC-6.9). A pool-destination line carries no such lock (AC-6.10).
+
+        The claim the lock waits for comes from ONE of three places, and never from this
+        walk (captain, 2 Sep 2026, on real data - see `_candidate`'s `cascadable`):
+
+          * the book's own `FromSODocList` column, on either purchase channel
+            (`po_history` / `po_upload` claims);
+          * the SUPPLY WRITER that created the line, at the moment it created it
+            (`app/services/scm/supply_claim.py`, `crm_supply` claims) - a purchase order
+            this codebase raised off the plan is a buy for the order-inquiry rows that
+            sized it, and it says so in the same transaction that opens the line;
+          * a person naming the line by hand in the Link dialog (`manual`, AC-6.9).
+
+        A line none of the three attributed is UNATTRIBUTED and stays manual-link only.
+        A blank `FromSODocList` beside a Loading Date remark such as "REPLACE BACK" means
+        the line belongs to somebody else's order (captain, 2 Sep), which is one more
+        reason the automatic pass may not help itself to one.
         """
         product_id = self._resolve_product_id(row)
         if not product_id:
@@ -3694,28 +3665,6 @@ class ProjectOrderInquiryService:
         # Uncited sorts after every citation, however many there are.
         citation_rank = cited.get(str(document or "").strip().upper(), len(cited) + 1)
         is_cited = bool(document) and citation_rank <= len(cited)
-        # BORN CLAIMED (G12, captain's ruling pending confirm 2 Sep): whether the
-        # automatic pass may take its OWN share of this project-bin line despite not
-        # (yet) claiming it - read fresh off the database every time, never off an
-        # in-memory "was this ever open" flag (bug found chasing PR #490's CI failures:
-        # a flag scoped to one service instance never survives to a SECOND row raised
-        # in its OWN, separate request - `test_order_inquiry_draft_links.py::test_two_
-        # rows_are_never_drafted_onto_the_same_units` raises 10 and 10 against a line
-        # of 12 in TWO separate presses, and the second press's own `_candidates_for_
-        # row` call starts a brand new instance with nothing to remember).
-        #
-        # `remaining` already excludes what an `order_inquiry`-sourced claim would
-        # double-count (`_reserved_for_netting`), so a project-bin line's genuinely FREE
-        # capacity - what is left after every OTHER SO's real placement, whichever SO
-        # made it - is exactly `remaining > 0`. `_has_external_claim` is the other half:
-        # an import feed naming a SPECIFIC SO for this line (G12's own reason for
-        # existing) still requires exactly that SO, or a person's manual override -
-        # nothing the cascade's OWN prior automatic claims ever wrote narrows THAT.
-        pass_unattributed = (
-            project_locked
-            and remaining > _ZERO
-            and not self._has_external_claim(target_id)
-        )
         return {
             "kind": kind,
             "po_line_id": target_id if kind == "po" else None,
@@ -3731,24 +3680,15 @@ class ProjectOrderInquiryService:
             # further for a project-bin line this row's own SO has not claimed - refused
             # to the automatic pass however good its location tier, because the SO that
             # claims it is the only one allowed to auto-take it.
+            #
+            # There is no trial, preview or self-claiming variant of this test, and there
+            # must never be one (captain, 2 Sep 2026, on real data): the cascade writing
+            # its OWN claim for a line it did not create is how PO 202607-S0067's 114
+            # units at BRW-IB - bought for SO391853 per the AutoCount book - were taken by
+            # SO381895. A project-bin line is attributed by the SUPPLY WRITER that created
+            # it (`app/services/scm/supply_claim.py`) or by the book's own FromSODocList
+            # column, never by the pass that wants to consume it.
             "cascadable": (own_location is None or tier <= TIER_POOL) and not project_locked,
-            # BORN CLAIMED (G12, captain's ruling pending confirm 2 Sep,
-            # `PLAN-scm-reorder-oi-feedback-1sep.md`): the same test as `cascadable`
-            # above, EXCEPT a project-bin line with real, netted capacity left and no
-            # EXTERNAL claim against it (`pass_unattributed`, computed above) counts as
-            # open to the automatic pass too. G12's own gate never grows an exception
-            # for it: `_born_claimed_takes` reads this field to find what the pass is
-            # ABOUT to take, writes the claim BEFORE the real walk runs, and the real
-            # walk then finds the SAME line already claimed by this row's own SO through
-            # `cascadable` exactly as shipped. A line an EXTERNAL feed dedicates to
-            # another SO is refused here exactly as `cascadable` refuses it.
-            "trial_cascadable": (
-                (own_location is None or tier <= TIER_POOL)
-                and (not project_locked or pass_unattributed)
-            ),
-            # `_born_claimed_takes`' own write decision - the SAME value `trial_
-            # cascadable` was built from, not a second, independent computation.
-            "pass_unattributed": pass_unattributed,
             "issue_date": issue_date,
             "expected_date": expected_date,
             "remaining": remaining,
@@ -3784,10 +3724,7 @@ class ProjectOrderInquiryService:
 
     @staticmethod
     def _cascade_take(
-        candidates: Sequence[Dict[str, Any]],
-        need: Decimal,
-        *,
-        gate: str = "cascadable",
+        candidates: Sequence[Dict[str, Any]], need: Decimal
     ) -> List[Tuple[Dict[str, Any], Decimal]]:
         """`min(what is left on this line, what is still needed)` off each candidate in the
         order it was given, until the need is covered or the candidates run out.
@@ -3797,10 +3734,6 @@ class ProjectOrderInquiryService:
         is left PARTLY LINKED with the rest still counting as demand. Before the links
         table there was nowhere to record that, so the row had to be split for the
         arithmetic to work.
-
-        `gate` picks which field decides what the walk may touch: `"cascadable"` (default)
-        for the real placement, `"trial_cascadable"` for `_born_claimed_takes`' preview of
-        what the real walk is ABOUT to take, before the claim it needs exists yet.
         """
         still = need
         takes: List[Tuple[Dict[str, Any], Decimal]] = []
@@ -3812,7 +3745,7 @@ class ProjectOrderInquiryService:
             # still LISTED in the Link dialog - a buyer may take it by hand - but the
             # automatic pass never does: BRW-IB's purchase is BRW-IB's, and an order at
             # MWH-IR taking 78 of it was the case that ruled it.
-            if not candidate.get(gate, True):
+            if not candidate.get("cascadable", True):
                 continue
             remaining = candidate["remaining"]
             take = remaining if remaining < still else still
@@ -3820,66 +3753,6 @@ class ProjectOrderInquiryService:
                 takes.append((candidate, take))
                 still -= take
         return takes
-
-    def _born_claimed_takes(
-        self, row: OrderInquiryRow, candidates: Sequence[Dict[str, Any]], need: Decimal
-    ) -> bool:
-        """BORN CLAIMED: write the claim an uncontested project-bin take needs BEFORE
-        the real cascade asks G12 whether it may have it (captain's ruling, pending
-        confirm 2 Sep, `PLAN-scm-reorder-oi-feedback-1sep.md` G12).
-
-        G12's own gate is not touched for this (`_candidate`'s `cascadable`, `_cascade_
-        take`'s default walk) - it is EXACTLY the check that shipped, no exception
-        clause. What changes is the ORDER of events: previewed with `trial_cascadable`
-        (the same walk, letting through a project-bin line with real capacity left and
-        no EXTERNAL claim against it - `pass_unattributed`, `_has_external_claim` -
-        so the walk sees precisely what it would have taken were dedication not in the
-        picture); a claim naming this row's own SO is written for each such line, in
-        the SAME transaction the real placement (`_write_link`, right after) commits
-        in; the real walk then runs unmodified and finds the claim already there,
-        exactly as a claim `_write_link` wrote a moment earlier for any other placement
-        always has been.
-
-        Scoped to `pass_unattributed` on purpose. A project-bin line an EXTERNAL feed
-        (`po_history`'s FromSODocList note, an `so_upload` / `po_upload` / `manual`
-        claim) already dedicates to a specific SO stays refused to the automatic pass
-        exactly as it always was - born-claiming only lets the row's OWN share of
-        whatever is left through the gate that would otherwise refuse the very first
-        automatic take ever made against a line with no claim of ANY kind yet, for want
-        of the claim only taking it could write; a SECOND, DIFFERENT SO reaching the
-        SAME line later (a separate press, a separate row in the same pass, it makes no
-        difference - `pass_unattributed` reads fresh off the database every time) is
-        exactly the ordinary G7 sharing "PO 100, SO A 30 claimed -> 70 free" already
-        describes, not a special case.
-        """
-        trial = self._cascade_take(candidates, need, gate="trial_cascadable")
-        own_so_number: Optional[str] = None
-        item_code: Optional[str] = None
-        core_line_id: Optional[str] = None
-        claimed_any = False
-        for candidate, _qty in trial:
-            if not candidate.get("pass_unattributed"):
-                continue
-            document = candidate["document"]
-            if not document:
-                continue
-            if own_so_number is None:
-                own_so_number, item_code, core_line_id = self._claim_identity(row)
-            order_link_service.claim_placed_on_po(
-                self.db,
-                company_id=row.company_id,
-                so_number=own_so_number,
-                po_number=document,
-                item_code=item_code,
-                so_line_id=core_line_id,
-                po_line_id=candidate["po_line_id"],
-                spo_allocation_id=candidate["spo_allocation_id"],
-            )
-            claimed_any = True
-        if claimed_any:
-            self.db.flush()
-            self._invalidate_link_cache()
-        return claimed_any
 
     def po_candidates_for_row(self, row_id: str) -> List[Dict[str, Any]]:
         """The candidate list the Link dialog shows, in the walk's own order.
@@ -3997,7 +3870,7 @@ class ProjectOrderInquiryService:
 
         claim_id = None
         if document:
-            so_number, item_code, core_line_id = self._claim_identity(row)
+            so_number, item_code, core_line_id = self.claim_identity(row)
             claim = order_link_service.claim_placed_on_po(
                 self.db,
                 company_id=row.company_id,
@@ -4507,8 +4380,26 @@ class ProjectOrderInquiryService:
     def rows_needed_at(
         self, cells: Sequence[Tuple[str, Optional[str]]]
     ) -> List[str]:
+        """Every row `rows_needed_at_by_cell` found, flattened - what the confirm's own
+        first cascade pass hands to `auto_place_for_products`, which is product-wide and
+        has no use for which cell a row came from."""
+        found: List[str] = []
+        for row_ids in self.rows_needed_at_by_cell(cells).values():
+            found.extend(row_ids)
+        return found
+
+    def rows_needed_at_by_cell(
+        self, cells: Sequence[Tuple[str, Optional[str]]]
+    ) -> Dict[Tuple[str, Optional[str]], List[str]]:
         """The ids of raised rows whose demand sits at these `(product_id, warehouse_id)`
-        cells - the rows that SIZED a plan line, in other words.
+        cells - the rows that SIZED a plan line, in other words - KEYED BY THE CELL.
+
+        Per cell rather than flat because the two callers want different grains. The
+        cascade's first pass wants "everybody this order bought for" and flattens it
+        (`rows_needed_at`); G12's write-time claim wants "who is this LINE's buy for", and
+        one purchase order can carry lines at two bins for two different customers
+        (`supply_claim.claim_purchase_order_for_sizing_rows`) - a flat list there would
+        claim each line for both.
 
         `PLAN-scm-purchasing-uat-journey.md` P7. A purchase order confirmed off the plan is
         a buy for particular plan rows, and a plan row is a `(product, location)` cell whose
@@ -4532,7 +4423,7 @@ class ProjectOrderInquiryService:
         """
         wanted = {(str(pid), str(wid) if wid else None) for pid, wid in cells if pid}
         if not wanted:
-            return []
+            return {}
         # Narrowed to the confirmed lines' PRODUCTS before anything is fetched. Without it
         # this walks every raised row in the book to answer a question about one purchase
         # order, which on the live book is thousands of rows and their product lookups.
@@ -4543,7 +4434,7 @@ class ProjectOrderInquiryService:
         query = self._narrow_to_products(query, [pid for pid, _wid in wanted])
         rows = query.all() if query is not None else []
         if not rows:
-            return []
+            return {}
         product_by_row = self._resolve_product_ids_bulk(rows)
 
         # The core line's fulfilment warehouse, one query for the whole set.
@@ -4580,7 +4471,7 @@ class ProjectOrderInquiryService:
                 ).filter(Warehouse.warehouse_code.in_(list(codes)))
             }
 
-        out: List[str] = []
+        out: Dict[Tuple[str, Optional[str]], List[str]] = {}
         for row in rows:
             product_id = product_by_row.get(row.id)
             if not product_id:
@@ -4595,8 +4486,9 @@ class ProjectOrderInquiryService:
                 warehouse_id = stated or core_warehouse.get(str(row.so_line_id or ""))
             else:
                 warehouse_id = core_warehouse.get(str(row.so_line_id or ""))
-            if (str(product_id), warehouse_id) in wanted:
-                out.append(str(row.id))
+            cell = (str(product_id), warehouse_id)
+            if cell in wanted:
+                out.setdefault(cell, []).append(str(row.id))
         return out
 
     def resolve_link_horizon(
@@ -4806,12 +4698,6 @@ class ProjectOrderInquiryService:
             candidates = self._candidates_for_row(row, credit_own_links=bool(drafts))
             if not candidates:
                 continue
-            # BORN CLAIMED (G12): write the claim an uncontested project-bin take needs
-            # before asking G12's own gate for it - see `_born_claimed_takes`. Only when
-            # it wrote one does the candidate list need re-reading; every other pass
-            # over every other product this call makes is untouched.
-            if self._born_claimed_takes(row, candidates, need):
-                candidates = self._candidates_for_row(row, credit_own_links=bool(drafts))
             takes = self._cascade_take(candidates, need)
             if not takes:
                 continue
@@ -5558,7 +5444,7 @@ class ProjectOrderInquiryService:
             return True
         return verb in _SPO_LINKABLE_VERBS and product_id in candidates.get("spo", ())
 
-    def _claim_identity(
+    def claim_identity(
         self, row: OrderInquiryRow
     ) -> Tuple[str, Optional[str], Optional[str]]:
         """The (so_number, item_code, core so_line_id) the audit claim is written and

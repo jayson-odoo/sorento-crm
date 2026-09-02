@@ -40,6 +40,8 @@ from app.services.scm.outstanding_diff import (
     diff_lines,
     states_settled,
 )
+from app.services.company_scope import get_company_scope, resolve_write_company_id
+from app.services.scm import order_link_service
 from app.services.scm import plan_exception_service
 from app.services.scm import reorder_run_service
 from app.services.scm import sales_agent_service
@@ -1973,6 +1975,74 @@ def _supersede_crm_raised_pos(db: Session, resolved: _Resolved,
     return len(to_close), superseded_documents
 
 
+def _claim_stated_so_links(db: Session, read: ReadResult) -> int:
+    """One `po_upload` claim per line whose `FromSODocList` names a sales order (G12/D2).
+
+    The history channel has done this since migration 358 and writes `po_history`; this is
+    the same fact off the same column on the OUTSTANDING book, and the two sources are kept
+    apart so an upload result can say which book stated a pairing. Both write through
+    `order_link_service.claim_book_pairing`, so there is one get-or-create rather than two
+    that merely agree.
+
+    Both families in one loop: `read.lines` is the purchase-order half, `read.spo_lines` the
+    shipping-order half, and a claim carries the DOCUMENT NUMBER rather than a row id, so
+    which table it lands in is `resolve()`'s decision and is made from the number's own
+    prefix. Resolution is asked for right here, narrowed to the sales orders this book
+    named: without it the claim's `so_line_id` stays NULL, and dedication reads only
+    RESOLVED claims - a claim nothing resolved would sit in the table saying nothing.
+
+    `seen` is this call's own memory, keyed as the unique index is. One book states the same
+    (document, item) pairing on more than one row routinely (two containers of one line),
+    and nothing is flushed until the end, so a claim added moments ago is invisible to the
+    SELECT inside the helper.
+    """
+    company_id = resolve_write_company_id(get_company_scope(db), ambiguous=None)
+    seen: set[tuple] = set()
+    written = 0
+    so_numbers: set[str] = set()
+    for line in list(read.lines) + list(read.spo_lines):
+        stated = (read.extras.get(str(line.row_ref), {}) or {}).get("so_number")
+        so_number = _clean_so(stated)
+        if not so_number or not line.doc_number or not line.item_code:
+            continue
+        key = (company_id, so_number, line.doc_number, line.item_code)
+        if key in seen:
+            continue
+        seen.add(key)
+        order_link_service.claim_book_pairing(
+            db,
+            company_id=company_id,
+            so_number=so_number,
+            po_number=line.doc_number,
+            item_code=line.item_code,
+            source=order_link_service.SOURCE_PO_UPLOAD,
+        )
+        so_numbers.add(so_number)
+        written += 1
+    if not written:
+        return 0
+    db.flush()
+    # Both sides, in the machinery that already knows how to find them: the sales line by
+    # (SO number, item code), the purchase side in `purchase_order_lines` or
+    # `spo_allocations` decided by the document number's prefix.
+    order_link_service.resolve(db, so_numbers=so_numbers)
+    return written
+
+
+def _clean_so(value) -> Optional[str]:
+    """The sales-order number as the file spells it, trimmed.
+
+    A cell naming SEVERAL orders (`SO123, SO456`) is deliberately NOT split: which line the
+    second one describes is exactly the guess G12 exists to stop, and a claim naming the
+    wrong customer's order is worse than no claim at all - the line simply stays
+    unattributed and is counted for Joey to fix at the source.
+    """
+    text = str(value or "").strip()
+    if not text or any(sep in text for sep in (",", ";", "/", "|")):
+        return None
+    return text
+
+
 def apply(db: Session, file_data: bytes, doc_type: str = SO,
           actor: Optional[str] = None, outcome: Optional[ImportOutcome] = None,
           on_total_rows: Optional[Callable[[int], None]] = None,
@@ -2506,6 +2576,28 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
     if spo.product_ids:
         touched_pids = sorted(set(touched_pids) | set(spo.product_ids))
 
+    # G12/D2 (captain, 2 Sep 2026): the book's own `FromSODocList` column becomes a CLAIM.
+    # Written after BOTH halves of the purchase book are on disk, so the resolver below can
+    # find whichever family each pairing names - `purchase_order_lines` for a `######-S####`
+    # number, `spo_allocations` for an `SPO-` one.
+    #
+    # This is the feed most attribution arrives on. G12's lock refuses an unattributed
+    # project-bin line to the automatic pass, and until this ran the outstanding channel
+    # read the column, recognised it, and threw it away - so a re-upload could never seed a
+    # single dedication and the unclaimed count below could never fall. It runs on every
+    # upload, not only the first: a claim is get-or-create on `uq_scm_order_link_claim_
+    # identity`, so re-uploading the same book leaves exactly the claims it left last time.
+    #
+    # Best-effort, like the reactions below it and for the same reason: the book is already
+    # written, and a defect here must cost the operator the dedication of ONE upload - which
+    # the next upload of the same book states again - rather than the whole import.
+    claims_written = 0
+    if doc_type == PO:
+        try:
+            claims_written = _claim_stated_so_links(db, read)
+        except Exception:  # pragma: no cover - defensive, see above
+            logger.exception("claiming the SO links a PO/SPO book states failed")
+
     # Section 3.G, AC-G3: the buyer acted on the occupancy panel's "location differs", split
     # the line in AutoCount and uploaded the book again. The book now states BRW-BB 487 + BRW
     # 13 and the placements are still on the line that used to be DC1 - so each one is moved
@@ -2616,6 +2708,10 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
         # as of THIS upload's own claim-resolution pass. `None` on an SO-channel upload,
         # which writes no supply line this rule covers.
         "unclaimed_project_bin_lines": unclaimed_project_bin_lines,
+        # G12/D2: the SO<->PO pairings this book STATED (`FromSODocList`), whether they were
+        # new or already held. What Joey's backfill in AutoCount is measured by from the
+        # other side, beside the unclaimed count above.
+        "so_links_claimed": claims_written,
         "resolution_issues": [asdict(i) for i in plan.issues],
         "row_problems": [asdict(p) for p in read.problems + plan.problems],
         # Reported by the commit as well as by the preview, and stated as it was BEFORE the

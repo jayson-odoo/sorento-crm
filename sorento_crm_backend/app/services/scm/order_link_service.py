@@ -26,10 +26,11 @@ permanently unresolvable the day the SPO documents moved.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
-from typing import Optional
+from datetime import date, datetime
+from decimal import Decimal
+from typing import Optional, Sequence
 
-from sqlalchemy import nullslast
+from sqlalchemy import nullslast, or_
 from sqlalchemy.orm import Session
 
 from app.models.order import SalesOrder, SalesOrderLine
@@ -40,6 +41,14 @@ from app.services.scm.po_listing_reader import FAMILY_SPO, doc_family
 from app.services.sla_service import MALAYSIA_TZ, to_naive_datetime
 
 logger = logging.getLogger(__name__)
+
+_ZERO = Decimal("0")
+
+
+def _dec(value) -> Decimal:
+    """A quantity as a Decimal, treating an absent one as nothing."""
+    return Decimal(str(value)) if value is not None else _ZERO
+
 
 #: Which column a resolved purchase side lands in. The reader returns the pair so the two
 #: families share one lookup and one loop, rather than a second copy of both.
@@ -190,6 +199,194 @@ def _purchase_side(db: Session, po_numbers: set[str]):
     return by_key, by_number
 
 
+#: The claim a SUPPLY WRITER makes for a line it has just created for known demand -
+#: G12's write-time rule (captain, 2 Sep 2026). Held apart from `order_inquiry`, which is
+#: the audit echo of a link, because two readers turn on the difference: the netting in
+#: `project_order_inquiry_service._reserved_for_netting` (an `order_inquiry` claim's
+#: quantity is already counted by its own link) and the one-shot repair that drops the
+#: withdrawn born-claimed mechanism's artifacts without touching a real attribution.
+SOURCE_CRM_SUPPLY = "crm_supply"
+
+#: The book's own `FromSODocList` column, read by the OUTSTANDING purchase channel. The
+#: history channel writes `po_history` for the same fact off the same column; the two are
+#: kept apart so an upload result can say which book stated the pairing.
+SOURCE_PO_UPLOAD = "po_upload"
+
+#: The audit row `ProjectOrderInquiryService._write_link` writes beside every placement.
+SOURCE_ORDER_INQUIRY = "order_inquiry"
+
+
+def find_claim(
+    db: Session,
+    *,
+    company_id: Optional[str],
+    so_number: str,
+    po_number: str,
+    item_code: Optional[str],
+) -> Optional[OrderLinkClaim]:
+    """The claim at this identity, or None - ONE spelling of the lookup every writer needs.
+
+    The identity is the database's own unique index, `uq_scm_order_link_claim_identity`:
+    the company, the two document numbers, and the item code coalesced. Scoped to the SAME
+    company the row would be stamped with, because the index is per company (migration 335)
+    and the system principal reads across every company while writing into the incumbent
+    one - without the filter another company's claim would suppress a claim this one is
+    missing.
+    """
+    query = db.query(OrderLinkClaim).filter(
+        OrderLinkClaim.so_number == so_number,
+        OrderLinkClaim.po_number == po_number,
+        OrderLinkClaim.item_code.is_(None)
+        if item_code is None
+        else OrderLinkClaim.item_code == item_code,
+    )
+    if company_id is not None:
+        query = query.filter(OrderLinkClaim.company_id == company_id)
+    return query.first()
+
+
+def claim_book_pairing(
+    db: Session,
+    *,
+    company_id: Optional[str],
+    so_number: str,
+    po_number: str,
+    item_code: Optional[str],
+    source: str,
+    now: Optional[datetime] = None,
+    po_line_id: Optional[str] = None,
+    spo_allocation_id: Optional[str] = None,
+) -> OrderLinkClaim:
+    """Get-or-create a claim a FEED states, leaving resolution to `resolve()`.
+
+    The difference from `claim_placed_on_po` below is what the caller knows. A placement
+    knows both ends - it is holding the purchase line and the sales line - so it records
+    the pairing RESOLVED. A book states a pairing and nothing else: the sales order it
+    names may not have been uploaded yet, which is the whole reason this table is claims
+    rather than a nullable foreign key. So the row goes in open and `resolve()` fills in
+    each side as it appears, exactly as the purchase-history channel has always relied on.
+
+    An existing claim is refreshed rather than doubled, and its `source` is LEFT ALONE:
+    the first feed to state a pairing is the one that knows it, and a later channel
+    restating the same fact is not evidence the provenance changed.
+    """
+    existing = find_claim(
+        db,
+        company_id=company_id,
+        so_number=so_number,
+        po_number=po_number,
+        item_code=item_code,
+    )
+    if existing is not None:
+        if po_line_id and existing.po_line_id is None:
+            existing.po_line_id = po_line_id
+        if spo_allocation_id and existing.spo_allocation_id is None:
+            existing.spo_allocation_id = spo_allocation_id
+        return existing
+    claim = OrderLinkClaim(
+        company_id=company_id,
+        so_number=so_number,
+        po_number=po_number,
+        item_code=item_code,
+        source=source,
+        claimed_at=now or _now(),
+        po_line_id=po_line_id,
+        spo_allocation_id=spo_allocation_id,
+    )
+    db.add(claim)
+    return claim
+
+
+def reservations_by_target(
+    db: Session, *, target_ids: Optional[Sequence[str]] = None
+) -> dict[str, list[dict]]:
+    """What every RESOLVED claim reserves, keyed by the PO line or SPO allocation it names.
+
+    G7 (`PLAN-scm-reorder-oi-feedback-1sep.md` S6): a claim carries no quantity of its own,
+    it reserves the claiming sales order LINE's LIVE outstanding - so a fulfilled or
+    cancelled line reserves nothing, whatever the claim still names, and the claim row is
+    never deleted to make that true. Joined rather than stored for exactly that reason.
+
+    `so_number` is read off the CLAIM's OWN column, never `SalesOrder.so_number` off the
+    join: the write side (`ProjectOrderInquiryService.claim_identity`) stores
+    `ProjectSalesOrder.autocount_doc_no or provisional_ref`, which is not always the
+    reconciled core number this join can also reach, and comparing the two identities made
+    a row's own claim unrecognisable as its own.
+
+    ONE reader, two consumers - the cascade's dedication netting
+    (`ProjectOrderInquiryService._claims_by_target`, whole table, cached per instance) and
+    the purchase order's "Allocated to" panel (`PurchaseOrderService._allocations_for`,
+    narrowed to one document's lines). A second spelling of "what does this claim reserve"
+    is how a panel and the walk behind it come to print different numbers for the same line.
+    """
+    query = (
+        db.query(
+            OrderLinkClaim.id,
+            OrderLinkClaim.po_line_id,
+            OrderLinkClaim.spo_allocation_id,
+            OrderLinkClaim.so_number,
+            OrderLinkClaim.source,
+            SalesOrder.order_date,
+            SalesOrderLine.qty_ordered,
+            SalesOrderLine.qty_delivered,
+            SalesOrderLine.line_status,
+        )
+        .join(SalesOrderLine, SalesOrderLine.id == OrderLinkClaim.so_line_id)
+        .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+    )
+    if target_ids is None:
+        query = query.filter(
+            or_(
+                OrderLinkClaim.po_line_id.isnot(None),
+                OrderLinkClaim.spo_allocation_id.isnot(None),
+            )
+        )
+    else:
+        wanted = [str(t) for t in target_ids]
+        if not wanted:
+            return {}
+        query = query.filter(
+            or_(
+                OrderLinkClaim.po_line_id.in_(wanted),
+                OrderLinkClaim.spo_allocation_id.in_(wanted),
+            )
+        )
+    out: dict[str, list[dict]] = {}
+    for (
+        claim_id,
+        po_line_id,
+        spo_allocation_id,
+        so_number,
+        source,
+        order_date,
+        qty_ordered,
+        qty_delivered,
+        line_status,
+    ) in query.all():
+        key = str(po_line_id or spo_allocation_id)
+        outstanding = (
+            _ZERO
+            if (line_status or "open") != "open"
+            else max(_dec(qty_ordered) - _dec(qty_delivered), _ZERO)
+        )
+        out.setdefault(key, []).append(
+            {
+                "claim_id": str(claim_id),
+                "so_number": so_number,
+                "source": source,
+                "so_date": order_date,
+                "outstanding": outstanding,
+            }
+        )
+    for claims in out.values():
+        # SO-date order, the order G7 says claims reserve in, with the id as the tie-break
+        # so two orders of the same date read the same way twice.
+        claims.sort(
+            key=lambda c: (c["so_date"] is None, c["so_date"] or date.max, c["claim_id"])
+        )
+    return out
+
+
 def claim_placed_on_po(
     db: Session,
     *,
@@ -200,9 +397,15 @@ def claim_placed_on_po(
     so_line_id: Optional[str],
     po_line_id: Optional[str] = None,
     spo_allocation_id: Optional[str] = None,
+    source: str = SOURCE_ORDER_INQUIRY,
 ) -> OrderLinkClaim:
     """Record a Link PO / Link SPO pairing as a claim, for the audit trail
     (PLAN-demo-followups-19aug-ladder-v2.md section G, PLAN-scm-cs-planning-uat.md 3.I).
+
+    `source` is what the caller is: `order_inquiry` (the default) for the audit row written
+    beside a link, `crm_supply` for a supply writer claiming a line it has just created for
+    known demand (G12's write-time rule). It applies to a claim this call CREATES; a claim
+    that already exists keeps the source of whoever stated the pairing first.
 
     The purchase side is whichever column the caller resolved: `po_line_id` for a purchase
     order line, `spo_allocation_id` for a shipping order, which since migration 420 is a
@@ -217,16 +420,13 @@ def claim_placed_on_po(
     anyway, and the existing claim is the more honest record either way.
     """
     now = _now()
-    query = db.query(OrderLinkClaim).filter(
-        OrderLinkClaim.so_number == so_number,
-        OrderLinkClaim.po_number == po_number,
-        OrderLinkClaim.item_code.is_(None)
-        if item_code is None
-        else OrderLinkClaim.item_code == item_code,
+    existing = find_claim(
+        db,
+        company_id=company_id,
+        so_number=so_number,
+        po_number=po_number,
+        item_code=item_code,
     )
-    if company_id is not None:
-        query = query.filter(OrderLinkClaim.company_id == company_id)
-    existing = query.first()
     if existing is not None:
         if existing.so_line_id is None:
             existing.so_line_id = so_line_id
@@ -240,7 +440,7 @@ def claim_placed_on_po(
         so_number=so_number,
         po_number=po_number,
         item_code=item_code,
-        source="order_inquiry",
+        source=source,
         claimed_at=now,
         so_line_id=so_line_id,
         po_line_id=po_line_id,

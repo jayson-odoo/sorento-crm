@@ -2,11 +2,10 @@
 
 Status: S1 IMPLEMENTED (PR #471, 1 Sep 2026) - review found a 6th creation site
 (`project_supply_service.py::_place_supply_borrows`) and 6 other must-fix items, addressed on the
-same branch. S6 IMPLEMENTED (PR #490, 2 Sep 2026) - tester found G12's gate blocking the
-automatic pass's own first, uncontested take of a project-bin line (63 pre-existing test
-cases across 8 files, shared root cause with a G7 own-claim double-count/identity bug);
-fixed with the born-claimed mechanism, see G12's own entry below (PENDING CAPTAIN CONFIRM
-2 Sep). S2-S5 not built.
+same branch. S6 IMPLEMENTED (PR #490, 2 Sep 2026); its first cut answered G12's gate with a
+BORN-CLAIMED pass that let the cascade write its own claim, which the captain measured on
+real data as theft and WITHDREW the same day - replaced by write-time claiming (G12's own
+entry below, plus D2/D3/D4 beneath it). S2-S5 not built.
 UAC: `scm-reorder-oi-feedback-1sep-acceptance-criteria.md`
 
 ## Journeys
@@ -71,27 +70,64 @@ UAC: `scm-reorder-oi-feedback-1sep-acceptance-criteria.md`
   unclaimed line still counts as supply in the plan; only the OI cover state waits for
   attribution. The import result + PO view surface the unclaimed-project-bin count so Joey
   backfills FromSODocList in AutoCount.
-  - BORN CLAIMED (PENDING CAPTAIN CONFIRM 2 Sep 2026 - PR #490 review fix): the gate
-    above is unconditional by design, which left no path for the automatic pass to EVER
-    take the very first, genuinely uncontested unit of a project-bin line - nothing has
-    written a claim for it yet, and only taking it could write one. Resolved WITHOUT an
-    exception clause on the gate itself: `_born_claimed_takes` previews the SAME walk
-    with a project-bin candidate additionally admitted when it has real, netted capacity
-    left AND no EXTERNAL claim (`po_history` / `so_upload` / `po_upload` / `manual`)
-    already names a specific SO for it; a claim for the row's own SO is written for
-    whatever that preview would take, in the same transaction as the real placement
-    right after, so the UNCHANGED gate then finds the claim already there. A LATER,
-    DIFFERENT SO reaching the same line's remaining capacity - a separate press, or a
-    second row in the same pass - is ordinary G7 sharing ("PO 100, SO A 30 claimed ->
-    70 free"), not a special case: the check is re-read fresh off the database every
-    time, never cached across rows or requests. A line an EXTERNAL feed already
-    dedicates to a specific SO is refused to the automatic pass exactly as before -
-    the born-claimed path only ever fires for capacity nothing but the cascade's own
-    prior automatic claims stands against. See `app/services/project_order_inquiry_
-    service.py` (`_born_claimed_takes`, `_has_external_claim`, `_reserved_for_netting`,
-    `trial_cascadable`/`pass_unattributed` on `_candidate`) and PR #490's review-fix
-    commit for the eight pre-existing test files this closed out (63 cases) plus the
-    G7 double-count / own-claim-identity bug it shared root cause with.
+  - WRITE-TIME CLAIMING (captain, 2 Sep 2026 - this SUPERSEDES the withdrawn
+    "born claimed" mechanism, which is deleted, not disabled). The rule, stated
+    strictly: the automatic pass may take (a) POOL-location documents and (b)
+    project-bin lines explicitly attributed to the row's OWN sales order. It never
+    takes a project-bin line that is unattributed or attributed to another SO, and it
+    NEVER writes the attribution itself. An own-SO-attributed bin line IS auto-linked -
+    forcing a manual click there is busywork.
+    Attribution has exactly three sources, none of them the cascade:
+      1. the BOOK's `FromSODocList` column - `po_history` on the purchase-history
+         channel, `po_upload` on the outstanding channel (D2 below);
+      2. the SUPPLY WRITER, at the moment this codebase CREATES the line for known
+         demand: `app/services/scm/supply_claim.py`, source `crm_supply`. A reorder
+         plan's Confirm lands its buy at a project bin (the buy lands where the demand
+         is), so `purchase_order_service.bulk_confirm` claims each project-bin line it
+         opens for the order-inquiry rows that sized its `(product, location)` cell -
+         in the SAME transaction, never best-effort. One line, several SOs, several
+         claims (114 at BRW-IB sized by SO X 30 + SO Y 84 = two claims): ordinary G7
+         sharing, not a split;
+      3. a PERSON in the Link dialog (`manual` / the placement's own audit row).
+    Why the first cut was wrong, measured: PO 202607-S0067's CB1178A-SS-NL at BRW-IB,
+    114 units bought for SO391853 per the AutoCount book, was auto-linked to SO381895
+    at 2026-09-02 02:47:41 against a claim SO381895 had written for itself moments
+    earlier. `_born_claimed_takes`, `_has_external_claim`, `trial_cascadable` and
+    `pass_unattributed` are gone; `_candidate`'s `cascadable` is the only gate and has
+    no trial variant.
+    A blank `FromSODocList` beside a Loading Date remark such as "REPLACE BACK" means
+    the line belongs to ANOTHER sales order (captain, 2 Sep) - one more reason
+    unattributed reads as locked rather than as free.
+    Kept from the first cut, because they were separate, real bugs: `_claims_by_target`
+    reading the CLAIM's own `so_number` (not the joined core one), and the netting that
+    stops a claim being subtracted twice once its own SO has placed part of it - now
+    measured off `OrderInquiryLink.claim_id` rather than guessed from the claim's
+    source (`_reserved_for_netting`).
+- G13 (2 Sep) THE OUTSTANDING BOOK WRITES CLAIMS (D2). `outstanding_import_service`
+  resolved `FromSODocList` and threw the value away, so the feed most attribution
+  arrives on could not seed a single dedication. It now writes one `po_upload` claim per
+  stated line through the same get-or-create the history channel uses
+  (`order_link_service.claim_book_pairing`) and resolves both sides immediately. A
+  re-upload restates rather than doubles (identity = company + SO + PO + item), and a
+  claim another feed already made keeps ITS source. Alias seeds: migration 456.
+- G14 (2 Sep) FREE NETS DEDICATION (D3). The purchase order's "Allocated to" panel read
+  `Free = outstanding - links`, so 202607-S0067's BRW-IB line printed Free 69 on a line
+  the book dedicated wholly to SO391853 - which is how the same quantity gets bought
+  twice. `Free` now also nets what other SOs' claims still reserve (G7: the claiming
+  line's LIVE outstanding, less what that claim has already placed), and each block
+  names who holds it. A line with a dedication and no placement is a block of its own.
+- G15 (2 Sep) THE REPAIR IS A GUARDED ONE-SHOT, NOT A MIGRATION (D4).
+  `scripts/repair_project_bin_self_claims.py`, `--scope today|legacy|both`, dry-run by
+  default. `today` undoes exactly what the withdrawn pass wrote (an `auto = true` link on
+  a project-bin target whose only claims are `order_inquiry` rows from 2026-09-02
+  onward, plus those claims). `legacy` extends it to every other automatic project-bin
+  placement no EXTERNAL claim names the row's own SO for. A human link (`auto = false`)
+  is never touched in either scope; a row that loses every link returns to uncovered,
+  which is intended. NOT run by `alembic upgrade`: `legacy` requires a fresh upload of
+  the current PO & SPO outstanding book FIRST, or it drops links that book would have
+  justified. Prod sequence: deploy -> captain re-uploads the book -> run `--scope legacy
+  --apply`. Dev (2 Sep): `today` applied, 22 links + 11 claims deleted; `legacy` dry-run
+  then reported 2 links / 1 row / 2 claims still to go, awaiting the book upload.
 - G8 Re-plan: Plan until AND warehouse/product scope editable. New run supersedes old;
   decisions carry for products present in both runs with unchanged suggestion; leaving scope
   drops them; entering arrives undecided; changed suggestions return flagged "re-check".
@@ -168,7 +204,9 @@ UAC: `scm-reorder-oi-feedback-1sep-acceptance-criteria.md`
   (claimed-by-other AND unclaimed alike); dialog shows unclaimed project-bin lines greyed
   "Unattributed - link manually"; manual link writes the claim. Unclaimed-project-bin
   counts on the PO/SPO upload result and as a PO-view filter for Joey's backfill.
-  Born-claimed follow-up: see G12's own ruling entry above (PENDING CAPTAIN CONFIRM).
+- Write-time claiming (`app/services/scm/supply_claim.py`, source `crm_supply`), the book's
+  own `FromSODocList` on the outstanding channel (`po_upload`), dedication netted out of the
+  PO detail's Free, and the one-shot repair: G12's own entry above plus G13/G14/G15.
 
 ## Build order
 

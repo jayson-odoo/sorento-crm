@@ -68,6 +68,7 @@ from app.services import import_outcome_codes as oc
 from app.services.company_scope import get_company_scope, resolve_write_company_id
 from app.services.import_alias_service import AliasResolver
 from app.services.import_outcome import ImportOutcome
+from app.services.scm import order_link_service
 from app.services.scm import upload_validation as val
 from app.services.scm.history_sources import PO_HISTORY_SOURCE, SPO_HISTORY_SOURCE
 from app.services.scm.po_listing_reader import (
@@ -993,22 +994,17 @@ def _claim_so_link(db: Session, po_number: str, so_number: str, now: datetime, *
     if key in seen:
         return
     seen.add(key)
-    query = db.query(OrderLinkClaim.id).filter(
-        OrderLinkClaim.so_number == so_number,
-        OrderLinkClaim.po_number == po_number,
-        OrderLinkClaim.item_code.is_(None) if item_code is None
-        else OrderLinkClaim.item_code == item_code,
-    )
-    if company_id is not None:
-        query = query.filter(OrderLinkClaim.company_id == company_id)
-    if query.first():
-        return
-    db.add(
-        OrderLinkClaim(
-            so_number=so_number,
-            po_number=po_number,
-            item_code=item_code,
-            source="po_history",
-            claimed_at=now,
-        )
+    # The database half is `order_link_service.claim_book_pairing` - the ONE get-or-create
+    # both purchase channels write through, so the history book and the outstanding book
+    # cannot disagree about what a stated pairing is. `seen` stays HERE because it is this
+    # run's memory and nothing is flushed until the end of `apply`: a claim added moments
+    # ago is invisible to the SELECT that helper makes.
+    order_link_service.claim_book_pairing(
+        db,
+        company_id=company_id,
+        so_number=so_number,
+        po_number=po_number,
+        item_code=item_code,
+        source="po_history",
+        now=now,
     )

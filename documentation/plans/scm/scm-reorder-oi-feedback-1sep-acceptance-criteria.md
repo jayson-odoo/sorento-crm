@@ -102,3 +102,24 @@ Plan: `PLAN-scm-reorder-oi-feedback-1sep.md` (journeys J1-J4 at its top)
   unclaimed project-bin lines. (G12)
 - AC-6.12 [T] The reorder engine still nets an unclaimed project-bin PO line's quantity at
   its location (no duplicate buy suggestion from the lock). (G12)
+- AC-6.13 [BE] Given a project-bin PO line no feed and no person attributed, when the
+  automatic pass runs for a row that could otherwise reach it, then NO link and NO claim is
+  written; attributing the same line to that row's own SO and re-running the identical pass
+  places it. The cascade never writes a claim for a line it did not create. (G12)
+- AC-6.14 [BE] Given a reorder plan whose BRW-IB demand comes from SO X (30) and SO Y (84),
+  when its draft purchase order of 114 at BRW-IB is confirmed, then ONE line carries TWO
+  `crm_supply` claims (X and Y, both resolved), both sizing rows are linked for their own
+  quantity, and a THIRD sales order's row at BRW-IB finds the line not cascadable and greyed
+  as dedicated. Claims are written whether or not the confirm has an actor to attribute a
+  placement to. (G12)
+- AC-6.15 [BE] Given a PO/SPO outstanding book stating `FromSODocList` per line, when it is
+  applied, then each stated line carries a `po_upload` claim resolved onto the line the same
+  upload wrote; re-applying the same book leaves exactly the same claims, and a pairing
+  another feed already stated keeps ITS source. (G13)
+- AC-6.16 [BE] Given a purchase order line another sales order's claim reserves, then the
+  "Allocated to" block's `Free` nets that reservation and the block names who holds it; a
+  claim whose sales order line has settled reserves nothing. (G14)
+- AC-6.17 [T] `scripts/repair_project_bin_self_claims.py --scope today` deletes an automatic
+  project-bin placement whose only claim is the self-written one, spares an identical
+  placement the book attributes to the same order, never touches an `auto = false` link, and
+  finds nothing on a second run. (G15)
