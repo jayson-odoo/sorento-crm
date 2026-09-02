@@ -15,7 +15,7 @@
 
 import { useCallback, useMemo, useState } from 'react';
 import { Loader2, Plus, Save, Send } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardHeading, CardTitle } from '@/components/ui/card';

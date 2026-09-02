@@ -32,7 +32,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   GATED_LANDING_KINDS,
   LANDING_LABELS,

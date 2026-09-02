@@ -15,7 +15,7 @@ vi.mock('next/navigation', () => ({
 }));
 
 const toasts = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn(), info: vi.fn() }));
-vi.mock('sonner', () => ({ toast: toasts }));
+vi.mock('@/lib/toast', () => ({ toast: toasts }));
 
 vi.mock('../lib/price-tag-request-service', () => ({
   lookupDebtors: vi.fn(),
