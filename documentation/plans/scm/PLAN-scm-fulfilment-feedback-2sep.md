@@ -101,10 +101,12 @@ Verified facts this plan stands on:
 - `priority_policy.immediate_window_days INTEGER NOT NULL DEFAULT 30` and
   `priority_policy.pool_share_pct INTEGER NOT NULL DEFAULT 50` (migration number = next free
   at implementation; 456 to 458 are claimed by #490 / #491 / #493).
-- `FULFILMENT_SETTINGS_DEFAULTS`, `fulfilment_settings()`, `save_fulfilment_priority`,
-  `GET/PUT /scm/config/fulfilment-settings` (whatever the 31 Aug `transfer_days` field used),
-  Policies page inputs beside Transfer days: "Immediate window (days)" and "Pool share (%)",
-  bounded 0 to 365 and 0 to 100.
+- `FULFILMENT_SETTINGS_DEFAULTS`, `fulfilment_settings()`, `save_fulfilment_priority`, and
+  the existing `GET/PUT /scm/policies/fulfilment-priority` route (the one `transfer_days`
+  rides; no new endpoint), Policies page inputs beside Transfer days: "Immediate window
+  (days)" and "Pool share (%)", bounded 0 to 365 and 0 to 100. Phase 1 shipped 2 Sep
+  (lane commit 9686f0f53); Phase 2 must also update `FulfilmentPriorityPanel.test.tsx` and
+  `scmPolicyService.test.ts` exact-payload assertions.
 
 ### S2 - engine v8: BRW share step + per-line walk (the change users asked for)
 
