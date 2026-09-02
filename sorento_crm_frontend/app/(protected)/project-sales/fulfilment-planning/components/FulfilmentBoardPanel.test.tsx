@@ -84,7 +84,7 @@ vi.mock('../../_shared/services/planningChangeService', () => ({
   applyPlanningChanges: vi.fn(),
 }));
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), warning: vi.fn(), error: vi.fn() },
 }));
 
@@ -136,7 +136,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
   ),
 }));
 
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   FulfilmentBoardPanel,
   unpostableNotices,

@@ -14,7 +14,7 @@ import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import type {
   ProjectSeries,
   SeriesProductImportResult,
@@ -30,7 +30,7 @@ if (!window.matchMedia) {
   });
 }
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), custom: vi.fn() },
 }));
 

@@ -5,7 +5,7 @@ import * as React from 'react';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { QueryKey } from '@tanstack/react-query';
 import type { ListPagerPage, ListPagerParams } from '@/hooks/useListPager';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   addStakeholder,
   changeProjectStatus,

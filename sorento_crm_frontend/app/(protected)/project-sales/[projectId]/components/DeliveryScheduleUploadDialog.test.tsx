@@ -10,11 +10,11 @@ import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import type { Project } from '../../_shared/types/project.types';
 import type { DeliverySchedule } from '../../_shared/types/deliverySchedule.types';
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 

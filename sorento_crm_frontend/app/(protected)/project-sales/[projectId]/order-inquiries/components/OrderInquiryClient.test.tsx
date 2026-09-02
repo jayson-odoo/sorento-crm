@@ -56,7 +56,7 @@ vi.mock('../../../_shared/services/projectService', async (importOriginal) => {
   return { ...actual, getProject: (...args: unknown[]) => getProject(...args) };
 });
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), custom: vi.fn() },
 }));
 

@@ -16,7 +16,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { FileDropzone } from '@/components/common/FileDropzone';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { listParties } from '../../_shared/services/projectService';
 import { usePurchaseOrders } from '../../_shared/hooks/useProjects';
 import { useDeliveryScheduleMutations } from '../../_shared/hooks/useDeliverySchedules';

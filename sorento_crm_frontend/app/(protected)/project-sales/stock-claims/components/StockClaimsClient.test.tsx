@@ -39,7 +39,7 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   },
 }));
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), custom: vi.fn() },
 }));
 

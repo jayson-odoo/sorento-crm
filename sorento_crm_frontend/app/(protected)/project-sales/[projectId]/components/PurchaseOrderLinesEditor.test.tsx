@@ -53,7 +53,7 @@ vi.mock('@/app/(protected)/master-data-management/products/services/productServi
   getProductsForVariantSelect: vi.fn(async () => []),
 }));
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { custom: vi.fn(), error: vi.fn(), success: vi.fn(), warning: vi.fn() },
 }));
 
