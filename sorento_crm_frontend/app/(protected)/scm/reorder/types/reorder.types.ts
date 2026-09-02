@@ -181,6 +181,10 @@ export interface ReorderRecommendation {
   alternatives: SupplierChoice[];
   /** True when this row is a no-supplier exception (visibly flagged, no buy). */
   is_exception: boolean;
+  /** Re-plan (S5, G8): this row's product/location carried a decision on the run this
+   *  one superseded, but the suggestion changed - flagged so the buyer decides again
+   *  rather than trusting a carried figure. Absent/false on a run nobody re-planned. */
+  needs_recheck?: boolean;
   /** Disposition action (disposition rows only). */
   disposition_action: DispositionAction | null;
   /** Advisory transfer hint, e.g. "consider transfer 60: WH-JB → WH-KL". */
@@ -426,6 +430,15 @@ export interface ReorderRun {
   plan_horizon_date?: string | null;
   /** When the engine started - the plan header's "Plan dd/mm/yyyy HH:mm" (C1). */
   started_at?: string | null;
+  /** Header tab scope (plan 5.1, S5, AC-5.1) - pre-fills a Re-plan edit. */
+  warehouse_codes?: string[];
+  is_all_warehouses?: boolean;
+  /** null = every product (the run stored no scope); a list, INCLUDING empty, is a real
+   *  narrowing. */
+  product_codes?: string[] | null;
+  /** Re-plan supersede pointers (G8). At most one is ever set on a given run. */
+  supersedes_run_id?: string | null;
+  superseded_by_run_id?: string | null;
 }
 
 /** Request to launch a run. `budget_id` is greyed in the UI until M4. Planning scope

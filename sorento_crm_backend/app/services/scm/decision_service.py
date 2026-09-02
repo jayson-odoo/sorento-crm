@@ -1657,6 +1657,203 @@ def _plan_row_decision_dict_batched(
     }
 
 
+def carry_replan_decisions(db: Session, old_run_id: str, new_run_id: str) -> dict:
+    """Re-plan (plan 5.1, G8): move each decided row from the OLD run to its matching row
+    on the NEW run, when the suggestion is unchanged. Matched by
+    (product_id, warehouse_id, rec_type) - NOT (product_id, warehouse_id) alone (review
+    B1): a single location can hold more than one decidable rec_type in one run (a `buy`
+    and a `needs_level` row measured side by side on real data), and product-grain runs
+    can even carry two `buy` recs at the same key - either way a two-part key collapsed
+    two distinct old decisions onto one new recommendation, and the second INSERT then hit
+    `uq_scm_plan_row_decision_recommendation_id`.
+
+    A product/location/type:
+    - present in both runs with an UNCHANGED suggestion (same rec_type + same order qty):
+      the decision is COPIED onto the new recommendation as a fresh `PlanRowDecision` row -
+      the old one is untouched, runs stay immutable.
+    - present in both but the suggestion CHANGED: arrives undecided, flagged
+      `needs_recheck` in the new rec's frozen `inputs` (AC-5.3's "visible flag" - `inputs`
+      already carries display extras alongside the frozen engine facts, so this needs no
+      new column).
+    - present only in the OLD run (left scope): not carried - there is no new rec to
+      attach the decision to, so this is a silent drop rather than a code path of its own.
+    - present only in the NEW run (entered scope): arrives undecided already, by default.
+
+    Only OLD rows that carry an actual decision are examined - an undecided old row has
+    nothing to carry and nothing to flag.
+
+    Two more guards (review B1/S2), because the match key can still collide (a genuine
+    duplicate pair on either side, or the buyer deciding the new row directly in the race
+    window between this run completing and this carry running):
+    - a target rec that ALREADY carries a decision - the buyer's own, or an earlier pair
+      in this same batch - is left alone. A carried decision must never overwrite a real
+      one.
+    - each insert runs in its own SAVEPOINT, so a pair that still collides (the unique
+      constraint is the backstop, not just the guard above) is skipped rather than
+      aborting every decision after it in the batch.
+    """
+    old_rows = (
+        db.query(
+            ReorderRecommendation.product_id,
+            ReorderRecommendation.warehouse_id,
+            ReorderRecommendation.rec_type,
+            ReorderRecommendation.rounded_qty,
+            PlanRowDecision,
+        )
+        .join(PlanRowDecision, PlanRowDecision.recommendation_id == ReorderRecommendation.id)
+        .filter(
+            ReorderRecommendation.run_id == old_run_id,
+            ReorderRecommendation.rec_type.in_(_PLAN_ROW_DECIDABLE_TYPES),
+        )
+        .all()
+    )
+    if not old_rows:
+        return {"carried": 0, "recheck": 0, "dropped": 0, "skipped": 0}
+
+    new_recs = (
+        db.query(ReorderRecommendation)
+        .filter(
+            ReorderRecommendation.run_id == new_run_id,
+            ReorderRecommendation.rec_type.in_(_PLAN_ROW_DECIDABLE_TYPES),
+        )
+        .all()
+    )
+    new_by_key: dict[tuple[str, Optional[str], str], ReorderRecommendation] = {
+        (str(r.product_id), str(r.warehouse_id) if r.warehouse_id else None, r.rec_type): r
+        for r in new_recs
+    }
+    # New recs that already carry a decision (the buyer's own, made after this run
+    # completed but before this carry ran) - never overwritten.
+    already_decided: set[str] = {
+        str(rec_id) for (rec_id,) in
+        db.query(PlanRowDecision.recommendation_id)
+        .join(ReorderRecommendation, ReorderRecommendation.id == PlanRowDecision.recommendation_id)
+        .filter(ReorderRecommendation.run_id == new_run_id)
+        .all()
+    }
+
+    carried = recheck = dropped = skipped = 0
+    now = datetime.utcnow()
+    for product_id, warehouse_id, rec_type, rounded_qty, old_decision in old_rows:
+        key = (str(product_id), str(warehouse_id) if warehouse_id else None, rec_type)
+        new_rec = new_by_key.get(key)
+        if new_rec is None:
+            dropped += 1
+            continue
+        unchanged = _qty_eq(new_rec.rounded_qty, rounded_qty)
+        if not unchanged:
+            recheck += 1
+            new_rec.inputs = {**(new_rec.inputs or {}), "needs_recheck": True}
+            db.add(new_rec)
+            continue
+        if str(new_rec.id) in already_decided:
+            skipped += 1
+            continue
+        sp = db.begin_nested()
+        try:
+            db.add(PlanRowDecision(
+                id=str(uuid.uuid4()),
+                recommendation_id=new_rec.id,
+                kind=old_decision.kind,
+                buy_qty=old_decision.buy_qty,
+                stock_takes=old_decision.stock_takes,
+                po_qty=old_decision.po_qty,
+                po_refs=old_decision.po_refs,
+                reason_text=old_decision.reason_text,
+                price_mode=old_decision.price_mode,
+                supplier_id=old_decision.supplier_id,
+                unit_cost=old_decision.unit_cost,
+                decided_by=old_decision.decided_by,
+                decided_at=now,
+            ))
+            db.flush()
+        except Exception:  # noqa: BLE001 - a colliding pair must not lose the rest
+            sp.rollback()
+            skipped += 1
+            log.exception(
+                "carry_replan_decisions: could not carry a decision onto rec %s (product %s)",
+                new_rec.id, product_id,
+            )
+            continue
+        sp.commit()
+        already_decided.add(str(new_rec.id))
+        carried += 1
+
+    # S3 (#491, merging around the same time as this PR) denormalises planned/decided/
+    # confirmed counts onto scm.reorder_run, kept current by _refresh_run_counts on every
+    # decision write - this function inserts PlanRowDecision rows directly, bypassing that,
+    # so a re-planned run carrying N carried decisions would show decided_count = 0 on the
+    # plans list until someone touched a row by hand. Guarded (module-attribute check, not
+    # an import) so this branch stays green BOTH before and after #491 merges: the name
+    # only exists in this module once that PR lands.
+    refresh_counts = globals().get("_refresh_run_counts")
+    if refresh_counts is not None:
+        refresh_counts(db, new_run_id)
+
+    return {"carried": carried, "recheck": recheck, "dropped": dropped, "skipped": skipped}
+
+
+def has_confirmed_or_keyed_decisions(db: Session, run_id: str) -> bool:
+    """S4 ruling (conservative, flagged for captain confirm - see the PLAN doc's S5
+    section): whether ANY product/location on this run has already been confirmed into a
+    draft purchase order, or keyed into AutoCount - the two states a re-plan would corrupt.
+
+    Location grain: a decided rec whose `keyed_status` moved off `not_keyed`, or a draft
+    (or since-confirmed) `purchase_order_lines` row still pointing at one of this run's
+    rec ids (`confirm_decisions`'s own `_SRC` stamp).
+
+    Product grain: an `OrderSummaryRow` with `chosen_qty` set (confirmed) or a
+    `keyed_status` off `not_keyed`.
+
+    A re-plan would hand `confirm_decisions` a run whose recs/rows carry NEW ids, so its
+    source_ref-keyed reconciliation orphans the existing draft line instead of updating it,
+    and a re-key off the new plan risks double-keying the same purchase into AutoCount.
+    """
+    rec_ids = [
+        str(r.id) for r in
+        db.query(ReorderRecommendation.id).filter(
+            ReorderRecommendation.run_id == run_id,
+            ReorderRecommendation.rec_type.in_(_PLAN_ROW_DECIDABLE_TYPES),
+        ).all()
+    ]
+    if rec_ids:
+        keyed = (
+            db.query(ReorderRecommendation.id)
+            .filter(ReorderRecommendation.id.in_(rec_ids),
+                    ReorderRecommendation.keyed_status != "not_keyed")
+            .first()
+        )
+        if keyed is not None:
+            return True
+        confirmed_loc = (
+            db.query(PurchaseOrderLine.id)
+            .filter(PurchaseOrderLine.source_system == _SRC,
+                    PurchaseOrderLine.source_ref.in_(rec_ids))
+            .first()
+        )
+        if confirmed_loc is not None:
+            return True
+
+    from app.models.scm import OrderSummaryRow
+    osr_confirmed = (
+        db.query(OrderSummaryRow.id)
+        .filter(
+            OrderSummaryRow.run_id == run_id,
+            (OrderSummaryRow.chosen_qty.isnot(None))
+            | (OrderSummaryRow.keyed_status != "not_keyed"),
+        )
+        .first()
+    )
+    return osr_confirmed is not None
+
+
+def _qty_eq(a, b) -> bool:
+    """Decimal-safe equality for two possibly-None recommendation quantities."""
+    if a is None or b is None:
+        return a is None and b is None
+    return abs(float(a) - float(b)) < 1e-6
+
+
 def _plan_row_decision_dict(
     db: Session, decision: PlanRowDecision, po: Optional[PurchaseOrder]
 ) -> dict:
