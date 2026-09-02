@@ -11,10 +11,10 @@
 **Actor:** master-data staff with `master_data.spec_registry.view` (and `.edit` to change anything), on a laptop, a few times a week. They arrive from the sidebar, Master Data > Product Specifications, because search or a flyer derived a spec wrong, or a new product family needs a key.
 
 1. The first screen is the registry: one row per spec key (label, type, unit, values, rules, seen in, source). A status line above the grid says when the catalogue was last read and whether rules changed since. They find the key with the list search.
-2. They click the row and land on the key's record page. The header carries the label, the type and unit, the source pill, a prev/next pager over the list they came from, a gear (Delete, user-made keys only) and one primary button, Edit.
+2. They click the row and land on the key's record page. The header carries the label, the type and unit, the source pill, a prev/next pager over the list they came from, a gear icon (Delete, user-made specifications only) and one primary button, Edit.
 3. Three underline tabs: **Values and words**, **Rules**, **Seen in products**. Edit swaps every read-only value for an input in place, on every tab at once; Save sends one update; Cancel restores. In Values and words each value row has a display label input (folded #423), its customer words, and suppression with undo.
 4. In Rules they read each rule as a sentence, reorder or add one while editing, and can try the rules on a product code or pasted text without leaving the page.
-5. Back on the list, **Actions** holds Add key, Try a phrase and Reread catalogue. Try a phrase opens a lightbox: they type what a customer would say and see what the engine understood and which products it would rank, each product a link.
+5. Back on the list, the primary button is **Add specification**; **Actions** holds Try a phrase and Reread catalogue. Try a phrase opens a lightbox: they type what a customer would say and see what the engine understood and which products it would rank, each product a link.
 6. A second tab on the list page, **Needs a human**, lists catalogue exceptions; a row click opens that product's Specifications tab.
 7. Ranking weights live under System Settings > Search ranking, not on this page.
 8. On Spec Verification the flow is unchanged; Unverify no longer asks a question, the button becomes a countdown they can cancel.
@@ -31,15 +31,16 @@ They leave with one key corrected and, if rules changed, a catalogue reread queu
 - **D6** The Catalogue tab's global derived-specs table is removed. Per-product derived values are the product Specifications tab and the Spec Verification worklist. Exceptions stay, as the Needs a human tab.
 - **D7** No new motion. Row expand no longer exists; tab switches and edit-mode toggles do not animate; lightboxes use the shared surface spring only. `find-animation-opportunities` was skipped by ruling.
 - **D8** Spec Verification is in scope for the design pass and one behaviour change: Unverify (row and bulk) becomes a deferred action (5s reversible window) instead of an AlertDialog. Verify stays immediate.
+- **D10** Plain words: the type pill reads Choice / Number / Yes or no / Text (never enum, string, boolean); UI copy says "specification", never "key"; the gear is a gear icon (Settings2), not three dots.
 - **D9** No single-key GET is added. The record page reads the key from the registry list query (ETag-cached, small) and the pager is page-scoped from that cache (design language D4).
 
 ## Group A - Registry list page (S1)
 
 ### AC-A.1 [FE] Page shell
-`page.tsx` renders `PageHeader` (title "Product Specifications", crumbs derived from `MENU_SIDEBAR`, so Master Data > Product Specifications) and an Actions dropdown with exactly: Add key, Try a phrase, Reread catalogue. Add key and Reread catalogue are hidden without `master_data.spec_registry.add` / `.edit` respectively.
+`page.tsx` renders `PageHeader` (title "Product Specifications", crumbs derived from `MENU_SIDEBAR`, so Master Data > Product Specifications), one primary button "Add specification" (hidden without `master_data.spec_registry.add`) and an Actions dropdown with exactly: Try a phrase, Reread catalogue (the latter hidden without `.edit`). The word "key" never appears in a label, button or column header; the entity is a "specification" (D10).
 
 ### AC-A.2 [FE] Registry grid
-The Specifications tab is a `DataGrid` (`tableLayout: { width: 'fixed', columnsResizable: true }`, explicit `size` per column, `truncate` + `title` on Label). Columns in order: Label, Key, Type (pill), Unit, Values (count), Rules (count, "default" pill when `rules_are_default`), Seen in (`measured_coverage`), Source (pill seed/user). Sorted by Label. `ListSearchInput` filters on label, key and synonyms client-side. Row click navigates to the record page carrying the list state in the URL. No row "..." menu (a key has one secondary action, Delete, which lives in the record gear; design language D15 allows an entity with no row menu when the gear holds only Delete).
+The Specifications tab is a `DataGrid` (`tableLayout: { width: 'fixed', columnsResizable: true }`, explicit `size` per column, `truncate` + `title` on Label). Columns in order: Label, Code (the slug, muted monospace), Type (pill reading Choice / Number / Yes or no / Text, D10), Unit, Values (count), Rules (count, "default" pill when `rules_are_default`), Seen in (`measured_coverage`), Source (pill seed/user). Sorted by Label. `ListSearchInput` filters on label, key and synonyms client-side. Row click navigates to the record page carrying the list state in the URL. No row "..." menu (a key has one secondary action, Delete, which lives in the record gear; design language D15 allows an entity with no row menu when the gear holds only Delete).
 
 ### AC-A.3 [FE] Freshness line
 Above the grid one line: "Catalogue read {formatDateTimeInMalaysia(finished_at)}" plus a warning pill "Rules changed since" when `rules_changed_since_last_read`; "Never read" when `!ever_read`; "Reading..." with a spinner while `status == running` (poll every 3s until idle, the existing `CatalogueFreshness` logic moved into a hook). No paragraph of explanation.
@@ -47,8 +48,8 @@ Above the grid one line: "Catalogue read {formatDateTimeInMalaysia(finished_at)}
 ### AC-A.4 [FE] Needs a human tab
 Second `TabsList variant="line"` tab, badge = open count. A `DataGrid` over `GET /product-specifications/exceptions` with `DataGridPagination` (server paged, `buildDataGridParams`). Columns: Product code, Description, Spec key, Reason, Seen. Row click opens `/master-data-management/products/{product_id}?tab=specifications&back=<list url>`. The "Stored" JSON column is gone (the value renders through `readableEntry`, or "Not set").
 
-### AC-A.5 [FE] Add key
-Actions > Add key opens a `Dialog` (lightbox) with Label, Type (`SearchableSelect`), Unit; the key slug previews below the label; `/similar` near-duplicate warning stays. Submit POSTs, closes, toasts, and navigates to the new record page. `AddSpecKey.tsx`'s inline form and its duplicated type list are deleted; the dialog is the one in `components/spec-table/AddSpecificationDialog.tsx` reused, or that dialog's type list extracted to one module both import.
+### AC-A.5 [FE] Add specification
+The primary button opens a `Dialog` (lightbox) with Label, Type (`SearchableSelect`), Unit; the key slug previews below the label; `/similar` near-duplicate warning stays. Submit POSTs, closes, toasts, and navigates to the new record page. `AddSpecKey.tsx`'s inline form and its duplicated type list are deleted; the dialog is the one in `components/spec-table/AddSpecificationDialog.tsx` reused, or that dialog's type list extracted to one module both import.
 
 ### AC-A.6 [FE] Try a phrase
 Actions > Try a phrase opens a `Dialog` holding today's `SpecSearchPreview` body: phrase input, "what was understood" chips, ranked candidates with score and matched keys, each product a link to its record. Empty result renders "No product matched" with the phrase echoed. Closing clears nothing until the page unmounts (re-open shows the last run).
@@ -57,12 +58,12 @@ Actions > Try a phrase opens a `Dialog` holding today's `SpecSearchPreview` body
 All fetches move to react-query hooks in `hooks/`: `useSpecRegistryQuery` (list, `staleTime` 60s to match the ETag), `useSpecExceptionsQuery`, `useCatalogueStatusQuery`, `useSpecRegistryMutations` (create, update, delete, addValue, rereadCatalogue). Components hold no `useEffect` + `useState` fetch pairs. Mutations invalidate the registry query and toast via `extractApiError`.
 
 ### AC-A.8 [E2E] Sidebar walk
-From `/`, sidebar Master Data > Product Specifications: grid renders the seeded keys, search narrows, Needs a human tab shows the count, Actions holds the three items. 375px and 1280px.
+From `/`, sidebar Master Data > Product Specifications: grid renders the seeded keys, search narrows, Needs a human tab shows the count, Actions holds the two items and the primary button. 375px and 1280px.
 
 ## Group B - Key record page (S2)
 
 ### AC-B.1 [FE] Route and header
-`[specKey]/page.tsx` renders `PageHeader` (crumb trail ends in the key label) and a record card: label as title, key slug as secondary text, pills for type and source, unit as a field. `DetailActions` in the design-language order: `ListPager` (page-scoped from the registry list cache, "n / N"), gear, primary. Gear holds Delete only, and only when `source == user` and the user has `master_data.spec_registry.delete`; seed keys show no gear.
+`[specKey]/page.tsx` renders `PageHeader` (crumb trail ends in the key label) and a record card: label as title, the code slug as secondary text, pills for type (D10 wording) and source, unit as a field. `DetailActions` in the design-language order: `ListPager` (page-scoped from the registry list cache, "n / N"), gear, primary. Gear holds Delete only, and only when `source == user` and the user has `master_data.spec_registry.delete`; seed keys show no gear.
 
 ### AC-B.2 [FE] View and edit share one layout
 Tabs, in order: Values and words, Rules, Seen in products (`TabsList variant="line"`, scrolls at 375px). Primary button "Edit" swaps every editable field on every tab for its input in place; the button becomes Save with a Cancel beside it. Nothing moves, appears or disappears between the two modes except the inputs. Save sends ONE `PATCH /spec-registry/{spec_key}` with `user_values`, `suppressed_values`, `user_synonyms`, `suppressed_synonyms`, `value_labels`, `derivation_rules`, `label`, `unit`, `max_value`; Cancel restores the last loaded row. Unsaved changes prompt via the browser `beforeunload` only (no custom dialog).
@@ -150,7 +151,7 @@ Every grid and every tab body renders an explicit empty state with one CTA (A.4,
 `git diff` of the lane contains no new `transition`, `animate-`, `motion.` or `cubic-bezier` outside `components/ui`. Tab switch and edit toggle are instant. Lightboxes open with the shared surface spring (inherited, not configured).
 
 ### AC-G.5 [UX] Breakpoints
-Screenshots at 375px and 1280px for: list (both tabs), record page (three tabs, view and edit), Try a phrase dialog, Add key dialog, Search ranking tab, Spec Verification list. Nothing clipped; grids scroll sideways inside their container; tab strips scroll.
+Screenshots at 375px and 1280px for: list (both tabs), record page (three tabs, view and edit), Try a phrase dialog, Add specification dialog, Search ranking tab, Spec Verification list. Nothing clipped; grids scroll sideways inside their container; tab strips scroll.
 
 ### AC-G.6 [UX] Identity and copy
 No UUID visible (product ids only inside hrefs). Datetimes through `formatDateTimeInMalaysia`. Status and source as `Badge` pills. No `text-[Npx]`, `z-[N]`, `duration-[N]`.
@@ -159,7 +160,7 @@ No UUID visible (product ids only inside hrefs). Datetimes through `formatDateTi
 The reviewer's report includes the `emil-design-eng` Before / After / Why table for the UI diff, and lists which findings were fixed in-branch versus filed.
 
 ### AC-G.8 [T] Tests
-vitest: registry grid renders + filters + row href; record page view/edit toggle keeps field order (snapshot of field labels in both modes is identical); Values tab label input + payload; Rules tab try-on-product; Seen-in pagination params; Add key dialog; Try a phrase dialog empty state; Search ranking tab save; Spec Verification unverify countdown commit + cancel. pytest: D.2 to D.5, F.2 if applicable. Existing 54 Spec Verification tests stay green.
+vitest: registry grid renders + filters + row href; record page view/edit toggle keeps field order (snapshot of field labels in both modes is identical); Values tab label input + payload; Rules tab try-on-product; Seen-in pagination params; Add specification dialog; Try a phrase dialog empty state; Search ranking tab save; Spec Verification unverify countdown commit + cancel. pytest: D.2 to D.5, F.2 if applicable. Existing 54 Spec Verification tests stay green.
 
 ## Out of scope
 - Outline user guide for the workbench (backlog; the prose removed in D3 is its raw material).
