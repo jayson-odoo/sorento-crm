@@ -34,20 +34,36 @@ describe('Tooltip is a bare Root (M2-07)', () => {
     expect(source).toContain('skipDelayDuration={300}');
   });
 
-  it('renders no TooltipContent zoom class (opacity only)', () => {
+  /**
+   * M2-07 fix round - a tooltip is instant in and out, and the code says so.
+   *
+   * The content used to carry `opacity-0 transition-opacity` plus
+   * `data-[state=delayed-open]:opacity-100`, which never ran either way.
+   * Radix mounts the content already carrying `delayed-open`/`instant-open`
+   * (its `stateAttribute` is only `closed` while the content is unmounted), so
+   * the entry has no starting value to travel from; and Radix's Presence waits
+   * on `animationend` only, so a transition-only style unmounts on the closing
+   * frame and the exit never runs either. A hover is a tens-of-times-a-day
+   * interaction - the frequency gate allows none or a fast opacity - so the
+   * pairing goes rather than the fade being resurrected with a keyframe.
+   */
+  it('renders no TooltipContent entry/exit animation at all (instant in and out)', () => {
     const source = read('components/ui/tooltip.tsx');
     expect(source).not.toContain('zoom-in-95');
     expect(source).not.toContain('animate-in');
+    expect(source).not.toContain('transition-opacity');
+    expect(source).not.toContain('opacity-0');
+    expect(source).not.toContain('data-[state=delayed-open]');
   });
 
   // A behavioural "throws with no ancestor TooltipProvider" case is NOT
-  // covered here: vitest.setup.ts globally shims @radix-ui/react-tooltip's
-  // Root so the ~60 unrelated tests that happen to render a page with a
-  // Tooltip in it don't each need their own wrapper (see that file's
-  // comment) - which means Radix's real "must be used within
-  // TooltipProvider" guard is deliberately not exercised in this suite. The
-  // source check above is what actually proves tooltip.tsx ships no
-  // self-wrapping.
+  // covered here: vitest.config.ts (not vitest.setup.ts - the alias has to run
+  // before Vite resolves the import graph) shims Radix's tooltip Root into the
+  // calibrated Provider, so the ~60 unrelated tests that happen to render a
+  // page with a Tooltip in it don't each need their own wrapper - which means
+  // Radix's real "must be used within TooltipProvider" guard is deliberately
+  // not exercised in this suite. The source checks above are what prove
+  // tooltip.tsx ships no self-wrapping.
 
   it('works once wrapped in the shared TooltipProvider', () => {
     render(

@@ -93,17 +93,27 @@ arrives - see the file's own "Materials" comment for the precedent.
   skipDelayDuration={300}>` mounts in `components/ClientProviders.tsx`. A second one anywhere
   below it shadows the shared rhythm for its own subtree - which is what several toolbar buttons
   did before this shipped, each with its own `delayDuration={300}` or `{0}`, so the
-  skipDelayDuration grouping never applied across siblings. `TooltipContent` animates opacity
-  only, via a plain CSS transition on `data-state` (`duration-(--duration-fast)
-  ease-(--ease-standard)`) - no zoom, no `animate-in`. Radix only tracks `animationend` for its
-  exit-wait, not `transitionend`, so a tooltip's close is instant; its entry is the fade.
+  skipDelayDuration grouping never applied across siblings. A single dense toolbar may still
+  pass `delayDuration` on its own `Tooltip` Root (Radix reads it per instance, no second
+  provider) - `CanvasToolbar` does, at 300ms, because 15 unlabelled icons in a row make the
+  label the affordance.
+- **A tooltip is instant in AND out (M2-07).** `TooltipContent` carries no transition and no
+  keyframe: it is simply there after the delay, and gone on the closing frame. The
+  fade-on-`data-state` it used to carry could not run in either direction, so it was removed
+  rather than left as decoration - Radix mounts the content already carrying
+  `delayed-open`/`instant-open` (`stateAttribute` is only `closed` while the content is
+  unmounted), so an entry fade has no starting value to travel from, and Radix's Presence waits
+  on `animationend` alone, so a transition-only style unmounts before an exit fade can run.
+  Hover sits in the frequency table's "none or `--duration-fast` opacity only" band, so none is
+  a legitimate answer; resurrecting the fade would mean a keyframe animation, which is not worth
+  it for a surface this small.
 
 ### Rulings (2 Sep 2026)
 
 | Topic | Ruling |
 | --- | --- |
 | Easing curve | `--ease-standard` stays. It is already a custom curve; do not introduce a second one. A stronger ease-out is an ADR, not a PR. |
-| Duration per surface | Lightboxes (Dialog, Sheet, AlertDialog) = `--duration-slow` 300ms in, 200ms out (`SURFACE_SPRING` / `SURFACE_SPRING_EXIT`). Menus and popovers (DropdownMenu, Popover, ContextMenu, HoverCard, Menubar) = `--duration-base` 200ms in and out (`MENU_SPRING` / `SURFACE_SPRING_EXIT`). Tooltip = `--duration-fast` 150ms in (CSS transition, not a spring), instant out. Pressed feedback = `--duration-fast` 150ms. Shipped M2-03/M2-06/M2-07. |
+| Duration per surface | Lightboxes (Dialog, Sheet, AlertDialog) = `--duration-slow` 300ms in, 200ms out (`SURFACE_SPRING` / `SURFACE_SPRING_EXIT`). Menus and popovers (DropdownMenu, Popover, ContextMenu, HoverCard, Menubar) = `--duration-base` 200ms in and out (`MENU_SPRING` / `SURFACE_SPRING_EXIT`). Tooltip = instant in and out (see the tooltip bullet above: the 150ms CSS fade this table used to claim could not run in either direction). Pressed feedback = `--duration-fast` 150ms. Shipped M2-03/M2-06/M2-07. |
 | Frequency gate | Adopt the emil-design-eng frequency table verbatim: 100+ times/day (keyboard shortcuts, command palette toggle) = no animation; tens/day (hover, list navigation, row expand/collapse, tab switch) = none or `--duration-fast` opacity only; occasional (lightboxes, toasts, drawers) = standard surface spring; rare (onboarding, celebration) = may add delight. Keyboard-initiated actions never animate. |
 
 ### Hard-fails in review

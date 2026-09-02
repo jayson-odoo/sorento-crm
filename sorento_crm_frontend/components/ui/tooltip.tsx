@@ -27,11 +27,18 @@ function TooltipTrigger({ ...props }: React.ComponentProps<typeof TooltipPrimiti
 const tooltipVariants = cva(
   // z-[70] keeps tooltips above cards AND dialog overlays/content (both z-50);
   // rendered through a Portal (below) so a card's stacking context can't clip them.
-  // Opacity only, no zoom (M2-07): a plain CSS transition on `data-state`
-  // rather than a tw-animate keyframe, so a tooltip is the one surface that
-  // does not scale up from its trigger - it is too small and too transient
-  // for a spring to read as anything but flicker.
-  'z-[70] overflow-hidden rounded-md px-3 py-1.5 text-xs opacity-0 transition-opacity duration-(--duration-fast) ease-(--ease-standard) data-[state=delayed-open]:opacity-100 data-[state=instant-open]:opacity-100',
+  //
+  // No entry and no exit (M2-07). A tooltip is too small and too transient for
+  // a spring, and the frequency gate puts hover at "none or a fast opacity" -
+  // so this is the one surface with no motion at all. The transparent-to-opaque
+  // CSS transition keyed on `data-state` that used to sit here could not run in
+  // either direction and is gone rather than left as decoration: Radix mounts
+  // the content already carrying `delayed-open`/`instant-open` (its
+  // `stateAttribute` is only `closed` while the content is unmounted), so the
+  // entry has no starting value to travel from, and Radix's Presence waits on
+  // `animationend` alone, so a transition-only style unmounts on the closing
+  // frame.
+  'z-[70] overflow-hidden rounded-md px-3 py-1.5 text-xs',
   {
     variants: {
       variant: {

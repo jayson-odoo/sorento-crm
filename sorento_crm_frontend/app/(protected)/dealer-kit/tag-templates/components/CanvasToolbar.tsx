@@ -93,7 +93,12 @@ function ToolbarButton({
   active?: boolean;
 }) {
   return (
-    <Tooltip>
+    // 300ms rather than the app-wide 700ms (M2-07): this toolbar is 15 unlabelled
+    // icons in a row, so the label IS the affordance and waiting most of a second
+    // for it turns a sweep along the row into a stall. A per-instance
+    // `delayDuration` on the Root overrides the shared provider without mounting
+    // a second one, so the 300ms skip window still groups the sweep.
+    <Tooltip delayDuration={300}>
       <TooltipTrigger asChild>
         <Button
           variant="ghost"
