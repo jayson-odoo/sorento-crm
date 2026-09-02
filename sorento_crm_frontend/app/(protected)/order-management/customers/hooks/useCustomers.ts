@@ -11,6 +11,7 @@ import {
   deleteCustomer,
 } from '../services/customerService';
 import type { CustomerFormData } from '../types/customer.types';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 
 export type CustomersListParams = DataGridApiFetchParams & { status?: string };
@@ -53,6 +54,7 @@ export const customersPagerQuery = {
 
 export function useCustomers(params: CustomersListParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: customersListQueryKey(params),
     queryFn: () => getCustomers(params),
     staleTime: Infinity,
