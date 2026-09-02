@@ -383,6 +383,8 @@ export async function updateSpecKey(
   specKey: string,
   body: {
     label?: string;
+    /** Editable from the record page's header field (B.1, B.2). null clears it. */
+    unit?: string | null;
     rank_weight?: number;
     is_active?: boolean;
     match_tolerance?: number;
@@ -398,6 +400,13 @@ export async function updateSpecKey(
     applies_when?: Record<string, string[]>;
     /** The plausibility cap (AC-A.5, C.5). null clears it; absent leaves it as stored. */
     max_value?: number | null;
+    /**
+     * How each value reads on screen (#423, folded into the spec workbench
+     * redesign). Rides the PATCH already, but the column ships in S4 - until then
+     * the backend accepts and drops it (Pydantic `extra='ignore'`), and
+     * `useSpecKeyRecord.save()` mocks the echo onto the client cache itself.
+     */
+    value_labels?: Record<string, string>;
   },
 ): Promise<SpecRegistryKey> {
   const response = await apiFetch(
