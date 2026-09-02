@@ -31,6 +31,18 @@
 
   /* Desktop mode */
   @media (min-width: theme(--breakpoint-lg)) {
+    /*
+     * M3-06 (`ui-motion-round2`, UAC): this collapse still animates `width`
+     * (and, below, `.wrapper`'s `padding-inline-start` / `.header`'s
+     * `inset-inline-start`) rather than a `transform` - a transform-only
+     * rewrite of this mechanism was tried and reverted (S8-03, see this
+     * file's git history: it distorted both end states). M3 does not retry
+     * that rewrite; instead it records a DevTools performance trace of a
+     * sidebar collapse on the Orders list (50 rows, `evidence/M3/`) and
+     * either files a follow-up ticket for the transform rewrite (if the
+     * trace shows dropped frames) or makes the transition instant, the
+     * trace being the justification (if it does not). See the PR for which.
+     */
     .demo1 .sidebar {
       width: var(--sidebar-width);
       transition: width var(--sidebar-transition-duration)
