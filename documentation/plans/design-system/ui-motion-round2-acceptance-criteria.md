@@ -259,10 +259,17 @@ Baseline measured on `origin/main` e1adad4d2, 2 Sep 2026.
 - **M6-04** `[vitest] [browser]` One `<Toaster position="top-center">` is mounted; query
   errors and mutation errors both appear top-center. `lib/toast.ts` gives success 4000ms and
   error `Infinity` with a close button; no file outside `lib/toast.ts` and
-  `components/ui/sonner.tsx` imports from `sonner` directly.
+  `components/ui/sonner.tsx` imports from `sonner` directly. `providers/query-provider.tsx`'s
+  own error toasts (`toast.custom`, both the permission-denied and the generic path) are sticky
+  too - `duration: Infinity` and a rendered close button that dismisses by the toast's own id -
+  the same "wait for the reader" contract `toast.error` gives everywhere else.
 - **M6-05** `[browser]` Tabbing to a dialog's close X shows the global focus ring.
-- **M6-06** `[review]` The four portal search boxes use `useDebouncedSearch` and
-  `ListSearchInput`; no hand-rolled `setTimeout(..., 300)` remains in `app/(auth)/portal`.
+- **M6-06** `[review]` The four portal search boxes adopt `useDebouncedSearch`; no hand-rolled
+  `setTimeout(..., 250|300)` remains in `app/(auth)/portal`. `PortalLanding`'s plain search box
+  also moves to `ListSearchInput`. `AsyncCombobox` / `MultiPillInput` / `AsyncMultiCombobox` are
+  comboboxes (a dropdown, keyboard nav, free text) that `ListSearchInput` does not support, so
+  they keep their own inputs and adopt only the hook, folding `isSettling` into their existing
+  "Searching..." state the way `ListSearchInput`'s spinner does.
 - **M6-07** `[browser]` A conversation thread with three images auto-scrolls to the bottom and
   stays there while the images load (each image is inside a fixed-aspect box).
 - **M6-08** `[review]` `documentation/adr/` records the `ssr: false` provider decision.

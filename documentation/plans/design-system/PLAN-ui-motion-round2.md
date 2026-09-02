@@ -276,10 +276,19 @@ query, and the inventory tests are what keep both halves true.
   their per-call `position`. New `lib/toast.ts` wrapping sonner: `toast.success` 4000ms,
   `toast.error` `duration: Infinity` with `closeButton`; the 1576 call sites switch import path
   (mechanical, one module per commit); a vitest asserts no direct `from 'sonner'` import outside
-  `lib/toast.ts` and `components/ui/sonner.tsx`.
+  `lib/toast.ts` and `components/ui/sonner.tsx`. `toast.custom` does not inherit that contract for
+  free - sonner never gives a `jsx` toast its own close button, `Toaster`'s global `closeButton`
+  prop notwithstanding - so `query-provider.tsx`'s two `toast.custom` error toasts (permission-
+  denied and the generic path) each pass `duration: Infinity` and render their own `<Alert
+  close onClose={() => toast.dismiss(id)}>`, using the id sonner's `custom` render prop hands
+  back; the permission-denied path keeps its fixed `id: 'permission-denied'` dedupe.
 - `dialog.tsx:267` drops `outline-0 focus:outline-hidden` on `DialogClose`.
-- Portal search boxes (`PortalLanding.tsx:373`, `AsyncCombobox.tsx:129`, `MultiPillInput.tsx:92`)
-  adopt `useDebouncedSearch` + `ListSearchInput`.
+- The four portal search boxes (`PortalLanding.tsx:373`, `AsyncCombobox.tsx:129`,
+  `MultiPillInput.tsx:92`, `AsyncMultiCombobox`) adopt `useDebouncedSearch`, replacing every
+  hand-rolled `setTimeout(..., 250|300)` in `app/(auth)/portal`. Only `PortalLanding`'s plain
+  search box also moves to `ListSearchInput`: the other three are comboboxes (dropdown, keyboard
+  nav, free text) that `ListSearchInput` does not support, so they keep their own inputs and fold
+  `isSettling` into the "Searching..." state they already render.
 - `RespondChatList.tsx:348-352` chat image inside an `aspect-[4/3]` box with `object-contain`.
 - `DynamicClientProviders.tsx` `ssr: false` is recorded as a decision in
   `documentation/adr/` (accepted for an authenticated internal app), not changed.
