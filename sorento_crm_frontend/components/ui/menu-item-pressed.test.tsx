@@ -78,15 +78,26 @@ describe('Menu item pressed states (M1-05)', () => {
 });
 
 describe('Clickable DataGrid row darkens on pointer-down (M1-05)', () => {
-  it('names active:bg-muted/60 alongside hover:bg-muted/40', () => {
-    // Both row branches (the real body row and the loading-skeleton row) share
-    // this literal class string; a source assertion is what a render test
-    // cannot speak for here without standing up the whole grid + table context.
-    const src = fs.readFileSync(path.join(__dirname, 'data-grid-table.tsx'), 'utf8');
-    const matches = src.match(/hover:bg-muted\/40[^']*/g) ?? [];
-    expect(matches.length).toBeGreaterThanOrEqual(2);
-    for (const m of matches) {
-      expect(m).toContain('active:bg-muted/60');
-    }
+  // A source assertion is what a render test cannot speak for here without
+  // standing up the whole grid + table context.
+  const src = fs.readFileSync(path.join(__dirname, 'data-grid-table.tsx'), 'utf8');
+  const flat = src.replace(/\s+/g, ' ');
+
+  it('gates active:bg-muted/60 on the row being clickable and not stripped', () => {
+    expect(flat).toContain("(href || props.onRowClick) && !props.tableLayout?.stripped && 'active:bg-muted/60'");
+  });
+
+  it('leaves the press cue off the skeleton row and off an unclickable row', () => {
+    // One occurrence in the file, and the assertion above says which one it is:
+    // the unconditional class string that both row builders open with no longer
+    // carries it, so a row with no rowHref/onRowClick never darkens.
+    expect(src.match(/active:bg-muted\/60/g) ?? []).toHaveLength(1);
+    expect(flat).toContain("'hover:bg-muted/40 data-[state=selected]:bg-muted/50'");
+
+    const from = src.indexOf('function DataGridTableBodyRowSkeleton');
+    expect(from).toBeGreaterThan(-1);
+    const skeleton = src.slice(from, src.indexOf('\n}\n', from));
+    expect(skeleton).toContain('hover:bg-muted/40');
+    expect(skeleton).not.toContain('active:bg-muted/60');
   });
 });

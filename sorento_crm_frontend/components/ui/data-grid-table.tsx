@@ -327,7 +327,7 @@ function DataGridTableBodyRowSkeleton({ children }: { children: ReactNode }) {
   return (
     <tr
       className={cn(
-        'hover:bg-muted/40 active:bg-muted/60 data-[state=selected]:bg-muted/50',
+        'hover:bg-muted/40 data-[state=selected]:bg-muted/50',
         (props.rowHref || props.onRowClick) && 'cursor-pointer',
         !props.tableLayout?.stripped &&
           props.tableLayout?.rowBorder &&
@@ -519,9 +519,14 @@ function DataGridTableBodyRow<TData>({
     ...(dndAttributes ?? {}),
     ...(dndListeners ?? {}),
     className: cn(
-      'hover:bg-muted/40 active:bg-muted/60 data-[state=selected]:bg-muted/50',
+      'hover:bg-muted/40 data-[state=selected]:bg-muted/50',
       isPending && 'opacity-50',
       (href || props.onRowClick) && 'cursor-pointer',
+      // The press cue belongs to the rows that take a press. It is not on the
+      // skeleton row (nothing to open yet), and not on a stripped grid, where
+      // the odd row already paints itself bg-muted/90 - darker than the /60 the
+      // press would set, so the press would read as a lift, not a push.
+      (href || props.onRowClick) && !props.tableLayout?.stripped && 'active:bg-muted/60',
       !props.tableLayout?.stripped &&
         props.tableLayout?.rowBorder &&
         'border-b border-border [&:not(:last-child)>td]:border-b',
