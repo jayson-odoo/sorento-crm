@@ -21,6 +21,7 @@ import type {
 
 export function useAutomations(params: { page?: number; limit?: number; query?: string } = {}) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['automations', params],
     queryFn: () => getAutomations(params),
     staleTime: 1000 * 30,

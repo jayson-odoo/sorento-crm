@@ -213,7 +213,11 @@ export function useProjectParties(params: {
   limit?: number;
   include_inactive?: boolean;
 }) {
-  return useQuery({ queryKey: [PARTIES_KEY, params], queryFn: () => listParties(params) });
+  return useQuery({
+    ...LIST_QUERY_OPTIONS,
+    queryKey: [PARTIES_KEY, params],
+    queryFn: () => listParties(params),
+  });
 }
 
 export function useStakeholders(projectId: string | undefined) {
@@ -473,6 +477,7 @@ export function useMyTasks(params: {
   limit?: number;
 }) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [MY_TASKS_KEY, params],
     queryFn: () => listMyTasks(params),
   });

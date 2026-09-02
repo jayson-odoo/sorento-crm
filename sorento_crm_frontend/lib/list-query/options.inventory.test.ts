@@ -41,6 +41,21 @@ const LIST_KEY_LITERAL_RE = /page|pageIndex|pageSize|sorting|limit|columnFilters
 const LIST_KEY_BUILDER_RE = /[Ll]ist(Query)?Key\s*\(|Keys\.(definitions|submissions)/;
 
 /**
+ * Trigger 3: a `queryKey` that carries a `params` (or `listParams`) OBJECT.
+ *
+ * `salesOrdersKey(projectId, params)`, `orderInquiryRowsKey(projectId, params)`
+ * and `awaitingAcceptanceKey(params)` name no list and use no list-key builder,
+ * so triggers 1 and 2 both walked past them while all three paged a grid. What
+ * they have in common is the bag of page/sort/filter state in the key, which is
+ * the thing `keepPreviousData` exists for.
+ *
+ * Deliberately `params`, not any identifier: a detail or report query keys on
+ * its id or its own named arguments (`coverageKey(projectId)`,
+ * `orderSummaryKey(orderId)`), so it stays unflagged.
+ */
+const LIST_KEY_PARAMS_RE = /\b(params|listParams)\b/;
+
+/**
  * The one query that names a list key and must NOT keep previous data.
  *
  * `useListPager` re-runs the LIST query in the background from a detail page,
@@ -216,7 +231,12 @@ function findMisses(): string[] {
     for (const { block, line } of findUseQueryBlocks(text)) {
       const keyVal = extractQueryKeyValue(block);
       if (!keyVal) continue;
-      if (!LIST_KEY_LITERAL_RE.test(keyVal) && !LIST_KEY_BUILDER_RE.test(keyVal)) continue;
+      if (
+        !LIST_KEY_LITERAL_RE.test(keyVal) &&
+        !LIST_KEY_BUILDER_RE.test(keyVal) &&
+        !LIST_KEY_PARAMS_RE.test(keyVal)
+      )
+        continue;
       if (block.includes('...LIST_QUERY_OPTIONS')) continue;
       misses.push(`${rel}:${line} :: queryKey ${keyVal.replace(/\s+/g, ' ').slice(0, 80)}`);
     }
@@ -239,6 +259,26 @@ describe('every paginated list hook spreads LIST_QUERY_OPTIONS (M4-01)', () => {
     expect(LIST_KEY_BUILDER_RE.test('productsListQueryKey(params)')).toBe(true);
     expect(LIST_KEY_BUILDER_RE.test('poWorklistKey(q)')).toBe(true);
     expect(LIST_KEY_BUILDER_RE.test('[...wfKeys.definitions, params]')).toBe(true);
+  });
+
+  it('trigger 3 reads a params BAG, and leaves a named-argument key alone', () => {
+    // The three the first two triggers walked past: no "list" in the builder
+    // name, no page/sort word in the key, but a whole bag of list state in it.
+    expect(LIST_KEY_PARAMS_RE.test("salesOrdersKey(projectId ?? '', params)")).toBe(true);
+    expect(LIST_KEY_PARAMS_RE.test("orderInquiryRowsKey(projectId ?? '', params)")).toBe(true);
+    expect(LIST_KEY_PARAMS_RE.test('awaitingAcceptanceKey(params)')).toBe(true);
+    expect(LIST_KEY_PARAMS_RE.test('[PARTIES_KEY, listParams]')).toBe(true);
+
+    // The reorder screens' report queries and the conversations inbox key on
+    // named arguments, not a params bag, and must stay unflagged - keeping the
+    // previous answer on a report is a decision those hooks make for
+    // themselves, and a detail key must never answer from the last record.
+    expect(LIST_KEY_PARAMS_RE.test('coverageKey(q)')).toBe(false);
+    expect(LIST_KEY_PARAMS_RE.test('orderSummaryKey(q)')).toBe(false);
+    expect(LIST_KEY_PARAMS_RE.test('planExceptionsKey(q)')).toBe(false);
+    expect(LIST_KEY_PARAMS_RE.test('conversationsInboxKey(tab, q)')).toBe(false);
+    expect(LIST_KEY_PARAMS_RE.test("['product', id]")).toBe(false);
+    expect(LIST_KEY_PARAMS_RE.test('taskHistoryKey(projectId, taskId)')).toBe(false);
   });
 
   it('blanks comments before matching, so an apostrophe in one cannot hide a hook', () => {

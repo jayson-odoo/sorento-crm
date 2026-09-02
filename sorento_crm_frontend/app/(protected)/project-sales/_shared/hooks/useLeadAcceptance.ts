@@ -13,6 +13,7 @@ import {
 import type { AwaitingAcceptanceParams } from '../types/leadAcceptance.types';
 // Read-only: one definition of the lead cache key, owned by useProjects.
 import { LEADS_KEY, leadKey } from './useProjects';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export const AWAITING_ACCEPTANCE_KEY = [LEADS_KEY, 'awaiting-acceptance'];
 export const awaitingAcceptanceKey = (params: AwaitingAcceptanceParams) => [
@@ -22,6 +23,7 @@ export const awaitingAcceptanceKey = (params: AwaitingAcceptanceParams) => [
 
 export function useAwaitingAcceptance(params: AwaitingAcceptanceParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: awaitingAcceptanceKey(params),
     queryFn: () => listAwaitingAcceptance(params),
   });

@@ -13,9 +13,11 @@ import type {
   EmailTemplateCreateBody,
   EmailTemplateUpdateBody,
 } from '../types/emailTemplate.types';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export function useEmailTemplates(params: { page?: number; limit?: number; query?: string } = {}) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['email-templates', params],
     queryFn: () => getEmailTemplates(params),
     staleTime: 1000 * 60,

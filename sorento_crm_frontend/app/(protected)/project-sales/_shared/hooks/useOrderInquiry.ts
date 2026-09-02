@@ -58,6 +58,7 @@ export function useOrderInquiryRows(
   params: OrderInquiryListParams = {},
 ) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: orderInquiryRowsKey(projectId ?? '', params),
     queryFn: () => listOrderInquiryRows(projectId as string, params),
     enabled: Boolean(projectId),
