@@ -80,6 +80,15 @@ export interface DataGridProps<TData extends object> {
    */
   rowPending?: (row: TData) => boolean;
   isLoading?: boolean;
+  /**
+   * True while the rows on screen are the PREVIOUS page's, kept visible by
+   * `LIST_QUERY_OPTIONS` while the next one loads (M4 list latency).
+   *
+   * `DataGridTable` dims the body while this is true instead of swapping it
+   * for a skeleton, and `DataGridPagination` keeps its own controls live -
+   * a placeholder page is not "loading" in the sense that hides the pager.
+   */
+  isPlaceholderData?: boolean;
   loadingMode?: 'skeleton' | 'spinner';
   loadingMessage?: ReactNode | string;
   emptyMessage?: ReactNode | string;

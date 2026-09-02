@@ -50,6 +50,12 @@ function DataGridPagination(props: DataGridPaginationProps) {
 
   const mergedProps: DataGridPaginationProps = { ...defaultProps, ...props };
 
+  // A placeholder page (M4 list latency) keeps its OWN rows on screen while
+  // the next page loads, so the pager has something real to show and stays
+  // interactive - Rows-per-page and Next both work, and the second press
+  // wins. Only the FIRST load, with no rows to show yet, gets the skeleton.
+  const showSkeleton = isLoading && table.getRowModel().rows.length === 0;
+
   const btnBaseClasses = 'size-7 p-0 text-sm';
   const btnArrowClasses = btnBaseClasses + ' rtl:transform rtl:rotate-180';
   const pageIndex = table.getState().pagination.pageIndex;
@@ -147,7 +153,7 @@ function DataGridPagination(props: DataGridPaginationProps) {
       )}
     >
       <div className="flex flex-wrap items-center space-x-2.5 pb-2.5 sm:pb-0 order-2 sm:order-1">
-        {isLoading ? (
+        {showSkeleton ? (
           mergedProps?.sizesSkeleton
         ) : (
           <>
@@ -177,7 +183,7 @@ function DataGridPagination(props: DataGridPaginationProps) {
         )}
       </div>
       <div className="flex flex-col sm:flex-row justify-center sm:justify-end items-center gap-2.5 pt-2.5 sm:pt-0 order-1 sm:order-2">
-        {isLoading ? (
+        {showSkeleton ? (
           mergedProps?.infoSkeleton
         ) : (
           <>
