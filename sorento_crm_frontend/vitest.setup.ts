@@ -1,13 +1,6 @@
 import '@testing-library/jest-dom';
 import { configure } from '@testing-library/dom';
 
-// M2-07: `Tooltip` is a bare Root in production (the app supplies exactly
-// ONE ambient TooltipProvider in ClientProviders.tsx) - the test-harness
-// equivalent is `vitest.config.ts`'s `resolve.alias` for `@radix-ui/react-tooltip`
-// (see `test-mocks/radix-tooltip.tsx`), not anything in this file: it needs
-// to run before Vite resolves the import graph, which a setup file is too
-// late for.
-
 /*
   Testing Library gives an async assertion one second to come true.
 

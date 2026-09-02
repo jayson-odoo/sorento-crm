@@ -57,13 +57,15 @@ describe('Tooltip is a bare Root (M2-07)', () => {
   });
 
   // A behavioural "throws with no ancestor TooltipProvider" case is NOT
-  // covered here: vitest.config.ts (not vitest.setup.ts - the alias has to run
-  // before Vite resolves the import graph) shims Radix's tooltip Root into the
-  // calibrated Provider, so the ~60 unrelated tests that happen to render a
-  // page with a Tooltip in it don't each need their own wrapper - which means
-  // Radix's real "must be used within TooltipProvider" guard is deliberately
-  // not exercised in this suite. The source checks above are what prove
-  // tooltip.tsx ships no self-wrapping.
+  // covered here: vitest.config.ts (not vitest.setup.ts - an alias has to run
+  // before Vite resolves the import graph) points `@/components/ui/tooltip` at
+  // test-mocks/ui-tooltip.tsx, which wraps Tooltip in the calibrated Provider,
+  // so the ~60 unrelated tests that happen to render a page with a Tooltip in
+  // it don't each need their own wrapper - which means Radix's real "must be
+  // used within TooltipProvider" guard is deliberately not exercised in this
+  // suite. This file imports './tooltip' by relative path, so it reads the
+  // real module; the source checks above are what prove tooltip.tsx ships no
+  // self-wrapping.
 
   it('works once wrapped in the shared TooltipProvider', () => {
     render(
