@@ -636,7 +636,11 @@ export function StockDocumentsPanel({
           : balance;
       list.push({
         id: 'balance',
-        accessorFn: (row) => Number(row.balance || 0),
+        // SORTED ON WHAT IS SHOWN (review round 2, nit 9). Under a site-pool section the
+        // cell renders the SHARE of each balance, and sorting the raw pile put the rows in
+        // an order the column's own numbers contradict - a floor and a cap are not
+        // order-preserving, so two rows can read 12 and 12 off balances of 25 and 24.
+        accessorFn: (row) => Number(displayedBalance(row.balance) || 0),
         header: ({ column }) => (
           <DataGridColumnHeader title={balanceHeading} column={column} />
         ),

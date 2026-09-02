@@ -560,6 +560,85 @@ describe('StockDocumentsPanel: the group reading', () => {
  * S3 (PLAN-scm-planning-feedback-31aug): the "Donor" and "This document" badges (AC-3.3/3.4),
  * the search (AC-3.5) and the jump flash (AC-3.1/3.11).
  */
+describe('StockDocumentsPanel: the site pool ledger (R-K, AC-2.6b)', () => {
+  /**
+   * The five-pool SET, which is the one section whose running column is not the raw pile:
+   * it reads `Available for Project` - the share of each balance a project line may take,
+   * capped by the five-pool net - so the ledger and the walk quote one number.
+   */
+  function poolsPosition(): StockDetail {
+    return {
+      product_id: 'prod-1',
+      item_code: 'SRTWCX8840-S-RL',
+      warehouse_id: null,
+      location: null,
+      group: 'pools',
+      bins: [{ warehouse_id: 'wh-brw', location: 'BRW', qty_on_hand: '102' }],
+      qty_on_hand: '102',
+      so_qty: '1',
+      spo_qty: '510',
+      available_qty: '611',
+      qty_reserved: '0',
+      qty_held_by_decisions: '0',
+      qty_free: '102',
+      five_pool_net: '900',
+      pool_share_pct: 50,
+      sales_orders: [
+        {
+          sales_order_id: 'so-dealer',
+          so_number: 'SO400001',
+          customer_name: 'A DEALER',
+          location: 'BRW',
+          doc_date: '2026-01-05',
+          delivery_date: '2026-09-05',
+          so_qty: '1',
+          line_id: 'line-d',
+          is_this_line: false,
+        },
+      ],
+      incoming: [
+        {
+          spo_number: 'SPO-2026/09-0001',
+          supplier_name: 'FOSHAN WORKS',
+          location: 'BRW',
+          expected_date: '2026-09-20',
+          spo_qty: '510',
+        },
+      ],
+    };
+  }
+
+  function balancesOf(): (string | null)[] {
+    return [
+      ...document.querySelectorAll('[data-testid^="stock-balance-"]'),
+    ].map((cell) => cell.textContent);
+  }
+
+  it('heads the running column Available for Project and shares every balance', async () => {
+    getStockDetail.mockResolvedValue(poolsPosition());
+
+    renderPanel('pools');
+    await screen.findByRole('table');
+
+    expect(screen.getByText('Available for Project')).toBeTruthy();
+    // 102 on hand -> 51, less the 1-unit dealer order -> 50, plus the 510 SPO -> 305.
+    // The share is applied to the BALANCE the walk landed on, never to the row's own qty.
+    expect(balancesOf()).toEqual(['51', '50', '305']);
+  });
+
+  it('caps every shared balance by the five-pool net, so the ledger cannot promise past the pile', async () => {
+    getStockDetail.mockResolvedValue({ ...poolsPosition(), five_pool_net: '52' });
+
+    renderPanel('pools');
+    await screen.findByRole('table');
+
+    // R-D: the pool's own free pile says WHERE, the net says HOW MUCH. 305 is what the
+    // share alone would read and 52 is what the five pools actually net between them.
+    expect(balancesOf()).toEqual(['51', '50', '52']);
+  });
+
+});
+
 describe('StockDocumentsPanel: the S3 badges, search and jump', () => {
   it('AC-3.3: badges the donor row by its core line id, and leaves other rows plain', async () => {
     getStockDetail.mockResolvedValue(captainsPosition());
