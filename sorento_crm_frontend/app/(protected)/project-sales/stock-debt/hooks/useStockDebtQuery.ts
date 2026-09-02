@@ -1,8 +1,9 @@
 'use client';
 
-import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { getStockDebtCell, getStockDebtList } from '../services/stockDebtService';
 import type { StockDebtListParams } from '../services/stockDebtService';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 /**
  * The month x product board (AC-S2-6).
@@ -13,6 +14,7 @@ import type { StockDebtListParams } from '../services/stockDebtService';
  */
 export function useStockDebtQuery(params: StockDebtListParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [
       'project-sales',
       'stock-debt',
@@ -24,7 +26,6 @@ export function useStockDebtQuery(params: StockDebtListParams) {
       params.onlyDebt,
     ],
     queryFn: () => getStockDebtList(params),
-    placeholderData: keepPreviousData,
     staleTime: 60_000,
     retry: 1,
   });

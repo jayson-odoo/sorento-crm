@@ -132,7 +132,6 @@ export function useSupply(psoId: string | undefined, enabled = true) {
     retry: 1,
     // A focus refetch mid-composition churns the proposal under CS for no decision
     // change; the confirm rechecks live facts anyway, so the sheet does not need to.
-    refetchOnWindowFocus: false,
     staleTime: 15_000,
   });
 
@@ -265,7 +264,6 @@ export function usePlanningBoard(
     queryFn: () => getPlanningBoard(soNumbers, granularity, previewPolicy, options),
     enabled: enabled && soNumbers.length > 0,
     retry: 1,
-    refetchOnWindowFocus: false,
   });
 }
 
@@ -289,7 +287,6 @@ export function usePileQueue(
     queryFn: () => getPileQueue(productId as string, warehouseId as string, lineId),
     enabled: enabled && Boolean(productId) && Boolean(warehouseId),
     retry: 1,
-    refetchOnWindowFocus: false,
   });
 }
 
@@ -305,7 +302,6 @@ export function useClassificationEvidence(productId?: string | null, enabled = t
     queryFn: () => getClassificationEvidence(productId as string),
     enabled: enabled && Boolean(productId),
     retry: 1,
-    refetchOnWindowFocus: false,
   });
 }
 
@@ -334,7 +330,6 @@ export function useStockDetail(
     queryKey: [STOCK_DETAIL_KEY, productId, group ?? warehouseId, key],
     queryFn: () => getStockDetail(productId, warehouseId, lineIds, group),
     retry: 1,
-    refetchOnWindowFocus: false,
   });
 }
 
