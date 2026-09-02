@@ -59,9 +59,6 @@ export function SeenInProductsTab({
   const canEdit = useHasPermission('master_data.spec_registry.edit');
   const { reread } = useSpecRegistryMutations();
   const [valueFilter, setValueFilter] = useState<string | undefined>();
-  // Class and Source have no query-string equivalent on `GET .../products` (only
-  // `value` and `q` do), so these two narrow the loaded PAGE rather than the whole
-  // filtered set - a known gap, not a round trip the backend does not support yet.
   const [classFilter, setClassFilter] = useState<string | undefined>();
   const [sourceFilter, setSourceFilter] = useState<string | undefined>();
   const [pagination, setPagination] = useState<PaginationState>({
@@ -77,27 +74,19 @@ export function SeenInProductsTab({
 
   useEffect(() => {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
-  }, [query, valueFilter]);
+  }, [query, valueFilter, classFilter, sourceFilter]);
 
   const { data, isLoading, isFetching } = useSpecKeyProductsQuery(specKey, {
     value: valueFilter,
     q: query || undefined,
+    classLabel: classFilter,
+    source: sourceFilter,
     limit: pagination.pageSize,
     offset: pagination.pageIndex * pagination.pageSize,
   });
 
   const total = data?.total ?? 0;
-
-  const filteredProducts = useMemo(
-    () =>
-      (data?.products ?? []).filter((product) => {
-        if (classFilter !== undefined && (product.class ?? '') !== classFilter) return false;
-        if (sourceFilter !== undefined && (product.source ?? '') !== sourceFilter) return false;
-        return true;
-      }),
-    [data, classFilter, sourceFilter],
-  );
-  const filteringPage = classFilter !== undefined || sourceFilter !== undefined;
+  const products = data?.products ?? [];
 
   const productHref = (row: SpecKeyProduct) =>
     `/master-data-management/products/${row.id}?tab=specifications&back=${encodeURIComponent(pathname)}`;
@@ -185,7 +174,7 @@ export function SeenInProductsTab({
 
   const table = useReactTable({
     columns,
-    data: filteredProducts,
+    data: products,
     getRowId: (row) => row.id,
     pageCount: Math.max(1, Math.ceil(total / pagination.pageSize)),
     state: { pagination },
@@ -223,7 +212,7 @@ export function SeenInProductsTab({
     <div className="flex flex-col gap-3">
       <DataGrid
         table={table}
-        recordCount={filteringPage ? filteredProducts.length : total}
+        recordCount={total}
         isLoading={isLoading}
         rowHref={productHref}
         tableLayout={{ width: 'fixed', columnsResizable: true }}

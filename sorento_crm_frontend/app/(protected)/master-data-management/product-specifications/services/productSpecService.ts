@@ -481,12 +481,23 @@ export async function getSpecCoverage(): Promise<{
 
 export async function getSpecKeyProducts(
   specKey: string,
-  params: { value?: string; q?: string; limit?: number; offset?: number } = {},
+  params: {
+    value?: string;
+    q?: string;
+    classLabel?: string;
+    source?: string;
+    limit?: number;
+    offset?: number;
+  } = {},
 ): Promise<SpecKeyProducts> {
   const query = new URLSearchParams();
   if (params.value !== undefined) query.set('value', params.value);
   // Searched server-side over the whole key, not over the page on screen.
   if (params.q) query.set('q', params.q);
+  // Class and Source narrow the query itself (UAC B.5, D17), not the page already on
+  // screen - a key with 10,000 rows only has one page loaded client-side.
+  if (params.classLabel) query.set('class_label', params.classLabel);
+  if (params.source) query.set('source', params.source);
   query.set('limit', String(params.limit ?? 100));
   query.set('offset', String(params.offset ?? 0));
   const response = await apiFetch(

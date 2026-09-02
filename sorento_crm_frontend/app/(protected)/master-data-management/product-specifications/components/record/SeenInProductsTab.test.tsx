@@ -36,16 +36,22 @@ vi.mock('../../hooks/useSpecRegistryMutations', () => ({
 }));
 
 let queryData: SpecKeyProducts;
+let lastParams: SpecKeyProductsParams | undefined;
+// `mock.calls` records what reached the hook. `lastParams` is the same thing read
+// back plainly, so assertions below do not have to dig into vitest's call-argument
+// typing.
+const mockUseSpecKeyProductsQuery = vi.fn((specKey: string, params: SpecKeyProductsParams) => {
+  lastParams = params;
+  return { data: queryData, isLoading: false, isFetching: false };
+});
 vi.mock('../../hooks/useSpecKeyProductsQuery', () => ({
-  useSpecKeyProductsQuery: () => ({
-    data: queryData,
-    isLoading: false,
-    isFetching: false,
-  }),
+  useSpecKeyProductsQuery: (specKey: string, params: SpecKeyProductsParams) =>
+    mockUseSpecKeyProductsQuery(specKey, params),
 }));
 
 import { SeenInProductsTab } from './SeenInProductsTab';
 import type { SpecKeyProducts } from '../../services/productSpecService';
+import type { SpecKeyProductsParams } from '../../hooks/useSpecKeyProductsQuery';
 
 function renderTab(props: Partial<React.ComponentProps<typeof SeenInProductsTab>> = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -57,6 +63,8 @@ function renderTab(props: Partial<React.ComponentProps<typeof SeenInProductsTab>
 }
 
 beforeEach(() => {
+  mockUseSpecKeyProductsQuery.mockClear();
+  lastParams = undefined;
   queryData = {
     spec_key: 'finish',
     label: 'Finish',
@@ -145,6 +153,30 @@ describe('SeenInProductsTab - toolbar filters, not a pill strip (D17)', () => {
     fireEvent.click(screen.getByText('Pp (3)'));
 
     expect(screen.getByText('Pp (3)', { selector: '[data-slot="searchable-select-trigger"] span' })).toBeInTheDocument();
+  });
+});
+
+describe('SeenInProductsTab - Class and Source narrow the query, not the page (D17)', () => {
+  it('choosing a Class option reaches the query hook as classLabel, not a client-side filter', () => {
+    queryData = { ...queryData, by_class: [{ class: 'Sinks', count: 2 }] };
+    renderTab();
+
+    const { classCombobox } = openFilters();
+    fireEvent.click(classCombobox);
+    fireEvent.click(screen.getByText('Sinks (2)'));
+
+    expect(lastParams).toMatchObject({ classLabel: 'Sinks' });
+  });
+
+  it('choosing a Source option reaches the query hook as source, not a client-side filter', () => {
+    queryData = { ...queryData, by_source: [{ source: 'human', count: 4 }] };
+    renderTab();
+
+    const { sourceCombobox } = openFilters();
+    fireEvent.click(sourceCombobox);
+    fireEvent.click(screen.getByText('Set by hand (4)'));
+
+    expect(lastParams).toMatchObject({ source: 'human' });
   });
 });
 
