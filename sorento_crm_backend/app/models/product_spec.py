@@ -145,6 +145,10 @@ class ProductSpecRegistry(Base):
     # lists, which meant a key created in the UI could never be populated - the form
     # made a promise the engine could not keep.
     derivation_rules = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    # value -> display label ("pp" -> "PP"), purely cosmetic (#423). Editable on seed
+    # AND user rows, like user_synonyms: staff-owned, never seed-repaired (nothing in
+    # `_seed_values` names this column, so the repair loop cannot touch it).
+    value_labels = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"), default=dict)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), nullable=True, onupdate=func.now())
 

@@ -102,9 +102,9 @@ describe('Mobile one-offs (S4-04)', () => {
     expect(src).not.toContain('bg-muted backdrop-blur-xs');
   });
 
-  it('S4-04: the Product Specifications freshness banner wraps instead of pushing', () => {
+  it('S4-04: the Product Specifications freshness line wraps instead of pushing', () => {
     const src = read(
-      'app/(protected)/master-data-management/product-specifications/components/CatalogueFreshness.tsx',
+      'app/(protected)/master-data-management/product-specifications/components/CatalogueFreshnessLine.tsx',
     );
     // Measured 0px wide and 500px tall at 375 with `flex-1` alone: a wrapping
     // row breaks its lines on flex-BASIS, and basis 0 kept the paragraph on the

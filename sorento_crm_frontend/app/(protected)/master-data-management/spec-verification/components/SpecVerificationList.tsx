@@ -30,6 +30,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import {
@@ -52,15 +53,19 @@ import { Switch } from '@/components/ui/switch';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { usePermissions } from '@/hooks/usePermissions';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { useDeferredBulkAction } from '@/hooks/useDeferredBulkAction';
+import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
-import { readable, readableEntry } from '@/lib/spec-readable';
+import { pendingEntityKey, usePendingEntityKeys } from '@/lib/pending-entity-store';
+import { readable, readableEntry, valueLabelsByKey } from '@/lib/spec-readable';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
+import { useSpecRegistryQuery } from '../../product-specifications/hooks/useSpecRegistryQuery';
 import {
-  skippedUnverifyCodes,
   skippedVerifyCodes,
   useSpecVerificationMutations,
   useSpecVerificationWorklist,
+  WORKLIST_KEY,
 } from '../hooks/useSpecVerification';
 import type {
   SpecVerificationCoverage,
@@ -89,7 +94,10 @@ function productCodeCount(n: number): string {
 }
 
 /** Who vouched for the code and when, or what moved under the stamp. */
-function verificationTitle(block: VerificationBlock): string {
+function verificationTitle(
+  block: VerificationBlock,
+  valueLabels: Record<string, Record<string, string>>,
+): string {
   const stamp =
     block.verified_by_name && block.verified_at
       ? `${block.verified_by_name} on ${formatDateTimeInMalaysia(block.verified_at)}`
@@ -99,15 +107,15 @@ function verificationTitle(block: VerificationBlock): string {
   }
   if (block.state === 'needs_reverify') {
     const changed = block.invalidated_diff?.changed ?? [];
-    // The diff carries the stored ENTRIES (`{ value, unit }`), not scalars, and there
-    // is no registry to hand here for the labels - `readable` is that fallback.
+    // The diff carries the stored ENTRIES (`{ value, unit }`), not scalars - `readable`
+    // is the fallback for a key with no label of its own (E.2).
     const diff = changed
-      .map(
-        (c) =>
-          `${readable(c.spec_key)}: ${readableEntry(c.was) || 'nothing'} to ${
-            readableEntry(c.now) || 'nothing'
-          }`,
-      )
+      .map((c) => {
+        const labels = valueLabels[c.spec_key];
+        return `${readable(c.spec_key)}: ${readableEntry(c.was, labels) || 'nothing'} to ${
+          readableEntry(c.now, labels) || 'nothing'
+        }`;
+      })
       .join('; ');
     const head = stamp ? `Was verified by ${stamp}.` : 'Was verified.';
     return changed.length
@@ -140,7 +148,13 @@ function verificationTitle(block: VerificationBlock): string {
  * than left uncontrolled because a touch device has no hover and would otherwise get
  * the count and nothing else.
  */
-function CoverageCell({ coverage }: { coverage: SpecVerificationCoverage }) {
+function CoverageCell({
+  coverage,
+  openExceptions,
+}: {
+  coverage: SpecVerificationCoverage;
+  openExceptions: number;
+}) {
   // A key "holds a value" only if it reads as something, so the filter runs on the
   // rendered text: an entry present but empty (`{ value: null }`) is not a value.
   const filled = (coverage.items ?? [])
@@ -148,32 +162,52 @@ function CoverageCell({ coverage }: { coverage: SpecVerificationCoverage }) {
     .filter((item) => item.text);
   const [open, setOpen] = useState(false);
   const summary = `${coverage.have} of ${coverage.applicable} applicable keys hold a value`;
+  // The payload carries only a count, never reasons (AC-F.4), so the pill and the
+  // hover card both say the same one sentence.
+  const exceptionsSummary =
+    openExceptions > 0 ? `${openExceptions} need a human` : '';
 
   return (
     <HoverCard open={open} onOpenChange={setOpen} openDelay={120}>
       <HoverCardTrigger asChild>
-        <button
-          type="button"
-          className="text-sm tabular-nums underline decoration-dotted underline-offset-4"
-          // The row navigates on click; this cell answers in place instead. The toggle
-          // is what makes it work under a finger: hover and focus still open it, and a
-          // second tap closes it.
-          onClick={(e) => {
-            e.stopPropagation();
-            setOpen((wasOpen) => !wasOpen);
-          }}
-          aria-expanded={open}
-          aria-label={`Coverage: ${summary}`}
-          // The last resort, for a pointer that reports neither hover nor a usable tap.
-          title={summary}
-        >
-          {coverage.have} / {coverage.applicable}
-        </button>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            className="text-sm tabular-nums underline decoration-dotted underline-offset-4"
+            // The row navigates on click; this cell answers in place instead. The toggle
+            // is what makes it work under a finger: hover and focus still open it, and a
+            // second tap closes it.
+            onClick={(e) => {
+              e.stopPropagation();
+              setOpen((wasOpen) => !wasOpen);
+            }}
+            aria-expanded={open}
+            aria-label={`Coverage: ${summary}`}
+            // The last resort, for a pointer that reports neither hover nor a usable tap.
+            title={summary}
+          >
+            {coverage.have} / {coverage.applicable}
+          </button>
+          {openExceptions > 0 && (
+            <Badge
+              variant="warning"
+              appearance="light"
+              shape="circle"
+              size="sm"
+              title={exceptionsSummary}
+            >
+              {exceptionsSummary}
+            </Badge>
+          )}
+        </div>
       </HoverCardTrigger>
       <HoverCardContent className="w-72 p-3" align="start">
         <div className="text-xs uppercase tracking-wide text-muted-foreground">
           {summary}
         </div>
+        {openExceptions > 0 && (
+          <div className="mt-2 text-sm text-amber-800">{exceptionsSummary}</div>
+        )}
         {filled.length === 0 ? (
           <p className="mt-2 text-sm text-muted-foreground">Nothing set yet</p>
         ) : (
@@ -257,13 +291,10 @@ export default function SpecVerificationList() {
    */
   const [focusCode] = useState(() => searchParams.get('focus'));
   const focusDone = useRef(false);
-  // The dialog carries the codes it was opened for, so a row-level Unverify and a bulk
-  // Unverify are the same confirmation with a different count (PRINCIPLES: confirm
-  // before every destructive or detach action, never one-click).
-  const [confirmTarget, setConfirmTarget] = useState<{
-    action: 'verify' | 'unverify';
-    codes: string[];
-  } | null>(null);
+  // Verify is not destructive, but a BULK verify still confirms first (unchanged);
+  // this carries the codes the dialog was opened for. Unverify (row and bulk) no
+  // longer confirms - it is a deferred action instead (D7, D8, AC-F.1).
+  const [verifyConfirm, setVerifyConfirm] = useState<string[] | null>(null);
 
   // Deps are primitives, and an unchanged URL is not rewritten: `sorting` /
   // `pagination` are fresh objects on some table renders, and replacing the URL
@@ -318,13 +349,49 @@ export default function SpecVerificationList() {
       class_label: classFilter,
       include_discontinued: includeDiscontinued,
     });
-  const { verify, unverify } = useSpecVerificationMutations();
-  const pending = verify.isPending || unverify.isPending;
+  const { verify } = useSpecVerificationMutations();
+  const pending = verify.isPending;
   // The server is the guard; this only decides what to SHOW - the same slug and the
   // same rule the Specifications tab uses, so a reader is not offered a button that
   // would 403 at submit.
   const { permissionSet } = usePermissions();
   const canEdit = permissionSet.has('master_data.products.edit');
+  // `{spec_key: value_labels}` (E.2) - the registry is small and ETag-cached (D9),
+  // so this list pays no extra round trip for it.
+  const { data: registryKeys } = useSpecRegistryQuery();
+  const valueLabels = useMemo(() => valueLabelsByKey(registryKeys), [registryKeys]);
+
+  // Every row parks its OWN "spec_verification.unverify" action (dimmed here by the
+  // same store a single-row and a bulk countdown both write to), so the grid can
+  // tell which rows are mid-window without a second query.
+  const pendingKeys = usePendingEntityKeys();
+  const rowUnverifyPending = (row: SpecVerificationRow) =>
+    pendingKeys.has(pendingEntityKey('spec_verification', row.product_code));
+
+  // Row Unverify asks nothing (D7, D8): the first press IS the action, and the
+  // countdown travels to a toast while the row dims - a row has nowhere to put an
+  // inline one, and the same reason every other list-row delete in the S6b sweep
+  // takes this hook rather than `useDeferredAction` directly.
+  const unverifyRow = useDeferredRowAction({
+    actionKey: 'spec_verification.unverify',
+    entityType: 'spec_verification',
+    verb: 'Unverifying',
+    successMessage: 'Unverified',
+    invalidateKeys: [[WORKLIST_KEY]],
+  });
+
+  // "Unverify selected" is the same shape over a SELECTION: one action per row,
+  // ONE countdown over them, one Cancel that withdraws the lot - the aggregate
+  // `useDeferredBulkAction` every other bulk delete/withdraw in the S6b sweep uses.
+  const bulkUnverify = useDeferredBulkAction({
+    actionKey: 'spec_verification.unverify',
+    entityType: 'spec_verification',
+    verb: 'Unverifying',
+    pastVerb: 'unverified',
+    describe: (count) => productCodeCount(count),
+    invalidateKeys: [[WORKLIST_KEY]],
+    onStarted: () => setRowSelection({}),
+  });
 
   const rows = useMemo(() => data?.data ?? [], [data]);
   const summary = data?.summary;
@@ -377,17 +444,6 @@ export default function SpecVerificationList() {
       return;
     }
     settleSelection(codes, skippedVerifyCodes(response.results));
-  };
-
-  const runUnverify = async (codes: string[]) => {
-    if (!codes.length) return;
-    let response;
-    try {
-      response = await unverify.mutateAsync(codes);
-    } catch {
-      return;
-    }
-    settleSelection(codes, skippedUnverifyCodes(response.results));
   };
 
   const columns = useMemo<ColumnDef<SpecVerificationRow>[]>(
@@ -485,11 +541,21 @@ export default function SpecVerificationList() {
         header: ({ column }) => (
           <DataGridColumnHeader title="Coverage" column={column} />
         ),
-        cell: ({ row }) => <CoverageCell coverage={row.original.coverage} />,
-        size: 90,
+        cell: ({ row }) => (
+          <CoverageCell
+            coverage={row.original.coverage}
+            openExceptions={row.original.open_exceptions}
+          />
+        ),
+        // Wide enough for "n / N" beside the "n need a human" pill without the two
+        // overlapping (F5); the cell also drops the shared `truncate` (which forces
+        // `white-space: nowrap` and hid the overlap rather than avoiding it) so the
+        // pill wraps to its own line if a row's numbers still run long.
+        size: 150,
         meta: {
           headerTitle: 'Coverage',
           skeleton: <Skeleton className="h-4 w-12" />,
+          cellClassName: 'whitespace-normal! overflow-visible!',
         },
         enableSorting: true,
       },
@@ -504,7 +570,7 @@ export default function SpecVerificationList() {
           return (
             <span
               className={`${STATUS_PILL_BASE} ${statusPillClass(block.state)}`}
-              title={verificationTitle(block)}
+              title={verificationTitle(block, valueLabels)}
             >
               {STATE_LABEL[block.state]}
             </span>
@@ -532,11 +598,14 @@ export default function SpecVerificationList() {
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={pending}
+                  disabled={
+                    unverifyRow.isPending &&
+                    unverifyRow.targetId === item.product_code
+                  }
                   onClick={() =>
-                    setConfirmTarget({
-                      action: 'unverify',
-                      codes: [item.product_code],
+                    unverifyRow.run({
+                      id: item.product_code,
+                      subject: item.product_code,
                     })
                   }
                 >
@@ -567,7 +636,7 @@ export default function SpecVerificationList() {
       },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [pending, rows, canEdit],
+    [pending, rows, canEdit, valueLabels, unverifyRow],
   );
 
   const [columnOrder, setColumnOrder] = useState<string[]>(() =>
@@ -657,12 +726,10 @@ export default function SpecVerificationList() {
     .getSelectedRowModel()
     .rows.map((selected) => selected.original.product_code);
 
-  const confirmRun = async () => {
-    const target = confirmTarget;
-    setConfirmTarget(null);
-    if (!target) return;
-    if (target.action === 'verify') await runVerify(target.codes);
-    else await runUnverify(target.codes);
+  const confirmVerify = async () => {
+    const codes = verifyConfirm;
+    setVerifyConfirm(null);
+    if (codes) await runVerify(codes);
   };
 
   // A reader is offered no bulk action; the toolbar then shows only the selection
@@ -674,16 +741,15 @@ export default function SpecVerificationList() {
           label: 'Verify selected',
           icon: BadgeCheck,
           disabled: pending,
-          onClick: () =>
-            setConfirmTarget({ action: 'verify', codes: selectedCodes }),
+          onClick: () => setVerifyConfirm(selectedCodes),
         },
         {
           key: 'unverify',
           label: 'Unverify selected',
           icon: BadgeX,
-          disabled: pending,
+          disabled: bulkUnverify.isStarting,
           onClick: () =>
-            setConfirmTarget({ action: 'unverify', codes: selectedCodes }),
+            bulkUnverify.run(selectedCodes.map((code) => ({ id: code }))),
         },
       ]
     : [];
@@ -738,21 +804,12 @@ export default function SpecVerificationList() {
     );
   }
 
-  const confirmCount = confirmTarget?.codes.length ?? 0;
-  const confirmCopy =
-    confirmTarget?.action === 'verify'
-      ? {
-          title: 'Confirm verify',
-          description: `Verify ${productCodeCount(confirmCount)}? A code whose values moved while you were reviewing is reported back as skipped.`,
-          actionLabel: 'Verify',
-        }
-      : {
-          title: 'Confirm unverify',
-          description: `Withdraw the verification on ${productCodeCount(confirmCount)}? ${
-            confirmCount === 1 ? 'It reads' : 'They read'
-          } as unverified again and the history keeps who vouched.`,
-          actionLabel: 'Unverify',
-        };
+  const confirmCount = verifyConfirm?.length ?? 0;
+  const confirmCopy = {
+    title: 'Confirm verify',
+    description: `Verify ${productCodeCount(confirmCount)}? A code whose values moved while you were reviewing is reported back as skipped.`,
+    actionLabel: 'Verify',
+  };
 
   return (
     <>
@@ -761,6 +818,7 @@ export default function SpecVerificationList() {
         recordCount={data?.pagination.total ?? 0}
         isLoading={isLoading}
         onRowClick={(row) => openProduct(row)}
+        rowPending={rowUnverifyPending}
         listingKey="master_data.products.view::spec-verification"
         tableLayout={{
           width: 'fixed',
@@ -906,9 +964,9 @@ export default function SpecVerificationList() {
       </DataGrid>
 
       <AlertDialog
-        open={confirmTarget !== null}
+        open={verifyConfirm !== null}
         onOpenChange={(open) => {
-          if (!open) setConfirmTarget(null);
+          if (!open) setVerifyConfirm(null);
         }}
       >
         <AlertDialogContent>
@@ -923,7 +981,7 @@ export default function SpecVerificationList() {
             <AlertDialogAction
               onClick={(e) => {
                 e.preventDefault();
-                void confirmRun();
+                void confirmVerify();
               }}
               disabled={pending}
             >

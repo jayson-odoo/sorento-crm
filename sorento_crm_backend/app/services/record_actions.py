@@ -801,6 +801,52 @@ register(
     )
 )
 
+def _unverify_spec_verification(db: Session, payload: dict):
+    from app.services import product_spec_verification
+
+    # Keyed by the PRODUCT CODE, not a uuid - `product_spec_verification.unverify_code`
+    # takes the code, and the verification ledger has no row of its own to key on
+    # (`ProductSpecVerification` is append-only and never re-pointed).
+    return product_spec_verification.unverify_code(
+        db, _entity_id(payload), actor=_actor(db, payload)
+    )
+
+
+register(
+    FormAction(
+        key="spec_verification.unverify",
+        entity_types=("spec_verification",),
+        execute=_unverify_spec_verification,
+        # Reversible: withdrawing a stamp is not a delete - Verify can be pressed again
+        # on the same row afterwards, and the ledger row itself is never removed, only
+        # marked withdrawn (D8).
+        window=WINDOW_REVERSIBLE,
+        permission="master_data.products.edit",
+        label="Unverify",
+    )
+)
+
+
+def _delete_spec_key(db: Session, payload: dict):
+    from app.services.product_spec_registry import delete_registry_key
+
+    # Keyed by the spec key ITSELF, not a uuid - `delete_registry_key` takes it and is
+    # the same refusal `DELETE /spec-registry/{spec_key}` runs (D.6, PLAN-spec-
+    # workbench-redesign.md): a seed-sourced key is refused, never deleted.
+    return delete_registry_key(db, _entity_id(payload))
+
+
+register(
+    FormAction(
+        key="spec_key.delete",
+        entity_types=("spec_key",),
+        execute=_delete_spec_key,
+        window=WINDOW_DESTRUCTIVE,
+        permission="master_data.spec_registry.delete",
+        label="Delete specification",
+    )
+)
+
 register(
     FormAction(
         key="stock_visibility_policy.remove",

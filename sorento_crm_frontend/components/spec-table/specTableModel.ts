@@ -79,6 +79,7 @@ export function buildSpecTableRows(input: {
       migratedFrom: stamp?.migrated_from ?? null,
       evidence: stamp?.evidence ?? null,
       unknownKey: !definition,
+      valueLabels: definition?.value_labels ?? {},
       conflict: conflict
         ? {
             proposed: conflict.proposed?.value ?? null,

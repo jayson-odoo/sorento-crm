@@ -44,6 +44,12 @@ export interface DetailActionsProps {
   dialogs?: ReactNode;
   gearLabel?: string;
   className?: string;
+  /**
+   * Disables the gear trigger while staying mounted (the pager's own `disabled`
+   * travels with `pagerNode`/`pager` instead, since `DetailActions` does not
+   * build that element).
+   */
+  disabled?: boolean;
   /** For the two clients whose tests read the whole action group as one node. */
   'data-testid'?: string;
 }
@@ -69,6 +75,7 @@ export default function DetailActions({
   dialogs,
   gearLabel = 'Actions',
   className,
+  disabled,
   'data-testid': testId,
 }: DetailActionsProps) {
   return (
@@ -79,7 +86,12 @@ export default function DetailActions({
       {pager && <ListPager {...pager} />}
       {!pager && pagerNode}
       {actions && actions.length > 0 && (
-        <DetailActionsMenu actions={actions} trigger="gear" ariaLabel={gearLabel} />
+        <DetailActionsMenu
+          actions={actions}
+          trigger="gear"
+          ariaLabel={gearLabel}
+          disabled={disabled}
+        />
       )}
       {!actions && gear}
       {pendingAction ?? primary}
