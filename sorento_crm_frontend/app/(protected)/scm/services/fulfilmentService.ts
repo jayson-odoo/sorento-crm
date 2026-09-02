@@ -40,7 +40,7 @@ import {
   filenameFromContentDisposition,
   saveBlobAs,
 } from '@/app/(protected)/project-sales/_shared/services/fileDownload';
-import type { UploadTestResult } from '../reorder/components/UploadTestVerdict';
+import type { SupplierCheck, UploadTestResult } from '../reorder/components/UploadTestVerdict';
 
 export interface StockListSummary {
   rows: number;
@@ -55,6 +55,9 @@ export interface StockListSummary {
   unmeasured_item_codes: string[];
   unmapped_headers: string[];
   unreadable_rows: number;
+  /** Does the file's own letterhead name a different active supplier (S7, AC-G3)? `null`
+   *  when the file states no letterhead above its header row. */
+  supplier_check: SupplierCheck | null;
 }
 
 export interface StockListPreview {

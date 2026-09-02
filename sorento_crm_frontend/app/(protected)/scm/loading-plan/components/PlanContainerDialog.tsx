@@ -21,7 +21,11 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
 import { MAX_SIZE_MB, useTwoStepUpload } from '../../reorder/hooks/useTwoStepUpload';
 import { CountTile } from '../../reorder/components/UploadCountTile';
-import { UploadTestVerdict, type UploadTestResult } from '../../reorder/components/UploadTestVerdict';
+import {
+  stockListCountsNote,
+  UploadTestVerdict,
+  type UploadTestResult,
+} from '../../reorder/components/UploadTestVerdict';
 import { fmtInt } from '../../lib/format';
 import { useCreateLoadingPlan } from '../../hooks/useFulfilment';
 import {
@@ -33,6 +37,7 @@ import {
   type LoadingPlanRecord,
   type PlanDocumentKind,
   type StockListPreview,
+  type StockListSummary,
 } from '../../services/fulfilmentService';
 import {
   applyProformaInvoice,
@@ -194,11 +199,17 @@ export function PlanContainerDialog({
   // read it already took, rather than costing the operator a second press.
   const proformaVerdict: UploadTestResult | null =
     docKind === 'proforma' && preview ? verdictFromPreview(preview as ProformaInvoicePreview) : null;
-  const verdict = proformaVerdict ?? upload.testResult;
-  const stockSummary =
+  const stockSummary: StockListSummary | null =
     docKind === 'stock_list' && preview && 'rows' in ((preview as StockListPreview).summary ?? {})
-      ? (preview as StockListPreview).summary
+      ? ((preview as StockListPreview).summary as StockListSummary)
       : null;
+  // "L rows · U codes unknown" (AC-G4) - the stock-list half of the same shape the proforma
+  // channel shows, added onto the server's own verdict rather than replacing it.
+  const stockVerdict: UploadTestResult | null =
+    stockSummary && upload.testResult
+      ? { ...upload.testResult, notes: [stockListCountsNote(stockSummary)] }
+      : upload.testResult;
+  const verdict = proformaVerdict ?? stockVerdict;
 
   const needsFile = docKind !== 'none';
   const busy = starting || applying || previewing || upload.testing || create.isPending;

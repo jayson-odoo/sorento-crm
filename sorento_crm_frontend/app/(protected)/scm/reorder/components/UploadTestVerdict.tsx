@@ -34,6 +34,54 @@ export interface UploadTestResult {
   notes?: string[];
 }
 
+/**
+ * Whether the file's own letterhead names a supplier OTHER than the one picked (S7, AC-G3).
+ * `other_supplier_name` is set only when that has happened - a warning is composed from it
+ * where the channel derives its own verdict client-side (the proforma dialog); the
+ * stock-list channel's `/apply?validate_only=true` already returns the sentence pre-built.
+ */
+export interface SupplierCheck {
+  letterhead: string;
+  chosen_supplier_name: string | null;
+  other_supplier_name: string | null;
+}
+
+export function supplierMismatchWarning(check: SupplierCheck | null | undefined): string | null {
+  if (!check?.other_supplier_name) return null;
+  const chosen = check.chosen_supplier_name ?? '';
+  // Several master-data supplier names already end in a full stop ("KAIPING KAIXIN
+  // SANITARY CO., LTD."); a second one read as a typo, not a sentence.
+  const stop = chosen.endsWith('.') ? '' : '.';
+  return `File header names ${check.other_supplier_name}, you picked ${chosen}${stop}`;
+}
+
+/** "N invoice blocks · L lines · U codes unknown" (AC-G4) - read off counts the preview
+ *  already carries, in the words the verdict card names them rather than a generic label. */
+export function proformaCountsNote(summary: {
+  document_count: number;
+  line_count: number;
+  unmatched_items: number;
+}): string {
+  const blocks = summary.document_count;
+  const lines = summary.line_count;
+  const unknown = summary.unmatched_items;
+  return (
+    `${fmtInt(blocks)} invoice block${blocks === 1 ? '' : 's'} · ` +
+    `${fmtInt(lines)} line${lines === 1 ? '' : 's'} · ` +
+    `${fmtInt(unknown)} code${unknown === 1 ? '' : 's'} unknown`
+  );
+}
+
+/** The stock-list channel's half of the same shape: "L rows · U codes unknown". */
+export function stockListCountsNote(summary: { rows: number; items_unmatched: number }): string {
+  const rows = summary.rows;
+  const unknown = summary.items_unmatched;
+  return (
+    `${fmtInt(rows)} row${rows === 1 ? '' : 's'} · ` +
+    `${fmtInt(unknown)} code${unknown === 1 ? '' : 's'} unknown`
+  );
+}
+
 function num(v: unknown): string | null {
   return typeof v === 'number' ? fmtInt(v) : null;
 }
