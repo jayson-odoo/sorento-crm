@@ -438,6 +438,68 @@ register(
 )
 
 
+def build_order_inquiry_link(so_number: Optional[str]) -> str:
+    """The Order Inquiries worklist, narrowed to the sales order the row belongs to.
+
+    There is no per-row detail page (`documentation/plans/scm/PLAN-scm-oi-handshake.md`) -
+    the worklist's own search IS the way in, exactly as `orderInquiryRowHref` reaches it
+    from every other screen. A row with no SO number (a claim-only or free-standing row)
+    gets the unfiltered list rather than a broken query string.
+
+    PUBLIC (nit, review of PR #471), unlike its `_build_*_link` siblings above: every one
+    of those is also called from ITS OWN trigger function inside this module, so the
+    underscore reads as "this module's own helper, imported elsewhere too". This one is
+    never called from in here - only from `project_order_inquiry_service.py` - so a
+    leading underscore promising module-private use was the wrong signal for what it is.
+    """
+    base = (settings.frontend_base_url or "").rstrip("/")
+    path = "/project-sales/order-inquiries"
+    if so_number:
+        from urllib.parse import quote
+
+        path = f"{path}?query={quote(so_number)}"
+    return f"{base}{path}" if base else path
+
+
+def _trigger_order_inquiry_changed_with_links(
+    db: Session,
+    config: dict[str, Any],
+    timezone: str,
+) -> Iterable[TriggerMatch]:
+    """Event-driven; pull-mode evaluation yields nothing.
+
+    Matches are produced via :meth:`ProjectOrderInquiryService._dispatch_changed_with_links`
+    (`PLAN-scm-reorder-oi-feedback-1sep.md` S1, G6), queued mid-transaction and drained
+    post-commit by ``_fire_pending_changed_with_links`` (S5, review of PR #471). Three
+    callers reach it, all sharing one rule - a row that already carries a link is amended
+    under purchasing: ``_settle_row_in_place`` on a quantity/date settle-in-place AND on
+    the need-drops-to-zero cancel that gives the link back (S4), and
+    ``_retire_uncovered_rows`` when a dropped line's cascade-linked row is retired on
+    supersede (S4). A linkless amendment fires nothing in any of the three: purchasing has
+    arranged nothing yet, so there is nothing for this trigger to warn them a change moved.
+    """
+    return []
+
+
+register(
+    TriggerSpec(
+        type="order_inquiry_changed_with_links",
+        label="Order inquiry changed with links",
+        description=(
+            "Fires when CS amends an order inquiry row that already has a purchase order "
+            "or SPO linked to it (event-driven, dispatched when the row settles). A row "
+            "with no links yet fires nothing."
+        ),
+        config_schema={
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+    ),
+    _trigger_order_inquiry_changed_with_links,
+)
+
+
 def _trigger_sponsorship_form_approved(
     db: Session,
     config: dict[str, Any],

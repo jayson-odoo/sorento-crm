@@ -33,7 +33,6 @@ from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.inventory import Warehouse
 from app.models.project_so import (
     ACK_ACKNOWLEDGED,
-    ACK_AWAITING,
     INQUIRY_ACTIONED,
     INQUIRY_PLACED,
     INQUIRY_RAISED,
@@ -1101,14 +1100,16 @@ def test_a_reader_cannot_trigger_auto_place(reader_api):
     assert response.status_code == 403
 
 
-def test_a_decision_confirm_raises_the_buy_row_awaiting_with_a_draft_link():
-    """REVERSED AGAIN by `PLAN-scm-oi-draft-links.md` R6 (captain, 27 Aug 2026).
+def test_a_decision_confirm_raises_the_buy_row_acknowledged_with_a_firm_link():
+    """REVERSED AGAIN by `PLAN-scm-oi-draft-links.md` R6 (captain, 27 Aug 2026), and once
+    more by `PLAN-scm-reorder-oi-feedback-1sep.md` S1 (G4, 1 Sep 2026).
 
     G2's original trigger linked at the decision confirm; the handshake took it away
     because a buyer found their own documents dealt out to instructions they had never
-    read; this restores the pass and answers that objection with what the link MEANS. The
-    row comes out `awaiting` - nobody has confirmed anything - and the link on it is a
-    DRAFT (R1), which is precisely "here is what could cover this, say the word".
+    read; R6 restored the pass and answered that objection with what the link MEANT THEN -
+    a DRAFT, on a row still `awaiting`. S1 removes the manual confirm the draft was
+    waiting on entirely: the row comes out ACKNOWLEDGED, and the link the raise found is
+    firm from the moment it is written.
     """
     from app.models.base import company_scope
     from app.services.project_service import register_project
@@ -1154,9 +1155,9 @@ def test_a_decision_confirm_raises_the_buy_row_awaiting_with_a_draft_link():
             .first()
         )
         assert row is not None
-        assert row.ack_state == ACK_AWAITING, "a draft is not a confirmation"
+        assert row.ack_state == ACK_ACKNOWLEDGED, "born acknowledged (S1)"
         assert row.state == INQUIRY_PLACED, "the 30-line covers the whole 20"
-        assert str(row.po_line_id) == str(po_line.id), "the draft names the open line"
+        assert str(row.po_line_id) == str(po_line.id), "the link names the open line"
 
 
 def test_partial_allocation_leaves_the_remainder_raised_and_in_committed_v():

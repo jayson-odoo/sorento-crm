@@ -6,7 +6,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const getOrderInquiryPoDetail = vi.fn();
@@ -76,7 +76,7 @@ describe('OrderInquiryDocumentLink: opens from either kind of document (AC-D18/A
 });
 
 describe('PO lightbox body', () => {
-  it('marks allocated rows Proposed for a draft (awaiting) row and Confirmed for an acknowledged one', async () => {
+  it('lists every allocated row - no Standing column any more (nit, review of PR #471)', async () => {
     getOrderInquiryPoDetail.mockResolvedValue({
       id: 'po-1',
       po_number: '202607-S0105',
@@ -94,7 +94,7 @@ describe('PO lightbox body', () => {
         },
       ],
       allocations: [
-        { inquiry_no: 'OI-000101', so_number: 'SO385126', item_code: 'SRTWB5400', qty: '20', ack_state: 'awaiting' },
+        { inquiry_no: 'OI-000101', so_number: 'SO385126', item_code: 'SRTWB5400', qty: '20', ack_state: 'acknowledged' },
         { inquiry_no: 'OI-000102', so_number: 'SO386461', item_code: 'SRTWB5400', qty: '15', ack_state: 'acknowledged' },
       ],
     });
@@ -103,10 +103,10 @@ describe('PO lightbox body', () => {
     );
 
     expect(await screen.findByText('SO385126')).toBeInTheDocument();
-    const draftRow = screen.getByText('SO385126').closest('tr') as HTMLElement;
-    expect(within(draftRow).getByText('Proposed')).toBeInTheDocument();
-    const confirmedRow = screen.getByText('SO386461').closest('tr') as HTMLElement;
-    expect(within(confirmedRow).getByText('Confirmed')).toBeInTheDocument();
+    expect(screen.getByText('SO386461')).toBeInTheDocument();
+    expect(screen.queryByText('Standing')).not.toBeInTheDocument();
+    expect(screen.queryByText('Proposed')).not.toBeInTheDocument();
+    expect(screen.queryByText('Confirmed')).not.toBeInTheDocument();
 
     // The lines table too.
     expect(screen.getByText('BRW-BB')).toBeInTheDocument();

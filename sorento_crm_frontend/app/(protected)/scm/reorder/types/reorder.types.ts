@@ -407,13 +407,6 @@ export interface ReorderRunSummary {
   total_cash_impact: number;
   /** Total rows to review (buy + disposition) - powers the completion CTA. */
   recommendation_count: number;
-  /**
-   * Order inquiry rows purchasing has not acknowledged yet (`PLAN-scm-oi-handshake.md`,
-   * AC-H10) - the plan page's own chip. LIVE, unlike the counts above it, which are
-   * frozen in the run log: the plan counts acknowledged rows only, so this is the work
-   * the plan itself cannot see, and it drops as the buyer clears it.
-   */
-  awaiting_rows?: number;
 }
 
 /** The run record returned by create / poll. `stage` is UI-only progress. */
