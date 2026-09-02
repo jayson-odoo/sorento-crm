@@ -35,6 +35,7 @@ const DATA: TagBindingData = {
     list_price: 2000,
     offer_price: 1500,
     promotion_id: null,
+    barcode: null,
   },
 };
 

@@ -640,6 +640,11 @@ class ProductTagData(BaseModel):
     list_price: Optional[float] = None
     offer_price: Optional[float] = None
     promotion_id: Optional[str] = None
+    # The product's own `products.barcode` (PLAN D14, price-tag-feedback-r2),
+    # for the tag editor's barcode layer (S7). Null when the product carries
+    # none, which the layer renders as an editor placeholder / nothing on
+    # print.
+    barcode: Optional[str] = None
 
 
 class ProductSetMemberTagData(BaseModel):
@@ -694,6 +699,8 @@ class ResolvedLineData(BaseModel):
     show_promo_price: bool
     included_accessories: str = ""
     quantity: int
+    # Empty for a set line: a set has no barcode of its own (S7).
+    barcode: Optional[str] = None
 
 
 class TagFont(BaseModel):

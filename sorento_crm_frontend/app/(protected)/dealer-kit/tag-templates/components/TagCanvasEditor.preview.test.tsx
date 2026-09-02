@@ -87,6 +87,7 @@ const PRODUCTS: Record<string, ProductTagData> = {
     list_price: 2000,
     offer_price: 1500,
     promotion_id: null,
+    barcode: null,
   },
   'p-tap': {
     id: 'p-tap',
@@ -99,6 +100,7 @@ const PRODUCTS: Record<string, ProductTagData> = {
     list_price: 400,
     offer_price: 320,
     promotion_id: null,
+    barcode: null,
   },
 };
 

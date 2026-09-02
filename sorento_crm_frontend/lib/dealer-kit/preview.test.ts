@@ -233,6 +233,18 @@ describe('previewBindingFor', () => {
     ).toBeUndefined();
   });
 
+  it('follows the first previewed block for a loose barcode layer too (S7)', () => {
+    // A barcode layer dropped onto a template canvas is a loose layer, not a
+    // child of the product block's group - the same shape as the "code
+    // repeated in a corner" case above, and it must not be left blank while
+    // the block beside it previews a real product (AC-S7-4).
+    const loose = [...layers, text('loose-barcode', 'barcode', '')];
+    const previews = { main: { product_id: 'p-main' } };
+    expect(
+      previewBindingFor(loose[loose.length - 1], previews, groupsOf(loose), loose),
+    ).toEqual({ product_id: 'p-main' });
+  });
+
   it('leaves an unbound layer in no group alone', () => {
     expect(
       previewBindingFor(find('band'), { main: { product_id: 'p' } }, groupOf),

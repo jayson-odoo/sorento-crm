@@ -352,6 +352,10 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                         <p className="text-muted-foreground">Brand</p>
                         <p className="font-medium">{product.brand?.brand_code ?? product.brand?.brand_name ?? '-'}</p>
                       </div>
+                      <div>
+                        <p className="text-muted-foreground">Barcode</p>
+                        <p className="font-medium">{product.barcode || '-'}</p>
+                      </div>
                       <div className="col-span-2">
                         <p className="text-muted-foreground">Description</p>
                         <p className="font-medium">{product.description || '-'}</p>

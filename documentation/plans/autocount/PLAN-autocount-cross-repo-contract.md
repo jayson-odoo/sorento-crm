@@ -290,3 +290,22 @@ the shared-service session after A1 and after A4.
    `integration_id` in place (it already does: it overwrites `integration_id`/`last_synced_at`),
    (c) pin this with a test: same `agent:X` pushed under company A then company B -> `created` then
    `updated`, one row. Master refs on document lines stay `{DatabaseName}:{key}` as pushed.
+
+## 8. `products` wire addition: `bar_code` (2 Sep 2026, price-tag-feedback-r2 S7)
+
+Flagged for the connector team - not part of Appendix A, added on the Sorento side for the tag
+designer's barcode layer (issue #480):
+
+- `CanonicalProduct` (`app/schemas/canonical_masters.py`) gains an optional `bar_code` field
+  (`max_length=100`), alongside the existing `code` / `name` / `category_code` / `uom_code` /
+  `brand_code` / `list_price` / `cost_price` / `is_active`.
+- **Overwrite rule, not "last write wins":** a non-empty `bar_code` on an ingest overwrites
+  `products.barcode`; an empty string or an absent field leaves whatever is already stored
+  untouched - including a value typed by hand on the CRM product master, which the sink must not
+  clobber by sending `bar_code: ""` as a matter of habit on a record it has no barcode for. Same
+  shape as every other field here: sent means authoritative, omitted means "I have nothing to say
+  about this column." See `master_ingest_service._product_columns` for the implementation and
+  `tests/test_master_ingest.py::TestBarcodeOverwritePolicy` for the pinned (stored, incoming) ->
+  result table.
+- `products.barcode` is nullable and indexed, never unique: a placeholder product may carry none,
+  and two products sharing one (or none) must not block either from syncing.

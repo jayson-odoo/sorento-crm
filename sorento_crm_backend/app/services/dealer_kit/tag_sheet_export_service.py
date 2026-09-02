@@ -336,6 +336,8 @@ def _resolved_payload(db: Session, inputs: dict) -> dict:
                 "show_promo_price": row["show_promo_price"],
                 "included_accessories": row["included_accessories"],
                 "quantity": row["quantity"],
+                # The barcode layer's binding (S7); null for a set line.
+                "barcode": row["barcode"],
                 # The photos themselves, not just their ids: a product-photo
                 # slot follows the product's PRIMARY photo when the template
                 # pinned none (D42), and only this list says which that is.
