@@ -18,7 +18,7 @@ import { formatDate } from '@/lib/helpers';
 import { useDownloadAttachment } from '@/app/(protected)/resource-management/attachments/hooks/useAttachments';
 import { useQuery } from '@tanstack/react-query';
 import { getAttachmentMetadata, getAttachmentPreviewUrl } from '@/app/(protected)/resource-management/attachments/services/attachmentService';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 interface FormDetailProps {
   formId: string;

@@ -29,7 +29,7 @@ import { AccessLevelsMultiSelect } from '@/app/(protected)/resource-management/a
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
 import { getAttachmentPreviewUrl } from '@/app/(protected)/resource-management/attachments/services/attachmentService';
 import { formatDate } from '@/lib/helpers';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 interface FormFormProps {
   formId?: string;
