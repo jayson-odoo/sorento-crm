@@ -29,6 +29,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { RespondMessageRenderable } from '@/lib/respondIoChatRender';
 import { getRespondMessageSortTimeMs } from '@/lib/respondIoMessage';
+import { usePendingThreadItems, type PendingSendInput } from './usePendingThreadItems';
 
 export interface ConversationThreadPage {
   items: RespondMessageRenderable[];
@@ -89,22 +90,11 @@ export interface ConversationSearchController {
   previous: () => void;
 }
 
-/** What the composer is about to send, as the pending bubbles should show it. */
-export interface PendingSendInput {
-  text: string;
-  files?: Array<{ name: string }>;
-}
-
-/**
- * A bubble for a message the composer has sent but the thread has not read
- * back yet (PLAN-optimistic-send AC-B1). No `messageId` (nothing to dedupe
- * on), a `pending` receipt so the list draws the "sending" clock, and a
- * `pendingKey` so the send that created it can take it down again.
- */
-export type PendingThreadItem = RespondMessageRenderable & {
-  source: 'pending';
-  pendingKey: string;
-};
+// The optimistic-bubble mechanism (add/remove/shape) lives in its own hook
+// (M6-01) so a surface with no scroll-back can use it without adopting the
+// rest of this one. Re-exported here so existing imports of these two names
+// keep working.
+export type { PendingSendInput, PendingThreadItem } from './usePendingThreadItems';
 
 export interface ConversationThread {
   items: RespondMessageRenderable[];
@@ -215,36 +205,7 @@ export function useConversationThread({
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
   const [isLoadingNewer, setIsLoadingNewer] = useState(false);
   const [pageError, setPageError] = useState<string | null>(null);
-  const [pendingItems, setPendingItems] = useState<PendingThreadItem[]>([]);
-  const pendingSeq = useRef(0);
-
-  const addPending = useCallback((input: PendingSendInput) => {
-    pendingSeq.current += 1;
-    const pendingKey = `pending-${pendingSeq.current}`;
-    const now = Date.now();
-    const bubble = (text: string): PendingThreadItem => ({
-      traffic: 'outgoing',
-      message: { type: 'text', text },
-      status: [{ value: 'pending', timestamp: now }],
-      source: 'pending',
-      pendingKey,
-    });
-    const next: PendingThreadItem[] = [];
-    if (input.text.trim()) next.push(bubble(input.text.trim()));
-    // The backend stores an attachment as "[kind] name"; the same placeholder
-    // here means the swap to the real row does not change the bubble's words.
-    for (const file of input.files ?? []) next.push(bubble(`[file] ${file.name}`));
-    if (next.length) setPendingItems((current) => [...current, ...next]);
-    return pendingKey;
-  }, []);
-
-  const removePending = useCallback((key: string) => {
-    setPendingItems((current) =>
-      current.some((item) => item.pendingKey === key)
-        ? current.filter((item) => item.pendingKey !== key)
-        : current,
-    );
-  }, []);
+  const { pendingItems, addPending, removePending, clearPending } = usePendingThreadItems();
 
   // AC-N6: a caller-driven jump (the drawer's quoted enquiry). Kept apart from
   // the search cursor: the two can be pointed at different messages, and a jump
@@ -305,11 +266,11 @@ export function useConversationThread({
     setIsLoadingOlder(false);
     setIsLoadingNewer(false);
     setPageError(null);
-    setPendingItems([]);
+    clearPending();
     focusToken.current = null;
     setIsJumpingToMessage(false);
     setFocus((current) => (current.messageId === null ? current : { messageId: null, nonce: current.nonce }));
-  }, [setDetached]);
+  }, [setDetached, clearPending]);
 
   const resetSearch = useCallback(() => {
     searchSeq.current += 1;
