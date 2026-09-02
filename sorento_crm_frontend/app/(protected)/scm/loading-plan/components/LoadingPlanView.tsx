@@ -250,7 +250,12 @@ export function LoadingPlanView({ planId }: { planId: string }) {
   useEffect(() => {
     if (searchParams?.get('send') !== '1') return;
     setSendOpen(true);
-    router.replace(`/scm/loading-plan/${planId}`);
+    // Only `send` goes: replacing the bare path threw away the tab she was on (`?tab=`) and
+    // scrolled the record back to the top under the dialog it had just opened (SF-4).
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete('send');
+    const qs = params.toString();
+    router.replace(`/scm/loading-plan/${planId}${qs ? `?${qs}` : ''}`, { scroll: false });
   }, [searchParams, planId, router]);
 
   // One action set, gear and row menu alike (S1, D15): Cancel and Delete are parked here

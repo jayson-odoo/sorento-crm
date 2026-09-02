@@ -640,6 +640,27 @@ describe('LoadingPlanView - the tab strip (S2, AC-B1-B4)', () => {
     expect(await screen.findByRole('button', { name: 'Send' })).toBeTruthy();
   });
 
+  // The row menu's Send navigates here with `?send=1` (a row has no built lines to hand the
+  // dialog itself). Clearing it used to `replace` the bare path, which threw away whatever
+  // tab the operator was on and scrolled the record back to the top (SF-4).
+  it('?send=1 opens the Send dialog and clears only that parameter', async () => {
+    currentSearchParams = new URLSearchParams('tab=sent&send=1');
+    renderView();
+
+    expect(await screen.findByRole('button', { name: 'Send' })).toBeTruthy();
+    expect(replace).toHaveBeenCalledWith('/scm/loading-plan/plan-1?tab=sent', {
+      scroll: false,
+    });
+  });
+
+  it('?send=1 on its own leaves no query string behind', async () => {
+    currentSearchParams = new URLSearchParams('send=1');
+    renderView();
+
+    expect(await screen.findByRole('button', { name: 'Send' })).toBeTruthy();
+    expect(replace).toHaveBeenCalledWith('/scm/loading-plan/plan-1', { scroll: false });
+  });
+
   it('a reload on ?tab=sent lands on the Sent tab, not Lines (AC-B2)', () => {
     currentSearchParams = new URLSearchParams('tab=sent');
     renderView();
