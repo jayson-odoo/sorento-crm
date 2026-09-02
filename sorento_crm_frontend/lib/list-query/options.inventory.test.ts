@@ -445,3 +445,70 @@ describe('every grid fed by a LIST_QUERY_OPTIONS hook forwards isPlaceholderData
     expect(tags[0].text).toContain('isPlaceholderData={p}');
   });
 });
+
+/**
+ * M4-01b (grid side) - every grid that pages on the SERVER forwards
+ * `isPlaceholderData`, whatever route its rows arrived by.
+ *
+ * The M4-02 walk above starts from the hooks and follows imports, so it only
+ * ever reaches a grid whose owner name is imported into the same file. Three
+ * shapes escape it and all three ship today: a grid that takes its rows as
+ * PROPS from a parent that owns the hook (`LeadsGrid`, `ProjectsGrid`), a page
+ * that declares its `useQuery` inline without the spread, and a component whose
+ * list hook lives two files away. This walk starts from the honest population
+ * instead: a file that sets `manualPagination: true` has told TanStack the
+ * server owns the page, so every `<DataGrid>` in it must be able to dim while
+ * the next page is in flight.
+ */
+
+/**
+ * A server-paged grid that must NOT forward the flag, with the reason. An entry
+ * here is a claim that the grid's rows do not come from a react-query list
+ * query, so there is no placeholder window for it to report.
+ */
+const MANUAL_PAGINATION_ALLOWLIST: Record<string, string> = {
+  'app/(protected)/dealer-kit/price-tag-requests/components/PriceTagRequestsList.tsx':
+    'fetches in a useEffect, not react-query, so no query reports isPlaceholderData',
+};
+
+function findManualPaginationMisses(): string[] {
+  const files = ['app', 'components']
+    .filter((d) => fs.existsSync(path.join(ROOT, d)))
+    .flatMap((d) => walk(path.join(ROOT, d), []));
+
+  const misses: string[] = [];
+  for (const file of files) {
+    const rel = path.relative(ROOT, file);
+    if (MANUAL_PAGINATION_ALLOWLIST[rel]) continue;
+    const raw = fs.readFileSync(file, 'utf8');
+    if (!raw.includes('manualPagination: true')) continue;
+    if (!/<DataGrid(?![A-Za-z])/.test(raw)) continue;
+
+    for (const tag of findDataGridTags(raw)) {
+      if (/\bisPlaceholderData\b/.test(tag.text)) continue;
+      misses.push(`${rel}:${tag.line} :: manualPagination grid, no isPlaceholderData`);
+    }
+  }
+  return misses;
+}
+
+describe('every server-paged grid forwards isPlaceholderData (M4-01b)', () => {
+  it('has no misses', () => {
+    const misses = findManualPaginationMisses();
+    if (misses.length) {
+      console.error(
+        `${misses.length} manualPagination <DataGrid> call(s) not forwarding isPlaceholderData:\n${misses.join('\n')}`,
+      );
+    }
+    expect(misses).toEqual([]);
+  });
+
+  it('every allowlist entry still exists and still pages on the server', () => {
+    for (const rel of Object.keys(MANUAL_PAGINATION_ALLOWLIST)) {
+      const full = path.join(ROOT, rel);
+
+      expect(fs.existsSync(full), `${rel} is allowlisted but gone`).toBe(true);
+      expect(fs.readFileSync(full, 'utf8')).toContain('manualPagination: true');
+    }
+  });
+});
