@@ -13,7 +13,17 @@ Baseline measured on `origin/main` e1adad4d2, 2 Sep 2026.
 - **M4-01** `[vitest]` A shared `LIST_QUERY_OPTIONS` exists in `lib/list-query/` and every list
   hook whose `queryKey` carries page, size, sort, filter or search state spreads it. An
   inventory test enumerates the hooks and fails on any miss. Baseline: 3 of 63 with
-  `placeholderData`.
+  `placeholderData`. One allowlisted exception, with its reason in the test:
+  `hooks/useListPager.ts` re-runs the LIST query in the background from a DETAIL page,
+  purely to find the current record's neighbours, and renders no rows - with
+  `keepPreviousData` it would answer from the previous page's items while a new page
+  loads, so prev/next would step through neighbours the reader is not on. It is the
+  absence of rows on screen that makes it different from every other entry.
+- **M4-01b** `[vitest]` Every `<DataGrid>` in a file fed by one of those hooks forwards
+  `isPlaceholderData` from that query. A second inventory test walks hook to consumer to
+  tag and fails on any miss. This is what M4-02 depends on: TanStack reports the
+  placeholder window as `isLoading: false, isFetching: true, isPlaceholderData: true`, so
+  a grid that does not receive the flag never dims, whatever the hook spreads.
 - **M4-02** `[browser]` On Products, Orders and Stock at 1280: pressing Next, changing sort,
   changing a filter and typing a search word each keep the current rows on screen (dimmed) until
   the new page arrives. No skeleton rows appear once a first page has loaded.
@@ -32,6 +42,11 @@ Baseline measured on `origin/main` e1adad4d2, 2 Sep 2026.
   that follows renders the detail page without a route-chunk request. The detail pager
   prefetches its prev and next hrefs on mount. The sidebar prefetches on pointer-enter, not on
   viewport.
+  **Evidence note:** `router.prefetch` is a no-op in `next dev`, so the Network panel shows
+  no prefetch request on the dev server whatever the code does. The browser evidence for
+  this AC is therefore the code path plus `hooks/usePrefetchOnce.test.ts` (once per href,
+  and the `(hover: none)` branch both ways); the network half is a production spot-check,
+  deferred to the deploy.
 - **M4-07** `[browser]` The SCM reorder grid (a list whose column set changes with its filter)
   shows no mismatched header for longer than one placeholder frame and no console error during
   a filter swap.

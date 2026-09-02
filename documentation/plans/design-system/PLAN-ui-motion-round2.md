@@ -6,7 +6,7 @@
 > `documentation/reference/DESIGN-LANGUAGE.md` (outranks the installed design skills).
 
 **Slug:** `ui-motion-round2` | **Domain:** design-system (cross-cutting)
-**Status:** IN PROGRESS - M4 built, fix round applied, browser pass pending. Audit 2 Sep 2026
+**Status:** IN PROGRESS - M4 built, two fix rounds applied, dim re-verification pending. Audit 2 Sep 2026
 (three read-only sweeps of `origin/main` e1adad4d2 with `review-animations`,
 `find-animation-opportunities`, `emil-design-eng`, `apple-design`); user
 approved all seven slices on the lavish review page 2 Sep 2026, order M4, M1+M2, M3, M5, M6, M7.
@@ -68,31 +68,58 @@ gate let them through. Guardrail tests are widened so the perimeter cannot drift
 
 ### 3.1 List query standard (M4)
 
-- New `lib/list-query/options.ts`: `export const LIST_QUERY_OPTIONS = { placeholderData:
-  keepPreviousData } as const satisfies Partial<UseQueryOptions>`. Every paginated list hook
-  spreads it: `useQuery({ ...LIST_QUERY_OPTIONS, queryKey, queryFn, ... })`. The 3 hooks that
-  already set it (e.g. `useIntegrationLogs.ts:62`) switch to the constant. A vitest inventory
-  test asserts every hook whose `queryKey` mentions `page|pageIndex|sorting|limit|columnFilters|
-  sortBy` spreads the constant (the audit's brace-matcher, committed as the test).
-- `DataGridPagination` gates its two skeletons on `isLoading && rows.length === 0` so a
-  placeholder page keeps a live pager. `DataGridTable` dims the body to `opacity-60` with
-  `transition-opacity duration-(--duration-fast) ease-(--ease-standard)` while
-  `isPlaceholderData` is true (the grid already receives `isLoading`; add `isPlaceholderData` to
-  the `DataGrid` props, default false).
-- `providers/query-provider.tsx`: `defaultOptions.queries = { retry: 1, staleTime: 30_000,
-  refetchOnWindowFocus: false }`. The 176 per-hook `refetchOnWindowFocus: false` repeats are
-  deleted in the same PR (mechanical, one module per commit). `useProducts.ts:52` and
-  `useOrders.ts:108` drop `staleTime: Infinity` (the default now applies).
+**The shipped rule, in one sentence:** the primitive dims the body while
+`isPlaceholderData` is true, every list forwards that flag from its own list
+query, and the inventory tests are what keep both halves true.
+
+- `lib/list-query/options.ts`: `export const LIST_QUERY_OPTIONS = {
+  placeholderData: keepPreviousData } as const satisfies Partial<UseQueryOptions>`.
+  Every paginated list hook spreads it: `useQuery({ ...LIST_QUERY_OPTIONS,
+  queryKey, queryFn })`. The 3 hooks that already set it (e.g.
+  `useIntegrationLogs.ts:62`) use the constant instead.
+- **`isPlaceholderData` is forwarded at the call site, always.** The spread
+  alone keeps the previous page's ROWS; it does not dim them. TanStack 5.90
+  reports the window as `isLoading: false, isFetching: true,
+  isPlaceholderData: true`, so a grid left to infer the state from `isLoading`
+  never dims at all - which is exactly what shipped in the first two rounds and
+  was caught in the browser. So each list reads the flag off its query
+  (`const { data, isLoading, isPlaceholderData } = useOrders(params)`) and passes
+  it: `<DataGrid ... isLoading={isLoading} isPlaceholderData={isPlaceholderData}>`.
+  100 grids do this.
+- **Skeleton only when there is nothing worth showing.** `useBodySkeleton()` in
+  `data-grid-table.tsx` is the single gate: `loadingMode === 'skeleton'` AND
+  `isLoading` AND a page size AND (no rows yet OR column preferences are still
+  resolving). `DataGridTable`, both drag variants and `DataGridPagination` all
+  call it, so the pager and the rows cannot disagree about what a first load is.
+  Column preferences are in the gate because painting rows under the DEFAULT
+  layout and re-laying them out a tick later is a flash, and a reader who saw the
+  wrong columns first does not trust the second answer either.
+  `DataGridTableBody` keeps a second dim clause, `isLoading && rows.length > 0`,
+  for the grids whose call site feeds it `isLoading || isFetching`.
+- **Two guardrail tests, in `lib/list-query/options.inventory.test.ts`:**
+  M4-01 walks every `useQuery` in `app/`, `components/`, `hooks/` and `services/`
+  and fails on a list key that does not spread the constant. A list key is one
+  that (1) names page/size/sort/filter/search state inline, (2) comes from a
+  named list-key builder, or (3) carries a `params` / `listParams` bag - trigger
+  3 is what caught the ten hooks whose key names none of the words. M4-02 walks
+  from each spreading declaration to the files that import it, and fails on any
+  `<DataGrid>` there that does not pass `isPlaceholderData`.
+- `providers/query-provider.tsx`: `defaultOptions.queries = { retry: 1, staleTime:
+  30_000, refetchOnWindowFocus: false }`. The 176 per-hook `refetchOnWindowFocus: false`
+  repeats are deleted in the same PR (mechanical, one module per commit).
+  `useProducts.ts:52` and `useOrders.ts:108` drop `staleTime: Infinity` (the default
+  now applies).
 - The 8 list files carrying `disabled={isLoading}` on toolbar filters or the primary action
   (`ProductsList.tsx:733,789,802,815,826` and 7 more; census 5 in audit C) drop the guard.
   Mutation guards on forms and dialogs are untouched.
 - Prefetch: `LinkableBodyRow` in `data-grid-table.tsx` calls `router.prefetch(href)` on
-  `onPointerEnter` (once per href, guarded by a `Set` ref). `useListPager` prefetches the prev
-  and next hrefs when the current record mounts. `sidebar-menu.tsx` KEEPS
-  `prefetch={false}` and adds the same pointer-enter prefetch on top: a Next 15 App Router
-  `Link` prefetches on viewport by default in production, which on a ~100-item menu is the
-  whole menu on mount, and that is why the flag was set. Hover is the middle ground.
-  Measured in the browser with the Network panel.
+  `onPointerEnter`, through `usePrefetchOnce` (one `Set` ref, and a `(hover: none)`
+  guard so a tap does not pay for a prefetch the click is already making).
+  `useListPager` prefetches the prev and next hrefs when the current record
+  mounts. `sidebar-menu.tsx` KEEPS `prefetch={false}` and adds the same
+  pointer-enter prefetch on top: a Next 15 App Router `Link` prefetches on
+  viewport by default in production, which on a ~100-item menu is the whole menu
+  on mount, and that is why the flag was set. Hover is the middle ground.
 
 ### 3.2 Motion perimeter (M1)
 
