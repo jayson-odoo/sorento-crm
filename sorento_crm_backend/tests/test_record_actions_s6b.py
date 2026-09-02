@@ -38,6 +38,7 @@ from app.models.access import MarketSegment, Team
 from app.models.notification import Notification
 from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
 from app.models.product_set import ProductSet, ProductSetMember
+from app.models.product_spec import ProductSpecVerification
 from app.models.procurement import ProductSupplier, Supplier
 from app.models.sla import FORM_ACTION_CANCELLED, FORM_ACTION_COMMITTED, SlaFormAction
 from app.models.user import SystemSetting, User
@@ -195,6 +196,21 @@ def _product_supplier(db) -> ProductSupplier:
     db.add(link)
     db.commit()
     return link
+
+
+def _verified_spec(db) -> ProductSpecVerification:
+    """A code with an active stamp - nothing else on the ledger this handler reads."""
+    row = ProductSpecVerification(
+        id=_uid(),
+        product_code=f"{MARKER}-{_uid()[:8]}",
+        party="internal",
+        verified_by_user_id=_uid(),
+        verified_by_name="Ada Actor",
+        values_hash="x" * 10,
+    )
+    db.add(row)
+    db.commit()
+    return row
 
 
 def _settings_with_background(db) -> SystemSetting:
@@ -591,6 +607,48 @@ def test_a_notification_is_deleted_only_for_the_reader_who_owns_it(client):
     assert db.query(Notification).filter(Notification.id == mine.id).first() is None
     assert db.query(Notification).filter(Notification.id == theirs.id).first() is not None
     assert body["last_outcome"]["status"] == "failed", body["last_outcome"]
+
+
+def test_spec_verification_unverify_withdraws_the_stamp_on_commit(client):
+    """Spec Verification (F.1/F.2): the row/bulk Unverify button parks this rather than
+    confirming through a dialog. Reversible (5s) - the ledger row is never deleted,
+    only marked withdrawn, and Verify can be pressed again on the same code."""
+    c, db, _actor, _denied = client
+    stamp = _verified_spec(db)
+
+    parked = _start(
+        c, "spec_verification.unverify", "spec_verification", stamp.product_code
+    )
+
+    assert parked.status_code == 202, parked.text
+    assert parked.json()["window_seconds"] == 5
+    db.refresh(stamp)
+    assert stamp.invalidated_reason is None
+
+    _commit_now(
+        c, db, "spec_verification", stamp.product_code, parked.json()["id"]
+    )
+
+    db.expire_all()
+    db.refresh(stamp)
+    assert stamp.invalidated_reason == "manual_unverify"
+    assert stamp.invalidated_at is not None
+
+
+def test_spec_verification_unverify_cancelled_leaves_the_stamp_verified(client):
+    c, db, _actor, _denied = client
+    stamp = _verified_spec(db)
+
+    parked = _start(
+        c, "spec_verification.unverify", "spec_verification", stamp.product_code
+    ).json()
+
+    response = c.post(f"{BASE}/{parked['id']}/cancel")
+
+    assert response.status_code == 200, response.text
+    db.expire_all()
+    db.refresh(stamp)
+    assert stamp.invalidated_reason is None
 
 
 def test_cancel_inside_the_window_leaves_the_record_exactly_where_it_was(client):
