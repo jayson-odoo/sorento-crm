@@ -78,6 +78,7 @@ export const complaintsPagerQuery = {
 
 export function useComplaints(params: ComplaintsListParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: complaintsListQueryKey(params),
     queryFn: () => getComplaints(params),
     staleTime: Infinity,
