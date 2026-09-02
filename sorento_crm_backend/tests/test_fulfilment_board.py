@@ -3877,6 +3877,80 @@ def test_a_location_with_no_pool_of_its_own_still_draws_another_active_site_pool
         assert kinds == [("reserve", "10", pool2.warehouse_code)]
 
 
+def test_the_proof_offers_what_ANOTHER_site_pool_actually_gave():
+    """Review round 2 (S5): the proof's pool question knew only the FIRST pool's allowance.
+
+    It read `available_for_project` off `pool_chain[0]` and then spread that one number
+    across every location in the chain, so on the R-L path - where the first pool is
+    oversold and a LATER one answers - it printed "no other active site pool has anything
+    to offer" beside a Reserve of 300 it had just made at that very pool. Each pool's own
+    allowance is now walked the way `_draw_other_pools` walks it, bounded by the one net.
+    """
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        _own1, oversold = _pooled_warehouses(db)
+        _own2, sparing = _pooled_warehouses(db)
+        lonely = _warehouse(db, f"ZZTL{_uid()[:6]}"[:20])
+        _stock(db, product, lonely, on_hand=0)
+        # The FULLEST pool leads the chain (by on hand) and its own book owes every unit of
+        # it, so its allowance is 0 - while the second pool has 800 and may spare 400.
+        _stock(db, product, oversold, on_hand=1000)
+        _stock(db, product, sparing, on_hand=800)
+        owed = _order(db, so_number=f"ZZT-SO-OWED{_uid()[:6]}", order_date=date(2026, 1, 1))
+        _line(db, owed, product, qty="1000", required_date=date(2026, 3, 1), warehouse=oversold)
+
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="300", required_date=date(2026, 9, 3), warehouse=lonely)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
+        step = _step(contribution, "pool")
+        sparing_code = sparing.warehouse_code
+
+    assert step["answer"] == "yes"
+    assert step["took"] == "300"
+    assert sparing_code in step["why"], step["why"]
+    assert "has anything to offer" not in step["why"], (
+        "the proof offered 0 beside a draw of 300 it had just made at that pool",
+        step["why"],
+    )
+
+
+def test_a_dealer_hot_selling_line_still_reads_the_pools_own_later_order_in_the_proof():
+    """Review round 2 (S4): the proof gated `pool_borrow` on dealer hot-selling while
+    `ProjectSupplyService.walk` built it for every item (LADDER V8, R-A retired the gate).
+
+    A hot item with an empty pool FLOOR and a later pool order holding stock is exactly the
+    shape the divergence hid: the walk composes the borrow, and the proof's own reading of
+    the step has to be made from the same donor list rather than from an empty one.
+    """
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own, pool = _dealer_pool(db, product, abc_class_retail="A")
+        _stock(db, product, own, on_hand=0)
+        _stock(db, product, pool, on_hand=60)
+        # The pool's OWN book owes all 60 to a LATER order, so its free share is nothing and
+        # the only thing left to answer with is that order's on hand (R34).
+        later = _order(db, so_number=f"ZZT-SO-LATE{_uid()[:6]}", order_date=date(2026, 1, 1))
+        _line(db, later, product, qty="60", required_date=date(2027, 1, 15), warehouse=pool)
+
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="60", required_date=date(2026, 9, 3), warehouse=own)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
+        step = _step(contribution, "pool")
+        kinds = [(s["kind"], s["qty"], s["location"]) for s in contribution["sources"]]
+        pool_code = pool.warehouse_code
+
+    assert kinds == [("borrow", "60", pool_code)], kinds
+    assert step["answer"] == "yes"
+    assert step["took"] == "60"
+    assert later.so_number in step["why"], step["why"]
+
+
 def test_the_borrow_step_offers_what_it_found_and_takes_none_of_it():
     """Ladder v2 splits Borrow into two rungs (group / cross-group), and with no policy row
     (the default caps closed) neither auto-composes here - but the donor is still OFFERED, on

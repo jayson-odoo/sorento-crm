@@ -105,6 +105,7 @@ from app.services.scm.front_planning_engine import (
     TIMELY_SPO,
     date_text,
     pool_reserve_capacity,
+    pool_share_capacity,
     qty_text,
     reserve_window_end,
 )
@@ -2578,45 +2579,40 @@ class FulfilmentBoardService:
             if pool_code and pool_chain
             else None
         )
-        pool_capacity = (
-            []
-            if outside_window
-            else pool_reserve_capacity(
-                pools=list(pool_chain),
-                pools_net=pools_net_open,
-            )
-        )
         # Step 4b's donors: the LATER POOL ORDERS holding on hand. Read off the same builder
         # the engine walked (`pool=True`), because without them the step printed
         # `answer=yes, took=30` beside `offered=0` and "No shared pool holds this product."
         # over a borrow it had just composed.
+        # LADDER V8 (R-A, review round 2 S4): the dealer hot-selling gate is retired here
+        # too. `ProjectSupplyService.walk` builds `pool_borrow` unconditionally, so a
+        # hot-selling item whose pool floor is empty and whose later pool order can lend
+        # read `offered=0` beside the borrow the engine had just composed.
         pool_borrow_candidates = (
             []
-            if outside_window or fact.is_dealer_hot_selling
+            if outside_window
             else self.supply.order_borrow_candidates_for(
                 fact, as_of=as_of, borrow_left=borrow_open, pool=True
             )
         )
-        # LADDER V8 (R-B): what the pile can offer THIS line is its share, not the whole
-        # net - the same `available_for_project` the walk's own step 0 was bound by, read
-        # off the chain's first pool exactly as the walk reads it. Without the cap the proof
-        # advertised 31 beside a step that could only ever have given 15.
-        pool_allowance = (
-            _ZERO
+        # LADDER V8 (R-B, R-L): what the CHAIN can offer this line is each pool's own share,
+        # walked the way `_draw_other_pools` walks it and bounded by the one five-pool net.
+        # Capping the whole chain by the FIRST pool's allowance printed `offered=0` beside
+        # `taken=300` the moment another site's pool answered the remainder (review round 2,
+        # S5); before that cap existed at all the proof advertised 31 beside a step that
+        # could only ever have given 15.
+        pool_share_chain = (
+            []
             if outside_window
-            else available_for_project(
-                (pool_chain[0].get("available") if pool_chain else _ZERO),
-                pools_net_open,
-                self.supply.fulfilment_settings().get("pool_share_pct"),
+            else pool_share_capacity(
+                pools=list(pool_chain),
+                pools_net=pools_net_open,
+                pool_share_pct=self.supply.fulfilment_settings().get("pool_share_pct"),
             )
         )
         # The two halves are ALTERNATIVES, never a sum: one step, one story (R33), so the
         # offer is the larger of them and not both added together.
         pool_offered = max(
-            min(
-                sum((amount for _location, amount in pool_capacity), _ZERO),
-                pool_allowance,
-            ),
+            sum((amount for _location, amount, _allowance in pool_share_chain), _ZERO),
             sum((_dec(c.get("qty")) for c in pool_borrow_candidates), _ZERO),
         )
         add(
@@ -2634,7 +2630,7 @@ class FulfilmentBoardService:
             note=(
                 None
                 if outside_window
-                else self._pool_note(fact, pool_chain)
+                else self._pool_note(pool_chain)
                 or self._order_borrow_note(pool_borrow_candidates)
             ),
             why=lambda outcome: (
@@ -3044,7 +3040,7 @@ class FulfilmentBoardService:
         )
 
     @staticmethod
-    def _pool_note(fact: Any, pool_chain: Sequence[Dict[str, Any]]) -> Optional[str]:
+    def _pool_note(pool_chain: Sequence[Dict[str, Any]]) -> Optional[str]:
         """Which pools were opened, under question 2's own row.
 
         The captain, on SO415472: "why is BRW the only pool considered? What about MWH, DC1,
@@ -3053,9 +3049,9 @@ class FulfilmentBoardService:
         like one that was never opened.
 
         The dealer hot-selling line it used to carry is gone with the gate (v8, R-A): every
-        pool in the chain is opened for every item now, and the share is what is kept back.
-        `fact` stays in the signature because the caller passes the walk's own fact and a
-        note about the pile may need it again.
+        pool in the chain is opened for every item now, and the share is what is kept back -
+        and `fact` went with it (review round 2, nit 7), because a parameter nothing reads
+        is a rule a reader still believes in.
         """
         if not pool_chain:
             return "no shared pool"
@@ -3121,21 +3117,19 @@ class FulfilmentBoardService:
             pools=list(pool_chain),
             pools_net=net,
         )
-        # LADDER V8 (R-B): what the pile may give THIS line is its share, so the sentence
-        # must not offer a figure the walk could never have taken. The same
-        # `available_for_project` the walk and the option row are bound by, applied to the
-        # chain's first pool exactly as the walk applies it.
-        allowance = available_for_project(
-            (pool_chain[0].get("available") if pool_chain else _ZERO),
-            net,
-            self.supply.fulfilment_settings().get("pool_share_pct"),
-        )
-        left_to_share = allowance
-        capacity_by_location: Dict[str, Decimal] = {}
-        for location, amount in capacity:
-            share = min(amount, max(left_to_share, _ZERO))
-            capacity_by_location[location] = share
-            left_to_share -= share
+        # LADDER V8 (R-B, R-L): what the pile may give THIS line is EACH pool's own share,
+        # walked the way the engine walks it, so the sentence never offers a figure the walk
+        # could not have taken and never prints 0 beside a draw another site's pool made.
+        # One allowance spread over every location was the round-1 shape, and it read
+        # `offered=0` under `taken=300` (review round 2, S5).
+        capacity_by_location: Dict[str, Decimal] = {
+            location: amount
+            for location, amount, _allowance in pool_share_capacity(
+                pools=list(pool_chain),
+                pools_net=net,
+                pool_share_pct=self.supply.fulfilment_settings().get("pool_share_pct"),
+            )
+        }
         pools_net_refused = not capacity and any(
             _dec(entry.get("free")) > _ZERO for entry in pool_chain
         )
