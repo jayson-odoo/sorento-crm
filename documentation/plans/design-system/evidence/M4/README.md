@@ -292,3 +292,106 @@ to pass, the newly-touched object-shaped call sites and hand-wrapped tags render
 correctly where the tenant has data for it, the pager-skeleton nit is confirmed end-to-end, and
 the Back-to-list regression still holds page and filters. No new console errors anywhere in this
 run.
+
+## Run 3 (after fix round 3, HEAD 8c814baae, 2 Sep 2026)
+
+Short targeted re-verification of the six named grids/lists for round 3 plus the MCP tools
+"revert" check and the Drive list view. Worktree `motion2-M4`, branch
+`feat/motion2-M4-list-latency`, `PORT=3081 npm run dev` (own session, PID group under parent
+`npm exec` 39313 / `next-server` child 39310), BE reused read-only on `:8120` per
+`FASTAPI_INTERNAL_URL=http://localhost:8120` in `.env.local` (confirmed alongside
+`NEXTAUTH_URL=http://localhost:3081`, `AUTH_TRUST_HOST=true`, no `NEXT_PUBLIC_API_URL`). Login via
+`E2E_EMAIL`/`E2E_PASSWORD` from `.env.local`. `lsof -i :3081` was empty before starting. Sessions
+`--session m4run3` (main), `--session m4areload` and `--session m4areload2` (the two hard-reload /
+`--init-script` checks, both closed immediately after use). Navigated by sidebar clicks from `/`,
+except the two `--init-script` sessions which needed a fresh login (isolated session) before
+reaching the target page by the same sidebar-click method.
+
+Method: same in-page `window.fetch` patch (500-1200ms artificial delay on the grid's own list
+endpoint) plus a 20-25ms poll of `document.querySelector('table')`'s `[data-slot="skeleton"]`
+count and the `<tbody>` class list for `opacity-60`, run together with the triggering
+click/keystroke inside one `eval` call so no CLI round-trip can miss the window. For the two
+cold-reload checks (Drive list first paint), a `--init-script`-registered patch armed the delay
+and a background poll loop before `location.reload()`/`location.href` navigation, since the
+runtime `addinitscript` command is still not present in the pinned 0.27.0 build (matches Run 2's
+finding). `network requests --filter` independently confirmed each interaction's request. Where
+`agent-browser click @ref` silently failed to register (the sidebar's "Operations"/"AI Assistant"
+group toggles, and one sidebar leaf link), a native `element.click()` via `eval` on the same
+element worked immediately - the same tool quirk Run 2 already logged, not a product defect.
+
+### Check 1: rows held and dimmed on a page turn / sort / filter
+
+| # | Grid | Trigger | Result | Observation |
+| - | --- | --- | --- | --- |
+| 1 | Project Sales > Leads | Status filter Open -> Qualified (no Next/Prev, single page) | PASS | maxSkeleton 0, `opacity-60` seen and cleared; `outcome=qualified` request confirmed 200 |
+| 2 | Project Sales > Pipeline (grid view) | Sort by "Code" (only page has 5 rows, no Next/Prev) | PASS | maxSkeleton 0, dim appeared at t=37ms and held through the full 900ms artificial delay, cleared at t=1047ms once `sort=project_code` resolved |
+| 3 | System Management > API Call Log | Next page | PASS | held 50 rows, dimmed t=106ms-1149ms, `page=2` request confirmed |
+| 4 | SLA Management > Message Snippets | Search ("widget"); tenant has zero snippets, single "No snippets yet" placeholder row | PASS | the empty-state row itself dims correctly (t=234-994ms) during the `query=widget` fetch, then clears - the mechanism engages even with no real data to hold |
+| 5 | SCM > Reorder > a run's results grid | Next page, then all 4 filter comboboxes (status, decided/undecided, price answer, suggested action, level answer) | **N/A** | the recommendations endpoint loads with `limit=1000` at mount and the 25-row/page pager plus every filter combobox is client-side against that already-loaded set - zero new `/api/v1/scm/*` requests fired for any of the 5 triggers tried. Per the brief's fallback instruction, marked n/a rather than forced. Also note: every visible run in this tenant shows status "Planning", not "Completed" - the most recent run was used since none was in a Completed state to pick from |
+| 6 | SCM > Policies > Reorder policies tab | Search ("PROJECT") | PASS | held 8 rows dimmed t=281-1228ms, cleared to the 2 matching rows once `query=PROJECT` resolved |
+
+Screenshots: `run3-leads-filter-qualified.png`, `run3-pipeline-grid-sort.png`,
+`run3-api-call-logs-next.png`, `run3-message-snippets-search.png`,
+`run3-reorder-run-clientside.png`, `run3-reorder-policies-search.png`.
+
+**Secondary observation on Pipeline (grid view), not a required check outcome:** toggling the
+"Critical only" switch to a filter combination that narrows the result set to genuinely ZERO rows
+(no critical projects exist in this tenant) blanks straight to the empty-state row at t=76ms -
+well before the artificially-delayed fetch resolves at t~1027ms - rather than holding the previous
+5 rows dimmed through the wait. The sort transition on the same grid (row 2 above, same 5 rows,
+count never reaches zero) dims correctly, so the mechanism itself works on this list; it is
+specifically the "next result set is empty" case that skips the hold. Flagging for a follow-up
+look, not fixed here.
+
+**Finding independent of M4, surfaced by check 6:** the Reorder Policies tab returns duplicate
+rows for the same policy even on a bare page load, before any search - `PROJECT`, `ACC-AT` and
+`SRT-BA` scope rows each render twice (confirmed both by reading rendered row text and by a
+`[error] Encountered two children with the same key` React console warning repeating for the same
+3 policy UUIDs throughout the session). This is a pre-existing data/dedup defect in that list, not
+a round-3 regression - it is called out here only because it produces the real console errors
+counted in Check 4 below. Not something for a tester to fix; worth its own ticket.
+
+### Check 2: MCP tools catalogue Active-only toggle (revert check)
+
+PASS. Flipping "Show deactivated" from the System Management > MCP Tools page dropped the
+previous 40 active-only rows to a single loading row almost immediately (t=23ms, well before the
+artificially-delayed `is_active=false` fetch resolved at t=860ms) rather than holding or dimming
+them, then swapped in the full 201-row deactivated set once the response arrived (t=904ms). This
+is the revert from commit `396825950` ("the catalogue must not answer from the previous filter")
+holding: no stale rows survive the filter flip. Zero console errors. Screenshot:
+`run3-mcp-tools-toggle.png`.
+
+### Check 3: Resource Management > Attachment directories, list view
+
+PASS, both halves.
+
+- **Cold first load** (`location.reload()` on the list-mode Drive page, delay armed via
+  `--init-script` since no runtime `addinitscript` exists in this build): no table for ~970ms,
+  then real skeleton bars appear (300 skeleton cells = 6 cols x 50 rows) and taper to 150 then 0
+  by t=2905ms as the column-config and row data both resolve - confirms skeleton-then-rows on a
+  genuine cold mount. Screenshot: `run3-drive-coldload-skeleton.png`.
+- **Folder navigate in and back** (root "All files" with 50 rows -> click into "Marketing", 23
+  rows -> click "All files" to return): both directions held the CURRENT row count with
+  `skelCount: 0` for the entire 800-1000ms artificial delay before flipping cleanly to the new
+  row count once the (delayed) `attachments/drive` request resolved (t=1013ms in, t=819ms out) -
+  no skeleton reappeared after the first paint in either direction. Column headers
+  (`""`, `Name`, `Modified`, `Company`) were identical before and after both transitions - no
+  default-column flash. Screenshot: `run3-drive-list-view.png`.
+
+### Check 4: console errors across all of the above
+
+**FAIL, isolated to the Reorder Policies tab (SCM > Policies).** `console` showed 56 repeats of
+`[error] Encountered two children with the same key, '%s'. ... <uuid>` cycling through 3 policy
+UUIDs, matching the duplicate-row finding under Check 1 row 6 above. Every other page and
+interaction in this run - Leads, Pipeline (both the sort and the critical-filter edge case), API
+Call Log, Message Snippets, the Reorder run results grid, MCP Tools, and both Drive list checks -
+produced zero console errors and zero uncaught page errors (`errors` command empty throughout).
+The failure is a pre-existing data/render defect (duplicate policy rows -> duplicate React keys),
+not a round-3 list-latency regression; it is reported here because the brief's check is worded as
+a blanket "zero errors across all of the above" and this run did surface a real one.
+
+### Cleanup
+
+Dev server killed (`kill 39313`, its `next-server` child 39310 exited with it; confirmed via a
+follow-up `lsof -i :3081` returning empty). Only the `m4run3`, `m4areload` and `m4areload2`
+agent-browser sessions belonging to this run were closed - no `close --all` was issued.
