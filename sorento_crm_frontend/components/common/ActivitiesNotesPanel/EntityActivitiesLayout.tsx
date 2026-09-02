@@ -174,7 +174,7 @@ export default function EntityActivitiesLayout({
           // the panel slid its full 200ms for someone who asked for no motion
           // (measured, evidence/M3/README.md M3-04). This is the shared pattern
           // DESIGN-LANGUAGE names for a one-off transition.
-          'transition-transform duration-200 ease-out motion-reduce:transition-none',
+          'transition-transform duration-(--duration-base) ease-(--ease-standard) motion-reduce:transition-none',
           open ? 'translate-x-0' : 'translate-x-full',
         )}
         aria-hidden={!open}
