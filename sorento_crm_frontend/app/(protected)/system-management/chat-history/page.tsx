@@ -30,6 +30,7 @@ import { buildGroupHeader } from './groupHeader';
 import { getChatMessages } from './services/chatHistoryService';
 import { useExportChatHistory } from './hooks/useChatHistory';
 import { ChatThreadDrawer } from './components/ChatThreadDrawer';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import type {
   ChatHistoryFilters,
   ChatHistoryGroupBy,
@@ -89,6 +90,7 @@ export default function ChatHistoryPage() {
   );
 
   const { data, isLoading } = useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['chat-history', filters, searchQuery, pagination, sorting, groupBy],
     queryFn: () =>
       getChatMessages(filters, {
@@ -100,7 +102,6 @@ export default function ChatHistoryPage() {
         group_by: groupBy === 'none' ? undefined : groupBy,
       }),
     staleTime: 15_000,
-    placeholderData: (prev) => prev,
   });
 
   const exportMutation = useExportChatHistory();
@@ -212,7 +213,6 @@ export default function ChatHistoryPage() {
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && applySearch()}
-                disabled={isLoading}
                 className="ps-9 w-full sm:w-64"
               />
               {searchQuery.length > 0 && (

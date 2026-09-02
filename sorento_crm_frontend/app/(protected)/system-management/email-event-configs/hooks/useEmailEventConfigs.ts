@@ -14,7 +14,6 @@ export function useEmailEventConfigs() {
     queryKey: ['email-event-configs'],
     queryFn: listEmailEventConfigs,
     staleTime: 1000 * 30,
-    refetchOnWindowFocus: false,
   });
 }
 

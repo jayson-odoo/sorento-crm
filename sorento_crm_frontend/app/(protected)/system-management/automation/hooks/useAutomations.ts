@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEntityMutation } from '@/hooks/useEntityMutation';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import {
   createAutomation,
   getAutomation,
@@ -89,6 +90,7 @@ export function useRunAutomationNow(id: string) {
 
 export function useAutomationRuns(id: string | null, page = 1, limit = 50) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['automation-runs', id, page, limit],
     queryFn: () => getAutomationRuns(id!, page, limit),
     enabled: !!id,

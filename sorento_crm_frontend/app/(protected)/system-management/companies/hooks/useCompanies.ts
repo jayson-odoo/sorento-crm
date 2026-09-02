@@ -16,14 +16,15 @@ import {
   updateCompany,
 } from '../services/companyService';
 import type { CompanyFormData, CompanyUser } from '../types/company.types';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export function useCompanies(params: DataGridApiFetchParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['companies', params.pageIndex, params.pageSize, params.sorting, params.searchQuery],
     queryFn: () => getCompanies(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

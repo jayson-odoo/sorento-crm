@@ -6,7 +6,6 @@ export function useHealthSummary(range?: { date_from?: string; date_to?: string 
     queryKey: ['system-health-summary', range?.date_from ?? null, range?.date_to ?? null],
     queryFn: () => getHealthSummary(range),
     staleTime: 1000 * 30,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

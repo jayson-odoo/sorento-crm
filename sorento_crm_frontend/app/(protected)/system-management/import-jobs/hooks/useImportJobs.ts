@@ -8,9 +8,11 @@ import {
   cancelImportJob,
 } from '../services/importJobService';
 import type { ImportJobRowsQuery } from '../types/importJob.types';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export function useImportJobs(params: DataGridApiFetchParams & { job_type?: string; status?: string }) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['import-jobs', params.pageIndex, params.pageSize, params.job_type, params.status],
     queryFn: () => getImportJobs(params),
     staleTime: 1000 * 30, // 30 seconds - jobs update frequently
@@ -57,6 +59,7 @@ export function useImportJobStatus(jobId: string, enabled: boolean = true) {
 
 export function useImportJobRows(jobId: string, params: ImportJobRowsQuery, enabled = true) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [
       'import-job-rows',
       jobId,
