@@ -5,6 +5,10 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
+import {
+  mockAvailableForProject,
+  POOLS_SET,
+} from '../../_shared/lib/fulfilmentV8Mock';
 import { StockDocumentsPanel } from './StockDocumentsPanel';
 import type {
   BoardCellLocation,
@@ -530,11 +534,22 @@ export const CellStockTable = React.forwardRef<
                         }
                         const isNet =
                           column.key === 'available' && section.net !== null;
+                        // R-K: the SUBTOTAL's own Available-for-Project is not a sum of the
+                        // rows above it, same reason `isNet` is not for Available - it is the
+                        // share of the pool's own net, which every pool row already agrees on
+                        // (`_net_fields`, the same value each row's `net` carries). Blank on a
+                        // non-pool section: there is no share to keep back from a group.
+                        const isPoolShare =
+                          column.key === 'available-for-project';
                         const total = isNet
                           ? section.net
-                          : sumOf(section.rows, (entry) =>
-                              valueOf(column, entry, drawn),
-                            );
+                          : isPoolShare
+                            ? section.netOf === POOLS_SET
+                              ? mockAvailableForProject(section.net, section.net)
+                              : null
+                            : sumOf(section.rows, (entry) =>
+                                valueOf(column, entry, drawn),
+                              );
                         return (
                           <td
                             key={column.key}
@@ -744,9 +759,6 @@ function labelOf(where: BoardLocationWhere, netOf: string | null): string {
   return `${WHERE_LABELS[where]} subtotal`;
 }
 
-/** What the server calls the five-pool set on `net_of`. */
-const POOLS_SET = 'pools';
-
 const HEAD_CELL =
   'sticky top-0 z-10 border-b border-e border-border bg-muted px-2 py-1.5 text-start align-bottom font-medium';
 const BODY_CELL = 'border-b border-e border-border px-2 py-1.5 align-middle';
@@ -774,6 +786,12 @@ const NUMERIC_COLUMNS: {
   total?: boolean;
   /** May legitimately be negative, and is coloured when it is. */
   signed?: boolean;
+  /**
+   * Skips AC-B2's "a named location with no figure reads 0" default (R-K): this column has
+   * no answer at all outside a site pool, and 0 there would say "the pool can spare
+   * nothing" about a row that is not a pool.
+   */
+  noZeroFallback?: boolean;
 }[] = [
   {
     key: 'on-hand',
@@ -803,6 +821,20 @@ const NUMERIC_COLUMNS: {
     of: (entry) => entry.available_qty ?? null,
     total: true,
     signed: true,
+  },
+  // R-K, S2: what the pool may still give a PROJECT line once its own dealer share is kept
+  // back (`min(floor(available x (100 - share) / 100), max(five-pool net, 0))`). Every site
+  // pool row states it, `0` included - the ONLY numeric column that is never `Available`'s
+  // own AC-B2 blank-or-zero rule, because outside a pool the concept does not exist at all.
+  {
+    key: 'available-for-project',
+    label: 'Available for Project',
+    of: (entry) =>
+      (entry.where ?? 'own') === 'site_pool'
+        ? (entry.available_for_project ?? '0')
+        : null,
+    total: true,
+    noZeroFallback: true,
   },
   // Information, deliberately NOT folded into Available: a purchase order reaches a project
   // line through a link, never by sitting at the location. "500 already on order at DC1" is
@@ -838,12 +870,14 @@ const NUMERIC_COLUMNS: {
 function valueOf(
   column: {
     of: (entry: BoardCellLocation, taken: Map<string, string>) => string | null;
+    noZeroFallback?: boolean;
   },
   entry: BoardCellLocation,
   taken: Map<string, string>,
 ): string | null {
   const value = column.of(entry, taken);
   if (value !== null) return value;
+  if (column.noZeroFallback) return null;
   return entry.location ? '0' : null;
 }
 

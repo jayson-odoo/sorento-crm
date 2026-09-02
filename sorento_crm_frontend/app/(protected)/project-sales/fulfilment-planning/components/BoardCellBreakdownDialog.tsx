@@ -1217,6 +1217,14 @@ function present(value: string | null | undefined): boolean {
  * Ladder v6: the line was not planned alone. The captain, 28 August 2026, on SO381895 lines
  * 31 and 32 (10 borrowed, 20 bought): "this is 1 order as a whole ... for the same delivery
  * date". Said only when there IS another line in the unit; the ordinary line says nothing.
+ *
+ * S2 (R-E) walks the unit's lines ONE AT A TIME, smallest quantity first, each sharing the
+ * piles the one before it left - so two lines of one unit can (and on SO419208's 135-then-
+ * 1305 shape, do) end with DIFFERENT compositions. The row above already prints THIS line's
+ * own `sources`; this sentence used to say "covered or bought as one" and that read as
+ * "identically", which R-E ended. It now says only what is still true: the UNIT's total, not
+ * how the lines inside it got there - that is what the Sourced-from cell of every other line
+ * of this unit is for.
  */
 function unitNote(contribution: BoardContribution): string | null {
   const count = contribution.unit_line_count ?? 1;
@@ -1225,7 +1233,7 @@ function unitNote(contribution: BoardContribution): string | null {
   const when = contribution.required_date
     ? ` for ${formatDateInMalaysia(contribution.required_date)}`
     : '';
-  return `Planned with ${others} other ${others === 1 ? 'line' : 'lines'} of this order${when}: ${contribution.unit_qty} in all, covered or bought as one.`;
+  return `Planned with ${others} other ${others === 1 ? 'line' : 'lines'} of this order${when}: ${contribution.unit_qty} in all. Each line's own composition is shown on its own row.`;
 }
 
 function shareNote(contribution: BoardContribution): string | null {

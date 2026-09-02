@@ -790,8 +790,14 @@ export interface BoardTrailStep {
  * `use` is the free pile (own group, then the other project groups), `order_borrow` is on hand
  * held by a later order, `supply_borrow` is the SUPPLY a later order holds (one document, S4),
  * then the pool's own book, then Buy.
+ *
+ * `pool_share` is ladder v8's replacement for `pool` (`PLAN-scm-fulfilment-feedback-2sep.md`
+ * S2, R-A/R-B): the site pool of the asking bin is asked FIRST rather than last, for up to its
+ * share allowance, and the label reads "Use BRW stock". `pool` is kept only so a trail frozen
+ * under v7.1 still renders in its own words; no LIVE v8 walk emits it.
  */
 export type BoardLadderStep =
+  | 'pool_share'
   | 'use'
   | 'order_borrow'
   | 'supply_borrow'
@@ -840,6 +846,13 @@ export interface BoardLadderOption {
   debt_month?: string | null;
   /** The option the engine proposed. Exactly one option carries it, or none when nothing covers. */
   chosen: boolean;
+  /**
+   * How much THIS step alone can give, stated only on `pool_share` (S2, R-B): the one step
+   * that may cover PART of the unit rather than whole-or-nothing (R10/R33 still bind every
+   * other step, so a quantity beside them would say nothing `whole` does not already say).
+   * `null` when the step gives nothing at all - `0`, per R-K, is never blank.
+   */
+  gives_qty?: string | null;
 }
 
 /**
@@ -1493,6 +1506,20 @@ export interface BoardCellLocation {
   qty_proposed_reserve?: string | null;
   qty_proposed_incoming?: string | null;
   qty_proposed_buy?: string | null;
+  /**
+   * S2 (`PLAN-scm-fulfilment-feedback-2sep.md`, R-K): what a `site_pool` row - and the
+   * "Site pool subtotal" row built from it - may give a PROJECT line once the pool's own
+   * dealer share is kept back: `min(floor(available_qty x (100 - pool_share_pct) / 100),
+   * max(net, 0))`, `net` being this SAME row's own five-pool net. Never rendered for an
+   * `own` / `group` / `other_group` row (there is no pool share to keep there); on an
+   * addressable `site_pool` row it is always a number, `0` included, never blank.
+   *
+   * PHASE 1 MOCK (this field does not exist on the wire yet): `lib/fulfilmentV8Mock.ts`
+   * computes it client-side in `fulfilmentPlanningService.ts` from `available_qty` and
+   * `net`, which the v7.1 board already sends. Phase 2 deletes the mock the day the v8
+   * engine sends this number for real.
+   */
+  available_for_project?: string | null;
 }
 
 /** One cell: this row, by this bucket, across every selected order. */
@@ -1890,6 +1917,17 @@ export interface StockDetail {
   incoming: StockDetailIncoming[];
   /** Confirmed holds taken by lines booked outside this set. Group reading only. */
   holds?: StockDetailHold[];
+  /**
+   * S2 (R-K): the five site pools' own net, for capping "Available for Project" on the
+   * `group: 'pools'` reading's running ledger. Absent on every other read (a bin, or a
+   * non-pool group), which has no pool share to cap.
+   *
+   * PHASE 1 MOCK: on today's wire this is the SAME number `available_qty` already carries
+   * for a `group: 'pools'` read (both are the five pools' net, signed), so
+   * `fulfilmentPlanningService.ts` aliases it client-side until Phase 2 sends the field for
+   * real under its own name.
+   */
+  five_pool_net?: string | null;
 }
 
 // ---------------------------------------------------------------------------

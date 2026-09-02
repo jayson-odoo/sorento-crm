@@ -1,7 +1,14 @@
 import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
+import {
+  mockAugmentLocations,
+  mockReorderLadderOptionsV8,
+  POOLS_SET,
+} from '../lib/fulfilmentV8Mock';
 import type {
   AdoptSalesOrderResult,
+  BoardCell,
+  BoardContribution,
   BoardGranularity,
   ClassificationEvidence,
   PlanningBoard,
@@ -97,6 +104,33 @@ import type {
  * real call; there is no switch left to turn on and no fixture served from here. The Phase 1
  * fixtures survive only as test support, which is the whole of what "throwaway by design"
  * meant.
+ *
+ * ── S2 LADDER v8 (PLAN-scm-fulfilment-feedback-2sep.md, PHASE 1 - the overlay below, not
+ *    the routes above) ─────────────────────────────────────────────────────────────────
+ *
+ * `getPlanningBoard`, `getSupply` and `getStockDetail` call `lib/fulfilmentV8Mock.ts` on
+ * their own response, BEFORE returning it, to add three fields the v7.1 board/stock-detail
+ * routes above do not send yet - the v8 engine change (this plan's S2) is Phase 2 for a
+ * DIFFERENT slice, so this file fakes its wire shape rather than its numbers, over payloads
+ * that are otherwise entirely real:
+ *
+ *   BoardCellLocation.available_for_project : string | null
+ *     `cell.locations[]`, `contribution.locations[]` (board) - one per `site_pool` row and
+ *     the "Site pool subtotal" row built from it (R-K). `0`, never blank, on an addressable
+ *     pool row; absent on `own` / `group` / `other_group`.
+ *
+ *   StockDetail.five_pool_net : string | null
+ *     `stock-detail` - only on a `group=pools` read, which is what the Stock tab's expanded
+ *     ledger caps its running "Available for Project" column by, under a site-pool section
+ *     (a plain bin or a non-pool group keeps "Balance after", uncapped, unchanged).
+ *
+ *   BoardLadderOption.step === 'pool_share', label "Use BRW stock", first in walk order
+ *     `contribution.options[]` (board), `SupplyLine.options[]` (sheet) - today's `pool` step
+ *     (last, before Buy) relabelled and moved first (R-A), carrying `gives_qty` (R-B).
+ *
+ * Phase 2 (S2's own Phase 2, not this slice's) deletes the `lib/fulfilmentV8Mock.ts` calls
+ * the day `front_planning_engine.walk_line` and the board/stock-detail serializers send all
+ * three for real; the functions below go back to `return response.json()` verbatim.
  */
 
 const BASE = '/api/v1/project-sales';
@@ -206,7 +240,15 @@ export async function getSupply(psoId: string): Promise<SupplyProposal> {
   const response = await apiFetch(`${BASE}/sales-orders/${psoId}/supply`);
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to load the supply composition'));
-  return response.json();
+  const data: SupplyProposal = await response.json();
+  // PHASE 1 MOCK (S2, `lib/fulfilmentV8Mock.ts`): v8's walk order, until the engine sends it.
+  return {
+    ...data,
+    lines: data.lines.map((line) => ({
+      ...line,
+      options: mockReorderLadderOptionsV8(line.options),
+    })),
+  };
 }
 
 /**
@@ -400,7 +442,42 @@ export async function getPlanningBoard(
   const response = await apiFetch(`${BASE}/fulfilment-planning/board?${search.toString()}`);
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to load the planning board'));
-  return response.json();
+  const data: PlanningBoard = await response.json();
+  return mockAugmentBoard(data);
+}
+
+/**
+ * PHASE 1 MOCK (S2, `lib/fulfilmentV8Mock.ts`): `available_for_project` on every site-pool
+ * location row and v8's ladder-option order, applied to BOTH homes a contribution's numbers
+ * live in - a cell's own `contributions` (windowed) and the board's flat, never-windowed
+ * `contributions` (`PlanningBoard.contributions` - "Approve all" and the List view read this
+ * one, not the cells). The two are separate arrays over the wire, so augmenting only one
+ * would leave the other reading v7.1's numbers depending which surface asked.
+ *
+ * Every array is read defensively (`?? []`, `?.map`): a minimal fixture built only to assert
+ * the URL a call makes (`{ cells: [] }`, no top-level `contributions`) is not this function's
+ * business to reject, and the real route always sends both.
+ */
+function mockAugmentBoard(board: PlanningBoard): PlanningBoard {
+  return {
+    ...board,
+    cells: (board.cells ?? []).map(
+      (cell): BoardCell => ({
+        ...cell,
+        locations: mockAugmentLocations(cell.locations),
+        contributions: (cell.contributions ?? []).map(mockAugmentContribution),
+      }),
+    ),
+    contributions: (board.contributions ?? []).map(mockAugmentContribution),
+  };
+}
+
+function mockAugmentContribution(contribution: BoardContribution): BoardContribution {
+  return {
+    ...contribution,
+    locations: mockAugmentLocations(contribution.locations),
+    options: mockReorderLadderOptionsV8(contribution.options),
+  };
 }
 
 
@@ -434,7 +511,14 @@ export async function getStockDetail(
   );
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to load the stock detail'));
-  return response.json();
+  const data: StockDetail = await response.json();
+  // PHASE 1 MOCK (S2, `lib/fulfilmentV8Mock.ts`): a `group: 'pools'` read's own `available_qty`
+  // already IS the five-pool net (both read `netting().pools_net()`); Phase 2 exposes it under
+  // its own name instead of this alias.
+  return {
+    ...data,
+    five_pool_net: data.group === POOLS_SET ? data.available_qty : (data.five_pool_net ?? null),
+  };
 }
 
 /**

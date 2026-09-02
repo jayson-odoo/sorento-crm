@@ -11,6 +11,10 @@ import { formatDateInMalaysia } from '@/lib/helpers';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
 import { useStockDetail } from '../../_shared/hooks/useFulfilmentPlanning';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
+import {
+  mockAvailableForProject,
+  POOLS_SET,
+} from '../../_shared/lib/fulfilmentV8Mock';
 import type {
   StockDocumentMatch,
   StockDonorMatch,
@@ -65,6 +69,11 @@ function normalizeSpoNumber(value: string | null | undefined): string {
  *   row. Step 1 of the ladder draws the GROUP's pile - a `BRW-IB` line is fed by `MWH-IB` stock
  *   - so the group is the only level at which "what was left when my line came round" is true.
  *   The asker's own line is marked and `My line` jumps to it.
+ * - Under the SITE POOL subtotal specifically (`group === 'pools'`), the running column reads
+ *   "Available for Project" instead of "Balance after" - R-K, S2: the pool's own share of that
+ *   running balance, never the raw pile, capped by the same five-pool net the summary row's
+ *   own column is. An ownership group keeps the raw pile: there is no dealer share to keep
+ *   back from `IB` or `BB`.
  */
 export function StockDocumentsPanel({
   productId,
@@ -102,6 +111,12 @@ export function StockDocumentsPanel({
 }) {
   const detail = useStockDetail(productId, warehouseId ?? null, lineIds, group);
   const isGroup = Boolean(group);
+  /**
+   * R-K, S2: under a SITE POOL section the running column is the pool's share, not the raw
+   * pile - a GROUP section (`IB`, `BB`, ...) keeps plain `Balance after`, unchanged, because
+   * there is no dealer share to keep back from an ownership group.
+   */
+  const isPoolsSection = group === POOLS_SET;
   const panelRef = React.useRef<HTMLDivElement | null>(null);
 
   const rows = React.useMemo<StockDetailRow[]>(() => {
@@ -611,50 +626,64 @@ export function StockDocumentsPanel({
     });
 
     if (isGroup) {
+      // R-K, S2: under the pools SET the running column is the pool's own share of each row's
+      // balance, capped by the five-pool net the SAME stock-detail read now carries
+      // (`five_pool_net`) - a GROUP set (`IB`, `BB`, ...) keeps the raw pile, unlabelled and
+      // uncapped, exactly as it always has.
+      const balanceHeading = isPoolsSection ? 'Available for Project' : 'Balance after';
+      const fivePoolNet = isPoolsSection ? (detail.data?.five_pool_net ?? null) : null;
+      const displayedBalance = (balance: string | null): string | null =>
+        isPoolsSection ? (mockAvailableForProject(balance, fivePoolNet) ?? balance) : balance;
       list.push({
         id: 'balance',
         accessorFn: (row) => Number(row.balance || 0),
         header: ({ column }) => (
-          <DataGridColumnHeader title="Balance after" column={column} />
+          <DataGridColumnHeader title={balanceHeading} column={column} />
         ),
-        cell: ({ row }) => (
-          <span
-            data-testid={`stock-balance-${row.original.key}`}
-            className={cn(
-              'block truncate text-sm tabular-nums',
-              emphasis(row.original),
-              isNegative(row.original.balance) && 'text-destructive',
-            )}
-          >
-            {row.original.balance}
-          </span>
-        ),
+        cell: ({ row }) => {
+          const shown = displayedBalance(row.original.balance);
+          return (
+            <span
+              data-testid={`stock-balance-${row.original.key}`}
+              className={cn(
+                'block truncate text-sm tabular-nums',
+                emphasis(row.original),
+                isNegative(shown) && 'text-destructive',
+              )}
+            >
+              {shown}
+            </span>
+          );
+        },
         // Where the group ends up once every row has been read. It is the subtotal's own
         // Available less two things the subtotal does not carry, both of them rows in this
         // list: THIS cell's own demand (the subtotal adds it back, because a line does not
-        // compete with itself) and any hold taken from outside the group.
+        // compete with itself) and any hold taken from outside the group. Under the pools SET
+        // this closing figure equals the Stock tab's own "Available for Project" summary cell
+        // (AC-2.6b) - the same share formula, over the same closing balance.
         footer: () => {
           const closing =
             rows.length > 0 ? rows[rows.length - 1].balance : null;
+          const shown = displayedBalance(closing);
           return (
             <span
               className={cn(
                 'tabular-nums',
-                isNegative(closing) && 'text-destructive',
+                isNegative(shown) && 'text-destructive',
               )}
             >
-              {closing ?? '-'}
+              {shown ?? '-'}
             </span>
           );
         },
         size: 130,
         minSize: 110,
-        meta: { headerTitle: 'Balance after' },
+        meta: { headerTitle: balanceHeading },
       });
     }
 
     return list;
-  }, [isGroup, rows]);
+  }, [isGroup, rows, isPoolsSection, detail.data?.five_pool_net]);
 
   return (
     <div
