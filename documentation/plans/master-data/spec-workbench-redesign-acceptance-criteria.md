@@ -15,7 +15,7 @@
 3. Three underline tabs: **Values and words**, **Rules**, **Seen in products**. Edit swaps every read-only value for an input in place, on every tab at once; Save sends one update; Cancel restores. In Values and words each value row has a display label input (folded #423), its customer words, and suppression with undo.
 4. In Rules they read each rule as a sentence, reorder or add one while editing, and can try the rules on a product code or pasted text without leaving the page.
 5. Back on the list, the primary button is **Add specification**; **Actions** holds Try a phrase and Reread catalogue. Try a phrase opens a lightbox: they type what a customer would say and see what the engine understood and which products it would rank, each product a link.
-6. A second tab on the list page, **Needs a human**, lists catalogue exceptions; a row click opens that product's Specifications tab.
+6. Catalogue exceptions ("needs a human") are not a tab here; they show as a warning pill on the Spec Verification row, where that work already happens.
 7. Ranking weights live under System Settings > Search ranking, not on this page.
 8. On Spec Verification the flow is unchanged; Unverify no longer asks a question, the button becomes a countdown they can cancel.
 
@@ -28,7 +28,8 @@ They leave with one key corrected and, if rules changed, a catalogue reread queu
 - **D3** Every explanatory paragraph in the two routes is removed. Field-level helper text stays only where ADR 1e allows it (a unit hint, a placeholder). The how-to goes to an Outline guide (backlog).
 - **D4** `spec-value-labels` (#423) is folded in as Groups D and E; its migration ships in this lane.
 - **D5** Ranking tab moves to System Settings as a `search-ranking` tab rendering the existing editor. It keeps `master_data.spec_registry.*` on the API side.
-- **D6** The Catalogue tab's global derived-specs table is removed. Per-product derived values are the product Specifications tab and the Spec Verification worklist. Exceptions stay, as the Needs a human tab.
+- **D6** The Catalogue tab is removed entirely: the derived-specs table (per-product values live on the product Specifications tab and the Spec Verification worklist) and the exceptions table.
+- **D11** Catalogue exceptions show as a warning pill in the Coverage cell of the Spec Verification row (`open_exceptions` is already in the worklist payload). No Needs a human tab, no new endpoint consumer.
 - **D7** No new motion. Row expand no longer exists; tab switches and edit-mode toggles do not animate; lightboxes use the shared surface spring only. `find-animation-opportunities` was skipped by ruling.
 - **D8** Spec Verification is in scope for the design pass and one behaviour change: Unverify (row and bulk) becomes a deferred action (5s reversible window) instead of an AlertDialog. Verify stays immediate.
 - **D10** Plain words: the type pill reads Choice / Number / Yes or no / Text (never enum, string, boolean); UI copy says "specification", never "key"; the gear is a gear icon (Settings2), not three dots.
@@ -45,8 +46,8 @@ The Specifications tab is a `DataGrid` (`tableLayout: { width: 'fixed', columnsR
 ### AC-A.3 [FE] Freshness line
 Above the grid one line: "Catalogue read {formatDateTimeInMalaysia(finished_at)}" plus a warning pill "Rules changed since" when `rules_changed_since_last_read`; "Never read" when `!ever_read`; "Reading..." with a spinner while `status == running` (poll every 3s until idle, the existing `CatalogueFreshness` logic moved into a hook). No paragraph of explanation.
 
-### AC-A.4 [FE] Needs a human tab
-Second `TabsList variant="line"` tab, badge = open count. A `DataGrid` over `GET /product-specifications/exceptions` with `DataGridPagination` (server paged, `buildDataGridParams`). Columns: Product code, Description, Spec key, Reason, Seen. Row click opens `/master-data-management/products/{product_id}?tab=specifications&back=<list url>`. The "Stored" JSON column is gone (the value renders through `readableEntry`, or "Not set").
+### AC-A.4 [FE] No second tab
+The list page has no tabs. The catalogue exceptions list (`ProductSpecsList`, the "Stored" JSON column included) is deleted with the Catalogue tab; exceptions surface on the Spec Verification worklist instead (AC-F.4, D11). `getSpecExceptions` in the service and its types are removed if no consumer remains.
 
 ### AC-A.5 [FE] Add specification
 The primary button opens a `Dialog` (lightbox) with Label, Type (`SearchableSelect`), Unit; the key slug previews below the label; `/similar` near-duplicate warning stays. Submit POSTs, closes, toasts, and navigates to the new record page. `AddSpecKey.tsx`'s inline form and its duplicated type list are deleted; the dialog is the one in `components/spec-table/AddSpecificationDialog.tsx` reused, or that dialog's type list extracted to one module both import.
@@ -58,7 +59,7 @@ Actions > Try a phrase opens a `Dialog` holding today's `SpecSearchPreview` body
 All fetches move to react-query hooks in `hooks/`: `useSpecRegistryQuery` (list, `staleTime` 60s to match the ETag), `useSpecExceptionsQuery`, `useCatalogueStatusQuery`, `useSpecRegistryMutations` (create, update, delete, addValue, rereadCatalogue). Components hold no `useEffect` + `useState` fetch pairs. Mutations invalidate the registry query and toast via `extractApiError`.
 
 ### AC-A.8 [E2E] Sidebar walk
-From `/`, sidebar Master Data > Product Specifications: grid renders the seeded keys, search narrows, Needs a human tab shows the count, Actions holds the two items and the primary button. 375px and 1280px.
+From `/`, sidebar Master Data > Product Specifications: grid renders the seeded keys, search narrows, Needs a human tab shows Actions holds the two items and the primary button. 375px and 1280px.
 
 ## Group B - Key record page (S2)
 
@@ -72,10 +73,10 @@ Tabs, in order: Values and words, Rules, Seen in products (`TabsList variant="li
 One row per merged allowed value: display label input (Group E) with the automatic wording as placeholder, the slug in a muted `code` span, the customer words as `TokenInput` chips, suppress / restore per value. Suppressed values render struck through with an Undo chip. A value the user added carries the "user" pill. Empty state when the key has no values: "No values yet" + CTA "Add value" (opens the same add-value input). Boolean keys render the single "When true" row.
 
 ### AC-B.4 [FE] Rules tab
-Each effective rule as a sentence (`lib/ruleSentence.ts`), shipped rules tagged with a "default" pill. Edit mode: dnd-kit reorder, add rule (`SpecRuleEditor` form), remove. "Try on a product" is available in both modes: a product code or pasted text, POST `/{spec_key}/try`, result rendered as "Would set {value} from {evidence}" or "No match". "Preview impact" (edit mode, after a rule change) POSTs `/{spec_key}/preview` and polls `/preview/{job_id}`, rendering changed counts. Empty state: "Using the shipped rules" when `rules_are_default`, with CTA "Edit" that enters edit mode on this tab.
+Each effective rule as a sentence (`lib/ruleSentence.ts`), shipped rules tagged with a "default" pill. Edit mode: every rule is editable in place (its fields become inputs / `SearchableSelect`s inside the sentence), dnd-kit reorder by handle, "+ Add rule" appends a blank sentence, a remove button per row. All of it is part of the one Save (B.2). "Try on a product" is available in both modes: a product code or pasted text, POST `/{spec_key}/try`, result rendered as "Would set {value} from {evidence}" or "No match". "Preview impact" (edit mode, after a rule change) POSTs `/{spec_key}/preview` and polls `/preview/{job_id}`, rendering changed counts. Empty state: "Using the shipped rules" when `rules_are_default`, with CTA "Edit" that enters edit mode on this tab.
 
 ### AC-B.5 [FE] Seen in products tab
-Facets by value, by class, by source as pill rows (top 30, `PillList` +N expansion), then a `DataGrid` of products (Code, Description, Class, Value, Source, Evidence) with `DataGridPagination` over `limit`/`offset` (25/50/100). Filtering by a facet pill narrows the grid (`value=` / `q=` params). Row click opens the product's Specifications tab with `back=`. Empty state: "Not seen on any product yet" with CTA "Reread catalogue" (when `.edit`).
+A `ListSearchInput` (product code or description, debounced, the `q=` param) beside facets by value, by class, by source as pill rows (top 30, `PillList` +N expansion), then a `DataGrid` of products (Code, Description, Class, Value, Source, Evidence) with `DataGridPagination` over `limit`/`offset` (25/50/100). Filtering by a facet pill narrows the grid (`value=` / `q=` params). Row click opens the product's Specifications tab with `back=`. Empty state: "Not seen on any product yet" with CTA "Reread catalogue" (when `.edit`).
 
 ### AC-B.6 [FE] Delete
 Gear > Delete runs through the deferred-action engine (`useDeferredAction`, 10s hard-delete window, System Settings governs) and on commit navigates back to the list with a toast; seed keys never expose it (backend also refuses).
@@ -133,6 +134,9 @@ Row Unverify and "Unverify selected" no longer open an `AlertDialog`. Row: `Defe
 ### AC-F.2 [BE] Engine registration
 If the deferred-action engine needs a server-side handler for `spec_verification.unverify` (check `form_action_registry` for how S6b registered deletes), it is registered with the reversible window and a pytest covers commit and cancel. If the engine is client-timed for reversible actions, no backend change; say which in the PR.
 
+### AC-F.4 [FE] Exceptions pill
+When a worklist row has `open_exceptions > 0`, the Coverage cell shows a warning pill "{n} need a human" beside the coverage count; the hover card lists the exception reasons if the payload carries them, otherwise the count only. Zero renders nothing. A test covers 0 and 2.
+
 ### AC-F.3 [FE] Design pass only
 No other behaviour change. The design pass (Group G) runs over `SpecVerificationList.tsx`; findings are fixed in-branch only when they are Group G hard-fails, otherwise filed.
 
@@ -145,13 +149,13 @@ Grep of both routes for muted paragraphs (`text-muted-foreground` on a `<p>`) re
 No `<table` outside `DataGridTable`; no hand-rolled pager (`SpecKeyProducts` Prev/Next gone); every select is `SearchableSelect` (optional ones `clearable`); every list search is `ListSearchInput`; every popup is `Dialog`/`Sheet`; every page has `PageHeader`.
 
 ### AC-G.3 [UX] Empty states
-Every grid and every tab body renders an explicit empty state with one CTA (A.4, B.3, B.4, B.5, A.6). No section is hidden on missing data.
+Every grid and every tab body renders an explicit empty state with one CTA (A.2, B.3, B.4, B.5, A.6). No section is hidden on missing data.
 
 ### AC-G.4 [UX] No motion added
 `git diff` of the lane contains no new `transition`, `animate-`, `motion.` or `cubic-bezier` outside `components/ui`. Tab switch and edit toggle are instant. Lightboxes open with the shared surface spring (inherited, not configured).
 
 ### AC-G.5 [UX] Breakpoints
-Screenshots at 375px and 1280px for: list (both tabs), record page (three tabs, view and edit), Try a phrase dialog, Add specification dialog, Search ranking tab, Spec Verification list. Nothing clipped; grids scroll sideways inside their container; tab strips scroll.
+Screenshots at 375px and 1280px for: list, record page (three tabs, view and edit), Try a phrase dialog, Add specification dialog, Search ranking tab, Spec Verification list. Nothing clipped; grids scroll sideways inside their container; tab strips scroll.
 
 ### AC-G.6 [UX] Identity and copy
 No UUID visible (product ids only inside hrefs). Datetimes through `formatDateTimeInMalaysia`. Status and source as `Badge` pills. No `text-[Npx]`, `z-[N]`, `duration-[N]`.

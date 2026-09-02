@@ -4,14 +4,14 @@
 > Governs: `PRINCIPLES.md` + `documentation/reference/ADR-PRODUCT-STANDARDS.md` + `documentation/reference/DESIGN-LANGUAGE.md` (PR #498).
 
 **Slug:** `spec-workbench-redesign` | **Domain:** master-data
-**Status:** Pre-code. Grill closed 2 Sep 2026. Lavish review round 1 applied (D10 plain words, primary Add specification, gear icon); verdict pending.
+**Status:** Pre-code. Grill closed 2 Sep 2026. Lavish review rounds 1-2 applied (D10 plain words, primary Add specification, gear icon, D11 no exceptions tab, rules editable in place, seen-in search); verdict pending.
 **Lane:** worktree `.claude/worktrees/spec-workbench-redesign`, branch `feat/spec-workbench-redesign` from `origin/main` (f09532f6c). Depends on PR #498 for the design-language reference; merge #498 first or the reviewer reads it from that branch.
 **Folds in:** `PLAN-spec-value-labels.md` (#423), now SUPERSEDED.
 **Pilot for:** the design slots added to `/feature` by #498 (design brief, `[UX]` ACs, animate gate, emil-design-eng review table).
 
 ## 1. What is being built, in one paragraph
 
-Two routes brought onto the design language. `/master-data-management/product-specifications` becomes a registry list (DataGrid, PageHeader, a primary Add specification button, an Actions dropdown holding Try a phrase / Reread catalogue, a one-line freshness status, a second tab for catalogue exceptions) and each key gets a record page at `/[specKey]` with the standard record card (pager, gear, Edit) and three underline tabs whose view and edit modes share one layout. The value display label from #423 ships inside that record page. The ranking editor moves to System Settings. Spec Verification keeps its flow and swaps its Unverify confirm dialog for the deferred-action countdown. Every explanatory paragraph goes. No new motion.
+Two routes brought onto the design language. `/master-data-management/product-specifications` becomes a registry list (DataGrid, PageHeader, a primary Add specification button, an Actions dropdown holding Try a phrase / Reread catalogue, a one-line freshness status) and each key gets a record page at `/[specKey]` with the standard record card (pager, gear, Edit) and three underline tabs whose view and edit modes share one layout. The value display label from #423 ships inside that record page. The ranking editor moves to System Settings. Spec Verification keeps its flow and swaps its Unverify confirm dialog for the deferred-action countdown. Every explanatory paragraph goes. No new motion.
 
 ## 2. Why now (evidence, measured 2 Sep 2026 against origin/main)
 
@@ -28,22 +28,20 @@ Two routes brought onto the design language. `/master-data-management/product-sp
 page.tsx                          PageHeader + Add specification + Actions + <SpecRegistryPage/>
 [specKey]/page.tsx                record page
 components/
-  SpecRegistryPage.tsx            tabs: Specifications (grid) | Needs a human (grid); freshness line
+  SpecRegistryPage.tsx            freshness line + grid
   SpecRegistryGrid.tsx            DataGrid of keys (A.2)
-  SpecExceptionsGrid.tsx          DataGrid over /exceptions (A.4)
   CatalogueFreshnessLine.tsx      one line + pill (A.3)
   AddSpecificationDialog          (A.5) thin wrapper over spec-table/AddSpecificationDialog, or that dialog used directly
   TryPhraseDialog.tsx             (A.6) wraps the SpecSearchPreview body
   record/SpecKeyRecordCard.tsx    identity + DetailActions (B.1)
   record/ValuesAndWordsTab.tsx    (B.3)
   record/RulesTab.tsx             (B.4) hosts SpecRuleEditor + TryOnProduct + PreviewImpact
-  record/SeenInProductsTab.tsx    (B.5)
+  record/SeenInProductsTab.tsx    (B.5) search by code + facets + paged grid
   SpecRuleEditor.tsx              kept (dnd reorder + SearchableSelect), loses its prose
   TokenInput.tsx, PillList.tsx    kept
 hooks/
   useSpecRegistryQuery.ts         list (staleTime 60s), selectKey(specKey)
   useSpecRegistryMutations.ts     create / update / delete / addValue / rereadCatalogue
-  useSpecExceptionsQuery.ts
   useCatalogueStatusQuery.ts      3s polling while running
   useSpecKeyProductsQuery.ts      facets + page
   useSpecKeyRecord.ts             edit-mode draft state, one PATCH on save (B.2)
@@ -76,7 +74,7 @@ Exactly the folded plan: one JSONB column `value_labels` on `product_spec_regist
 
 ### 3.7 Spec Verification (F)
 
-`SpecVerificationList.tsx`: the row Unverify becomes `DeferredActionButton` (reversible window); bulk uses `useDeferredRowAction` + `deferredToast`. The `AlertDialog` and its state go. Backend: read `app/services/form_action_registry.py` (or wherever S6b registered `delete` handlers) before deciding F.2; the plan's expectation is that reversible actions are client-timed and need no handler, in which case F.2 is a one-line PR note.
+`SpecVerificationList.tsx`: the row Unverify becomes `DeferredActionButton` (reversible window); bulk uses `useDeferredRowAction` + `deferredToast`. The `AlertDialog` and its state go. The Coverage cell gains the `open_exceptions` warning pill (F.4, D11): the field is already fetched and typed, never rendered. Backend: read `app/services/form_action_registry.py` (or wherever S6b registered `delete` handlers) before deciding F.2; the plan's expectation is that reversible actions are client-timed and need no handler, in which case F.2 is a one-line PR note.
 
 ### 3.8 Copy (D3, D10, G.1)
 
@@ -92,11 +90,11 @@ None added. Inherited only: lightbox surface spring, pressed states from `PRESSE
 
 | Slice | Phase | Scope | Executor |
 | --- | --- | --- | --- |
-| S1 | 1 (FE, mocks only for `value_labels`) | Group A: list page, exceptions tab, freshness line, Add specification + Try a phrase dialogs, react-query hooks; delete the old shell | coder (Sonnet), worktree = lane |
+| S1 | 1 (FE, mocks only for `value_labels`) | Group A: list page, freshness line, Add specification + Try a phrase dialogs, react-query hooks; delete the old shell | coder (Sonnet), worktree = lane |
 | S2 | 1 | Group B + E.1/E.2 with `value_labels` mocked on the registry response: record page, three tabs, edit-in-place, pager, delete via deferred action | coder (Sonnet) |
 | S3 | 1 | Group C: Search ranking tab, remove Ranking tab | coder (Sonnet), can run with S2 if a second slot is free |
 | S4 | 2 (BE, test-first) | Group D: migration, model, serialise, PATCH validation, tests; swap the S2 mock; E.3 | coder (Sonnet) |
-| S5 | 1 + 2 | Group F: Spec Verification unverify countdown (+ F.2 handler if needed) | coder (Sonnet) |
+| S5 | 1 + 2 | Group F: Spec Verification unverify countdown, exceptions pill (F.4) (+ F.2 handler if needed) | coder (Sonnet) |
 | S6 | 3 | Group G: reviewer (Opus) with the emil-design-eng table, browser evidence at both widths, DoD gate | reviewer + tester |
 
 Browser verification per slice with agent-browser, sidebar walk from `/`, own `--session` name, both widths. One verification sweep per slice (30 Aug rigour ruling): blockers fixed in-branch, the rest filed.
