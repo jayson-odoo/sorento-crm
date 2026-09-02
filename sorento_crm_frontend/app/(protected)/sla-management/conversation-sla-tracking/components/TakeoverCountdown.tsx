@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { useDrainingScaleXFill } from '@/hooks/useDrainingScaleXFill';
 
 /** Treat a timezone-less ISO timestamp (naive UTC from the backend) as UTC. */
 function asUtc(iso: string): string {
@@ -69,8 +70,13 @@ export function TakeoverCountdown({
   }, [now, target, onExpire]);
 
   const remainingMs = Math.max(0, target - now);
-  const pct = Math.max(0, Math.min(100, (remainingMs / maxMsRef.current) * 100));
   const finalizing = remainingMs <= 0;
+
+  // A late mount (tab-switch remount) has to paint the ALREADY-elapsed
+  // fraction immediately, not restart full - the shared hook's `startFraction`
+  // is what a fixed-denominator bar like this one needs it for (M3-02).
+  const startFraction = Math.max(0, Math.min(1, remainingMs / maxMsRef.current));
+  const fillStyle = useDrainingScaleXFill(target, startFraction);
 
   const secs = Math.ceil(remainingMs / 1000);
   const mm = Math.floor(secs / 60);
@@ -82,10 +88,13 @@ export function TakeoverCountdown({
       <div className="flex items-center gap-2">
         <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
           <div
-            className={`h-full rounded-full transition-[width] duration-200 ease-linear ${
+            className={`h-full origin-left rounded-full motion-reduce:transition-none ${
               finalizing ? 'bg-muted-foreground/40' : 'bg-primary'
             }`}
-            style={{ width: finalizing ? '100%' : `${pct}%` }}
+            // Finalizing flatlines the bar full grey rather than showing the
+            // transition's own end value (scaleX(0), empty) - "the window is
+            // over" reads as a full bar, not a vanished one.
+            style={finalizing ? { transform: 'scaleX(1)' } : fillStyle}
             data-testid="takeover-bar"
           />
         </div>

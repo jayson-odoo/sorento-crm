@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { useDrainingScaleXFill } from '@/hooks/useDrainingScaleXFill';
 import type { PendingAction } from '@/services/pendingActionService';
 
 /** Treat a timezone-less ISO timestamp (naive UTC from the backend) as UTC. */
@@ -57,43 +58,11 @@ export function DeferredCountdown({
     };
   }, [pending]);
 
-  // The fill's own CSS transition, armed ONCE per parked action rather than
-  // recomputed on every tick: it starts at scaleX(1) with no transition (so
-  // the first paint does not animate), then a double rAF flips it to
-  // scaleX(0) over the remaining window - one frame has to land at scaleX(1)
-  // before the flip, or there is nothing for the transition to run FROM. A
-  // `transform` transition runs on the compositor and never touches layout,
-  // unlike the old `width` tween this replaces, which is what let a
-  // ResizeObserver on the fill fire once per 100ms tick.
-  const [fillStyle, setFillStyle] = useState<CSSProperties>({ transform: 'scaleX(1)' });
-  const armedKeyRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (!pending) {
-      armedKeyRef.current = null;
-      return;
-    }
-    const key = `${pending.id}:${pending.commit_at}`;
-    if (armedKeyRef.current === key) return;
-    armedKeyRef.current = key;
-    setFillStyle({ transform: 'scaleX(1)' });
-    const remaining = Math.max(0, Date.parse(asUtc(pending.commit_at)) - Date.now());
-    let raf2 = 0;
-    const raf1 = requestAnimationFrame(() => {
-      raf2 = requestAnimationFrame(() => {
-        setFillStyle({
-          transform: 'scaleX(0)',
-          transitionProperty: 'transform',
-          transitionDuration: `${remaining}ms`,
-          transitionTimingFunction: 'linear',
-        });
-      });
-    });
-    return () => {
-      cancelAnimationFrame(raf1);
-      if (raf2) cancelAnimationFrame(raf2);
-    };
-  }, [pending]);
+  // The fill always parks fresh and full - an action is only ever just-parked,
+  // never resumed partway through from a remount - so the ONE shared
+  // draining mechanism (`hooks/useDrainingScaleXFill`, M3-01) always starts
+  // it at scaleX(1) and drains to 0 by the server's `commit_at`.
+  const fillStyle = useDrainingScaleXFill(target, 1);
 
   if (!pending) return null;
 
