@@ -139,6 +139,21 @@ describe('M3-04 reduced-motion reaches the shell, the drawer and bracket transit
     expect(winningDeclaration(reducedMotion, drawer, 'transition-duration')).toBe('1ms');
   });
 
+  /**
+   * vaul's own stylesheet (node_modules/vaul/style.css) drives the drawer's
+   * open/close with `animation-name: slideFromLeft` etc. at
+   * `animation-duration: 0.5s` on the SAME `[data-vaul-drawer]` element as the
+   * transition above, so collapsing the transition alone left the drawer
+   * sliding for ~400ms under reduced motion (tester finding, M3).
+   */
+  it('also collapses the vaul drawer animation-duration, not just its transition', () => {
+    const drawer = document.createElement('div');
+    drawer.setAttribute('data-vaul-drawer', '');
+    drawer.setAttribute('data-slot', 'drawer-content');
+
+    expect(winningDeclaration(reducedMotion, drawer, 'animation-duration')).toBe('1ms');
+  });
+
   it('still resets the menu and popover surfaces it was written for', () => {
     // The exclusion is drawer-shaped, not a hole: a dropdown's content still
     // gets the 150ms reset that stops its enter/exit keyframes travelling.

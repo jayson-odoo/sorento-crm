@@ -193,6 +193,17 @@
     transition-duration: 1ms !important;
   }
 
+  /* vaul's own stylesheet (node_modules/vaul/style.css) drives the open/close
+     with `animation-name: slideFromLeft` etc. at `animation-duration: 0.5s` on
+     this same element, independent of the transition above - so without this
+     the drawer still travelled ~400ms under reduced motion even with its
+     transition collapsed (tester finding, M3). 1ms for the same reason as the
+     transition-duration above: a `transitionend`/`animationend` listener needs
+     an actual event, and `0` may never fire one. */
+  [data-vaul-drawer] {
+    animation-duration: 1ms !important;
+  }
+
   /* Deliberately broad, and narrower than it looks: it catches an arbitrary-value
      `transition-[width]`/`transition-[transform,opacity]` utility a component
      reached for directly, and NOTHING named - `transition-all`, `transition-colors`
