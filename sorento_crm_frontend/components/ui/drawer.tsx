@@ -3,6 +3,7 @@
 import * as React from 'react';
 import { cn } from '@/lib/utils';
 import { Drawer as DrawerPrimitive } from 'vaul';
+import { OVERLAY_CLASS_STATIC } from '@/components/ui/primitive-classes';
 
 const Drawer = ({ shouldScaleBackground = true, ...props }: React.ComponentProps<typeof DrawerPrimitive.Root>) => (
   <DrawerPrimitive.Root shouldScaleBackground={shouldScaleBackground} {...props} />
@@ -24,7 +25,7 @@ function DrawerOverlay({ className, ...props }: React.ComponentProps<typeof Draw
   return (
     <DrawerPrimitive.Overlay
       data-slot="drawer-overlay"
-      className={cn('fixed inset-0 z-50 bg-black/80', className)}
+      className={cn(OVERLAY_CLASS_STATIC, className)}
       {...props}
     />
   );

@@ -548,6 +548,14 @@ describe('M1 motion perimeter hygiene', () => {
     });
   });
 
+  describe('M1-07 drawer overlay shares the one scrim', () => {
+    it('drawer.tsx overlay uses OVERLAY_CLASS_STATIC instead of its own bg-black/80', () => {
+      const drawer = read('components/ui/drawer.tsx');
+      expect(drawer).toContain('OVERLAY_CLASS_STATIC');
+      expect(drawer).not.toContain('bg-black/80');
+    });
+  });
+
   describe('M1-01 the shared press token carries the house curve', () => {
     it('PRESSED_CLASS names duration-fast and ease-standard', () => {
       const primitiveClasses = read('components/ui/primitive-classes.ts');
