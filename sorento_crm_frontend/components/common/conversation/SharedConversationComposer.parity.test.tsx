@@ -55,10 +55,10 @@ vi.mock('@/services/whatsappTemplateService', async () => {
   };
 });
 
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 import SharedConversationComposer from './SharedConversationComposer';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 const SNIPPETS: MessageSnippetOption[] = [
   {

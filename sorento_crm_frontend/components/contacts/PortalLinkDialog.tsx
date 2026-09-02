@@ -3,7 +3,7 @@
 import { useEffect } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Check, Loader2, Copy, ExternalLink, Send } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   Dialog,
   DialogContent,

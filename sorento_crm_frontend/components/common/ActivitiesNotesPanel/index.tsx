@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { Activity, FileText, MessageSquare } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';

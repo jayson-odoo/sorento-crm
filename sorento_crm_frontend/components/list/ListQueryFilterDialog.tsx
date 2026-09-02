@@ -15,7 +15,7 @@ import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { OrderFilterFieldSelect } from '@/components/list/OrderFilterFieldSelect';
 import {
   fetchListQueryFields,

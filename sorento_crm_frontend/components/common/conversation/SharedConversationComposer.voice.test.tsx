@@ -40,7 +40,7 @@ vi.mock('@/services/whatsappTemplateService', async () => {
 });
 
 const toastError = vi.fn();
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: (...args: unknown[]) => toastError(...args) } }));
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: (...args: unknown[]) => toastError(...args) } }));
 
 // ---- The fake browser recording stack ---------------------------------
 

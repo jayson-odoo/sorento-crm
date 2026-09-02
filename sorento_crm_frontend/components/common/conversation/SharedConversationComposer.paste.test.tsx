@@ -32,7 +32,7 @@ vi.mock('@/services/whatsappTemplateService', async () => {
   };
 });
 
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 /** The shared preview surface, stubbed to a marker: what matters here is that
  *  the composer routes a staged image to THAT component, with that item. */

@@ -4,7 +4,7 @@ import { Fragment, ReactNode, useMemo, useState } from 'react';
 import Link from 'next/link';
 import type { Table } from '@tanstack/react-table';
 import { Columns3, Download, Filter, MoreHorizontal, RefreshCw, X, type LucideIcon } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';

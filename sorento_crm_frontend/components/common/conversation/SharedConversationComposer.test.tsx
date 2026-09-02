@@ -20,7 +20,7 @@ vi.mock('@/services/whatsappTemplateService', async () => {
   };
 });
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
@@ -32,7 +32,7 @@ import {
   sendTemplateMessage,
   NoChatTemplateError,
 } from '@/services/whatsappTemplateService';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 // jsdom does not implement scrollIntoView (guard per CLAUDE.md).
 if (!(Element.prototype as any).scrollIntoView) {

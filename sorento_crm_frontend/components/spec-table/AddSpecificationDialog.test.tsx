@@ -9,11 +9,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
 }));
 
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 import { AddSpecificationDialog, toSpecKey } from './AddSpecificationDialog';
 import type { SpecKeyDefinition } from './types';

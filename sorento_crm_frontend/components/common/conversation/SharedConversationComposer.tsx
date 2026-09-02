@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   Send,
   Link2,
