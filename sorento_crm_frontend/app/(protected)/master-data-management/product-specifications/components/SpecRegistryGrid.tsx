@@ -8,6 +8,7 @@ import {
   type ColumnDef,
 } from '@tanstack/react-table';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
@@ -224,14 +225,16 @@ export function SpecRegistryGrid() {
               <Badge variant="secondary" appearance="light" shape="circle" size="sm">
                 Specifications of {matchedCode}
               </Badge>
-              <button
+              <Button
                 type="button"
-                className="text-muted-foreground hover:text-foreground"
+                mode="icon"
+                size="sm"
+                variant="ghost"
                 aria-label={`Clear the ${matchedCode} filter`}
                 onClick={() => setFilter('')}
               >
                 <X className="size-3.5" />
-              </button>
+              </Button>
             </div>
           )}
         </CardHeader>
