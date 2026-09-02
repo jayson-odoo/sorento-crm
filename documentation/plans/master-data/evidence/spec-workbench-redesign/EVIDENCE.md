@@ -84,3 +84,29 @@ All test data created during this run was ZZT-prefixed and has been removed; all
 
 - Bulk "Verify selected" -> actual commit path (only Cancel was exercised, per the checklist's "Bulk Verify still confirms (open then cancel the dialog)" instruction - committing a bulk verify was not required and was avoided to minimise risk to real data).
 - A full manual click-through of every one of the 8,815 Spec Verification rows for `open_exceptions` - one exemplar (`MCH906`) was located via the worklist API and confirmed in the UI; the zero-case was confirmed by absence of the pill on every other row inspected during rows 1-18.
+
+## Fix round 2 (2 Sep 2026)
+
+Three items fixed against the F1/F3/F5 repros above; F2 and F4 are unchanged (already tracked separately, F2 as #522-adjacent, F4 as an existing behaviour tracking issue, neither touched here).
+
+### F1 - Add specification near-duplicate warning now fires as the label is typed
+
+`AddSpecificationDialog.tsx` only ran `getSimilarSpecKey` on submit; the row-6 repro typed "Brand" and waited without submitting, so no `/similar` call ever fired. Added a 300ms-debounced `useEffect` keyed on `label` that calls `getSimilarSpecKey` and sets the same `match` state the warning `Alert` already reads (the "X already exists" / "Go to X" link was already correct - it just never had a chance to render). Submit keeps its own re-check as a race guard (a fast typist can click Add before the 300ms debounce fires), skipping straight to create only when `match` is confirmed null. `AddSpecificationDialog.test.tsx` gained one test: typing a label the mocked service reports as similar renders the warning with no click at all.
+
+### F3 - Seen in products row middle-click: already fixed by round 1, confirmed live
+
+The evidence's DOM inspection ("no `<a>`, no href, real middle-click cannot open a new tab") was accurate against the code AT THAT TIME, which used `onRowClick` + `router.push`. A same-day round-1 commit (`7d6c3098e`) had already switched `SeenInProductsTab.tsx` to `DataGrid`'s `rowHref` prop before this fix round started. `DataGridTable`'s `rowHref` mechanism (`components/ui/data-grid-table.tsx`, `LinkableBodyRow`) genuinely renders no `<a>` anywhere - a `<tr>` cannot be an anchor's child in the HTML table model, so it never has been one in this codebase (the same is true of every other `rowHref` consumer, e.g. the Users list). What it does instead: an `onAuxClick` handler that checks `event.button === 1` and calls `window.open(href, '_blank', 'noopener,noreferrer')`, which only runs when `opensUrl: true` - true for the `rowHref` branch, false for `onRowClick`. That distinction is exactly why middle-click did nothing before round 1 (SeenInProductsTab was on the `onRowClick` branch, `opensUrl: false`) and why it works now.
+
+Verified live rather than trusting the inference: on `:3080`, dispatched a real `auxclick` MouseEvent with `button: 1` on a Seen-in-products row (key "Finish or colour") - a second tab opened at `/master-data-management/products/{id}?...&tab=specifications&back=%2Fmaster-data-management%2Fproduct-specifications%2Ffinish`, i.e. middle-click-to-new-tab already works end to end. No change to `SeenInProductsTab.tsx` or to the shared `data-grid-table.tsx` was needed or made - adding a real anchor there would touch all ~78 `rowHref` consumers for a case that already functions, which fails "simplest thing that works." `SeenInProductsTab.test.tsx` gained a test that dispatches a real `auxclick` (button 1) and asserts `window.open` was called with a URL containing `/products/prod-1`, `tab=specifications` and `back=`, and that `router.push` was NOT called - locking in the behaviour instead of asserting an `href` attribute that will never exist on this row.
+
+### F5 - Spec Verification Coverage cell no longer overlaps
+
+`SpecVerificationList.tsx`'s Coverage column was `size: 90` and inherited the shared `DataGridTable` cell's `truncate` class (`overflow: hidden; text-overflow: ellipsis; white-space: nowrap`), so the "n / N" button and the "{n} need a human" `Badge` - both flex children of a `flex items-center gap-1.5` wrapper - could never wrap onto a second line and instead overlapped inside the 90px column. Fixed by: widening the column to `size: 150`; changing the wrapper to `flex flex-wrap items-center gap-1.5`; and adding `meta.cellClassName: 'whitespace-normal! overflow-visible!'` on the column definition to override the ambient `truncate` for this one cell (Tailwind v4 trailing-`!` important, the same pattern the shared component itself uses for pinned-column borders).
+
+Verified on `:3080` at both breakpoints, product code `MCH906` (Spec Verification list, `open_exceptions: 3`), `--session spec-workbench-fix`, closed after: at 1280px "5 / 50" now sits cleanly above the "3 need a human" pill with no overlap (`19-fix-1280.png`); at 375px, after scrolling the grid's own horizontal container to reach the Coverage column, the two elements stack with a measured 6px gap between the button's bottom edge and the badge's top edge - bounding-rect check confirmed `overlap: false` (`19-fix-375.png`). Existing `SpecVerificationList.test.tsx` AC-F.4 coverage (0 and 2 exceptions) still passes unchanged.
+
+Screenshots: `documentation/plans/master-data/evidence/spec-workbench-redesign/19-fix-1280.png`, `documentation/plans/master-data/evidence/spec-workbench-redesign/19-fix-375.png`.
+
+### Tests and type-check
+
+`npx vitest run` over `product-specifications/` and `spec-verification/`: 18 files, 164 tests, all passing. `npx tsc --noEmit`: 28 errors, same baseline as before this round, none in a touched file. `eslint` on the five touched files: 0 errors (2 pre-existing warnings in `SpecVerificationList.tsx` at an untouched line, unrelated to this change).
