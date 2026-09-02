@@ -103,11 +103,23 @@ function DialogContent({
   overlay = true,
   variant,
   onCloseAutoFocus,
+  motion: motionEnabled = true,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> &
   VariantProps<typeof dialogContentVariants> & {
     showCloseButton?: boolean;
     overlay?: boolean;
+    /**
+     * A keyboard-triggered surface never animates (DESIGN-LANGUAGE section 3,
+     * M2-01): `motion={false}` drops the scale entirely and makes the panel
+     * identical across initial/animate/exit, so it is simply THERE on the
+     * frame after the keydown and gone the frame Escape/selection fires - no
+     * spring to interrupt, no exit to wait out. The scrim still fades, just
+     * on a plain `--duration-fast` tween instead of the shared spring, since
+     * a scrim (not the thing the keyboard shortcut was for) reading as an
+     * abrupt on/off is more jarring than a panel that does.
+     */
+    motion?: boolean;
   }) {
   const open = React.useContext(DialogOpenContext);
   const prefersReducedMotion = useReducedMotion();
@@ -119,13 +131,25 @@ function DialogContent({
   // `inset-5` instead and needs no offset.
   const centerOffset = variant === 'fullscreen' ? {} : { x: '-50%', y: '-50%' };
   const base = surfaceVariants(prefersReducedMotion);
-  const variants = {
-    initial: { ...base.initial, ...centerOffset },
-    animate: { ...base.animate, ...centerOffset },
-    exit: { ...base.exit, ...centerOffset },
-  };
-  const transition = surfaceTransition(prefersReducedMotion);
-  const exitTransition = surfaceExitTransition(prefersReducedMotion);
+  const variants = motionEnabled
+    ? {
+        initial: { ...base.initial, ...centerOffset },
+        animate: { ...base.animate, ...centerOffset },
+        exit: { ...base.exit, ...centerOffset },
+      }
+    : {
+        // Identical initial/animate/exit: nothing for the spring to
+        // interpolate, so the panel is simply there, then simply gone.
+        initial: { opacity: 1, ...centerOffset },
+        animate: { opacity: 1, ...centerOffset },
+        exit: { opacity: 1, ...centerOffset },
+      };
+  const transition = motionEnabled ? surfaceTransition(prefersReducedMotion) : { duration: 0 };
+  const exitTransition = motionEnabled ? surfaceExitTransition(prefersReducedMotion) : { duration: 0 };
+  // 0.15s = `--duration-fast` (css/config.reui.css). The scrim is not what a
+  // keyboard shortcut is asking to see, so it keeps a quick tween rather than
+  // going fully static like the content it sits behind.
+  const overlayTransition = motionEnabled ? transition : { duration: 0.15 };
   const needsFallbackTitle = !hasDialogTitleInChildren(children);
   // Track the moment the actual Content DOM node attaches (i.e. the moment
   // the dialog truly opens). We can't use mount of this React component
@@ -244,8 +268,8 @@ function DialogContent({
                 className={OVERLAY_CLASS_STATIC}
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
-                exit={{ opacity: 0, transition: exitTransition }}
-                transition={transition}
+                exit={{ opacity: 0, transition: overlayTransition }}
+                transition={overlayTransition}
               />
             </DialogPrimitive.Overlay>
           )}
@@ -254,6 +278,7 @@ function DialogContent({
             asChild
             forceMount
             data-slot="dialog-content"
+            data-motion={motionEnabled ? undefined : 'off'}
             onPointerDownOutside={guardOutsideInteraction}
             onInteractOutside={guardOutsideInteraction}
             onFocusOutside={guardOutsideInteraction}

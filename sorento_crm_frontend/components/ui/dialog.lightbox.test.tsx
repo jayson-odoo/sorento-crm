@@ -288,6 +288,18 @@ describe('Tall surfaces stay reachable (S1-03)', () => {
     expect(screen.getByTestId('behind').closest('[aria-hidden="true"]')).toBeNull();
   });
 
+  it('M2-01: DialogContent motion={false} marks its content data-motion="off"', () => {
+    render(
+      <Dialog open>
+        <DialogContent motion={false}>
+          <DialogTitle>Palette</DialogTitle>
+        </DialogContent>
+      </Dialog>,
+    );
+
+    expect(document.querySelector('[data-slot="dialog-content"]')).toHaveAttribute('data-motion', 'off');
+  });
+
   it('S1-03: a modal sheet still inerts the page, so the two props are independent', async () => {
     render(
       <div>
