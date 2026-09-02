@@ -9,11 +9,12 @@
  * the product-block starter (D6/D13) - a line's tag gets cloned from.
  */
 
+import React from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PRODUCT_BLOCK_SIZE } from '@/lib/dealer-kit/product-block';
-import type { TagTemplateDoc } from '@/lib/dealer-kit/tag-template-types';
+import type { TagLayer, TagTemplateDoc } from '@/lib/dealer-kit/tag-template-types';
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
@@ -36,13 +37,95 @@ vi.mock('@/app/(protected)/dealer-kit/tag-templates/components/useTagBindings', 
 // The stand-in records the doc it was asked to draw so a test can tell a real
 // template's clone apart from the starter's, the same idiom
 // TagCanvasEditor.preview.test.tsx uses for react-konva/KonvaTagLayer.
+//
+// It also mirrors the ONE real behaviour Fix B (design lost on Design ->
+// Arrange -> Design) turns on: the real editor reads `doc` once, on mount,
+// keeps the layers in its OWN state from then on, and its mount effect fires
+// `onLayersChange` with whatever it was handed. A stub that just rendered
+// `doc.layers` directly would never reproduce a stale remount snapshot.
 type TagSheetDocCapture = { doc: TagTemplateDoc };
 const canvasDocs: TagSheetDocCapture[] = [];
 vi.mock('@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor', () => ({
-  TagCanvasEditor: ({ doc }: { doc: TagTemplateDoc }) => {
+  TagCanvasEditor: ({
+    doc,
+    onLayersChange,
+    leftRail,
+  }: {
+    doc: TagTemplateDoc;
+    onLayersChange?: (layers: TagLayer[]) => void;
+    leftRail?: React.ReactNode;
+  }) => {
     canvasDocs.push({ doc });
-    return <div data-testid="canvas-editor">canvas open</div>;
+    const [layers, setLayers] = React.useState<TagLayer[]>(doc.layers);
+    React.useEffect(() => {
+      onLayersChange?.(doc.layers);
+      // Mount-only, matching "reads its document once, on mount" - doc is
+      // deliberately excluded from the deps so a doc PROP update after mount
+      // (which does not happen for the real editor either) cannot re-fire it.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+    return (
+      <div data-testid="canvas-editor">
+        canvas open
+        {leftRail}
+        <button
+          type="button"
+          onClick={() => {
+            const next = [...layers, addedLayer(layers.length)];
+            setLayers(next);
+            onLayersChange?.(next);
+          }}
+        >
+          Add layer
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setLayers([]);
+            onLayersChange?.([]);
+          }}
+        >
+          Clear layers
+        </button>
+      </div>
+    );
   },
+}));
+
+/** A minimal, valid text layer for the "add a layer" stub button above. */
+function addedLayer(index: number): TagLayer {
+  return {
+    id: `added-${index}`,
+    type: 'text',
+    x_mm: 0,
+    y_mm: 0,
+    width_mm: 20,
+    height_mm: 10,
+    rotation_deg: 0,
+    z_index: index,
+    locked: false,
+    visible: true,
+    slot_binding: null,
+    text_override: null,
+    props: {
+      kind: 'text',
+      text: 'Added',
+      align: 'left',
+      color: '#000',
+      fontSize: 10,
+      fontFamily: 'Jost',
+      fontWeight: 400,
+      lineHeight: 1.2,
+      letterSpacing: 0,
+    },
+  };
+}
+
+// Arrange draws through real react-konva/Konva, which needs a real canvas -
+// unavailable in jsdom. Toggling to Arrange is exercised by the Fix B tests
+// below, so it needs a stand-in the same way TagCanvasEditor does above.
+vi.mock('./ArrangeSheetView', () => ({
+  ArrangeSheetView: () => <div data-testid="arrange-view">arrange open</div>,
 }));
 
 vi.mock('../../../../services/tagTemplateService', () => ({
@@ -305,6 +388,84 @@ describe('RequestTagDesigner - full screen (AC-S6-1)', () => {
 
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(document.querySelector('[data-dk-focus-mode]')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A design must survive Design -> Arrange -> Design (Fix B).
+//
+// `docRef` snapshots the open tag's layers once, keyed by tag id, so the
+// editor can remount on the SAME tag without replaying every keystroke.
+// Toggling to Arrange unmounts the editor without changing the tag id, so
+// without invalidating the snapshot on that unmount, the remount handed the
+// editor - and, through its mount effect, the host's OWN `tags` state -
+// whatever the snapshot held before the toggle, silently discarding
+// anything added since. Save afterwards would then persist the loss.
+// ---------------------------------------------------------------------------
+
+describe('RequestTagDesigner - design survives a mode toggle (Fix B)', () => {
+  it('keeps a layer added in Design after toggling to Arrange and back', async () => {
+    mockListTemplates.mockResolvedValue([]);
+    mockResolveRequestLines.mockResolvedValue([lineTagData()]);
+
+    renderDesigner();
+
+    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add layer' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Arrange' }));
+    expect(screen.queryByTestId('canvas-editor')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Design' }));
+    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+
+    const drawn = canvasDocs[canvasDocs.length - 1].doc;
+    expect(drawn.layers.some((l) => l.id.startsWith('added-'))).toBe(true);
+  });
+
+  it('keeps a design cleared to 0 layers, then switched to another line and back, then rebuilt to 3 layers, across a mode toggle', async () => {
+    mockListTemplates.mockResolvedValue([]);
+    mockResolveRequestLines.mockResolvedValue([
+      lineTagData({ line_id: 'line-1', code: 'SRT-1' }),
+      lineTagData({ line_id: 'line-2', code: 'SRT-2', name: 'Bath Tap' }),
+    ]);
+
+    renderDesigner(
+      request({
+        lines: [
+          line({ id: 'line-1', code: 'SRT-1' }),
+          line({ id: 'line-2', code: 'SRT-2', product_id: 'prod-2' }),
+        ],
+      }),
+    );
+
+    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+
+    // Clear line-1's tag to zero layers.
+    fireEvent.click(screen.getByRole('button', { name: 'Clear layers' }));
+
+    // Switch to line-2 (clones its own starter) and back to line-1 - the
+    // canvas remounts on the tag id both times (existing behaviour, not part
+    // of Fix B), so the clear must still be there when line-1 reopens.
+    fireEvent.click(screen.getByText('SRT-2'));
+    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+    fireEvent.click(screen.getByText('SRT-1'));
+    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+    expect(canvasDocs[canvasDocs.length - 1].doc.layers).toHaveLength(0);
+
+    // Add 3 layers back.
+    fireEvent.click(screen.getByRole('button', { name: 'Add layer' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add layer' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add layer' }));
+
+    // Toggle to Arrange and back - this is the step that lost the design
+    // before Fix B.
+    fireEvent.click(screen.getByRole('button', { name: 'Arrange' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Design' }));
+    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+
+    expect(canvasDocs[canvasDocs.length - 1].doc.layers).toHaveLength(3);
   });
 });
 

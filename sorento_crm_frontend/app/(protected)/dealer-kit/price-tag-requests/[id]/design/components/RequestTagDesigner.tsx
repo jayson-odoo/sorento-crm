@@ -243,6 +243,13 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
    * That is exactly what it did until this was measured on the lane.
    */
   const docRef = useRef<{ tagId: string; doc: TagTemplateDoc } | null>(null);
+  // The editor is unmounted whenever Arrange is showing (the mode ternary
+  // below), so a snapshot taken before that switch is stale by the time
+  // Design remounts it - dropping the ref here forces a rebuild off the
+  // live `tags` state instead of replaying the layers as they stood before
+  // the switch and losing whatever Arrange-side or since-mount edits
+  // happened in between.
+  if (mode !== 'design') docRef.current = null;
   if (selectedTag && docRef.current?.tagId !== selectedTag.id) {
     docRef.current = {
       tagId: selectedTag.id,
@@ -414,7 +421,7 @@ export function RequestTagDesigner({ request, initialDoc, onSave }: Props) {
 
   return (
     <FocusShell active={focus} onExit={() => setFocus(false)}>
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex h-full min-h-0 flex-1 flex-col">
       {/* Request bar: what this is, which half is showing, and the two actions
           that leave the page in a different state.
           `flex-wrap` (S6): at 375px the back button, mode toggle, Full
