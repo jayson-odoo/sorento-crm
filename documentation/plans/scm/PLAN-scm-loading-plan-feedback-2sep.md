@@ -260,4 +260,10 @@ AC-G4 are read from it, not typed.
 2. `SCM-UPLOAD-FORMATS.md` goes to the repo AND the Outline user guide (S8).
 3. The prod ROYAL MIRROR snapshot stays; with plan-owned statements it cannot reach a plan.
 
-Still open: the captain's verdict on the plan as amended.
+Approved 2 Sep. One finding surfaced while briefing S7, for the captain: AC-G3's exact-substring
+rule will NOT warn on the captain's own file, because the master name is "CHAOZHOU JINBAICHUAN
+SANITARY WARE CO., LTD" and the letterhead reads "CHAOZHOU JINBAICHUAN SANITARY WARE TECHNOLOGY
+CO.,LTD". Options when it comes up: (a) keep exact substring and accept the miss, (b) also
+accept a supplier `supplier_code` or a stored "letterhead alias" on the supplier record (one
+column, deterministic), (c) token overlap of 3+ words (still deterministic, wider). Not built
+until ruled.
