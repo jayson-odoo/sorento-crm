@@ -34,12 +34,26 @@ export interface PriceTagRequestLine {
   sell_price: number | null;
 }
 
+/**
+ * The shape `entity_attachment_service.list_attachments_for_entity` answers
+ * with - the SAME shape the portal's own detail route carries (D49, S1), so
+ * this and the portal's `PortalAttachment` type must never drift apart again.
+ * No `id` field: `link_id` is the row identity (what a key/unlink target
+ * reads), `attachment_id` is what the download route is keyed on - the two
+ * are NOT interchangeable.
+ */
 export interface PriceTagAttachment {
-  id: string;
-  filename: string;
-  content_type: string | null;
+  link_id: string;
+  attachment_id: string;
+  filename: string | null;
+  size: number | null;
   url: string | null;
-  created_at: string;
+  content_type: string | null;
+  uploaded_at: string | null;
+  uploader_kind: 'user' | 'contact' | 'system' | null;
+  uploaded_by_name: string | null;
+  uploaded_by_role: 'contact' | 'staff' | 'unknown';
+  can_unlink: boolean;
 }
 
 export interface PriceTagRequestSummary {

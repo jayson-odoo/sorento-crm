@@ -50,6 +50,9 @@ import BackToList from '@/components/common/BackToList';
 import DetailActions from '@/components/common/DetailActions';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { PageHeader } from '@/components/common/PageHeader';
+import AttachmentPreviewModal, {
+  type AttachmentPreviewItem,
+} from '@/components/common/AttachmentPreviewModal';
 import { priceTagRequestsPagerQuery } from '../lib/listQuery';
 import {
   priceTagStatusLabel,
@@ -115,6 +118,8 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
   const [actionLoading, setActionLoading] = useState(false);
   const [exportLoading, setExportLoading] = useState(false);
   const [voidDialogOpen, setVoidDialogOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewIndex, setPreviewIndex] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -215,6 +220,21 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
   );
   const primary = actions[0] ?? null;
   const secondary = actions.slice(1);
+
+  // PO Attachments: standard preview/download, read-only - upload stays
+  // portal-only (D4). Backed by the generic attachment download route, same as
+  // every other CRM attachment list.
+  const attachments = request?.attachments ?? [];
+  const attachmentPreviewItems: AttachmentPreviewItem[] = useMemo(
+    () =>
+      (request?.attachments ?? []).map((att) => ({
+        id: att.link_id,
+        name: att.filename || 'Attachment',
+        url: att.url ?? '',
+        downloadUrl: `/api/v1/resource-management/attachments/${att.attachment_id}/download`,
+      })),
+    [request?.attachments],
+  );
 
   const busy = actionLoading || exportLoading;
 
@@ -475,33 +495,39 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
         </CardContent>
       </Card>
 
-      {/* PO attachments */}
+      {/* PO attachments - read-only: marketing views/downloads what the
+          salesperson attached, upload stays portal-only (D4). */}
       <Card>
         <CardHeader className="py-3 px-4">
           <CardTitle className="text-base">PO Attachments</CardTitle>
         </CardHeader>
         <CardContent className="px-4 pb-4">
-          {(request.attachments?.length ?? 0) === 0 ? (
+          {attachments.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-4">
               No PO attachments uploaded.
             </p>
           ) : (
             <div className="space-y-1">
-              {(request.attachments ?? []).map((att) => (
-                <div
-                  key={att.id}
-                  className="flex items-center justify-between text-sm px-2 py-1.5 bg-muted rounded"
+              {attachments.map((att, idx) => (
+                <button
+                  key={att.link_id}
+                  type="button"
+                  onClick={() => {
+                    setPreviewIndex(idx);
+                    setPreviewOpen(true);
+                  }}
+                  className="flex w-full items-center justify-between text-sm px-2 py-1.5 bg-muted rounded hover:bg-muted/70 transition text-left"
                 >
                   <div className="flex items-center min-w-0">
                     <FileText className="size-4 mr-2 text-muted-foreground shrink-0" />
-                    <span className="truncate" title={att.filename}>
-                      {att.filename}
+                    <span className="truncate" title={att.filename ?? undefined}>
+                      {att.filename || 'Attachment'}
                     </span>
                   </div>
                   <span className="text-xs text-muted-foreground ml-2 shrink-0">
-                    {formatDateTimeInMalaysia(att.created_at)}
+                    {att.uploaded_at ? formatDateTimeInMalaysia(att.uploaded_at) : '-'}
                   </span>
-                </div>
+                </button>
               ))}
             </div>
           )}
@@ -530,6 +556,13 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
           )}
         </CardContent>
       </Card>
+
+      <AttachmentPreviewModal
+        open={previewOpen}
+        onOpenChange={setPreviewOpen}
+        items={attachmentPreviewItems}
+        startIndex={previewIndex}
+      />
 
       {/* Void confirmation */}
       <AlertDialog open={voidDialogOpen} onOpenChange={setVoidDialogOpen}>

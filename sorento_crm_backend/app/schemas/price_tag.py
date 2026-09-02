@@ -102,6 +102,32 @@ class PriceTagRequestUpdate(BaseModel):
     lines: Optional[list[PriceTagRequestLineCreate]] = None
 
 
+class PriceTagRequestAttachment(BaseModel):
+    """One row of ``entity_attachment_service.list_attachments_for_entity``'s
+    output, typed rather than left as a bare ``dict`` - an untyped field is
+    exactly how the CRM FE's own copy of this shape (`priceTagRequestService
+    .ts`) drifted from the real one (id/created_at that were never sent) with
+    nothing catching it. Both the CRM and the portal detail routes answer with
+    this shape (D49); the portal side additionally needs uploader attribution
+    to gate its own unlink control, which is why every field the service emits
+    is declared here too rather than trimmed to what the CRM screen shows.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    link_id: str
+    attachment_id: str
+    filename: Optional[str] = None
+    size: Optional[int] = None
+    url: Optional[str] = None
+    content_type: Optional[str] = None
+    uploaded_at: Optional[str] = None
+    uploader_kind: Optional[str] = None
+    uploaded_by_name: str = "Unknown"
+    uploaded_by_role: str = "unknown"
+    can_unlink: bool = True
+
+
 class PriceTagRequestResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -137,6 +163,23 @@ class PriceTagRequestResponse(BaseModel):
     contact_name: Optional[str] = None
     promotion_name: Optional[str] = None
     line_count: int = 0
+
+    # The PO files the salesperson attached, in
+    # ``entity_attachment_service.list_attachments_for_entity``'s shape
+    # (link_id, attachment_id, filename, size, url, content_type, ...). Filled
+    # by ``response_with_resolved_lines`` for both the CRM and the portal
+    # detail routes (D49) - declared here for the same reason as the four
+    # fields above it: an undeclared field is dropped by ``response_model``
+    # without a word (AC-S1-5).
+    attachments: list[PriceTagRequestAttachment] = Field(default_factory=list)
+
+    # Whether a completed (READY) tag sheet PDF export exists for this request.
+    # Filled by ``response_with_resolved_lines`` from ``user_downloads``, same as
+    # the four fields above - the portal read-only view's gear needs to know
+    # whether to enable Download PDF without a second round trip, and an
+    # undeclared field is dropped by ``response_model`` without a word
+    # (PLAN-price-tag-feedback-r2 S2).
+    has_completed_export: bool = False
 
 
 class PriceTagRequestListItem(BaseModel):

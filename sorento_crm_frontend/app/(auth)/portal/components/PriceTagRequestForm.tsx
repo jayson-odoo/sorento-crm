@@ -31,20 +31,20 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
+import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import {
   SearchableSelect,
   type SearchableSelectOption,
 } from '@/components/common/SearchableSelect';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
-import { FileDropzone } from '@/components/common/FileDropzone';
 import {
   priceTagStatusLabel,
   priceTagStatusPillClass,
@@ -67,9 +67,14 @@ import {
   submitRequest,
   approveRequest,
   requestChanges,
+  downloadPriceTagPdf,
 } from '../lib/price-tag-request-service';
 import PriceTagProofViewer from './PriceTagProofViewer';
 import POCrossCheckViewer from './POCrossCheckViewer';
+import { AttachmentDropzone } from './AttachmentDropzone';
+import AttachmentPreviewModal from '@/components/common/AttachmentPreviewModal';
+import { toPreviewItem, portalFetchBytes } from '../lib/portal-preview';
+import { uploadAttachment, type PortalAttachment } from '../lib/portal-client';
 import type { ResolvedLineData } from '@/app/(public)/c/print/tag-sheet/[downloadId]/components/TagSheetRenderer';
 import type { TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
 
@@ -207,6 +212,12 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [request, setRequest] = useState<PriceTagRequestDetail | null>(null);
+  // The id a create call answered with, held in STATE rather than trusted to
+  // live only in the `requestId` prop (the route param) - a retry after
+  // create-succeeded-but-flushPendingFiles-failed never gets a fresh prop, so
+  // without this the next Save Draft/Submit click saw `isNew` again and
+  // created a second row for the same draft.
+  const [createdRequestId, setCreatedRequestId] = useState<string | null>(null);
 
   // ---- Lookup data ----
   const [debtors, setDebtors] = useState<DebtorOption[]>([]);
@@ -221,6 +232,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   const [neededByDate, setNeededByDate] = useState('');
   const [notes, setNotes] = useState('');
   const [lines, setLines] = useState<DraftLine[]>([]);
+  const [attachments, setAttachments] = useState<PortalAttachment[]>([]);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
 
   // ---- Proof review state ----
@@ -230,6 +242,12 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // ---- Delete draft ----
   const [deleting, setDeleting] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+
+  // ---- Read-only view: PO attachment preview + Download PDF (D19/S2) ----
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewIndex, setPreviewIndex] = useState(0);
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const [gearOpen, setGearOpen] = useState(false);
 
   // ---- What Submit found wrong, where it found it (D48b) ----
   // Set by a Submit click and by a server refusal that named a field; cleared
@@ -248,6 +266,9 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   const isDraft = Boolean(request?.portal_draft_at);
   const isEditable = isNew || isDraft;
   const isProofReady = request?.status === 'proof_ready';
+  // The id to save/flush against: the route param when one exists, else
+  // whatever a create call in THIS session already answered with.
+  const effectiveId = requestId ?? createdRequestId ?? undefined;
 
   // ---- Load lookups ----
   useEffect(() => {
@@ -287,6 +308,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         setNeededByDate(data.needed_by_date ?? '');
         setNotes(data.notes ?? '');
         setLines(data.lines.map(lineToDraft));
+        setAttachments(data.attachments ?? []);
       })
       .catch(() => {
         if (!cancelled) toast.error('Failed to load request');
@@ -427,13 +449,17 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
 
   // ---- What there is to save, and what Submit still needs (D48) ----
 
-  /** Save Draft asks for one thing only: that there is something to save. */
+  /** Save Draft asks for one thing only: that there is something to save. A
+   *  dropped PO file with nothing else filled in still counts (AC-S1-2) - it is
+   *  parked in `pendingFiles` waiting on a draft id to upload to, and Save Draft
+   *  is the only way to give it one. */
   const hasSomethingToSave =
     !!debtorCode ||
     !!promotionId ||
     !!neededByDate ||
     notes.trim().length > 0 ||
-    lines.length > 0;
+    lines.length > 0 ||
+    pendingFiles.length > 0;
 
   const payloadLines = () =>
     lines.map((l) => ({
@@ -510,6 +536,40 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     });
   }, [debtorCode, neededByDate, lines.length]);
 
+  // ---- PO attachments: buffer pre-draft, flush once the draft exists ----
+  //
+  // The legacy SubmissionForm pattern (D2): a file dropped before Save Draft or
+  // Submit is held in `pendingFiles` (nothing to upload TO yet) and uploaded the
+  // moment the draft is created. A file that fails names itself in the thrown
+  // error and stays in `pendingFiles`, so Save Draft / Submit refuse to look
+  // like they finished cleanly.
+  const flushPendingFiles = useCallback(
+    async (id: string) => {
+      if (pendingFiles.length === 0) return;
+      const uploaded: PortalAttachment[] = [];
+      const remaining: File[] = [];
+      const errors: string[] = [];
+      for (const file of pendingFiles) {
+        try {
+          const att = await uploadAttachment('price_tag_request', id, file);
+          uploaded.push(att);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : 'unknown error';
+          errors.push(`${file.name}: ${msg}`);
+          remaining.push(file);
+        }
+      }
+      if (uploaded.length > 0) setAttachments((prev) => [...prev, ...uploaded]);
+      setPendingFiles(remaining);
+      if (errors.length > 0) {
+        throw new Error(
+          `${errors.length} attachment${errors.length > 1 ? 's' : ''} failed: ${errors.join('; ')}`,
+        );
+      }
+    },
+    [pendingFiles],
+  );
+
   // ---- Save draft (D48a: validates nothing) ----
   const handleSaveDraft = useCallback(async () => {
     setSaving(true);
@@ -524,12 +584,15 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         lines: payloadLines(),
       };
       // An open draft is UPDATED, not created again: saving twice used to leave
-      // the salesperson with two rows and no way to tell them apart.
-      if (requestId) {
-        await updateRequest(requestId, payload);
-      } else {
-        await createRequest(payload);
-      }
+      // the salesperson with two rows and no way to tell them apart - and so
+      // does a RETRY after the create half of a previous attempt succeeded
+      // but the attachment flush after it failed, which is why this checks
+      // `effectiveId` (state) rather than only the `requestId` prop.
+      const saved = effectiveId
+        ? await updateRequest(effectiveId, payload)
+        : await createRequest(payload);
+      if (!effectiveId) setCreatedRequestId(saved.id);
+      await flushPendingFiles(saved.id);
       toast.success('Draft saved');
       router.push(`${portalBase(slug)}?type=price_tag_request`);
     } catch (e) {
@@ -541,7 +604,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       setSaving(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [requestId, debtorCode, debtors, promotionId, neededByDate, notes, lines, router, slug]);
+  }, [effectiveId, debtorCode, debtors, promotionId, neededByDate, notes, lines, flushPendingFiles, router, slug]);
 
   // ---- Delete draft ----
   const handleDeleteDraft = useCallback(async () => {
@@ -581,14 +644,22 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     setLines((prev) => prev.map((l) => ({ ...l, guard_error: null })));
     try {
       const debtor = debtors.find((d) => d.code === debtorCode);
-      const created = await createRequest({
+      const payload = {
         debtor_code: debtorCode,
         debtor_name: debtor?.name ?? debtorCode,
         promotion_id: promotionId || null,
         needed_by_date: neededByDate,
         notes: notes || null,
         lines: payloadLines(),
-      });
+      };
+      // Same reasoning as Save Draft: a retry after a create succeeded but the
+      // attachment flush after it failed must update that row, not create a
+      // second one.
+      const created = effectiveId
+        ? await updateRequest(effectiveId, payload)
+        : await createRequest(payload);
+      if (!effectiveId) setCreatedRequestId(created.id);
+      await flushPendingFiles(created.id);
       await submitRequest(created.id);
       toast.success('Request submitted');
       router.push(`${portalBase(slug)}?type=price_tag_request`);
@@ -612,7 +683,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       setSubmitting(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [collectProblems, applyFieldErrors, debtorCode, debtors, promotionId, neededByDate, notes, lines, router, slug]);
+  }, [collectProblems, applyFieldErrors, effectiveId, debtorCode, debtors, promotionId, neededByDate, notes, lines, flushPendingFiles, router, slug]);
 
   // ---- Approve proof ----
   const handleApprove = useCallback(async () => {
@@ -639,6 +710,22 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     }
   }, [requestId, changesNote, router, slug]);
 
+  // ---- Download PDF (D19): the request's latest completed tag sheet export ----
+  const handleDownloadPdf = useCallback(async () => {
+    if (!requestId) return;
+    setDownloadingPdf(true);
+    try {
+      await downloadPriceTagPdf(requestId);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to download the PDF');
+    } finally {
+      setDownloadingPdf(false);
+      // Close the gear once the download has settled (success or failure) -
+      // a failure still toasts, so nothing is lost by not leaving it open.
+      setGearOpen(false);
+    }
+  }, [requestId]);
+
   // ---- Loading skeleton ----
   if (loading) {
     return (
@@ -651,126 +738,320 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     );
   }
 
-  // ---- Read-only detail view (non-editable statuses) ----
-  if (request && !isEditable && !isProofReady) {
-    const showDownload =
-      request.status === 'ready' || request.status === 'approved';
+  // ---- Read-only view (ADR: View = Edit) ----
+  //
+  // Every non-editable status - including proof-ready - renders the SAME
+  // sections in the SAME order as the edit form below (debtor, promotion,
+  // needed-by, notes, lines table, PO attachments), each input swapped in
+  // place for its read-only value (AC-S2-1). Proof-ready appends the proof
+  // section beneath it (AC-S2-2); `RequestDetailView` no longer exists as a
+  // separate layout.
+  if (request && !isEditable) {
+    const hasPromotion = !!request.promotion_id;
+    const attachmentPreviewItems = attachments.map(toPreviewItem);
+
     return (
       <div className="w-full max-w-2xl mx-auto px-3 pt-4 pb-8 space-y-4">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => router.push(`${portalBase(slug)}?type=price_tag_request`)}
-        >
-          <ArrowLeft className="size-4 mr-1" /> Back
-        </Button>
+        <div className="flex items-center justify-between gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => router.push(`${portalBase(slug)}?type=price_tag_request`)}
+          >
+            <ArrowLeft className="size-4 mr-1" /> Back
+          </Button>
+          {/* The gear (D19): Download PDF, disabled with a reason until a
+              completed export exists. The stub toast is gone. Controlled open
+              state so the menu closes itself once the download settles,
+              instead of sitting open with a stale item until an outside
+              click. */}
+          <DetailActionsMenu
+            ariaLabel="Price tag request actions"
+            open={gearOpen}
+            onOpenChange={setGearOpen}
+          >
+            <DropdownMenuItem
+              disabled={!request.has_completed_export || downloadingPdf}
+              onSelect={(event) => {
+                event.preventDefault();
+                void handleDownloadPdf();
+              }}
+            >
+              {downloadingPdf ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Download className="size-4" />
+              )}
+              <span className="flex flex-col items-start">
+                <span>{downloadingPdf ? 'Downloading...' : 'Download PDF'}</span>
+                {!request.has_completed_export && !downloadingPdf && (
+                  <span className="text-xs text-muted-foreground">
+                    No completed export yet
+                  </span>
+                )}
+              </span>
+            </DropdownMenuItem>
+          </DetailActionsMenu>
+        </div>
 
-        <RequestDetailView request={request} />
+        <div className="space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-lg font-semibold">{request.doc_number}</h1>
+            <span
+              className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${priceTagStatusPillClass(request.status)}`}
+            >
+              {priceTagStatusLabel(request.status)}
+            </span>
+          </div>
+          {/* Read-only metadata, never a form field: created is derived, not
+              something the salesperson typed. */}
+          <p className="text-xs text-muted-foreground">
+            Created {new Date(request.created_at).toLocaleDateString()}
+          </p>
+        </div>
 
-        {showDownload && (
-          <Card>
-            <CardContent className="pt-4">
-              <Button
-                onClick={() => {
-                  // Phase 2: link to the actual download via download_id.
-                  toast.info('PDF download will be available when export completes.');
-                }}
-                size="sm"
-              >
-                <Download className="size-4 mr-1" />
-                Download PDF
-              </Button>
-            </CardContent>
-          </Card>
-        )}
-      </div>
-    );
-  }
+        {/* Debtor - same field, same position as the edit form, value swapped in. */}
+        <div className="space-y-1.5">
+          <Label>Debtor</Label>
+          <p className="text-sm font-medium py-2">{request.debtor_name ?? '-'}</p>
+        </div>
 
-  // ---- Proof review view ----
-  if (request && isProofReady) {
-    return (
-      <div className="w-full max-w-2xl mx-auto px-3 pt-4 pb-8 space-y-4">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => router.push(`${portalBase(slug)}?type=price_tag_request`)}
-        >
-          <ArrowLeft className="size-4 mr-1" /> Back
-        </Button>
+        {/* Promotion */}
+        <div className="space-y-1.5">
+          <Label>Promotion</Label>
+          <p className="text-sm font-medium py-2">
+            {request.promotion_name ?? '-'}
+          </p>
+        </div>
 
-        <RequestDetailView request={request} />
+        {/* Needed by date */}
+        <div className="space-y-1.5">
+          <Label>Needed by</Label>
+          <p className="text-sm font-medium py-2">
+            {request.needed_by_date ?? '-'}
+          </p>
+        </div>
 
-        {/* Tag sheet proof preview */}
-        <ProofPreviewSection request={request} />
+        {/* Notes */}
+        <div className="space-y-1.5">
+          <Label>Notes</Label>
+          <p className="text-sm py-2">
+            {request.notes || (
+              <span className="text-muted-foreground">No notes.</span>
+            )}
+          </p>
+        </div>
 
-        {/* PO cross-check Phase 1: side-by-side */}
-        <POCrossCheckViewer
-          attachments={request.attachments ?? []}
-          lines={request.lines.map((l) => ({
-            id: l.id,
-            code: l.code,
-            name: l.name,
-            line_type: l.line_type,
-            quantity: l.quantity,
-            list_price: null,
-            sell_price: null,
-            show_promo_price: l.show_promo_price,
-            marketing_price_override: null,
-          }))}
-        />
-
+        {/* Lines: same table the edit form uses, cells read-only. */}
         <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Proof Review</CardTitle>
+          <CardHeader className="py-3 px-4">
+            <CardTitle className="text-base">
+              Lines ({request.lines.length})
+            </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <Button onClick={handleApprove} className="flex-1">
-                <Check className="size-4 mr-1" />
-                Approve
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => setShowChangesDialog(true)}
-                className="flex-1"
-              >
-                <MessageSquare className="size-4 mr-1" />
-                Request Changes
-              </Button>
-            </div>
+          <CardContent className="space-y-3 px-4 pb-4">
+            {request.lines.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-6">
+                No lines.
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[560px] table-fixed text-sm">
+                  <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
+                    <tr>
+                      <th className="w-7 px-2 py-2 text-left">#</th>
+                      <th className="w-[32%] px-2 py-2 text-left">Item</th>
+                      <th className="w-[12%] px-2 py-2 text-left">
+                        Qty (tags)
+                      </th>
+                      <th className="w-[24%] px-2 py-2 text-left">
+                        Alternatives
+                      </th>
+                      <th className="w-[22%] px-2 py-2 text-left">
+                        Accessories
+                      </th>
+                      {hasPromotion && (
+                        <th className="w-[10%] px-2 py-2 text-left">
+                          Promo price
+                        </th>
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {request.lines.map((line, index) => (
+                      <tr
+                        key={line.id}
+                        className="border-t border-border align-top"
+                      >
+                        <td className="px-2 py-2 text-muted-foreground">
+                          {index + 1}
+                        </td>
+                        <td className="px-2 py-2">
+                          <div
+                            className="font-medium truncate"
+                            title={line.name}
+                          >
+                            {line.name}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {line.line_type === 'product' ? 'Product' : 'Set'}
+                            {line.code ? ` - ${line.code}` : ''}
+                          </div>
+                        </td>
+                        <td className="px-2 py-2">{line.quantity}</td>
+                        <td className="px-2 py-2 text-muted-foreground">
+                          {line.line_type === 'product_set'
+                            ? 'Not for a set'
+                            : line.alternatives.length > 0
+                              ? line.alternatives
+                                  .map((a) => a.name || a.code)
+                                  .join(', ')
+                              : '-'}
+                        </td>
+                        <td className="px-2 py-2 text-muted-foreground">
+                          {line.included_accessories || '-'}
+                        </td>
+                        {hasPromotion && (
+                          <td className="px-2 py-2">
+                            {line.show_promo_price ? (
+                              <Check
+                                className="size-4 text-green-600"
+                                aria-label="Promo price shown"
+                              />
+                            ) : (
+                              <span className="text-muted-foreground">-</span>
+                            )}
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </CardContent>
         </Card>
 
-        <AlertDialog
-          open={showChangesDialog}
-          onOpenChange={setShowChangesDialog}
-        >
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Request Changes</AlertDialogTitle>
-              <AlertDialogDescription>
-                Describe what needs to be changed. The marketing team will revise
-                the proof.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <Textarea
-              value={changesNote}
-              onChange={(e) => setChangesNote(e.target.value)}
-              placeholder="Describe the changes needed..."
-              rows={4}
+        {/* Purchase Order - same section as the edit form's dropzone, without
+            upload controls: the files the salesperson attached, openable in
+            place. Always rendered, empty state when there are none, so a
+            reader never wonders whether the form has a PO section at all. */}
+        <Card>
+          <CardHeader className="py-3 px-4">
+            <CardTitle className="text-base">Purchase Order</CardTitle>
+          </CardHeader>
+          <CardContent className="px-4 pb-4 space-y-1">
+            {attachments.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-4">
+                No PO files attached.
+              </p>
+            ) : (
+              attachments.map((att, idx) => (
+                <button
+                  key={att.link_id}
+                  type="button"
+                  onClick={() => {
+                    setPreviewIndex(idx);
+                    setPreviewOpen(true);
+                  }}
+                  className="flex w-full items-center text-sm px-2 py-1.5 bg-muted rounded hover:bg-muted/70 transition text-left"
+                >
+                  <FileText className="size-3.5 mr-2 text-muted-foreground shrink-0" />
+                  <span className="truncate" title={att.filename ?? undefined}>
+                    {att.filename || 'Attachment'}
+                  </span>
+                </button>
+              ))
+            )}
+          </CardContent>
+        </Card>
+
+        <AttachmentPreviewModal
+          open={previewOpen}
+          onOpenChange={setPreviewOpen}
+          items={attachmentPreviewItems}
+          startIndex={previewIndex}
+          fetchBytes={portalFetchBytes}
+        />
+
+        {/* Proof review appends beneath the same layout (AC-S2-2); nothing
+            below here renders for a plain read-only status. */}
+        {isProofReady && (
+          <>
+            <ProofPreviewSection request={request} />
+
+            {/* Same `attachments` state the Purchase Order card above reads
+                (not `request.attachments`, which is only ever the snapshot
+                from the initial fetch) - one source, so the two can never
+                show a different file list for the same request. */}
+            <POCrossCheckViewer
+              attachments={attachments}
+              lines={request.lines.map((l) => ({
+                id: l.id,
+                code: l.code,
+                name: l.name,
+                line_type: l.line_type,
+                quantity: l.quantity,
+                list_price: null,
+                sell_price: null,
+                show_promo_price: l.show_promo_price,
+                marketing_price_override: null,
+              }))}
             />
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                onClick={handleRequestChanges}
-                disabled={!changesNote.trim()}
-              >
-                Submit
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Proof Review</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <Button onClick={handleApprove} className="flex-1">
+                    <Check className="size-4 mr-1" />
+                    Approve
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => setShowChangesDialog(true)}
+                    className="flex-1"
+                  >
+                    <MessageSquare className="size-4 mr-1" />
+                    Request Changes
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            <AlertDialog
+              open={showChangesDialog}
+              onOpenChange={setShowChangesDialog}
+            >
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Request Changes</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Describe what needs to be changed. The marketing team will
+                    revise the proof.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <Textarea
+                  value={changesNote}
+                  onChange={(e) => setChangesNote(e.target.value)}
+                  placeholder="Describe the changes needed..."
+                  rows={4}
+                />
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={handleRequestChanges}
+                    disabled={!changesNote.trim()}
+                  >
+                    Submit
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </>
+        )}
       </div>
     );
   }
@@ -936,43 +1217,18 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           <CardTitle className="text-base">Purchase Order</CardTitle>
         </CardHeader>
         <CardContent className="px-4 pb-4">
-          {/* The shared drop surface, not a hand-rolled dashed box: the old one
-              said "Drop PO files here" and had no drag handlers at all, so a
-              dropped file opened in the browser tab instead. */}
-          <FileDropzone
-            id="po-upload"
-            multiple
-            accept=".pdf,.jpg,.jpeg,.png"
-            files={pendingFiles}
-            onFilesChange={setPendingFiles}
-            onReject={(file, reason) =>
-              toast.error(
-                reason === 'type'
-                  ? `${file.name} is not a PDF, JPG or PNG.`
-                  : `${file.name} could not be attached.`,
-              )
-            }
-            title="Drop PO files here, or click to browse"
-            aria-label="Attach purchase order files"
+          {/* The shared portal dropzone (D2/D3): a file dropped before the draft
+              exists is buffered and shown here as pending; once the draft exists
+              (this request already has an id) a drop uploads immediately. */}
+          <AttachmentDropzone
+            kind="price_tag_request"
+            submissionId={effectiveId ?? null}
+            attachments={attachments}
+            onChange={setAttachments}
+            disabled={saving || submitting || deleting}
+            pendingFiles={pendingFiles}
+            onPendingFilesChange={setPendingFiles}
           />
-          {(request?.attachments?.length ?? 0) > 0 && (
-            <div className="mt-3 space-y-1">
-              <p className="text-xs text-muted-foreground font-medium">
-                Existing attachments
-              </p>
-              {(request?.attachments ?? []).map((att) => (
-                <div
-                  key={att.id}
-                  className="flex items-center text-sm px-2 py-1 bg-muted rounded"
-                >
-                  <FileText className="size-3.5 mr-2 text-muted-foreground" />
-                  <span className="truncate" title={att.filename}>
-                    {att.filename}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
         </CardContent>
       </Card>
 
@@ -1241,7 +1497,7 @@ function LineRow({
 }
 
 // ---------------------------------------------------------------------------
-// Read-only detail
+// Proof preview
 // ---------------------------------------------------------------------------
 
 /**
@@ -1355,129 +1611,3 @@ function ProofPreviewSection({
   );
 }
 
-function RequestDetailView({
-  request,
-}: {
-  request: PriceTagRequestDetail;
-}) {
-  return (
-    <>
-      {/* Header */}
-      <Card>
-        <CardContent className="pt-4 space-y-3">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <h2 className="text-lg font-semibold">{request.doc_number}</h2>
-            <span
-              className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${priceTagStatusPillClass(request.status)}`}
-            >
-              {priceTagStatusLabel(request.status)}
-            </span>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-            <div>
-              <span className="text-muted-foreground">Debtor</span>
-              {/* A draft carries neither until it is finished (D48a). */}
-              <p className="font-medium">{request.debtor_name ?? '-'}</p>
-            </div>
-            {request.promotion_name && (
-              <div>
-                <span className="text-muted-foreground">Promotion</span>
-                <p className="font-medium">{request.promotion_name}</p>
-              </div>
-            )}
-            <div>
-              <span className="text-muted-foreground">Needed by</span>
-              <p className="font-medium">{request.needed_by_date ?? '-'}</p>
-            </div>
-            <div>
-              <span className="text-muted-foreground">Created</span>
-              <p className="font-medium">
-                {new Date(request.created_at).toLocaleDateString()}
-              </p>
-            </div>
-          </div>
-
-          {request.notes && (
-            <div>
-              <span className="text-sm text-muted-foreground">Notes</span>
-              <p className="text-sm mt-1">{request.notes}</p>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Lines */}
-      <Card>
-        <CardHeader className="py-3 px-4">
-          <CardTitle className="text-base">
-            Lines ({request.lines.length})
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="px-4 pb-4">
-          {request.lines.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-4">
-              No lines.
-            </p>
-          ) : (
-            <div className="space-y-2">
-              {request.lines.map((line) => (
-                <div
-                  key={line.id}
-                  className="border rounded-lg p-3 space-y-1"
-                >
-                  <div className="flex items-center gap-2">
-                    <Badge variant="secondary" className="text-xs">
-                      {line.line_type === 'product' ? 'Product' : 'Set'}
-                    </Badge>
-                    <span className="font-medium text-sm">{line.name}</span>
-                  </div>
-                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                    <span>Code: {line.code}</span>
-                    <span>Qty: {line.quantity}</span>
-                    {line.show_promo_price && (
-                      <span className="text-amber-600">Promo price</span>
-                    )}
-                  </div>
-                  {line.alternatives.length > 0 && (
-                    <p className="text-xs text-muted-foreground">
-                      Alternatives:{' '}
-                      {line.alternatives.map((a) => a.name).join(', ')}
-                    </p>
-                  )}
-                  {line.included_accessories && (
-                    <p className="text-xs text-muted-foreground">
-                      Accessories: {line.included_accessories}
-                    </p>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Attachments */}
-      {(request.attachments?.length ?? 0) > 0 && (
-        <Card>
-          <CardHeader className="py-3 px-4">
-            <CardTitle className="text-base">PO Attachments</CardTitle>
-          </CardHeader>
-          <CardContent className="px-4 pb-4 space-y-1">
-            {(request.attachments ?? []).map((att) => (
-              <div
-                key={att.id}
-                className="flex items-center text-sm px-2 py-1.5 bg-muted rounded"
-              >
-                <FileText className="size-3.5 mr-2 text-muted-foreground" />
-                <span className="truncate" title={att.filename}>
-                  {att.filename}
-                </span>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      )}
-    </>
-  );
-}

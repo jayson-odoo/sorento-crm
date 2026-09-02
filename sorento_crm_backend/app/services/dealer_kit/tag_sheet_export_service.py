@@ -209,6 +209,33 @@ def request_tag_sheet_export(
     return download, sheet_ids
 
 
+def latest_completed_export(db: Session, request_id: str) -> Optional[UserDownload]:
+    """The request's most recent completed (READY) tag sheet PDF, or None.
+
+    Keyed by ``source_entity_type``/``source_entity_id``, never by the download
+    row's ``user_id`` - that is the marketing staffer who ran the export, not
+    the portal contact who owns the request. The caller checks the request's
+    ownership itself (``_require_own_request``); this only answers "does a
+    finished PDF exist for it".
+
+    ``id.desc()`` breaks a tie on ``created_at``: two rows seeded (or, in a
+    real export, committed) inside the same transaction see the same Postgres
+    ``now()`` (it is fixed at transaction start, not per-statement), so
+    ``created_at`` alone cannot always tell "latest" from "simultaneous".
+    """
+    return (
+        db.query(UserDownload)
+        .filter(
+            UserDownload.source_entity_type == "price_tag_request",
+            UserDownload.source_entity_id == str(request_id),
+            UserDownload.kind == KIND,
+            UserDownload.status == DownloadStatus.READY.value,
+        )
+        .order_by(UserDownload.created_at.desc(), UserDownload.id.desc())
+        .first()
+    )
+
+
 def render_inputs(db: Session, download_id: str) -> dict:
     """Everything the tag sheet render needs."""
     from app.services.dealer_kit.export_service import get_request as _get_export_request
