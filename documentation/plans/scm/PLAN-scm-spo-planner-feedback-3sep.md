@@ -1,6 +1,6 @@
 # PLAN - SPO planner feedback, 3 Sep 2026
 
-**Status:** DRAFT, captain's screenshot round 3 Sep 2026 (evening). UAC:
+**Status:** DRAFT + Lavish round 1 folded (legend, S7). Captain's screenshot round 3 Sep 2026 (evening). UAC:
 `scm-spo-planner-feedback-3sep-acceptance-criteria.md`.
 Lane: `feat/scm-spo-planner-feedback-3sep`, worktree `.claude/worktrees/spo-planner-3sep`,
 stack FE :3160 / BE :8160, Redis db 14. **Stacked on `feat/scm-loading-plan-lightbox-3sep`**
@@ -119,6 +119,10 @@ netting or the cascade.
   `data-bucket-hit` and the `bg-primary/10` row tint, so the click reads as "these rows";
   the picker's search / filter is untouched by it.
 - Keyboard: the cell is still a `button`; Enter / Space open the dialog.
+- **Legend** (captain's Lavish note 3 Sep): a one-line legend under the matrix, two swatches
+  with their words - blue "This SPO", grey "Another SPO" - rendered only in schedule view.
+  A colour with no key is an explanation the reader has to guess, which is worse than a
+  sentence; two swatches are the sentence.
 
 ### S5. Occupied by another SPO: shown grey, never tickable (BE + FE)
 
@@ -154,6 +158,43 @@ ticks, `qty` semantics and `create` are untouched.
 - Vitest: grey row untickable; ticked figures ignore taken rows; a cell with only taken
   quantity renders grey and opens the dialog.
 
+### S7. The other side of the loop: what the PO and the SO say after Create SPO (BE + FE)
+
+Captain's Lavish note 3 Sep: "after I create SPO, I need visibility that this PO is used to
+supply this SPO, how many left, how many supplied, from the PO form; same for SO."
+
+- **PO form: already there.** `PurchaseOrderAllocations` on the PO detail prints per line
+  Outstanding / Allocated / Free and every placement, an SPO one as `SPO-… qty` with its
+  packing list (`kind: 'spo'`, `spo_number`, `packing_list`, from
+  `PurchaseOrderService._allocations_for`). Nothing to build; S6's evidence run opens the
+  source PO after Create SPO and screenshots the block. One wording check: the PO line's
+  Received figure includes the SPO pull (that is how `create` records it), so the panel
+  must say "Pulled to SPO N" on the placement, not leave the reader to infer it from
+  Received.
+- **Project SO line: already there.** The tick is the ORDER BACK order-inquiry row on the
+  line; `create` writes `OrderInquiryLink` rows; the SCM sales-order detail's "Linked to"
+  column (`linked_to`, AC-I9) prints `SPO-… <warehouse> <qty> due <date>` off that link,
+  and the order-inquiry worklist and the PO occupancy panel read the same reader. So yes:
+  we cover the OI row, which is how the project SO line is reached (OI = demand), and the
+  project SO shows it.
+- **Retail SO line: NOT there.** The retail tick is recorded only in the SPO line's
+  `source_ref.so_coverage`; nothing on the SO side reads it, so a retail line covered by an
+  SPO reads "-" in Linked to. Build:
+  - `spo_conversion_service.coverage_for_so_lines(db, so_line_ids) -> dict[so_line_id,
+    list[dict]]`: for every `crm_spo` PO line whose `source_ref.so_coverage` names one of the
+    lines, one entry `{kind: 'spo', document: <SPO number>, qty, location: <allocation
+    warehouse code or None>, expected_date: <shipment ETA or None>, line_label: None}` -
+    the `SalesOrderLineLink` shape. Shared with S5's `taken_by` read (one query, both
+    callers).
+  - `sales_order_service` line builder: for a line with no inquiry row, `linked_to` =
+    that list when non-empty, else `None` as today. A line with an inquiry row keeps the
+    OI links and appends the SPO coverage entries after them.
+  - FE: no change; the "Linked to" cell already renders the shape.
+  - Pytest first (`tests/scm/test_sales_order_detail_links.py` or the existing SO detail
+    test file): retail line covered by one SPO reads one `spo` link with the SPO number
+    and qty; two containers = two links; after `unwind` the line reads `None` again.
+    Route test asserts the field through the API.
+
 ### S6. Tests, browser evidence, review
 
 - Vitest: `SpoPlannerTable.test.tsx` (no subtitle, no partly-covered sentence, toolbar
@@ -162,6 +203,8 @@ ticks, `qty` semantics and `create` are untouched.
   classes, click opens dialog).
 - agent-browser evidence run on :3160 via the sidebar: Procurement → Packing lists → a draft
   shipment → SPO planner; both views; open a cell; filter in the SO picker; screenshot each.
+- Evidence run also opens the source PO (Outstanding / Allocated / placements) and the SCM
+  sales order (Linked to) after Create SPO, for S7.
 - Full `npm run test`, whole-frontend `npx tsc --noEmit`, `pytest tests/scm/test_spo_planner_selection.py tests/scm/test_spo_conversion.py`, `alembic heads` (no migration in this batch).
 - Opus review, then ONE PR after the lightbox PR merges.
 
@@ -175,4 +218,4 @@ ticks, `qty` semantics and `create` are untouched.
 
 ## 4. Order
 
-S1 → S2 → S3 → S4 → S5 (BE test-first, then FE) → S6. One coder at a time in this worktree.
+S1 → S2 → S3 → S4 → S5 (BE test-first, then FE) → S7 (BE test-first) → S6. One coder at a time in this worktree.

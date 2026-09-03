@@ -53,6 +53,9 @@ agent-browser evidence on :3160 via the sidebar.
   for that line; in the Sales order view it opens `SO covered · <code>`. No popover renders.
 - **AC-D3** `[FE]` In the opened picker, rows whose date falls in the clicked week carry
   `data-bucket-hit` and the row tint.
+- **AC-D5** `[FE]` In schedule view a legend renders under the matrix with a blue swatch
+  labelled "This SPO" and a grey swatch labelled "Another SPO"; it does not render in table
+  view.
 - **AC-D4** `[E2E]` Click a schedule cell on :3160; the dialog opens; ticking a row in it
   changes the cell figure behind it once closed.
 
@@ -80,6 +83,20 @@ agent-browser evidence on :3160 via the sidebar.
 - **AC-E9** `[E2E]` Create an SPO from a ZZT- draft shipment on :3160, open a second ZZT-
   draft for the same product, see the grey rows in the SO covered dialog and the grey cell
   in the schedule; delete the first SPO; the rows return.
+
+## G. PO and SO after Create SPO (S7)
+
+- **AC-G1** `[E2E]` After Create SPO on :3160, the source PO's detail shows the line with
+  Outstanding reduced by the pull and a placement `SPO-… <qty>` naming the packing list.
+- **AC-G2** `[BE]` A retail SO line covered by one SPO returns `linked_to` = one link with
+  `kind: 'spo'`, `document` = the SPO number, `qty` = the covered quantity.
+- **AC-G3** `[BE]` Covered by two containers = two links, in SPO number order.
+- **AC-G4** `[BE]` After `unwind` of the SPO, the same line returns `linked_to: None`.
+- **AC-G5** `[BE]` A line with an inquiry row keeps its OI links first and the SPO
+  coverage entries after them.
+- **AC-G6** `[BE]` The sales-order route carries the links (asserted through the API).
+- **AC-G7** `[E2E]` The SCM sales order detail's Linked to cell prints `SPO-… <qty>` for
+  the covered retail line.
 
 ## F. Regression (S6)
 
