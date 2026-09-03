@@ -13,7 +13,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import UUID
 
 revision = "462_tag_size_preset"
-down_revision = "463_draft_proposed"
+down_revision = "464_overdue_grace"
 branch_labels = None
 depends_on = None
 
