@@ -439,6 +439,16 @@ export interface SupplyLine {
    * instead. Kept for wire compatibility. */
   pool_cap?: string | null;
   pool_reorder_level?: string | null;
+  /**
+   * The pool-share carve-out (LADDER V8, R-C), stated on THIS line the way the board's cell
+   * states it on its locations (B2, fix round 5): `{warehouse_id: available_for_project}`
+   * for every site pool this line's own walk consulted. Read into `PoolShareLimits` by
+   * `poolShareLimitsFromLine` (`_shared/lib/poolShare.ts`), the sheet's own source for the
+   * allowance the board reads off `BoardCellLocation` instead.
+   */
+  pool_allowances?: Record<string, string | null | undefined>;
+  /** The five site pools' NET (R-D), bounding every pool's allowance together. */
+  pools_net?: string | null;
   components: SupplyComponent[];
   /**
    * THE FIVE STEPS OF LADDER v7.1 FOR THIS LINE, taken or not (R36, AC-S3-14).
@@ -1501,6 +1511,15 @@ export interface BoardCellLocation {
   net?: string | null;
   /** Which set that net covers, for the subtotal's label: a group code, or `pools`. */
   net_of?: string | null;
+  /**
+   * THE RAW net (N1, fix round 5): `net` above has the asking line's own demand added back
+   * in, so the SUBTOTAL a planner reads matches "what is left for me" - but the SERVER's own
+   * confirm-time guard and `stock-detail` bound a pool-share composition by the net WITHOUT
+   * that addition. `poolShareLimitsOf` reads THIS field, never `net`, or it could admit a
+   * split the server's own guard refuses the instant this line's own demand padded the
+   * figure past what the raw pile carries.
+   */
+  net_raw?: string | null;
   /** What is owed here. `qty` is kept as an alias of it. */
   qty: string;
   qty_demand?: string | null;

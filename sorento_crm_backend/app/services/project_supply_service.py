@@ -1021,9 +1021,11 @@ class ProjectSupplyService:
         # not as the Buy its own hold would make of it. First, because `_facts_for` replaces
         # the request's stock caches and everything below - the walk, the donor lists, the
         # availability printed beside each line - has to read the ones for the walk.
-        covered_alone: Dict[
-            str, Tuple[Tuple[Component, ...], Optional[Decimal], Dict[str, Decimal]]
-        ] = {}
+        # N6 (fix round 5): matches `compose_lines`'s own return annotation
+        # (`Dict[Any, Tuple[Any, ...]]`) - the value is the walk's NINE-tuple
+        # `(components, pool_open, borrow_open, net_open, options, other_group_open,
+        # supply_open, share_open, own_group_open)`, not the three-tuple this said before.
+        covered_alone: Dict[str, Tuple[Any, ...]] = {}
         if covered_ids:
             amend_facts = self._facts_for(order, lines, replacing=covered_ids)
             for line_id in covered_ids:
@@ -3331,6 +3333,28 @@ class ProjectSupplyService:
         """
         return max(group.net + max(_dec(fact.open_qty), _ZERO), _ZERO)
 
+    def _pool_allowances(self, fact: _LineFacts) -> Dict[str, str]:
+        """`{warehouse_id: available_for_project}` for every site pool this line's own
+        walk consulted (B2, fix round 5).
+
+        THE SAME figures the walk obeyed, read off `pool_chain_for` and `fact.pools_net` -
+        never a second arithmetic. The per-order SHEET (`SupplyCompositionSection`) has no
+        cell to read `poolShareLimitsOf` off, so it composed a line seeded from the engine's
+        own "BRW 62 + Buy 73" (LADDER V8, R-C) and then refused to confirm its own suggestion,
+        because `lineBlockers` ran with no `limits` at all and the whole-line rule saw a mix.
+        This is the sheet's OWN source for those limits, one line at a time.
+        """
+        pct = self._fulfilment_settings().get("pool_share_pct")
+        allowances: Dict[str, str] = {}
+        for entry in self.pool_chain_for(fact):
+            warehouse_id = self.warehouse_id_for_code(entry.get("location"))
+            if not warehouse_id:
+                continue
+            allowances[warehouse_id] = qty_text(
+                available_for_project(entry.get("available"), fact.pools_net, pct)
+            )
+        return allowances
+
     def _serialize_line(
         self,
         fact: _LineFacts,
@@ -3404,6 +3428,12 @@ class ProjectSupplyService:
             "pool_reorder_level": (
                 qty_text(fact.pool_reorder_level) if fact.pool_code else None
             ),
+            # B2 (fix round 5): the pool-share carve-out (R-C), stated on the sheet's own
+            # line the same way the board's cell states it on its locations - see
+            # `_pool_allowances`. Without them the sheet's `lineBlockers` had no `limits` and
+            # refused the engine's own "BRW 62 + Buy 73" as a mix.
+            "pool_allowances": self._pool_allowances(fact),
+            "pools_net": qty_text(fact.pools_net),
             "components": [
                 self._serialize_component(component, fact) for component in components
             ],

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import List, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -230,6 +230,13 @@ class SupplyLine(BaseModel):
     #: pool's own availability instead. Kept for wire compatibility, never a number again.
     pool_cap: Optional[str] = None
     pool_reorder_level: Optional[str] = None
+    #: The pool-share carve-out (LADDER V8, R-C), stated on THIS line the way the board's
+    #: cell states it on its locations (B2, fix round 5): `{warehouse_id:
+    #: available_for_project}` for every site pool the walk consulted, and the five pools'
+    #: own net. Without them the per-order sheet's `lineBlockers` had no allowance to check
+    #: a reserve-plus-Buy split against, and refused the engine's own suggestion.
+    pool_allowances: Dict[str, str] = {}
+    pools_net: Optional[str] = None
     components: List[SupplyComponent] = []
     #: The FIVE options of ladder v7.1 (R36, AC-S3-14), always all five and always in step
     #: order, one chosen at most - the same table the board's contribution carries, because
