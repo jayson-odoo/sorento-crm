@@ -142,24 +142,7 @@ export interface DataGridProps<TData extends object> {
     bodyRow?: string;
     footer?: string;
     edgeCell?: string;
-    /**
-     * The horizontal scroller around the table.
-     *
-     * A grid nested INSIDE another scrolling table needs it (D3): the scroller's
-     * `overflow-x: auto` makes the div a scroll container on BOTH axes (CSS computes a
-     * `visible` sibling axis to `auto`), so a sticky header inside it sticks to a box that
-     * never scrolls. `overflow-x-visible` hands the scrolling back to the outer table,
-     * which is the one the reader is actually scrolling.
-     */
-    scroller?: string;
   };
-  /**
-   * Inline style for the `<thead>`, for the one thing a class cannot carry: a MEASURED
-   * offset. A grid stacked under another grid's sticky header sticks at that header's own
-   * height, which is a runtime number (it wraps to two lines at 375px). See `PanelDataGrid`'s
-   * `stickyTop`.
-   */
-  headerStyle?: React.CSSProperties;
   /**
    * @deprecated No-op. The auto-rendered standard toolbar was removed - every list
    * owns its toolbar via `DataGridListToolbar` in `CardHeader`. Kept only so existing
@@ -259,7 +242,6 @@ function DataGrid<TData extends object>({
       bodyRow: '',
       footer: '',
       edgeCell: '',
-      scroller: '',
     },
     // Default OFF: every list owns its toolbar (DataGridListToolbar in CardHeader,
     // or a legacy per-page toolbar). The auto standard toolbar was almost always a

@@ -227,32 +227,6 @@ export const CellStockTable = React.forwardRef<
    * sits - a second, ad hoc scan here would risk answering the two questions differently.
    */
   const sections = React.useMemo(() => sectionsOf(locations), [locations]);
-  /**
-   * How tall THIS table's own header is, so a ledger expanded under a row can stack its own
-   * header directly below it (D3, captain 3 Sep). Measured rather than written down: the
-   * header wraps to two lines at 375px, and a constant would leave a gap at one width and
-   * cover a row at the other.
-   */
-  const headRef = React.useRef<HTMLTableSectionElement | null>(null);
-  const [headHeight, setHeadHeight] = React.useState(0);
-  /**
-   * A row whose ledger is OPEN stays under the table's own header while that ledger is read
-   * (D3). Sticky on the row, one z-index under the header it sits below, on a solid
-   * background so the rows passing beneath do not show through - and confined to its own
-   * section's `tbody`, so it stops sticking where its section ends.
-   */
-  const frozenRow = (open: boolean): React.CSSProperties | undefined =>
-    open ? { position: 'sticky', top: headHeight, zIndex: 9 } : undefined;
-  React.useEffect(() => {
-    const node = headRef.current;
-    if (!node || typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(() => {
-      setHeadHeight(node.getBoundingClientRect().height);
-    });
-    observer.observe(node);
-    setHeadHeight(node.getBoundingClientRect().height);
-    return () => observer.disconnect();
-  }, []);
 
   /**
    * Opens whichever section a jump names - the GROUP subtotal when the set nets one (the
@@ -404,7 +378,7 @@ export const CellStockTable = React.forwardRef<
           had it stopping at two thirds with an empty band on the right), the numeric columns
           hold a min-width floor, and the Location column above carries the slack. */}
         <table className="w-full border-separate border-spacing-0 text-xs">
-          <thead ref={headRef}>
+          <thead>
             <tr>
               <th scope="col" className={cn(CHEVRON_COL, HEAD_CELL)} />
               <th scope="col" className={cn(LOCATION_COL, HEAD_CELL)}>
@@ -425,13 +399,8 @@ export const CellStockTable = React.forwardRef<
             </tr>
           </thead>
 
-          {/* ONE `tbody` PER SECTION (D3, captain 3 Sep). A sticky row is confined to its
-              own block container, so a subtotal frozen under the header would otherwise
-              float over every section after it once its own was scrolled past - "the
-              freezing of row is not very robust". Per section, it stops where it belongs. */}
-          {sections.map((section) => (
-            <tbody key={`section-${section.key}`}>
-              {[
+          <tbody>
+            {sections.flatMap((section) => [
               ...section.rows.map((entry) => {
                 const key = entry.location ?? '__none__';
                 const testKey = entry.location ?? 'none';
@@ -444,11 +413,7 @@ export const CellStockTable = React.forwardRef<
                 const isOpen = Boolean(expanded[key]);
                 return (
                   <React.Fragment key={key}>
-                    <tr
-                      data-testid={`cell-location-${testKey}`}
-                      className={cn(isOpen && 'bg-muted')}
-                      style={frozenRow(isOpen)}
-                    >
+                    <tr data-testid={`cell-location-${testKey}`}>
                       <td className={cn(CHEVRON_COL, BODY_CELL, 'px-1')}>
                         {addressable ? (
                           <Button
@@ -571,7 +536,6 @@ export const CellStockTable = React.forwardRef<
                             documentInfo={documentInfo}
                             filterText={filterText}
                             jumpTarget={activeJump}
-                            stickyTop={0}
                           />
                         </td>
                       </tr>
@@ -589,8 +553,6 @@ export const CellStockTable = React.forwardRef<
                     <tr
                       key={`subtotal-${section.key}`}
                       data-testid={`stock-subtotal-${section.key}`}
-                      className={cn(expandedSets[section.key] && 'bg-muted')}
-                      style={frozenRow(Boolean(expandedSets[section.key]))}
                     >
                       <td className={cn(CHEVRON_COL, FOOT_CELL, 'px-1')}>
                         {section.netOf && sectionProductId(section) ? (
@@ -706,7 +668,6 @@ export const CellStockTable = React.forwardRef<
                                 documentInfo={documentInfo}
                                 filterText={filterText}
                                 jumpTarget={activeJump}
-                                stickyTop={0}
                               />
                             </td>
                           </tr>,
@@ -714,9 +675,8 @@ export const CellStockTable = React.forwardRef<
                       : []),
                   ]
                 : []),
-              ]}
-            </tbody>
-          ))}
+            ])}
+          </tbody>
 
           {showTotals && (
             // Only when there is something to add up. One location IS its own total, and a totals
