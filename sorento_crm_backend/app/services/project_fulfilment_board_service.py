@@ -2690,8 +2690,8 @@ class FulfilmentBoardService:
         # (R24), and then the OTHER project groups' free piles (R5), which is the free stock
         # the retired `cross_group_borrow` rung used to call a Borrow. Both are one question,
         # because free stock is owed to nobody wherever it sits.
-        group_take_candidates, other_group_candidates, own_offer = (
-            ([], [], _ZERO)
+        group_take_candidates, other_group_candidates, own_offer, _other_short = (
+            ([], [], _ZERO, {})
             if outside_window
             # `other_group_open` is step 1b's own ledger as this unit found it, passed for
             # exactly the reason `borrow_open` is: the proof has to be the answer the engine

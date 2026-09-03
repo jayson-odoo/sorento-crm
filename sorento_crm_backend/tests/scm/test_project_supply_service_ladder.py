@@ -1752,3 +1752,84 @@ def test_a_shipment_backed_row_is_supply_the_group_holds():
 
     assert [c["rung"] for c in components] == ["group_take"]
     assert components[0]["qty"] == "40"
+
+
+# ------------------------------------------------------------------- R-M (3 Sep 2026)
+
+
+def _other_group_book(db, company_id, product, bin_, *, near, far):
+    """One other group's whole open book: what it holds, what is owed before the asker's
+    date, and what is owed after it."""
+    for qty, days in ((near, 20), (far, 90)):
+        if not qty:
+            continue
+        core_so = _core_so(db, company_id)
+        core_so.so_number = f"ZZT-SO-{_uid()[:8]}"
+        db.flush()
+        _core_line(
+            db, core_so, product, bin_, qty_ordered=str(qty),
+            required_date=date.today() + timedelta(days=days),
+        )
+
+
+def test_another_groups_free_pile_is_capped_by_that_groups_own_open_book():
+    """R-M, the captain's production cell (SO419417, SRTWT7443, 3 September 2026).
+
+    The other group holds 2,237 and owes 2,684 - 1,708 before the asker's date and 976
+    after - so it is 447 short on its own book. The date-bounded pile still reads 529 free
+    on the asker's day, because demand due AFTER that day never counted against it, and
+    that 529 is what the ladder used to offer a BB line of 4. A group whose whole book is
+    short gives NOTHING, and the step says why.
+    """
+    with blank_session() as db:
+        company_id, _eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own, _pool = sites["BRW"]
+        other = _warehouse(db, f"ZZTDC1-IB{_uid()[:3]}")
+        _stock(db, product, other, on_hand=2237)
+        _other_group_book(db, company_id, product, other, near=1708, far=976)
+        db.commit()
+
+        order, _line, _cso, _cline = _seed_line(
+            db, company_id, project, product, own, qty_ordered="4",
+        )
+        service = ProjectSupplyService(db)
+        facts = service._facts_for(order, service.lines_of(str(order.id)))
+        fact = next(iter(facts.values()))
+        _own, cross, _offer, short = service.use_candidates_for(fact)
+        other_code = other.warehouse_code
+        # The suffix, upper-cased, which is `group_of_warehouse_code`'s own rule.
+        other_group = other_code.split("-", 1)[1].upper()
+
+    assert sum(
+        (Decimal(str(c["qty"])) for c in cross if c["location"] == other_code),
+        Decimal("0"),
+    ) == Decimal("0"), "an oversold group has nothing free to offer, whatever the date says"
+    assert short == {other_group: Decimal("447")}
+
+
+def test_another_groups_free_pile_stands_where_that_groups_book_is_whole():
+    """The same cell with the far order gone: 2,237 against 1,708 owed is a book of 529, so
+    the pile the asker's date measured is genuinely free and the offer stands at 529."""
+    with blank_session() as db:
+        company_id, _eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own, _pool = sites["BRW"]
+        other = _warehouse(db, f"ZZTDC1-IB{_uid()[:3]}")
+        _stock(db, product, other, on_hand=2237)
+        _other_group_book(db, company_id, product, other, near=1708, far=0)
+        db.commit()
+
+        order, _line, _cso, _cline = _seed_line(
+            db, company_id, project, product, own, qty_ordered="4",
+        )
+        service = ProjectSupplyService(db)
+        facts = service._facts_for(order, service.lines_of(str(order.id)))
+        fact = next(iter(facts.values()))
+        _own, cross, _offer, short = service.use_candidates_for(fact)
+        other_code = other.warehouse_code
+
+    assert [(c["location"], c["qty"]) for c in cross] == [
+        (other_code, Decimal("529")),
+    ]
+    assert short == {}

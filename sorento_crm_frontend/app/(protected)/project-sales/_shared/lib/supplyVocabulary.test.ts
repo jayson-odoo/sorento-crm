@@ -1227,3 +1227,98 @@ describe('takenByLocation', () => {
     ]);
   });
 });
+
+describe("step 1's pill names the group whose stock it is (R-M, 3 Sep 2026)", () => {
+  it('reads a draw from another ownership group as that group, not "Use own location"', () => {
+    // The captain's production cell: a `BRW-BB` line composed off `BRW-IB`. The board's own
+    // options row already read "Use IB group stock" (`front_planning_engine._use_step_label`)
+    // while the Suggestion card beside it read "Use own location" for the same composition.
+    const rows = suggestionBreakdown(
+      cell([
+        line({
+          fulfilment_location: 'BRW-BB',
+          sources: [
+            source({
+              kind: 'reserve',
+              rung: 'group_take',
+              qty: '4',
+              location: 'BRW-IB',
+            }),
+          ],
+        }),
+      ]),
+    );
+
+    expect(rows.map((entry) => entry.label)).toEqual(['Use IB group stock']);
+  });
+
+  it('keeps "Use own location" where the stock is the line\'s own group', () => {
+    const rows = suggestionBreakdown(
+      cell([
+        line({
+          fulfilment_location: 'BRW-BB',
+          sources: [
+            source({
+              kind: 'reserve',
+              rung: 'group_take',
+              qty: '40',
+              location: 'DC1-BB',
+            }),
+          ],
+        }),
+      ]),
+    );
+
+    expect(rows.map((entry) => entry.label)).toEqual([LABELS.own]);
+  });
+
+  it('names another group\'s WATER as incoming from that group', () => {
+    const rows = suggestionBreakdown(
+      cell([
+        line({
+          fulfilment_location: 'BRW-BB',
+          sources: [
+            source({
+              kind: 'timely_spo',
+              rung: 'group_take',
+              qty: '15',
+              location: 'BRW-IB',
+            }),
+          ],
+        }),
+      ]),
+    );
+
+    expect(rows.map((entry) => entry.label)).toEqual([
+      'Use incoming from IB group',
+    ]);
+  });
+
+  it('names two lending groups together, in the order the label sorts them', () => {
+    const rows = suggestionBreakdown(
+      cell([
+        line({
+          fulfilment_location: 'BRW-BB',
+          sources: [
+            source({
+              kind: 'reserve',
+              rung: 'group_take',
+              qty: '4',
+              location: 'BRW-IB',
+            }),
+            source({
+              kind: 'reserve',
+              rung: 'group_take',
+              qty: '6',
+              location: 'DC1-NTC',
+            }),
+          ],
+        }),
+      ]),
+    );
+
+    expect(rows.map((entry) => entry.label)).toEqual([
+      'Use IB group and NTC group stock',
+    ]);
+  });
+});

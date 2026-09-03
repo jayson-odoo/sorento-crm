@@ -295,11 +295,16 @@ BALANCE_INVARIANT_CASE = ProposalCase(
             reason="BRW-BB gives 10 of the 70 the BB group can cover this line with",
             source_location=GROUP_OWN_LOCATION,
         ),
+        # RE-BLESSED under R-M (3 Sep 2026): the sentence states the PILE and what the cap
+        # now makes true of it. Old reading: "DC1-NTC has 60 free outside the BB group, and
+        # free stock is owed to nobody". The quantity is unchanged - the take and the pile
+        # are both 60 here - and this case pins the wording where the caller names neither
+        # the lending group nor the day the pile was measured on.
         Component(
             kind=RESERVE,
             qty=Decimal("60"),
             reason=(
-                "DC1-NTC has 60 free outside the BB group, and free stock is owed to nobody"
+                "DC1-NTC has 60 free outside the BB group, none of it owed to a later order"
             ),
             source_location="DC1-NTC",
         ),
@@ -310,7 +315,7 @@ BALANCE_INVARIANT_CASE = ProposalCase(
 #: that owns the criterion rather than four unrelated ones.
 BALANCE_INVARIANT_STATED = (
     "Reserve 10: BRW-BB gives 10 of the 70 the BB group can cover this line with",
-    "Reserve 60: DC1-NTC has 60 free outside the BB group, and free stock is owed to nobody",
+    "Reserve 60: DC1-NTC has 60 free outside the BB group, none of it owed to a later order",
 )
 
 
@@ -1277,6 +1282,145 @@ BORROW_HALF_ANSWERS_THE_POOL_SHARE_ROW_CASE = WalkCase(
 )
 
 
+# --------------------------------------------------------------------------- R-M (3 Sep)
+#
+# ANOTHER GROUP'S FREE PILE IS CAPPED BY THAT GROUP'S OWN BOOK. The captain, on the
+# production cell of 3 September 2026: SO419417's SRTWT7443 line, 4 due 5 October at BRW-BB,
+# was proposed "Use own location: 4 from BRW-IB. BRW-IB has 4 free outside the BB group, and
+# free stock is owed to nobody" - while BRW-IB held 2,237 on hand against 2,684 of open IB
+# demand, 447 short on its own book. The date-bounded pile said 785 was free on 5 October
+# only because IB demand due AFTER that day was never subtracted from it.
+#
+# The engine is handed the CAPPED lists (`project_supply_service.use_candidates_for`), so
+# the case for the refusal is stated as the engine sees it: no other-group candidate at all,
+# and `other_group_short` naming what the lending group is short by, which is what the `use`
+# row says instead of a silent 0.
+
+#: The line the two cases below are the two readings of.
+R_M_DATE = date(2026, 10, 5)
+R_M_OWN_LOCATION = "BRW-BB"
+R_M_OTHER_LOCATION = "BRW-IB"
+#: The site pool of the asking bin, oversold on the day (BRW Available -91), so step 0 is
+#: out of the way and what is under test is step 1's second half and nothing else.
+R_M_POOLS = [{"location": POOL_LOCATION, "free": Decimal("0"), "available": Decimal("0")}]
+
+
+OTHER_GROUP_SHORT_BOOK_CASE = WalkCase(
+    ac="AC-2.12a",
+    title=(
+        "the IB group is 447 short on its own book, so its 785 free on 5 October is not "
+        "free at all: the 4 is borrowed from a later IB order, never reserved at BRW-IB"
+    ),
+    inputs=_v8_inputs(
+        open_qty=Decimal("4"),
+        required_date=R_M_DATE,
+        fulfilment_location=R_M_OWN_LOCATION,
+        group_code=V8_GROUP,
+        # Capped away by the caller: IB's whole open book is negative, so it offers nothing.
+        other_group_candidates=[],
+        other_group_short={"IB": Decimal("447")},
+        pools=R_M_POOLS,
+        pools_net=Decimal("0"),
+        order_borrow_candidates=[
+            {
+                "location": R_M_OTHER_LOCATION,
+                "qty": Decimal("4"),
+                "donor_so_number": "SO419100",
+                "donor_line_no": 7,
+                "donor_agent_code": "JEREMY",
+                "donor_required_date": date(2026, 11, 20),
+            }
+        ],
+    ),
+    components=(
+        Component(
+            kind=BORROW,
+            qty=Decimal("4"),
+            reason=(
+                "Borrow 4 on hand at BRW-IB from SO419100 line 7 (JEREMY, due 20 Nov 2026); "
+                "its debt lands in Nov 2026"
+            ),
+            source_location=R_M_OTHER_LOCATION,
+        ),
+    ),
+    options=(
+        OptionRow(
+            step="pool_share",
+            whole=False,
+            gives_qty=Decimal("0"),
+            reason="BRW has nothing to spare for projects",
+            label="Use BRW stock",
+        ),
+        OptionRow(
+            step="use",
+            whole=False,
+            gives_qty=Decimal("0"),
+            reason="IB group is 447 short on its own book, nothing to spare",
+        ),
+        OptionRow(
+            step="order_borrow", whole=True, gives_qty=Decimal("4"), chosen=True
+        ),
+        OptionRow(step="supply_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="buy", whole=True, gives_qty=Decimal("4")),
+    ),
+)
+
+
+OTHER_GROUP_WHOLE_BOOK_CASE = WalkCase(
+    ac="AC-2.12b",
+    title=(
+        "the same cell with IB's book POSITIVE (2,237 on hand against 1,708 owed): the take "
+        "stands, and the sentence states the PILE and the date it was measured on, not the 4"
+    ),
+    inputs=_v8_inputs(
+        open_qty=Decimal("4"),
+        required_date=R_M_DATE,
+        fulfilment_location=R_M_OWN_LOCATION,
+        group_code=V8_GROUP,
+        other_group_candidates=[
+            {
+                "location": R_M_OTHER_LOCATION,
+                "qty": Decimal("529"),
+                "group": "IB",
+                "free_at": R_M_DATE,
+            }
+        ],
+        pools=R_M_POOLS,
+        pools_net=Decimal("0"),
+    ),
+    components=(
+        Component(
+            kind=RESERVE,
+            qty=Decimal("4"),
+            reason=(
+                "BRW-IB has 529 free outside the BB group at 5 Oct 2026, none of it owed to "
+                "a later IB order"
+            ),
+            source_location=R_M_OTHER_LOCATION,
+        ),
+    ),
+    options=(
+        OptionRow(
+            step="pool_share",
+            whole=False,
+            gives_qty=Decimal("0"),
+            reason="BRW has nothing to spare for projects",
+            label="Use BRW stock",
+        ),
+        OptionRow(
+            step="use",
+            whole=True,
+            gives_qty=Decimal("4"),
+            chosen=True,
+            label="Use IB group stock",
+        ),
+        OptionRow(step="order_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="supply_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="buy", whole=True, gives_qty=Decimal("4")),
+    ),
+)
+
+
 V8_WALK_CASES = (
     IMMEDIATE_SHARE_CASE,
     SMALL_LINE_WHOLE_FROM_POOL_CASE,
@@ -1288,4 +1432,6 @@ V8_WALK_CASES = (
     NET_BOUNDS_THE_WHOLE_POOL_CHAIN_CASE,
     BEYOND_WINDOW_FREE_PILE_SHORT_CASE,
     BORROW_HALF_ANSWERS_THE_POOL_SHARE_ROW_CASE,
+    OTHER_GROUP_SHORT_BOOK_CASE,
+    OTHER_GROUP_WHOLE_BOOK_CASE,
 )

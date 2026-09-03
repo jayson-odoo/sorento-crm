@@ -63,6 +63,26 @@ or a rule: those live once on the Policies page.
 - AC-2.9 SO407733, SO407735, SO414617 produce the same proposals as v7.1 (pool free 0).
 - AC-2.10 `test_ladder_v7_borrow.py` step-order test rewritten for the v8 order; goldens
   re-blessed with the diff listed in the PR body (count of rows changed per step).
+- AC-2.12 **Another group's free pile is capped by that group's own book (R-M) [BE][T].**
+  Two goldens in `tests/scm/front_planning_golden.py`, from the production cell (SO419417,
+  SRTWT7443, 3 Sep 2026):
+  - AC-2.12a **the lending group is short.** BB line 4 due 5 Oct at BRW-BB, own group offer
+    0, pool share 0 (BRW has nothing to spare), the IB group holding 2,237 against 2,684 of
+    open demand so its book is -447 (or -191 counting the assignment's own incoming), and a
+    later IB order lendable: the proposal is BORROW 4 from that later order (or Buy where
+    step 2's own rules refuse it), NEVER "Reserve 4 @ BRW-IB". The `use` options row reads
+    0 with "IB group is 447 short on its own book, nothing to spare".
+  - AC-2.12b **the lending group's book is whole.** The same cell with IB owing only 1,708
+    against 2,237: the take stands, and the component's sentence states the PILE and the
+    date it was measured on - "BRW-IB has 529 free outside the BB group at 5 Oct 2026, none
+    of it owed to a later IB order" - beside a Reserve of 4. The `use` row reads 4, whole,
+    chosen, labelled "Use IB group stock".
+  - Board side [BE]: `use_candidates_for` on an oversold other group returns that group's
+    bins with qty 0 and names it in the shorts map; where the book is whole it returns the
+    measured pile (529).
+  - Pill [FE]: the Suggestion card and the summary cards read an other-group source as
+    "Use IB group stock" (water: "Use incoming from IB group"), and an own-group source as
+    "Use own location", unchanged.
 
 ## S3 reserve add-location
 

@@ -663,3 +663,90 @@ def test_a_pin_on_an_overdue_document_holds_the_line_without_counting_the_docume
     assert [event.key for event in result.uncounted] == ["spo:old"]
     # Counted as nothing: the month still owes the 40 (R31).
     assert [m.balance for m in result.months] == [-40.0]
+
+
+# --------------------------------------------------------------------------- R-M (3 Sep)
+
+
+def test_a_groups_book_position_nets_its_whole_open_book_not_the_asking_date():
+    """R-M's arithmetic, from the production cell (SO419417, SRTWT7443, 3 Sep 2026).
+
+    BRW-IB holds 2,237 on hand against 2,684 of open IB demand - 1,708 due on or before the
+    asking BB line's 5 October and 976 after it - so IB's own book is 447 SHORT. The
+    date-bounded pile the offer used to be made of reads 529 free on 5 October, because
+    demand due AFTER that day is not subtracted from it; the book position is the figure
+    that says the group has nothing to spare.
+    """
+    from app.services.scm.supply_assignment import group_book_positions
+
+    result = assign(
+        "p",
+        as_of=AS_OF,
+        tba_from=TBA,
+        lead_days=90,
+        supply=[_hand("BRW-IB", 2237)],
+        demand=[
+            _line("ib_near", "BRW-IB", date(2026, 10, 1), 1708),
+            _line("ib_far", "BRW-IB", date(2026, 11, 20), 976),
+            _line("bb_asker", "BRW-BB", date(2026, 10, 5), 4),
+        ],
+    )
+
+    assert group_book_positions(result)["IB"] == -447.0
+    assert group_book_positions(result)["BB"] == -4.0
+
+
+def test_a_groups_book_position_counts_the_supply_the_assignment_counted():
+    """The book is on hand PLUS the counted supply (R31: an overdue document is not supply).
+
+    2,237 on hand and an SPO of 256 landing inside the span reads -191 against the same
+    2,684 of demand; an overdue SPO of 500 adds nothing at all.
+    """
+    from app.services.scm.supply_assignment import group_book_positions
+
+    result = assign(
+        "p",
+        as_of=AS_OF,
+        tba_from=TBA,
+        lead_days=90,
+        supply=[
+            _hand("BRW-IB", 2237),
+            SupplyEvent(
+                key="spo:ib", kind="spo", warehouse="BRW-IB",
+                at=date(2026, 10, 20), qty=256, ref="SPO IB",
+            ),
+            SupplyEvent(
+                key="spo:overdue", kind="spo", warehouse="BRW-IB",
+                at=date(2026, 8, 1), qty=500, ref="SPO OVERDUE",
+            ),
+        ],
+        demand=[
+            _line("ib_near", "BRW-IB", date(2026, 10, 1), 1708),
+            _line("ib_far", "BRW-IB", date(2026, 11, 20), 976),
+        ],
+    )
+
+    assert group_book_positions(result)["IB"] == -191.0
+
+
+def test_a_cross_group_hold_leaves_the_lending_groups_book_by_what_it_pinned():
+    """A confirmed hold at IB's bin taken by a BB line is not in IB's demand, so the book
+    has to subtract it or the same 40 would read as IB's twice."""
+    from app.services.scm.supply_assignment import group_book_positions
+
+    result = assign(
+        "p",
+        as_of=AS_OF,
+        tba_from=TBA,
+        lead_days=90,
+        supply=[_hand("BRW-IB", 100), _hand("BRW-BB", 0)],
+        demand=[
+            _line("ib_own", "BRW-IB", date(2026, 10, 1), 20),
+            _line("bb_pinned", "BRW-BB", date(2026, 9, 20), 40),
+        ],
+        pinned=[Hold(line_key="bb_pinned", supply_key="on_hand:BRW-IB", qty=40)],
+    )
+
+    positions = group_book_positions(result)
+    assert positions["IB"] == 40.0, "100 on hand, 20 of its own owed, 40 pinned away"
+    assert positions["BB"] == -40.0
