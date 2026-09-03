@@ -15,6 +15,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
+import { availableForProjectOf } from '../../_shared/lib/poolShare';
 import type {
   BoardCellLocation,
   BoardLocationWhere,
@@ -129,6 +130,12 @@ export function ReserveAddDialog({
                         const code = location.location ?? 'Unknown';
                         const chosen = key === selectedKey;
                         const free = location.qty_free_remaining ?? location.qty_free ?? null;
+                        // S2 (fix round 5): outside a site pool, Available for Project IS
+                        // Available (D2, captain 3 Sep) - the same accessor
+                        // `CellStockTable`'s own column reads, so a group row here does not
+                        // print "Not stated" over a figure the cell it was added from
+                        // already states.
+                        const availableForProject = availableForProjectOf(location);
                         return (
                           <tr key={key} data-testid={`reserve-location-${code}`}>
                             <td className={cn(LOCATION_COL, BODY_CELL)}>
@@ -171,14 +178,14 @@ export function ReserveAddDialog({
                                 data-testid={`reserve-cell-available-for-project-${code}`}
                                 className={cn(
                                   'block truncate text-end tabular-nums',
-                                  location.available_for_project === null ||
-                                    location.available_for_project === undefined
+                                  availableForProject === null ||
+                                    availableForProject === undefined
                                     ? 'text-muted-foreground'
                                     : undefined,
                                 )}
-                                title={location.available_for_project ?? 'Not stated'}
+                                title={availableForProject ?? 'Not stated'}
                               >
-                                {location.available_for_project ?? 'Not stated'}
+                                {availableForProject ?? 'Not stated'}
                               </span>
                             </td>
                           </tr>

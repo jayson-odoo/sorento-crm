@@ -92,6 +92,21 @@ describe('ReserveAddDialog: the candidate order (R-A, AC-3.1)', () => {
     ).toHaveTextContent('Not stated');
   });
 
+  it('states a group row s own Available as its Available for Project (D2, S2 fix round 5)', () => {
+    // Outside a site pool nothing is kept back, so Available for Project reads the same
+    // signed figure `CellStockTable`'s own column reads for the row - never "Not stated"
+    // over a number the cell it was added from already states.
+    const groupWithAvailable: BoardCellLocation = {
+      ...GROUP,
+      available_qty: '15',
+    };
+    renderDialog([OWN, groupWithAvailable]);
+
+    expect(
+      screen.getByTestId('reserve-cell-available-for-project-DC1-AM'),
+    ).toHaveTextContent('15');
+  });
+
   it('states each location’s free quantity beside it', () => {
     renderDialog([OWN, SITE_POOL]);
 

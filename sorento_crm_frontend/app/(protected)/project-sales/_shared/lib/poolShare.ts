@@ -20,7 +20,10 @@
  * the payload (`PlanningBoard.pool_share_pct`, `StockDetail.pool_share_pct`) rather than a
  * constant, so a policy change on the Policies page moves every one of these numbers at once.
  */
-import type { BoardCellLocation } from '../types/fulfilmentPlanning.types';
+import type {
+  BoardCellLocation,
+  SupplyLine,
+} from '../types/fulfilmentPlanning.types';
 import {
   fromMinor,
   QTY_SCALE,
@@ -66,6 +69,26 @@ export function availableForProject(
 }
 
 /**
+ * "Available for Project" for ONE ROW of a cell's stock (S2, fix round 5; D2, captain 3
+ * Sep): a site pool row states `available_for_project`, its own dealer share already kept
+ * back - `0` rather than a blank when it is stated but nothing is left. OUTSIDE A SITE POOL
+ * it is simply `Available`: no dealer share is kept back at an own bin, a group sibling or
+ * another group, so everything Available there is available to a project, negative
+ * included.
+ *
+ * ONE accessor for both readers of this figure, `CellStockTable`'s own column and
+ * `ReserveAddDialog`'s add-location table - a row reading "Not stated" outside a pool used
+ * to disagree with the very cell it was added from, which stated Available for that same row.
+ */
+export function availableForProjectOf(
+  location: Pick<BoardCellLocation, 'where' | 'available_for_project' | 'available_qty'>,
+): string | null {
+  return (location.where ?? 'own') === 'site_pool'
+    ? (location.available_for_project ?? '0')
+    : (location.available_qty ?? null);
+}
+
+/**
  * What each site pool of THIS cell may lend a project line, and the one net over all of
  * them (D5, captain 3 Sep).
  *
@@ -90,6 +113,26 @@ export function poolShareLimitsOf(
   }
   return {
     allowanceByWarehouseId,
-    net: pools.find((entry) => entry.net !== null && entry.net !== undefined)?.net ?? null,
+    // N1 (fix round 5): `net_raw`, never `net` - `net` has this line's own demand added
+    // back in for the SUBTOTAL's display, and the server's own confirm-time guard
+    // (`_is_pool_share_split`) bounds a pool-share split by the figure WITHOUT that
+    // addition. Reading `net` here admitted a split the server would refuse.
+    net:
+      pools.find((entry) => entry.net_raw !== null && entry.net_raw !== undefined)
+        ?.net_raw ?? null,
+  };
+}
+
+/**
+ * `poolShareLimitsOf`'s sibling for the per-order SHEET, which has no cell to read locations
+ * off (B2, fix round 5). The sheet's own `SupplyLine` carries the same two figures the walk
+ * obeyed - `pool_allowances` and `pools_net`, both read straight off the server
+ * (`ProjectSupplyService._pool_allowances`) - so this is a reshape, never a second
+ * arithmetic, exactly as `poolShareLimitsOf` is for the board's cell.
+ */
+export function poolShareLimitsFromLine(line: SupplyLine): PoolShareLimits {
+  return {
+    allowanceByWarehouseId: line.pool_allowances ?? {},
+    net: line.pools_net ?? null,
   };
 }

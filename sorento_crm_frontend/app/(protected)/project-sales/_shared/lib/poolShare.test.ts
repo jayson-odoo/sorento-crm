@@ -12,7 +12,12 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { availableForProject, DEFAULT_POOL_SHARE_PCT } from './poolShare';
+import {
+  availableForProject,
+  DEFAULT_POOL_SHARE_PCT,
+  poolShareLimitsOf,
+} from './poolShare';
+import type { BoardCellLocation } from '../types/fulfilmentPlanning.types';
 
 describe('availableForProject', () => {
   it('floors the share to whole units', () => {
@@ -49,5 +54,46 @@ describe('availableForProject', () => {
   it('has nothing to share out of an unstated figure', () => {
     expect(availableForProject(null, '900', 50)).toBeNull();
     expect(availableForProject(undefined, '900', 50)).toBeNull();
+  });
+});
+
+/**
+ * N1 (fix round 5). `net` on a `BoardCellLocation` is the DISPLAYED subtotal - this line's
+ * own demand added back in, so the subtotal reads "what is left for me" - while the
+ * server's own confirm-time guard (`_is_pool_share_split`) and `stock-detail` bound a
+ * pool-share split by the RAW net (`net_raw`), without that addition. `poolShareLimitsOf`
+ * must read the raw figure, or it admits a split the server refuses.
+ */
+describe('poolShareLimitsOf', () => {
+  it('reads net_raw, never the displayed net that has this line s own demand added back in', () => {
+    const locations: BoardCellLocation[] = [
+      {
+        location: 'BRW',
+        warehouse_id: 'wh-brw',
+        where: 'site_pool',
+        qty: '0',
+        available_for_project: '62',
+        // The displayed subtotal (this line's own 20 added back to a raw net of 100).
+        net: '120',
+        net_raw: '100',
+      },
+    ];
+
+    expect(poolShareLimitsOf(locations).net).toBe('100');
+  });
+
+  it('has no allowance to read when the server sends no net_raw at all', () => {
+    const locations: BoardCellLocation[] = [
+      {
+        location: 'BRW',
+        warehouse_id: 'wh-brw',
+        where: 'site_pool',
+        qty: '0',
+        available_for_project: '62',
+        net: '120',
+      },
+    ];
+
+    expect(poolShareLimitsOf(locations).net).toBeNull();
   });
 });
