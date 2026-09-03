@@ -388,6 +388,37 @@ describe('ContainerRequestSection - the grid', () => {
     expect(within(dialog).getByText('40')).toBeInTheDocument();
   });
 
+  it('foots the Packed column with the sum of the blocks (AC-J2/J3 parity, S10 fix 3)', async () => {
+    // S9 converted every other row-figure dialog to the shared DataGrid + footer TOTAL;
+    // the Blocks table was still a plain <table> with no total row until this fix.
+    state.build.data = {
+      stock_list_as_of: null,
+      rows: [
+        row({
+          holding_source: 'proforma',
+          holding_qty: 100,
+          holding_as_of: '2026-07-31',
+          holding_blocks: 5,
+          blocks: [
+            { block_index: 4, pi_number: 'PI-JBC-4', qty: 60 },
+            { block_index: 5, pi_number: 'PI-JBC-5', qty: 40 },
+          ],
+          qty_packed: 0,
+          qty_unfinished: 0,
+        }),
+      ],
+      sources: { ...EMPTY_SOURCES, proforma_as_of: '2026-07-31', proforma_pi_number: 'PI-JBC-4' },
+    };
+    renderSection();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Invoice blocks behind this figure' }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Total')).toBeInTheDocument();
+    // 60 + 40 = 100, the same number the row's own "They hold" cell already reads.
+    expect(within(dialog).getByText('100')).toBeInTheDocument();
+  });
+
   it('says so when no invoice on the plan names the product', async () => {
     state.build.data = {
       stock_list_as_of: null,

@@ -32,20 +32,20 @@ import { EM_DASH, fmtInt } from '../../lib/format';
 import { useContainerRequestBuild, useContainerRequestHistory } from '../../hooks/useFulfilment';
 import type {
   ContainerRequestHistoryProduct,
+  ContainerRequestHoldingBlock,
   ContainerRequestRow,
   ContainerRequestSoLine,
 } from '../../services/fulfilmentService';
 import {
-  DocTable,
-  EmptyRow,
+  DrillTable,
   IncomingPlTable,
   OnHandTable,
   PlanRowDialog,
   PoTabs,
   ProjectRetailTabs,
+  RIGHT,
   SpoTabs,
-  Td,
-  Th,
+  TOTAL_LABEL,
   monthLabel,
   type PlanDemandLineRow,
   type PlanHistoryPoint,
@@ -175,34 +175,49 @@ function HoldingCell({
   return <span className="tabular-nums">{fmtInt(row.qty_packed)}</span>;
 }
 
-/** The per-block split behind one proforma row's figure (AC-F4). */
+/** The per-block split behind one proforma row's figure (AC-F4, AC-J2/J3 parity - S10 fix 3). */
+function blocksColumns(total: number): ColumnDef<ContainerRequestHoldingBlock>[] {
+  return [
+    {
+      id: 'block',
+      header: 'Block',
+      cell: ({ row }) => row.original.block_index ?? EM_DASH,
+      footer: () => TOTAL_LABEL,
+      size: 90,
+    },
+    {
+      id: 'invoice',
+      header: 'Invoice',
+      cell: ({ row }) => (
+        <span className="block truncate" title={row.original.pi_number}>
+          {row.original.pi_number}
+        </span>
+      ),
+      size: 220,
+    },
+    {
+      id: 'packed',
+      header: 'Packed',
+      cell: ({ row }) => fmtInt(row.original.qty),
+      footer: () => fmtInt(total),
+      size: 110,
+      meta: RIGHT,
+    },
+  ];
+}
+
 function BlocksTable({ row }: { row: ContainerRequestRow }) {
-  const blocks = row.blocks ?? [];
+  const blocks = useMemo(() => row.blocks ?? [], [row.blocks]);
+  const total = useMemo(() => blocks.reduce((s, b) => s + b.qty, 0), [blocks]);
+  const columns = useMemo(() => blocksColumns(total), [total]);
+
   return (
-    <DocTable>
-      <thead>
-        <tr className="border-b">
-          <Th>Block</Th>
-          <Th>Invoice</Th>
-          <Th right>Packed</Th>
-        </tr>
-      </thead>
-      <tbody>
-        {blocks.length === 0 ? (
-          <EmptyRow colSpan={3}>No invoice on this plan names this product.</EmptyRow>
-        ) : (
-          blocks.map((b) => (
-            <tr key={`${b.pi_number}-${b.block_index ?? 0}`} className="border-b last:border-0">
-              <Td>{b.block_index ?? EM_DASH}</Td>
-              <Td title={b.pi_number}>
-                <span className="block max-w-56 truncate">{b.pi_number}</span>
-              </Td>
-              <Td right>{fmtInt(b.qty)}</Td>
-            </tr>
-          ))
-        )}
-      </tbody>
-    </DocTable>
+    <DrillTable
+      columns={columns}
+      rows={blocks}
+      getRowId={(b, i) => `${b.pi_number}-${b.block_index ?? 0}-${i}`}
+      emptyMessage="No invoice on this plan names this product."
+    />
   );
 }
 

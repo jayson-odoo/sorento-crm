@@ -273,3 +273,8 @@ the match.
   waiting for a reload or for the operator to leave the tab (AC-C3's other two triggers are
   unchanged). Undo stays available on a row until it is confirmed; once confirmed, Forget is
   what reaches it, on the Remembered list.
+- **AC-K3** `[FE][T]` The Blocks table in a loading plan's Packed drill (`BlocksTable` in
+  `ContainerRequestSection.tsx`) is a `DataGrid` through the shared `DrillTable` helper
+  (`scm/components/PlanRowDialog.tsx`, exported for this reuse - AC-J1/J2 parity), with a
+  footer TOTAL row on the Packed column summing the blocks shown, matching every other S9
+  drill body.

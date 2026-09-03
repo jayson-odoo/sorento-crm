@@ -259,6 +259,11 @@ section K (AC-K1-AC-K3).
   computed against the CURRENT `rows` (not `Object.keys(decided).length`) so the count - and
   the button's own label - falls back to 0 on its own once the refetch removes the confirmed
   codes, rather than staying pinned at the number just confirmed.
+- `app/(protected)/scm/loading-plan/components/ContainerRequestSection.tsx`: `BlocksTable`
+  (the Packed drill) was still a plain `<table>`, the one S9 body that was not converted.
+  Rebuilt on the `DrillTable` helper S9 added in `scm/components/PlanRowDialog.tsx` (now
+  exported, along with `RIGHT` and `TOTAL_LABEL`, for this reuse), with a footer TOTAL on the
+  Packed column.
 
 ## 4. What is reused, and what is deliberately not built
 

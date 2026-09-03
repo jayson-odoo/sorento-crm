@@ -187,7 +187,7 @@ function moneyCell(value: number | null | undefined) {
 }
 
 /** Every right-aligned quantity/money/date column shares this header + cell alignment. */
-const RIGHT: { headerClassName: string; cellClassName: string } = {
+export const RIGHT: { headerClassName: string; cellClassName: string } = {
   headerClassName: 'text-right',
   cellClassName: 'text-right tabular-nums',
 };
@@ -196,7 +196,7 @@ const RIGHT: { headerClassName: string; cellClassName: string } = {
 const SKELETON_CELL = <Skeleton className="h-4 w-full" />;
 
 /** The label half of a footer TOTAL row (AC-J3) - under whichever column comes first. */
-const TOTAL_LABEL = <span className="text-muted-foreground">Total</span>;
+export const TOTAL_LABEL = <span className="text-muted-foreground">Total</span>;
 
 /**
  * A tab's own table (AC-J2): every row the caller already holds, in the repo's `DataGrid`,
@@ -206,7 +206,7 @@ const TOTAL_LABEL = <span className="text-muted-foreground">Total</span>;
  * `overflow-x-auto` scroller, which stays INSIDE the dialog body - the dialog itself never
  * grows past `max-h-[85vh]`.
  */
-function DrillTable<TRow extends object>({
+export function DrillTable<TRow extends object>({
   columns,
   rows,
   getRowId,
