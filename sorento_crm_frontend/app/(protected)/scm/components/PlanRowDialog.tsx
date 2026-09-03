@@ -1,6 +1,14 @@
 'use client';
 
-import { Fragment, useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
+import {
+  type ColumnDef,
+  type ExpandedState,
+  type OnChangeFn,
+  getCoreRowModel,
+  getExpandedRowModel,
+  useReactTable,
+} from '@tanstack/react-table';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 
 import {
@@ -14,6 +22,8 @@ import {
 import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { DataGrid } from '@/components/ui/data-grid';
+import { DataGridTable } from '@/components/ui/data-grid-table';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { cn } from '@/lib/utils';
 
@@ -45,6 +55,16 @@ import type {
  * The shell knows nothing about any body: it is a titled frame, and the caller renders what
  * belongs inside. A registry keyed on `kind` would have to import every body and so every
  * body's data hook, which is how one dialog comes to fetch for six screens.
+ *
+ * S9 (3 Sep, plan section 3.9): every body in this file renders on the repo's own `DataGrid`
+ * rather than a plain `<table>` - the SPO document detail's own line table
+ * (`SPODocumentDetail.tsx`) is the reference this family now matches: `TabsList variant="line"`,
+ * fixed-width resizable columns, and a footer TOTAL row under whichever column the cell's own
+ * figure sums. `DrillTable` below is the one place that wiring lives, because every body here
+ * is the same shape - a caller-held list of rows, no server pagination, no per-user column
+ * memory (a dialog's columns are not a personal preference, so `listingKey` is always `null`).
+ * `OnHandTable` builds its own table instead of going through it: its rows expand in place,
+ * which needs TanStack's expanded-row state passed straight to `useReactTable`.
  */
 
 export type PlanRowDialogKind =
@@ -76,6 +96,10 @@ export const PLAN_ROW_DIALOG_TITLES: Record<PlanRowDialogKind, string> = {
 
 // ---------------------------------------------------------------------------
 // Table furniture - exported so a body written by another screen looks the same
+//
+// `ContainerRequestScheduleMatrix.tsx` is the one remaining consumer: its schedule PIVOT is
+// not a list of rows (it is a product/SO axis against day/week/month buckets) and so is never
+// a `DataGrid` - these stay here for it.
 // ---------------------------------------------------------------------------
 
 export function Th({ children, right }: { children: ReactNode; right?: boolean }) {
@@ -162,29 +186,57 @@ function moneyCell(value: number | null | undefined) {
   );
 }
 
+/** Every right-aligned quantity/money/date column shares this header + cell alignment. */
+const RIGHT: { headerClassName: string; cellClassName: string } = {
+  headerClassName: 'text-right',
+  cellClassName: 'text-right tabular-nums',
+};
+
+/** One `Skeleton` bar, reused across every column's `meta.skeleton` in this file. */
+const SKELETON_CELL = <Skeleton className="h-4 w-full" />;
+
+/** The label half of a footer TOTAL row (AC-J3) - under whichever column comes first. */
+const TOTAL_LABEL = <span className="text-muted-foreground">Total</span>;
+
 /**
- * A footing row: the label on the left, the figure UNDER the column it totals, and the
- * columns after it left blank. `colSpan` is how many columns precede the total, `trailing`
- * how many follow it - stated rather than derived so a table that gains a column fails to
- * line up visibly instead of silently misfooting.
+ * A tab's own table (AC-J2): every row the caller already holds, in the repo's `DataGrid`,
+ * with no server pagination (there is nothing left to page - the caller passed the whole
+ * list) and no per-user column persistence (`listingKey={null}`: a dialog's columns are not a
+ * personal preference). The horizontal scroll a wide table needs is the grid's own
+ * `overflow-x-auto` scroller, which stays INSIDE the dialog body - the dialog itself never
+ * grows past `max-h-[85vh]`.
  */
-function TotalRow({
-  colSpan,
-  label,
-  total,
-  trailing = 0,
+function DrillTable<TRow extends object>({
+  columns,
+  rows,
+  getRowId,
+  isLoading,
+  emptyMessage,
 }: {
-  colSpan: number;
-  label: string;
-  total: number;
-  trailing?: number;
+  columns: ColumnDef<TRow>[];
+  rows: TRow[];
+  getRowId?: (row: TRow, index: number) => string;
+  isLoading?: boolean;
+  emptyMessage: ReactNode;
 }) {
+  const table = useReactTable({
+    columns,
+    data: rows,
+    getRowId,
+    getCoreRowModel: getCoreRowModel(),
+  });
+
   return (
-    <tr className="border-t font-medium">
-      <Td colSpan={colSpan}>{label}</Td>
-      <Td right>{fmtInt(total)}</Td>
-      {trailing > 0 ? <Td colSpan={trailing}> </Td> : null}
-    </tr>
+    <DataGrid
+      table={table}
+      recordCount={rows.length}
+      isLoading={Boolean(isLoading)}
+      listingKey={null}
+      tableLayout={{ width: 'fixed', columnsResizable: true }}
+      emptyMessage={emptyMessage}
+    >
+      <DataGridTable />
+    </DataGrid>
   );
 }
 
@@ -280,66 +332,144 @@ export function ProjectRetailTabs({
   const total = useMemo(() => lines.reduce((sum, l) => sum + (l.qty || 0), 0), [lines]);
   const projectPeak = peakOf(history, 'project');
   const retailPeak = peakOf(history, 'retail');
+  // AC-J3: the history tab foots BOTH series - the peak line above states the biggest month,
+  // this states the whole twelve.
+  const projectTotal = useMemo(
+    () => history.reduce((sum, p) => sum + (p.project_qty || 0), 0),
+    [history],
+  );
+  const retailTotal = useMemo(
+    () => history.reduce((sum, p) => sum + (p.retail_qty || 0), 0),
+    [history],
+  );
   const openLabel =
     channel === 'project'
       ? `Open project SO lines (${fmtInt(lines.length)})`
       : `Open sales orders (${fmtInt(lines.length)})`;
 
+  const openColumns = useMemo<ColumnDef<PlanDemandLineRow>[]>(
+    () => [
+      {
+        id: 'so_number',
+        header: 'Sales order',
+        cell: ({ row }) => {
+          const l = row.original;
+          return l.href ? (
+            <a className="hover:underline" href={l.href}>
+              {l.so_number ?? 'Not numbered'}
+            </a>
+          ) : (
+            (l.so_number ?? 'Not numbered')
+          );
+        },
+        footer: () => TOTAL_LABEL,
+        size: 130,
+        meta: { skeleton: SKELETON_CELL },
+      },
+      {
+        id: 'customer',
+        header: 'Customer',
+        cell: ({ row }) => (
+          <span className="block truncate" title={row.original.customer ?? undefined}>
+            {textCell(row.original.customer)}
+          </span>
+        ),
+        size: 170,
+        meta: { skeleton: SKELETON_CELL },
+      },
+      {
+        id: 'project',
+        header: 'Project',
+        cell: ({ row }) => (
+          <span className="block truncate" title={row.original.project ?? undefined}>
+            {textCell(row.original.project)}
+          </span>
+        ),
+        size: 170,
+      },
+      {
+        id: 'agent',
+        header: 'Agent',
+        cell: ({ row }) => textCell(row.original.agent),
+        size: 90,
+      },
+      {
+        id: 'price',
+        header: 'Price',
+        cell: ({ row }) => moneyCell(row.original.price),
+        size: 100,
+        meta: RIGHT,
+      },
+      {
+        id: 'qty',
+        header: 'Qty',
+        cell: ({ row }) => fmtInt(row.original.qty),
+        footer: () => fmtInt(total),
+        size: 90,
+        meta: RIGHT,
+      },
+      {
+        id: 'required_date',
+        header: 'Required',
+        cell: ({ row }) => fmtDate(row.original.required_date),
+        size: 110,
+        meta: RIGHT,
+      },
+    ],
+    [total],
+  );
+
+  const historyColumns = useMemo<ColumnDef<PlanHistoryPoint>[]>(
+    () => [
+      {
+        id: 'month',
+        header: 'Month',
+        cell: ({ row }) => monthLabel(row.original.month),
+        footer: () => TOTAL_LABEL,
+        size: 110,
+        meta: { skeleton: SKELETON_CELL },
+      },
+      {
+        id: 'project_qty',
+        header: 'Project',
+        cell: ({ row }) => fmtInt(row.original.project_qty),
+        footer: () => fmtInt(projectTotal),
+        size: 100,
+        meta: {
+          ...RIGHT,
+          cellClassName: cn(RIGHT.cellClassName, focused === 'project' && 'font-medium'),
+        },
+      },
+      {
+        id: 'retail_qty',
+        header: 'Retail',
+        cell: ({ row }) => fmtInt(row.original.retail_qty),
+        footer: () => fmtInt(retailTotal),
+        size: 100,
+        meta: {
+          ...RIGHT,
+          cellClassName: cn(RIGHT.cellClassName, focused === 'retail' && 'font-medium'),
+        },
+      },
+    ],
+    [focused, projectTotal, retailTotal],
+  );
+
   return (
     <Tabs defaultValue={initialTab}>
-      <TabsList variant="default">
+      <TabsList variant="line">
         <TabsTrigger value="open">{openLabel}</TabsTrigger>
         <TabsTrigger value="history">12-month history</TabsTrigger>
       </TabsList>
 
       <TabsContent value="open">
-        <DocTable>
-          <thead>
-            <tr className="border-b">
-              <Th>Sales order</Th>
-              <Th>Customer</Th>
-              <Th>Project</Th>
-              <Th>Agent</Th>
-              <Th right>Price</Th>
-              <Th right>Qty</Th>
-              <Th right>Required</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading ? (
-              <LoadingRows colSpan={7} />
-            ) : lines.length === 0 ? (
-              <EmptyRow colSpan={7}>Nothing open on this channel for this product.</EmptyRow>
-            ) : (
-              <>
-                {lines.map((l, i) => (
-                  <tr key={`${l.so_number ?? 'unnumbered'}-${i}`} className="border-b last:border-0">
-                    <Td>
-                      {l.href ? (
-                        <a className="hover:underline" href={l.href}>
-                          {l.so_number ?? 'Not numbered'}
-                        </a>
-                      ) : (
-                        (l.so_number ?? 'Not numbered')
-                      )}
-                    </Td>
-                    <Td title={l.customer ?? undefined}>
-                      <span className="block max-w-56 truncate">{textCell(l.customer)}</span>
-                    </Td>
-                    <Td title={l.project ?? undefined}>
-                      <span className="block max-w-56 truncate">{textCell(l.project)}</span>
-                    </Td>
-                    <Td>{textCell(l.agent)}</Td>
-                    <Td right>{moneyCell(l.price)}</Td>
-                    <Td right>{fmtInt(l.qty)}</Td>
-                    <Td right>{fmtDate(l.required_date)}</Td>
-                  </tr>
-                ))}
-                <TotalRow colSpan={5} label="Total" total={total} trailing={1} />
-              </>
-            )}
-          </tbody>
-        </DocTable>
+        <DrillTable
+          columns={openColumns}
+          rows={lines}
+          getRowId={(l, i) => `${l.so_number ?? 'unnumbered'}-${i}`}
+          isLoading={loading}
+          emptyMessage="Nothing open on this channel for this product."
+        />
       </TabsContent>
 
       <TabsContent value="history">
@@ -352,34 +482,13 @@ export function ProjectRetailTabs({
               {`Retail peak ${retailPeak ? `${fmtInt(retailPeak.qty)} ${monthLabel(retailPeak.month)}` : EM_DASH}`}
             </span>
           </div>
-          <DocTable>
-            <thead>
-              <tr className="border-b">
-                <Th>Month</Th>
-                <Th right>Project</Th>
-                <Th right>Retail</Th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <LoadingRows colSpan={3} />
-              ) : history.length === 0 ? (
-                <EmptyRow colSpan={3}>Nothing was ordered in the last twelve months.</EmptyRow>
-              ) : (
-                history.map((point) => (
-                  <tr key={point.month} className="border-b last:border-0">
-                    <Td>{monthLabel(point.month)}</Td>
-                    <Td right className={cn(focused === 'project' && 'font-medium')}>
-                      {fmtInt(point.project_qty)}
-                    </Td>
-                    <Td right className={cn(focused === 'retail' && 'font-medium')}>
-                      {fmtInt(point.retail_qty)}
-                    </Td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </DocTable>
+          <DrillTable
+            columns={historyColumns}
+            rows={history}
+            getRowId={(p) => p.month}
+            isLoading={loading}
+            emptyMessage="Nothing was ordered in the last twelve months."
+          />
         </div>
       </TabsContent>
     </Tabs>
@@ -390,6 +499,20 @@ export function ProjectRetailTabs({
 // On hand - the site pools' stock, row by row, with the documents under each
 // ---------------------------------------------------------------------------
 
+/** One site-pool stock row, as `useLocationStock` returns it. */
+interface OnHandLocation {
+  warehouse_id: string;
+  warehouse_code: string | null;
+  on_hand: number;
+  reserved: number;
+  free: number;
+  so_qty: number;
+  spo_qty: number;
+  available: number;
+  is_pool?: boolean;
+  po_qty?: number | null;
+}
+
 /**
  * Reorder planning's On hand lightbox, verbatim (AC-B3 / AC-G3): the SITE POOL rows only,
  * each expanding to the documents standing behind that location.
@@ -398,99 +521,148 @@ export function ProjectRetailTabs({
  * counting it here would disagree with the cell, which nets pools alone. A response with no
  * pool row at all falls back to everything it was given, rather than showing an empty table
  * for a product that plainly has stock somewhere.
+ *
+ * Builds its own `useReactTable` rather than going through `DrillTable`: the expanding row
+ * needs TanStack's own expanded-row state, which `DrillTable`'s callers never do.
  */
 export function OnHandTable({ productId }: { productId: string }) {
   const stock = useLocationStock(productId, Boolean(productId));
   const [openRow, setOpenRow] = useState<string | null>(null);
 
   const rows = useMemo(() => {
-    const locations = stock.data?.locations ?? [];
-    const pools = locations.filter((l) => (l as { is_pool?: boolean }).is_pool);
+    const locations = (stock.data?.locations ?? []) as OnHandLocation[];
+    const pools = locations.filter((l) => l.is_pool);
     return pools.length ? pools : locations;
   }, [stock.data]);
 
   const total = rows.reduce((sum, l) => sum + (l.on_hand || 0), 0);
 
+  const columns = useMemo<ColumnDef<OnHandLocation>[]>(
+    () => [
+      {
+        id: 'expand',
+        header: '',
+        cell: ({ row }) =>
+          row.getIsExpanded() ? (
+            <ChevronDown className="size-3.5 text-muted-foreground" aria-hidden />
+          ) : (
+            <ChevronRight className="size-3.5 text-muted-foreground" aria-hidden />
+          ),
+        size: 32,
+        enableResizing: false,
+      },
+      {
+        id: 'location',
+        header: 'Location',
+        cell: ({ row }) => (
+          <span title={row.original.warehouse_code ?? undefined}>
+            {textCell(row.original.warehouse_code)}
+          </span>
+        ),
+        footer: () => <span className="text-muted-foreground">Site pools</span>,
+        size: 120,
+        meta: {
+          skeleton: SKELETON_CELL,
+          expandedContent: (loc: OnHandLocation) => (
+            <StockDocumentsPanel productId={productId} warehouseId={loc.warehouse_id} />
+          ),
+        },
+      },
+      {
+        id: 'on_hand',
+        header: 'On hand',
+        cell: ({ row }) => fmtInt(row.original.on_hand),
+        footer: () => fmtInt(total),
+        size: 90,
+        meta: RIGHT,
+      },
+      {
+        id: 'reserved',
+        header: 'Reserved',
+        cell: ({ row }) => fmtInt(row.original.reserved),
+        size: 90,
+        meta: RIGHT,
+      },
+      {
+        id: 'free',
+        header: 'Free',
+        cell: ({ row }) => fmtInt(row.original.free),
+        size: 80,
+        meta: RIGHT,
+      },
+      {
+        id: 'so_qty',
+        header: 'SO qty',
+        cell: ({ row }) => fmtInt(row.original.so_qty),
+        size: 90,
+        meta: RIGHT,
+      },
+      {
+        id: 'spo_qty',
+        header: 'SPO qty',
+        cell: ({ row }) => fmtInt(row.original.spo_qty),
+        size: 90,
+        meta: RIGHT,
+      },
+      {
+        id: 'available',
+        header: 'Available',
+        cell: ({ row }) => (
+          <span className={cn(row.original.available < 0 && 'text-destructive')}>
+            {fmtInt(row.original.available)}
+          </span>
+        ),
+        size: 100,
+        meta: RIGHT,
+      },
+      {
+        id: 'po_qty',
+        // `po_qty` arrives with the reorder lane's own extension of this endpoint; until it
+        // merges the column reads as "not stated", never as zero.
+        header: 'PO qty',
+        cell: ({ row }) =>
+          row.original.po_qty === null || row.original.po_qty === undefined ? (
+            <span className="text-muted-foreground">{EM_DASH}</span>
+          ) : (
+            fmtInt(row.original.po_qty)
+          ),
+        size: 90,
+        meta: RIGHT,
+      },
+    ],
+    [productId, total],
+  );
+
+  const expanded: ExpandedState = openRow ? { [openRow]: true } : {};
+  const onExpandedChange: OnChangeFn<ExpandedState> = (updater) => {
+    const next = typeof updater === 'function' ? updater(expanded) : updater;
+    const openIds = Object.keys(next).filter((id) => (next as Record<string, boolean>)[id]);
+    setOpenRow(openIds[0] ?? null);
+  };
+
+  const table = useReactTable({
+    columns,
+    data: rows,
+    getRowId: (l) => l.warehouse_id,
+    state: { expanded },
+    onExpandedChange,
+    getCoreRowModel: getCoreRowModel(),
+    getExpandedRowModel: getExpandedRowModel(),
+  });
+
   return (
     <div className="space-y-2">
-      <DocTable>
-        <thead>
-          <tr className="border-b">
-            <Th> </Th>
-            <Th>Location</Th>
-            <Th right>On hand</Th>
-            <Th right>Reserved</Th>
-            <Th right>Free</Th>
-            <Th right>SO qty</Th>
-            <Th right>SPO qty</Th>
-            <Th right>Available</Th>
-            <Th right>PO qty</Th>
-          </tr>
-        </thead>
-        <tbody>
-          {stock.isLoading ? (
-            <LoadingRows colSpan={9} />
-          ) : rows.length === 0 ? (
-            <EmptyRow colSpan={9}>No stock rows for this product.</EmptyRow>
-          ) : (
-            <>
-              {rows.map((loc) => {
-                const expanded = openRow === loc.warehouse_id;
-                // `po_qty` arrives with the reorder lane's own extension of this endpoint;
-                // until it merges the column reads as "not stated", never as zero.
-                const poQty = (loc as { po_qty?: number | null }).po_qty;
-                return (
-                  <Fragment key={loc.warehouse_id}>
-                    <tr
-                      className="cursor-pointer border-b last:border-0 hover:bg-muted/50"
-                      onClick={() => setOpenRow(expanded ? null : loc.warehouse_id)}
-                    >
-                      <Td className="w-8">
-                        {expanded ? (
-                          <ChevronDown className="size-3.5 text-muted-foreground" aria-hidden />
-                        ) : (
-                          <ChevronRight className="size-3.5 text-muted-foreground" aria-hidden />
-                        )}
-                      </Td>
-                      <Td title={loc.warehouse_code ?? undefined}>
-                        {textCell(loc.warehouse_code)}
-                      </Td>
-                      <Td right>{fmtInt(loc.on_hand)}</Td>
-                      <Td right>{fmtInt(loc.reserved)}</Td>
-                      <Td right>{fmtInt(loc.free)}</Td>
-                      <Td right>{fmtInt(loc.so_qty)}</Td>
-                      <Td right>{fmtInt(loc.spo_qty)}</Td>
-                      <Td right>
-                        <span className={cn(loc.available < 0 && 'text-destructive')}>
-                          {fmtInt(loc.available)}
-                        </span>
-                      </Td>
-                      <Td right>
-                        {poQty === null || poQty === undefined ? (
-                          <span className="text-muted-foreground">{EM_DASH}</span>
-                        ) : (
-                          fmtInt(poQty)
-                        )}
-                      </Td>
-                    </tr>
-                    {expanded ? (
-                      <tr>
-                        <td colSpan={9} className="bg-muted/30 p-0">
-                          <StockDocumentsPanel
-                            productId={productId}
-                            warehouseId={loc.warehouse_id}
-                          />
-                        </td>
-                      </tr>
-                    ) : null}
-                  </Fragment>
-                );
-              })}
-              <TotalRow colSpan={2} label="Site pools" total={total} trailing={6} />
-            </>
-          )}
-        </tbody>
-      </DocTable>
+      <DataGrid
+        table={table}
+        recordCount={rows.length}
+        isLoading={stock.isLoading}
+        listingKey={null}
+        tableLayout={{ width: 'fixed', columnsResizable: true }}
+        onRowClick={(loc) => setOpenRow((cur) => (cur === loc.warehouse_id ? null : loc.warehouse_id))}
+        emptyMessage="No stock rows for this product."
+      >
+        <DataGridTable />
+      </DataGrid>
       {/* The newest stock timestamp for the product, never the moment this dialog asked. */}
       {stock.data?.as_of ? (
         <p className="text-2xs text-muted-foreground">
@@ -505,72 +677,106 @@ export function OnHandTable({ productId }: { productId: string }) {
 // SPO - what is on the water for the site pools
 // ---------------------------------------------------------------------------
 
+/** Columns shared by the open and history tabs - only the footer total differs. */
+function spoColumns(totalQty: number): ColumnDef<ContainerRequestDrillSpoRow>[] {
+  return [
+    {
+      id: 'spo_number',
+      header: 'SPO',
+      cell: ({ row }) => textCell(row.original.spo_number),
+      footer: () => TOTAL_LABEL,
+      size: 140,
+      meta: { skeleton: SKELETON_CELL },
+    },
+    {
+      id: 'packing_list',
+      header: 'Packing list',
+      cell: ({ row }) =>
+        row.original.shipment_id ? (row.original.shipment_number ?? 'Draft') : 'Not shipped',
+      size: 140,
+    },
+    {
+      id: 'to',
+      header: 'To',
+      cell: ({ row }) => textCell(row.original.warehouse_code),
+      size: 90,
+    },
+    {
+      id: 'qty',
+      header: 'Qty',
+      cell: ({ row }) => fmtInt(row.original.qty),
+      footer: () => fmtInt(totalQty),
+      size: 90,
+      meta: RIGHT,
+    },
+    {
+      id: 'received',
+      header: 'Received',
+      cell: ({ row }) => fmtInt(row.original.received),
+      size: 100,
+      meta: RIGHT,
+    },
+    {
+      id: 'eta',
+      header: 'ETA',
+      cell: ({ row }) => fmtDate(row.original.eta),
+      size: 100,
+      meta: RIGHT,
+    },
+    {
+      id: 'status',
+      header: 'Status',
+      cell: ({ row }) => textCell(row.original.status),
+      size: 110,
+    },
+  ];
+}
+
+function spoRowId(r: ContainerRequestDrillSpoRow, i: number): string {
+  return `${r.spo_number ?? 'unnumbered'}-${r.shipment_id}-${i}`;
+}
+
 /**
  * The shipping orders behind the SPO cell (AC-B4), open first and then what has landed.
  *
  * Rows come from `/container-requests/drill?kind=spo`, whose total IS the cell - see that
  * service's docstring for why the reader is `spo_allocations` and not the purchase-order
- * table (migration 420 moved every SPO document out of it).
+ * table (migration 420 moved every SPO document out of it). The open tab foots to that same
+ * total; the history tab has none to defer to, so it sums its own rows (AC-J3).
  */
 export function SpoTabs({ supplierId, productId }: { supplierId: string; productId: string }) {
   const drill = useContainerRequestDrill(supplierId, productId, 'spo');
   const open = (drill.data?.rows ?? []) as ContainerRequestDrillSpoRow[];
   const history = (drill.data?.history ?? []) as ContainerRequestDrillSpoRow[];
 
-  const body = (rows: ContainerRequestDrillSpoRow[], emptyText: string, withTotal: boolean) => (
-    <DocTable>
-      <thead>
-        <tr className="border-b">
-          <Th>SPO</Th>
-          <Th>Packing list</Th>
-          <Th>To</Th>
-          <Th right>Qty</Th>
-          <Th right>Received</Th>
-          <Th right>ETA</Th>
-          <Th>Status</Th>
-        </tr>
-      </thead>
-      <tbody>
-        {drill.isLoading ? (
-          <LoadingRows colSpan={7} />
-        ) : rows.length === 0 ? (
-          <EmptyRow colSpan={7}>{emptyText}</EmptyRow>
-        ) : (
-          <>
-            {rows.map((r, i) => (
-              <tr key={`${r.spo_number ?? 'unnumbered'}-${r.shipment_id}-${i}`} className="border-b last:border-0">
-                <Td>{textCell(r.spo_number)}</Td>
-                <Td>{r.shipment_id ? (r.shipment_number ?? 'Draft') : 'Not shipped'}</Td>
-                <Td>{textCell(r.warehouse_code)}</Td>
-                <Td right>{fmtInt(r.qty)}</Td>
-                <Td right>{fmtInt(r.received)}</Td>
-                <Td right>{fmtDate(r.eta)}</Td>
-                <Td>{textCell(r.status)}</Td>
-              </tr>
-            ))}
-            {withTotal ? (
-              <TotalRow
-                colSpan={3}
-                label="Total"
-                total={drill.data?.total ?? rows.reduce((s, r) => s + r.qty, 0)}
-                trailing={3}
-              />
-            ) : null}
-          </>
-        )}
-      </tbody>
-    </DocTable>
-  );
+  const openTotal = drill.data?.total ?? open.reduce((s, r) => s + r.qty, 0);
+  const historyTotal = history.reduce((s, r) => s + r.qty, 0);
+  const openColumns = useMemo(() => spoColumns(openTotal), [openTotal]);
+  const historyColumns = useMemo(() => spoColumns(historyTotal), [historyTotal]);
 
   return (
     <Tabs defaultValue="open">
-      <TabsList variant="default">
+      <TabsList variant="line">
         <TabsTrigger value="open">{`Open to pools (${fmtInt(open.length)})`}</TabsTrigger>
         <TabsTrigger value="history">{`History (${fmtInt(history.length)})`}</TabsTrigger>
       </TabsList>
-      <TabsContent value="open">{body(open, NO_SPO_TO_POOL, true)}</TabsContent>
+      <TabsContent value="open">
+        <DrillTable
+          columns={openColumns}
+          rows={open}
+          getRowId={spoRowId}
+          isLoading={drill.isLoading}
+          emptyMessage={NO_SPO_TO_POOL}
+        />
+      </TabsContent>
       <TabsContent value="history">
-        {body(history, 'No shipping order has landed here for this product.', false)}
+        <DrillTable
+          columns={historyColumns}
+          rows={history}
+          getRowId={spoRowId}
+          isLoading={drill.isLoading}
+          emptyMessage="No shipping order has landed here for this product."
+        />
       </TabsContent>
     </Tabs>
   );
@@ -596,60 +802,80 @@ export function IncomingPlTable({
 }) {
   const drill = useContainerRequestDrill(supplierId, productId, 'incoming_pl');
   const rows = (drill.data?.rows ?? []) as ContainerRequestDrillIncomingPlRow[];
+  const total = drill.data?.total ?? rows.reduce((s, r) => s + r.qty, 0);
+
+  const columns = useMemo<ColumnDef<ContainerRequestDrillIncomingPlRow>[]>(
+    () => [
+      {
+        id: 'shipment_number',
+        header: 'Packing list',
+        cell: ({ row }) => {
+          const r = row.original;
+          return onOpenShipment ? (
+            <button
+              type="button"
+              className="underline-offset-2 hover:underline"
+              onClick={() => onOpenShipment(r.shipment_id)}
+            >
+              {r.shipment_number ?? 'Draft'}
+            </button>
+          ) : (
+            (r.shipment_number ?? 'Draft')
+          );
+        },
+        footer: () => TOTAL_LABEL,
+        size: 150,
+        meta: { skeleton: SKELETON_CELL },
+      },
+      {
+        id: 'container_number',
+        header: 'Container',
+        cell: ({ row }) => textCell(row.original.container_number),
+        size: 130,
+      },
+      {
+        id: 'supplier_name',
+        header: 'Supplier',
+        cell: ({ row }) => (
+          <span className="block truncate" title={row.original.supplier_name ?? undefined}>
+            {textCell(row.original.supplier_name)}
+          </span>
+        ),
+        size: 170,
+      },
+      {
+        id: 'qty',
+        header: 'Qty',
+        cell: ({ row }) => fmtInt(row.original.qty),
+        footer: () => fmtInt(total),
+        size: 90,
+        meta: RIGHT,
+      },
+      {
+        id: 'eta',
+        header: 'ETA',
+        cell: ({ row }) => fmtDate(row.original.eta),
+        size: 100,
+        meta: RIGHT,
+      },
+      {
+        id: 'status',
+        header: 'Status',
+        cell: ({ row }) => textCell(row.original.status),
+        size: 110,
+      },
+    ],
+    [onOpenShipment, total],
+  );
 
   return (
-    <DocTable>
-      <thead>
-        <tr className="border-b">
-          <Th>Packing list</Th>
-          <Th>Container</Th>
-          <Th>Supplier</Th>
-          <Th right>Qty</Th>
-          <Th right>ETA</Th>
-          <Th>Status</Th>
-        </tr>
-      </thead>
-      <tbody>
-        {drill.isLoading ? (
-          <LoadingRows colSpan={6} />
-        ) : rows.length === 0 ? (
-          <EmptyRow colSpan={6}>Nothing is on its way on a packing list for this product.</EmptyRow>
-        ) : (
-          <>
-            {rows.map((r) => (
-              <tr key={r.shipment_id} className="border-b last:border-0">
-                <Td>
-                  {onOpenShipment ? (
-                    <button
-                      type="button"
-                      className="underline-offset-2 hover:underline"
-                      onClick={() => onOpenShipment(r.shipment_id)}
-                    >
-                      {r.shipment_number ?? 'Draft'}
-                    </button>
-                  ) : (
-                    (r.shipment_number ?? 'Draft')
-                  )}
-                </Td>
-                <Td>{textCell(r.container_number)}</Td>
-                <Td title={r.supplier_name ?? undefined}>
-                  <span className="block max-w-56 truncate">{textCell(r.supplier_name)}</span>
-                </Td>
-                <Td right>{fmtInt(r.qty)}</Td>
-                <Td right>{fmtDate(r.eta)}</Td>
-                <Td>{textCell(r.status)}</Td>
-              </tr>
-            ))}
-            <TotalRow
-              colSpan={3}
-              label="Total"
-              total={drill.data?.total ?? rows.reduce((s, r) => s + r.qty, 0)}
-              trailing={2}
-            />
-          </>
-        )}
-      </tbody>
-    </DocTable>
+    <DrillTable
+      columns={columns}
+      rows={rows}
+      getRowId={(r) => r.shipment_id}
+      isLoading={drill.isLoading}
+      emptyMessage="Nothing is on its way on a packing list for this product."
+    />
   );
 }
 
@@ -657,76 +883,115 @@ export function IncomingPlTable({
 // PO - what is already ordered, and what was ordered before
 // ---------------------------------------------------------------------------
 
+/** Columns shared by the open and history tabs - only the footer total differs. */
+function poColumns(totalStillToCome: number): ColumnDef<ContainerRequestDrillPoRow>[] {
+  return [
+    {
+      id: 'po_number',
+      header: 'PO',
+      cell: ({ row }) => textCell(row.original.po_number),
+      footer: () => <span className="text-muted-foreground">Total still to come</span>,
+      size: 120,
+      meta: { skeleton: SKELETON_CELL },
+    },
+    {
+      id: 'supplier_name',
+      header: 'Supplier',
+      cell: ({ row }) => (
+        <span className="block truncate" title={row.original.supplier_name ?? undefined}>
+          {textCell(row.original.supplier_name)}
+        </span>
+      ),
+      size: 170,
+    },
+    {
+      id: 'qty_ordered',
+      header: 'Qty',
+      cell: ({ row }) => fmtInt(row.original.qty_ordered),
+      size: 90,
+      meta: RIGHT,
+    },
+    {
+      id: 'still_to_come',
+      header: 'Still to come',
+      cell: ({ row }) => fmtInt(row.original.still_to_come),
+      footer: () => fmtInt(totalStillToCome),
+      size: 110,
+      meta: RIGHT,
+    },
+    {
+      id: 'unit_price',
+      header: 'Unit price',
+      cell: ({ row }) =>
+        row.original.unit_price === null ? (
+          <span className="text-muted-foreground">{EM_DASH}</span>
+        ) : (
+          fmtSupplierCost(row.original.unit_price, row.original.currency)
+        ),
+      size: 120,
+      meta: RIGHT,
+    },
+    {
+      id: 'issued',
+      header: 'Issued',
+      cell: ({ row }) => fmtDate(row.original.issued),
+      size: 100,
+      meta: RIGHT,
+    },
+    {
+      id: 'eta',
+      header: 'ETA',
+      cell: ({ row }) => fmtDate(row.original.eta),
+      size: 100,
+      meta: RIGHT,
+    },
+    {
+      id: 'status',
+      header: 'Status',
+      cell: ({ row }) => textCell(row.original.status),
+      size: 100,
+    },
+  ];
+}
+
+function poRowId(r: ContainerRequestDrillPoRow, i: number): string {
+  return `${r.purchase_order_id}-${i}`;
+}
+
 /** The purchase-order lines behind the PO cell (AC-B4): open first, then the last 12 months. */
 export function PoTabs({ supplierId, productId }: { supplierId: string; productId: string }) {
   const drill = useContainerRequestDrill(supplierId, productId, 'po');
   const open = (drill.data?.rows ?? []) as ContainerRequestDrillPoRow[];
   const history = (drill.data?.history ?? []) as ContainerRequestDrillPoRow[];
 
-  const body = (rows: ContainerRequestDrillPoRow[], emptyText: string, withTotal: boolean) => (
-    <DocTable>
-      <thead>
-        <tr className="border-b">
-          <Th>PO</Th>
-          <Th>Supplier</Th>
-          <Th right>Qty</Th>
-          <Th right>Still to come</Th>
-          <Th right>Unit price</Th>
-          <Th right>Issued</Th>
-          <Th right>ETA</Th>
-          <Th>Status</Th>
-        </tr>
-      </thead>
-      <tbody>
-        {drill.isLoading ? (
-          <LoadingRows colSpan={8} />
-        ) : rows.length === 0 ? (
-          <EmptyRow colSpan={8}>{emptyText}</EmptyRow>
-        ) : (
-          <>
-            {rows.map((r, i) => (
-              <tr key={`${r.purchase_order_id}-${i}`} className="border-b last:border-0">
-                <Td>{textCell(r.po_number)}</Td>
-                <Td title={r.supplier_name ?? undefined}>
-                  <span className="block max-w-56 truncate">{textCell(r.supplier_name)}</span>
-                </Td>
-                <Td right>{fmtInt(r.qty_ordered)}</Td>
-                <Td right>{fmtInt(r.still_to_come)}</Td>
-                <Td right>
-                  {r.unit_price === null ? (
-                    <span className="text-muted-foreground">{EM_DASH}</span>
-                  ) : (
-                    fmtSupplierCost(r.unit_price, r.currency)
-                  )}
-                </Td>
-                <Td right>{fmtDate(r.issued)}</Td>
-                <Td right>{fmtDate(r.eta)}</Td>
-                <Td>{textCell(r.status)}</Td>
-              </tr>
-            ))}
-            {withTotal ? (
-              <TotalRow
-                colSpan={3}
-                label="Total still to come"
-                total={drill.data?.total ?? rows.reduce((s, r) => s + r.still_to_come, 0)}
-                trailing={4}
-              />
-            ) : null}
-          </>
-        )}
-      </tbody>
-    </DocTable>
-  );
+  const openStillToCome = drill.data?.total ?? open.reduce((s, r) => s + r.still_to_come, 0);
+  const historyStillToCome = history.reduce((s, r) => s + r.still_to_come, 0);
+  const openColumns = useMemo(() => poColumns(openStillToCome), [openStillToCome]);
+  const historyColumns = useMemo(() => poColumns(historyStillToCome), [historyStillToCome]);
 
   return (
     <Tabs defaultValue="open">
-      <TabsList variant="default">
+      <TabsList variant="line">
         <TabsTrigger value="open">{`Open (${fmtInt(open.length)})`}</TabsTrigger>
         <TabsTrigger value="history">{`History (${fmtInt(history.length)})`}</TabsTrigger>
       </TabsList>
-      <TabsContent value="open">{body(open, 'Nothing is on order for this product.', true)}</TabsContent>
+      <TabsContent value="open">
+        <DrillTable
+          columns={openColumns}
+          rows={open}
+          getRowId={poRowId}
+          isLoading={drill.isLoading}
+          emptyMessage="Nothing is on order for this product."
+        />
+      </TabsContent>
       <TabsContent value="history">
-        {body(history, 'No purchase order in the last twelve months names this product.', false)}
+        <DrillTable
+          columns={historyColumns}
+          rows={history}
+          getRowId={poRowId}
+          isLoading={drill.isLoading}
+          emptyMessage="No purchase order in the last twelve months names this product."
+        />
       </TabsContent>
     </Tabs>
   );
@@ -776,46 +1041,84 @@ export function PoTakesPicker({
   const toggle = (id: string, on: boolean) =>
     onChange(on ? [...tickedIds, id] : tickedIds.filter((x) => x !== id));
 
+  const columns = useMemo<ColumnDef<PoTakeRow>[]>(
+    () => [
+      {
+        id: 'select',
+        header: '',
+        cell: ({ row }) => {
+          const t = row.original;
+          return (
+            <Checkbox
+              checked={tickedIds.includes(t.po_line_id)}
+              onCheckedChange={(checked) => toggle(t.po_line_id, !!checked)}
+              aria-label={`Draw from ${t.po_number ?? t.po_line_id}`}
+            />
+          );
+        },
+        size: 40,
+        enableResizing: false,
+      },
+      {
+        id: 'po_number',
+        header: 'PO',
+        cell: ({ row }) => textCell(row.original.po_number),
+        footer: () => TOTAL_LABEL,
+        size: 130,
+        meta: { skeleton: SKELETON_CELL },
+      },
+      {
+        id: 'supplier_name',
+        header: 'Supplier',
+        cell: ({ row }) => (
+          <span className="block truncate" title={row.original.supplier_name ?? undefined}>
+            {textCell(row.original.supplier_name)}
+          </span>
+        ),
+        size: 170,
+      },
+      {
+        id: 'po_date',
+        header: 'Doc date',
+        cell: ({ row }) => fmtDate(row.original.po_date),
+        size: 100,
+        meta: RIGHT,
+      },
+      {
+        id: 'expected_date',
+        header: 'Due',
+        cell: ({ row }) => fmtDate(row.original.expected_date),
+        size: 100,
+        meta: RIGHT,
+      },
+      {
+        id: 'open_qty',
+        header: 'Open',
+        cell: ({ row }) => fmtInt(row.original.open_qty),
+        size: 90,
+        meta: RIGHT,
+      },
+      {
+        id: 'qty',
+        header: 'Taken',
+        cell: ({ row }) => fmtInt(row.original.qty),
+        footer: () => fmtInt(coveredQty),
+        size: 90,
+        meta: RIGHT,
+      },
+    ],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [tickedIds, coveredQty],
+  );
+
   return (
     <div className="space-y-2">
-      <DocTable>
-        <thead>
-          <tr className="border-b">
-            <Th> </Th>
-            <Th>PO</Th>
-            <Th>Supplier</Th>
-            <Th right>Doc date</Th>
-            <Th right>Due</Th>
-            <Th right>Open</Th>
-            <Th right>Taken</Th>
-          </tr>
-        </thead>
-        <tbody>
-          {takes.length === 0 ? (
-            <EmptyRow colSpan={7}>No open PO can back this line.</EmptyRow>
-          ) : (
-            takes.map((t) => (
-              <tr key={t.po_line_id} className="border-b last:border-0">
-                <Td className="w-8">
-                  <Checkbox
-                    checked={tickedIds.includes(t.po_line_id)}
-                    onCheckedChange={(checked) => toggle(t.po_line_id, !!checked)}
-                    aria-label={`Draw from ${t.po_number ?? t.po_line_id}`}
-                  />
-                </Td>
-                <Td>{textCell(t.po_number)}</Td>
-                <Td title={t.supplier_name ?? undefined}>
-                  <span className="block max-w-56 truncate">{textCell(t.supplier_name)}</span>
-                </Td>
-                <Td right>{fmtDate(t.po_date)}</Td>
-                <Td right>{fmtDate(t.expected_date)}</Td>
-                <Td right>{fmtInt(t.open_qty)}</Td>
-                <Td right>{fmtInt(t.qty)}</Td>
-              </tr>
-            ))
-          )}
-        </tbody>
-      </DocTable>
+      <DrillTable
+        columns={columns}
+        rows={takes}
+        getRowId={(t) => t.po_line_id}
+        emptyMessage="No open PO can back this line."
+      />
       <p className="border-t pt-2 text-2xs text-muted-foreground">
         {`${fmtInt(tickedIds.length)} of ${fmtInt(takes.length)} POs · covers ${fmtInt(coveredQty)} of packed ${fmtInt(packedQty)}`}
       </p>
@@ -859,50 +1162,101 @@ export function SoCoveragePicker({
 }) {
   const toggle = (key: string, on: boolean) =>
     onChange(on ? [...tickedKeys, key] : tickedKeys.filter((x) => x !== key));
-  const cols = takes ? 8 : 7;
+
+  const totalQty = useMemo(() => coverage.reduce((s, c) => s + c.qty, 0), [coverage]);
+  const totalTaken = useMemo(
+    () => (takes ? coverage.reduce((s, c) => s + (takes[c.key] ?? 0), 0) : null),
+    [coverage, takes],
+  );
+
+  const columns = useMemo<ColumnDef<SoCoverageRow>[]>(
+    () => [
+      {
+        id: 'select',
+        header: '',
+        cell: ({ row }) => {
+          const c = row.original;
+          return (
+            <Checkbox
+              checked={tickedKeys.includes(c.key)}
+              onCheckedChange={(checked) => toggle(c.key, !!checked)}
+              aria-label={`Cover ${c.document ?? c.key}`}
+            />
+          );
+        },
+        size: 40,
+        enableResizing: false,
+      },
+      {
+        id: 'document',
+        header: 'Sales order',
+        cell: ({ row }) => textCell(row.original.document),
+        footer: () => TOTAL_LABEL,
+        size: 130,
+        meta: { skeleton: SKELETON_CELL },
+      },
+      {
+        id: 'customer_name',
+        header: 'Customer',
+        cell: ({ row }) => (
+          <span className="block truncate" title={row.original.customer_name ?? undefined}>
+            {textCell(row.original.customer_name)}
+          </span>
+        ),
+        size: 170,
+      },
+      {
+        id: 'kind',
+        header: 'Class',
+        cell: ({ row }) => (row.original.kind === 'project' ? 'Project' : 'Retail'),
+        size: 90,
+      },
+      {
+        id: 'required_date',
+        header: 'Required',
+        cell: ({ row }) => fmtDate(row.original.required_date),
+        size: 100,
+        meta: RIGHT,
+      },
+      {
+        id: 'qty',
+        header: 'Open',
+        cell: ({ row }) => fmtInt(row.original.qty),
+        footer: () => fmtInt(totalQty),
+        size: 90,
+        meta: RIGHT,
+      },
+      ...(takes
+        ? [
+            {
+              id: 'take',
+              header: 'Take',
+              cell: ({ row }) => fmtInt(takes[row.original.key] ?? 0),
+              footer: () => fmtInt(totalTaken ?? 0),
+              size: 90,
+              meta: RIGHT,
+            } as ColumnDef<SoCoverageRow>,
+          ]
+        : []),
+      {
+        id: 'warehouse_code',
+        header: 'Location',
+        cell: ({ row }) => textCell(row.original.warehouse_code),
+        size: 110,
+      },
+    ],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [tickedKeys, takes, totalQty, totalTaken],
+  );
 
   return (
     <div className="space-y-2">
-      <DocTable>
-        <thead>
-          <tr className="border-b">
-            <Th> </Th>
-            <Th>Sales order</Th>
-            <Th>Customer</Th>
-            <Th>Class</Th>
-            <Th right>Required</Th>
-            <Th right>Open</Th>
-            {takes ? <Th right>Take</Th> : null}
-            <Th>Location</Th>
-          </tr>
-        </thead>
-        <tbody>
-          {coverage.length === 0 ? (
-            <EmptyRow colSpan={cols}>No open demand this SPO could cover.</EmptyRow>
-          ) : (
-            coverage.map((c) => (
-              <tr key={c.key} className="border-b last:border-0">
-                <Td className="w-8">
-                  <Checkbox
-                    checked={tickedKeys.includes(c.key)}
-                    onCheckedChange={(checked) => toggle(c.key, !!checked)}
-                    aria-label={`Cover ${c.document ?? c.key}`}
-                  />
-                </Td>
-                <Td>{textCell(c.document)}</Td>
-                <Td title={c.customer_name ?? undefined}>
-                  <span className="block max-w-56 truncate">{textCell(c.customer_name)}</span>
-                </Td>
-                <Td>{c.kind === 'project' ? 'Project' : 'Retail'}</Td>
-                <Td right>{fmtDate(c.required_date)}</Td>
-                <Td right>{fmtInt(c.qty)}</Td>
-                {takes ? <Td right>{fmtInt(takes[c.key] ?? 0)}</Td> : null}
-                <Td>{textCell(c.warehouse_code)}</Td>
-              </tr>
-            ))
-          )}
-        </tbody>
-      </DocTable>
+      <DrillTable
+        columns={columns}
+        rows={coverage}
+        getRowId={(c) => c.key}
+        emptyMessage="No open demand this SPO could cover."
+      />
       <p className="border-t pt-2 text-2xs text-muted-foreground">
         {`Unassigned ${fmtInt(unassigned)}`}
       </p>

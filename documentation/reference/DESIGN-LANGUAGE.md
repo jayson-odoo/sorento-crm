@@ -89,7 +89,7 @@ arrives - see the file's own "Materials" comment for the precedent.
 | `DetailActions` + `ListPager` | `components/common/DetailActions.tsx`, `components/common/ListPager.tsx` | Record card: pager, gear LEFT of the single primary button, Delete last in the gear |
 | `DataGrid` / `DataGridTable` | `components/ui/data-grid.tsx`, `components/ui/data-grid-table.tsx` | EVERY tabular list; `tableLayout: { width: 'fixed', columnsResizable: true }`, explicit `size`, `truncate` + `title`; a deliberately pinned column keeps its pinned styles on a phone, nothing pins automatically |
 | `Badge` pill | `components/ui/badge.tsx` | Status = rounded tinted pill with a dot (`status` prop, resolves via `getStatusBadgeVariant`) |
-| `Tabs` with `TabsList variant="line"` | `components/ui/tabs.tsx` | Form/detail tabs (the default); pills (`variant="default"`) only for a two/three-option segmented switch inside a dialog |
+| `Tabs` with `TabsList variant="line"` | `components/ui/tabs.tsx` | The default everywhere, dialogs/lightboxes included (S9, PLAN-scm-loading-plan-feedback-2sep.md section 3.9); pills (`variant="default"`) are reserved for a view TOGGLE that is not navigation - a Table/Schedule switch, never a set of tabbed panels |
 | `Dialog` / `Sheet` / `AlertDialog` | `components/ui/dialog.tsx`, `components/ui/sheet.tsx`, `components/ui/alert-dialog.tsx` | Lightbox surfaces, `modal ?? true`, shared `OVERLAY_CLASS` / `OVERLAY_CLASS_STATIC` from `components/ui/primitive-classes.ts` |
 | `SearchableSelect` / `SearchableMultiSelect` | `components/common/SearchableSelect.tsx`, `components/common/SearchableMultiSelect.tsx` | Every dropdown-select; optional ones set `clearable` |
 | `ListSearchInput` | `components/common/ListSearchInput.tsx` | Every list search box |

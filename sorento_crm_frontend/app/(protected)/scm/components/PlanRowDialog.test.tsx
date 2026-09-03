@@ -4,10 +4,23 @@
  * The data hooks are mocked, never a QueryClient: these are the dialog's STATES (loading,
  * empty, rows, totals, tab switch, tick), and a real query would make the tests about
  * react-query's timing instead.
+ *
+ * S9 (3 Sep): every body now renders on the repo's `DataGrid`, which calls
+ * `useListingColumnPreferences` (a `useQuery`/`useQueryClient` pair) even with
+ * `listingKey={null}` - `renderWithClient` supplies the `QueryClientProvider` that needs.
+ * `next/navigation`'s `usePathname` (the grid's own pathname fallback, never actually read
+ * here since every call passes `listingKey={null}`) is stubbed for a stable value rather than
+ * left to jsdom's default of returning `null` outside an app router.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+
+function renderWithClient(ui: React.ReactElement) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+}
 
 class ResizeObserverStub {
   observe() {}
@@ -28,6 +41,10 @@ if (!window.matchMedia) {
     removeListener() {},
   });
 }
+
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/scm/loading-plan',
+}));
 
 const useContainerRequestDrill = vi.fn();
 vi.mock('../hooks/useContainerRequestDrill', () => ({
@@ -87,7 +104,7 @@ beforeEach(() => {
 
 describe('PlanRowDialog', () => {
   it('titles itself "<Kind> · <product code>" with the product name as the description', () => {
-    render(
+    renderWithClient(
       <PlanRowDialog
         kind="spo"
         productCode="SRTWB241"
@@ -108,7 +125,7 @@ describe('PlanRowDialog', () => {
 
   it('closes on Escape', () => {
     const onOpenChange = vi.fn();
-    render(
+    renderWithClient(
       <PlanRowDialog kind="po" productCode="SRTWB241" onOpenChange={onOpenChange}>
         <p>body</p>
       </PlanRowDialog>,
@@ -120,7 +137,7 @@ describe('PlanRowDialog', () => {
   });
 
   it('renders nothing when it is not open', () => {
-    render(
+    renderWithClient(
       <PlanRowDialog kind="po" productCode="SRTWB241" open={false} onOpenChange={() => {}}>
         <p>body</p>
       </PlanRowDialog>,
@@ -134,7 +151,7 @@ describe('PlanNumberButton', () => {
   it('is the number itself, and opens the dialog without clicking the row through it', () => {
     const onClick = vi.fn();
     const onRowClick = vi.fn();
-    render(
+    renderWithClient(
       <div onClick={onRowClick}>
         <PlanNumberButton value="117" label="SPO for SRTWB241" onClick={onClick} />
       </div>,
@@ -147,7 +164,7 @@ describe('PlanNumberButton', () => {
   });
 
   it('is plain text on a row with nothing to open', () => {
-    render(<PlanNumberButton value="117" label="SPO" onClick={() => {}} disabled />);
+    renderWithClient(<PlanNumberButton value="117" label="SPO" onClick={() => {}} disabled />);
 
     expect(screen.queryByRole('button')).toBeNull();
     expect(screen.getByText('117')).toBeTruthy();
@@ -187,7 +204,7 @@ const HISTORY: PlanHistoryPoint[] = [
 
 describe('ProjectRetailTabs', () => {
   it('lists the open lines and foots them to the figure the cell shows', () => {
-    render(<ProjectRetailTabs channel="project" lines={LINES} history={HISTORY} />);
+    renderWithClient(<ProjectRetailTabs channel="project" lines={LINES} history={HISTORY} />);
 
     expect(screen.getByRole('tab', { name: 'Open project SO lines (2)' })).toBeTruthy();
     expect(screen.getByText('SO404118')).toBeTruthy();
@@ -197,13 +214,13 @@ describe('ProjectRetailTabs', () => {
   });
 
   it('says so when the channel has nothing open', () => {
-    render(<ProjectRetailTabs channel="retail" lines={[]} history={[]} />);
+    renderWithClient(<ProjectRetailTabs channel="retail" lines={[]} history={[]} />);
 
     expect(screen.getByText('Nothing open on this channel for this product.')).toBeTruthy();
   });
 
   it('shows skeletons while the payload is still coming', () => {
-    const { container } = render(
+    const { container } = renderWithClient(
       <ProjectRetailTabs channel="retail" lines={[]} history={[]} loading />,
     );
 
@@ -211,7 +228,7 @@ describe('ProjectRetailTabs', () => {
   });
 
   it('switches to the 12-month history and names both peaks', () => {
-    render(<ProjectRetailTabs channel="project" lines={LINES} history={HISTORY} />);
+    renderWithClient(<ProjectRetailTabs channel="project" lines={LINES} history={HISTORY} />);
 
     switchTab('12-month history');
 
@@ -219,8 +236,19 @@ describe('ProjectRetailTabs', () => {
     expect(screen.getByText('Retail peak 701 Jul 26')).toBeTruthy();
   });
 
+  it('foots the 12-month history to BOTH series, under the peaks line (AC-J3)', () => {
+    renderWithClient(<ProjectRetailTabs channel="project" lines={LINES} history={HISTORY} />);
+
+    switchTab('12-month history');
+
+    // 300 + 1,504 + 400 project; 120 + 200 + 701 retail.
+    const footer = screen.getByText('Total').closest('tr') as HTMLElement;
+    expect(within(footer).getByText('2,204')).toBeTruthy();
+    expect(within(footer).getByText('1,021')).toBeTruthy();
+  });
+
   it('opens on the history tab when a peak cell was the trigger (AC-B6)', () => {
-    render(
+    renderWithClient(
       <ProjectRetailTabs
         channel="retail"
         lines={LINES}
@@ -280,7 +308,7 @@ describe('OnHandTable', () => {
       isLoading: false,
     });
 
-    render(<OnHandTable productId="p1" />);
+    renderWithClient(<OnHandTable productId="p1" />);
 
     expect(screen.getByText('BRW')).toBeTruthy();
     expect(screen.queryByText('BRW-BB')).toBeNull();
@@ -311,7 +339,7 @@ describe('OnHandTable', () => {
       isLoading: false,
     });
 
-    render(<OnHandTable productId="p1" />);
+    renderWithClient(<OnHandTable productId="p1" />);
     expect(screen.queryByTestId('stock-documents')).toBeNull();
 
     fireEvent.click(screen.getByText('BRW'));
@@ -325,7 +353,7 @@ describe('OnHandTable', () => {
       isLoading: false,
     });
 
-    render(<OnHandTable productId="p1" />);
+    renderWithClient(<OnHandTable productId="p1" />);
 
     expect(screen.getByText('No stock rows for this product.')).toBeTruthy();
   });
@@ -362,7 +390,7 @@ describe('SpoTabs', () => {
   ];
 
   it('asks the drill for this supplier, product and kind', () => {
-    render(<SpoTabs supplierId="sup1" productId="p1" />);
+    renderWithClient(<SpoTabs supplierId="sup1" productId="p1" />);
 
     expect(useContainerRequestDrill).toHaveBeenCalledWith('sup1', 'p1', 'spo');
   });
@@ -370,7 +398,7 @@ describe('SpoTabs', () => {
   it('lists what is on the water and foots it to the cell', () => {
     useContainerRequestDrill.mockReturnValue(drill({ data: { rows, total: 117, history: [] } }));
 
-    render(<SpoTabs supplierId="sup1" productId="p1" />);
+    renderWithClient(<SpoTabs supplierId="sup1" productId="p1" />);
 
     expect(screen.getByRole('tab', { name: 'Open to pools (2)' })).toBeTruthy();
     expect(screen.getByText('CRM-SPO-e372b1e9')).toBeTruthy();
@@ -381,7 +409,7 @@ describe('SpoTabs', () => {
   });
 
   it('says the SPO sentence when nothing is on its way to a pool', () => {
-    render(<SpoTabs supplierId="sup1" productId="p1" />);
+    renderWithClient(<SpoTabs supplierId="sup1" productId="p1" />);
 
     expect(screen.getByText(NO_SPO_TO_POOL)).toBeTruthy();
   });
@@ -397,17 +425,22 @@ describe('SpoTabs', () => {
       }),
     );
 
-    render(<SpoTabs supplierId="sup1" productId="p1" />);
+    renderWithClient(<SpoTabs supplierId="sup1" productId="p1" />);
     switchTab('History (1)');
 
     const row = screen.getByText('CRM-SPO-e372b1e9').closest('tr') as HTMLElement;
     expect(within(row).getAllByText('40').length).toBe(2); // qty and received
+
+    // AC-J3: the history tab foots its own qty too, not only the open one - there is no
+    // cell total for a landed shipment, so it sums its own rows.
+    const footer = screen.getByText('Total').closest('tr') as HTMLElement;
+    expect(within(footer).getByText('40')).toBeTruthy();
   });
 
   it('shows skeletons while the drill is loading', () => {
     useContainerRequestDrill.mockReturnValue(drill({ data: undefined, isLoading: true }));
 
-    const { container } = render(<SpoTabs supplierId="sup1" productId="p1" />);
+    const { container } = renderWithClient(<SpoTabs supplierId="sup1" productId="p1" />);
 
     expect(container.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0);
   });
@@ -438,7 +471,7 @@ describe('IncomingPlTable', () => {
   it('lists the unreceived packing lists and foots them to the cell', () => {
     useContainerRequestDrill.mockReturnValue(drill({ data: { rows, total: 599, history: [] } }));
 
-    render(<IncomingPlTable supplierId="sup1" productId="p1" />);
+    renderWithClient(<IncomingPlTable supplierId="sup1" productId="p1" />);
 
     expect(useContainerRequestDrill).toHaveBeenCalledWith('sup1', 'p1', 'incoming_pl');
     expect(screen.getByText('PL-2608-001')).toBeTruthy();
@@ -449,7 +482,7 @@ describe('IncomingPlTable', () => {
     const onOpenShipment = vi.fn();
     useContainerRequestDrill.mockReturnValue(drill({ data: { rows, total: 599, history: [] } }));
 
-    render(
+    renderWithClient(
       <IncomingPlTable supplierId="sup1" productId="p1" onOpenShipment={onOpenShipment} />,
     );
     fireEvent.click(screen.getByRole('button', { name: 'FSCU8103365' }));
@@ -458,7 +491,7 @@ describe('IncomingPlTable', () => {
   });
 
   it('says so when nothing is on its way', () => {
-    render(<IncomingPlTable supplierId="sup1" productId="p1" />);
+    renderWithClient(<IncomingPlTable supplierId="sup1" productId="p1" />);
 
     expect(
       screen.getByText('Nothing is on its way on a packing list for this product.'),
@@ -485,7 +518,7 @@ describe('PoTabs', () => {
   it('lists the open lines, prices them in the PO currency and foots still-to-come', () => {
     useContainerRequestDrill.mockReturnValue(drill({ data: { rows: open, total: 143, history: [] } }));
 
-    render(<PoTabs supplierId="sup1" productId="p1" />);
+    renderWithClient(<PoTabs supplierId="sup1" productId="p1" />);
 
     expect(useContainerRequestDrill).toHaveBeenCalledWith('sup1', 'p1', 'po');
     expect(screen.getByText('PO-24118')).toBeTruthy();
@@ -505,14 +538,18 @@ describe('PoTabs', () => {
       }),
     );
 
-    render(<PoTabs supplierId="sup1" productId="p1" />);
+    renderWithClient(<PoTabs supplierId="sup1" productId="p1" />);
     switchTab('History (1)');
 
     expect(screen.getByText('PO-24090')).toBeTruthy();
+
+    // AC-J3: the history tab foots its own still-to-come too (here, a closed PO: 0).
+    const footer = screen.getByText('Total still to come').closest('tr') as HTMLElement;
+    expect(within(footer).getByText('0')).toBeTruthy();
   });
 
   it('says so when nothing is on order', () => {
-    render(<PoTabs supplierId="sup1" productId="p1" />);
+    renderWithClient(<PoTabs supplierId="sup1" productId="p1" />);
 
     expect(screen.getByText('Nothing is on order for this product.')).toBeTruthy();
   });
@@ -545,7 +582,7 @@ describe('PoTakesPicker', () => {
   ];
 
   it('pre-ticks the suggested takes and counts them in the footer', () => {
-    render(
+    renderWithClient(
       <PoTakesPicker
         takes={takes}
         tickedIds={['l1']}
@@ -558,11 +595,15 @@ describe('PoTakesPicker', () => {
     expect(screen.getByLabelText('Draw from PO-24118')).toBeChecked();
     expect(screen.getByLabelText('Draw from PO-24090')).not.toBeChecked();
     expect(screen.getByText('1 of 2 POs · covers 40 of packed 60')).toBeTruthy();
+
+    // AC-J3: the table itself also foots the Taken column, beside the existing sentence.
+    const footer = screen.getByText('Total').closest('tr') as HTMLElement;
+    expect(within(footer).getByText('40')).toBeTruthy();
   });
 
   it('hands the whole tick set back when one is turned on', () => {
     const onChange = vi.fn();
-    render(
+    renderWithClient(
       <PoTakesPicker
         takes={takes}
         tickedIds={['l1']}
@@ -579,7 +620,7 @@ describe('PoTakesPicker', () => {
 
   it('hands back the remainder when one is turned off', () => {
     const onChange = vi.fn();
-    render(
+    renderWithClient(
       <PoTakesPicker
         takes={takes}
         tickedIds={['l1', 'l2']}
@@ -595,7 +636,7 @@ describe('PoTakesPicker', () => {
   });
 
   it('says so when no open PO can back the line', () => {
-    render(
+    renderWithClient(
       <PoTakesPicker takes={[]} tickedIds={[]} onChange={() => {}} coveredQty={0} packedQty={60} />,
     );
 
@@ -626,7 +667,7 @@ describe('SoCoveragePicker', () => {
   ];
 
   it('lists project first then retail, pre-ticked, with the unassigned remainder stated', () => {
-    render(
+    renderWithClient(
       <SoCoveragePicker
         coverage={coverage}
         tickedKeys={['project:1']}
@@ -640,11 +681,15 @@ describe('SoCoveragePicker', () => {
     expect(rows[2].textContent).toContain('SO404352');
     expect(screen.getByLabelText('Cover OI-0042')).toBeChecked();
     expect(screen.getByText('Unassigned 20')).toBeTruthy();
+
+    // AC-J3: the Open column foots too (40 + 20), beside the existing Unassigned line.
+    const footer = screen.getByText('Total').closest('tr') as HTMLElement;
+    expect(within(footer).getByText('60')).toBeTruthy();
   });
 
   it('hands the whole tick set back on a change', () => {
     const onChange = vi.fn();
-    render(
+    renderWithClient(
       <SoCoveragePicker
         coverage={coverage}
         tickedKeys={['project:1']}
@@ -659,7 +704,7 @@ describe('SoCoveragePicker', () => {
   });
 
   it('says so when there is no open demand to point at', () => {
-    render(
+    renderWithClient(
       <SoCoveragePicker coverage={[]} tickedKeys={[]} onChange={() => {}} unassigned={0} />,
     );
 

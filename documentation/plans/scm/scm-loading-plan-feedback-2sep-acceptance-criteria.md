@@ -222,3 +222,28 @@ the match.
   newer upload), which are rewritten to AC-F6 and the p4 UAC line is marked superseded.
 - **AC-I3** `[FE]` The formats doc is published to the Outline user guide (captain: yes,
   2 Sep) with the same content as the repo file.
+
+## J. The row lightbox matches the SPO document detail's design (S9, captain's markup 3 Sep)
+
+- **AC-J1** `[FE]` Every dialog opened off a loading-plan or reorder-planning figure
+  (`scm/components/PlanRowDialog.tsx`, `scm/reorder/components/PlanRowDialogs.tsx`) uses
+  `TabsList variant="line"` for its tab strip, the same trigger styling
+  `SPODocumentDetail.tsx` uses - never `variant="default"` pills. Counts stay in the trigger
+  labels (`Open to pools (2)`, `History (0)`, etc).
+- **AC-J2** `[FE]` Every table inside those dialogs is a `DataGrid`/`DataGridTable`, not a
+  plain `<table>`: `tableLayout: { width: 'fixed', columnsResizable: true }`,
+  `columnResizeMode: 'onChange'`, an explicit `size` per column, `truncate` + `title` on long
+  text, right-aligned tabular numbers on every quantity/money/date column. No pagination (the
+  caller already holds every row) and no `listingKey` persistence (a dialog's columns are not
+  a personal preference - every grid passes `listingKey={null}`). The grid's own horizontal
+  scroll stays inside the dialog body; the dialog itself never grows past `max-h-[85vh]`.
+- **AC-J3** `[FE]` Every tab that lists a quantity ends with a footer TOTAL row (the `DataGrid`
+  column `footer`, styled like the family's existing `TotalRow`), open and history tabs alike.
+  The 12-month history tab (`ProjectRetailTabs`) foots BOTH series - the sum of the twelve
+  months for Project and for Retail - under the peak-month line, which stays. `PoTakesPicker`
+  keeps its "n of m POs · covers X of packed Y" sentence AND gains a footer total on the Taken
+  column. `SoCoveragePicker` keeps its "Unassigned N" sentence AND gains a footer total on the
+  Open column.
+- **AC-J4** `[FE]` Usable and non-clipped at 375px and 1280px: the dialog's `sm:max-w-[95vw]`
+  and `max-h-[85vh]` are unchanged: a wide grid scrolls sideways inside the dialog body, the
+  page itself never scrolls sideways.

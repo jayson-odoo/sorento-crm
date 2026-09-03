@@ -221,6 +221,15 @@ alias table per column (seeded by migrations 311 and 375, `import_field_alias`),
 blocks, labelled block fields, date formats, totals rows, skip rules and how they are reported,
 matching ladder rungs, currency rule, "supplier comes from the dialog". Offered for Outline.
 
+### 3.9 The row lightbox matches the SPO document detail's design (S9)
+
+Captain's markup, 3 Sep: `scm/components/PlanRowDialog.tsx` and
+`scm/reorder/components/PlanRowDialogs.tsx` line tabs (`TabsList variant="line"`) and
+`DataGrid` tables, matching `SPODocumentDetail.tsx`; every tab that lists a quantity gets a
+footer TOTAL row, the 12-month history tab included. See UAC section J (AC-J1-AC-J4) for the
+full contract; `DESIGN-LANGUAGE.md`'s `Tabs` row is amended to make line tabs the default
+everywhere, dialogs included.
+
 ## 4. What is reused, and what is deliberately not built
 
 - Reused: `RowActionsMenu`, `DetailActions`, `recordActions`, `useDeferredAction`,
@@ -242,8 +251,9 @@ matching ladder rungs, currency rule, "supplier comes from the dialog". Offered 
 | S7 | Statement label, letterhead warning, verdict counts | verdict card | label rules, reader letterhead, pytest | - |
 | S4 | Match reaches master data | Suppliers tab "Their code" | link upsert, universe union, response field, pytest | - |
 | S8 | Formats doc | - | doc | - |
+| S9 | Row lightbox matches SPO document detail (line tabs, `DataGrid`, footer totals) | `PlanRowDialog.tsx`, `PlanRowDialogs.tsx`, `DESIGN-LANGUAGE.md` | - | - |
 
-Order of execution in ONE lane, one coder at a time: S1, S2, S3, S5, S6, S7, S4, S8.
+Order of execution in ONE lane, one coder at a time: S1, S2, S3, S5, S6, S7, S4, S8, S9.
 Review (`/code-review`, then `emil-design-eng` Before/After/Why on S1-S3, S5) after S5 and
 again at the end. One PR, or two (UI batch S1/S2/S3/S5, data batch S6/S7/S4/S8) if the diff
 passes 2,500 lines.
