@@ -203,7 +203,7 @@ export function SpoScheduleMatrixTable<T>({
         </span>
         <span className="flex items-center gap-1.5">
           <span className="size-3 rounded-sm border border-border bg-muted" aria-hidden />
-          Another SPO
+          Taken elsewhere
         </span>
       </div>
     </div>

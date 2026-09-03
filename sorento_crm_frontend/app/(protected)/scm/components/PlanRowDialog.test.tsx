@@ -1042,6 +1042,16 @@ describe('PoTakesPicker', () => {
 
     expect(onChange).not.toHaveBeenCalled();
   });
+
+  it('the footer counts only tickable POs, not a taken row (F5, review round)', () => {
+    renderWithClient(
+      <PoTakesPicker takes={takenTakes} tickedIds={['l1']} onChange={() => {}} coveredQty={40} packedQty={60} />,
+    );
+
+    // 3 rows total (l1, l2, taken l4) but only 2 are tickable - the taken row must not
+    // count in the denominator.
+    expect(screen.getByText('1 of 2 POs · covers 40 of packed 60')).toBeTruthy();
+  });
 });
 
 describe('SoCoveragePicker', () => {

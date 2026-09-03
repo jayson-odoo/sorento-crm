@@ -31,8 +31,10 @@ agent-browser evidence on :3160 via the sidebar.
 ## C. Pickers (S3)
 
 - **AC-C1** `[FE]` SO covered picker headers: Sales order, Customer, Class, Delivery date,
-  Outstanding, Take, Location. PO covers picker headers: PO, Supplier, Doc date, Delivery
-  date, Outstanding, Taken.
+  Outstanding, Taken, Take, Location. PO covers picker headers: PO, Supplier, Doc date,
+  Delivery date, Outstanding, Taken, This SPO. (Review round: S5 added the `Taken` column to
+  both pickers, and renamed the PO picker's own take column to `This SPO`; stated here as the
+  columns actually render, in order.)
 - **AC-C2** `[FE]` Both pickers render as a DataGrid with a sticky header and resizable
   columns.
 - **AC-C3** `[FE]` Typing in the search and pressing Enter narrows the rows to those whose
@@ -54,8 +56,9 @@ agent-browser evidence on :3160 via the sidebar.
 - **AC-D3** `[FE]` In the opened picker, rows whose date falls in the clicked week carry
   `data-bucket-hit` and the row tint.
 - **AC-D5** `[FE]` In schedule view a legend renders under the matrix with a blue swatch
-  labelled "This SPO" and a grey swatch labelled "Another SPO"; it does not render in table
-  view.
+  labelled "This SPO" and a grey swatch labelled "Taken elsewhere"; it does not render in
+  table view. (Review round: F3 widened the grey state to cover a plain PO placement, not
+  only another SPO, so "Another SPO" stopped being true.)
 - **AC-D4** `[E2E]` Click a schedule cell on :3160; the dialog opens; ticking a row in it
   changes the cell figure behind it once closed.
 
@@ -67,7 +70,7 @@ agent-browser evidence on :3160 via the sidebar.
 - **AC-E2** `[BE]` A retail line half covered returns `qty` = the rest and `taken_qty` =
   the covered half.
 - **AC-E3** `[BE]` A project row linked to an SPO allocation elsewhere carries `taken_by`
-  naming that SPO.
+  naming that SPO, or the PO number when the row was placed on a purchase order.
 - **AC-E4** `[BE]` A PO line fully pulled by SPO-1 is returned in `po_takes` for a second
   shipment's planner with `qty: 0`, `open_qty: 0`, `taken_qty` = the pull, `taken_by` =
   [SPO-1's number]; `suggested_qty` for that line does not count it.

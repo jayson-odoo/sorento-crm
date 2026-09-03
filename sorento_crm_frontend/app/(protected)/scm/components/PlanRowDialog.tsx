@@ -1320,6 +1320,10 @@ export function PoTakesPicker({
 
   const activeCount = appliedConditions.filter((c) => c.value).length;
   const isFiltered = Boolean(appliedSearch.trim()) || activeCount > 0;
+  // F5 (review round): the footer's denominator is how many POs can actually be TICKED,
+  // not every row the grid draws - a taken row is greyed and its checkbox is disabled, so
+  // counting it made "N of M POs" read as though M included POs nobody could ever tick.
+  const tickableCount = useMemo(() => takes.filter((t) => !isTaken(t)).length, [takes]);
 
   const columns = useMemo<ColumnDef<PoTakeRow>[]>(
     () => [
@@ -1479,7 +1483,7 @@ export function PoTakesPicker({
         <DataGridTable />
       </DataGrid>
       <p className="border-t pt-2 text-2xs text-muted-foreground">
-        {`${fmtInt(tickedIds.length)} of ${fmtInt(takes.length)} POs · covers ${fmtInt(coveredQty)} of packed ${fmtInt(packedQty)}`}
+        {`${fmtInt(tickedIds.length)} of ${fmtInt(tickableCount)} POs · covers ${fmtInt(coveredQty)} of packed ${fmtInt(packedQty)}`}
         {isFiltered ? ` · ${fmtInt(rows.length)} of ${fmtInt(takes.length)} shown` : ''}
       </p>
     </div>

@@ -13,6 +13,19 @@ slice edits the same two files. PR opens against main only after the lightbox PR
 `spoScheduleMatrix.ts`, `SpoScheduleMatrixTable.tsx`) and the shared
 `scm/components/PlanRowDialog.tsx` pickers.
 
+**Review round (Opus review of S5 BE / S7, 3 Sep 2026, fix round):** F1 (blocker) - a pin to
+an exhausted PO line no longer fell back to the product match. F2 - a taken-only `po_takes`
+row was appended for any candidate with `taken_qty > 0` regardless of its own open balance,
+greying out lines with real balance left. F3 - `_project_coverage`'s `taken_by` only ever
+named an SPO, though `taken_qty` already summed every link including a plain PO placement.
+F4 - dead `_retail_covered_qty` deleted. F6 - `coverage_for_so_lines`'s `qty` used `_g`
+(drifts to scientific notation, disagrees with the order-inquiry link's own formatter) rather
+than a fixed-point read. F7 - `_spo_pulls_by_po_line` re-scanned the whole `crm_spo` book once
+per shipment line rather than once per `suggest` call. F9 (pre-existing) - `unwind` bulk-deleted
+`spo_allocations` an `OrderInquiryLink` pointed at, violating `ck_order_inquiry_links_one_target`.
+F5 (FE) - the PO picker footer counted untickable taken rows in its denominator. F3-FE (FE) -
+the schedule legend's grey label widened from "Another SPO" to "Taken elsewhere" to match F3.
+
 ## 1. What the captain saw (prod, draft shipment, JINBAICHUAN)
 
 | Screenshot | Symptom | Cause (source on the lightbox lane tip) |
@@ -120,9 +133,10 @@ netting or the cascade.
   the picker's search / filter is untouched by it.
 - Keyboard: the cell is still a `button`; Enter / Space open the dialog.
 - **Legend** (captain's Lavish note 3 Sep): a one-line legend under the matrix, two swatches
-  with their words - blue "This SPO", grey "Another SPO" - rendered only in schedule view.
+  with their words - blue "This SPO", grey "Taken elsewhere" - rendered only in schedule view.
   A colour with no key is an explanation the reader has to guess, which is worse than a
-  sentence; two swatches are the sentence.
+  sentence; two swatches are the sentence. (Review round: worded "Another SPO" at S4 time,
+  before F3 widened the grey state to cover a plain PO placement too.)
 
 ### S5. Occupied by another SPO: shown grey, never tickable (BE + FE)
 
@@ -136,9 +150,11 @@ ticks, `qty` semantics and `create` are untouched.
   number. A row FULLY taken is now **returned** with `qty: 0`, `default_ticked: false`, its
   `taken_qty` / `taken_by` filled, in its normal date position. Today it is dropped.
 - `po_takes[]` entries gain `taken_qty` and `taken_by` the same way, read from the SPO
-  lines whose `source_ref.pulls` name the PO line (the same read
-  `PurchaseOrderService._allocations_for` does for the PO panel, reused not copied: extract
-  the "pulls by source PO line" query into one helper both call). A PO line to this supplier
+  lines whose `source_ref.pulls` name the PO line (the same FACT
+  `PurchaseOrderService._allocations_for` reads for the PO panel, but as its own query -
+  `_spo_pulls_by_po_line` - copied with the reason in its docstring: that read also fetches
+  the LANDING, packing list, warehouses, arrival date, this one does not, so folding it in
+  was not a clean drop-in). A PO line to this supplier
   and product with `open == 0` whose only reason is prior pulls is **returned** with
   `qty: 0`, `open_qty: 0`, `taken_qty > 0`. A line with nothing open and nothing pulled
   (genuinely received) is still not offered.

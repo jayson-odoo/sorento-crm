@@ -1322,7 +1322,7 @@ describe('S4 - schedule cells (AC-D1-AC-D5)', () => {
     await screen.findByTestId('spo-schedule-legend');
     const legend = screen.getByTestId('spo-schedule-legend');
     expect(legend.textContent).toContain('This SPO');
-    expect(legend.textContent).toContain('Another SPO');
+    expect(legend.textContent).toContain('Taken elsewhere');
   });
 
   it('clicking a cell in the Purchase order view opens "PO covers · <code>" (AC-D2)', async () => {

@@ -207,6 +207,6 @@ describe('SpoScheduleMatrixTable - legend (AC-D5)', () => {
 
     const legend = screen.getByTestId('spo-schedule-legend');
     expect(legend.textContent).toContain('This SPO');
-    expect(legend.textContent).toContain('Another SPO');
+    expect(legend.textContent).toContain('Taken elsewhere');
   });
 });
