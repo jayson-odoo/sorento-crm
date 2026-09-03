@@ -46,6 +46,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { getProducts } from '@/app/(protected)/master-data-management/products/services/productService';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { useUrlTab } from '@/hooks/useUrlTab';
 import { useContainerSizes } from '../../../hooks/useFulfilment';
 import {
   useConvertProformaInvoicesToDraftShipment,
@@ -80,6 +81,9 @@ const LINES_LISTING_KEY = 'scm.dashboard.view::proforma-invoice-lines';
 
 /** How many products a page of the picker asks for. */
 const PRODUCT_PAGE_SIZE = 50;
+
+/** The record's four tabs (S1): General (default), Lines, Revisions, Packing lists. */
+const PI_TABS = ['general', 'lines', 'revisions', 'packing-lists'] as const;
 
 function Field({
   label,
@@ -214,7 +218,14 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
     invalidateKeys: [['scm', 'proforma-invoices', 'detail', id]],
   });
 
-  const [tab, setTab] = useState('general');
+  // The tab lives in the URL, not component state (S1, AC-A1-A4): reload, the record's own
+  // prev/next pager, and pressing Edit all have to land back on the tab she was reading.
+  // Shared with the loading plan as `useUrlTab`, extracted from its own inline version.
+  const [tab, setTab] = useUrlTab({
+    tabs: PI_TABS,
+    defaultTab: 'general',
+    basePath: `/scm/proforma-invoices/${id}`,
+  });
   const [editing, setEditing] = useState(false);
   const [draftNumber, setDraftNumber] = useState('');
   const [draftSizeId, setDraftSizeId] = useState<string | null>(null);
@@ -268,14 +279,14 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
   }, []);
 
   // Editing starts from whatever the server currently holds, every time - a draft left over
-  // from a cancelled edit would silently re-apply what the user backed out of.
+  // from a cancelled edit would silently re-apply what the user backed out of. It does NOT
+  // reset the tab (AC-A4): pressing Edit from Lines has to stay on Lines.
   const beginEdit = () => {
     if (!data) return;
     setDraftNumber(data.pi_number);
     setDraftSizeId(data.container_size_id ?? null);
     setDraftLines(lines.map(toDraft));
     setEditing(true);
-    setTab('general');
   };
 
   const cancelEdit = () => {

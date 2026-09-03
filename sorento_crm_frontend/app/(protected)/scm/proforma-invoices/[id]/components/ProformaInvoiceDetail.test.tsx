@@ -63,10 +63,14 @@ vi.mock('@/hooks/usePermissions', () => ({
 }));
 
 const push = vi.fn();
+const replace = vi.fn();
+// The tab lives in the URL (S1) - a real `URLSearchParams` so `.get('tab')` and `.toString()`
+// both behave, swappable per test to prove a reload lands back on the tab named in it.
+let currentSearchParams = new URLSearchParams();
 vi.mock('next/navigation', () => ({
   usePathname: () => '/scm/proforma-invoices/pi-1',
-  useRouter: () => ({ push }),
-  useSearchParams: () => new URLSearchParams(),
+  useRouter: () => ({ push, replace }),
+  useSearchParams: () => currentSearchParams,
 }));
 
 // The WHOLE surface the components under test call. `ConfirmDeleteDialog` reports through
@@ -228,6 +232,10 @@ function detail(over: Partial<ProformaInvoiceDetailData> = {}): ProformaInvoiceD
   };
 }
 
+/** The last render's `rerender`, so `openTab` can force a re-read of the mocked URL - same
+ *  trick `renderDetail`'s own `refresh` uses. */
+let currentRerender: (() => void) | null = null;
+
 function renderDetail() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const tree = () => (
@@ -236,6 +244,7 @@ function renderDetail() {
     </QueryClientProvider>
   );
   const view = render(tree());
+  currentRerender = () => view.rerender(tree());
   // The detail hook is mocked, so a write's invalidation cannot be observed the usual way.
   // `refresh` replays what the refetch would do.
   return { ...view, refresh: () => view.rerender(tree()) };
@@ -250,13 +259,24 @@ function openActions() {
   });
 }
 
+const TAB_PARAM: Record<'General' | 'Lines' | 'Revisions' | 'Packing lists', string | null> = {
+  General: null,
+  Lines: 'lines',
+  Revisions: 'revisions',
+  'Packing lists': 'packing-lists',
+};
+
 /**
- * `mouseDown`, not `click`: Radix's tab trigger selects on mouse-down, and a plain `click`
- * event is a silent no-op. Exact names, because `/lines/i` matches BOTH "Lines" and
- * "Packing lists".
+ * The tab now lives in the URL (S1), not local state, so a click's own re-render depends on
+ * the mocked router actually navigating - it doesn't. This sets `?tab=` the way the click's
+ * `router.replace` would have written it and re-renders, exactly as `LoadingPlanView.test.tsx`
+ * does for the same reason. The writing half of the click itself is pinned separately, in
+ * "ProformaInvoiceDetail - the tab lives in the URL (S1)" below.
  */
 function openTab(name: 'General' | 'Lines' | 'Revisions' | 'Packing lists') {
-  fireEvent.mouseDown(screen.getByRole('tab', { name }), { button: 0, ctrlKey: false });
+  const value = TAB_PARAM[name];
+  currentSearchParams = new URLSearchParams(value ? `tab=${value}` : '');
+  currentRerender?.();
 }
 
 /** Open the gear menu and press Edit, which is where editing starts from now. */
@@ -278,6 +298,9 @@ beforeEach(() => {
   state.isLoading = false;
   state.isError = false;
   push.mockReset();
+  replace.mockReset();
+  currentSearchParams = new URLSearchParams();
+  currentRerender = null;
   writes.save.mockReset().mockResolvedValue(undefined);
   writes.forgetMatch.mockReset().mockResolvedValue(undefined);
   writes.markAsRevision.mockReset().mockResolvedValue(undefined);
@@ -421,6 +444,66 @@ describe('ProformaInvoiceDetail - deleting the invoice', () => {
     const item = screen.getByRole('menuitem', { name: /delete invoice/i });
     expect(item).toHaveAttribute('data-disabled');
     expect(item).toHaveAttribute('title', expect.stringContaining('FSCU8103365'));
+  });
+});
+
+describe('ProformaInvoiceDetail - the tab lives in the URL (S1)', () => {
+  it('clicking Lines writes ?tab=lines (AC-A1)', () => {
+    state.data = detail();
+    renderDetail();
+
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Lines' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    expect(replace).toHaveBeenCalledWith('/scm/proforma-invoices/pi-1?tab=lines', {
+      scroll: false,
+    });
+  });
+
+  it('clicking General from another tab clears ?tab= rather than writing ?tab=general (AC-A1)', () => {
+    state.data = detail();
+    currentSearchParams = new URLSearchParams('tab=lines');
+    renderDetail();
+
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'General' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    expect(replace).toHaveBeenCalledWith('/scm/proforma-invoices/pi-1', { scroll: false });
+  });
+
+  it('a reload on ?tab=revisions lands on Revisions, not General (AC-A3)', () => {
+    state.data = detail();
+    currentSearchParams = new URLSearchParams('tab=revisions');
+    renderDetail();
+
+    expect(screen.getByRole('tab', { name: 'Revisions' })).toHaveAttribute(
+      'data-state',
+      'active',
+    );
+    expect(
+      screen.getByText('This is the only version the supplier has sent.'),
+    ).toBeInTheDocument();
+  });
+
+  it('an unrecognised ?tab= falls back to General', () => {
+    state.data = detail();
+    currentSearchParams = new URLSearchParams('tab=nonsense');
+    renderDetail();
+
+    expect(screen.getByRole('tab', { name: 'General' })).toHaveAttribute('data-state', 'active');
+  });
+
+  it('pressing Edit while on Lines stays on Lines (AC-A4)', () => {
+    state.data = detail();
+    currentSearchParams = new URLSearchParams('tab=lines');
+    renderDetail();
+
+    beginEdit();
+
+    expect(screen.getByRole('tab', { name: 'Lines' })).toHaveAttribute('data-state', 'active');
+    expect(screen.getByLabelText('Item code for line 1')).toBeInTheDocument();
   });
 });
 

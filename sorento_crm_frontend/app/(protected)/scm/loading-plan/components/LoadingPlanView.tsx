@@ -25,6 +25,7 @@ import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from '@/components/common/AttachmentPreviewModal';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { useUrlTab } from '@/hooks/useUrlTab';
 import { EM_DASH, fmtDate } from '../../lib/format';
 import {
   loadingPlanPagerQuery,
@@ -156,17 +157,13 @@ export function LoadingPlanView({ planId }: { planId: string }) {
   // The tab lives in the URL (AC-B2), not component state: reload and the record's own
   // prev/next pager both have to land back on the tab she was reading. `?tab=` follows the
   // same shape ProductDetail uses - absent or unrecognised falls back to Lines, the default.
-  const rawTab = searchParams?.get('tab');
-  const activeTab: LoadingPlanTab = LOADING_PLAN_TABS.includes(rawTab as LoadingPlanTab)
-    ? (rawTab as LoadingPlanTab)
-    : 'lines';
-  const handleTabChange = (tab: string) => {
-    const params = new URLSearchParams(searchParams?.toString());
-    if (tab === 'lines') params.delete('tab');
-    else params.set('tab', tab);
-    const qs = params.toString();
-    router.replace(`/scm/loading-plan/${planId}${qs ? `?${qs}` : ''}`, { scroll: false });
-  };
+  // Shared with the proforma invoice (S1 of the PI/packing-list feedback batch) as
+  // `useUrlTab`, so the two records cannot drift onto two ways of doing the same thing.
+  const [activeTab, handleTabChange] = useUrlTab({
+    tabs: LOADING_PLAN_TABS,
+    defaultTab: 'lines',
+    basePath: `/scm/loading-plan/${planId}`,
+  });
 
   const rows = useMemo(() => build.data?.rows ?? [], [build.data]);
   const readOnly = plan?.status === 'cancelled';
