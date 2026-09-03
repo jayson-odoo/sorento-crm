@@ -48,9 +48,12 @@ describe('UploadSessionRow - failed import with a traceback error', () => {
     expect(summaryEl.textContent).toBe(EXCEPTION_LINE);
     // `errorSummary` already strips the traceback down to this one line, so a plain
     // `truncate` (single line, ellipsis mid-word) is no longer needed to keep the row
-    // from overflowing - `line-clamp-2 break-all` wraps it instead.
+    // from overflowing - `line-clamp-2 break-words` wraps it instead (N-3, fix round
+    // 7: `break-all` broke mid-word on ordinary text, not only the pathological
+    // unbroken run it was meant for).
     expect(summaryEl.className).toContain('line-clamp-2');
-    expect(summaryEl.className).toContain('break-all');
+    expect(summaryEl.className).toContain('break-words');
+    expect(summaryEl.className).not.toContain('break-all');
     expect(summaryEl.className).not.toContain('truncate');
   });
 

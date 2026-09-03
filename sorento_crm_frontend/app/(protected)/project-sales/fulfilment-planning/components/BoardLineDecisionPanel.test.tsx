@@ -1290,7 +1290,7 @@ describe('BoardLineDecisionPanel: Buy follows the remainder of the line (D7)', (
     },
   ];
 
-  function renderRemainder() {
+  function renderRemainder(locations: BoardCellLocation[] = POOL_LOCATIONS) {
     const onDecide = vi.fn();
     render(
       <BoardLineDecisionPanel
@@ -1322,7 +1322,7 @@ describe('BoardLineDecisionPanel: Buy follows the remainder of the line (D7)', (
           ],
         })}
         decision={null}
-        locations={POOL_LOCATIONS}
+        locations={locations}
         onDecide={onDecide}
       />,
     );
@@ -1398,5 +1398,146 @@ describe('BoardLineDecisionPanel: Buy follows the remainder of the line (D7)', (
     expect(
       screen.getByTestId(`line-decision-summary-${KEY}`),
     ).not.toHaveTextContent('Buy');
+  });
+
+  /**
+   * B-1 (fix round 7). `buying` used to be DERIVED from the numbers
+   * (`toMinor(draft.buy_qty) > 0 && fromStockMinor === 0`), so clearing the BRW box (or typing
+   * 0) made `buy_qty` follow the whole open quantity and `fromStockMinor` hit zero in the same
+   * render - the switch read ON, and the Reserve section and the Add-location button unmounted
+   * under the planner mid-edit. It is STATE now, seeded once from the opening draft and changed
+   * only by the switch itself.
+   */
+  it('B-1: clearing or zeroing the Reserve box never flips the switch on, and turning it on then off restores what was typed', () => {
+    // A third, free location beside BRW-AM (0 free) and BRW (already reserved), so
+    // "Add location" has something to offer and its own unmount is part of what this proves.
+    renderRemainder([
+      ...POOL_LOCATIONS,
+      {
+        location: 'MWH-IB',
+        warehouse_id: 'wh-MWH-IB',
+        qty: '0',
+        available_qty: '400',
+        qty_free: '400',
+        qty_free_remaining: '400',
+        where: 'own',
+      },
+    ]);
+
+    const reserveInput = screen.getByLabelText('Reserve at BRW');
+    const switchControl = screen.getByRole('switch', {
+      name: 'Buy the whole line',
+    });
+
+    fireEvent.change(reserveInput, { target: { value: '' } });
+    expect(switchControl).not.toBeChecked();
+    expect(screen.getByTestId(`line-buy-derived-${KEY}`)).toHaveTextContent(
+      'Buy 135',
+    );
+    expect(screen.getByLabelText('Reserve at BRW')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Add location' }),
+    ).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
+      target: { value: '0' },
+    });
+    expect(switchControl).not.toBeChecked();
+    expect(screen.getByTestId(`line-buy-derived-${KEY}`)).toHaveTextContent(
+      'Buy 135',
+    );
+    expect(screen.getByLabelText('Reserve at BRW')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
+      target: { value: '60' },
+    });
+    expect(screen.getByTestId(`line-buy-derived-${KEY}`)).toHaveTextContent(
+      'Buy 75',
+    );
+
+    fireEvent.click(switchControl);
+    expect(
+      screen.getAllByText('The whole line is being bought.'),
+    ).toHaveLength(2);
+
+    fireEvent.click(switchControl);
+    // The `stockBefore` path (D7): the 60 that was typed comes back, never a zero.
+    expect(screen.getByLabelText('Reserve at BRW')).toHaveValue(60);
+    expect(screen.getByTestId(`line-buy-derived-${KEY}`)).toHaveTextContent(
+      'Buy 75',
+    );
+  });
+});
+
+/**
+ * S-1 (fix round 7). `ReserveAddDialog`'s opening quantity is the line's remainder capped at
+ * the location's free stock (`openingQty`); D7 made `totalMinor` include the derived Buy, so
+ * `open - totalMinor` read 0 on an already-composed line and the dialog fell back to the
+ * location's WHOLE free stock instead. The remainder has to exclude the Buy component itself.
+ */
+describe('BoardLineDecisionPanel: Add-location seeds the remainder, not the whole free stock (S-1, fix round 7)', () => {
+  it('seeds 73 on a bin with 400 free, on a line already carrying BRW 62 + derived Buy 73', () => {
+    const onDecide = vi.fn();
+    render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf({
+          line_no: 3,
+          item_code: 'CSK14A-NL',
+          qty: '135',
+          qty_ordered: '135',
+          qty_outstanding: '135',
+          qty_proposed_reserve: '62',
+          qty_proposed_buy: '73',
+          sources: [
+            {
+              kind: 'reserve',
+              qty: '62',
+              location: 'BRW',
+              warehouse_id: 'wh-BRW',
+              reason: 'BRW may spare 62 of its pile to a project line.',
+              rung: 'pool',
+            },
+            {
+              kind: 'buy',
+              qty: '73',
+              location: null,
+              warehouse_id: null,
+              reason: 'The remainder has to be bought.',
+              rung: 'buy',
+            },
+          ],
+        })}
+        decision={null}
+        locations={[
+          {
+            location: 'BRW',
+            warehouse_id: 'wh-BRW',
+            qty: '0',
+            available_qty: '124',
+            qty_free: '124',
+            qty_free_remaining: '124',
+            where: 'site_pool',
+            available_for_project: '62',
+            net: '400',
+            net_raw: '400',
+            net_of: 'pools',
+          },
+          {
+            location: 'MWH-IB',
+            warehouse_id: 'wh-MWH-IB',
+            qty: '0',
+            available_qty: '400',
+            qty_free: '400',
+            qty_free_remaining: '400',
+            where: 'own',
+          },
+        ]}
+        onDecide={onDecide}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add location' }));
+
+    expect(screen.getByLabelText('Quantity')).toHaveValue(73);
   });
 });

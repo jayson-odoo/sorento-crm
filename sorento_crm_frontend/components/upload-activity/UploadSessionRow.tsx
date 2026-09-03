@@ -131,11 +131,14 @@ export function UploadSessionRow({
                 the exception line, so there is no long unbroken line left to cut mid
                 word - `truncate` (one line, ellipsis) was doing that job for a
                 one-line RQ failure string, cutting a short sentence mid-timestamp.
-                `line-clamp-2 break-all` restores the earlier, pre-D-nit intent: wrap
-                onto two lines and only clip past that, with the full text still one
-                hover away via `title`. */}
+                `line-clamp-2` restores the earlier, pre-D-nit intent: wrap onto two
+                lines and only clip past that, with the full text still one hover
+                away via `title`. `break-words` (N-3, fix round 7), not `break-all` -
+                the latter breaks mid-WORD on ordinary text (any exception line long
+                enough to wrap at all), not only on the pathological unbroken run
+                `break-all` exists for. */}
             <div
-              className="text-xs text-muted-foreground mt-1 line-clamp-2 break-all"
+              className="text-xs text-muted-foreground mt-1 line-clamp-2 break-words"
               title={summary}
             >
               {errorSummary(summary)}

@@ -201,12 +201,27 @@ export function BoardLineDecisionPanel({
   const approving = matchesSuggestion(contribution, draft);
   const canSave =
     blockers.length === 0 && (!needsReason || reason.trim().length > 0);
-  // WHOLLY bought, which is what the switch means. A composition carrying stock AND a Buy is
-  // a revision frozen before the whole-line rule; it renders in full and `lineBlockers` says
-  // it cannot be saved that way.
   const fromStockMinor =
     balance.timelyMinor + balance.reserveMinor + balance.borrowMinor;
-  const buying = toMinor(draft.buy_qty) > 0 && fromStockMinor === 0;
+  /**
+   * WHOLLY bought, which is what the switch means. STATE (B-1, fix round 7), not derived from
+   * the numbers - deriving it used to flip the switch ON the instant `fromStockMinor` hit zero,
+   * which clearing a reserve box (or typing 0 into it) does on its own now that D7's
+   * `editComposition` recomputes `buy_qty` on every keystroke. The switch turning itself on
+   * mid-edit unmounted the Reserve section and the Add-location button under the planner, and
+   * turning it back OFF afterwards took the "nothing was captured" branch below and wrote
+   * zeroes over rows nobody asked to zero.
+   *
+   * Seeded ONCE from the opening draft - a line that opens already wholly bought (its stock
+   * rows already at zero) starts on the switch, the same line `setBuying`'s OFF transition
+   * documents - and changed only by `setBuying` itself. No reactive re-seed: the panel already
+   * remounts fresh (via `draftFor`, the initializer `draft` itself uses) whenever it is closed
+   * and reopened on a different contribution or a different saved draft, which is the only
+   * point this needs to move.
+   */
+  const [buying, setBuyingState] = React.useState(
+    () => toMinor(draft.buy_qty) > 0 && fromStockMinor === 0,
+  );
 
   /**
    * Everything that stops the Save EXCEPT the balance, which the hint beside the summary
@@ -260,6 +275,7 @@ export function BoardLineDecisionPanel({
     'reserve' | 'borrow' | 'timely_spo_qty'
   > | null>(null);
   const setBuying = (next: boolean) => {
+    setBuyingState(next);
     if (next) {
       stockBefore.current = {
         reserve: draft.reserve,
@@ -848,7 +864,13 @@ export function BoardLineDecisionPanel({
           lineNo={contribution.line_no}
           itemCode={contribution.item_code}
           locations={reserveCandidates}
-          openRemainder={fromMinor(Math.max(balance.openMinor - balance.totalMinor, 0))}
+          // S-1 (fix round 7): NOT `open - total` - `total` now includes D7's derived Buy, so
+          // on an already-composed line (BRW 62 + Buy 73) it read 0 and the dialog fell back
+          // to the location's WHOLE free stock (`ReserveAddDialog.openingQty`). What is left
+          // to cover from STOCK is the open quantity minus everything except the Buy.
+          openRemainder={fromMinor(
+            Math.max(balance.openMinor - (balance.totalMinor - balance.buyMinor), 0),
+          )}
           onDone={() => setAddingReserve(false)}
           onAdd={(location, qty) =>
             editComposition({
