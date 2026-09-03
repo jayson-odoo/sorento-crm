@@ -439,6 +439,13 @@ def shipment_supplier_predicate(supplier_id):
     )
 
 
+#: Line fields where an explicit `null` on the PUT is a stated "clear it", not "not
+#: mentioned" - see `_upsert_shipment_lines`. Both are free text with no fallback that
+#: `_merge_shipment_lines` computes on the caller's behalf (unlike `supplier_id`), so the
+#: key's mere presence in the merged dict already carries the caller's intent correctly.
+_CLEARABLE_LINE_FIELDS = {"description", "remarks"}
+
+
 def _effective_line_supplier(line_dict: dict, header_supplier_id: Optional[str]) -> Optional[str]:
     """Whose line this is: what the line says, else what the header says.
 
@@ -1232,9 +1239,20 @@ class InboundShipmentService:
 
         for line, d in updates:
             for field, value in d.items():
-                # None means "the payload did not state it", never "clear it": supplier,
-                # cbm and remarks are read off the packing list, not typed into the edit
-                # form that is saving over them.
+                if field in _CLEARABLE_LINE_FIELDS:
+                    # A key PRESENT here already means "the payload stated this" - real
+                    # text, or an explicit None to clear it - because `_merge_shipment_lines`
+                    # never fabricates a value for `description` / `remarks` the way it does
+                    # for `supplier_id` below; the key comes straight from the caller's
+                    # `model_dump(exclude_unset=True)`. Skipping None here kept a cleared
+                    # Description/Remarks reading its stale value forever (review, PR #594).
+                    setattr(line, field, value)
+                    continue
+                # None means "the payload did not state it", never "clear it": supplier and
+                # cbm are read off the packing list, not typed into the edit form that is
+                # saving over them - and `supplier_id` is unconditionally written into the
+                # dict above even when nothing named a supplier, so its own None has to stay
+                # a no-op.
                 if value is not None:
                     setattr(line, field, value)
         for d in inserts:

@@ -747,6 +747,25 @@ describe('the edit draft, which now lives above every tab', () => {
     expect(line.description).toBe('304 STAINLESS STEEL BASIN TAP');
   });
 
+  it('sends null for a cleared description, never dropping the key', async () => {
+    routerState.pathname = '/procurement-management/packing-lists/pl-1/lines';
+    await renderTab(<LinesPage />);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+
+    // l-1 already carries its own description; clearing it back to blank must be a Save
+    // that says "null", not one that says nothing at all - an omitted key on this PUT means
+    // "unchanged", so the old wording would otherwise survive the save.
+    fireEvent.change(screen.getByLabelText('Description for SRTWT7443'), {
+      target: { value: '' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^Save packing list$/i }));
+
+    await waitFor(() => expect(updatePackingList).toHaveBeenCalledTimes(1));
+    const line = updatePackingList.mock.calls[0][0].data.shipment_lines[0];
+    expect(line.description).toBeNull();
+    expect(Object.keys(line)).toContain('description');
+  });
+
   it('totals follow the draft while somebody is typing', async () => {
     routerState.pathname = '/procurement-management/packing-lists/pl-1/lines';
     await renderTab(<LinesPage />);

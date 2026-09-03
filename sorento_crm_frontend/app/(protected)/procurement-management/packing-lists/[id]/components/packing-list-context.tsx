@@ -339,8 +339,13 @@ export function PackingListProvider({
         net_weight_per_carton: orUndefined(line.net_weight_per_carton),
         gross_weight_per_carton: orUndefined(line.gross_weight_per_carton),
         unit_cost: orUndefined(line.unit_cost),
-        remarks: line.remarks.trim() || undefined,
-        description: line.description.trim() || undefined,
+        // NULL for a cleared field, never `undefined` - same reasoning as `orNull` above.
+        // The line PUT is an existing-row upsert keyed on presence (`_upsert_shipment_lines`
+        // in the backend), so an omitted key is "unchanged" but an explicit null clears it;
+        // `.trim() || undefined` used to send the omitted form for BOTH, so blanking the
+        // Description or Remarks and saving kept the old value forever (review, PR #594).
+        remarks: orNull(line.remarks),
+        description: orNull(line.description),
       })),
     };
     // The clearance and cost fields are on the payload schema but not on

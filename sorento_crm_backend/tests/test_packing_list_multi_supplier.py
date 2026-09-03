@@ -694,6 +694,82 @@ def test_the_lines_grid_can_edit_the_description(db):
     assert line.description == "304 STAINLESS STEEL BASIN TAP - CHROME"
 
 
+def test_clearing_the_description_or_remarks_on_save_writes_null(db):
+    """The edit form sends `description: null` / `remarks: null` for a cleared field
+    (`orNull` on the FE, not `undefined`) - review finding on PR #594. A key PRESENT on the
+    line with an explicit None is a stated instruction to clear it, exactly like the header
+    fields already do via `exclude_unset` - the old blanket `if value is not None` skip in
+    `_upsert_shipment_lines` treated that the same as "never mentioned" and kept the stale
+    text forever.
+    """
+    w = World(db)
+    shipment = w.upload(supplier_id=None, lines=[(w.tap, 1, None)])
+    db.commit()
+    InboundShipmentService(db).update_shipment(
+        str(shipment.id),
+        InboundShipmentUpdate(
+            shipment_lines=[
+                InboundShipmentLineCreate(
+                    product_id=str(w.tap.id),
+                    quantity_shipped=1,
+                    description="304 STAINLESS STEEL BASIN TAP - CHROME",
+                    remarks="one pallet",
+                )
+            ],
+        ),
+        updated_by=None,
+    )
+    db.commit()
+    line = w.lines(shipment.id)[0]
+    assert line.description == "304 STAINLESS STEEL BASIN TAP - CHROME"
+    assert line.remarks == "one pallet"
+
+    InboundShipmentService(db).update_shipment(
+        str(shipment.id),
+        InboundShipmentUpdate(
+            shipment_lines=[
+                InboundShipmentLineCreate(
+                    product_id=str(w.tap.id),
+                    quantity_shipped=1,
+                    description=None,
+                    remarks=None,
+                )
+            ],
+        ),
+        updated_by=None,
+    )
+    db.commit()
+    db.refresh(line)
+    assert line.description is None
+    assert line.remarks is None
+
+
+def test_a_line_that_omits_description_or_remarks_keeps_the_existing_value(db):
+    """Absent key = leave alone: the procurement edit form's minimal payload (product and
+    quantity only) must not blank out a description or remark a previous save wrote."""
+    w = World(db)
+    shipment = w.upload(supplier_id=None, lines=[(w.tap, 1, None)])
+    db.commit()
+    line = w.lines(shipment.id)[0]
+    line.description = "existing wording"
+    line.remarks = "existing remark"
+    db.commit()
+
+    InboundShipmentService(db).update_shipment(
+        str(shipment.id),
+        InboundShipmentUpdate(
+            shipment_lines=[
+                InboundShipmentLineCreate(product_id=str(w.tap.id), quantity_shipped=1)
+            ],
+        ),
+        updated_by=None,
+    )
+    db.commit()
+    db.refresh(line)
+    assert line.description == "existing wording"
+    assert line.remarks == "existing remark"
+
+
 def test_the_container_workbook_fields_travel_back_out_on_the_read():
     """`response_model` silently DROPS a field it does not declare.
 

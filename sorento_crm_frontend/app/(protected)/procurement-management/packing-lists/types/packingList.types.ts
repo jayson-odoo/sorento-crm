@@ -256,8 +256,10 @@ export interface PackingListFormData {
     /** Volume, editable in place on the Lines tab since F9 - the column has existed on the
      *  line since S3b and only the importer could ever fill it. */
     cbm?: number;
-    remarks?: string;
+    /** Absent = unchanged, `null` = clear it - the same absent-vs-null rule the header
+     *  fields above use, so a blanked Remarks/Description on save actually clears. */
+    remarks?: string | null;
     /** The supplier's own wording for the item (S9), editable in the lines grid. */
-    description?: string;
+    description?: string | null;
   }>;
 }
