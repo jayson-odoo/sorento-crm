@@ -1,7 +1,7 @@
 # PLAN - Pool step walks every site pool before another site's group bin (R-N)
 
-Status: S1 to S3 DONE + AC-N.12 floor ledger + review fix round (PR #607), on
-`feat/scm-pool-chain-first` (R-N, 3 Sep 2026; no sha here because the lane is rebased onto
+Status: S1 to S3 DONE + AC-N.12 floor ledger + review fix round + B1 ruled + golden (PR #607),
+on `feat/scm-pool-chain-first` (R-N, 3 Sep 2026; no sha here because the lane is rebased onto
 #575's final tip before it is pushed). Engine, board proof and docs landed;
 `walk_line` step 0 walks the whole pool chain, R-L's spill block and `_draw_other_pools` are
 deleted, and the step 0 row is written from the pools that answered. Goldens AC-N.1 to AC-N.8
@@ -9,7 +9,9 @@ are `_v8_inputs` cases in `tests/scm/front_planning_golden.py`, AC-N.9 is two co
 `tests/test_so_supply_confirmation.py`, the board's multi-pool proof is
 `tests/test_fulfilment_board.py::test_a_cell_whose_pool_step_answered_from_two_pools_shows_both_taken_figures`
 and AC-N.11 is two vitest cases in `supplyComposition.test.ts`. AC-N.10 (browser evidence on
-SO419417) is still owed. R-O (S4 to S6, overdue grace) NOT started - separate brief, issue #586.
+SO419417) recorded 3 Sep. B1 (own-bin order) ruled by the captain 3 Sep and pinned by AC-N.13,
+a `_v8_inputs` case in `V8_WALK_CASES` - no engine change, the coded behaviour already matched
+the ruling. R-O (S4 to S6, overdue grace) NOT started - separate brief, issue #586.
 RULED 3 Sep 2026 (R-N + R-O, Q1 by on hand, grace 14 / dead 90). Supersedes R-L's trigger.
 
 ## Why
@@ -48,8 +50,12 @@ decided by whether a group bin happened to have stock.
   `spilled_components` path becomes the only path): "Pool BRW spares 4 of the 355 it may lend
   a project Pool WH3 spares 4 of the 343 it may lend a project". Label stays
   `_pool_share_label` (names the pools that answered).
-- **Own-bin order is NOT changed**: pool share before own free stock is R-A/R-B (2 Sep) and
-  stands.
+- **The pool chain outranks the line's own bin, not only every group bin** (B1, captain 3
+  Sep): step 0 (the whole site-pool chain, own pool first then by on hand) is asked before the
+  asking line's OWN bin's free stock, exactly as it is asked before every group bin. Own free
+  stock is step 1 (`STEP_USE`), unchanged in position, only later in the order than the pool
+  chain. This is R-A/R-B (2 Sep) stated of the own bin as well as the group, not a change to
+  the walk order already coded.
 
 ## What this changes on SO419417
 
@@ -110,3 +116,4 @@ Slices for R-O (same lane, after S1 to S3): S4 migration + policy schema/form; S
 ## Rulings taken
 
 - Q1 (captain 3 Sep): other pools by on hand, fullest first, as today.
+- B1 (captain 3 Sep): all pools before own bin.

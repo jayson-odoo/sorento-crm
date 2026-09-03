@@ -37,6 +37,13 @@ All goldens are `_v8_inputs` fixtures in `tests/scm/front_planning_golden.py`, f
   buys. `compose_lines` carried a running balance for the asking bin's OWN pool only, and
   R-N made the other pools' path the common one.
 
+- AC-N.13 (B1, own bin outranked too). Own bin BRW-BB holds all 8 free
+  (`group_take_candidates=[{"location": "BRW-BB", "qty": 8}]`, `group_offer=8`). Pools: BRW
+  free 4 available 710, WH3 free 687 available 686, net 1605. Line 8 inside the window.
+  Composition = reserve BRW 4 + reserve WH3 4, chosen at step 0. The step 1 `use` row still
+  reports the own bin could give 8 whole, but is not chosen - the pool chain outranks the
+  line's own bin, the same as it outranks a group bin.
+
 ## R-O overdue grace (supersedes R31)
 
 - AC-O.1 (alive late document counts at the assumed date). Today 3 Sep 2026, grace 14. SPO of
