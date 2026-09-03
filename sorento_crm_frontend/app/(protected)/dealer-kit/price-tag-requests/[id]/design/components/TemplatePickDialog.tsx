@@ -10,6 +10,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog,
   DialogBody,
@@ -30,7 +31,13 @@ interface Props {
   /** The family the line's code says it is, listed first. */
   preferredFamily: string | null;
   onCancel: () => void;
-  onConfirm: (templateId: string) => void;
+  /**
+   * `applyToAll` is the "Apply to all lines" checkbox (default off, AC-S5-4):
+   * on, the chosen template replaces every line's tag, not only this one.
+   * Either way it replaces immediately - the confirm dialog that used to sit
+   * in front of this is gone (D11); Undo is the safety net now.
+   */
+  onConfirm: (templateId: string, applyToAll: boolean) => void;
 }
 
 export function TemplatePickDialog({
@@ -42,9 +49,13 @@ export function TemplatePickDialog({
   onConfirm,
 }: Props) {
   const [selected, setSelected] = useState('');
+  const [applyToAll, setApplyToAll] = useState(false);
 
   useEffect(() => {
-    if (open) setSelected(currentTemplateId ?? '');
+    if (open) {
+      setSelected(currentTemplateId ?? '');
+      setApplyToAll(false);
+    }
   }, [open, currentTemplateId]);
 
   const options = useMemo(() => {
@@ -83,12 +94,20 @@ export function TemplatePickDialog({
               There are no tag templates yet. Design one under Tag Templates first.
             </p>
           )}
+          <label className="flex items-center gap-2 text-xs text-foreground">
+            <Checkbox
+              size="sm"
+              checked={applyToAll}
+              onCheckedChange={(checked) => setApplyToAll(checked === true)}
+            />
+            Apply to all lines
+          </label>
         </DialogBody>
         <DialogFooter>
           <Button variant="outline" onClick={onCancel}>
             Cancel
           </Button>
-          <Button disabled={!selected} onClick={() => onConfirm(selected)}>
+          <Button disabled={!selected} onClick={() => onConfirm(selected, applyToAll)}>
             Use template
           </Button>
         </DialogFooter>

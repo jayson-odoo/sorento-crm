@@ -20,6 +20,7 @@ import type {
 import { IMPOSITION_PRESETS, defaultTextProps } from './tag-template-types';
 import { PRODUCT_BLOCK_SIZE, SET_BLOCK_SIZE } from './product-block';
 import {
+  applyDesignToAllLines,
   autoArrange,
   copiesOf,
   defaultTemplateFor,
@@ -810,5 +811,138 @@ describe('templateFromTag', () => {
 
     expect(result.name).toBe('Sink Combo v2');
     expect(result.family).toBe('sink_combo');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// applyDesignToAllLines - "Apply this design to all lines" (S5, D3, AC-S5-2/5/6)
+// ---------------------------------------------------------------------------
+
+describe('applyDesignToAllLines', () => {
+  function sourceTag(overrides: Partial<PlacedTag> = {}): PlacedTag {
+    return {
+      id: 'tag-src',
+      template_id: 't-sink',
+      request_line_id: 'l1',
+      x_mm: 0,
+      y_mm: 0,
+      width_mm: 95,
+      height_mm: 44.5,
+      layers: [
+        { ...textLayer('code', 1), text_override: 'Hand typed' },
+        groupLayer('group', ['code']),
+      ],
+      ...overrides,
+    };
+  }
+
+  it('clones the source tag to every OTHER line, rebound to each line\'s own product', () => {
+    const tags = { l1: sourceTag() };
+    const lines = [productLine('l1'), productLine('l2'), productLine('l3')];
+
+    const next = applyDesignToAllLines(tags, lines, 'l1', newId);
+
+    expect(next.l2).toBeDefined();
+    expect(next.l3).toBeDefined();
+    const group2 = next.l2.layers.find((l) => l.props.kind === 'group');
+    expect(group2?.props).toMatchObject({ binding: { product_id: 'p-l2' } });
+    const group3 = next.l3.layers.find((l) => l.props.kind === 'group');
+    expect(group3?.props).toMatchObject({ binding: { product_id: 'p-l3' } });
+  });
+
+  it('copies template_id and size from the source onto every other line', () => {
+    const tags = { l1: sourceTag() };
+    const lines = [productLine('l1'), productLine('l2')];
+
+    const next = applyDesignToAllLines(tags, lines, 'l1', newId);
+
+    expect(next.l2).toMatchObject({
+      template_id: 't-sink',
+      width_mm: 95,
+      height_mm: 44.5,
+    });
+  });
+
+  it('copies a hand-typed text_override VERBATIM (D3) - no stripping, unlike templateFromTag', () => {
+    const tags = { l1: sourceTag() };
+    const lines = [productLine('l1'), productLine('l2')];
+
+    const next = applyDesignToAllLines(tags, lines, 'l1', newId);
+
+    const codeLayer = next.l2.layers.find((l) => l.slot_binding === 'code');
+    expect(codeLayer?.text_override).toBe('Hand typed');
+  });
+
+  it('gives every clone fresh layer ids, sharing none with the source or with each other', () => {
+    const tags = { l1: sourceTag() };
+    const lines = [productLine('l1'), productLine('l2'), productLine('l3')];
+
+    const next = applyDesignToAllLines(tags, lines, 'l1', newId);
+
+    const l2Ids = next.l2.layers.map((l) => l.id);
+    const l3Ids = next.l3.layers.map((l) => l.id);
+    expect(l2Ids).not.toEqual(expect.arrayContaining(['code', 'group']));
+    expect(l3Ids).not.toEqual(expect.arrayContaining(['code', 'group']));
+    expect(new Set([...l2Ids, ...l3Ids]).size).toBe(l2Ids.length + l3Ids.length);
+  });
+
+  it("remaps a group's children to the same fresh ids their layers got", () => {
+    const tags = { l1: sourceTag() };
+    const lines = [productLine('l1'), productLine('l2')];
+
+    const next = applyDesignToAllLines(tags, lines, 'l1', newId);
+
+    const remappedCodeId = next.l2.layers.find((l) => l.slot_binding === 'code')?.id;
+    const group = next.l2.layers.find((l) => l.props.kind === 'group');
+    expect(group?.props).toMatchObject({ children: [remappedCodeId] });
+  });
+
+  it('keeps a target line\'s existing pinned copy/position rather than resetting it', () => {
+    const tags = {
+      l1: sourceTag(),
+      l2: { ...placed('old-l2', 'l2'), x_mm: 12, y_mm: 34, pinned: true },
+    };
+    const lines = [productLine('l1'), productLine('l2')];
+
+    const next = applyDesignToAllLines(tags, lines, 'l1', newId);
+
+    expect(next.l2).toMatchObject({ x_mm: 12, y_mm: 34, pinned: true });
+  });
+
+  it('a line with no tag yet gets one too, so it never re-clones from the default template later (AC-S5-5)', () => {
+    const tags = { l1: sourceTag() };
+    const lines = [productLine('l1'), productLine('l2')];
+
+    const next = applyDesignToAllLines(tags, lines, 'l1', newId);
+
+    expect(next.l2).toBeDefined();
+    expect(next.l2.layers.length).toBeGreaterThan(0);
+  });
+
+  it('never touches the source line\'s own tag', () => {
+    const source = sourceTag();
+    const tags = { l1: source };
+    const lines = [productLine('l1'), productLine('l2')];
+
+    const next = applyDesignToAllLines(tags, lines, 'l1', newId);
+
+    expect(next.l1).toBe(source);
+  });
+
+  it('answers the map unchanged when the source line has no tag', () => {
+    const tags = {};
+    const lines = [productLine('l1'), productLine('l2')];
+
+    expect(applyDesignToAllLines(tags, lines, 'l1', newId)).toBe(tags);
+  });
+
+  it('binds a set line to its own product set, not the source line\'s binding', () => {
+    const tags = { l1: sourceTag() };
+    const lines = [productLine('l1'), setLine('l2')];
+
+    const next = applyDesignToAllLines(tags, lines, 'l1', newId);
+
+    const group = next.l2.layers.find((l) => l.props.kind === 'group');
+    expect(group?.props).toMatchObject({ binding: { product_set_id: 's-l2' } });
   });
 });

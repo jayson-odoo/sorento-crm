@@ -366,6 +366,83 @@ export function resolveTagSize(
 }
 
 // ---------------------------------------------------------------------------
+// Apply this design to all lines (S5, D3, D11)
+// ---------------------------------------------------------------------------
+
+/**
+ * "Apply this design to all lines" (AC-S5-1/2/5): the SELECTED line's tag,
+ * cloned onto every other line - and for the "Use template..." picker's
+ * "Apply to all lines" checkbox, `tags[sourceLineId]` is a pristine
+ * `tagForLine` clone the caller already stashed under the source line, so
+ * this one function covers both surfaces (D3).
+ *
+ * Every clone gets FRESH layer ids (group `children` remapped alongside), so
+ * no two lines' tags ever share an id - the same reason `templateFromTag`
+ * remaps ids, just fanned out to N lines instead of one template. Unlike
+ * `templateFromTag`, `text_override` is copied VERBATIM (D3): this is one
+ * line's tag becoming every line's tag, not a tag becoming a reusable
+ * template, so a hand-typed price note is exactly what "apply to all lines"
+ * is supposed to spread.
+ *
+ * `bindTemplateLayers` re-points each clone's group binding at the TARGET
+ * line's own product/set - a straight copy would leave every other line's
+ * tag pointing at the source line's item - and clears a stale barcode
+ * override the same way a fresh clone from a template does.
+ *
+ * A line that already had a tag keeps its position/pin (AC-S5-2): those live
+ * on the `PlacedTag` a caller may be carrying position/pin state on, and
+ * losing them here would silently un-arrange whatever was dragged. A line
+ * with no tag yet gets one too (AC-S5-5), so it never later clones from the
+ * request's default template and quietly undoes the bulk apply.
+ */
+export function applyDesignToAllLines(
+  tags: Record<string, PlacedTag>,
+  lines: TagRequestLine[],
+  sourceLineId: string,
+  newId: () => string,
+): Record<string, PlacedTag> {
+  const source = tags[sourceLineId];
+  if (!source) return tags;
+
+  const next: Record<string, PlacedTag> = { ...tags };
+  for (const line of lines) {
+    if (line.id === sourceLineId) continue;
+
+    const idMap = new Map<string, string>();
+    for (const layer of source.layers) idMap.set(layer.id, newId());
+    const layers: TagLayer[] = source.layers.map((layer) => {
+      const clone: TagLayer = {
+        ...structuredClone(layer),
+        id: idMap.get(layer.id) as string,
+      };
+      if (clone.props.kind === 'group') {
+        clone.props = {
+          ...clone.props,
+          children: clone.props.children
+            .map((childId) => idMap.get(childId))
+            .filter((childId): childId is string => Boolean(childId)),
+        };
+      }
+      return clone;
+    });
+
+    const existing = next[line.id];
+    next[line.id] = {
+      id: existing?.id ?? newId(),
+      template_id: source.template_id,
+      request_line_id: line.id,
+      x_mm: existing?.x_mm ?? 0,
+      y_mm: existing?.y_mm ?? 0,
+      width_mm: source.width_mm,
+      height_mm: source.height_mm,
+      layers: bindTemplateLayers(layers, bindingForLine(line)),
+      pinned: existing?.pinned,
+    };
+  }
+  return next;
+}
+
+// ---------------------------------------------------------------------------
 // Imposition
 // ---------------------------------------------------------------------------
 
