@@ -805,12 +805,22 @@ class StockDetailIncoming(BaseModel):
     supplier_name: Optional[str] = None
     #: The bin it lands at, for the same reason a sales-order row states one.
     location: Optional[str] = None
+    #: The date the DOCUMENT states. Unchanged by R-O: what the paperwork says is a fact,
+    #: and the assumed date travels beside it rather than instead of it.
     expected_date: Optional[date] = None
     spo_qty: str
     #: Days late, when the promised arrival has passed with nothing received. The service
     #: has always stated it and the panel has always rendered it; undeclared here, the
     #: response model dropped it on the way out, so every row read as fresh.
     overdue_days: Optional[int] = None
+    #: R-O (3 Sep 2026, #586): the day the WALK plans this late document against -
+    #: `today + overdue_grace_days`. `None` when the document is not late, or when it is so
+    #: late that nothing is assumed about it at all. `response_model` drops an undeclared
+    #: field, so this is named here or the ledger row can never print it.
+    assumed_date: Optional[date] = None
+    #: False when the document is later than `overdue_dead_days` and therefore counts as
+    #: nothing (R31, as R-O leaves it). The row reads "not counted".
+    counted: bool = True
 
 
 class StockDetailHold(BaseModel):

@@ -207,25 +207,38 @@ class StockDebtService:
         if month not in BUCKET_KEYS:
             as_of = date.today()
             current = month_key(as_of)
+            # The events AS THE WALK COUNTED THEM (R-O): a late-but-alive document was
+            # admitted at an ASSUMED date, and the cell it is filed under has to be the one
+            # its free quantity was credited to, or the drill and the cell that opened it
+            # disagree about which month the goods are in.
+            admitted = {event.key: event for event in result.supply}
             for event in events:
-                # An uncounted document (overdue, or with no date at all) is listed in the
+                # An uncounted document (dead, or with no date at all) is listed in the
                 # CURRENT month: its own arrival month has gone, and the axis starts today.
-                counted = event not in result.uncounted
-                key = (
-                    month_key(effective_date(event.at, as_of)) if counted else current
-                )
+                walked = admitted.get(event.key)
+                counted = walked is not None
+                arrival = walked.at if counted else event.at
+                key = month_key(effective_date(arrival, as_of)) if counted else current
                 if key != month:
                     continue
+                stated = walked.stated_at if counted else None
                 supply.append(
                     {
                         "kind": event.kind,
                         "ref": event.ref,
                         "warehouse_code": event.warehouse,
-                        "date": event.at,
+                        # THE ASSUMED date where there is one (R-O), because that is what
+                        # the walk planned against; the paperwork's own date travels beside
+                        # it rather than instead of it.
+                        "date": arrival,
+                        "stated_date": stated,
+                        "days_late": int(getattr(walked, "days_late", 0) or 0)
+                        if counted
+                        else 0,
                         "bought_for": event.bought_for,
                         "qty": event.qty,
                         # What nobody took, once the whole walk was over - the other half of
-                        # the cell (R37). An overdue document is free of nothing: it is not
+                        # the cell (R37). A DEAD document is free of nothing: it is not
                         # supply until somebody re-dates it (R31).
                         "free_qty": result.free.get(event.key, 0.0) if counted else 0.0,
                         "overdue": not counted and event.at is not None,
@@ -421,6 +434,10 @@ class StockDebtService:
             {line.key for lines in demand_rows.values() for line in lines},
         )
 
+        settings = self.supply._fulfilment_settings()
+        grace = settings.get("overdue_grace_days")
+        dead = settings.get("overdue_dead_days")
+
         out: Dict[str, Assignment] = {}
         for product_id in product_ids:
             # The product's own lead, or the ladder's default - the SAME source the reserve
@@ -444,6 +461,12 @@ class StockDebtService:
                 supply=events,
                 demand=lines,
                 pinned=[hold for hold in holds if hold.line_key in line_keys],
+                # R-O (3 Sep 2026): the grace a late document is counted under, off the
+                # SAME active policy row `tba_from` above is read from - the board, this
+                # view and the ladder all walk one assignment, so they cannot come to two
+                # views of how late is too late.
+                overdue_grace_days=grace,
+                overdue_dead_days=dead,
             )
             if keep_events:
                 self._event_cache[product_id] = events

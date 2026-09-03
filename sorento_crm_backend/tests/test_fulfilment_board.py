@@ -2872,6 +2872,51 @@ def test_the_drill_down_lists_the_documents_behind_the_totals():
         ]
 
 
+def test_the_drill_down_states_the_assumed_arrival_of_a_late_document():
+    """AC-O.3's Stock tab half (R-O, 3 Sep 2026, #586).
+
+    A document whose arrival has passed is planned against `today + overdue_grace_days`, so
+    the ledger row carries that day BESIDE the one the paperwork states - the panel prints
+    "assumed 17 Sep 2026, stated 24 Jul". A document past `overdue_dead_days` is counted as
+    nothing (R31) and its row says so instead of naming a date nobody can plan on.
+
+    Both fields are asserted BY NAME: `response_model` drops what a schema does not
+    declare, and this is the second time a field on this very row went out silently.
+    """
+    from datetime import timedelta
+
+    today = date.today()
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        _stock(db, product, warehouse, on_hand=0)
+        _incoming(
+            db, product, warehouse, spo_number="ZZT-SPO-LATE", allocated=100,
+            received=0, arrives=today - timedelta(days=41),
+        )
+        _incoming(
+            db, product, warehouse, spo_number="ZZT-SPO-DEAD", allocated=500,
+            received=0, arrives=today - timedelta(days=241),
+        )
+
+        rows = {
+            row["spo_number"]: row
+            for row in _service(db).stock_detail(str(product.id), str(warehouse.id))[
+                "incoming"
+            ]
+        }
+
+    late = rows["ZZT-SPO-LATE"]
+    assert late["expected_date"] == today - timedelta(days=41), "the paperwork's own date"
+    assert late["assumed_date"] == today + timedelta(days=14), "the day the walk plans on"
+    assert late["counted"] is True
+    assert late["overdue_days"] == 41
+
+    dead = rows["ZZT-SPO-DEAD"]
+    assert dead["assumed_date"] is None, "nothing is assumed about a document counted as nothing"
+    assert dead["counted"] is False
+
+
 def test_the_drill_down_total_is_the_same_number_the_cell_printed():
     """The list has to ADD UP to the strip, or the drill-down justifies nothing.
 

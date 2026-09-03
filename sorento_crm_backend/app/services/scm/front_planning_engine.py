@@ -52,7 +52,10 @@ re-derives a capacity.
 AutoCount's Available is ``on hand + SPO - SO`` - so step 1 answers with it where it is free
 by the asker's date, as ``timely_spo`` rather than as a Reserve, because a hold cannot be
 written against goods a picker cannot walk to. A document whose arrival has PASSED with
-nothing received is not supply at all until somebody re-dates it (R31).
+nothing received is supply landing on ``today + overdue_grace_days`` (R-O, 3 Sep 2026),
+which is the date every rung here plans against and the date its sentence names beside the
+lateness (``late_document_reason``); past ``overdue_dead_days`` it is not supply at all
+until somebody re-dates it, which is R31 kept for the dead.
 
 ``attribute_sources`` answers "who gets the one pile" - several lines competing for one
 location's opening stock and its dated incoming, resolved in PLAN 3.5's fixed order so the
@@ -507,6 +510,26 @@ def spo_reason(
     return f"{named} arrives on {when}, by the required date"
 
 
+def late_document_reason(
+    document: Optional[str], days_late: int, assumed: Optional[date]
+) -> str:
+    """R-O's clause (3 Sep 2026, #586): a LATE document and the day the walk assumes it by.
+
+    `SPO 2026/07-0031 is 41 days late, assumed by 17 Sep 2026`. R31 counted such a document
+    as nothing and the sentence beside a line said nothing about it at all; under R-O it is
+    supply landing `today + overdue_grace_days`, and every incoming rung that draws it says
+    so in the same words, so a planner reading a promise dated three weeks out can see it
+    rests on paperwork that is two months overdue.
+
+    Written ONCE and called from every rung's own builder, for the reason `spo_reason` is
+    public: three sentences that agreed by coincidence stop agreeing the first time one of
+    them has something new to say.
+    """
+    named = document or "the document"
+    day = "day" if days_late == 1 else "days"
+    when = date_text(assumed) if assumed else "an unstated date"
+    return f"{named} is {days_late} {day} late, assumed by {when}"
+
 
 # --------------------------------------------------------------------------- #
 # Ladder v2 rung helpers (PLAN-demo-followups-19aug-ladder-v2.md section E)
@@ -699,6 +722,7 @@ def group_water_reason(
     group_offer: Optional[Decimal],
     arrival_date: Optional[date],
     document: Optional[str] = None,
+    late_days: int = 0,
 ) -> str:
     """Question 1's OTHER answer: the share of the group's offer that is still on the water.
 
@@ -714,14 +738,22 @@ def group_water_reason(
     document's number pasted beside the first, and never present at all when the draw is
     actually several documents sharing a bucket; the caller decides which is true and passes
     `None` rather than let this function guess.
+
+    `late_days` is R-O's lateness (3 Sep 2026): a document whose own arrival has passed is
+    counted at an ASSUMED date, and the sentence then states the lateness and that date
+    instead of an arrival the paperwork does not support.
     """
-    when = f", arriving {date_text(arrival_date)}" if arrival_date else ""
-    named = f" ({document})" if document else ""
+    late = (
+        late_document_reason(document, late_days, arrival_date) if late_days > 0 else ""
+    )
+    when = "" if late else (f", arriving {date_text(arrival_date)}" if arrival_date else "")
+    named = "" if late else (f" ({document})" if document else "")
+    tail = f". {late}" if late else ""
     if group_offer is None or not group_code:
-        return f"{location} has {qty_text(qty)} on the water{when}{named}"
+        return f"{location} has {qty_text(qty)} on the water{when}{named}{tail}"
     return (
         f"{location} has {qty_text(qty)} of the {qty_text(group_offer)} the {group_code} "
-        f"group can cover this line with on the water{when}{named}"
+        f"group can cover this line with on the water{when}{named}{tail}"
     )
 
 
@@ -767,6 +799,7 @@ def other_group_reason(
     document: Optional[str] = None,
     lending_group: Optional[str] = None,
     free_at: Optional[date] = None,
+    late_days: int = 0,
 ) -> str:
     """Step 1's second half (v7.1, R5, AC-S3-1): another PROJECT group's FREE pile.
 
@@ -797,12 +830,18 @@ def other_group_reason(
     """
     whose = f" the {group_code} group" if group_code else " this line's group"
     measured = f" at {date_text(free_at)}" if free_at else ""
-    when = f", arriving {date_text(arrival_date)}" if arrival_date else ""
-    named = f" ({document})" if document else ""
+    # R-O: a LATE document is counted at an assumed date, and the sentence says so instead
+    # of stating an arrival the paperwork does not support.
+    late = (
+        late_document_reason(document, late_days, arrival_date) if late_days > 0 else ""
+    )
+    when = "" if late else (f", arriving {date_text(arrival_date)}" if arrival_date else "")
+    named = "" if late else (f" ({document})" if document else "")
     owed = f"a later {lending_group} order" if lending_group else "a later order"
+    tail = f". {late}" if late else ""
     return (
         f"{location} has {qty_text(pile)} free outside{whose}{measured}{when}{named}, none "
-        f"of it owed to {owed}"
+        f"of it owed to {owed}{tail}"
     )
 
 
@@ -877,6 +916,7 @@ def supply_borrow_reason(
     donor_line_no: Optional[int] = None,
     donor_agent_code: Optional[str] = None,
     donor_required_date: Optional[date] = None,
+    late_days: int = 0,
 ) -> str:
     """Step 3's sentence (AC-S4-1).
 
@@ -902,6 +942,13 @@ def supply_borrow_reason(
     if kind == "po":
         # Historical snapshot only - see the docstring above.
         head = f"{verb} {qty_text(qty)} on order ({named}, arriving about {when})"
+    elif late_days > 0:
+        # R-O: the document's own arrival has passed, so the head states the lateness and
+        # the assumed date rather than an arrival the paperwork does not support.
+        head = (
+            f"{verb} {qty_text(qty)} "
+            f"({late_document_reason(document, late_days, arrival_date)})"
+        )
     else:
         head = f"{verb} {qty_text(qty)} arriving {when} ({named})"
     if not donor_so_number:
@@ -1374,7 +1421,8 @@ def _draw_group(
                 qty=take,
                 reason=(
                     group_water_reason(
-                        str(location), take, group_code, group_offer, arrival, document
+                        str(location), take, group_code, group_offer, arrival, document,
+                        late_days=int(candidate.get("late_days") or 0),
                     )
                     if water
                     else group_take_reason(str(location), take, group_code, group_offer)
@@ -1456,6 +1504,7 @@ def _draw_other_groups(
                     document,
                     lending_group=str(lending_group) if lending_group else None,
                     free_at=_as_date(candidate.get("free_at")),
+                    late_days=int(candidate.get("late_days") or 0),
                 ),
                 source_location=str(location),
                 rung=RUNG_GROUP_TAKE,
@@ -1572,6 +1621,7 @@ def _draw_supply_borrow(
                     donor_line_no=candidate.get("donor_line_no"),
                     donor_agent_code=candidate.get("donor_agent_code"),
                     donor_required_date=donor_date,
+                    late_days=int(candidate.get("late_days") or 0),
                 ),
                 source_location=str(location) if location else None,
                 rung=RUNG_SUPPLY_BORROW,

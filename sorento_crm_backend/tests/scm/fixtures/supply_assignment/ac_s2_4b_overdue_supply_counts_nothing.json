@@ -1,10 +1,13 @@
 {
   "case": "AC-S2-4b",
   "why": [
-    "An SPO whose arrival has passed with nothing received is not supply until somebody re-dates",
-    "it (R31). It contributes NOTHING to the balance and the line it would have covered is short",
-    "- but it is returned as uncounted, because a document nobody mentions reads as a document",
-    "that is not there, and the buyer has to chase it."
+    "A document whose arrival has passed is not supply until somebody re-dates it - once it",
+    "is DEAD (later than overdue_dead_days, 90 by policy). R-O (3 Sep 2026) gives a late",
+    "document a grace period and lets it count at an assumed date; this case is the far side",
+    "of that ruling, where R31 still holds. The document dated 1 April against a walk taken",
+    "on 1 September is 153 days late: it contributes NOTHING to the balance and the line it",
+    "would have covered is short - but it is returned as uncounted, because a document nobody",
+    "mentions reads as a document that is not there, and the buyer has to chase it."
   ],
   "as_of": "2026-09-01",
   "tba_from": "2029-01-01",
@@ -14,7 +17,7 @@
       "key": "spo:OLD",
       "kind": "spo",
       "warehouse": "BRW-BB",
-      "at": "2026-08-16",
+      "at": "2026-04-01",
       "qty": 50,
       "ref": "SPO 2026/07-0031"
     }

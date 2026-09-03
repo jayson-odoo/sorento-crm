@@ -887,6 +887,24 @@ class FulfilmentBoardService:
             for bin_id in target_ids
             for ref in by_location.get((str(product_id), bin_id), [])
         ]
+        # R-O (3 Sep 2026): what the WALK assumes about a late document, off the same
+        # policy row the walk itself reads, so the ledger and the ladder can never disagree
+        # about which documents are still being counted on.
+        settings = self.supply.fulfilment_settings()
+        grace = max(int(settings.get("overdue_grace_days") or 0), 0)
+        dead = max(int(settings.get("overdue_dead_days") or 0), 0)
+        today = date.today()
+        assumed_arrival = today + timedelta(days=grace)
+
+        def _assumed(late: Optional[int]) -> Dict[str, Any]:
+            days = int(late or 0)
+            if days <= 0:
+                return {"assumed_date": None, "counted": True}
+            if days > dead:
+                # Nothing is assumed about a document the walk counts as nothing (R31).
+                return {"assumed_date": None, "counted": False}
+            return {"assumed_date": assumed_arrival, "counted": True}
+
         incoming = [
             {
                 "spo_number": ref.spo_number,
@@ -899,6 +917,7 @@ class FulfilmentBoardService:
                 # can see which one to chase, rather than silently dropped or silently
                 # read as fresh. Same number the engine's trail names.
                 "overdue_days": ref.overdue_days,
+                **_assumed(ref.overdue_days),
             }
             for bin_id, ref in sorted(
                 incoming_rows,

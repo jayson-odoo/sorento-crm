@@ -1709,24 +1709,25 @@ def test_a_late_spo_is_inside_the_groups_net_and_outside_what_the_line_may_draw(
     assert components[0]["donor_so_number"] is None, "nobody is owed it back"
 
 
-def test_a_past_dated_promise_is_still_inside_the_groups_net():
+def test_a_dead_promise_is_still_inside_the_groups_net_and_still_draws_nothing():
     """TRUST THE BOOK (captain, 26 August 2026). The goods are owed until a re-uploaded PO
     and SPO book says they arrived, so an overdue promise is still supply the group holds.
 
-    LADDER V7.1 REVERSES THE DRAW (R31, 29 August 2026), and keeps the net. An overdue
-    document is still inside `group_net` - AutoCount counts it and the trail names it - but
-    it is NOT supply a proposal may promise against until somebody re-dates it. The captain
-    ruled it with the measurement in hand: every one of the 725 open SPO lines on the live
-    book is dated August 2026 or earlier, so drawing them would promise against dates
-    nobody believes. The line buys, and "overdue" stays a word for the order-inquiry row and
-    the location table, where the document is named and can be chased.
+    LADDER V7.1 REVERSES THE DRAW (R31, 29 August 2026), and keeps the net. Such a document
+    is still inside `group_net` - AutoCount counts it and the trail names it - but it is NOT
+    supply a proposal may promise against until somebody re-dates it.
+
+    R-O (3 September 2026) narrows that to the DEAD: a document less than
+    `overdue_dead_days` late is planned against `today + overdue_grace_days` now, so this
+    fixture's own document was moved from 25 days late to 125 to keep stating the rule it
+    was written for. The alive half is `tests/scm/test_overdue_grace_ladder.py`.
     """
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)
         _group, sites = _group_sites(db)
         own, _pool = sites["BRW"]
         spo_number = _spo_line(
-            db, product, own, qty=40, arrives=date.today() - timedelta(days=25)
+            db, product, own, qty=40, arrives=date.today() - timedelta(days=125)
         ).spo_number
         db.commit()
 

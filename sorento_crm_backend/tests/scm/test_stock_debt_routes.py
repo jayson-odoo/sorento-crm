@@ -717,14 +717,20 @@ def c_get_supply(app, product, month) -> list:
         ]
 
 
-def test_an_overdue_document_is_listed_and_counted_as_nothing(scm_app):
-    """AC-S2-4b / R31, on the wire: the arrival has passed with nothing received, so the
-    line is short and the document is still in the drill with `overdue: true`."""
+def test_a_dead_document_is_listed_and_counted_as_nothing(scm_app):
+    """AC-S2-4b / R31 as R-O leaves it (AC-O.3), on the wire: the arrival passed 120 days
+    ago with nothing received, the grace period has given up on it, so the line is short
+    and the document is still in the drill with `overdue: true` - the row a reader sees as
+    "not counted".
+
+    The document was 20 days late until R-O landed, which is inside the 90-day dead line
+    and therefore counted now; the alive half is the next test.
+    """
     app, db = _client(scm_app)
     marker = f"ZZTSD{_u()[:6]}".upper()
     warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
     product = _product(db, f"{marker}-A")
-    _spo(db, product, warehouse, qty=50, arrives=TODAY - timedelta(days=20))
+    _spo(db, product, warehouse, qty=50, arrives=TODAY - timedelta(days=120))
     due = _months_ahead(1)
     _demand(
         db, product, warehouse, qty=50, required_date=due, so_number=f"{marker}-SO1"
@@ -741,8 +747,51 @@ def test_an_overdue_document_is_listed_and_counted_as_nothing(scm_app):
 
     assert [event["overdue"] for event in overdue["supply"]] == [True]
     assert overdue["supply"][0]["qty"] == 50
+    assert overdue["supply"][0]["stated_date"] is None, (
+        "nothing is assumed about a document the walk counted as nothing"
+    )
     assert cell["demand"][0]["status"] == "short"
     assert cell["demand"][0]["assigned_qty"] == 0
+
+
+def test_a_late_but_alive_document_is_listed_at_its_assumed_date(scm_app):
+    """AC-O.3's other half (R-O, #586): 41 days late on a 14-day grace, so the ledger row
+    is filed under the ASSUMED arrival, prints the date the paperwork states beside it, and
+    is not marked overdue - it is supply, and the line it covers is not short.
+
+    `stated_date` / `days_late` are asserted BY NAME: `response_model` drops what a schema
+    does not declare, and a field the walk computes and the wire never carries is a field
+    the Stock tab cannot print.
+    """
+    app, db = _client(scm_app)
+    marker = f"ZZTSD{_u()[:6]}".upper()
+    warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
+    product = _product(db, f"{marker}-A")
+    stated = TODAY - timedelta(days=41)
+    assumed = TODAY + timedelta(days=14)
+    _spo(db, product, warehouse, qty=50, arrives=stated)
+    due = _months_ahead(2)
+    _demand(
+        db, product, warehouse, qty=50, required_date=due, so_number=f"{marker}-SO1"
+    )
+    db.flush()
+
+    with TestClient(app) as c:
+        landing = c.get(
+            f"{BASE}/{product.id}/cell", params={"month": month_key(assumed)}
+        ).json()
+        cell = c.get(
+            f"{BASE}/{product.id}/cell", params={"month": month_key(due)}
+        ).json()
+
+    rows = [event for event in landing["supply"] if event["kind"] == "spo"]
+    assert len(rows) == 1, "filed under the month it is ASSUMED to land in"
+    assert rows[0]["date"] == assumed.isoformat()
+    assert rows[0]["stated_date"] == stated.isoformat()
+    assert rows[0]["days_late"] == 41
+    assert rows[0]["overdue"] is False
+    assert cell["demand"][0]["status"] == "covered"
+    assert cell["demand"][0]["assigned_qty"] == 50
 
 
 def test_the_cell_answers_the_tba_and_the_undated_bucket(scm_app):

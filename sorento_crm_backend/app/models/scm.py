@@ -787,6 +787,19 @@ class PriorityPolicy(Base):
     pool_share_pct = Column(
         Integer, nullable=False, default=50, server_default=text("50")
     )
+    # The overdue grace (R-O, 3 Sep 2026, migration 464). R31 counted a document whose
+    # arrival has passed with nothing received as nothing at all; on SO419417 that left the
+    # ladder lending 4 units off the 11 on the floor at BRW while 725 SPO units dated July
+    # and August sat unreceived. A late-but-alive document now counts as supply landing on
+    # `today + overdue_grace_days`, and one later than `overdue_dead_days` counts as
+    # nothing, which is R31 kept for the dead. Two numbers on this row for the same reason
+    # `immediate_window_days` is here: one policy, activated as a whole.
+    overdue_grace_days = Column(
+        Integer, nullable=False, default=14, server_default=text("14")
+    )
+    overdue_dead_days = Column(
+        Integer, nullable=False, default=90, server_default=text("90")
+    )
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
