@@ -89,3 +89,25 @@ on Opus at the end.
 Mock swapped to real; existing shipments carry `container_size_id` NULL = tenant default;
 new column in both manual dict builders; real sidebar clicks at 375 and 1280; agent-browser
 evidence run per slice; pytest + vitest green; `alembic heads` single before PR.
+
+## Round 2 (captain, 3 Sep, after printing from production)
+
+Measured against the fixture `documentation/plans/scm/fixtures/FSCU8103365.xlsx` (sheet RMB):
+
+| Symptom | Cause |
+| --- | --- |
+| Export header block centred, values wrap (`FSCU8103365` on two lines, dates print `######`) | `to_xlsx` applies `Alignment(center, center, wrap_text=True)` to the header rows (`consolidated_packing_list.py:445`); the fixture's header labels are default (left) and values are `horizontal=left`, no wrap, so a long value overflows into C. Column B is 7.3 wide in both files; the wrap is the difference. |
+| "Freezing at the bottom" on first open | `ws.freeze_panes = A17` (`:668`); the fixture has NO freeze pane. |
+| DESCRIPTION prints the product name (= the code on prod) | shipment line has no description column; the PI line's supplier wording is dropped at convert (was BL-045, captain now wants it). |
+| Qty input loses focus after two digits; picked product does not show on a new line | S7 grid: inputs remount on every keystroke (draft state change rebuilds column defs / cell components), same class as the S3 columns-memo fix. |
+| Ctn qty reads `-` on a line with no pcs/ctn; cannot change an existing line's product | Ctn qty is derived only; existing line's product is fixed by design of the old table. |
+| Is the SORENTO + MOCHA split right? | Export fidelity test pins the fixture (which carries MOCHA blocks); Split card is unit-tested on the same numbers; not yet checked live on a mixed container. |
+
+Slices, same PR (#594), after S5:
+
+| Slice | Scope |
+| --- | --- |
+| **S8** export fidelity | Header rows: label cells default alignment, value cells left, no wrap, dates as real dates with the fixture's number format; no freeze pane; fidelity test extended to assert alignment, wrap and freeze against the fixture cell by cell. |
+| **S9** description carried | Migration 466: `inbound_shipment_lines.description` Text NULL; convert copies `proforma_invoice_line.description`; backfill existing lines from `scm.proforma_invoice_shipment_link`; editable in the lines grid; export column D = description, else product name; screen Description column reads the same. |
+| **S10** lines grid editing | Inputs keep focus across keystrokes (test types three digits); product select on a new line shows the pick; product editable on an existing line (unique index shipment+product+supplier still enforced, duplicate refused with a readable message); Ctn qty editable (`cartons_count`) when pcs/ctn is blank, derived and read-only when pcs/ctn is given; every measurement cell fillable on every row. |
+| **S11** mixed-company check | Tester: on :3140 build a packing list with a MOCHA-brand line beside SORENTO lines, compare Split card, Download XLSX footer and a hand calculation (clearance/freight by cbm share, insurance by amount share); report numbers side by side. |
