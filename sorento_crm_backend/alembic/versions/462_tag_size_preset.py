@@ -6,21 +6,30 @@ scoped, unique per ``(company_id, name)`` so two marketers cannot silently
 shadow each other's "Shelf rail".
 
 Revision ID: 462_tag_size_preset
-Revises: 461_so_supply_decision_drafts
+Revises: 463_draft_proposed
 """
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import UUID
 
 revision = "462_tag_size_preset"
-down_revision = "461_so_supply_decision_drafts"
+down_revision = "463_draft_proposed"
 branch_labels = None
 depends_on = None
 
 SCHEMA = "dealer_kit"
 
 
+def _has_table(name: str) -> bool:
+    return sa.inspect(op.get_bind()).has_table(name, schema=SCHEMA)
+
+
 def upgrade() -> None:
+    # Hand-applied on the shared dev database before the reparent (see
+    # 443/450/452/460/461/463 for the same shared-DB, per-worktree stamp drift):
+    # a no-op if the table already exists rather than a failure.
+    if _has_table("tag_size_preset"):
+        return
     op.create_table(
         "tag_size_preset",
         sa.Column("id", UUID(as_uuid=False), primary_key=True),
@@ -62,6 +71,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    if not _has_table("tag_size_preset"):
+        return
     op.drop_index(
         "ix_dealer_kit_tag_size_preset_company_id",
         table_name="tag_size_preset",
