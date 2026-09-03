@@ -413,9 +413,37 @@ def test_the_sort_is_always_made_total_by_id():
                 f"the tiebreaker for sort={sort!r} dir={direction} is not the id"
             )
             # Both halves point the same way, or the second page of a descending list is
-            # ordered against the first.
-            assert str(clause[0]).endswith(direction.upper() if direction == "asc" else "DESC")
+            # ordered against the first. The sorted column also carries NULLS LAST, so an
+            # undated row never reads as the newest thing in the book under DESC.
+            assert str(clause[0]).endswith(
+                f"{direction.upper()} NULLS LAST"
+            ), f"no NULLS LAST on the sorted column for sort={sort!r} dir={direction}"
             assert str(clause[-1]).endswith("ASC" if direction == "asc" else "DESC")
+
+
+def test_order_date_desc_puts_a_null_dated_order_last_not_first(db, world):
+    """Postgres defaults `ORDER BY ... DESC` to NULLS FIRST. Left alone, that would put a row
+    nobody dated at the very TOP of the list's shipped default (latest Document date first,
+    PLAN-listing-view-memory) - read as the newest thing in the book rather than as the
+    unfiled row it is. Belongs last in both directions.
+    """
+    early = _order(db, world, when=date(2026, 3, 1), customer=world["acme"])
+    late = _order(db, world, when=date(2026, 9, 1), customer=world["acme"])
+    undated = _order(db, world, when=None, customer=world["acme"])
+
+    desc = SalesOrderService(db).list(
+        page=1, limit=200, sort="order_date", direction="desc",
+        query=MARKER, status=None, priority=None,
+    )
+    desc_numbers = [row["so_number"] for row in desc["data"]]
+    assert desc_numbers == [late.so_number, early.so_number, undated.so_number]
+
+    asc = SalesOrderService(db).list(
+        page=1, limit=200, sort="order_date", direction="asc",
+        query=MARKER, status=None, priority=None,
+    )
+    asc_numbers = [row["so_number"] for row in asc["data"]]
+    assert asc_numbers == [early.so_number, late.so_number, undated.so_number]
 
 
 def test_page_one_and_page_two_partition_the_result(db, world):
