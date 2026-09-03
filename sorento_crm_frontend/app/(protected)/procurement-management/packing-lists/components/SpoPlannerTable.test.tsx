@@ -343,6 +343,21 @@ async function closeDrill() {
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
 }
 
+/**
+ * R2 (captain's ruling, 3 Sep) - Create SPO opens "Review before creating" first; the actual
+ * send happens on the dialog's OWN "Create SPO" button, which shares the trigger's accessible
+ * name, so every read/click on it after opening is scoped with `within(dialog)`.
+ */
+async function openReviewDialog() {
+  await screen.findByRole('button', { name: /^create spo$/i });
+  fireEvent.click(screen.getByRole('button', { name: /^create spo$/i }));
+  return screen.findByRole('alertdialog');
+}
+async function confirmReview() {
+  const dialog = await openReviewDialog();
+  fireEvent.click(within(dialog).getByRole('button', { name: /^create spo$/i }));
+}
+
 describe('F7 - the SPO planner chooses its POs and its SOs', () => {
   beforeEach(() => {
     state.suggestion = suggestion({ lines: [plannerLine()] });
@@ -383,7 +398,7 @@ describe('F7 - the SPO planner chooses its POs and its SOs', () => {
 
     // The remaining PO has 150 open, so it covers the whole 100 packed - not the 40 the
     // cascade happened to take from it while the other one was ticked.
-    expect(screen.getByTitle(/what the TICKED POs pull this SPO up to/i)).toHaveValue(100);
+    expect(screen.getByTestId('spo-qty-input')).toHaveValue(100);
   });
 
   it('a take can only cover what its own line has open', async () => {
@@ -396,7 +411,7 @@ describe('F7 - the SPO planner chooses its POs and its SOs', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: 'Draw from 202606-S0099' }));
 
     // Only the 60-open line is ticked now, whatever the packed quantity is.
-    expect(screen.getByTitle(/what the TICKED POs pull this SPO up to/i)).toHaveValue(60);
+    expect(screen.getByTestId('spo-qty-input')).toHaveValue(60);
   });
 
   it('sends only the ticked takes to the create (AC-G6)', async () => {
@@ -404,7 +419,7 @@ describe('F7 - the SPO planner chooses its POs and its SOs', () => {
     await openPoDrill();
     fireEvent.click(screen.getByRole('checkbox', { name: 'Draw from 202605-S0060' }));
     await closeDrill();
-    fireEvent.click(screen.getByRole('button', { name: /create spo/i }));
+    await confirmReview();
 
     await waitFor(() => expect(state.create).toHaveBeenCalledTimes(1));
     const [, lines] = state.create.mock.calls[0];
@@ -434,8 +449,7 @@ describe('F7 - the SPO planner chooses its POs and its SOs', () => {
 
   it('the ticks drive the location split (AC-G4)', async () => {
     renderTable();
-    await screen.findByRole('button', { name: /create spo/i });
-    fireEvent.click(screen.getByRole('button', { name: /create spo/i }));
+    await confirmReview();
 
     await waitFor(() => expect(state.create).toHaveBeenCalledTimes(1));
     const [, lines] = state.create.mock.calls[0];
@@ -453,7 +467,7 @@ describe('F7 - the SPO planner chooses its POs and its SOs', () => {
     await openSoDrill();
     fireEvent.click(screen.getByRole('checkbox', { name: 'Cover SO-2201' }));
     await closeDrill();
-    fireEvent.click(screen.getByRole('button', { name: /create spo/i }));
+    await confirmReview();
 
     await waitFor(() => expect(state.create).toHaveBeenCalledTimes(1));
     const [, lines] = state.create.mock.calls[0];
@@ -546,7 +560,7 @@ function shortCoveredLine(over: Record<string, unknown> = {}) {
   });
 }
 
-describe('F7 - the SO-covered cell and the Create banner are one arithmetic', () => {
+describe('F7 - the SO-covered cell and the review dialog read one arithmetic', () => {
   beforeEach(() => {
     state.suggestion = suggestion({ lines: [shortCoveredLine()] });
     state.create = vi.fn().mockResolvedValue({
@@ -588,26 +602,24 @@ describe('F7 - the SO-covered cell and the Create banner are one arithmetic', ()
     expect(screen.getByRole('checkbox', { name: 'Cover SO-2202' })).not.toBeChecked();
   });
 
-  it('says which order it cannot serve when the operator ticks one it cannot reach', async () => {
+  it('names the over-ticked order in the review dialog, and Create SPO stays enabled (R2)', async () => {
     renderTable();
     await screen.findByTitle(/which demand this spo is for/i);
     fireEvent.click(screen.getByTitle(/which demand this spo is for/i));
 
     fireEvent.click(screen.getByRole('checkbox', { name: 'Cover SO-2202' }));
-
-    // Named on the banner - the lightbox lists SO-2202 as well, so the assertion is on the
-    // sentence that stops the send, not on the number appearing somewhere.
-    expect(
-      await screen.findByText(/SO-2202 - this container has nothing left/),
-    ).toBeInTheDocument();
     await closeDrill();
-    expect(screen.getByRole('button', { name: /create spo/i })).toBeDisabled();
+
+    // R2 (captain's ruling, 3 Sep): an over-tick no longer blocks Create SPO or shows a live
+    // banner - it is named once, in the review dialog, alongside every other note.
+    expect(screen.getByRole('button', { name: /create spo/i })).toBeEnabled();
+    const dialog = await openReviewDialog();
+    expect(within(dialog).getByText(/SO-2202/)).toBeInTheDocument();
   });
 
   it('splits only what it can serve, and calls the rest unassigned', async () => {
     renderTable();
-    await screen.findByRole('button', { name: /create spo/i });
-    fireEvent.click(screen.getByRole('button', { name: /create spo/i }));
+    await confirmReview();
 
     await waitFor(() => expect(state.create).toHaveBeenCalledTimes(1));
     const [, lines] = state.create.mock.calls[0];
@@ -639,7 +651,7 @@ describe('F7 - unticking then re-ticking a take returns every figure', () => {
     });
   });
 
-  const qtyInput = () => screen.getByTitle(/what the TICKED POs pull this SPO up to/i);
+  const qtyInput = () => screen.getByTestId('spo-qty-input');
   /** The drill closes on a tick, so each one is its own open-click-read. */
   const tick = async (name: string) => {
     await screen.findByTitle(/which po covers this/i);
@@ -672,7 +684,7 @@ describe('F7 - unticking then re-ticking a take returns every figure', () => {
     await tick('Draw from 202606-S0099');
 
     await closeDrill();
-    fireEvent.click(screen.getByRole('button', { name: /create spo/i }));
+    await confirmReview();
 
     await waitFor(() => expect(state.create).toHaveBeenCalledTimes(1));
     const [, lines] = state.create.mock.calls[0];
@@ -683,7 +695,7 @@ describe('F7 - unticking then re-ticking a take returns every figure', () => {
     ]);
   });
 
-  it('keeps a quantity the operator typed themselves, clamped to what is ticked', async () => {
+  it('keeps a quantity the operator typed themselves, across an untick and a re-tick', async () => {
     renderTable();
     await screen.findByTitle(/which po covers this/i);
     fireEvent.change(qtyInput(), { target: { value: '50' } });
@@ -749,12 +761,15 @@ describe('F7 - unticking an SO line shows up as Unassigned', () => {
 });
 
 /**
- * Browser pass 4, finding 2 - a typed quantity survives a round trip through the ticks.
+ * Browser pass 4, finding 2, amended by R2 (captain's ruling, 3 Sep) - a typed quantity
+ * survives a round trip through the ticks, and is NEVER clamped to what is ticked any more.
  *
- * The recompute wrote the CLAMPED figure back into the quantity, so unticking the only
- * take stored 0 and the re-tick had nothing left to restore.
+ * Pre-R2 the recompute wrote the CLAMPED figure back into the quantity, so unticking the
+ * only take stored 0 and the re-tick had nothing left to restore - fixed by deriving from
+ * the typed figure rather than the clamped one. R2 goes further and removes the clamp
+ * itself: unticking every take now leaves the typed figure exactly as typed, not 0.
  */
-describe('F7 - the quantity the operator typed is theirs', () => {
+describe('F7 - the quantity the operator typed is theirs, never clamped to what is ticked', () => {
   const oneTake = () =>
     plannerLine({
       po_takes: [
@@ -774,43 +789,163 @@ describe('F7 - the quantity the operator typed is theirs', () => {
     state.suggestion = suggestion({ lines: [oneTake()] });
   });
 
-  const qtyInput = () => screen.getByTitle(/what the TICKED POs pull this SPO up to/i);
+  const qtyInput = () => screen.getByTestId('spo-qty-input');
   const toggle = async () => {
     await screen.findByTitle(/which po covers this/i);
     fireEvent.click(screen.getByTitle(/which po covers this/i));
     fireEvent.click(screen.getByRole('checkbox', { name: 'Draw from 202605-S0060' }));
   };
 
-  it('gives back the typed figure after untick and re-tick, every time', async () => {
+  it('gives back the typed figure after untick and re-tick, every time (R2)', async () => {
     renderTable();
     await screen.findByTitle(/which po covers this/i);
     fireEvent.change(qtyInput(), { target: { value: '40' } });
     expect(qtyInput()).toHaveValue(40);
 
+    // Unticking the only take drops what a PO covers to 0 - the PO cap is removed (R2), so
+    // the typed 40 stays exactly as typed, never clamped down to 0.
     await toggle();
-    expect(qtyInput()).toHaveValue(0);
+    expect(qtyInput()).toHaveValue(40);
     await toggle();
     expect(qtyInput()).toHaveValue(40);
 
-    // And again - the second round trip used to give back whatever the first one left.
+    // And again - it survives every round trip, not only the first.
     await toggle();
-    expect(qtyInput()).toHaveValue(0);
+    expect(qtyInput()).toHaveValue(40);
     await toggle();
     expect(qtyInput()).toHaveValue(40);
   });
+});
 
-  it('never lets the typed figure exceed what is ticked', async () => {
+/**
+ * Section I - free quantity, one review dialog (R2, captain's ruling 3 Sep, UAC AC-I1-AC-I6).
+ *
+ * A single line packed 500, one open PO covering 409 of it. Typing past what the PO covers no
+ * longer clamps or bans the send; every note about the shortfall reads once, in "Review before
+ * creating", which Create SPO now opens instead of sending straight away.
+ */
+function unbackedLine(over: Record<string, unknown> = {}) {
+  return plannerLine({
+    shipment_line_id: 'sl-big',
+    item_code: 'BIG-ITEM',
+    packed_qty: 500,
+    po_covered_qty: 409,
+    suggested_qty: 409,
+    no_po_qty: 91,
+    po_takes: [
+      {
+        po_line_id: 'pol-big',
+        po_number: 'PO-BIG',
+        qty: 409,
+        expected_date: '2026-09-01',
+        po_date: '2026-05-02',
+        supplier_name: 'Kailu',
+        open_qty: 409,
+      },
+    ],
+    so_coverage: [],
+    ...over,
+  });
+}
+
+describe('Section I - free quantity, one review dialog', () => {
+  beforeEach(() => {
+    state.suggestion = suggestion({ lines: [unbackedLine()] });
+    state.create = vi.fn().mockResolvedValue({
+      shipment_id: 'sh-1',
+      shipment_number: 'ABCU1000001',
+      created_spos: [],
+      skipped: [],
+      allocations: [],
+      demand_links: [],
+    });
+  });
+
+  const qtyInput = () => screen.getByTestId('spo-qty-input');
+
+  it('keeps a typed figure past what the PO covers, with no banner, Create SPO enabled (AC-I1)', async () => {
+    renderTable();
+    await screen.findByTestId('spo-qty-input');
+
+    fireEvent.change(qtyInput(), { target: { value: '500' } });
+
+    expect(qtyInput()).toHaveValue(500);
+    expect(screen.queryByText(/without PO backing/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /create spo/i })).toBeEnabled();
+  });
+
+  it('Create SPO opens the review dialog naming what is asked, what POs cover, and the rest (AC-I2, AC-I6)', async () => {
+    renderTable();
+    await screen.findByTestId('spo-qty-input');
+    fireEvent.change(qtyInput(), { target: { value: '500' } });
+
+    const dialog = await openReviewDialog();
+
+    expect(within(dialog).getByText('Review before creating')).toBeInTheDocument();
+    expect(
+      within(dialog).getByText('Asked 500, POs cover 409, 91 without PO backing'),
+    ).toBeInTheDocument();
+  });
+
+  it('Confirm sends the same payload Create SPO always sent (AC-I3)', async () => {
+    renderTable();
+    await screen.findByTestId('spo-qty-input');
+    fireEvent.change(qtyInput(), { target: { value: '500' } });
+
+    await confirmReview();
+
+    await waitFor(() => expect(state.create).toHaveBeenCalledTimes(1));
+    const [shipmentId, lines] = state.create.mock.calls[0];
+    expect(shipmentId).toBe('sh-1');
+    expect(lines[0]).toMatchObject({
+      shipment_line_id: 'sl-big',
+      qty: 500,
+      include: true,
+      po_take_ids: ['pol-big'],
+    });
+  });
+
+  it('Cancel closes the dialog and changes nothing (AC-I3)', async () => {
+    renderTable();
+    await screen.findByTestId('spo-qty-input');
+    fireEvent.change(qtyInput(), { target: { value: '500' } });
+
+    const dialog = await openReviewDialog();
+    fireEvent.click(within(dialog).getByRole('button', { name: /cancel/i }));
+
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+    expect(state.create).not.toHaveBeenCalled();
+    expect(qtyInput()).toHaveValue(500);
+  });
+
+  it('a line with a supplier but no open PO at all is convertible, and names the shortfall in the review dialog', async () => {
     state.suggestion = suggestion({
-      lines: [oneTake()],
+      lines: [
+        unbackedLine({
+          shipment_line_id: 'sl-nopo',
+          item_code: 'NOPO-ITEM',
+          packed_qty: 40,
+          po_covered_qty: 0,
+          suggested_qty: 0,
+          no_po_qty: 40,
+          po_takes: [],
+          cannot_convert: false,
+          reason: 'No open PO to pull from; the SPO line is written without PO backing.',
+        }),
+      ],
     });
     renderTable();
-    await screen.findByTitle(/which po covers this/i);
-    fireEvent.change(qtyInput(), { target: { value: '90' } });
+    await screen.findByTestId('spo-qty-input');
+    // A cannot_convert-only-by-no-supplier line starts at the default (0 here), so it must be
+    // typed to be included - the same "qty > 0 to include" rule every other line follows.
+    fireEvent.change(qtyInput(), { target: { value: '40' } });
 
-    await toggle();
-    await toggle();
+    const dialog = await openReviewDialog();
 
-    expect(qtyInput()).toHaveValue(90);
+    expect(within(dialog).getByText('NOPO-ITEM')).toBeInTheDocument();
+    expect(
+      within(dialog).getByText('Asked 40, POs cover 0, 40 without PO backing'),
+    ).toBeInTheDocument();
   });
 });
 
@@ -937,7 +1072,7 @@ describe('R22 - the destinations expand under the row', () => {
     // The remaining 30 lands on the row that was just added, at the warehouse not already
     // used - so the split adds up again and Create SPO is allowed.
     expect(qtyRow(2)).toHaveValue(30);
-    fireEvent.click(screen.getByRole('button', { name: /create spo/i }));
+    await confirmReview();
     await waitFor(() => expect(state.create).toHaveBeenCalledTimes(1));
     const [, lines] = state.create.mock.calls[0];
     expect(lines[0].location_splits).toEqual([
@@ -1090,7 +1225,7 @@ describe('R21 - the four figures open the shared lightbox', () => {
     fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Draw from 202606-S0099' }));
 
     expect(screen.getByTitle(PO)).toHaveTextContent('60');
-    expect(screen.getByTitle(/what the TICKED POs pull this SPO up to/i)).toHaveValue(60);
+    expect(screen.getByTestId('spo-qty-input')).toHaveValue(60);
     // The dialog stays open across the tick - it is a lightbox, not a hover surface.
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });

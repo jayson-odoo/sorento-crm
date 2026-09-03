@@ -1287,12 +1287,17 @@ export async function downloadPackingListExport(
  *     Never a remainder after PO/stock is subtracted.
  *   * `on_hand` / `incoming_spo` are CONTEXT ONLY - shown, never netted.
  *   * `no_po_qty = max(packed_qty - po_covered_qty, 0)` - the portion nothing open can back.
- *     When `po_covered_qty` is zero, the WHOLE line is `cannot_convert` (same shape as the
- *     no-supplier case, unselectable) with `reason` "No PO to pull from - raise the PO in
- *     AutoCount first."; a PARTIALLY-backed line stays selectable at `po_covered_qty`, with
- *     the shortfall named on `reason` too.
  *   * `covered` is GONE - it meant "nothing left to ask for", a concept that only existed
  *     when a PO was a deduction.
+ *
+ * ── R2 (captain's ruling, 3 Sep) - the PO CAP is also removed ────────────────
+ * `create`'s `need = min(requested, packed)` is now the SPO line's quantity outright; the PO
+ * cascade still pulls and advances only what it reaches, and whatever is left over is written
+ * on the SAME line with no pull (`source_ref.no_po_qty` on the backend). `suggested_qty` /
+ * `po_covered_qty` is only the DEFAULT the FE's qty input starts at, never a ceiling - it can
+ * be typed past. `cannot_convert` is true ONLY for a line with no supplier at all; a line with
+ * a supplier and no open PO (`po_covered_qty` zero) is fully convertible, `reason` naming the
+ * shortfall as information (`_REASON_NO_PO`, backend), never a block.
  *
  * ── BACKEND CONTRACT (app/api/v1/scm/fulfilment.py) ─────────────────────────
  *  GET  /api/v1/scm/inbound-shipments/{id}/spo-suggestion -> 200 SpoSuggestion. Auth:
@@ -1310,7 +1315,8 @@ export async function downloadPackingListExport(
  *
  * One SPO per SUPPLIER represented on the shipment - a container is routinely several
  * factories, and AutoCount POs are per supplier too. A line with no supplier recorded (the
- * n8n PDF path), or with nothing pullable from any open PO, cannot convert.
+ * n8n PDF path) cannot convert; a line WITH a supplier but nothing pullable from any open PO
+ * is still convertible since R2 (captain's ruling, 3 Sep), just written without a pull.
  *
  * **Recording the pull, and the honesty decision the plan asked to settle.** `create`
  * ADVANCES the source PO line's own `qty_received` by what it pulls (the IDENTICAL write
@@ -1362,8 +1368,9 @@ export async function downloadPackingListExport(
  *       above (a generic PO delete, a bad migration) - shown as a small informational note,
  *       never a toast, since it describes something that already happened silently. That
  *       bypass path does NOT reverse the source PO's advance (only `unwind` does), so a
- *       self-healed line can come back `cannot_convert` rather than restored - a documented
- *       limitation, not a bug.
+ *       self-healed line can come back with nothing left to pull (`po_covered_qty` 0) rather
+ *       than restored - still convertible since R2 (unbacked, not `cannot_convert`) - a
+ *       documented limitation, not a bug.
  */
 export type SpoMatchedBy = 'po_ref' | 'product' | null;
 
@@ -1470,17 +1477,19 @@ export interface SpoSuggestionLine {
   on_hand: number;
   incoming_spo: number;
   /** `po_covered_qty`, capped at `packed_qty` by the cascade - what the PO(s) PULL this SPO
-   *  up to. Editable, but cannot exceed `po_covered_qty` (nothing more to pull). */
+   *  up to. R2 (captain's ruling, 3 Sep): only the DEFAULT the FE's qty input starts at, no
+   *  longer a ceiling - the buyer can type past it, up to `packed_qty`. */
   suggested_qty: number;
-  /** `max(packed_qty - po_covered_qty, 0)` - the portion nothing open can back. Shown as
-   *  context on a selectable line; the reason the WHOLE line is `cannot_convert` when it
-   *  equals `packed_qty`. */
+  /** `max(packed_qty - po_covered_qty, 0)` - the portion nothing open can back, at the
+   *  DEFAULT quantity. Shown as context on a selectable line. */
   no_po_qty: number;
-  /** No supplier recorded, OR nothing at all is pullable from an open PO - cannot become an
-   *  SPO line, like the no-supplier case. */
+  /** No supplier recorded - the ONLY reason a line cannot become an SPO line (R2, captain's
+   *  ruling, 3 Sep). A line with a supplier and nothing pullable from any open PO is fully
+   *  convertible, simply unbacked. */
   cannot_convert: boolean;
-  /** Why `cannot_convert`, or a note about a partially-uncovered remainder. Null on a line
-   *  fully backed by an open PO. */
+  /** Informational only since R2: names why `po_covered_qty` falls short of `packed_qty`
+   *  (or is zero), never a reason the line is blocked. Null on a line fully backed by an
+   *  open PO. */
   reason: string | null;
   unit_cost: number | null;
   currency: string | null;

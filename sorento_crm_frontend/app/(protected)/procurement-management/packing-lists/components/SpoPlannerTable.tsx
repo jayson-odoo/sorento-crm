@@ -88,12 +88,18 @@ import { SpoScheduleMatrixTable } from './SpoScheduleMatrixTable';
  * confirm without hiding the row.
  *
  * DOCTRINE CORRECTION (captain, 21 Aug): "when there is PO, then we only can do SPO... it is
- * when we got PO, then we only can pull from the PO to form SPO." `suggested_qty` is now
- * `po_covered_qty` itself - what an open PO PULLS this SPO up to, never a deduction. A line
- * with nothing pullable (`cannot_convert`) is not selectable, same shape as the no-supplier
- * case; a partially-backed line stays selectable at `po_covered_qty`, with the uncovered
- * remainder (`no_po_qty`) named on `reason`. On hand / incoming SPO are CONTEXT columns only -
- * they never feed the qty. See `fulfilmentService.ts`'s own contract doc for the full story.
+ * when we got PO, then we only can pull from the PO to form SPO." `suggested_qty` is
+ * `po_covered_qty` itself - what an open PO PULLS this SPO up to. On hand / incoming SPO are
+ * CONTEXT columns only - they never feed the qty. See `fulfilmentService.ts`'s own contract
+ * doc for the full story.
+ *
+ * R2 (captain's ruling, 3 Sep): the PO cap is REMOVED. `po_covered_qty` / `suggested_qty` is
+ * only the DEFAULT the qty input starts at now, never a ceiling - the input takes any whole
+ * number, no live clamp. `cannot_convert` (input disabled) is true ONLY for a line with no
+ * supplier; a line with a supplier and no open PO is fully editable, simply unbacked. Nothing
+ * about the quantity - past packed, past what a PO covers, an over-tick - blocks Create SPO
+ * live any more; it is all read once, in the "Review before creating" dialog Create SPO opens
+ * (`reviewNotesFor`), and Confirm there sends exactly the payload Create SPO always sent.
  *
  * Four asks from the same doctrine-correction message, all on this table:
  *   1. The PO-takes drill names the PO's own date and supplier, and opens as the shared
@@ -260,12 +266,66 @@ function splitsTotal(splits: SplitState[]): number {
   return splits.reduce((sum, s) => sum + (s.qty || 0), 0);
 }
 
+/**
+ * What "Review before creating" says about one included line (R2, AC-I2/AC-I6).
+ *
+ * The PO cap is gone, so nothing here blocks Create SPO any more - the notes are the ONE
+ * place every shortfall the operator might miss is read before the write, in place of the
+ * live clamp and live red banner this table used to carry. Only the notes that apply to
+ * this line are returned; an empty array means the line reads "Ready".
+ */
+function reviewNotesFor(
+  ln: SpoSuggestionLine,
+  qty: number,
+  takeIds: string[],
+  soKeys: string[],
+  splits: SplitState[],
+  /** The starved document names `overTicked` already worked out for this line - passed in
+   *  rather than re-derived, so the dialog and the (now-retired) live banner could never
+   *  have disagreed about which orders this SPO cannot serve. */
+  starved: string[],
+): string[] {
+  const notes: string[] = [];
+  const asked = qty;
+  const packed = ln.packed_qty;
+  // The server's own cap, restated here so the dialog names the same figure `create` will
+  // actually write - `need = min(requested, packed)`.
+  const willBe = Math.min(asked, packed);
+  if (asked > packed) {
+    notes.push(`Asked ${fmtInt(asked)}, packed ${fmtInt(packed)}, SPO will be ${fmtInt(willBe)}`);
+  }
+  const poCovered = poCoveredFor(ln, takeIds);
+  if (willBe > poCovered) {
+    notes.push(
+      `Asked ${fmtInt(willBe)}, POs cover ${fmtInt(poCovered)}, ${fmtInt(willBe - poCovered)} without PO backing`,
+    );
+  }
+  if (starved.length) {
+    const tickedAsk = soKeys.reduce((sum, key) => {
+      const entry = (ln.so_coverage ?? []).find((c) => c.key === key);
+      return sum + (entry?.qty ?? 0);
+    }, 0);
+    const covers = tickedQty(ln, soKeys, qty);
+    notes.push(
+      `Ticked SOs ask ${fmtInt(tickedAsk)}, this SPO covers ${fmtInt(covers)} - ${starved.join(', ')}`,
+    );
+  }
+  const hasSplit = splits.some((s) => s.warehouseId && s.qty > 0);
+  if (ln.location_options.length === 0 || !hasSplit) {
+    notes.push('No location');
+  }
+  return notes;
+}
+
 export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
   const suggestion = useSpoSuggestion(shipmentId);
   const create = useCreateSpo(shipmentId);
   const deleteSpo = useDeleteSpo(shipmentId);
   const worksheet = useDownloadSpoWorksheet(shipmentId);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  /** Create SPO no longer clamps or blocks live (R2) - everything worth a second look is
+   *  read once, here, before the write (AC-I2, AC-I6). */
+  const [reviewOpen, setReviewOpen] = useState(false);
   const [view, setView] = useState<'table' | 'schedule'>('table');
   const [scheduleView, setScheduleView] = useState<ScheduleView>('po');
 
@@ -361,9 +421,11 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
     const nextIds = poTakeIds.filter((id) => tickable.has(id));
     const current = stateFor(ln);
     const covered = poCoveredFor(ln, nextIds);
-    // Derived from the TYPED figure, never from the clamped one on screen: clamping is a
-    // view of what can be sent right now, and storing it destroyed the decision behind it.
-    const qty = current.typedQty === null ? covered : Math.min(current.typedQty, covered);
+    // The PO cap is removed (captain's ruling, 3 Sep, R2): a typed quantity is the buyer's
+    // own decision and is never clamped down to what the ticked takes cover - the SPO line
+    // simply pulls less and writes the rest without a pull. Only an UNTYPED (still default)
+    // quantity follows the takes.
+    const qty = current.typedQty === null ? covered : current.typedQty;
     patch(ln, {
       poTakeIds: nextIds,
       qty,
@@ -429,15 +491,17 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
    *
    * The figures are shown rather than the ticks being silently clamped: the operator ticked
    * four orders for a container that can serve three, and which of them to drop is their
-   * decision, not an arithmetic one.
+   * decision, not an arithmetic one. R2 (captain's ruling, 3 Sep): this no longer disables
+   * Create SPO or shows a live banner - the starved names it collects feed one note per line
+   * in the "Review before creating" dialog instead (`reviewNotesFor`).
    */
   const overTicked = useMemo(() => {
     const bad = new Map<string, string[]>();
     for (const ln of lines) {
       if (ln.cannot_convert) continue;
       // An order this SPO cannot serve AT ALL - the operator ticked past what the
-      // container holds. Which one to drop is their decision, so it is named rather than
-      // silently untitcked, and Create waits until they have made it (AC-G5).
+      // container holds. Which one to drop is their decision, so it is named in the review
+      // dialog rather than silently unticked.
       const starved = coverageTakes(ln, soKeysFor(ln), qtyFor(ln))
         .filter((t) => t.take <= 0)
         .map((t) => t.entry.document ?? t.entry.key);
@@ -451,16 +515,20 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
     <Input
       type="number"
       min={0}
-      max={poCoveredFor(ln, takeIdsFor(ln)) || undefined}
       step={1}
       className="h-8 w-24 tabular-nums"
       value={qtyFor(ln)}
       disabled={ln.cannot_convert}
-      title="What the TICKED POs pull this SPO up to - cannot exceed it"
+      aria-label="SPO qty"
+      // A test hook, not a live tooltip (the `title` this used to carry was the explanatory
+      // clamp text R2 removed) - the drills open a MODAL that marks the rest of the grid
+      // `aria-hidden`, which takes this input out of the accessibility tree `getByRole`
+      // reads, so a test asserting the figure WHILE a drill is open needs a query that does
+      // not depend on that tree.
+      data-testid="spo-qty-input"
       onChange={(e) => {
         const raw = Math.max(0, Number(e.target.value) || 0);
-        const next = Math.min(raw, poCoveredFor(ln, takeIdsFor(ln)));
-        setQty(ln, next);
+        setQty(ln, raw);
       }}
     />
   );
@@ -998,10 +1066,8 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
         </div>
         <Button
           size="sm"
-          onClick={() => create.mutate(confirmLines)}
-          disabled={
-            !includedCount || splitMismatch.size > 0 || overTicked.size > 0 || create.isPending
-          }
+          onClick={() => setReviewOpen(true)}
+          disabled={!includedCount || splitMismatch.size > 0 || create.isPending}
         >
           {create.isPending ? (
             <LoaderCircle className="size-4 animate-spin" aria-hidden />
@@ -1078,19 +1144,15 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
           ) : null}
         </div>
         <div className="flex min-w-0 items-center justify-end gap-2 sm:ms-auto">
-          {/* S3 (review): these gate Create SPO in EITHER view, so they render in both - a
-              disabled Create SPO with no reason on screen reads as broken. They sit before
-              the schedule View select so the reason is read first. */}
+          {/* S3 (review): this gates Create SPO in EITHER view, so it renders in both - a
+              disabled Create SPO with no reason on screen reads as broken. It sits before
+              the schedule View select so the reason is read first. An over-tick is no longer
+              a live banner or a Create SPO block (R2) - it surfaces once, in the Review
+              before creating dialog, alongside every other note on the confirm. */}
           {splitMismatch.size > 0 ? (
             <span className="text-2xs text-end font-medium text-destructive">
               {splitMismatch.size} line{splitMismatch.size === 1 ? '' : 's'} - location split does not add up
               to the SPO qty
-            </span>
-          ) : null}
-          {overTicked.size > 0 ? (
-            <span className="text-2xs text-end font-medium text-destructive">
-              {[...overTicked.values()].flat().join(', ')} - this container has nothing left
-              for it. Untick it, or send more.
             </span>
           ) : null}
           {view === 'schedule' ? (
@@ -1182,6 +1244,64 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
           {dialogBody(dialog.kind, dialog.line, dialog.bucket)}
         </PlanRowDialog>
       ) : null}
+
+      {/* R2 (captain's ruling, 3 Sep): the PO cap is gone, so nothing about the quantity
+          blocks Create SPO live any more - every shortfall worth a second look (asked past
+          packed, asked past what a PO covers, an over-tick, no location) is read ONCE, here,
+          before the write. Cancel changes nothing; Confirm sends today's payload unchanged. */}
+      <AlertDialog open={reviewOpen} onOpenChange={setReviewOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Review before creating</AlertDialogTitle>
+            <AlertDialogDescription>
+              {includedCount} line{includedCount === 1 ? '' : 's'} will create an SPO.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <ScrollArea className="max-h-80">
+            <ul className="space-y-2 pe-3">
+              {lines
+                .filter((ln) => !ln.cannot_convert && qtyFor(ln) > 0)
+                .map((ln) => {
+                  const notes = reviewNotesFor(
+                    ln,
+                    qtyFor(ln),
+                    takeIdsFor(ln),
+                    soKeysFor(ln),
+                    splitsFor(ln),
+                    overTicked.get(ln.shipment_line_id) ?? [],
+                  );
+                  return (
+                    <li key={ln.shipment_line_id} className="rounded-md border p-2 text-xs">
+                      <p className="truncate font-medium" title={ln.item_code ?? ''}>
+                        {ln.item_code ?? ln.product_name ?? EM_DASH}
+                      </p>
+                      {notes.length ? (
+                        <ul className="mt-1 space-y-0.5 text-2xs text-muted-foreground">
+                          {notes.map((note) => (
+                            <li key={note}>{note}</li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="mt-1 text-2xs text-muted-foreground">Ready</p>
+                      )}
+                    </li>
+                  );
+                })}
+            </ul>
+          </ScrollArea>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={create.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() =>
+                create.mutate(confirmLines, { onSuccess: () => setReviewOpen(false) })
+              }
+              disabled={create.isPending}
+            >
+              {create.isPending ? 'Creating...' : 'Create SPO'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   );
 }
