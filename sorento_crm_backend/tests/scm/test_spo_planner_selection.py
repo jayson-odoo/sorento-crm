@@ -17,6 +17,7 @@ R1: project demand is an unlinked order-inquiry row, retail is a sales-order boo
 """
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
@@ -24,6 +25,7 @@ from decimal import Decimal
 import pytest
 
 from app.models.order import Customer, SalesOrder, SalesOrderLine
+from app.models.procurement import PurchaseOrder, PurchaseOrderLine
 from app.models.project_so import (
     INQUIRY_RAISED,
     IV_ORDER_BACK,
@@ -586,7 +588,13 @@ def test_the_take_carries_its_lines_whole_open_balance_so_the_screen_can_do_the_
 def test_a_retail_line_already_covered_by_one_container_is_offered_net_on_the_next():
     """R7 stands - a retail tick writes no link row - but the tick still has to be
     remembered, or the same 30 pieces are promised to SO-A on every container of the month
-    and each one is default-ticked at full quantity."""
+    and each one is default-ticked at full quantity.
+
+    S5 supersedes the ORIGINAL shape of this test: a fully covered row is no longer dropped
+    from the list - it is RETURNED at `qty: 0` (never re-tickable, `test_a_retail_line_fully
+    _covered_by_one_container_returns_taken_on_the_next` covers that in full), so the netting
+    itself - the SAME 30 pieces are never offered twice - is what this test still stands for.
+    """
     with pg_session() as db:
         w = World(db)
         supplier = w.supplier()
@@ -609,8 +617,11 @@ def test_a_retail_line_already_covered_by_one_container_is_offered_net_on_the_ne
             _line(svc.suggest(db, str(second.id)), str(second_lines[0].id)), "retail"
         )
 
-        # The whole 30 went on the first container, so there is nothing left to offer.
-        assert [c for c in coverage if str(retail.id) in c["key"]] == []
+        # The whole 30 went on the first container - nothing left for a SECOND container to
+        # claim, so the row reads 0 and untickable, never the 30 again.
+        entry = next(c for c in coverage if str(retail.id) in c["key"])
+        assert entry["qty"] == 0
+        assert entry["default_ticked"] is False
 
 
 def test_a_partly_covered_retail_line_is_offered_for_the_rest():
@@ -724,3 +735,229 @@ def test_the_purchase_order_route_still_carries_the_spo_placement(scm_app):
     assert row["qty"] == 60
     assert [x["warehouse_code"] for x in row["warehouses"]] == [wh.warehouse_code]
     assert "arrival_date" in row
+
+
+# --------------------------------------------------------------------------- #
+# S5 - occupied by another SPO: shown grey, never tickable (AC-E1..E6)
+# --------------------------------------------------------------------------- #
+
+
+def test_a_retail_line_fully_covered_by_one_container_returns_taken_on_the_next():
+    """AC-E1: netting stays the rule (the row is not offered a tick), but S5 makes the
+    occupied portion VISIBLE instead of the row simply vanishing."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        wh = w.warehouse()
+        w.po("A", supplier, [("A", 500, 0)])
+        retail, _so = _retail_demand(db, w, "A", wh, qty=30, required=date(2026, 9, 1))
+
+        first, first_lines = w.shipment([("A", 30, supplier)])
+        created = svc.create(
+            db, str(first.id),
+            [_confirm(
+                first_lines[0], 30,
+                location_splits=[{"warehouse_id": str(wh.id), "qty": 30}],
+                so_line_ids=[f"retail:{retail.id}"],
+            )],
+        )
+        spo_number = created["created_spos"][0]["po_number"]
+
+        second, second_lines = w.shipment([("A", 100, supplier)])
+        coverage = _coverage(
+            _line(svc.suggest(db, str(second.id)), str(second_lines[0].id)), "retail"
+        )
+
+        entry = next(c for c in coverage if str(retail.id) in c["key"])
+        assert entry["qty"] == 0
+        assert entry["default_ticked"] is False
+        assert entry["taken_qty"] == 30
+        assert entry["taken_by"] == [spo_number]
+
+
+def test_a_retail_line_half_covered_returns_the_rest_and_the_taken_half():
+    """AC-E2."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        wh = w.warehouse()
+        w.po("A", supplier, [("A", 500, 0)])
+        retail, _so = _retail_demand(db, w, "A", wh, qty=30, required=date(2026, 9, 1))
+
+        first, first_lines = w.shipment([("A", 15, supplier)])
+        created = svc.create(
+            db, str(first.id),
+            [_confirm(
+                first_lines[0], 15,
+                location_splits=[{"warehouse_id": str(wh.id), "qty": 15}],
+                so_line_ids=[f"retail:{retail.id}"],
+            )],
+        )
+        spo_number = created["created_spos"][0]["po_number"]
+
+        second, second_lines = w.shipment([("A", 100, supplier)])
+        coverage = _coverage(
+            _line(svc.suggest(db, str(second.id)), str(second_lines[0].id)), "retail"
+        )
+
+        entry = next(c for c in coverage if str(retail.id) in c["key"])
+        assert entry["qty"] == 15
+        assert entry["taken_qty"] == 15
+        assert entry["taken_by"] == [spo_number]
+
+
+def test_a_project_row_linked_elsewhere_carries_taken_by_naming_the_spo():
+    """AC-E3."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        wh = w.warehouse()
+        w.po("A", supplier, [("A", 100, 0)])
+        first, first_lines = w.shipment([("A", 100, supplier)])
+        row, _pso = _project_chain(db, w, "A", qty=40, delivery=date(2026, 9, 10))
+
+        created = svc.create(
+            db, str(first.id),
+            [_confirm(
+                first_lines[0], 100,
+                location_splits=[{"warehouse_id": str(wh.id), "qty": 100}],
+                so_line_ids=[f"project:{row.id}"],
+            )],
+        )
+        spo_number = created["created_spos"][0]["po_number"]
+
+        # A second open PO, or the second shipment's line cannot convert at all and
+        # `so_coverage` would come back empty regardless of what the demand side holds.
+        w.po("B", supplier, [("A", 100, 0)])
+        second, second_lines = w.shipment([("A", 100, supplier)])
+        coverage = _coverage(
+            _line(svc.suggest(db, str(second.id)), str(second_lines[0].id)), "project"
+        )
+
+        entry = next(c for c in coverage if str(row.id) in c["key"])
+        assert entry["qty"] == 0
+        assert entry["taken_qty"] == 40
+        assert entry["taken_by"] == [spo_number]
+
+
+def test_a_po_line_fully_pulled_returns_taken_in_po_takes_on_a_second_shipment():
+    """AC-E4: a line with nothing open, whose only reason is a prior SPO pull, is still
+    RETURNED (never silently dropped) - `suggested_qty` for the line does not count it.
+
+    SPO-1 is written directly here - the exact state `create` leaves behind on the source
+    line and on its own new line's `source_ref` (`test_the_purchase_order_says_which_spo_
+    took_its_quantity` covers `create` itself writing it) - rather than through `svc.create`,
+    so its own line, marked CLOSED (its whole quantity already pulled, nothing left to
+    receive against it), cannot ALSO show up as a second, unrelated OPEN candidate for the
+    second shipment's cascade: a live CRM SPO otherwise counts as genuine "ordered" supply to
+    the same supplier and product the instant it exists (`po_ordered_v`'s own rule), which
+    would otherwise defeat this test's own "the only PO" premise.
+    """
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        po_a = w.po("A", supplier, [("A", 100, 0)])
+        source_line = db.query(PurchaseOrderLine).filter(
+            PurchaseOrderLine.purchase_order_id == po_a.id
+        ).one()
+
+        spo_po = PurchaseOrder(
+            id=_u(), po_number=f"{MARKER}-SPO1-{uuid.uuid4().hex[:6]}",
+            supplier_id=supplier.id, issue_date=date(2026, 8, 1), status="active",
+            source_system=svc.SOURCE_SYSTEM,
+        )
+        db.add(spo_po)
+        db.flush()
+        db.add(PurchaseOrderLine(
+            id=_u(), purchase_order_id=spo_po.id, product_id=w.product("A").id,
+            qty_ordered=100, qty_received=100, line_status="closed",
+            source_system=svc.SOURCE_SYSTEM,
+            source_ref=json.dumps(
+                {"pulls": [{"po_line_id": str(source_line.id), "qty": 100}], "so_coverage": []}
+            ),
+        ))
+        source_line.qty_received = 100
+        db.flush()
+
+        second, second_lines = w.shipment([("A", 50, supplier)])
+        line = _line(svc.suggest(db, str(second.id)), str(second_lines[0].id))
+
+        entry = next(t for t in line["po_takes"] if t["taken_qty"] > 0)
+        assert entry["po_line_id"] == str(source_line.id)
+        assert entry["qty"] == 0
+        assert entry["open_qty"] == 0
+        assert entry["taken_qty"] == 100
+        assert entry["taken_by"] == [spo_po.po_number]
+        assert line["suggested_qty"] == 0
+        assert line["cannot_convert"] is True
+
+
+def test_unwind_returns_the_same_rows_with_taken_qty_zero_and_full_qty():
+    """AC-E5: both halves - a retail line covered, and the PO line it was pulled from."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        wh = w.warehouse()
+        po_a = w.po("A", supplier, [("A", 100, 0)])
+        source_line = db.query(PurchaseOrderLine).filter(
+            PurchaseOrderLine.purchase_order_id == po_a.id
+        ).one()
+        retail, _so = _retail_demand(db, w, "A", wh, qty=30, required=date(2026, 9, 1))
+
+        first, first_lines = w.shipment([("A", 100, supplier)])
+        svc.create(
+            db, str(first.id),
+            [_confirm(
+                first_lines[0], 100,
+                location_splits=[{"warehouse_id": str(wh.id), "qty": 100}],
+                so_line_ids=[f"retail:{retail.id}"],
+            )],
+        )
+        db.refresh(source_line)
+        assert float(source_line.qty_received) == 100, "sanity: the pull advanced it"
+
+        svc.unwind(db, str(first.id))
+
+        second, second_lines = w.shipment([("A", 60, supplier)])
+        line = _line(svc.suggest(db, str(second.id)), str(second_lines[0].id))
+
+        po_take = next(t for t in line["po_takes"] if t["po_line_id"] == str(source_line.id))
+        assert po_take["open_qty"] == 100
+        assert po_take["taken_qty"] == 0
+        assert po_take["qty"] == 60
+
+        retail_entry = next(
+            c for c in _coverage(line, "retail") if str(retail.id) in c["key"]
+        )
+        assert retail_entry["qty"] == 30
+        assert retail_entry["taken_qty"] == 0
+        assert retail_entry["taken_by"] == []
+
+
+def test_the_route_response_carries_taken_qty_and_taken_by(scm_app):
+    """AC-E6: `response_model`-free route, but the additive fields still have to survive it -
+    asserted through the API, the same discipline
+    `test_the_purchase_order_route_still_carries_the_spo_placement` uses for its own field."""
+    from fastapi.testclient import TestClient
+
+    from tests.scm.test_outstanding_import_routes import as_company_user
+
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+    supplier = w.supplier()
+    w.po("A", supplier, [("A", 100, 0)])
+    shipment, lines = w.shipment([("A", 100, supplier)])
+    _project_chain(db, w, "A", qty=40, delivery=date(2026, 9, 10))
+
+    client = TestClient(app)
+    r = client.get(f"/api/v1/scm/inbound-shipments/{shipment.id}/spo-suggestion")
+
+    assert r.status_code == 200, r.text
+    line = r.json()["lines"][0]
+    assert line["po_takes"]
+    assert "taken_qty" in line["po_takes"][0]
+    assert "taken_by" in line["po_takes"][0]
+    assert line["so_coverage"]
+    assert "taken_qty" in line["so_coverage"][0]
+    assert "taken_by" in line["so_coverage"][0]

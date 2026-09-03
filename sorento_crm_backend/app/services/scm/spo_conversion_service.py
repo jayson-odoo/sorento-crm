@@ -421,8 +421,15 @@ def _cascade_take(
 
 
 def _open_line_rows(q) -> list[tuple[PurchaseOrderLine, PurchaseOrder, float]]:
-    """Shared tail of both cascade lookups below: oldest DOCUMENT first, then keep only the
-    lines with real open balance.
+    """Shared tail of both cascade lookups below: oldest DOCUMENT first, `available` computed
+    for every matching line - INCLUDING one with nothing left (`available == 0`, S5).
+
+    A zero-available line was dropped here before S5, so a line another SPO had already
+    pulled down to zero simply vanished from the candidate set - `_cascade_take` never took
+    from it either way (`min(0, still)` is always 0), but `suggest`'s taken-only rows need to
+    SEE it to say "this line is fully pulled by SPO-1" instead of nothing. Keeping it here
+    rather than a second, unfiltered query means the two readers can never see a different
+    candidate set for the same shipment line (`_candidate_lines_for_line`).
 
     Ordered by the purchase order's own `issue_date` since the captain's Q8 ruling (26 Aug):
     the buyer draws down the order they raised first, and a line's expected date is when it
@@ -440,8 +447,7 @@ def _open_line_rows(q) -> list[tuple[PurchaseOrderLine, PurchaseOrder, float]]:
     out: list[tuple[PurchaseOrderLine, PurchaseOrder, float]] = []
     for line, po in rows:
         available = max(float(line.qty_ordered or 0) - float(line.qty_received or 0), 0.0)
-        if available > 0:
-            out.append((line, po, available))
+        out.append((line, po, available))
     return out
 
 
@@ -504,6 +510,34 @@ def _pinned_po_candidates(
     return _open_line_rows(q)
 
 
+def _candidate_lines_for_line(
+    db: Session, ln: InboundShipmentLine
+) -> tuple[Optional[str], list[tuple[PurchaseOrderLine, PurchaseOrder, float]]]:
+    """The PO lines a Create SPO for this shipment line could draw from - pin first (a
+    stated `po_ref` outranks inference), else the plain product/supplier match - shared by
+    `_match_takes_for_line`'s cascade AND `suggest`'s taken-only rows (S5), so the SAME
+    resolution decides both what the cascade may walk and which lines the plan even shows.
+    Every matching line comes back, INCLUDING one with `available == 0` (`_open_line_rows`,
+    S5) - `_cascade_take` never takes from one anyway, but a taken-only row needs to see it.
+
+    Returns `(resolved_by, candidates)`: `resolved_by` names WHICH resolution produced the
+    list ('po_ref' when a stated ref resolved to at least one line, 'product' when the plain
+    match did, `None` when neither named a line at all) - a statement of PROVENANCE, not a
+    promise that the cascade will actually take anything from it (a pin can resolve to lines
+    with nothing open); `_match_takes_for_line` still decides `matched_by` on its own terms.
+    """
+    supplier_id = str(ln.supplier_id) if ln.supplier_id else None
+    if supplier_id is None:
+        return None, []
+    po_refs = _po_refs_for_line(db, str(ln.id))
+    if len(po_refs) == 1:
+        pinned = _pinned_po_candidates(db, next(iter(po_refs)), supplier_id, str(ln.product_id))
+        if pinned:
+            return "po_ref", pinned
+    product_lines = _po_cascade_lines(db, supplier_id, str(ln.product_id))
+    return ("product" if product_lines else None), product_lines
+
+
 def _match_takes_for_line(
     db: Session,
     ln: InboundShipmentLine,
@@ -532,22 +566,88 @@ def _match_takes_for_line(
             return candidates
         return [c for c in candidates if str(c[0].id) in only_po_lines]
 
-    po_refs = _po_refs_for_line(db, str(ln.id))
+    resolved_by, candidates = _candidate_lines_for_line(db, ln)
     matched_by: Optional[str] = None
     takes: list[tuple[PurchaseOrderLine, PurchaseOrder, float]] = []
-    if len(po_refs) == 1:
-        pinned_lines = _keep(
-            _pinned_po_candidates(db, next(iter(po_refs)), supplier_id, str(ln.product_id))
-        )
+    if resolved_by == "po_ref":
+        pinned_lines = _keep(candidates)
         if pinned_lines:
             takes = _cascade_take(pinned_lines, need)
             matched_by = "po_ref"
     if matched_by is None:
-        product_lines = _keep(_po_cascade_lines(db, supplier_id, str(ln.product_id)))
+        # Either the resolution already landed on the product match, or a po_ref pin
+        # existed but the buyer ticked out every one of its lines - the ORIGINAL fallback:
+        # try the plain product/supplier match fresh, never the pin's own candidates twice.
+        product_lines = candidates if resolved_by in (None, "product") else _po_cascade_lines(
+            db, supplier_id, str(ln.product_id)
+        )
+        product_lines = _keep(product_lines)
         takes = _cascade_take(product_lines, need)
         if takes:
             matched_by = "product"
     return matched_by, takes
+
+
+def _spo_pulls_by_po_line(db: Session, po_line_ids: list[str]) -> dict[str, list[dict]]:
+    """Every CRM SPO line that has pulled from one of these purchase-order lines, oldest SPO
+    number first - `{po_line_id: [{"spo_number", "qty"}]}` (S5, `po_takes[].taken_qty` /
+    `taken_by`).
+
+    Read off the source line's own record: `create` advances `qty_received` on the PO line
+    AND writes `source_ref.pulls` on the SPO line it created (`parse_source_ref`), so this is
+    a read of a fact already on file, not a second table to keep in step. Kept separate from
+    `PurchaseOrderService._spo_takes_of` (the PO detail's own occupancy panel), which needs
+    the LANDING too (packing list, warehouses, arrival date) this helper does not fetch -
+    the same one-query-per-purpose reasoning `_stock_context` above gives for not sharing a
+    query across two different-shaped answers.
+    """
+    if not po_line_ids:
+        return {}
+    wanted = set(po_line_ids)
+    rows = (
+        db.query(PurchaseOrderLine.source_ref, PurchaseOrder.po_number)
+        .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+        .filter(
+            PurchaseOrderLine.source_system == SOURCE_SYSTEM,
+            PurchaseOrderLine.source_ref.isnot(None),
+        )
+        .all()
+    )
+    out: dict[str, list[dict]] = {}
+    for source_ref, po_number in rows:
+        for po_line_id, qty in parse_source_ref(source_ref)["pulls"]:
+            if po_line_id in wanted:
+                out.setdefault(po_line_id, []).append({"spo_number": po_number, "qty": qty})
+    for entries in out.values():
+        entries.sort(key=lambda e: e["spo_number"] or "")
+    return out
+
+
+def _spo_cover_by_so_line(db: Session, product_id: str) -> dict[str, list[dict]]:
+    """Every CRM SPO line pointed at a retail sales-order line for THIS product, oldest SPO
+    number first - `{so_line_id: [{"spo_number", "qty"}]}` (S5, `so_coverage[].taken_qty` /
+    `taken_by`, and `_retail_covered_qty`'s own totals below - one query, both answers).
+
+    Read off the SPO line's own `source_ref.so_coverage`, the same JSON `create` writes the
+    PO pulls into (`parse_source_ref`).
+    """
+    rows = (
+        db.query(PurchaseOrderLine.source_ref, PurchaseOrder.po_number)
+        .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+        .filter(
+            PurchaseOrderLine.source_system == SOURCE_SYSTEM,
+            PurchaseOrderLine.product_id == product_id,
+            PurchaseOrderLine.source_ref.isnot(None),
+        )
+        .all()
+    )
+    out: dict[str, list[dict]] = {}
+    for source_ref, po_number in rows:
+        for so_line_id, qty in parse_source_ref(source_ref)["so_coverage"]:
+            out.setdefault(so_line_id, []).append({"spo_number": po_number, "qty": qty})
+    for entries in out.values():
+        entries.sort(key=lambda e: e["spo_number"] or "")
+    return out
 
 
 #: The site-pool test, from the one module that spells it (`pool_predicate`). It was copied
@@ -761,8 +861,9 @@ def _project_coverage(db: Session, product_id: str) -> list[dict]:
     here would offer a tick that cannot be honoured.
 
     `qty` is what the row still needs, net of every link it already carries. A row half
-    placed on a purchase order is offered for the other half, and a fully placed row is not
-    offered at all.
+    placed is offered for the other half; a FULLY placed row is still RETURNED, at `qty: 0`
+    (S5), carrying `taken_qty` / `taken_by` so the plan can grey it out rather than have it
+    vanish with no word about where it went.
     """
     from app.models.project_so import (
         INQUIRY_CANCELLED,
@@ -808,12 +909,28 @@ def _project_coverage(db: Session, product_id: str) -> list[dict]:
     ):
         linked[str(row_id)] = float(total or 0)
 
+    # `taken_by` (S5): the SPO number(s) currently backing each row's links - LIVE only, an
+    # inner join to `spo_allocations` so a link whose allocation was unwound (`spo_allocation
+    # _id` SET NULL, the FK's own rule) never names an SPO that no longer exists.
+    taken_by: dict[str, list[str]] = {}
+    for row_id, spo_number in (
+        db.query(OrderInquiryLink.row_id, SPOAllocation.spo_number)
+        .join(SPOAllocation, SPOAllocation.id == OrderInquiryLink.spo_allocation_id)
+        .filter(
+            OrderInquiryLink.row_id.in_([str(r.OrderInquiryRow.id) for r in rows]),
+            SPOAllocation.spo_number.isnot(None),
+        )
+        .all()
+    ):
+        taken_by.setdefault(str(row_id), []).append(spo_number)
+    for names in taken_by.values():
+        names.sort()
+
     codes = _warehouse_ids_by_code(db)
     out: list[dict] = []
     for row, doc_no, provisional, project_title in rows:
-        need = float(row.qty or 0) - linked.get(str(row.id), 0.0)
-        if need <= 0:
-            continue
+        taken_qty = linked.get(str(row.id), 0.0)
+        need = max(float(row.qty or 0) - taken_qty, 0.0)
         location = (row.stock_location or "").strip().upper() or None
         warehouse_id = codes.get(location) if location else None
         out.append({
@@ -823,6 +940,8 @@ def _project_coverage(db: Session, product_id: str) -> list[dict]:
             "customer_name": project_title,
             "required_date": row.delivery_date.isoformat() if row.delivery_date else None,
             "qty": need,
+            "taken_qty": taken_qty,
+            "taken_by": taken_by.get(str(row.id), []),
             "warehouse_id": warehouse_id,
             "warehouse_code": location,
         })
@@ -840,31 +959,21 @@ def _warehouse_ids_by_code(db: Session) -> dict[str, str]:
 
 
 def _retail_covered_qty(db: Session, product_id: str) -> dict[str, float]:
-    """Per sales-order line, how much of it a CRM SPO has already been pointed at.
+    """Per sales-order line, how much of it a CRM SPO has already been pointed at - a thin
+    sum over `_spo_cover_by_so_line` (one query, shared with S5's `taken_by`).
 
-    Read off the SPO line's own `source_ref`, which is where the retail ticks are recorded
-    (`create`): the retail half writes no link row - the links table hangs off an
-    order-inquiry row and a retail line has none - so this is the only record that the
+    The retail half writes no link row - the links table hangs off an order-inquiry row and
+    a retail line has none - so `source_ref.so_coverage` is the only record that the
     quantity has already been promised. Without it the same 30 pieces were offered, and
     default-ticked, on every container of the month.
 
     An unwound SPO takes its lines with it, so its record disappears with it, which is
     correct: the promise was undone.
     """
-    rows = (
-        db.query(PurchaseOrderLine.source_ref)
-        .filter(
-            PurchaseOrderLine.source_system == SOURCE_SYSTEM,
-            PurchaseOrderLine.product_id == product_id,
-            PurchaseOrderLine.source_ref.isnot(None),
-        )
-        .all()
-    )
-    out: dict[str, float] = {}
-    for (raw,) in rows:
-        for so_line_id, qty in parse_source_ref(raw)["so_coverage"]:
-            out[so_line_id] = out.get(so_line_id, 0.0) + qty
-    return out
+    cover = _spo_cover_by_so_line(db, product_id)
+    return {
+        so_line_id: sum(e["qty"] for e in entries) for so_line_id, entries in cover.items()
+    }
 
 
 def _retail_cover_for(
@@ -905,6 +1014,10 @@ def _retail_coverage(db: Session, product_id: str) -> list[dict]:
     The same predicate `_demand_lines_by_warehouse` uses, so the two answers cannot
     disagree; the difference is that this one carries the LINE, because a tick has to name
     the thing it ticked.
+
+    A line already partly or fully covered by an earlier container is still RETURNED (S5): a
+    fully covered one at `qty: 0`, carrying `taken_qty` / `taken_by` so the plan can grey it
+    out rather than have it vanish with no word about where it went.
     """
     from app.services.scm.demand import demand_qty, is_open_demand
 
@@ -934,13 +1047,14 @@ def _retail_coverage(db: Session, product_id: str) -> list[dict]:
         )
         .all()
     )
-    # Net of what earlier containers were already pointed at (review finding 10).
-    covered = _retail_covered_qty(db, product_id)
+    # Net of what earlier containers were already pointed at (review finding 10); the SAME
+    # read also names WHICH SPO(s) (S5).
+    cover = _spo_cover_by_so_line(db, product_id)
     out: list[dict] = []
     for r in rows:
-        left = float(r.qty or 0) - covered.get(str(r.id), 0.0)
-        if left <= 0:
-            continue
+        entries = cover.get(str(r.id), [])
+        taken_qty = sum(e["qty"] for e in entries)
+        left = max(float(r.qty or 0) - taken_qty, 0.0)
         out.append({
             "key": f"{_COVERAGE_RETAIL}:{r.id}",
             "kind": _COVERAGE_RETAIL,
@@ -948,6 +1062,8 @@ def _retail_coverage(db: Session, product_id: str) -> list[dict]:
             "customer_name": r.customer_name,
             "required_date": r.required_date.isoformat() if r.required_date else None,
             "qty": left,
+            "taken_qty": taken_qty,
+            "taken_by": [e["spo_number"] for e in entries],
             "warehouse_id": str(r.warehouse_id) if r.warehouse_id else None,
             "warehouse_code": r.warehouse_code,
         })
@@ -961,7 +1077,9 @@ def _so_coverage(db: Session, product_id: str, packed: float) -> list[dict]:
     stated here as a walk rather than a score because the operator is being asked to confirm
     a list, not to read a ranking. Ticks run down that list until the packed quantity is used
     up; everything after that is offered unticked, and what no tick claims is free stock
-    (the "Unassigned" remainder the screen names).
+    (the "Unassigned" remainder the screen names). A row already fully taken by an earlier
+    container walks to `qty: 0` here, so `take` is always 0 for it and `default_ticked` is
+    always `False` - it is visible (S5), never tickable.
     """
     coverage = _project_coverage(db, product_id) + _retail_coverage(db, product_id)
     left = packed
@@ -1147,8 +1265,20 @@ def suggest(db: Session, shipment_id: str) -> dict:
         matched_by, takes = _match_takes_for_line(db, ln, packed)
         po_covered = sum(t[2] for t in takes)
         matched_po_number = takes[0][1].po_number if takes else None
-        po_takes = [
-            {
+
+        # The SAME candidate set the cascade above just walked (S5) - a taken-only row
+        # names the SPO(s) that already pulled from a line the cascade did NOT take from,
+        # so a line fully (or partly) occupied elsewhere is visible rather than silently
+        # absent. `_candidate_lines_for_line` is re-resolved rather than threaded out of
+        # `_match_takes_for_line` because `suggest` never ticks (`only_po_lines=None`), so
+        # the two calls can never name a different candidate set for this line.
+        _, candidates = _candidate_lines_for_line(db, ln)
+        taken_ids = {str(line.id) for line, _po, _qty in takes}
+        pulls_by_line = _spo_pulls_by_po_line(db, [str(c[0].id) for c in candidates])
+
+        def _po_take_row(line, po, qty: float) -> dict:
+            entries = pulls_by_line.get(str(line.id), [])
+            return {
                 "po_line_id": str(line.id),
                 "po_number": po.po_number,
                 "qty": qty,
@@ -1165,9 +1295,23 @@ def suggest(db: Session, shipment_id: str) -> dict:
                 "open_qty": max(
                     float(line.qty_ordered or 0) - float(line.qty_received or 0), 0.0
                 ),
+                # S5: what an earlier SPO already pulled off this SAME line, and its
+                # number(s) - context on a take, the whole row on a taken-only entry below.
+                "taken_qty": sum(e["qty"] for e in entries),
+                "taken_by": [e["spo_number"] for e in entries],
             }
-            for line, po, qty in takes
-        ]
+
+        po_takes = [_po_take_row(line, po, qty) for line, po, qty in takes]
+        # Candidate lines the cascade did NOT take from, but that another SPO already has
+        # (S5) - `qty: 0` (nothing left for THIS cascade to claim), kept in the candidates'
+        # own order (earliest issue date first) so they read as a continuation of the takes
+        # above rather than a second, differently-ordered list.
+        for line, po, _available in candidates:
+            if str(line.id) in taken_ids:
+                continue
+            row = _po_take_row(line, po, 0.0)
+            if row["taken_qty"] > 0:
+                po_takes.append(row)
 
         # The doctrine correction's own arithmetic (module docstring, fifth amendment):
         # `suggested_qty` IS `po_covered_qty` - what an open PO pulls this SPO up to, never a
