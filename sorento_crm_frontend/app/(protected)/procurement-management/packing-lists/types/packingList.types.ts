@@ -13,6 +13,13 @@ export interface InboundShipmentLine {
   cbm?: number | string | null;
   /** The supplier's own note on the line. */
   remarks?: string | null;
+  /**
+   * The supplier's own wording for the item (S9), copied off the proforma invoice line at
+   * convert. Editable on the Shipment lines tab. Null on a line drafted before this field
+   * existed or uploaded with no description column of its own - the grid and the export
+   * both fall back to the product's name then.
+   */
+  description?: string | null;
   uom_id?: string | null;
   batch_number?: string | null;
   serial_number_range_from?: string | null;
@@ -250,5 +257,7 @@ export interface PackingListFormData {
      *  line since S3b and only the importer could ever fill it. */
     cbm?: number;
     remarks?: string;
+    /** The supplier's own wording for the item (S9), editable in the lines grid. */
+    description?: string;
   }>;
 }

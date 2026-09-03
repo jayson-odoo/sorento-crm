@@ -186,6 +186,10 @@ class InboundShipmentLineBase(BaseModel):
     # Volume as the packing list stated it, and the supplier's own note on the line.
     cbm: Optional[Decimal] = None
     remarks: Optional[str] = None
+    # The supplier's own wording for the item (migration 466, S9). Copied off the proforma
+    # invoice line at convert; editable in the lines grid afterwards. Product name is the
+    # reader's fallback when this is unset, never a value written here.
+    description: Optional[str] = None
     # What the container workbook measures the line by (AC-F3.5). Editable on the packing
     # list, because the supplier's file is where they come from and it is not always right.
     # Lengths in centimetres, weights per CARTON - the sheet multiplies them by the carton

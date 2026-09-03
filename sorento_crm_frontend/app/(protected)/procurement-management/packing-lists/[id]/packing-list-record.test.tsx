@@ -190,6 +190,9 @@ function mixedContainer(over: Record<string, unknown> = {}) {
         gross_weight_per_carton: '8.300',
         currency: 'CNY',
         unit_cost: '65.50',
+        // The supplier's own wording (S9) - deliberately different from the product name,
+        // so a test reading it can tell the two apart.
+        description: '连体马桶',
         product: { id: 'p-1', product_code: 'SRTWT7443', product_name: 'Basin Mixer Tall' },
       },
       {
@@ -551,6 +554,19 @@ describe('the Shipment lines tab', () => {
     expect(within(kailu).getByText('SORENTO')).toBeInTheDocument();
   });
 
+  it("shows the supplier's own description, the product name when the line has none (S9)", async () => {
+    await renderTab(<LinesPage />);
+
+    // l-1 carries its own description, and it prints INSTEAD of the product name.
+    const kailu = screen.getByText('SRTWT7443').closest('tr') as HTMLElement;
+    expect(within(kailu).getByText('连体马桶')).toBeInTheDocument();
+    expect(within(kailu).queryByText('Basin Mixer Tall')).not.toBeInTheDocument();
+
+    // l-2 has no description of its own, so the column falls back to the product's name.
+    const caizhou = screen.getByText('MCHWT1200').closest('tr') as HTMLElement;
+    expect(within(caizhou).getByText('Shower Set')).toBeInTheDocument();
+  });
+
   it('names the invoice per line', async () => {
     state.sourceInvoices = sourceInvoices();
     await renderTab(<LinesPage />);
@@ -702,6 +718,24 @@ describe('the edit draft, which now lives above every tab', () => {
     // The unit the price is in, round-tripped: a payload carrying the cost and dropping
     // this hands the backend a number with no meaning.
     expect(line.currency).toBe('CNY');
+  });
+
+  it('edits the description and sends it (S9, AC-I3)', async () => {
+    routerState.pathname = '/procurement-management/packing-lists/pl-1/lines';
+    await renderTab(<LinesPage />);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+
+    // l-1 already carries its own description - the input opens on it, not on the
+    // product's name.
+    expect(screen.getByLabelText('Description for SRTWT7443')).toHaveValue('连体马桶');
+    fireEvent.change(screen.getByLabelText('Description for SRTWT7443'), {
+      target: { value: '304 STAINLESS STEEL BASIN TAP' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^Save packing list$/i }));
+
+    await waitFor(() => expect(updatePackingList).toHaveBeenCalledTimes(1));
+    const line = updatePackingList.mock.calls[0][0].data.shipment_lines[0];
+    expect(line.description).toBe('304 STAINLESS STEEL BASIN TAP');
   });
 
   it('totals follow the draft while somebody is typing', async () => {

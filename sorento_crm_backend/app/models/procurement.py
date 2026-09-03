@@ -342,6 +342,11 @@ class InboundShipmentLine(Base, CompanyScopedMixin):
     # The supplier's own note on the line (`备注`). Kept separate from the discrepancies the
     # system derives, which are computed at read time and never stored.
     remarks = Column(Text, nullable=True)
+    # The supplier's own wording for the item (migration 466, S9), copied off
+    # `proforma_invoice_line.description` at convert. NULL on a line drafted before this
+    # column existed or uploaded from a packing list with no description column of its own -
+    # both the export and the grid read the product's name instead when this is unset.
+    description = Column(Text, nullable=True)
 
     # ---- What the container workbook measures the line by -------------------
     # Read off the supplier's proforma / packing list, editable on the packing list

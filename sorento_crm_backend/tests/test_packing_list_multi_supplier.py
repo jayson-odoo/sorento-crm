@@ -641,6 +641,31 @@ def test_the_update_schema_carries_the_container_workbook_fields(db):
     assert float(line.gross_weight_per_carton) == pytest.approx(8.3)
 
 
+def test_the_lines_grid_can_edit_the_description(db):
+    """S9, AC-I3 - the grid's Description column is editable in edit mode, and Save persists
+    it the same way every other line field on this PUT does."""
+    w = World(db)
+    payload = InboundShipmentUpdate(
+        shipment_lines=[
+            InboundShipmentLineCreate(
+                product_id=str(w.tap.id),
+                quantity_shipped=490,
+                supplier_id=str(w.kailu.id),
+                description="304 STAINLESS STEEL BASIN TAP - CHROME",
+            )
+        ],
+    )
+
+    shipment = w.upload(supplier_id=None, lines=[(w.tap, 1, None)])
+    db.commit()
+    InboundShipmentService(db).update_shipment(str(shipment.id), payload, updated_by=None)
+    db.commit()
+
+    db.refresh(shipment)
+    line = w.lines(shipment.id)[0]
+    assert line.description == "304 STAINLESS STEEL BASIN TAP - CHROME"
+
+
 def test_the_container_workbook_fields_travel_back_out_on_the_read():
     """`response_model` silently DROPS a field it does not declare.
 
@@ -674,6 +699,8 @@ def test_the_container_workbook_fields_travel_back_out_on_the_read():
         "carton_height_cm",
         "net_weight_per_carton",
         "gross_weight_per_carton",
+        # S9 - the supplier's own wording for the item (migration 466).
+        "description",
     }
     assert line <= set(InboundShipmentLineResponse.model_fields)
 

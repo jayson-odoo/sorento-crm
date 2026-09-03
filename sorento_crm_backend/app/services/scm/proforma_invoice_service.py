@@ -1690,6 +1690,10 @@ def convert_to_draft_shipment(
                     # rule the unit price follows two blocks below (AC-F3.5).
                     "measurements": {},
                     "remarks": [],
+                    # The supplier's own wording for the line (S9, "description carried from
+                    # the PI"), so the container workbook and the shipment grid print what the
+                    # factory called the item rather than the product's name here.
+                    "description": None,
                     "source_lines": [],
                 }
                 groups[key] = group
@@ -1724,6 +1728,8 @@ def convert_to_draft_shipment(
                     value = getattr(ln, source, None)
                     if value is not None and group["measurements"].get(target) is None:
                         group["measurements"][target] = value
+                if ln.description and group["description"] is None:
+                    group["description"] = ln.description
             group["placed"] = group.get("placed", {})
             if primary:
                 # HOW MUCH of the PI line came here, in the PI line's OWN units, recorded
@@ -1829,6 +1835,7 @@ def convert_to_draft_shipment(
             **({"cartons_count": group["cartons"]} if group["cartons"] is not None else {}),
             **group["measurements"],
             remarks="; ".join(group["remarks"]) if group["remarks"] else None,
+            description=group["description"],
         )
         db.add(line)
         shipment_lines_by_key[key] = line

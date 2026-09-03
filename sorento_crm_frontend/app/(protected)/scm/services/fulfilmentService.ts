@@ -1211,6 +1211,10 @@ export interface PackingListLine {
   product_id: string;
   product_code: string;
   product_name: string | null;
+  /** The supplier's own wording for the item (S9). The product's name when the line has
+   *  none - `build()` already resolves the fallback server-side. Optional (absent on a
+   *  payload built before this field existed), same convention `unit_cost` below uses. */
+  description?: string | null;
   brand: string | null;
   company: PackingListCompany;
   qty: number;

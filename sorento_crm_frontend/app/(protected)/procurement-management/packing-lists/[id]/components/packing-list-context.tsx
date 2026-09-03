@@ -36,6 +36,9 @@ export interface DraftLine {
   product_id: string;
   product_code: string;
   product_name: string | null;
+  /** The supplier's own wording for the item (S9). Null shows the product's name instead;
+   *  editing here writes this field alone, never the name it stands in for. */
+  description: string;
   quantity_shipped: string;
   supplier_id: string;
   cartons_count: string;
@@ -190,6 +193,7 @@ export function PackingListProvider({
         product_id: line.product_id,
         product_code: line.product?.product_code ?? '',
         product_name: line.product?.product_name ?? null,
+        description: toInput(line.description),
         quantity_shipped: String(line.quantity_shipped ?? 0),
         supplier_id: line.supplier_id ?? '',
         cartons_count: toInput(line.cartons_count),
@@ -237,6 +241,7 @@ export function PackingListProvider({
         product_id: '',
         product_code: '',
         product_name: null,
+        description: '',
         quantity_shipped: '0',
         supplier_id: '',
         cartons_count: '',
@@ -318,6 +323,7 @@ export function PackingListProvider({
         gross_weight_per_carton: orUndefined(line.gross_weight_per_carton),
         unit_cost: orUndefined(line.unit_cost),
         remarks: line.remarks.trim() || undefined,
+        description: line.description.trim() || undefined,
       })),
     };
     // The clearance and cost fields are on the payload schema but not on

@@ -69,6 +69,7 @@ function toGridLine(line: InboundShipmentLine, brand: string | null, sourceLinks
     product_id: line.product_id,
     product_code: line.product?.product_code ?? '',
     product_name: line.product?.product_name ?? null,
+    description: toStr(line.description),
     quantity_shipped: toStr(line.quantity_shipped ?? 0),
     supplier_id: line.supplier_id ?? '',
     cartons_count: toStr(line.cartons_count),
@@ -344,11 +345,29 @@ export function PackingListLinesTab() {
       {
         id: 'description',
         header: ({ column }) => <DataGridColumnHeader title="Description" column={column} />,
-        cell: ({ row }) => (
-          <span className="block truncate" title={row.original.product_name ?? undefined}>
-            {row.original.product_name || EM_DASH}
-          </span>
-        ),
+        cell: ({ row }) => {
+          const line = row.original;
+          if (editing) {
+            return (
+              <Input
+                className="h-8 w-56"
+                value={line.description}
+                onChange={(e) => setLineField(line.key, 'description', e.target.value)}
+                placeholder={line.product_name ?? undefined}
+                aria-label={`Description for ${line.product_code || 'the new line'}`}
+              />
+            );
+          }
+          // The supplier's own wording carried off the PI (S9); the product's name when
+          // the line has none - a container drafted before this field existed, or one
+          // read off the n8n PDF path, which states no description at all.
+          const value = line.description || line.product_name;
+          return (
+            <span className="block truncate" title={value ?? undefined}>
+              {value || EM_DASH}
+            </span>
+          );
+        },
         size: 240,
         enableSorting: false,
         meta: { headerTitle: 'Description' },

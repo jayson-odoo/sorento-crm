@@ -147,6 +147,10 @@ def build(db: Session, shipment_id: str) -> dict:
                 "product_id": str(product.id),
                 "product_code": product.product_code,
                 "product_name": product.product_name,
+                # The supplier's own wording for the item (S9), the product name when the
+                # line has none - a container drafted before this column existed, or one
+                # uploaded from a packing list with no description column of its own.
+                "description": line.description or product.product_name,
                 "brand": brand_code or None,
                 "company": MOCHA if (brand_code or "").upper() == MOCHA else SORENTO,
                 "qty": qty,
@@ -537,7 +541,9 @@ def to_xlsx(payload: dict) -> bytes:
             ws.cell(row=row, column=1, value=block["name"])
             ws.cell(row=row, column=2, value=number)
             ws.cell(row=row, column=3, value=line.get("product_code"))
-            ws.cell(row=row, column=4, value=line.get("product_name"))
+            # DESCRIPTION prints the supplier's own wording (S9), the product name when
+            # the line has none - `build()` already resolved the fallback.
+            ws.cell(row=row, column=4, value=line.get("description"))
             ws.cell(row=row, column=5, value=line.get("material"))
             ws.cell(row=row, column=6, value=_qty(qty))
             ws.cell(row=row, column=7, value=pcs)
