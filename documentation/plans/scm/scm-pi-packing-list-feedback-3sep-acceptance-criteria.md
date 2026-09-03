@@ -129,8 +129,9 @@ loading plan's Supplier codes tab is not brought onto the PI.
      warehouse, Container size (S5).
   2. **Costs** - Clearance, China freight, Insurance rate.
   3. **Clearance** - the remaining checkpoints and attributes (ETC, ETA delay, Inspection,
-     Approval, Gatepass, Warehouse arrival, Informed collection, Collection, Liner, China
-     forwarder, Malaysia forwarder, Location, Stacked, COA permit no), Source sheet.
+     Approval, Gatepass, Warehouse arrival, Informed collection, Collection, Liner, Malaysia
+     forwarder, Location, Stacked, COA permit no), Source sheet. (`china_forwarder` is one
+     column; it renders once, in card 1 as China agent - S6 deviation accepted.)
   4. **Document** - Shipment number, Supplier, Shipment date, Actual arrival, Bill of lading,
      Invoice number, Total items (derived), Notes.
 - **AC-F6 [E2E]** Fill Seal no, Shipper, Container no, Save: toast success, values persist after
