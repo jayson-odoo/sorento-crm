@@ -2625,8 +2625,9 @@ class FulfilmentBoardService:
                 fact, as_of=as_of, borrow_left=borrow_open, pool=True
             )
         )
-        # LADDER V8 (R-B, R-L): what the CHAIN can offer this line is each pool's own share,
-        # walked the way `_draw_other_pools` walks it and bounded by the one five-pool net.
+        # LADDER V8 (R-B, R-L, R-N): what the CHAIN can offer this line is each pool's own
+        # share, walked the way step 0 itself walks it (`_draw_pool_share` draws exactly
+        # this list since R-N) and bounded by the one five-pool net.
         # Capping the whole chain by the FIRST pool's allowance printed `offered=0` beside
         # `taken=300` the moment another site's pool answered the remainder (review round 2,
         # S5); before that cap existed at all the proof advertised 31 beside a step that
@@ -3138,6 +3139,20 @@ class FulfilmentBoardService:
         ]
         if drawn:
             return " ".join(component.reason for component in drawn)
+        # R-N (3 Sep 2026): step 0 walks the WHOLE chain, so the ordinary answer is several
+        # pools at once - and the sentences below describe the ASKING pool's pile, which
+        # would report the whole step's take ("this line takes 8") against one of the two
+        # piles it actually came from. Where more than one pool answered, the pools' own
+        # sentences ARE the answer, which is what the walk's own option row states too, so
+        # the trail and the decision panel cannot spell one composition two ways.
+        share = [
+            component
+            for component in components
+            if getattr(component, "rung", None) == RUNG_POOL
+            and getattr(component, "source_location", None)
+        ]
+        if len({component.source_location for component in share}) > 1:
+            return ". ".join(component.reason for component in share)
         if not pool_chain:
             if borrow_donors:
                 named = ", ".join(
@@ -3158,9 +3173,9 @@ class FulfilmentBoardService:
             pools=list(pool_chain),
             pools_net=net,
         )
-        # LADDER V8 (R-B, R-L): what the pile may give THIS line is EACH pool's own share,
-        # walked the way the engine walks it, so the sentence never offers a figure the walk
-        # could not have taken and never prints 0 beside a draw another site's pool made.
+        # LADDER V8 (R-B, R-L, R-N): what the pile may give THIS line is EACH pool's own
+        # share, walked the way the engine walks it, so the sentence never offers a figure
+        # the walk could not have taken and never prints 0 beside a draw another pool made.
         # One allowance spread over every location was the round-1 shape, and it read
         # `offered=0` under `taken=300` (review round 2, S5).
         capacity_by_location: Dict[str, Decimal] = {

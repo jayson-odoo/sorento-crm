@@ -119,8 +119,10 @@ Verified facts this plan stands on:
   **D3 sticky ledger header: tried, reverted 3 Sep (captain: confusing, header covered
   rows).**
 
-- R-L. **Other site pools still supply the remainder (ruled 2 Sep, "B, the current
-  behaviour").** Step 0 asks the asking bin's own site pool. When own locations and both
+- R-L. **SUPERSEDED 3 Sep by R-N (`PLAN-scm-pool-chain-first.md`): step 0 now walks the whole
+  pool chain, so the spill below has nothing left to find and is deleted. What R-L ruled about
+  the OTHER pools' allowances still stands; only its TRIGGER is retired.** Other site pools
+  still supply the remainder (ruled 2 Sep, "B, the current behaviour"). Step 0 asks the asking bin's own site pool. When own locations and both
   borrows cannot cover the remainder whole, the OTHER site pools are asked, in the v7.1 draw
   order (by on hand), each under the same allowance rule (its own Available minus the kept
   share, all bounded by the one five-pool net), whole or nothing. A DC1-IB line of 300 with

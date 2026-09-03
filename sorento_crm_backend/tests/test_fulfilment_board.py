@@ -3884,7 +3884,7 @@ def test_the_proof_offers_what_ANOTHER_site_pool_actually_gave():
     across every location in the chain, so on the R-L path - where the first pool is
     oversold and a LATER one answers - it printed "no other active site pool has anything
     to offer" beside a Reserve of 300 it had just made at that very pool. Each pool's own
-    allowance is now walked the way `_draw_other_pools` walks it, bounded by the one net.
+    allowance is now walked the way step 0 itself walks it, bounded by the one net.
     """
     with blank_session() as db:
         product = _product(db, f"ZZT-{_uid()[:6]}")
@@ -3915,6 +3915,57 @@ def test_the_proof_offers_what_ANOTHER_site_pool_actually_gave():
         "the proof offered 0 beside a draw of 300 it had just made at that pool",
         step["why"],
     )
+
+
+def test_a_cell_whose_pool_step_answered_from_two_pools_shows_both_taken_figures():
+    """S2 of `PLAN-scm-pool-chain-first.md` (R-N): the proof agrees with a MULTI-POOL step 0.
+
+    Step 0 walks the whole chain now, so the ordinary answer is two pools at once. Three
+    things have to say the same thing about it: the pool question's `offered`, which reads
+    `pool_share_capacity` over the chain; its `took`; and the Taken column on the cell's own
+    site pool rows, which is where a planner checks WHERE the units come from. A cell that
+    printed one pool's take against a two-pool composition would be the round-2 S5 defect
+    again, one rung further up.
+    """
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own, own_pool = _pooled_warehouses(db)
+        _far_own, far_pool = _pooled_warehouses(db)
+        # The asking bin's own pool may spare 4 of its 8 (half is kept for dealers) and the
+        # second pool holds plenty, so a line of 8 is 4 + 4 across the two of them.
+        _stock(db, product, own, on_hand=0)
+        _stock(db, product, own_pool, on_hand=8)
+        _stock(db, product, far_pool, on_hand=687)
+
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="8", required_date=date(2026, 9, 3), warehouse=own)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        cell = _cell(board, product.product_code, "2026-08-31")
+        contribution = cell["contributions"][0]
+        step = _step(contribution, "pool")
+        sources = [(s["kind"], s["qty"], s["location"]) for s in contribution["sources"]]
+        pool_rows = [row for row in cell["locations"] if row["where"] == "site_pool"]
+        listed = {row["location"]: row["available_for_project"] for row in pool_rows}
+        own_code, far_code = own_pool.warehouse_code, far_pool.warehouse_code
+
+    assert sources == [
+        ("reserve", "4", own_code),
+        ("reserve", "4", far_code),
+    ], sources
+    assert step["answer"] == "yes"
+    # `offered` is internal since the trail was cut back to a sentence and an answer; what
+    # a reader can check is that the question TOOK the whole 8 and that its sentence names
+    # both pools it took them from. A chain capped by the first pool's allowance would have
+    # answered 4 here, which is the round-2 S5 defect one rung further up.
+    assert step["took"] == "8"
+    # BOTH pools are rows of the cell's own table, each stating the allowance the walk
+    # obeyed - which is what the Stock tab's Taken column is checked against (the column
+    # itself is summed on the client off these very components, `takenByLocation`).
+    assert listed[own_code] == "4", listed
+    assert Decimal(listed[far_code]) >= Decimal("4"), listed
+    assert own_code in step["why"] and far_code in step["why"], step["why"]
 
 
 def test_a_dealer_hot_selling_line_still_reads_the_pools_own_later_order_in_the_proof():
