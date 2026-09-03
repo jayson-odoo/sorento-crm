@@ -16,7 +16,7 @@ import {
   getPaginationRowModel,
 } from '@tanstack/react-table';
 import { Download, Eye, Plus, RefreshCw, Trash2, Upload } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { getLatestContainerStatusDocument } from '../services/packingListService';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';

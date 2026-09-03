@@ -28,7 +28,7 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useIntegrationLogs, useRetryIntegrationLog } from '../hooks/useIntegrationLogs';
 import type { IntegrationLog } from '../types/integrationLog.types';
 import { formatDistanceToNow } from 'date-fns';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { formatDateTimeInMalaysia, parseDateTimeAsUTC } from '@/lib/helpers';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';

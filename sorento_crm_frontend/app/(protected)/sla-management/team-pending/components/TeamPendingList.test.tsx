@@ -35,7 +35,7 @@ vi.mock('@/app/(protected)/account/notifications/hooks/useCoverage', () => ({
   useSubscribeCoverage: () => ({ mutate: subscribeMutate, isPending: false }),
 }));
 
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 const row: TeamPendingItem = {
   id: 't1',

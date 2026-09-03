@@ -1,7 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { exportChatHistory, getChatThread } from '../services/chatHistoryService';
 import type { ChatHistoryFilters } from '../types/chatHistory.types';
 

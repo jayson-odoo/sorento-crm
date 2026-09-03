@@ -35,7 +35,7 @@ vi.mock('../../services/currencyRateService', () => ({
   deleteCurrencyRate: (...a: unknown[]) => deleteCurrencyRate(...a),
 }));
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn(), dismiss: vi.fn() },
 }));
 

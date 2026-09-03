@@ -93,7 +93,7 @@ const h = vi.hoisted(() => ({
  * path and it is `useDeferredAction`, which owns the countdown, the toast and the
  * invalidation on its own.
  */
-vi.mock('sonner', () => {
+vi.mock('@/lib/toast', () => {
   const record = (kind: string) => () => {
     h.toasts.push(kind);
     return kind;

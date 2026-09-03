@@ -48,7 +48,7 @@ vi.mock('@/services/userSelectService', () => ({
   getUsersSelect: (...args: unknown[]) => getUsersSelect(...args),
 }));
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn() },
 }));
 

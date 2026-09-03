@@ -19,7 +19,7 @@ import { useUploadAttachment, useAttachmentTypesList } from '../hooks/useAttachm
 import { useUploadConflict } from '@/hooks/use-upload-conflict';
 import { checkAttachmentCollision, type AttachmentConflictResolution } from '../services/attachmentService';
 import type { AttachmentType } from '../../attachment-types/types/attachmentType.types';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
 import {
   groupFieldSpecs,

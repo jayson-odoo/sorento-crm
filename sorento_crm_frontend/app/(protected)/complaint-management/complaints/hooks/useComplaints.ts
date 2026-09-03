@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { isDeferredFormAction } from '@/app/(protected)/sla-management/_shared/formAction';
 
 import { type ComplaintsListParams } from '../services/complaintService';

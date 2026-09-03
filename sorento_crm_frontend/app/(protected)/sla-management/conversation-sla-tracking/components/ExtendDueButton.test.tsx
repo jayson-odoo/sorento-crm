@@ -10,7 +10,7 @@ vi.mock('../services/conversationSLATrackingService', () => ({
   getExtendPreview: vi.fn(),
   extendSLATracking: vi.fn(),
 }));
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 
 function renderButton(props: Partial<React.ComponentProps<typeof ExtendDueButton>>) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });

@@ -50,7 +50,7 @@ import {
   usePurchaseRequest,
 } from "../hooks/usePurchaseRequests";
 import { getOrCreateViewLink } from "../services/purchaseRequestService";
-import { toast } from "sonner";
+import { toast } from '@/lib/toast';
 import {
   PurchaseRequestFormSchema,
   type PurchaseRequestSchemaType,

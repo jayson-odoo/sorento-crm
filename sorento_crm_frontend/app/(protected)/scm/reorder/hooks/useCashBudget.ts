@@ -1,7 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
 import { fmtMoney } from '../../lib/format';

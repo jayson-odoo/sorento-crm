@@ -38,7 +38,7 @@ import {
   deleteNotificationsBulk,
   deleteAllNotifications,
 } from '@/services/notificationService';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import NotificationItem from './notifications/NotificationItem';
 
 const UNREAD_POLL_INTERVAL_MS = 10_000; // 10s so bell badge updates soon after job completion
@@ -234,7 +234,9 @@ export function NotificationsSheet({ trigger }: { trigger: ReactNode }) {
             <SheetTitle className="p-0 text-base leading-none">Notifications</SheetTitle>
           </SheetHeader>
           <SheetBody className="p-0">
-            <ScrollArea className="h-[calc(100vh-12rem)] min-h-[200px]">
+            {/* M6-02: dvh - mobile Safari's dynamic toolbar makes the vh unit taller
+                than the visible viewport, so the sheet's bottom sat under it. */}
+            <ScrollArea className="h-[calc(100dvh-12rem)] min-h-[200px]">
               <Tabs
                 value={tab}
                 onValueChange={(v) => setTab(v as 'inbox' | 'archived')}

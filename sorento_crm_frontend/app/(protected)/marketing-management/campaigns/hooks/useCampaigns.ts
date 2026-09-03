@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import type { ListPagerPage, ListPagerParams } from '@/hooks/useListPager';
 import { getCampaigns, getCampaign, getCampaignTypes, createCampaign, updateCampaign } from '../services/campaignService';

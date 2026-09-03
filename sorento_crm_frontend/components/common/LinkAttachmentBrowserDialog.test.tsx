@@ -22,7 +22,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 vi.mock('@/app/(protected)/resource-management/attachments/services/directoryService', () => ({
   getDirectoryTree: vi.fn(),
@@ -32,7 +32,7 @@ vi.mock('@/app/(protected)/resource-management/attachments/services/attachmentSe
   getAttachments: vi.fn(),
 }));
 
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { getDirectoryTree } from '@/app/(protected)/resource-management/attachments/services/directoryService';
 import { getAttachments } from '@/app/(protected)/resource-management/attachments/services/attachmentService';
 import type { Attachment } from '@/app/(protected)/resource-management/attachments/types/attachment.types';

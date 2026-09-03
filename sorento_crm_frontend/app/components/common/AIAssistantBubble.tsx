@@ -501,7 +501,9 @@ export default function AIAssistantBubble() {
             width: `${bubbleSize.width}px`,
             height: `${bubbleSize.height}px`,
             maxWidth: 'calc(100vw - 3rem)',
-            maxHeight: 'calc(100vh - 6rem)',
+            // M6-02: dvh - the vh unit includes the space mobile Safari's dynamic
+            // toolbar occupies, so the panel's bottom edge sat off-screen.
+            maxHeight: 'calc(100dvh - 6rem)',
           }}
           // Materialises from the bottom-right (S8-05): scale + blur + opacity
           // together, not a plain fade, so the panel reads as a real surface

@@ -19,7 +19,7 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 
 const toastSuccess = vi.fn();
 const toastError = vi.fn();
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: {
     success: (...args: unknown[]) => toastSuccess(...args),
     error: (...args: unknown[]) => toastError(...args),

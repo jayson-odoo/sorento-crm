@@ -10,7 +10,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { OrderInquiryPoCandidate } from '../types/orderInquiry.types';
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 

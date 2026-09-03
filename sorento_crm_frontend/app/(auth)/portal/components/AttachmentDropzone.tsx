@@ -19,7 +19,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from '@/components/common/AttachmentPreviewModal';

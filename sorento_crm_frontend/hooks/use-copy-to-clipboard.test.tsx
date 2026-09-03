@@ -13,11 +13,11 @@ import { renderHook } from '@testing-library/react';
 
 import { useCopyToClipboard } from './use-copy-to-clipboard';
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { error: vi.fn(), success: vi.fn() },
 }));
 
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 function mockClipboard(writeText: (value: string) => Promise<void>) {
   Object.defineProperty(navigator, 'clipboard', {

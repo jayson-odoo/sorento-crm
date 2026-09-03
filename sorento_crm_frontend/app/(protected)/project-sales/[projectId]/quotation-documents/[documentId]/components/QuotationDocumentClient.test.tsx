@@ -49,7 +49,7 @@ if (!window.matchMedia) {
   });
 }
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: {
     custom: vi.fn(),
     error: vi.fn(),
@@ -168,7 +168,7 @@ vi.mock('@/app/(protected)/master-data-management/shared/hooks/use-uom-select-qu
   useUOMSelectQuery: () => ({ data: [{ id: 'u1', uom_code: 'PCS', uom_name: 'Pieces' }] }),
 }));
 
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { QuotationDocumentClient } from './QuotationDocumentClient';
 import { QuotationDocumentHeader } from './QuotationDocumentHeader';
 import { QuotationScopesTab } from './QuotationScopesTab';

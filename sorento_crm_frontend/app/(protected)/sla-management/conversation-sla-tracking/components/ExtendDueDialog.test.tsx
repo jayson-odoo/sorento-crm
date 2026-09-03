@@ -13,7 +13,7 @@ vi.mock('../services/conversationSLATrackingService', () => ({
   extendSLATracking: (...a: unknown[]) => extendSLATracking(...a),
 }));
 
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 
 // Keep date formatting deterministic + simple for assertions.
 vi.mock('@/lib/helpers', () => ({

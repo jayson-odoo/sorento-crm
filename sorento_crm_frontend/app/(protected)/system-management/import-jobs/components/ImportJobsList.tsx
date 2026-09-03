@@ -27,7 +27,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { getImportJob } from '../services/importJobService';
 import { useImportJobs, useCancelImportJob } from '../hooks/useImportJobs';
 import type { ImportJob } from '../types/importJob.types';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 const JOB_TYPE_LABELS: Record<string, string> = {
   order_import: 'Order Import',

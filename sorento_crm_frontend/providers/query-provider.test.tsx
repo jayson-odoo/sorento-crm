@@ -35,7 +35,7 @@ vi.mock('@tanstack/react-query', () => {
 });
 
 const toastCustom = vi.fn();
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { custom: (...args: unknown[]) => toastCustom(...args) },
 }));
 
@@ -123,12 +123,16 @@ describe('QueryProvider toast deduplication', () => {
     );
   });
 
-  it('passes a 500 error through with no id (no dedup)', () => {
+  it('passes a 500 error through with no id (no dedup) but sticky until dismissed', () => {
     fireOnError('Internal server error');
 
     expect(toastCustom).toHaveBeenCalledTimes(1);
+    // M6-04: the Toaster is mounted once at top-center, so an ungrouped toast
+    // carries no dedup `id`, but it still waits for the reader to close it -
+    // the fixed `toast.custom` lifetime read as "nothing happened" otherwise.
     const opts = toastCustom.mock.calls[0][1];
-    expect(opts.id).toBeUndefined();
+    expect(opts?.id).toBeUndefined();
+    expect(opts).toEqual(expect.objectContaining({ duration: Infinity }));
   });
 
   it('keeps permission toast and regular toast separate', () => {
@@ -138,10 +142,13 @@ describe('QueryProvider toast deduplication', () => {
     expect(toastCustom).toHaveBeenCalledTimes(2);
     // First call: permission-denied id
     expect(toastCustom.mock.calls[0][1]).toEqual(
-      expect.objectContaining({ id: 'permission-denied' }),
+      expect.objectContaining({ id: 'permission-denied', duration: Infinity }),
     );
-    // Second call: no id
-    expect(toastCustom.mock.calls[1][1].id).toBeUndefined();
+    // Second call: no id, still sticky
+    expect(toastCustom.mock.calls[1][1]?.id).toBeUndefined();
+    expect(toastCustom.mock.calls[1][1]).toEqual(
+      expect.objectContaining({ duration: Infinity }),
+    );
   });
 
   it('suppresses toast when query meta has silent: true', () => {

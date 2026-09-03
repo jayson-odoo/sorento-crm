@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   Boxes,
   Download,

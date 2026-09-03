@@ -344,13 +344,20 @@ function AttachmentBlock({
   const body = (
     <>
       {item.kind === 'image' && item.url ? (
-        // Remote Respond.io media: a plain <img> (next/image needs configured hosts).
-        <img
-          src={item.url}
-          alt={caption}
-          className="max-h-48 w-full rounded object-cover"
-          loading="lazy"
-        />
+        // M6-07: a fixed aspect-[4/3] box reserves the space BEFORE the image
+        // loads (the natural-size <img> this replaced had zero height until
+        // then), so a thread pinned to its tail does not have to re-settle as
+        // each photo finishes loading. object-contain, not object-cover: a
+        // portrait photo cropped to 4:3 loses the top and bottom of the shot.
+        <div className="aspect-[4/3] w-full overflow-hidden rounded bg-muted/20">
+          {/* Remote Respond.io media: a plain <img> (next/image needs configured hosts). */}
+          <img
+            src={item.url}
+            alt={caption}
+            className="size-full object-contain"
+            loading="lazy"
+          />
+        </div>
       ) : null}
       <div className="flex items-center gap-1.5 px-0.5 pt-1 text-xs opacity-80" title={caption}>
         <AttachmentIcon kind={item.kind} />
@@ -925,9 +932,16 @@ export default function RespondChatList({
             ? getOutgoingSenderLabel(sourceNorm, getRespondSenderName(item))
             : null;
 
-          const bubbleClass = isOutgoing
-            ? 'bg-[#d9fdd3] text-zinc-900 dark:bg-[#005c4b] dark:text-zinc-50'
-            : 'bg-white text-zinc-900 dark:bg-[#202c33] dark:text-zinc-50';
+          // M6-01: the optimistic bubble (`usePendingThreadItems`) is the same
+          // shape as a real message, so it renders through this exact path -
+          // the ONLY thing that marks it as not-yet-real is the dim, the same
+          // `opacity-60` a placeholder row uses in the DataGrid.
+          const isPending = (item as { source?: string }).source === 'pending';
+          const bubbleClass =
+            (isOutgoing
+              ? 'bg-[#d9fdd3] text-zinc-900 dark:bg-[#005c4b] dark:text-zinc-50'
+              : 'bg-white text-zinc-900 dark:bg-[#202c33] dark:text-zinc-50') +
+            (isPending ? ' opacity-60' : '');
 
           const options = extractSelectionOptions(item);
           const templateButtons = extractTemplateButtons(item);

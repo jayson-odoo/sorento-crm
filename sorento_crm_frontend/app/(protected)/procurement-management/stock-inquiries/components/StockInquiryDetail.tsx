@@ -66,7 +66,7 @@ import {
   getOrCreateStockInquiryViewLink,
   getStockInquiryRevisions,
 } from '../services/stockInquiryService';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { formatDate } from '@/lib/helpers';
 import { useHasPermission } from '@/hooks/usePermissions';
 import StockInquiryDeleteDialog from './stock-inquiry-delete-dialog';

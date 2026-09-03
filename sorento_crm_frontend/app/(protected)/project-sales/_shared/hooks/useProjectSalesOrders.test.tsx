@@ -30,7 +30,7 @@ const toast = vi.hoisted(() => ({
   warning: vi.fn(),
   info: vi.fn(),
 }));
-vi.mock('sonner', () => ({ toast }));
+vi.mock('@/lib/toast', () => ({ toast }));
 
 import {
   SALES_ORDERS_KEY,

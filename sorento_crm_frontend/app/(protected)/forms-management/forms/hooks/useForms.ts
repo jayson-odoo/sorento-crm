@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 import { getForms, getForm, createForm, updateForm, deleteForm, bulkDeleteForms, duplicateForm, publishForm, getFormVersions } from '../services/formService';
 import type { FormsListParams } from '../services/formService';

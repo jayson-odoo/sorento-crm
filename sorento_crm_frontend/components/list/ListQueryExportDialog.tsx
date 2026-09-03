@@ -28,7 +28,7 @@ import {
 } from '@/lib/list-query/listQueryService';
 import { groupOrderListFields, shortNestedOrderLineLabel } from '@/lib/list-query/orderFieldGroups';
 import { cn } from '@/lib/utils';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 export type ListQueryExportDialogProps = {
   resourceKey: ListQueryResourceKey;

@@ -3,7 +3,7 @@
 import { useMemo, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   ChevronRight,
   Ellipsis,

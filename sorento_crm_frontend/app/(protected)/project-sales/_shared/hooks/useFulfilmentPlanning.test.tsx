@@ -44,7 +44,7 @@ vi.mock('../services/fulfilmentPlanningService', () => ({
 const toastSuccess = vi.fn();
 const toastWarning = vi.fn();
 const toastError = vi.fn();
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: {
     success: (...args: unknown[]) => toastSuccess(...args),
     warning: (...args: unknown[]) => toastWarning(...args),

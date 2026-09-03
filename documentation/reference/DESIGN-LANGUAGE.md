@@ -151,7 +151,7 @@ arrives - see the file's own "Materials" comment for the precedent.
 | `ListSearchInput` | `components/common/ListSearchInput.tsx` | Every list search box |
 | `FileDropzone` | `components/common/FileDropzone.tsx` | File upload surfaces |
 | `DeferredActionButton` / `useDeferredAction` | `components/common/DeferredActionButton.tsx`, `hooks/useDeferredAction.tsx` (list rows: `hooks/useDeferredRowAction.tsx`, `components/common/deferredToast.tsx`) | Destructive + detach actions (delete, archive-as-delete, unlink) - see ADR section 2. `ConfirmDeleteDialog` (`components/common/ConfirmDeleteDialog.tsx`) is retired; a new importer of it, or of a destructive `AlertDialog`, is a defect outside the named carve-outs |
-| `sonner` toast | `components/ui/sonner.tsx`, `Toaster` mounted in `components/ClientProviders.tsx` | Success/error feedback, deferred-action toasts on list rows |
+| `sonner` toast | `lib/toast.ts` for EVERY call site (`success`/`error` default duration + close button per M6-04; import `toast` from here, never `'sonner'` directly); `components/ui/sonner.tsx` + `ClientProviders.tsx` mount the one `<Toaster>` and are the only files allowed to import `sonner` itself | Success/error feedback, deferred-action toasts on list rows |
 
 Pressed + touch: `PRESSED_CLASS` and `COARSE_HIT_TARGET_CLASS` from
 `components/ui/primitive-classes.ts` on every pressable. Button sizes do not change - the

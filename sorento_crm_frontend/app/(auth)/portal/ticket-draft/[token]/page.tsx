@@ -2,7 +2,7 @@
 
 import { use, useEffect, useState } from 'react';
 import { sanitizedHtml } from '@/lib/sanitize';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';

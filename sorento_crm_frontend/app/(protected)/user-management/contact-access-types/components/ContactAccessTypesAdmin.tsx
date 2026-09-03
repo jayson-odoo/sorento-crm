@@ -31,7 +31,7 @@ import {
   type ColumnDef,
   type RowSelectionState,
 } from '@tanstack/react-table';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   getAllContactAccessTypes,
   createContactAccessType,

@@ -6,7 +6,7 @@ import { RiCheckboxCircleFill, RiErrorWarningFill } from '@remixicon/react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { X } from 'lucide-react';
 import { useForm } from 'react-hook-form';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { apiFetch } from '@/lib/api';
 import {
   Alert,

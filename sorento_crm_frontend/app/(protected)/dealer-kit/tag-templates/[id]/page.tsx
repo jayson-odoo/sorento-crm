@@ -39,7 +39,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { History, Save as SaveIcon, Upload } from 'lucide-react';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';

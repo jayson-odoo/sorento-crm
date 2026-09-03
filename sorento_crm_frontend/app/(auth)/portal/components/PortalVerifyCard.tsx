@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { AlertCircle, MessageCircle } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -537,7 +537,9 @@ function VerifyShell({
   children: React.ReactNode;
 }) {
   return (
-    <div className="min-h-screen max-w-md mx-auto px-4 py-6 space-y-4">
+    // M6-02: dvh - phone-facing (verify/OTP), so a `vh` shell that sits under
+    // mobile Safari's dynamic toolbar clips the card the reader is filling in.
+    <div className="min-h-dvh max-w-md mx-auto px-4 py-6 space-y-4">
       <Card>
         {title && (
           <CardHeader>

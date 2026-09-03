@@ -75,7 +75,7 @@ vi.mock('@/app/(protected)/master-data-management/products/services/productServi
 }));
 
 const toastError = vi.fn();
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: {
     custom: vi.fn(),
     error: (...args: unknown[]) => toastError(...args),

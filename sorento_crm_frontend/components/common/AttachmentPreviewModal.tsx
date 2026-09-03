@@ -26,7 +26,7 @@ import {
 } from '@/components/ui/carousel';
 import { Button } from '@/components/ui/button';
 import { apiFetch } from '@/lib/api';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 /**
  * Fetch attachment bytes for the Download button and the Excel inline preview.

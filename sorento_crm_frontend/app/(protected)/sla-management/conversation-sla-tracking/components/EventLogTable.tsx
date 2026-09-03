@@ -33,7 +33,7 @@ import {
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { useConversationSLAEventLogs, useDeleteConversationSLAEventLog } from '../hooks/useConversationSLATracking';
 import { formatDateTime, formatDuration, parseDateTimeAsUTC } from '@/lib/helpers';
 import type { ConversationSLAEventLog } from '../types/conversationSLATracking.types';

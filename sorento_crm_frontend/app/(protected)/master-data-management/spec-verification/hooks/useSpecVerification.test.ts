@@ -105,7 +105,7 @@ import { vi, beforeEach } from 'vitest';
 import type { ReactNode } from 'react';
 import React from 'react';
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), warning: vi.fn(), error: vi.fn() },
 }));
 vi.mock('../services/specVerificationService', () => ({

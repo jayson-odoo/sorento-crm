@@ -86,7 +86,9 @@ export default function ConversationsInbox() {
   }, []);
 
   return (
-    <div className="flex min-h-[70vh] flex-col gap-4 lg:h-[calc(100vh-13rem)] lg:flex-row">
+    // M6-02: dvh - the vh unit sat under mobile Safari's dynamic toolbar, clipping
+    // the bottom of the inbox at 375.
+    <div className="flex min-h-[70dvh] flex-col gap-4 lg:h-[calc(100dvh-13rem)] lg:flex-row">
       <ConversationListPane
         tab={tab}
         onTabChange={(next) => {

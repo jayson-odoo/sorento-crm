@@ -13,7 +13,7 @@ import {
 } from '@/components/ui/dialog';
 import { parseExcelFile } from '@/lib/excel-utils';
 import { useExcelAccept } from '@/hooks/use-excel-accept';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { Progress } from '@/components/ui/progress';
 import { FileDropzone } from '@/components/common/FileDropzone';
 import { ScrollArea } from '@/components/ui/scroll-area';

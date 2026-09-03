@@ -24,7 +24,7 @@ const toastMock = vi.hoisted(() => ({
   custom: vi.fn(),
 }));
 
-vi.mock('sonner', () => ({ toast: toastMock }));
+vi.mock('@/lib/toast', () => ({ toast: toastMock }));
 
 vi.mock('../../product-attachments/services/productAttachmentService', () => ({
   getProductAttachmentsByProduct: (...a: unknown[]) => getProductAttachmentsByProduct(...a),

@@ -26,7 +26,7 @@ Element.prototype.hasPointerCapture = Element.prototype.hasPointerCapture ?? (()
 // The pager has its own tests (hooks/useListPager.test.ts).
 vi.mock('@/components/common/ListPager', () => ({ __esModule: true, default: () => null }));
 
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn() } }));
 
 const useProductSet = vi.hoisted(() => vi.fn());
 const useProductSets = vi.hoisted(() => vi.fn());

@@ -29,7 +29,7 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { useCreateProduct, useUpdateProduct, useProduct } from '../hooks/useProducts';
 import { ProductSchema, type ProductSchemaType } from '../forms/product-schema';
 import type { Product, ProductFormData } from '../types/product.types';

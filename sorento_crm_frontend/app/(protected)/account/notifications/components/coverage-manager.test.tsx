@@ -49,7 +49,7 @@ vi.mock('@/app/(protected)/sla-management/conversation-sla-tracking/hooks/useTea
   }),
 }));
 
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 const mySub: CoverageSub = {
   id: 's1',

@@ -28,7 +28,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '@/lib/api';
 import type { RespondContact } from '../types/contact.types';
 import { formatDate } from '@/lib/helpers';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import ContactCreateDialog from './ContactCreateDialog';
 import ContactDeleteDialog from './ContactDeleteDialog';
 import ContactBulkDeleteDialog from './ContactBulkDeleteDialog';

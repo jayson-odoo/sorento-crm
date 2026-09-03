@@ -14,7 +14,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const upsertPriceFloor = vi.fn();
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn() },
 }));
 

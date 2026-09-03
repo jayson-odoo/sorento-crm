@@ -9,7 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 interface TraceSettings {
   ai_assistant_role_split_enabled: boolean;

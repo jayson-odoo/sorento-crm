@@ -24,7 +24,7 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { formatDateTime, parseDateTimeAsUTC } from '@/lib/helpers';
 import {
   useTeamPendingSLA,

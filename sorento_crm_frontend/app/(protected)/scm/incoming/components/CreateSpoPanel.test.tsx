@@ -10,7 +10,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
 }));
 
@@ -27,7 +27,7 @@ vi.mock('../../services/fulfilmentService', () => ({
   downloadSpoWorksheet: (...args: unknown[]) => state.worksheet(...args),
 }));
 
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { CreateSpoPanel } from './CreateSpoPanel';
 
 function line(over: Record<string, unknown> = {}) {

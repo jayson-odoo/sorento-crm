@@ -56,7 +56,7 @@ vi.mock('@/lib/listing-column-preferences/listColumnPreferencesService', () => (
   resetUserListColumnConfig: vi.fn(async () => undefined),
 }));
 
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn() } }));
 
 vi.mock('@/components/my-downloads/EntityDownloadsButton', () => ({
   EntityDownloadsButton: () => <span>downloads</span>,

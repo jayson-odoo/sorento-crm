@@ -17,7 +17,7 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { apiFetch } from '@/lib/api';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   IChannelsItem,
   IChannelsItems,

@@ -16,7 +16,7 @@ import type { ContactPortalFormRow } from '../services/contactPortalFormsService
 const apiFetch = vi.fn();
 
 vi.mock('@/lib/api', () => ({ apiFetch: (...a: unknown[]) => apiFetch(...a) }));
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 function ok(body: unknown) {
   return Promise.resolve({ ok: true, json: () => Promise.resolve(body) });

@@ -61,7 +61,7 @@ if (!window.matchMedia) {
   });
 }
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
 }));
 
@@ -87,7 +87,7 @@ vi.mock('../services/outstandingImportService', () => ({
   getOutstandingUploadConfig: (...a: unknown[]) => getOutstandingUploadConfig(...a),
 }));
 
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { OutstandingUploadDialog, verdictFromPreview } from './OutstandingUploadDialog';
 import type { OutstandingPreview } from '../services/outstandingImportService';
 import type { ImportQueuedResult } from '@/components/upload-activity/importQueue';

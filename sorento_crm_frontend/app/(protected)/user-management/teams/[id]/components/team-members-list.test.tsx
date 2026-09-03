@@ -18,7 +18,7 @@ vi.mock('../../hooks/use-team-members', () => ({
 }));
 
 vi.mock('../../services/teamService', () => ({ addTeamMember: vi.fn() }));
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 function render(ui: React.ReactElement) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });

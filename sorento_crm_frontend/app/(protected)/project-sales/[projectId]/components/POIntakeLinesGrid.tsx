@@ -8,7 +8,7 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import { Ban, Check, Filter, Loader2, Pencil, RotateCcw, X } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   AlertDialog,
   AlertDialogAction,

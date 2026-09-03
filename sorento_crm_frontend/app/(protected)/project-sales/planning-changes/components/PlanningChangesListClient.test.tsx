@@ -30,7 +30,7 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
 }));
 
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }));
 
 const listPlanningChangeBatches = vi.fn();
 vi.mock('../../_shared/services/planningChangeService', () => ({

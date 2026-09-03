@@ -16,7 +16,7 @@ import type { ContactMediaAccessItem } from '../services/contactMediaAccessServi
 const apiFetch = vi.fn();
 
 vi.mock('@/lib/api', () => ({ apiFetch: (...a: unknown[]) => apiFetch(...a) }));
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 function ok(body: unknown) {
   return Promise.resolve({ ok: true, json: () => Promise.resolve(body) });
@@ -352,7 +352,7 @@ describe('ContactMediaAccessSection - bounds', () => {
 
 describe('ContactMediaAccessSection - a failed limits save', () => {
   it('keeps the dialog open, toasts, and never surfaces an unhandled rejection', async () => {
-    const { toast } = await import('sonner');
+    const { toast } = await import('@/lib/toast');
     const unhandled: unknown[] = [];
     const onUnhandled = (event: PromiseRejectionEvent) => {
       unhandled.push(event.reason);

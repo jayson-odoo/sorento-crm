@@ -1,4 +1,4 @@
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 /**
  * Copy the supplier's read-only link, wherever it is offered from.

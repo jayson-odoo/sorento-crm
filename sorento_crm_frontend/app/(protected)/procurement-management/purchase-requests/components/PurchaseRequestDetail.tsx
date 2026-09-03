@@ -86,7 +86,7 @@ import {
 import { ExportWithRevisionsDialog } from '@/components/common/ExportWithRevisionsDialog';
 import { useRevisionEnabledMap } from '@/app/(protected)/sla-management/_shared/useRevisionEnabledMap';
 import { useLookupOptionsByBinding } from '@/hooks/useLookupOptionsByBinding';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import LookupBoundLabel from '@/components/common/LookupBoundLabel';
 import PurchaseRequestAttachmentsSection from './PurchaseRequestAttachmentsSection';
 import PurchaseRequestConversationPanel from './PurchaseRequestConversationPanel';

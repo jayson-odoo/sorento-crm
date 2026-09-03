@@ -11,7 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   useScheduledTask,
   useUpdateScheduledTask,

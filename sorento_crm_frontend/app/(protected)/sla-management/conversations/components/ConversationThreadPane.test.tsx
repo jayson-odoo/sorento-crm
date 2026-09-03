@@ -94,6 +94,8 @@ interface ComposerStubProps {
     params: Record<string, string>;
   }) => Promise<unknown>;
   sendAdapter?: (p: { text: string; files: File[] }) => Promise<unknown>;
+  onSent?: () => void | Promise<unknown>;
+  pendingBubble?: { add: (input: { text: string; files: { name: string }[] }) => string; remove: (key: string) => void };
 }
 
 vi.mock('@/components/common/conversation/SharedConversationComposer', () => ({
@@ -105,6 +107,8 @@ vi.mock('@/components/common/conversation/SharedConversationComposer', () => ({
     windowStateOverride,
     templateSendAdapter,
     sendAdapter,
+    onSent,
+    pendingBubble,
   }: ComposerStubProps) =>
     canReply ? (
       <div
@@ -119,9 +123,25 @@ vi.mock('@/components/common/conversation/SharedConversationComposer', () => ({
           type="button"
           data-testid="inbox-composer-send"
           data-snippet-tracking-id={snippetTrackingId ?? ''}
-          // The real composer catches a failed send and toasts; the stub must
-          // swallow it the same way or a rejection test leaks an unhandled error.
-          onClick={() => void sendAdapter?.({ text: 'hello', files: [] }).catch(() => undefined)}
+          // Mirrors the real composer's handleSend (M6-01): the pending bubble
+          // goes up before the request, comes down once `onSent` settles (or
+          // right away on failure) - the real composer catches a failed send
+          // and toasts, so the stub swallows it the same way.
+          onClick={() => {
+            const key = pendingBubble?.add({ text: 'hello', files: [] });
+            void sendAdapter
+              ?.({ text: 'hello', files: [] })
+              .then(async () => {
+                const settled = onSent?.();
+                if (settled && typeof (settled as PromiseLike<unknown>)?.then === 'function') {
+                  await settled;
+                }
+              })
+              .catch(() => undefined)
+              .finally(() => {
+                if (key) pendingBubble?.remove(key);
+              });
+          }}
         >
           Send
         </button>
@@ -157,7 +177,7 @@ vi.mock('@/components/common/conversation/InternalCommentComposer', () => ({
 }));
 
 const toastSuccess = vi.fn();
-vi.mock('sonner', () => ({ toast: { success: (...a: unknown[]) => toastSuccess(...a) } }));
+vi.mock('@/lib/toast', () => ({ toast: { success: (...a: unknown[]) => toastSuccess(...a) } }));
 
 import ConversationThreadPane from './ConversationThreadPane';
 import type { ConversationInboxItem } from '../services/conversationsInboxService';

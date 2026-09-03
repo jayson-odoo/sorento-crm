@@ -27,7 +27,7 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useIntegrationLogs, useRetryIntegrationLog } from '@/app/(protected)/integration-management/integration-logs/hooks/useIntegrationLogs';
 import type { IntegrationLog } from '@/app/(protected)/integration-management/integration-logs/types/integrationLog.types';
 import { formatDistanceToNow } from 'date-fns';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 

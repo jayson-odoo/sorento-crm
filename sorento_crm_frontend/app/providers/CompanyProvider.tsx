@@ -21,7 +21,7 @@
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSession } from 'next-auth/react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   getMyCompanyContext,
   switchCompany,

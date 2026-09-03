@@ -35,7 +35,7 @@ import { replaceLatestStockList, getCurrentStockListAttachment } from '@/app/(pr
 import { useImportJobDrawer } from '@/components/upload-activity';
 import StockBulkDeleteDialog from './StockBulkDeleteDialog';
 import { useQueryClient, useQuery } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { generateExcelFile, type ColumnOption } from '@/lib/excel-utils';
 import { useRouter } from 'next/navigation';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';

@@ -15,7 +15,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { generateExcelFile, type ColumnOption } from '@/lib/excel-utils';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 interface TemplateDownloadDialogProps {
   open: boolean;

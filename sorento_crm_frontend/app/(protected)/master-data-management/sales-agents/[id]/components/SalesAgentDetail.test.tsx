@@ -42,7 +42,7 @@ if (!Element.prototype.hasPointerCapture) {
   Element.prototype.releasePointerCapture = () => {};
 }
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
 }));
 

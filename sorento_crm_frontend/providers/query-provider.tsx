@@ -7,7 +7,7 @@ import {
   QueryClient,
   QueryClientProvider,
 } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { registerRevisionStaleHandler } from '@/lib/revision-fence';
 import { pendingEntityStore } from '@/lib/pending-entity-store';
@@ -67,8 +67,8 @@ const QueryProvider = ({ children }: { children: ReactNode }) => {
 
             if (isPermissionError) {
               toast.custom(
-                () => (
-                  <Alert variant="mono" icon="destructive" close={false}>
+                (id) => (
+                  <Alert variant="mono" icon="destructive" close onClose={() => toast.dismiss(id)}>
                     <AlertIcon>
                       <RiErrorWarningFill />
                     </AlertIcon>
@@ -77,26 +77,21 @@ const QueryProvider = ({ children }: { children: ReactNode }) => {
                     </AlertTitle>
                   </Alert>
                 ),
-                {
-                  id: 'permission-denied',
-                  position: 'top-center',
-                },
+                { id: 'permission-denied', duration: Infinity },
               );
               return;
             }
 
             toast.custom(
-              () => (
-                <Alert variant="mono" icon="destructive" close={false}>
+              (id) => (
+                <Alert variant="mono" icon="destructive" close onClose={() => toast.dismiss(id)}>
                   <AlertIcon>
                     <RiErrorWarningFill />
                   </AlertIcon>
                   <AlertTitle>{message}</AlertTitle>
                 </Alert>
               ),
-              {
-                position: 'top-center',
-              },
+              { duration: Infinity },
             );
           },
         }),

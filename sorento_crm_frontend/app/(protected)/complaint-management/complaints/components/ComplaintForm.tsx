@@ -34,7 +34,7 @@ import {
   displayComplaintTechnicalResponse,
   searchProjectsForLink,
 } from "../services/complaintService";
-import { toast } from "sonner";
+import { toast } from '@/lib/toast';
 import {
   ComplaintSchema,
   type ComplaintSchemaType,

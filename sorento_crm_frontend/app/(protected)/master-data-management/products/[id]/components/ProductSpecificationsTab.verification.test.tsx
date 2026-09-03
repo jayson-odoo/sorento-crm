@@ -14,7 +14,7 @@ import ProductSpecificationsTab from './ProductSpecificationsTab';
 import type { ProductSpecDetail } from '../../../product-specifications/types/productSpec.types';
 import type { VerificationBlock } from '../../../spec-verification/types/specVerification.types';
 
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 vi.mock('next/link', () => ({
   default: ({ href, children }: { href: string; children: ReactNode }) => (
