@@ -53,6 +53,10 @@ or a rule: those live once on the Policies page.
   On hand 102 reads 51, after the first 1-unit dealer SO 50, after the 510 SPO 295 (the
   last row equals the summary row's Available for Project). Expanding a GROUP section still
   reads Balance after, unchanged.
+- AC-2.6c **Expanded ledger Total is the signed net (D9).** On a group or site pool reading,
+  the ledger's Quantity totals the signed net of the rows listed (on hand and SPO plus, S/O
+  and holds minus) and equals the section's own Available; on a single-bin reading it totals
+  the S/O rows as before. SRTWB241 site pool ledger: 49 + 586 + 20 + 113 + 4 - 1 = 771.
 - AC-2.7 Dealer hot-selling product with pool free 6,500 (WESERP10B): reads pool, not Buy.
 - AC-2.8 Every option row still carries fulfil date and days late (R36); `ladder` on the
   board and the drawer is "v8".
