@@ -119,14 +119,14 @@ agent-browser evidence on :3160 via the sidebar.
 - **AC-H7** `[FE]` PO detail of a crm_spo shows a Plan card with Pulled from / Covers tables.
 - **AC-H8** `[E2E]` Create SPO twice from one ZZT container (partial then remainder); both listed; open one; Plan card shows the SOs ticked; delete one; the other stays.
 
-## I. Free quantity, one review dialog (R2)
+## I. Free quantity, creates on the click (R2; review dialog withdrawn 4 Sep)
 
 - **AC-I1** `[FE]` Typing 500 in a line whose POs cover 409 keeps 500 in the input; no red banner; Create SPO stays enabled.
-- **AC-I2** (superseded by AC-I6, captain 3 Sep) `[FE]` Create SPO opens "Review before creating" listing that line as "Asked 500, POs cover 409, SPO will be 409"; over-ticked SOs listed as part-covered; lines with no location listed.
-- **AC-I3** `[FE]` Confirm sends the same payload as today; Cancel returns to the planner unchanged.
+- **AC-I2** (withdrawn, captain 4 Sep: no review dialog; Create SPO creates on the click) `[FE]` Create SPO opens "Review before creating" listing that line as "Asked 500, POs cover 409, SPO will be 409"; over-ticked SOs listed as part-covered; lines with no location listed.
+- **AC-I3** (withdrawn, captain 4 Sep: no review dialog; Create SPO creates on the click) `[FE]` Confirm sends the same payload as today; Cancel returns to the planner unchanged.
 - **AC-I4** `[BE]` `create` with qty 500 on a line packed 500 whose POs cover 409 writes an SPO line of 500, `source_ref.pulls` totalling 409, and the source PO lines advance by 409 only.
 - **AC-I5** `[BE]` A line with no open PO and a supplier is convertible; `create` writes its SPO line with no pulls.
-- **AC-I6** `[FE]` The review dialog states "Asked 500, POs cover 409, 91 without PO backing" for that line.
+- **AC-I6** (withdrawn, captain 4 Sep: no review dialog; Create SPO creates on the click) `[FE]` The review dialog states "Asked 500, POs cover 409, 91 without PO backing" for that line.
 
 ## J. Class (R3)
 

@@ -102,9 +102,10 @@ import { SpoScheduleMatrixTable } from './SpoScheduleMatrixTable';
  * only the DEFAULT the qty input starts at now, never a ceiling - the input takes any whole
  * number, no live clamp. `cannot_convert` (input disabled) is true ONLY for a line with no
  * supplier; a line with a supplier and no open PO is fully editable, simply unbacked. Nothing
- * about the quantity - past packed, past what a PO covers, an over-tick - blocks Create SPO
- * live any more; it is all read once, in the "Review before creating" dialog Create SPO opens
- * (`reviewNotesFor`), and Confirm there sends exactly the payload Create SPO always sent.
+ * about the quantity - past packed, past what a PO covers, an over-tick - blocks Create SPO.
+ * The server caps every line at its own remainder and writes the uncovered part without a PO
+ * pull, so there is nothing to confirm: Create SPO creates on the click (captain, 4 Sep - the
+ * "Review before creating" dialog this used to open is gone, no replacement dialog either).
  *
  * Four asks from the same doctrine-correction message, all on this table:
  *   1. The PO-takes drill names the PO's own date and supplier, and opens as the shared
@@ -273,60 +274,6 @@ function splitsTotal(splits: SplitState[]): number {
   return splits.reduce((sum, s) => sum + (s.qty || 0), 0);
 }
 
-/**
- * What "Review before creating" says about one included line (R2, AC-I2/AC-I6).
- *
- * The PO cap is gone, so nothing here blocks Create SPO any more - the notes are the ONE
- * place every shortfall the operator might miss is read before the write, in place of the
- * live clamp and live red banner this table used to carry. Only the notes that apply to
- * this line are returned; an empty array means the line reads "Ready".
- */
-function reviewNotesFor(
-  ln: SpoSuggestionLine,
-  qty: number,
-  takeIds: string[],
-  soKeys: string[],
-  splits: SplitState[],
-  /** The starved document names `overTicked` already worked out for this line - passed in
-   *  rather than re-derived, so the dialog and the (now-retired) live banner could never
-   *  have disagreed about which orders this SPO cannot serve. */
-  starved: string[],
-): string[] {
-  const notes: string[] = [];
-  const asked = qty;
-  // The server's own cap, restated here so the dialog names the same figure `create` will
-  // actually write - `need = min(requested, remaining_qty)` (R1: the remainder, not the raw
-  // packed figure - a prior `create` run may already have claimed part of this line).
-  const remaining = ln.remaining_qty;
-  const willBe = Math.min(asked, remaining);
-  if (asked > remaining) {
-    notes.push(
-      `Asked ${fmtInt(asked)}, ${fmtInt(asked - remaining)} over the remainder, SPO will be ${fmtInt(willBe)}`,
-    );
-  }
-  const poCovered = poCoveredFor(ln, takeIds);
-  if (willBe > poCovered) {
-    notes.push(
-      `Asked ${fmtInt(willBe)}, POs cover ${fmtInt(poCovered)}, ${fmtInt(willBe - poCovered)} without PO backing`,
-    );
-  }
-  if (starved.length) {
-    const tickedAsk = soKeys.reduce((sum, key) => {
-      const entry = (ln.so_coverage ?? []).find((c) => c.key === key);
-      return sum + (entry?.qty ?? 0);
-    }, 0);
-    const covers = tickedQty(ln, soKeys, qty);
-    notes.push(
-      `Ticked SOs ask ${fmtInt(tickedAsk)}, this SPO covers ${fmtInt(covers)} - ${starved.join(', ')}`,
-    );
-  }
-  const hasSplit = splits.some((s) => s.warehouseId && s.qty > 0);
-  if (ln.location_options.length === 0 || !hasSplit) {
-    notes.push('No location');
-  }
-  return notes;
-}
-
 export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
   const suggestion = useSpoSuggestion(shipmentId);
   const create = useCreateSpo(shipmentId);
@@ -335,9 +282,6 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
   /** Which row of the Created SPOs grid Delete was pressed on (R1: one row per SPO, not one
    *  confirm for the whole shipment). */
   const [deleteTarget, setDeleteTarget] = useState<SpoRef | null>(null);
-  /** Create SPO no longer clamps or blocks live (R2) - everything worth a second look is
-   *  read once, here, before the write (AC-I2, AC-I6). */
-  const [reviewOpen, setReviewOpen] = useState(false);
   const [view, setView] = useState<'table' | 'schedule'>('table');
   const [scheduleView, setScheduleView] = useState<ScheduleView>('po');
 
@@ -517,31 +461,6 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
    *  `columns` memo - see `stateRef`. */
   const splitMismatchRef = useRef(splitMismatch);
   splitMismatchRef.current = splitMismatch;
-
-  /**
-   * Lines where the ticked demand asks for more than the container holds (AC-G5).
-   *
-   * The figures are shown rather than the ticks being silently clamped: the operator ticked
-   * four orders for a container that can serve three, and which of them to drop is their
-   * decision, not an arithmetic one. R2 (captain's ruling, 3 Sep): this no longer disables
-   * Create SPO or shows a live banner - the starved names it collects feed one note per line
-   * in the "Review before creating" dialog instead (`reviewNotesFor`).
-   */
-  const overTicked = useMemo(() => {
-    const bad = new Map<string, string[]>();
-    for (const ln of lines) {
-      if (ln.cannot_convert) continue;
-      // An order this SPO cannot serve AT ALL - the operator ticked past what the
-      // container holds. Which one to drop is their decision, so it is named in the review
-      // dialog rather than silently unticked.
-      const starved = coverageTakes(ln, soKeysFor(ln), qtyFor(ln))
-        .filter((t) => t.take <= 0)
-        .map((t) => t.entry.document ?? t.entry.key);
-      if (starved.length) bad.set(ln.shipment_line_id, starved);
-    }
-    return bad;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lines, state]);
 
   const renderQtyCell = (ln: SpoSuggestionLine) => (
     <Input
@@ -1162,7 +1081,10 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
         </div>
         <Button
           size="sm"
-          onClick={() => setReviewOpen(true)}
+          // Creates on the click (captain, 4 Sep): the server caps every line at its own
+          // remainder and writes the uncovered part without a PO pull, so there is nothing
+          // to confirm - no review dialog.
+          onClick={() => create.mutate(confirmLines)}
           disabled={!includedCount || splitMismatch.size > 0 || create.isPending}
         >
           {create.isPending ? (
@@ -1242,9 +1164,7 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
         <div className="flex min-w-0 items-center justify-end gap-2 sm:ms-auto">
           {/* S3 (review): this gates Create SPO in EITHER view, so it renders in both - a
               disabled Create SPO with no reason on screen reads as broken. It sits before
-              the schedule View select so the reason is read first. An over-tick is no longer
-              a live banner or a Create SPO block (R2) - it surfaces once, in the Review
-              before creating dialog, alongside every other note on the confirm. */}
+              the schedule View select so the reason is read first. */}
           {splitMismatch.size > 0 ? (
             <span className="text-2xs text-end font-medium text-destructive">
               {splitMismatch.size} line{splitMismatch.size === 1 ? '' : 's'} - location split does not add up
@@ -1341,63 +1261,6 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
         </PlanRowDialog>
       ) : null}
 
-      {/* R2 (captain's ruling, 3 Sep): the PO cap is gone, so nothing about the quantity
-          blocks Create SPO live any more - every shortfall worth a second look (asked past
-          packed, asked past what a PO covers, an over-tick, no location) is read ONCE, here,
-          before the write. Cancel changes nothing; Confirm sends today's payload unchanged. */}
-      <AlertDialog open={reviewOpen} onOpenChange={setReviewOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Review before creating</AlertDialogTitle>
-            <AlertDialogDescription>
-              {includedCount} line{includedCount === 1 ? '' : 's'} will create an SPO.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <ScrollArea className="max-h-80">
-            <ul className="space-y-2 pe-3">
-              {lines
-                .filter((ln) => !ln.cannot_convert && qtyFor(ln) > 0)
-                .map((ln) => {
-                  const notes = reviewNotesFor(
-                    ln,
-                    qtyFor(ln),
-                    takeIdsFor(ln),
-                    soKeysFor(ln),
-                    splitsFor(ln),
-                    overTicked.get(ln.shipment_line_id) ?? [],
-                  );
-                  return (
-                    <li key={ln.shipment_line_id} className="rounded-md border p-2 text-xs">
-                      <p className="truncate font-medium" title={ln.item_code ?? ''}>
-                        {ln.item_code ?? ln.product_name ?? EM_DASH}
-                      </p>
-                      {notes.length ? (
-                        <ul className="mt-1 space-y-0.5 text-2xs text-muted-foreground">
-                          {notes.map((note) => (
-                            <li key={note}>{note}</li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <p className="mt-1 text-2xs text-muted-foreground">Ready</p>
-                      )}
-                    </li>
-                  );
-                })}
-            </ul>
-          </ScrollArea>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={create.isPending}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() =>
-                create.mutate(confirmLines, { onSuccess: () => setReviewOpen(false) })
-              }
-              disabled={create.isPending}
-            >
-              {create.isPending ? 'Creating...' : 'Create SPO'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
         </Card>
       ) : null}
 
