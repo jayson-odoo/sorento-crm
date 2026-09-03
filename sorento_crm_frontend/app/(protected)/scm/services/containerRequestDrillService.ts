@@ -22,6 +22,8 @@ export interface ContainerRequestDrillSpoRow {
   shipment_id: string | null;
   /** Null on a draft nobody has numbered - the screen says "Draft", never invents one. */
   shipment_number: string | null;
+  /** The shipment's container number, null on an allocation with no shipment yet (S4). */
+  container_number: string | null;
   /** The site pool this allocation is bound for. */
   warehouse_code: string | null;
   qty: number;

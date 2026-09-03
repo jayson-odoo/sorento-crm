@@ -19,12 +19,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
+import { getStatusBadgeVariant, formatStatusLabel } from '@/lib/status-badge';
 import { cn } from '@/lib/utils';
 
 import { EM_DASH, fmtDate, fmtInt, fmtMoney, fmtSupplierCost } from '../lib/format';
@@ -757,10 +759,11 @@ function spoColumns(totalQty: number): ColumnDef<ContainerRequestDrillSpoRow>[] 
       meta: { skeleton: SKELETON_CELL },
     },
     {
-      id: 'packing_list',
-      header: 'Packing list',
-      cell: ({ row }) =>
-        row.original.shipment_id ? (row.original.shipment_number ?? 'Draft') : 'Not shipped',
+      // S4: what "Packing list" used to say (Draft / Not shipped) is now the status pill;
+      // this column is only ever the container the SPO landed on.
+      id: 'container',
+      header: 'Container',
+      cell: ({ row }) => textCell(row.original.container_number),
       size: 140,
     },
     {
@@ -794,8 +797,24 @@ function spoColumns(totalQty: number): ColumnDef<ContainerRequestDrillSpoRow>[] 
     {
       id: 'status',
       header: 'Status',
-      cell: ({ row }) => textCell(row.original.status),
-      size: 110,
+      cell: ({ row }) => {
+        const r = row.original;
+        // An allocation nobody has put on a shipment yet has no status word to format -
+        // "Not shipped" says the same thing the Container column's own dash used to.
+        if (!r.shipment_id) {
+          return (
+            <Badge variant="secondary" appearance="light" size="md">
+              Not shipped
+            </Badge>
+          );
+        }
+        return (
+          <Badge variant={getStatusBadgeVariant(r.status)} appearance="light" size="md">
+            {formatStatusLabel(r.status)}
+          </Badge>
+        );
+      },
+      size: 130,
     },
   ];
 }

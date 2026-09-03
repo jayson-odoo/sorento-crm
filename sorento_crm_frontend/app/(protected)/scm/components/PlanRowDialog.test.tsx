@@ -462,6 +462,7 @@ describe('SpoTabs', () => {
       spo_number: 'CRM-SPO-e372b1e9',
       shipment_id: 's1',
       shipment_number: 'FSCU8103365',
+      container_number: 'FSCU8103365',
       warehouse_code: 'BRW',
       qty: 90,
       received: 0,
@@ -470,15 +471,17 @@ describe('SpoTabs', () => {
       status: 'in_transit',
     },
     {
+      // No shipment at all yet - the allocation is still on order (S4, AC-D3).
       spo_number: 'CRM-SPO-1a0c77',
-      shipment_id: 's2',
+      shipment_id: null,
       shipment_number: null,
+      container_number: null,
       warehouse_code: 'WH3',
       qty: 27,
       received: 0,
       eta: null,
       arrived_at: null,
-      status: 'draft',
+      status: null,
     },
   ];
 
@@ -495,9 +498,14 @@ describe('SpoTabs', () => {
 
     expect(screen.getByRole('tab', { name: 'Open to pools (117)' })).toBeTruthy();
     expect(screen.getByText('CRM-SPO-e372b1e9')).toBeTruthy();
+    // Container, not "Packing list" (S4, AC-D2).
+    expect(screen.getByText('Container')).toBeTruthy();
+    expect(screen.queryByText('Packing list')).toBeNull();
     expect(screen.getByText('FSCU8103365')).toBeTruthy();
-    // A packing list nobody has numbered reads as a draft, never as a blank.
-    expect(screen.getByText('Draft')).toBeTruthy();
+    // A shipped row's status is the same formatted pill every other screen wears (AC-D3).
+    expect(screen.getByText('In Transit')).toBeTruthy();
+    // An allocation nobody has put on a shipment yet reads Not shipped, never Draft.
+    expect(screen.getByText('Not shipped')).toBeTruthy();
     expect(screen.getByText('117')).toBeTruthy();
   });
 
