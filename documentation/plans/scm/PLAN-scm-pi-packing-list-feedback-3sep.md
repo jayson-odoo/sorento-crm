@@ -111,3 +111,17 @@ Slices, same PR (#594), after S5:
 | **S9** description carried | Migration 466: `inbound_shipment_lines.description` Text NULL; convert copies `proforma_invoice_line.description`; backfill existing lines from `scm.proforma_invoice_shipment_link`; editable in the lines grid; export column D = description, else product name; screen Description column reads the same. |
 | **S10** lines grid editing | Inputs keep focus across keystrokes (test types three digits); product select on a new line shows the pick; product editable on an existing line (unique index shipment+product+supplier still enforced, duplicate refused with a readable message); Ctn qty editable (`cartons_count`) when pcs/ctn is blank, derived and read-only when pcs/ctn is given; every measurement cell fillable on every row. |
 | **S11** mixed-company check | Tester: on :3140 build a packing list with a MOCHA-brand line beside SORENTO lines, compare Split card, Download XLSX footer and a hand calculation (clearance/freight by cbm share, insurance by amount share); report numbers side by side. |
+
+### S12 (from the S11 check, 3 Sep)
+
+Measured: `consolidated_packing_list.build()` resolves a line's CBM as stored `cbm`, else the product
+master's dimensions, never the line's own carton dimensions (`:141-143`), while `to_xlsx` writes
+`=H*L` live from those dimensions. A line typed with L/W/H and no stored cbm is 0 cbm on screen and
+gets no clearance / freight share; the workbook is right. `_attach_capacity` (S5) sums the same
+stored `cbm`, so the gauge has the same hole. The Costs card sends an emptied field as "not
+stated" (`orUndefined`) so a cost cannot be cleared from the UI.
+
+Slice: ONE server-side rule `line_cbm(line, product)` = stored `cbm`, else `ctn * L*W*H/1e6` with
+`ctn = qty / pcs_per_carton` when pcs is stated else `cartons_count`, else catalogue; used by
+`build()`, `_attach_capacity` and anywhere else that sums shipment-line volume. `build()` gets its
+own tests (JSON payload, mixed company, dims-only line). Costs card: empty sends `null`.

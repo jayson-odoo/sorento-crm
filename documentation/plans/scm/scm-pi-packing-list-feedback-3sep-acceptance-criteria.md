@@ -196,3 +196,13 @@ loading plan's Supplier codes tab is not brought onto the PI.
 
 - **AC-K1 [E2E]** A packing list with SORENTO and MOCHA lines: Split card, XLSX footer and a hand
   calculation agree on CBM, Clearance, Insurance, China freight and Amount per company.
+
+### L. One volume rule (S12)
+
+- **AC-L1 [BE][T]** A shipment line with no stored cbm but carton L/W/H and pcs/ctn (or cartons)
+  contributes `ctn * L*W*H/1e6` to `build()`'s per-company CBM and to the shipment's `total_cbm`.
+- **AC-L2 [BE][T]** `build()` for a container with one SORENTO and one MOCHA dims-only line yields
+  the same per-company CBM, Clearance, Insurance, China freight and Amount as the XLSX formulas.
+- **AC-L3 [FE][T]** Emptying Clearance, China freight or Insurance rate and saving sends `null`
+  and the value reads `-` after reload.
+- **AC-L4 [E2E]** Split card equals the downloaded workbook's footer on a mixed container.
