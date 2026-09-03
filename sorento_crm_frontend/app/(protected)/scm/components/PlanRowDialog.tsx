@@ -979,15 +979,28 @@ export function IncomingPlTable({
 // PO - what is already ordered, and what was ordered before
 // ---------------------------------------------------------------------------
 
-/** Columns shared by the open and history tabs - only the footer total differs. */
-function poColumns(totalStillToCome: number): ColumnDef<ContainerRequestDrillPoRow>[] {
+/**
+ * Columns shared by the open and history tabs. `tab` decides two things that must agree with
+ * each other and with the tab's own label: which column carries the footer total (still-to-come
+ * on Open, qty-ordered on History - History's own `still_to_come` is always 0 on a closed line,
+ * so summing it there would read "Total outstanding 0" under a tab that already says otherwise)
+ * and whether a line counts as on order for the status pill. The backend's History predicate
+ * (`line_status <> 'open' OR qty_ordered <= qty_received`) leaves `still_to_come` nonzero on a
+ * line that closed short, so History never derives the pill off it - every History row reads
+ * Completed (or Cancelled/Draft off its own status).
+ */
+function poColumns(
+  tab: 'open' | 'history',
+  total: number,
+): ColumnDef<ContainerRequestDrillPoRow>[] {
+  const footerLabel = tab === 'open' ? 'Total outstanding' : 'Total ordered';
   return [
     {
       id: 'po_number',
       header: 'PO',
       cell: ({ row }) => textCell(row.original.po_number),
       // S6: the purchase-order list's own word for this figure.
-      footer: () => <span className="text-muted-foreground">Total outstanding</span>,
+      footer: () => <span className="text-muted-foreground">{footerLabel}</span>,
       size: 120,
       meta: { skeleton: SKELETON_CELL },
     },
@@ -1005,6 +1018,7 @@ function poColumns(totalStillToCome: number): ColumnDef<ContainerRequestDrillPoR
       id: 'qty_ordered',
       header: 'Qty',
       cell: ({ row }) => fmtInt(row.original.qty_ordered),
+      footer: tab === 'history' ? () => fmtInt(total) : undefined,
       size: 90,
       meta: RIGHT,
     },
@@ -1012,7 +1026,7 @@ function poColumns(totalStillToCome: number): ColumnDef<ContainerRequestDrillPoR
       id: 'still_to_come',
       header: 'Outstanding',
       cell: ({ row }) => fmtInt(row.original.still_to_come),
-      footer: () => fmtInt(totalStillToCome),
+      footer: tab === 'open' ? () => fmtInt(total) : undefined,
       size: 110,
       meta: RIGHT,
     },
@@ -1050,10 +1064,13 @@ function poColumns(totalStillToCome: number): ColumnDef<ContainerRequestDrillPoR
       cell: ({ row }) => {
         const r = row.original;
         // The same pill the purchase-order list itself wears (S6): Outstanding / Completed
-        // is DERIVED off `still_to_come`, not the raw stored status word.
+        // is DERIVED off `still_to_come`, not the raw stored status word - but only on the
+        // Open tab, where `still_to_come > 0` means what it says. History rows can close short
+        // (`still_to_come` stays nonzero) and still belong under a tab called History, so
+        // History never counts as on order.
         const pill = purchaseOrderStatusPill({
           status: r.status ?? '',
-          is_on_order: r.still_to_come > 0,
+          is_on_order: tab === 'open' && r.still_to_come > 0,
         });
         return (
           <Badge variant={pill.variant} appearance="light" size="md">
@@ -1077,12 +1094,16 @@ export function PoTabs({ supplierId, productId }: { supplierId: string; productI
   const history = (drill.data?.history ?? []) as ContainerRequestDrillPoRow[];
 
   const openStillToCome = drill.data?.total ?? open.reduce((s, r) => s + r.still_to_come, 0);
-  const historyStillToCome = history.reduce((s, r) => s + r.still_to_come, 0);
   // S3: the History tab names the quantity that WAS ordered, not what is still owed on it -
-  // a closed PO's still-to-come is always 0, so that sum would read "History (0)" forever.
+  // a closed PO's still-to-come is always 0, so that sum would read "History (0)" forever. The
+  // footer sums the same figure (fix round, Opus review), so the tab label and the footer never
+  // disagree on a closed book.
   const historyQtyOrdered = history.reduce((s, r) => s + r.qty_ordered, 0);
-  const openColumns = useMemo(() => poColumns(openStillToCome), [openStillToCome]);
-  const historyColumns = useMemo(() => poColumns(historyStillToCome), [historyStillToCome]);
+  const openColumns = useMemo(() => poColumns('open', openStillToCome), [openStillToCome]);
+  const historyColumns = useMemo(
+    () => poColumns('history', historyQtyOrdered),
+    [historyQtyOrdered],
+  );
 
   return (
     <Tabs defaultValue="open">

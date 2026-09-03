@@ -280,7 +280,6 @@ function toDemandLines(lines: ContainerRequestSoLine[]): PlanDemandLineRow[] {
   }));
 }
 
-
 /**
  * The two 12-month series, zipped per month - the dialog reads one row per month with both
  * channels on it, the sidecar answers one series per channel.

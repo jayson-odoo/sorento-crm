@@ -1,6 +1,6 @@
 # PLAN - Loading plan lightbox feedback, 3 Sep 2026
 
-**Status:** APPROVED by the captain 3 Sep 2026 (Lavish markup: both peak cells; "ok good to go"). Implementation on `feat/scm-loading-plan-lightbox-3sep`. UAC: `scm-loading-plan-lightbox-feedback-3sep-acceptance-criteria.md`.
+**Status:** APPROVED by the captain 3 Sep 2026 (Lavish markup: both peak cells; "ok good to go"). Implementation on `feat/scm-loading-plan-lightbox-3sep`. UAC: `scm-loading-plan-lightbox-feedback-3sep-acceptance-criteria.md`. Phase 3 review done 3 Sep (Opus), fix round applied; PR pending.
 Lane: `feat/scm-loading-plan-lightbox-3sep` off `origin/main` (53723ed02), stack slot FE :3130 / BE :8130.
 
 **Amends:** `PLAN-scm-loading-plan-feedback-2sep.md` (R7 lightboxes, AC-B2/B4/B6) and the

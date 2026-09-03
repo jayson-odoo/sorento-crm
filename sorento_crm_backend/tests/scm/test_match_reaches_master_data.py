@@ -397,9 +397,17 @@ def test_a_dry_run_reports_the_orphan_and_writes_nothing():
         pairs = {(str(c.product_id), str(c.supplier_id)) for c in candidates}
         assert (str(target.id), str(w.supplier.id)) in pairs
 
-        backfill.run(db, apply=False)
+        summary = backfill.run(db, apply=False)
 
         assert _link_for(db, w, target) is None
+        # Fix round (Opus review): a dry-run has no link row to read the lead time back off,
+        # so it must be COMPUTED, not `None` - the same ladder `--apply` would write.
+        reported = {
+            (row["product_id"], row["supplier_id"]): row["lead_time"] for row in summary["rows"]
+        }
+        lead_time = reported[(str(target.id), str(w.supplier.id))]
+        assert isinstance(lead_time, int)
+        assert lead_time == alias_svc.lead_time_for_link(db, str(w.supplier.id), str(target.id))
 
 
 def test_apply_writes_the_link_and_a_second_apply_is_a_noop():

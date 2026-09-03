@@ -268,8 +268,11 @@ def test_the_unit_draws_the_pool_once_and_the_draw_is_split_in_line_order():
     assert _stated_sheet(lines[32]) == [
         ("reserve", "20", pool.warehouse_code, "pool")
     ]
-    assert composed[31][1] == Decimal("63")
-    assert composed[32][1] == Decimal("53"), (
+    # AC-N.12: the walk's pool ledger is one entry PER POOL LOCATION now (it carried the
+    # asking bin's own pool alone until step 0 started walking the whole chain), so the
+    # proof reads the asking pool's own entry out of it.
+    assert composed[31][1][pool.warehouse_code] == Decimal("63")
+    assert composed[32][1][pool.warehouse_code] == Decimal("53"), (
         "LADDER V8 (R-E): the second line of a unit reads the pool as the FIRST LINE LEFT "
         "it - 63 less the 10 that line took - because the unit's lines walk one at a time "
         "now. Under v6 the unit drew once and both members reported the same opening pile."
