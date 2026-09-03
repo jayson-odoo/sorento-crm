@@ -1007,6 +1007,14 @@ class BoardCellLocation(BaseModel):
     #: Which set that net is over, for the subtotal's own label: the group code (`IB`),
     #: `pools`, or None where no set applies.
     net_of: Optional[str] = None
+    #: THE RAW net (N1, fix round 5): `net` above has the asking line's own demand added
+    #: BACK IN (`_mine_in`) so the SUBTOTAL a planner reads matches "what is left for me" -
+    #: but the SERVER's own confirm-time guard (`ProjectSupplyService._is_pool_share_split`)
+    #: and `stock-detail` bound a pool-share composition by the net WITHOUT that addition
+    #: (`fact.pools_net`). `poolShareLimitsOf` (D5) read `net` and so admitted a split the
+    #: server's own guard would refuse the instant this line's own demand padded the figure
+    #: past what the raw pile actually carries. Absent wherever `net` is.
+    net_raw: Optional[str] = None
     #: LADDER V8 (R-K): what a SITE POOL row may give a project line once the dealers' share
     #: is kept back - `min(floor(available_qty x (100 - pool_share_pct) / 100), max(net, 0))`,
     #: the SAME allowance the walk's own step 0 asked the pool for. `0` rather than blank on

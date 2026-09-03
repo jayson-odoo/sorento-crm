@@ -4251,7 +4251,7 @@ class FulfilmentBoardService:
         summed off the rows the table happens to list.
         """
         if not stated or not product_id or not warehouse_id:
-            return {"net": None, "net_of": None}
+            return {"net": None, "net_of": None, "net_raw": None}
         netting = self.supply.netting()
         if where == WHERE_SITE_POOL or netting.is_pool(warehouse_id):
             position = netting.pools_net(product_id)
@@ -4260,16 +4260,21 @@ class FulfilmentBoardService:
                     position.net + self._mine_in(position, own_demand, product_id)
                 ),
                 "net_of": POOLS_SET,
+                # N1 (fix round 5): the figure `_is_pool_share_split` and `stock-detail`
+                # actually bound a pool-share composition by - never the displayed net
+                # above, which has this line's own demand added back in.
+                "net_raw": qty_text(position.net),
             }
         group = netting.group_of(warehouse_id)
         if not group:
-            return {"net": None, "net_of": None}
+            return {"net": None, "net_of": None, "net_raw": None}
         position = netting.group_net(product_id, group)
         return {
             "net": qty_text(
                 position.net + self._mine_in(position, own_demand, product_id)
             ),
             "net_of": group,
+            "net_raw": qty_text(position.net),
         }
 
     def _pool_share_pct(self) -> int:
