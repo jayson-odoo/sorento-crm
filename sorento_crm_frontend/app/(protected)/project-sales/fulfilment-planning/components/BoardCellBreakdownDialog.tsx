@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { Check, ChevronDown, ChevronRight, Info, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Info, Undo2, X } from 'lucide-react';
 import { ColumnDef, RowSelectionState } from '@tanstack/react-table';
 import { Button } from '@/components/ui/button';
 import {
@@ -48,6 +48,7 @@ import {
 import type { SuggestionRow } from '../../_shared/lib/supplyVocabulary';
 import { LADDER_VERSION } from '../../_shared/lib/supplyVocabulary';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
+import { suggestedDecisionFor } from '../../_shared/lib/boardAmend';
 import { BoardDecisionPill } from './BoardDecisionPill';
 import { BoardLineDecisionPanel } from './BoardLineDecisionPanel';
 import { BoardTrailPopover, ItemFlagChips } from './BoardTrailPopover';
@@ -391,6 +392,40 @@ export function BoardCellBreakdownDialog({
     },
     [selectedKeys, onDecide],
   );
+
+  /**
+   * D14: a quick save of the engine's own composition, ticked row by ticked row - the same
+   * loop `decideSelected` runs, but each key gets ITS OWN suggestion rather than one decision
+   * applied to every row, because "approved" is not one object across lines with different
+   * suggestions the way "rejected" is.
+   */
+  const saveSelectedAsSuggested = React.useCallback(() => {
+    for (const key of selectedKeys) {
+      const contribution = cell.contributions.find((entry) => entry.key === key);
+      if (!contribution) continue;
+      onDecide(key, suggestedDecisionFor(contribution));
+    }
+    setRowSelection({});
+  }, [selectedKeys, cell.contributions, onDecide]);
+
+  /**
+   * D14: every line in the cell a quick save could still touch - not covered (there is
+   * nothing to approve on a confirmed line) and not already drafted (nothing a re-save would
+   * change). No selection needed for this one; it is the cell's own "nothing here is worth a
+   * second look" button.
+   */
+  const suggestibleContributions = React.useMemo(
+    () =>
+      cell.contributions.filter(
+        (entry) => !entry.unplannable && !entry.covered && !draft[entry.key],
+      ),
+    [cell.contributions, draft],
+  );
+  const saveAllSuggested = React.useCallback(() => {
+    for (const contribution of suggestibleContributions) {
+      onDecide(contribution.key, suggestedDecisionFor(contribution));
+    }
+  }, [suggestibleContributions, onDecide]);
 
   /**
    * The muted line under the title, in the shape the family's shell wants it (`PlanRowDialog`,
@@ -793,17 +828,37 @@ export function BoardCellBreakdownDialog({
         header: ({ column }) => (
           <DataGridColumnHeader title="Decision" column={column} />
         ),
-        // A PILL, AND NOTHING ELSE (C2). The three verbs used to live here, which is why the
-        // column was 210px wide and still truncated its own composition: a decision is taken
-        // in the expanded row now, where the numbers it is made against are.
-        cell: ({ row }) => (
-          <BoardDecisionPill
-            contribution={row.original}
-            decision={draft[row.original.key] ?? null}
-          />
-        ),
-        size: 110,
-        minSize: 100,
+        // A PILL, AND (D14) an Undo beside a saved one. The three verbs used to live here,
+        // which is why the column was 210px wide and still truncated its own composition: a
+        // decision is taken in the expanded row now, where the numbers it is made against
+        // are - Undo is the one exception, because there is nothing left to look at once a
+        // line is saved, only the choice to unsave it.
+        cell: ({ row }) => {
+          const key = row.original.key;
+          const drafted = Boolean(draft[key]);
+          return (
+            <div className="flex min-w-0 items-center gap-1">
+              <BoardDecisionPill contribution={row.original} decision={draft[key] ?? null} />
+              {drafted ? (
+                <Button
+                  type="button"
+                  mode="icon"
+                  variant="ghost"
+                  size="sm"
+                  aria-label={`Undo line ${row.original.line_no}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onDecide(key, null);
+                  }}
+                >
+                  <Undo2 className="size-3.5" aria-hidden />
+                </Button>
+              ) : null}
+            </div>
+          );
+        },
+        size: 140,
+        minSize: 120,
         enableSorting: false,
         meta: { headerTitle: 'Decision' },
       },
@@ -1113,6 +1168,18 @@ export function BoardCellBreakdownDialog({
                       placeholder="Search SO number, customer, agent"
                       className="w-full sm:w-72"
                     />
+                    {/* D14: the cell's own "nothing here needs a second look" button - every
+                    still-outstanding, not-yet-drafted line in the cell, with no selection to
+                    make first. Reversible with the per-line Undo below, so no confirmation. */}
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={suggestibleContributions.length === 0}
+                      onClick={saveAllSuggested}
+                    >
+                      Save all suggested
+                    </Button>
                     {selectedKeys.length > 0 ? (
                       <>
                         {/* Says exactly how many rows the verbs will act on. With a paginated cell
@@ -1147,6 +1214,14 @@ export function BoardCellBreakdownDialog({
                         >
                           <X className="size-4" aria-hidden />
                           Reject selected
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={saveSelectedAsSuggested}
+                        >
+                          {`Save as suggested (${selectedKeys.length})`}
                         </Button>
                         <Button
                           type="button"

@@ -428,3 +428,111 @@ describe('FulfilmentBoardListView says what was suggested and what was decided',
     expect(await screen.findByText('Not decided')).toBeInTheDocument();
   });
 });
+
+/**
+ * D14 (the captain: a quick save for the lines that need nothing amended, and a per-line Undo
+ * for the one that a quick save was wrong for).
+ */
+describe('FulfilmentBoardListView: quick save as suggested and per-line undo', () => {
+  function threeRows() {
+    return [
+      contribution({ key: 'so-1:line-10', so_number: 'SO397450', line_no: 10 }),
+      contribution({ key: 'so-2:line-20', so_number: 'SO397451', line_no: 20 }),
+      contribution({ key: 'so-3:line-30', so_number: 'SO397452', line_no: 30 }),
+    ];
+  }
+
+  function selectAll() {
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: 'Select all rows on this page' }),
+    );
+  }
+
+  it('offers no bulk save button until a row is ticked', async () => {
+    renderView({ contributions: threeRows() });
+
+    await screen.findByText('SO397450');
+    expect(
+      screen.queryByRole('button', { name: /^Save as suggested/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('saves every ticked row with the engine composition and clears the selection', async () => {
+    const { onDecide } = renderView({ contributions: threeRows() });
+
+    await screen.findByText('SO397450');
+    selectAll();
+    expect(
+      await screen.findByRole('button', { name: 'Save as suggested (3)' }),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save as suggested (3)' }));
+
+    expect(onDecide).toHaveBeenCalledTimes(3);
+    for (const call of vi.mocked(onDecide).mock.calls) {
+      expect(call[1]).toEqual(
+        expect.objectContaining({ verdict: 'approved', buy_qty: '43' }),
+      );
+    }
+    expect(
+      screen.queryByRole('button', { name: /^Save as suggested/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('does not offer a covered row a checkbox', async () => {
+    renderView({
+      contributions: [
+        contribution({
+          covered: true,
+          decision: {
+            revision_no: 1,
+            timely_spo_qty: '0',
+            reserve: [],
+            borrow: [],
+            buy_qty: '43',
+          },
+        }),
+      ],
+    });
+
+    await screen.findByText('SO397450');
+    expect(
+      screen.getByRole('checkbox', { name: 'Select SO397450 line 10' }),
+    ).toBeDisabled();
+  });
+
+  it('does not offer an already-saved row a checkbox', async () => {
+    const row = contribution();
+    renderView({
+      contributions: [row],
+      draft: { [row.key]: { verdict: 'approved' } },
+    });
+
+    await screen.findByText('SO397450');
+    expect(
+      screen.getByRole('checkbox', { name: 'Select SO397450 line 10' }),
+    ).toBeDisabled();
+  });
+
+  it('shows no Undo until the row carries a draft', async () => {
+    renderView();
+
+    await screen.findByText('SO397450');
+    expect(
+      screen.queryByRole('button', { name: /^Undo line/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('Undo on a saved row deletes its draft', async () => {
+    const row = contribution();
+    const { onDecide } = renderView({
+      contributions: [row],
+      draft: { [row.key]: { verdict: 'approved' } },
+    });
+
+    await screen.findByText('SO397450');
+    fireEvent.click(screen.getByRole('button', { name: 'Undo line 10' }));
+
+    expect(onDecide).toHaveBeenCalledWith('so-1:line-10', null);
+  });
+});

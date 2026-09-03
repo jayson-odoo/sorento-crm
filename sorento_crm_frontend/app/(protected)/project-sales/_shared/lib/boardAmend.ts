@@ -398,6 +398,22 @@ export function decisionFromAmendDraft(draft: DraftLine, reason: string): BoardD
 }
 
 /**
+ * The engine's own suggestion, posted exactly as `BoardLineDecisionPanel`'s Save button posts
+ * an untouched line (D14, the captain: a quick save from the list or the grid has to be
+ * byte-identical to opening the line and pressing Save with nothing changed).
+ *
+ * `verdict: 'approved'` and reason `''`, because nothing was amended - `decisionFromAmendDraft`
+ * on its own always writes `'amended'`, which is right for that function's other callers but
+ * wrong for an approval, so this wraps it the same way the panel's `save()` does.
+ */
+export function suggestedDecisionFor(contribution: BoardContribution): BoardDecision {
+  return {
+    ...decisionFromAmendDraft(suggestionDraftFrom(contribution), ''),
+    verdict: 'approved',
+  };
+}
+
+/**
  * A composed decision as the LINE ONE CONFIRMATION POSTS, component for component.
  *
  * One mapping for the two verdicts that post a composition rather than a derivation: an

@@ -1989,6 +1989,121 @@ describe('BoardCellBreakdownDialog: bulk approve and reject', () => {
 });
 
 /**
+ * D14 (the captain: a quick save for the lines that need nothing amended, and an Undo for the
+ * one line a quick save was wrong for). "Save as suggested" writes the ENGINE's own
+ * composition - the same object an untouched Save on the row would post - so a bulk quick
+ * save is byte-identical to opening every one of those rows and pressing Save.
+ */
+describe('BoardCellBreakdownDialog: quick save as suggested and per-line undo', () => {
+  function threeLines() {
+    return [
+      demand({ line_no: 1, so_number: 'SO000001', sales_order_id: 'so-a' }),
+      demand({ line_no: 2, so_number: 'SO000002', sales_order_id: 'so-b' }),
+      demand({ line_no: 3, so_number: 'SO000003', sales_order_id: 'so-c' }),
+    ];
+  }
+
+  function selectAll() {
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: 'Select all rows on this page' }),
+    );
+  }
+
+  it('saves the ticked rows with the engine composition, and clears the selection', () => {
+    const { onDecide } = renderDialog(threeLines());
+    openLines();
+
+    selectAll();
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Save as suggested (3)' }),
+    );
+
+    expect(onDecide).toHaveBeenCalledTimes(3);
+    for (const call of onDecide.mock.calls) {
+      expect(call[1]).toEqual(
+        expect.objectContaining({ verdict: 'approved', buy_qty: '100' }),
+      );
+    }
+    expect(screen.queryByText('3 selected')).not.toBeInTheDocument();
+  });
+
+  it('Save all suggested reaches every selectable line with no selection needed', () => {
+    const { onDecide } = renderDialog(threeLines());
+    openLines();
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Save all suggested' }),
+    );
+
+    expect(onDecide).toHaveBeenCalledTimes(3);
+    const keys = onDecide.mock.calls.map((call) => call[0]).sort();
+    expect(keys).toEqual(
+      [
+        'so-a|1|WESERP10B|2026-08-31',
+        'so-b|2|WESERP10B|2026-08-31',
+        'so-c|3|WESERP10B|2026-08-31',
+      ].sort(),
+    );
+  });
+
+  it('Save all suggested skips a confirmed line and a line already saved', () => {
+    const draft: BoardDraft = {
+      'so-b|2|WESERP10B|2026-08-31': { verdict: 'approved' },
+    };
+    const { onDecide } = renderDialog(
+      [
+        demand({ line_no: 1, so_number: 'SO000001', sales_order_id: 'so-a' }),
+        demand({ line_no: 2, so_number: 'SO000002', sales_order_id: 'so-b' }),
+        demand({
+          line_no: 3,
+          so_number: 'SO000003',
+          sales_order_id: 'so-c',
+          decision: {
+            revision_no: 1,
+            timely_spo_qty: '0',
+            reserve: [],
+            borrow: [],
+            buy_qty: '100',
+          },
+        }),
+      ],
+      {},
+      draft,
+    );
+    openLines();
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Save all suggested' }),
+    );
+
+    expect(onDecide).toHaveBeenCalledTimes(1);
+    expect(onDecide.mock.calls[0][0]).toBe('so-a|1|WESERP10B|2026-08-31');
+  });
+
+  it('offers no per-line Undo until a line carries a draft', () => {
+    renderDialog(threeLines());
+    openLines();
+
+    expect(
+      screen.queryByRole('button', { name: /^Undo line/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('Undo on one saved line removes its draft and leaves the others alone', () => {
+    const draft: BoardDraft = {
+      'so-a|1|WESERP10B|2026-08-31': { verdict: 'approved' },
+    };
+    const { onDecide } = renderDialog(threeLines(), {}, draft);
+    openLines();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Undo line 1' }));
+
+    expect(onDecide).toHaveBeenCalledTimes(1);
+    expect(onDecide).toHaveBeenCalledWith('so-a|1|WESERP10B|2026-08-31', null);
+  });
+});
+
+/**
  * HOW the decision was reached (the captain: "can you justify how you arrive at the buy, like
  * what's the process you have gone through: checking the available quantity first, deciding
  * whether to reserve it or not, then checking the SPO quantity, then checking whether can

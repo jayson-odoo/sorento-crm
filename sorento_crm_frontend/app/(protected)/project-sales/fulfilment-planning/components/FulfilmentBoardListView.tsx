@@ -2,15 +2,19 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { ChevronDown, ChevronRight } from 'lucide-react';
-import { ColumnDef } from '@tanstack/react-table';
+import { ChevronDown, ChevronRight, Undo2 } from 'lucide-react';
+import { ColumnDef, RowSelectionState } from '@tanstack/react-table';
 import { formatDateInMalaysia } from '@/lib/helpers';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
 import { BoardDecidedMarker, decidedRevisions } from './BoardDecidedMarker';
 import { BoardDecisionPill } from './BoardDecisionPill';
 import { BoardLineDecisionPanel } from './BoardLineDecisionPanel';
 import { UnsavedDecisionPrompt, useDecisionRowExpansion } from './decisionRowExpansion';
 import { SupplyBar } from '../../_shared/components/SupplyBar';
+import { suggestedDecisionFor } from '../../_shared/lib/boardAmend';
 import {
   COLOURS,
   LABELS,
@@ -60,8 +64,46 @@ export function FulfilmentBoardListView({
   const expansion = useDecisionRowExpansion();
   const { expanded, setExpanded, setDirty, requestRow } = expansion;
 
+  /**
+   * D14 (the captain: a quick save for the lines that need nothing amended). Selection is
+   * the SAME `RowSelectionState` `BoardCellBreakdownDialog` keeps for its own bulk verbs -
+   * ticked here, applied with `suggestedDecisionFor`, cleared once applied. A row that is
+   * already covered or already carries a draft is not offered a box at all (`buildSelectColumn`
+   * below): there is nothing a quick save would change on either.
+   */
+  const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
+  const selectedKeys = React.useMemo(
+    () => Object.keys(rowSelection).filter((key) => rowSelection[key]),
+    [rowSelection],
+  );
+  const saveSelectedAsSuggested = React.useCallback(() => {
+    for (const key of selectedKeys) {
+      const contribution = contributions.find((entry) => entry.key === key);
+      if (!contribution) continue;
+      onDecide(key, suggestedDecisionFor(contribution));
+    }
+    setRowSelection({});
+  }, [selectedKeys, contributions, onDecide]);
+
   const columns = React.useMemo<ColumnDef<BoardContribution>[]>(
     () => [
+      // The repo's own select column (the users list uses the same one), so a quick save is
+      // a bulk action like any other rather than a second selection mechanism.
+      buildSelectColumn<BoardContribution>({
+        enableRow: (row) =>
+          !row.original.unplannable &&
+          !row.original.covered &&
+          !draft[row.original.key],
+        disabledReason: (row) =>
+          row.original.covered
+            ? 'This line is already confirmed. Amend it to change what was decided.'
+            : row.original.unplannable
+              ? 'This line cannot be decided here: its sales order states no fulfilment location.'
+              : draft[row.original.key]
+                ? 'Already saved. Undo it before saving it again.'
+                : undefined,
+        rowLabel: (row) => `Select ${row.original.so_number} line ${row.original.line_no}`,
+      }),
       {
         id: 'so_number',
         accessorFn: (row) => row.so_number,
@@ -302,16 +344,38 @@ export function FulfilmentBoardListView({
         id: 'verdict',
         accessorFn: () => '',
         header: 'Verdict',
-        // A PILL, and nothing else. The three verbs are in the expanded row, where the
-        // numbers the decision is made against are.
-        cell: ({ row }) => (
-          <BoardDecisionPill
-            contribution={row.original}
-            decision={draft[row.original.key] ?? null}
-          />
-        ),
-        size: 160,
-        minSize: 120,
+        // A PILL, and (D14) an Undo beside it once there is something a saved line can be
+        // undone FROM - the only other way to shed one saved line today is the board-wide
+        // "Undo all", which is not this line's answer to a quick save taken by mistake.
+        cell: ({ row }) => {
+          const key = row.original.key;
+          const drafted = Boolean(draft[key]);
+          return (
+            <div className="flex min-w-0 items-center gap-1">
+              <BoardDecisionPill
+                contribution={row.original}
+                decision={draft[key] ?? null}
+              />
+              {drafted ? (
+                <Button
+                  type="button"
+                  mode="icon"
+                  variant="ghost"
+                  size="sm"
+                  aria-label={`Undo line ${row.original.line_no}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onDecide(key, null);
+                  }}
+                >
+                  <Undo2 className="size-3.5" aria-hidden />
+                </Button>
+              ) : null}
+            </div>
+          );
+        },
+        size: 190,
+        minSize: 150,
         enableResizing: false,
       },
     ],
@@ -333,6 +397,33 @@ export function FulfilmentBoardListView({
         [row.so_number, row.customer_name, row.agent_code, row.item_code]
           .filter(Boolean)
           .join(' ')
+      }
+      rowSelection={rowSelection}
+      onRowSelectionChange={setRowSelection}
+      enableRowSelection={(row) =>
+        !row.original.unplannable &&
+        !row.original.covered &&
+        !draft[row.original.key]
+      }
+      toolbar={
+        selectedKeys.length > 0 ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="secondary" className="h-8 gap-1 px-2.5 text-sm">
+              {`${selectedKeys.length} selected`}
+            </Badge>
+            <Button type="button" size="sm" onClick={saveSelectedAsSuggested}>
+              {`Save as suggested (${selectedKeys.length})`}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={() => setRowSelection({})}
+            >
+              Clear
+            </Button>
+          </div>
+        ) : undefined
       }
       expanded={expanded}
       onExpandedChange={setExpanded}

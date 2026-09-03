@@ -126,6 +126,17 @@ or a rule: those live once on the Policies page.
   decision as Decided `<composition>` with a Saved pill and Decision "Saved" naming the
   saver, until Confirm replaces it with Rev N. An approval with no typed composition prints
   Decided "-" beside the Saved pill - there is nothing to state beyond the pill itself.
+- AC-4.7 (D14, captain 3 Sep) Quick save as suggested and per-line Undo: (a) in the list
+  view, ticking N selectable rows (not already confirmed, not already saved) and pressing
+  "Save as suggested (N)" saves each ticked row with the engine's own composition - the same
+  object an untouched Save on that row would post - and every one of those rows now reads
+  Saved with the saver's own stamp; (b) in a cell's breakdown dialog, the same "Save as
+  suggested (N)" sits beside the existing bulk Approve/Reject-selected buttons, and a
+  header-level "Save all suggested" saves every still-selectable line in the cell with no
+  selection needed, skipping a confirmed line and a line already saved; (c) Undo on one saved
+  row (list or dialog) returns that row alone to Suggested and deletes its server draft, with
+  no confirmation dialog - it is reversible with another quick save - and every other row's
+  own state is untouched.
 
 ## S5 upload
 

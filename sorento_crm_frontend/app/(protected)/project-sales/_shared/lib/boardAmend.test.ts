@@ -18,6 +18,7 @@ import {
   borrowCandidatesOf,
   confirmLineFrom,
   decisionFromAmendDraft,
+  suggestedDecisionFor,
   suggestionDraftFrom,
 } from './boardAmend';
 import { buildBoard, type BoardDemandLine } from './__testsupport__/boardFixture';
@@ -594,6 +595,77 @@ describe('decisionFromAmendDraft: what the draft carries away', () => {
         .buy_reason,
     ).toBe('Last batch for the site.');
     expect(decisionFromAmendDraft({ ...draft, buy_reason: '   ' }, '').buy_reason).toBeUndefined();
+  });
+});
+
+/**
+ * D14: a quick save has to be BYTE-IDENTICAL to opening the line and pressing Save with
+ * nothing changed - `BoardLineDecisionPanel`'s own untouched-save path
+ * (`{ ...decisionFromAmendDraft(suggestionDraftFrom(contribution), ''), verdict: 'approved' }`).
+ */
+describe('suggestedDecisionFor: the quick-save decision', () => {
+  it('equals what an untouched Save on the row would post', () => {
+    const contribution = contributionOf({ 'WESERP10B|BRW-BB': '40' });
+
+    expect(suggestedDecisionFor(contribution)).toEqual({
+      ...decisionFromAmendDraft(suggestionDraftFrom(contribution), ''),
+      verdict: 'approved',
+    });
+  });
+
+  it('carries the engine composition, not a bare verdict', () => {
+    const contribution = contributionOf({ 'WESERP10B|BRW-BB': '40' });
+
+    const decision = suggestedDecisionFor(contribution);
+
+    expect(decision.verdict).toBe('approved');
+    expect(decision.reserve).toEqual([
+      { warehouse_id: 'wh-BRW-BB', location: 'BRW-BB', qty: '40' },
+    ]);
+    expect(decision.buy_qty).toBe('60');
+    expect(decision.reason).toBeUndefined();
+  });
+
+  it('reads the SUGGESTION on a covered line, not the frozen decision it is leaving', () => {
+    // The same fixture `suggestionDraftFrom on a covered line` exercises: a decision already
+    // covers the line, and this reads what the engine would propose instead - the reason
+    // D11's approval carries the composition rather than a bare `{verdict: 'approved'}`.
+    const base = contributionOf(
+      {},
+      {
+        qty: '100',
+        fulfilment_location: 'BRW-BB',
+        decision: {
+          revision_no: 1,
+          timely_spo_qty: '0',
+          reserve: [{ warehouse_id: 'wh-BRW-BB', location: 'BRW-BB', qty: '100' }],
+          borrow: [],
+          buy_qty: '0',
+        },
+      },
+    );
+    const contribution: BoardContribution = {
+      ...base,
+      proposed: {
+        components: [
+          {
+            kind: 'reserve',
+            qty: '40',
+            location: 'BRW-BB',
+            warehouse_id: 'wh-BRW-BB',
+            reason: 'Free unclaimed stock at BRW-BB covers this much by the delivery date.',
+          },
+          { kind: 'buy', qty: '60', reason: 'Nothing else free at BRW-BB.' },
+        ],
+      },
+    };
+
+    const decision = suggestedDecisionFor(contribution);
+
+    expect(decision.buy_qty).toBe('60');
+    expect(decision.reserve).toEqual([
+      { warehouse_id: 'wh-BRW-BB', location: 'BRW-BB', qty: '40' },
+    ]);
   });
 });
 
