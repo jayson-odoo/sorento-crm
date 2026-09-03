@@ -268,7 +268,9 @@ export function NeedsLevelView({
       recordCount={table.getFilteredRowModel().rows.length}
       listingKey={NO_COLUMN_PERSISTENCE}
       tableLayout={{ width: 'fixed', columnsResizable: true, headerSticky: true }}
-      tableClassNames={{ headerSticky: 'sticky top-0 z-10 bg-background shadow-sm' }}
+      tableClassNames={{
+        headerSticky: 'sticky top-0 z-(--z-sticky-content) bg-background shadow-sm',
+      }}
       emptyMessage="No unsized item matches this search."
     >
       <Card>

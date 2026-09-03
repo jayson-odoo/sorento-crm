@@ -193,6 +193,13 @@ async def apply_proforma_invoice(
                     "UNTICKED. They are filed as new documents under the next free number, "
                     "never merged into the one they would otherwise land on.",
     ),
+    loading_plan_id: Optional[str] = Form(
+        None,
+        description="The loading plan these invoices belong to (S6). Every invoice this "
+                    "call creates or revises is stamped with it, so the plan sums its own "
+                    "blocks. 422 `invoice_supplier_mismatch` when the plan is another "
+                    "supplier's.",
+    ),
     validate_only: bool = Query(
         False,
         description="Test the file and write nothing. Returns {valid, errors, warnings, summary}.",
@@ -223,6 +230,7 @@ async def apply_proforma_invoice(
         actor=_actor(current_user),
         revision_of=_revision_map(revision_of),
         file_as_new=_new_document_list(file_as_new),
+        loading_plan_id=loading_plan_id,
     )
     db.commit()
     return out

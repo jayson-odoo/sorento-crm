@@ -1,5 +1,5 @@
 """Procurement schemas."""
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Optional, List
 from datetime import datetime, date
 from decimal import Decimal
@@ -149,6 +149,11 @@ class ProductSupplierUpdate(ProductSupplierSourcingTerms):
 class ProductSupplierResponse(ProductSupplierBase):
     id: str
     created_at: datetime
+    # Read off `scm.supplier_product_code_alias` (product + supplier, non-dismissed), not a
+    # column on this table (S4, AC-D2): the alias is the single writer, so a manual match and
+    # this field can never drift apart. Declared on the RESPONSE only - a create or update
+    # payload naming it would be dropped in silence, since nothing here writes it back.
+    supplier_item_code: Optional[str] = None
     product: Optional[ProductSimple] = None
     supplier: Optional[SupplierSimple] = None
 
@@ -309,8 +314,16 @@ class InboundShipmentUpdate(ClearanceFields, ContainerWorkbookFields):
     PUT accepted the payload and silently dropped it - `update_shipment` setattrs
     whatever `exclude_unset` yields, so a field absent from the schema never
     reaches the row and the save looks successful.
+
+    `extra="forbid"`: a mistyped or renamed key used to pass straight through as an
+    unknown-but-ignored field and the save looked successful with nothing written - the
+    same silent-drop failure mode `shipment_number` itself used to hit before it was
+    declared here. Now a typo 422s loudly instead.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
+    shipment_number: Optional[str] = None
     supplier_id: Optional[str] = None
     shipment_date: Optional[date] = None
     estimated_arrival_date: Optional[date] = None

@@ -118,15 +118,9 @@ async def get_product_suppliers_by_product(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get all suppliers for a specific product."""
+    """Get all suppliers for a specific product, "their code" (S4) alongside each one."""
     try:
         service = ProductSupplierService(db)
-        result = service.list_product_suppliers(
-            page=1,
-            limit=1000,
-            product_id=product_id
-        )
-        # Return just the data array for this endpoint
-        return result.get("data", [])
+        return service.list_suppliers_for_product(product_id)
     except Exception as e:
         raise handle_internal_error(str(e))

@@ -18,10 +18,13 @@ import { useRematchSupplierCodes } from '../../hooks/useSupplierCodeAliases';
  * the hook directly, since a menu item is not a button.
  */
 export function RefreshMatchingButton({
-  supplierId,
+  planId,
   size = 'sm',
 }: {
-  supplierId: string;
+  /** The ladder is re-run over THIS plan's rows only (S6, AC-C7): the queue beside the
+   *  button is the plan's own, and a rematch that moved another plan's rows would report
+   *  counts nobody on this screen can see. */
+  planId: string;
   size?: 'sm' | 'md' | 'lg';
 }) {
   const rematch = useRematchSupplierCodes();
@@ -32,8 +35,8 @@ export function RefreshMatchingButton({
       variant="outline"
       size={size}
       data-testid="refresh-matching"
-      disabled={!supplierId || rematch.isPending}
-      onClick={() => rematch.mutate({ supplier_id: supplierId })}
+      disabled={!planId || rematch.isPending}
+      onClick={() => rematch.mutate({ plan_id: planId })}
     >
       {rematch.isPending ? (
         <Loader2 className="size-4 animate-spin" />

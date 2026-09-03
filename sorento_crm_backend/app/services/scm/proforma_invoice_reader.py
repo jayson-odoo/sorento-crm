@@ -157,6 +157,11 @@ class ProformaReadResult:
     unmapped_headers: list[str] = field(default_factory=list)
     missing_columns: list[str] = field(default_factory=list)
     total_rows: int = 0
+    #: The first non-empty text cell above the FIRST invoice block's header row (AC-G3) -
+    #: JINBAICHUAN's own name and address, Kailu's letterhead, whichever the supplier put
+    #: there. `None` when the header sits on row 1, which is the honest answer to "what did
+    #: the file say above its table" when the file said nothing at all.
+    letterhead: Optional[str] = None
 
     @property
     def ok(self) -> bool:
@@ -406,6 +411,12 @@ def read_workbook(
             best_header = fields
 
         if not saw_header:
+            if result.letterhead is None:
+                for cell in raw:
+                    cell_text = _text(cell)
+                    if cell_text:
+                        result.letterhead = cell_text
+                        break
             _absorb(pending, _labelled(raw, resolver, _BLOCK_FIELDS), row_number)
             continue
 

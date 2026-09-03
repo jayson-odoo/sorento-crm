@@ -42,9 +42,13 @@ const DATE_COL = 'min-w-[150px]';
  * (the "Product" corner) has to beat a cell pinned on one, because with equal z-index the
  * winner is whichever the DOM happened to put last rather than whichever a reader expects.
  * Same rule, and the same reason, as the delivery-schedule matrix.
+ *
+ * Both tokens (css/config.reui.css) sit below --z-header/--z-sidebar: a pinned cell has to
+ * beat the columns scrolling under it, but never the app shell - the collapsed sidebar's
+ * hover flyout has to render over the frozen Product column, not under it.
  */
-const Z_PINNED = 'z-20';
-const Z_CORNER = 'z-30';
+const Z_PINNED = 'z-(--z-sticky-content)';
+const Z_CORNER = 'z-(--z-sticky-content-corner)';
 
 /**
  * A pinned cell has to be OPAQUE. `bg-destructive/10` is ninety percent transparent, so a

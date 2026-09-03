@@ -50,6 +50,10 @@ export interface DraftLine {
   uom_id: string | null;
   /** Round-tripped untouched: the PUT dropped it, so the price lost its unit on every save. */
   currency: string | null;
+  /** Priced per unit, and the supplier's own note on the line - both editable on the
+   *  Shipment lines grid (AC-G1, AC-G5), same as every other measurement here. */
+  unit_cost: string;
+  remarks: string;
 }
 
 /** The header fields the Details tab types, beyond the clearance ones. */
@@ -196,6 +200,8 @@ export function PackingListProvider({
         gross_weight_per_carton: toInput(line.gross_weight_per_carton),
         uom_id: line.uom_id ?? null,
         currency: line.currency ?? null,
+        unit_cost: toInput(line.unit_cost),
+        remarks: toInput(line.remarks),
       })),
     );
     setEditing(true);
@@ -241,6 +247,8 @@ export function PackingListProvider({
         gross_weight_per_carton: '',
         uom_id: null,
         currency: null,
+        unit_cost: '',
+        remarks: '',
       },
     ]);
 
@@ -259,13 +267,22 @@ export function PackingListProvider({
     // operator just deleted came straight back on the next read, reading as a save that did
     // not work.
     const orNull = (value: string | undefined) => (value ?? '').trim() || null;
-    const orUndefined = (value: string) => (value === '' ? undefined : Number(value));
+    // Never the JS literal NaN: `JSON.stringify(NaN)` silently becomes the JSON `null`, and a
+    // field the backend declares as a plain (non-Optional) number then 422s on it - the
+    // operator sees "[object Object]" for a blank they never even touched. Anything that does
+    // not parse is treated the same as blank: nothing was stated.
+    const orUndefined = (value: string) => {
+      const trimmed = (value ?? '').trim();
+      if (trimmed === '') return undefined;
+      const n = Number(trimmed);
+      return Number.isNaN(n) ? undefined : n;
+    };
     const payload: Partial<PackingListFormData> = {
       shipment_number: orNull(draft.shipment_number),
       supplier_id: orNull(draft.supplier_id),
-      // The one field with no cleared state: the backend requires a shipment date, so
-      // sending null would be refused rather than clearing anything.
-      shipment_date: draft.shipment_date,
+      // Optional on the update schema, so a cleared date is a cleared date - sending the raw
+      // (possibly empty) string 422'd instead of clearing anything.
+      shipment_date: orNull(draft.shipment_date),
       estimated_arrival_date: orNull(draft.estimated_arrival_date),
       actual_arrival_date: orNull(draft.actual_arrival_date),
       bill_of_lading_number: orNull(draft.bill_of_lading_number),
@@ -277,7 +294,10 @@ export function PackingListProvider({
       notes: orNull(draft.notes),
       shipment_lines: draftLines.map((line) => ({
         product_id: line.product_id,
-        quantity_shipped: Number(line.quantity_shipped || 0),
+        // Required and non-nullable on the line schema, so garbage text falls back to 0
+        // rather than sending NaN-turned-null and 422ing on a line the operator never meant
+        // to touch.
+        quantity_shipped: orUndefined(line.quantity_shipped) ?? 0,
         supplier_id: line.supplier_id || undefined,
         uom_id: line.uom_id || undefined,
         // The unit the price is in. Sent back untouched - a payload that carried the cost
@@ -292,6 +312,8 @@ export function PackingListProvider({
         carton_height_cm: orUndefined(line.carton_height_cm),
         net_weight_per_carton: orUndefined(line.net_weight_per_carton),
         gross_weight_per_carton: orUndefined(line.gross_weight_per_carton),
+        unit_cost: orUndefined(line.unit_cost),
+        remarks: line.remarks.trim() || undefined,
       })),
     };
     // The clearance and cost fields are on the payload schema but not on
@@ -301,10 +323,10 @@ export function PackingListProvider({
     for (const cp of checkpoints) extra[cp.field] = orNull(draft[cp.field]);
     for (const f of CLEARANCE_ATTRIBUTE_FIELDS) extra[f.name] = orNull(draft[f.name]);
     // A cost cleared back to blank is null, not 0: nobody has priced this container yet
-    // and a zero would be apportioned across the companies as a real figure.
+    // and a zero would be apportioned across the companies as a real figure. Unparseable
+    // text is treated the same as blank, not sent as NaN-turned-null-turned-422.
     for (const f of CONTAINER_COST_FIELDS) {
-      const value = (draft[f.name] ?? '').trim();
-      extra[f.name] = value === '' ? null : Number(value);
+      extra[f.name] = orUndefined(draft[f.name] ?? '') ?? null;
     }
     try {
       await updateMutation.mutateAsync({ id: packingListId, data: payload });

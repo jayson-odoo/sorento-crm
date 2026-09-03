@@ -587,6 +587,108 @@ def _latest_notice_channels(db: Session, plan_ids: list[str]) -> dict[str, dict]
     return supplier_notice_service.latest_notice_for_plans(db, plan_ids)
 
 
+def _plan_statements(db: Session, plan_ids: list[str]) -> dict[str, dict]:
+    """What each plan's OWN statement is: `{plan_id: {"kind", "as_of", "pi_number",
+    "source_ref", "blocks"}}` (S6, AC-F7/AC-G1).
+
+    Two queries for a whole page rather than one per row, the same reason
+    `_latest_notice_channels` batches: the list prints the document label in a column.
+
+    A plan with nothing stamped is ABSENT from the result rather than present and empty -
+    "this plan predates migration 454" and "this plan's upload wrote nothing" have to reach
+    the caller as different answers, because the first one falls back to the supplier-wide
+    label and the second must not.
+    """
+    if not plan_ids:
+        return {}
+    from app.services.company_scope_sql import company_sql_predicate
+
+    out: dict[str, dict] = {}
+    # Both tables are company-scoped, and the ORM's isolation filter does not reach a raw
+    # SELECT (SF-6): unscoped, another company's snapshot would date this company's record.
+    stock_co, stock_params = company_sql_predicate(db, "company_id", param_prefix="lpsi")
+    invoice_co, invoice_params = company_sql_predicate(db, "company_id", param_prefix="lppi")
+
+    for row in db.execute(
+        text(
+            f"""
+            SELECT loading_plan_id::text AS plan_id, max(as_of) AS as_of
+              FROM scm.supplier_inventory
+             WHERE loading_plan_id = ANY(CAST(:ids AS uuid[]))
+               AND {stock_co or 'true'}
+             GROUP BY loading_plan_id
+            """
+        ),
+        {"ids": plan_ids, **stock_params},
+    ).mappings():
+        out[row["plan_id"]] = {"kind": "stock_list", "as_of": row["as_of"]}
+
+    invoices = db.execute(
+        text(
+            f"""
+            SELECT loading_plan_id::text AS plan_id, id::text AS id,
+                   revision_of_id::text AS revision_of_id, pi_number, source_ref,
+                   invoice_date
+              FROM scm.proforma_invoice
+             WHERE loading_plan_id = ANY(CAST(:ids AS uuid[]))
+               AND {invoice_co or 'true'}
+            """
+        ),
+        {"ids": plan_ids, **invoice_params},
+    ).mappings().all()
+    by_plan: dict[str, list] = {}
+    for row in invoices:
+        by_plan.setdefault(row["plan_id"], []).append(row)
+    for plan_id, rows in by_plan.items():
+        # "Current" is judged inside the PLAN's own set: an invoice a LATER plan revised is
+        # still what this plan was started from, and it goes on naming it (AC-F5).
+        superseded = {r["revision_of_id"] for r in rows if r["revision_of_id"]}
+        current = [r for r in rows if r["id"] not in superseded] or rows
+        dates = [r["invoice_date"] for r in current if r["invoice_date"]]
+        out[plan_id] = {
+            "kind": "proforma",
+            "as_of": max(dates) if dates else None,
+            "pi_number": current[0]["pi_number"] if len(current) == 1 else None,
+            "source_ref": next((r["source_ref"] for r in current if r["source_ref"]), None),
+            "blocks": len(current),
+        }
+    return out
+
+
+def _file_stem(source_ref: Optional[str]) -> Optional[str]:
+    """The file's name without its extension - what a person calls the sheet they sent."""
+    if not source_ref:
+        return None
+    stem = source_ref.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+    return stem.rsplit(".", 1)[0] if "." in stem else stem
+
+
+def _source_filenames(db: Session, attachment_ids: list[str]) -> dict[str, str]:
+    """`{attachment id: filename}` for the sheets these plans were started from (BL-3).
+
+    The record's "View uploaded list" opens THIS plan's file, and the preview picks its
+    viewer off the file name's extension - so the name has to travel with the id or an xlsx
+    opens as "no preview available". One query for a page, like every other batch here.
+    """
+    from app.models.resources import Attachment
+
+    ids = [str(a) for a in attachment_ids if a]
+    if not ids:
+        return {}
+    rows = (
+        db.query(Attachment.id, Attachment.original_filename, Attachment.stored_filename)
+        .filter(Attachment.id.in_(ids), Attachment.is_deleted.is_(False))
+        .all()
+    )
+    # `stored_filename` first, exactly as `latest_stock_list_attachment` reads it: it holds
+    # the name as the operator typed it, and `original_filename` the storage-sanitised one.
+    return {
+        str(r.id): r.stored_filename or r.original_filename
+        for r in rows
+        if (r.stored_filename or r.original_filename)
+    }
+
+
 def _proforma_numbers(db: Session, supplier_ids: list[str]) -> dict[str, str]:
     """The newest un-converted proforma per supplier, for the Document label.
 
@@ -614,13 +716,31 @@ def _proforma_numbers(db: Session, supplier_ids: list[str]) -> dict[str, str]:
     return {r["supplier_id"]: r["pi_number"] for r in rows}
 
 
-def _document_label(plan: LoadingPlan, pi_number: Optional[str]) -> str:
-    """Ready to print. "No file" is a real answer, not a missing one."""
+def _document_label(
+    plan: LoadingPlan, pi_number: Optional[str], statement: Optional[dict] = None
+) -> str:
+    """Ready to print, off the plan's OWN rows. "No file" is a real answer, not a missing one.
+
+    The label used to be re-looked-up from the SUPPLIER at read time - their newest
+    un-converted proforma - so every plan of one supplier's was named after the same
+    document, and a plan started with no file at all still borrowed one. Since S6 (AC-F7) the
+    rows an upload writes carry the plan they were uploaded into, and this reads those.
+
+    `statement` absent means the plan has nothing stamped, which is every plan open when
+    migration 454 landed: those keep the old supplier-wide reading rather than going blank.
+    """
     if plan.document_kind == "stock_list":
-        when = plan.inventory_as_of.strftime("%d/%m/%Y") if plan.inventory_as_of else None
-        return f"Stock list {when}" if when else "Stock list"
+        as_of = (statement or {}).get("as_of") or plan.inventory_as_of
+        return f"Stock list {as_of.strftime('%d/%m/%Y')}" if as_of else "Stock list"
     if plan.document_kind == "proforma":
-        return f"Proforma invoice {pi_number}" if pi_number else "Proforma invoice"
+        blocks = int((statement or {}).get("blocks") or 0)
+        if blocks > 1:
+            # A five-block sheet has no single invoice number to print, so the FILE names it.
+            stem = _file_stem((statement or {}).get("source_ref"))
+            named = stem or "several blocks"
+            return f"Proforma invoice {named} · {blocks} blocks"
+        number = (statement or {}).get("pi_number") or pi_number
+        return f"Proforma invoice {number}" if number else "Proforma invoice"
     return "No file"
 
 
@@ -637,6 +757,8 @@ def record_dict(
     supplier_email: Optional[str] = None,
     notice: Optional[dict] = None,
     pi_number: Any = _UNSET,
+    statement: Any = _UNSET,
+    source_filename: Any = _UNSET,
 ) -> dict[str, Any]:
     """One plan, in the shape the list and the record page both read.
 
@@ -662,6 +784,17 @@ def record_dict(
             if plan.document_kind == "proforma"
             else None
         )
+    if statement is _UNSET:
+        statement = (
+            _plan_statements(db, [str(plan.id)]).get(str(plan.id))
+            if plan.document_kind in ("stock_list", "proforma")
+            else None
+        )
+    if source_filename is _UNSET:
+        source_filename = _source_filenames(db, [plan.source_attachment_id]).get(
+            str(plan.source_attachment_id)
+        )
+    as_of = (statement or {}).get("as_of")
     return {
         "id": str(plan.id),
         "supplier_id": str(plan.supplier_id),
@@ -673,10 +806,17 @@ def record_dict(
             plan.plan_horizon_date.isoformat() if plan.plan_horizon_date else None
         ),
         "document_kind": plan.document_kind,
-        "document_label": _document_label(plan, pi_number),
+        "document_label": _document_label(plan, pi_number, statement),
+        # The DATE of the statement this plan is bound to (AC-G1) - the codes tab's header
+        # names it. Null on a "No file" plan, which reads no statement at all, and on a
+        # legacy plan that has nothing of its own stamped.
+        "statement_as_of": as_of.isoformat() if as_of else None,
         "source_attachment_id": (
             str(plan.source_attachment_id) if plan.source_attachment_id else None
         ),
+        # The file's own name, so the record can preview it as the spreadsheet it is (BL-3):
+        # the viewer is chosen off the extension.
+        "source_attachment_filename": source_filename or None,
         "status": plan.status,
         "supplier_email": supplier_email,
         "sent_channel": (notice or {}).get("channel"),
@@ -740,6 +880,11 @@ def list_records(
     numbers = _proforma_numbers(
         db, sorted({str(p.supplier_id) for p in plans if p.document_kind == "proforma"})
     )
+    # One pair of queries for the page, not one per row: the Document column reads this.
+    statements = _plan_statements(
+        db, [str(p.id) for p in plans if p.document_kind in ("stock_list", "proforma")]
+    )
+    filenames = _source_filenames(db, [p.source_attachment_id for p in plans])
     return {
         "data": [
             record_dict(
@@ -749,6 +894,8 @@ def list_records(
                 supplier_email=email,
                 notice=notices.get(str(p.id)) or {},
                 pi_number=numbers.get(str(p.supplier_id)),
+                statement=statements.get(str(p.id)),
+                source_filename=filenames.get(str(p.source_attachment_id)),
             )
             for p, name, email in rows
         ],
@@ -818,6 +965,24 @@ def has_notices(db: Session, plan_id: str) -> bool:
     )
 
 
+def refuse_if_sent(db: Session, plan: LoadingPlan) -> None:
+    """A notice already left for this plan, so it is cancelled, never deleted (Q5, AC-A10).
+
+    Shared by the immediate `DELETE /loading-plans/{id}` route (through `delete_record`
+    below) and the deferred `loading_plan.delete` record action's `capture`, so a delete
+    parked on a sent plan refuses at PARK time rather than ten seconds later - the same
+    shape `refuse_if_cancelled` gives cancel.
+    """
+    from app.services.error_handler import AppException
+
+    if has_notices(db, plan.id):
+        raise AppException(
+            status_code=409,
+            message="Sent plans are cancelled, not deleted.",
+            code="plan_sent",
+        )
+
+
 def delete_record(db: Session, plan_id: str) -> None:
     """Hard delete, with its lines - unless something for it already left the building.
 
@@ -831,15 +996,27 @@ def delete_record(db: Session, plan_id: str) -> None:
     plan = db.query(LoadingPlan).filter(LoadingPlan.id == plan_id).first()
     if plan is None:
         raise HTTPException(status_code=404, detail="Loading plan not found")
-    if has_notices(db, plan_id):
-        # The shape the route has always answered with, kept verbatim: the frontend
-        # service and `test_loading_plan_record` both read `detail.code`.
-        raise HTTPException(
-            status_code=409,
-            detail={"code": "plan_sent", "message": "Sent plans are cancelled, not deleted."},
-        )
+    refuse_if_sent(db, plan)
     db.delete(plan)
     db.commit()
+
+
+def refuse_if_cancelled(plan: LoadingPlan) -> None:
+    """A plan cancelled once cannot be cancelled again (AC-A7).
+
+    Shared by the immediate `POST /loading-plans/{id}/cancel` route (through
+    `cancel_record` below) and the deferred `loading_plan.cancel` record action's
+    `capture`, so a second cancel refuses at the CLICK on the immediate path and at
+    PARK time on the deferred one - never a silent re-stamp of `cancelled_at`.
+    """
+    from app.services.error_handler import AppException
+
+    if plan.status == "cancelled":
+        raise AppException(
+            status_code=409,
+            message="This plan is already cancelled.",
+            code="plan_cancelled",
+        )
 
 
 def cancel_record(db: Session, plan: LoadingPlan, *, actor: Optional[str] = None) -> LoadingPlan:
@@ -851,6 +1028,7 @@ def cancel_record(db: Session, plan: LoadingPlan, *, actor: Optional[str] = None
     """
     from app.services.scm import supplier_notice_service
 
+    refuse_if_cancelled(plan)
     plan.status = "cancelled"
     plan.cancelled_at = datetime.utcnow()
     plan.cancelled_by = actor

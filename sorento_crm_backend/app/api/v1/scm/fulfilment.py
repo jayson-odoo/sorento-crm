@@ -33,6 +33,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import require_permission
 from app.models.scm import ContainerSize, LoadingPlan
+from app.services.error_handler import AppException
 from app.services.scm import (
     allocation_suggestion_service,
     consolidated_packing_list,
@@ -74,15 +75,46 @@ def _plan_or_404(db: Session, plan_id: str) -> LoadingPlan:
     return plan
 
 
+def _plan_for_upload(
+    db: Session, loading_plan_id: Optional[str], *, supplier_id: str
+) -> Optional[LoadingPlan]:
+    """The plan an upload is being applied INTO, or None for the standalone page (S6).
+
+    Checked before anything is written. Stamping one supplier's rows onto another supplier's
+    plan would make every read on that plan wrong - its holdings, its unknown codes and its
+    own subtitle - and nothing on the record would say so.
+    """
+    if not loading_plan_id:
+        return None
+    try:
+        uuid.UUID(str(loading_plan_id))
+    except (ValueError, AttributeError, TypeError):
+        raise AppException(422, "That loading plan does not exist.", detail="loading_plan_id")
+    plan = db.query(LoadingPlan).filter(LoadingPlan.id == loading_plan_id).first()
+    if plan is None:
+        raise AppException(422, "That loading plan does not exist.", detail="loading_plan_id")
+    if str(plan.supplier_id) != str(supplier_id):
+        raise AppException(
+            422,
+            "That loading plan belongs to a different supplier.",
+            detail="invoice_supplier_mismatch",
+        )
+    return plan
+
+
 def _refuse_cancelled(plan: LoadingPlan) -> None:
-    """A cancelled plan is a record of what was asked, not a form (AC-A8)."""
+    """A cancelled plan is a record of what was asked, not a form (AC-A8).
+
+    `AppException`, like every other refusal this router raises: its handler puts `code` at
+    the top level of the body, where `refuse_if_sent` has always put it. A bare
+    `HTTPException` nested the same field under `detail`, so one of the two 409s a stale tab
+    can provoke was read by the client and the other was not (SF-5).
+    """
     if plan.status == "cancelled":
-        raise HTTPException(
+        raise AppException(
             status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "code": "plan_cancelled",
-                "message": "This plan is cancelled, so it can no longer be changed.",
-            },
+            message="This plan is cancelled, so it can no longer be changed.",
+            code="plan_cancelled",
         )
 
 
@@ -95,6 +127,12 @@ def _refuse_cancelled(plan: LoadingPlan) -> None:
 async def preview_supplier_inventory(
     file: UploadFile = File(..., description="The supplier's own stock list"),
     supplier_id: str = Form(..., description="Which supplier sent it"),
+    loading_plan_id: Optional[str] = Form(
+        None,
+        description="The plan this snapshot would belong to (S6), the same field `apply` "
+                    "takes. Stated, 'rows held now' counts only that plan's own rows; absent, "
+                    "the supplier-wide snapshot (loading_plan_id IS NULL).",
+    ),
     _user: dict = Depends(_WRITE),
     db: Session = Depends(get_db),
 ):
@@ -104,7 +142,7 @@ async def preview_supplier_inventory(
     quantities and no indication of who wrote it.
     """
     return supplier_inventory_service.preview(
-        db, await read_upload(file), supplier_id=supplier_id
+        db, await read_upload(file), supplier_id=supplier_id, loading_plan_id=loading_plan_id
     )
 
 
@@ -112,6 +150,12 @@ async def preview_supplier_inventory(
 async def apply_supplier_inventory(
     file: UploadFile = File(..., description="The same file the preview was taken from"),
     supplier_id: str = Form(...),
+    loading_plan_id: Optional[str] = Form(
+        None,
+        description="The plan this snapshot belongs to (S6). Stated, only that plan's rows "
+                    "are replaced and the new ones are stamped with it; absent, the "
+                    "supplier-wide snapshot is replaced as before.",
+    ),
     validate_only: bool = Query(
         False,
         description="Test the file and write nothing. Returns {valid, errors, warnings, summary}.",
@@ -119,12 +163,17 @@ async def apply_supplier_inventory(
     current_user: dict = Depends(_WRITE),
     db: Session = Depends(get_db),
 ):
-    """Replace this supplier's stock snapshot."""
+    """Replace a stock snapshot - this plan's own, or the supplier's."""
     upload = await read_upload_retained(file)
     if validate_only:
         return supplier_inventory_service.validate(db, upload.data, supplier_id=supplier_id)
+    plan = _plan_for_upload(db, loading_plan_id, supplier_id=supplier_id)
     out = supplier_inventory_service.apply(
-        db, upload.data, supplier_id=supplier_id, actor=current_user.get("id")
+        db,
+        upload.data,
+        supplier_id=supplier_id,
+        actor=current_user.get("id"),
+        loading_plan_id=str(plan.id) if plan is not None else None,
     )
     if not out.get("readable"):
         missing = ", ".join(out.get("missing_columns") or [])
@@ -140,7 +189,7 @@ async def apply_supplier_inventory(
     # Retain the supplier's OWN sheet, previewable like any resource attachment, so Ms Tee
     # can cross-check without opening Excel. Best-effort and AFTER the commit above - a
     # storage hiccup here must never turn a successful apply into a failed request.
-    supplier_inventory_service.store_stock_list_attachment(
+    attachment_id = supplier_inventory_service.store_stock_list_attachment(
         db,
         upload.source_bytes,
         filename=upload.source_name,
@@ -148,6 +197,17 @@ async def apply_supplier_inventory(
         supplier_id=supplier_id,
         uploaded_by=current_user.get("id"),
     )
+    # The plan points at the sheet it was started from, stamped HERE rather than looked up by
+    # the dialog: since S6 the plan is created before the file is applied, so at the moment
+    # the dialog would have asked, the retained copy did not exist yet. Best-effort, like the
+    # retain itself - a plan without the pointer is still a plan, it just cannot offer "View
+    # uploaded list".
+    if plan is not None and attachment_id:
+        try:
+            plan.source_attachment_id = attachment_id
+            db.commit()
+        except Exception:  # noqa: BLE001 - the apply already committed; this is a pointer
+            db.rollback()
     return out
 
 
@@ -157,31 +217,13 @@ def list_supplier_inventory(
     _user: dict = Depends(_READ),
     db: Session = Depends(get_db),
 ):
-    """What we currently believe this supplier is holding."""
-    from app.models.scm import SupplierInventory
+    """What we currently believe this supplier is holding, off their own snapshot.
 
-    rows = (
-        db.query(SupplierInventory)
-        .filter(SupplierInventory.supplier_id == supplier_id)
-        .order_by(SupplierInventory.qty_packed.desc())
-        .all()
-    )
-    return {
-        "supplier_id": supplier_id,
-        "as_of": max((r.as_of for r in rows), default=None),
-        "rows": [
-            {
-                "item_code": r.item_code,
-                "product_id": str(r.product_id) if r.product_id else None,
-                "product_name": r.product_name,
-                "qty_packed": float(r.qty_packed or 0),
-                "qty_unfinished": float(r.qty_unfinished or 0),
-                "cbm_per_unit": float(r.cbm_per_unit) if r.cbm_per_unit is not None else None,
-                "matched": r.product_id is not None,
-            }
-            for r in rows
-        ],
-    }
+    The standalone page's scope is `loading_plan_id IS NULL` (BL-1): a plan's rows are read
+    on the plan's own record, and listing every plan's here showed the same model number once
+    per plan that had ever uploaded it.
+    """
+    return supplier_inventory_service.snapshot(db, supplier_id=supplier_id)
 
 
 @router.get("/supplier-inventory/unfinished")
@@ -240,14 +282,17 @@ def list_supplier_code_aliases(
 
 @router.get("/supplier-code-aliases/unmatched")
 def list_unmatched_supplier_codes(
-    supplier_id: str = Query(..., description="Whose unbound codes to show"),
+    plan_id: str = Query(..., description="Whose plan's unbound codes to show"),
     _user: dict = Depends(_READ),
     db: Session = Depends(get_db),
 ):
-    """The codes this supplier sent that bind to nothing we hold - the list somebody comes
-    back to answer (R16). Declared before the `{alias_id}` routes so the literal path is not
-    swallowed by the parameter."""
-    return {"data": supplier_code_alias_service.unmatched_for_supplier(db, supplier_id)}
+    """The codes on THIS PLAN's statement that bind to nothing we hold - the list somebody
+    comes back to answer (R16), scoped to the plan since S6 (AC-C7).
+
+    It took `supplier_id` until then, which is how a plan started with no file at all listed
+    79 codes off a stock list another plan had uploaded for the same supplier. Declared before
+    the `{alias_id}` routes so the literal path is not swallowed by the parameter."""
+    return {"data": supplier_code_alias_service.unmatched_for_plan(db, plan_id)}
 
 
 @router.post("/supplier-code-aliases", status_code=status.HTTP_201_CREATED)
@@ -299,7 +344,10 @@ def dismiss_supplier_code(
 
 
 class SupplierCodeRematch(BaseModel):
-    supplier_id: str
+    #: The PLAN whose rows to re-run the ladder over (S6, AC-C7) - the same scope the queue
+    #: beside the button reads. It was the supplier, so the counts the toast reported could
+    #: describe rows nobody on this screen can see.
+    plan_id: str
 
 
 @router.post("/supplier-code-aliases/rematch")
@@ -317,8 +365,8 @@ def rematch_supplier_codes(
     No `response_model`: the three counts ARE the answer the screen reports, and a model
     would be one more place for them to be dropped. Declared before the `{alias_id}` route so
     the literal path is not swallowed by the parameter."""
-    out = supplier_code_alias_service.rematch(
-        db, supplier_id=body.supplier_id, actor=_actor(current_user)
+    out = supplier_code_alias_service.rematch_for_plan(
+        db, body.plan_id, actor=_actor(current_user)
     )
     db.commit()
     return out

@@ -200,3 +200,46 @@ describe('Column drag-and-drop', () => {
     expect(headerCell('Name').style.position).toBe('sticky');
   });
 });
+
+/**
+ * A pinned column and a sticky header carry the SAME `--z-sticky-content`
+ * token (css/config.reui.css) a bare `z-1`/`z-10` used to. That keeps them
+ * below the app shell's `--z-header`/`--z-sidebar`, so the collapsed
+ * sidebar's hover flyout renders over a frozen column instead of under it -
+ * see FulfilmentBoardMatrix and the sibling schedule matrices for the same
+ * fix on their own custom pinned cells.
+ */
+describe('Sticky content stays below the app shell', () => {
+  it('a pinned column carries the shared sticky-content z token, not a bare number', () => {
+    render(<Harness pinned />);
+
+    expect(headerCell('Name').style.zIndex).toBe('var(--z-sticky-content)');
+  });
+
+  it('a sticky header carries the same token', () => {
+    function StickyHeaderHarness() {
+      const table = useReactTable({
+        data: ROWS,
+        columns: COLUMNS,
+        getRowId: (r) => r.id,
+        getCoreRowModel: getCoreRowModel(),
+      });
+      return (
+        <DataGrid
+          table={table}
+          recordCount={ROWS.length}
+          isLoading={false}
+          tableLayout={{ width: 'fixed', headerSticky: true }}
+        >
+          <DataGridTable />
+        </DataGrid>
+      );
+    }
+
+    render(<StickyHeaderHarness />);
+
+    expect(document.querySelector('thead')?.className).toContain(
+      'z-(--z-sticky-content)',
+    );
+  });
+});

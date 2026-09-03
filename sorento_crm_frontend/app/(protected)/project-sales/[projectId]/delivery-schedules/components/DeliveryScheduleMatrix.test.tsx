@@ -83,8 +83,23 @@ function controller(overrides: Partial<ScheduleGridController> = {}): ScheduleGr
   };
 }
 
-/** The paint layer a cell declares, or 0 when it declares none. */
+/**
+ * The paint layer a cell declares, or 0 when it declares none.
+ *
+ * Z_PINNED / Z_CORNER (DeliveryScheduleMatrix.tsx) name the shared
+ * `--z-sticky-content(-corner)` tokens (css/config.reui.css) rather than a bare
+ * `z-20`/`z-30`, so the corner still outranks a single-axis pin below the app
+ * shell's sidebar/header - this mirrors those token values, not the class name.
+ */
+const Z_TOKEN_VALUES: Record<string, number> = {
+  'z-(--z-sticky-content)': 5,
+  'z-(--z-sticky-content-corner)': 6,
+};
+
 function zLayerOf(element: Element): number {
+  for (const [className, value] of Object.entries(Z_TOKEN_VALUES)) {
+    if (element.classList.contains(className)) return value;
+  }
   const match = element.className.match(/(?:^|\s)z-(\d+)/);
   return match ? Number(match[1]) : 0;
 }

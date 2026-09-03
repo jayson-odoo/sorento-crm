@@ -40,7 +40,7 @@ import {
   filenameFromContentDisposition,
   saveBlobAs,
 } from '@/app/(protected)/project-sales/_shared/services/fileDownload';
-import type { UploadTestResult } from '../reorder/components/UploadTestVerdict';
+import type { SupplierCheck, UploadTestResult } from '../reorder/components/UploadTestVerdict';
 
 export interface StockListSummary {
   rows: number;
@@ -55,6 +55,9 @@ export interface StockListSummary {
   unmeasured_item_codes: string[];
   unmapped_headers: string[];
   unreadable_rows: number;
+  /** Does the file's own letterhead name a different active supplier (S7, AC-G3)? `null`
+   *  when the file states no letterhead above its header row. */
+  supplier_check: SupplierCheck | null;
 }
 
 export interface StockListPreview {
@@ -179,10 +182,19 @@ async function readJson<T>(res: Response, fallback: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-function stockForm(file: File, supplierId: string): FormData {
+function stockForm(
+  file: File,
+  supplierId: string,
+  loadingPlanId?: string | null,
+): FormData {
   const body = new FormData();
   body.append('file', file);
   body.append('supplier_id', supplierId);
+  // S6 - which plan OWNS the rows this upload writes. Stated, the apply replaces only that
+  // plan's rows and stamps the new ones with it, so a later upload for the same supplier
+  // cannot move an older plan's figures. Absent (the standalone stock-list page) it keeps
+  // the supplier-wide replace it always did.
+  if (loadingPlanId) body.append('loading_plan_id', loadingPlanId);
   return body;
 }
 
@@ -199,10 +211,24 @@ export async function previewStockList(
   return { ...body, ok: body.readable };
 }
 
-export async function applyStockList(file: File, supplierId: string): Promise<StockListResult> {
+/**
+ * Write the supplier's stock list.
+ *
+ * ── CONTRACT ADDED BY S6 ───────────────────────────────────────────────────
+ * `loadingPlanId` (multipart field `loading_plan_id`, optional) - the plan this snapshot
+ * belongs to. With it the apply deletes and rewrites ONLY that plan's rows; without it the
+ * supplier-wide snapshot is replaced exactly as before. It is what makes "a plan owns its
+ * statement" true: the ROYAL MIRROR plan read a stale supplier-wide snapshot uploaded from
+ * a different plan, and said "No file" while doing it.
+ */
+export async function applyStockList(
+  file: File,
+  supplierId: string,
+  loadingPlanId?: string | null,
+): Promise<StockListResult> {
   const res = await apiFetch('/api/v1/scm/supplier-inventory/apply', {
     method: 'POST',
-    body: stockForm(file, supplierId),
+    body: stockForm(file, supplierId, loadingPlanId),
   });
   return readJson<StockListResult>(res, 'Failed to save the stock list');
 }
@@ -321,9 +347,19 @@ export interface LoadingPlanRecord {
   /** "Sales order cut-off". Null = every open order counts. */
   plan_horizon_date: string | null;
   document_kind: PlanDocumentKind;
-  /** Ready to print: "Stock list 27/07/2026" / "Proforma invoice PI-x" / "No file". */
+  /** Ready to print, off THIS plan's own rows (S6, AC-F7): "Stock list 27/07/2026",
+   *  "Proforma invoice PI-x", "Proforma invoice <file stem> · 5 blocks", "No file". Never
+   *  re-looked-up from whatever the supplier sent last. */
   document_label: string;
+  /** The date of the statement this plan is bound to - its stock rows' `as_of`, or the
+   *  latest invoice date across its bound invoices. Null on a "No file" plan, which reads
+   *  no statement at all (AC-G1). */
+  statement_as_of: string | null;
+  /** The stored copy of the sheet THIS plan was started from, stamped at apply time (S6).
+   *  Null on a plan started with no file, and on every plan that predates the stamp. */
   source_attachment_id: string | null;
+  /** That file's own name - the preview picks its viewer off the extension. */
+  source_attachment_filename: string | null;
   status: LoadingPlanStatus;
   /** The latest notice for this plan, so the list can say how and when it went out. */
   sent_channel: 'email' | 'chat' | null;
@@ -394,11 +430,6 @@ export async function updateLoadingPlanCutOff(
     body: JSON.stringify({ plan_horizon_date: planHorizonDate }),
   });
   return readJson<LoadingPlanRecord>(res, 'Failed to change the cut-off');
-}
-
-export async function cancelLoadingPlan(id: string): Promise<LoadingPlanRecord> {
-  const res = await apiFetch(`/api/v1/scm/loading-plans/${id}/cancel`, { method: 'POST' });
-  return readJson<LoadingPlanRecord>(res, 'Failed to cancel the plan');
 }
 
 /**
@@ -503,19 +534,6 @@ export interface SupplierNotice {
   created_by: string | null;
 }
 
-export async function approveLoadingPlan(
-  planId: string,
-): Promise<{ notices: SupplierNotice[]; document_filename: string }> {
-  const res = await apiFetch(`/api/v1/scm/loading-plans/${planId}/notices`, { method: 'POST' });
-  return readJson(res, 'Failed to send the supplier notice');
-}
-
-export async function getPlanNotices(planId: string): Promise<SupplierNotice[]> {
-  const res = await apiFetch(`/api/v1/scm/loading-plans/${planId}/notices`);
-  const body = await readJson<{ data: SupplierNotice[] }>(res, 'Failed to load the notices');
-  return body.data;
-}
-
 export async function getNoticeDocumentUrl(
   noticeId: string,
   kind: 'pdf' | 'xlsx' = 'pdf',
@@ -542,8 +560,8 @@ export async function getNoticeDocumentUrl(
  * Rows on the stock list with no open need (`has_demand: false`) sort after them, suggested 0,
  * unranked - nothing the stock list holds vanishes in the merge. `include_lines=true` (always
  * requested by this FE - the matrix and the SO drill both need it) adds the flat open-SO lines
- * behind every demand row. `send` turns Ms Tee's reviewed lines into a notice through the same
- * S8 machinery `approveLoadingPlan` uses.
+ * behind every demand row. `send` turns Ms Tee's reviewed lines into a notice through the
+ * same S8 notice machinery the plan approval used.
  *
  * `planHorizonDate` ("Plan until", captain 20 Aug) is an optional request field, not a stored
  * column - `build` recomputes on every call, so there is no run row to carry it on. When set,
@@ -558,6 +576,14 @@ export async function getNoticeDocumentUrl(
  *       Body: { supplier_id, plan_horizon_date?: "YYYY-MM-DD" }. Auth: `scm.dashboard.view`.
  *  POST /api/v1/scm/container-requests       -> 201 { notices, document_filename }. Auth: `scm.reorder.run`.
  */
+/** One invoice block behind a proforma row's "They hold" figure (S6, AC-F4). */
+export interface ContainerRequestHoldingBlock {
+  /** Which block of the uploaded file this invoice was read from, 1-based. */
+  block_index: number | null;
+  pi_number: string;
+  qty: number;
+}
+
 export interface ContainerRequestRow {
   /** Whose FIGURES this row shows. On a set row that is the driver member's id (R19), which
    *  is what the SO drill and the twelve-month history are keyed on. */
@@ -629,6 +655,14 @@ export interface ContainerRequestRow {
    *  quantity on a proforma row. Null - never 0 - when neither document names it. */
   holding_qty: number | null;
   holding_as_of: string | null;
+  /** How many invoice blocks this plan's proforma statement was read from (S6, AC-F4). One
+   *  file can hold five stacked blocks, and the plan binds to every one of them, so the cell
+   *  says "PI 31/07/2026 · 5 blocks" rather than quietly reporting one block's figure. 1 on
+   *  a single-invoice plan, 0 on a stock-list or "No file" row. */
+  holding_blocks: number;
+  /** The per-block split behind `holding_qty`, so the drill can show where the sum came
+   *  from. Empty on anything but a proforma row. */
+  blocks: ContainerRequestHoldingBlock[];
   /** The stock list's own two figures. Both 0 on a proforma row: a proforma states one
    *  quantity per line and there is no unfinished half of it to report. */
   qty_packed: number;
@@ -1155,6 +1189,20 @@ export interface PackingListLine {
   cbm: number | null;
   /** What the supplier wrote on the line, and only that. */
   remarks: string | null;
+  /** Priced per unit. Null (or absent, on a payload built before this field existed) on a
+   *  line nobody has costed yet - never 0, which the split footer would then apportion
+   *  insurance against as if it were free. */
+  unit_cost?: number | null;
+  currency?: string | null;
+}
+
+/** The container's own header block and costs, off the same `build()` payload (S7's Split
+ *  card reads `costs`; the header block itself already prints on the packing-list Details
+ *  tab from `inbound_shipments` directly, so nothing here re-fetches it). */
+export interface PackingListCosts {
+  clearance_cost: number | null;
+  china_freight_cost: number | null;
+  insurance_rate: number | null;
 }
 
 export interface PackingListTotals {
@@ -1189,6 +1237,9 @@ export interface ConsolidatedPackingList {
   total: PackingListTotals;
   /** Both companies, always, zeros included: an absent row reads as a missing figure. */
   split: PackingListSplitRow[];
+  /** Typed per container; the split card apportions clearance and freight by CBM share and
+   *  insurance by amount share, the same ratios the export's footer formulas use. */
+  costs?: PackingListCosts;
 }
 
 export async function getConsolidatedPackingList(
