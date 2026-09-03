@@ -1072,7 +1072,6 @@ export function ContainerRequestSection({
               )}
               history={toHistoryPoints(historyRef.current.get(dialog.row.product_id))}
               initialTab={dialog.onHistory ? 'history' : 'open'}
-              focus={dialog.kind}
               loading={build.isFetching || (dialog.onHistory && history.isFetching)}
             />
           ) : dialog.kind === 'on_hand' ? (

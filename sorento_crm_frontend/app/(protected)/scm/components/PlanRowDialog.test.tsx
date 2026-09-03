@@ -227,16 +227,59 @@ describe('ProjectRetailTabs', () => {
     expect(container.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0);
   });
 
-  it('switches to the 12-month history and names both peaks', () => {
-    renderWithClient(<ProjectRetailTabs channel="project" lines={LINES} history={HISTORY} />);
+  it('marks each column\'s own peak cell, on whichever row it fell, with no peak text line (S1, AC-A1/A2)', () => {
+    const { container } = renderWithClient(
+      <ProjectRetailTabs channel="project" lines={LINES} history={HISTORY} />,
+    );
 
     switchTab('12-month history');
 
-    expect(screen.getByText('Project peak 1,504 Mar 26')).toBeTruthy();
-    expect(screen.getByText('Retail peak 701 Jul 26')).toBeTruthy();
+    expect(screen.queryByText(/Project peak/)).toBeNull();
+    expect(screen.queryByText(/Retail peak/)).toBeNull();
+
+    const projectPeak = container.querySelector('[data-peak="project"]');
+    const retailPeak = container.querySelector('[data-peak="retail"]');
+    expect(projectPeak?.textContent).toBe('1,504');
+    expect(projectPeak?.closest('tr')).toHaveTextContent('Mar 26');
+    expect(retailPeak?.textContent).toBe('701');
+    expect(retailPeak?.closest('tr')).toHaveTextContent('Jul 26');
   });
 
-  it('foots the 12-month history to BOTH series, under the peaks line (AC-J3)', () => {
+  it('marks both peaks on the same row when they coincide (S1)', () => {
+    const sameRow: PlanHistoryPoint[] = [
+      { month: '2026-02', project_qty: 100, retail_qty: 50 },
+      { month: '2026-03', project_qty: 900, retail_qty: 400 },
+    ];
+    const { container } = renderWithClient(
+      <ProjectRetailTabs channel="project" lines={[]} history={sameRow} />,
+    );
+
+    switchTab('12-month history');
+
+    const projectPeak = container.querySelector('[data-peak="project"]');
+    const retailPeak = container.querySelector('[data-peak="retail"]');
+    expect(projectPeak?.closest('tr')).toBe(retailPeak?.closest('tr'));
+  });
+
+  it('the first of a tie wins, and a column that never rises above 0 marks nothing (S1, AC-A2)', () => {
+    const tie: PlanHistoryPoint[] = [
+      { month: '2026-02', project_qty: 300, retail_qty: 0 },
+      { month: '2026-03', project_qty: 1504, retail_qty: 0 },
+      { month: '2026-04', project_qty: 1504, retail_qty: 0 },
+    ];
+    const { container } = renderWithClient(
+      <ProjectRetailTabs channel="project" lines={[]} history={tie} />,
+    );
+
+    switchTab('12-month history');
+
+    const projectPeaks = container.querySelectorAll('[data-peak="project"]');
+    expect(projectPeaks.length).toBe(1);
+    expect(projectPeaks[0].closest('tr')).toHaveTextContent('Mar 26');
+    expect(container.querySelectorAll('[data-peak="retail"]').length).toBe(0);
+  });
+
+  it('foots the 12-month history to BOTH series (AC-A3/AC-J3)', () => {
     renderWithClient(<ProjectRetailTabs channel="project" lines={LINES} history={HISTORY} />);
 
     switchTab('12-month history');
@@ -247,18 +290,15 @@ describe('ProjectRetailTabs', () => {
     expect(within(footer).getByText('1,021')).toBeTruthy();
   });
 
-  it('opens on the history tab when a peak cell was the trigger (AC-B6)', () => {
+  it('opens directly on the history tab when the trigger asked for it (AC-B6)', () => {
     renderWithClient(
-      <ProjectRetailTabs
-        channel="retail"
-        lines={LINES}
-        history={HISTORY}
-        initialTab="history"
-        focus="retail"
-      />,
+      <ProjectRetailTabs channel="retail" lines={LINES} history={HISTORY} initialTab="history" />,
     );
 
-    expect(screen.getByText('Retail peak 701 Jul 26')).toBeTruthy();
+    expect(screen.getByRole('tab', { name: '12-month history' })).toHaveAttribute(
+      'data-state',
+      'active',
+    );
     expect(screen.getByText('Mar 26')).toBeTruthy();
   });
 });

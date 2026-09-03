@@ -289,18 +289,41 @@ export interface PlanHistoryPoint {
   retail_qty: number;
 }
 
-function peakOf(history: PlanHistoryPoint[], channel: 'project' | 'retail') {
-  let peak: PlanHistoryPoint | null = null;
-  for (const point of history) {
-    const qty = channel === 'project' ? point.project_qty : point.retail_qty;
-    const best = peak ? (channel === 'project' ? peak.project_qty : peak.retail_qty) : -1;
-    if (qty > best) peak = point;
-  }
-  if (!peak) return null;
-  return {
-    month: peak.month,
-    qty: channel === 'project' ? peak.project_qty : peak.retail_qty,
-  };
+/**
+ * The index of a series' biggest month (S1, AC-A2): the FIRST occurrence wins a tie, and a
+ * series that never goes above 0 has no peak at all - `-1`, which no row index ever equals.
+ */
+function peakIndexOf(values: number[]): number {
+  let bestIndex = -1;
+  let bestValue = 0;
+  values.forEach((value, index) => {
+    if (value > bestValue) {
+      bestValue = value;
+      bestIndex = index;
+    }
+  });
+  return bestIndex;
+}
+
+/** One cell of the 12-month history table (S1): tinted and marked when it is its column's
+ *  peak, so the row it landed on reads at a glance rather than by scanning every month. */
+function PeakValueCell({
+  qty,
+  isPeak,
+  mark,
+}: {
+  qty: number;
+  isPeak: boolean;
+  mark: 'project' | 'retail';
+}) {
+  return (
+    <span
+      data-peak={isPeak ? mark : undefined}
+      className={cn(isPeak && 'rounded bg-primary/10 px-1.5 py-0.5 font-semibold')}
+    >
+      {fmtInt(qty)}
+    </span>
+  );
 }
 
 /**
@@ -317,22 +340,24 @@ export function ProjectRetailTabs({
   lines,
   history,
   initialTab = 'open',
-  focus,
   loading,
 }: {
   channel: 'project' | 'retail';
   lines: PlanDemandLineRow[];
   history: PlanHistoryPoint[];
   initialTab?: 'open' | 'history';
-  /** Which series the reader came in for. Defaults to the channel's own. */
-  focus?: 'project' | 'retail';
   loading?: boolean;
 }) {
-  const focused = focus ?? channel;
   const total = useMemo(() => lines.reduce((sum, l) => sum + (l.qty || 0), 0), [lines]);
-  const projectPeak = peakOf(history, 'project');
-  const retailPeak = peakOf(history, 'retail');
-  // AC-J3: the history tab foots BOTH series - the peak line above states the biggest month,
+  const projectPeakIndex = useMemo(
+    () => peakIndexOf(history.map((p) => p.project_qty)),
+    [history],
+  );
+  const retailPeakIndex = useMemo(
+    () => peakIndexOf(history.map((p) => p.retail_qty)),
+    [history],
+  );
+  // AC-J3: the history tab foots BOTH series - the peak cell above states the biggest month,
   // this states the whole twelve.
   const projectTotal = useMemo(
     () => history.reduce((sum, p) => sum + (p.project_qty || 0), 0),
@@ -432,27 +457,33 @@ export function ProjectRetailTabs({
       {
         id: 'project_qty',
         header: 'Project',
-        cell: ({ row }) => fmtInt(row.original.project_qty),
+        cell: ({ row }) => (
+          <PeakValueCell
+            qty={row.original.project_qty}
+            isPeak={row.index === projectPeakIndex}
+            mark="project"
+          />
+        ),
         footer: () => fmtInt(projectTotal),
         size: 100,
-        meta: {
-          ...RIGHT,
-          cellClassName: cn(RIGHT.cellClassName, focused === 'project' && 'font-medium'),
-        },
+        meta: RIGHT,
       },
       {
         id: 'retail_qty',
         header: 'Retail',
-        cell: ({ row }) => fmtInt(row.original.retail_qty),
+        cell: ({ row }) => (
+          <PeakValueCell
+            qty={row.original.retail_qty}
+            isPeak={row.index === retailPeakIndex}
+            mark="retail"
+          />
+        ),
         footer: () => fmtInt(retailTotal),
         size: 100,
-        meta: {
-          ...RIGHT,
-          cellClassName: cn(RIGHT.cellClassName, focused === 'retail' && 'font-medium'),
-        },
+        meta: RIGHT,
       },
     ],
-    [focused, projectTotal, retailTotal],
+    [projectPeakIndex, retailPeakIndex, projectTotal, retailTotal],
   );
 
   return (
@@ -473,23 +504,13 @@ export function ProjectRetailTabs({
       </TabsContent>
 
       <TabsContent value="history">
-        <div className="space-y-2">
-          <div className="flex flex-wrap gap-4 text-xs">
-            <span className={cn(focused === 'project' && 'font-medium')}>
-              {`Project peak ${projectPeak ? `${fmtInt(projectPeak.qty)} ${monthLabel(projectPeak.month)}` : EM_DASH}`}
-            </span>
-            <span className={cn(focused === 'retail' && 'font-medium')}>
-              {`Retail peak ${retailPeak ? `${fmtInt(retailPeak.qty)} ${monthLabel(retailPeak.month)}` : EM_DASH}`}
-            </span>
-          </div>
-          <DrillTable
-            columns={historyColumns}
-            rows={history}
-            getRowId={(p) => p.month}
-            isLoading={loading}
-            emptyMessage="Nothing was ordered in the last twelve months."
-          />
-        </div>
+        <DrillTable
+          columns={historyColumns}
+          rows={history}
+          getRowId={(p) => p.month}
+          isLoading={loading}
+          emptyMessage="Nothing was ordered in the last twelve months."
+        />
       </TabsContent>
     </Tabs>
   );

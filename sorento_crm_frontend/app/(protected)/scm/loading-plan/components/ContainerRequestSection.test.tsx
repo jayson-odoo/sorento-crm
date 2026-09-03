@@ -944,7 +944,7 @@ describe('ContainerRequestSection - the eight figures open the shared lightbox (
     expect(within(dialog).getByText('Total still to come').closest('tr')).toHaveTextContent('60');
   });
 
-  it('a peak figure opens its channel dialog on the 12-month tab, focused on that series (AC-B6)', () => {
+  it('a peak figure opens its channel dialog on the 12-month tab, with both peak cells marked (AC-B6, S1)', () => {
     withHistory();
     renderSection();
 
@@ -962,8 +962,12 @@ describe('ContainerRequestSection - the eight figures open the shared lightbox (
       'data-state',
       'active',
     );
-    expect(within(dialog).getByText('Project peak 1,240 Jun 26')).toBeInTheDocument();
-    expect(within(dialog).getByText('Retail peak 320 Jul 26')).toBeInTheDocument();
+    const projectPeak = dialog.querySelector('[data-peak="project"]');
+    const retailPeak = dialog.querySelector('[data-peak="retail"]');
+    expect(projectPeak?.textContent).toBe('1,240');
+    expect(projectPeak?.closest('tr')).toHaveTextContent('Jun 26');
+    expect(retailPeak?.textContent).toBe('320');
+    expect(retailPeak?.closest('tr')).toHaveTextContent('Jul 26');
   });
 
   it('the Retail peak opens the retail dialog on the same tab', () => {
