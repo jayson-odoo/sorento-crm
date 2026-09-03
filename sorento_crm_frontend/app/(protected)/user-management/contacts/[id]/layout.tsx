@@ -1,7 +1,7 @@
 'use client';
 
 import React, { use, useEffect, useMemo, useState } from 'react';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { KeyRound, MessageSquare, Route, UserPen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -67,6 +67,7 @@ export default function ContactLayout({
   const { id } = use(params);
   const pathname = usePathname();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const backHref = useBackToListHref('/user-management/contacts');
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   // Impersonate is on the record now as well as the row (D15), through the one
@@ -112,9 +113,13 @@ export default function ContactLayout({
   const { data: contact, isLoading } = useContactQuery(id);
 
 
+  // Tabs are routes, so the click must carry the list position (page/sort/search)
+  // the detail URL is holding, or the record pager falls back to "row 1" the
+  // moment a tab is clicked (it reads that query string, not local state).
   const handleTabClick = (key: string, path: string) => {
     setActiveTab(key);
-    router.push(path);
+    const query = searchParams.toString();
+    router.push(query ? `${path}?${query}` : path);
   };
 
 
