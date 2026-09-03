@@ -129,13 +129,13 @@ describe('ColorPicker', () => {
 
     openPopover();
 
-    expect(screen.getByTitle('Eyedropper')).toBeInTheDocument();
+    expect(screen.getByTitle('Pick colour from screen')).toBeInTheDocument();
   });
 
   it('hides the eyedropper button when the browser has no EyeDropper API', () => {
     openPopover();
 
-    expect(screen.queryByTitle('Eyedropper')).not.toBeInTheDocument();
+    expect(screen.queryByTitle('Pick colour from screen')).not.toBeInTheDocument();
   });
 
   it('picking with the eyedropper hands the picked colour to onChange', async () => {
@@ -147,7 +147,7 @@ describe('ColorPicker', () => {
 
     const onChange = openPopover();
 
-    fireEvent.click(await screen.findByTitle('Eyedropper'));
+    fireEvent.click(await screen.findByTitle('Pick colour from screen'));
 
     await vi.waitFor(() => expect(onChange).toHaveBeenCalledWith('#654321'));
   });

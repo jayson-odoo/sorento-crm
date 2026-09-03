@@ -209,6 +209,7 @@ function SwatchGrid({
         <button
           key={swatch.value}
           type="button"
+          aria-label={swatch.label}
           className="size-6 rounded border border-input hover:ring-2 hover:ring-primary/40"
           style={{
             backgroundColor: swatch.value === 'transparent' ? undefined : swatch.value,
@@ -310,6 +311,7 @@ export function ColorPicker({ value, onChange, label, usedColours = [] }: ColorP
           <PopoverTrigger asChild>
             <button
               type="button"
+              aria-label={label ? `${label} colour` : 'Colour'}
               className="size-7 shrink-0 rounded border border-input shadow-sm"
               style={{
                 backgroundColor: value === 'transparent' ? undefined : value,
@@ -336,7 +338,8 @@ export function ColorPicker({ value, onChange, label, usedColours = [] }: ColorP
                     variant="outline"
                     size="icon"
                     className="size-7 shrink-0"
-                    title="Eyedropper"
+                    aria-label="Pick colour from screen"
+                    title="Pick colour from screen"
                     onClick={handleEyedropper}
                   >
                     <Pipette className="size-3.5" />

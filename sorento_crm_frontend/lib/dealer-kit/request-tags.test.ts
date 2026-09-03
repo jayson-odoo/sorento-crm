@@ -34,6 +34,7 @@ import {
   tagForLine,
   tagSizeBounds,
   tagSizePresets,
+  templateFromTag,
 } from './request-tags';
 
 // ---------------------------------------------------------------------------
@@ -727,5 +728,87 @@ describe('resolveTagSize', () => {
   it('refuses a height that does not fit the sheet, with a reason', () => {
     const result = resolveTagSize(95, 400, bounds);
     expect(result.ok).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// templateFromTag - "Save as template" (S4, AC-S4-6/7/9)
+// ---------------------------------------------------------------------------
+
+describe('templateFromTag', () => {
+  function tagWithLayers(layers: TagLayer[]): PlacedTag {
+    return {
+      id: 'tag-1',
+      template_id: 't-sink',
+      request_line_id: 'l1',
+      x_mm: 0,
+      y_mm: 0,
+      width_mm: 72,
+      height_mm: 48,
+      layers,
+    };
+  }
+
+  it('strips text_override off a bound layer - a slot binding is what makes a template apply to every product (AC-S4-9)', () => {
+    const bound: TagLayer = { ...textLayer('code', 1), text_override: 'SRT-9999' };
+    const tag = tagWithLayers([bound]);
+
+    const result = templateFromTag(tag, { name: 'My Template', family: 'ala_carte', newId });
+
+    expect(result.doc.layers[0].slot_binding).toBe('code');
+    expect(result.doc.layers[0].text_override).toBeNull();
+  });
+
+  it('keeps unbound text exactly as typed - it has no binding to fall back to', () => {
+    const unbound: TagLayer = {
+      ...textLayer('heading', 1),
+      slot_binding: null,
+      text_override: 'Sale Now On',
+    };
+    const tag = tagWithLayers([unbound]);
+
+    const result = templateFromTag(tag, { name: 'My Template', family: 'ala_carte', newId });
+
+    expect(result.doc.layers[0].slot_binding).toBeNull();
+    expect(result.doc.layers[0].text_override).toBe('Sale Now On');
+  });
+
+  it('gives every layer a fresh id, sharing none with the tag it was cloned from', () => {
+    const tag = tagWithLayers([textLayer('code', 1), groupLayer('group', ['code'])]);
+
+    const result = templateFromTag(tag, { name: 'My Template', family: 'ala_carte', newId });
+
+    const resultIds = result.doc.layers.map((l) => l.id);
+    expect(resultIds).toHaveLength(2);
+    expect(resultIds).not.toEqual(expect.arrayContaining(['code', 'group']));
+    expect(new Set(resultIds).size).toBe(2);
+  });
+
+  it("remaps a group's children ids to the same fresh ids their layers got", () => {
+    const tag = tagWithLayers([textLayer('code', 1), groupLayer('group', ['code'])]);
+
+    const result = templateFromTag(tag, { name: 'My Template', family: 'ala_carte', newId });
+
+    const remappedCodeId = result.doc.layers.find((l) => l.slot_binding === 'code')?.id;
+    const group = result.doc.layers.find((l) => l.props.kind === 'group');
+    expect(group?.props).toMatchObject({ children: [remappedCodeId] });
+  });
+
+  it("print_size is the tag's own width/height, not the template it was cloned from", () => {
+    const tag = tagWithLayers([textLayer('code', 1)]);
+
+    const result = templateFromTag(tag, { name: 'My Template', family: 'ala_carte', newId });
+
+    expect(result.print_size).toEqual({ width_mm: 72, height_mm: 48 });
+    expect(result.doc).toMatchObject({ width_mm: 72, height_mm: 48 });
+  });
+
+  it('name and family pass through as given', () => {
+    const tag = tagWithLayers([textLayer('code', 1)]);
+
+    const result = templateFromTag(tag, { name: 'Sink Combo v2', family: 'sink_combo', newId });
+
+    expect(result.name).toBe('Sink Combo v2');
+    expect(result.family).toBe('sink_combo');
   });
 });
