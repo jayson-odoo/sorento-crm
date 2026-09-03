@@ -1253,8 +1253,6 @@ export function PoTakesPicker({
   onChange,
   coveredQty,
   packedQty,
-  // Accepted now, wired by S4 once a per-row class hook exists; see the prop's own doc below.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   bucketHits,
 }: {
   takes: PoTakeRow[];
@@ -1265,10 +1263,10 @@ export function PoTakesPicker({
   /** What the shipment line packs, for the footer. */
   packedQty: number;
   /**
-   * PO line ids whose date fell in the schedule week that opened this picker (S4, AC-D3).
-   * `DataGridTable`'s `<tr>` has no per-row class hook today (only the boolean `rowPending`
-   * predicate, which only ever toggles `data-pending` + a fixed dim style) - so this is wired
-   * through and otherwise unused until S4 either extends that table or reads it another way.
+   * PO line ids whose date fell in the schedule week that opened this picker (S4, AC-D3) -
+   * those rows carry `data-bucket-hit` and the `bg-primary/10` row tint, so the click reads
+   * as "these rows" once the dialog opens. `DataGrid`'s `rowClassName`/`rowAttributes` are
+   * the per-row hook this reads through.
    */
   bucketHits?: Set<string>;
 }) {
@@ -1434,6 +1432,12 @@ export function PoTakesPicker({
         recordCount={rows.length}
         listingKey={null}
         tableLayout={{ width: 'fixed', columnsResizable: true }}
+        rowClassName={
+          bucketHits ? (t) => (bucketHits.has(t.po_line_id) ? 'bg-primary/10' : undefined) : undefined
+        }
+        rowAttributes={
+          bucketHits ? (t) => (bucketHits.has(t.po_line_id) ? { 'data-bucket-hit': 'true' } : {}) : undefined
+        }
         emptyMessage="No open PO can back this line."
       >
         <DataGridTable />
@@ -1470,8 +1474,6 @@ export function SoCoveragePicker({
   onChange,
   unassigned,
   takes,
-  // Accepted now, wired by S4 once a per-row class hook exists; see the prop's own doc below.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   bucketHits,
 }: {
   coverage: SoCoverageRow[];
@@ -1483,8 +1485,7 @@ export function SoCoveragePicker({
    *  rather than reading 0 for every row and being mistaken for one. */
   takes?: Record<string, number>;
   /** SO coverage keys whose date fell in the schedule week that opened this picker (S4,
-   *  AC-D3) - see `PoTakesPicker`'s own doc: no per-row class hook exists yet, so this is
-   *  accepted and otherwise unused. */
+   *  AC-D3) - see `PoTakesPicker`'s own doc for the row hook this reads through. */
   bucketHits?: Set<string>;
 }) {
   const toggle = (key: string, on: boolean) =>
@@ -1683,6 +1684,10 @@ export function SoCoveragePicker({
         recordCount={rows.length}
         listingKey={null}
         tableLayout={{ width: 'fixed', columnsResizable: true }}
+        rowClassName={bucketHits ? (c) => (bucketHits.has(c.key) ? 'bg-primary/10' : undefined) : undefined}
+        rowAttributes={
+          bucketHits ? (c) => (bucketHits.has(c.key) ? { 'data-bucket-hit': 'true' } : {}) : undefined
+        }
         emptyMessage="No open demand this SPO could cover."
       >
         <DataGridTable />

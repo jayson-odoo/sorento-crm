@@ -71,7 +71,13 @@ import type {
   SpoPoTake,
   SpoSuggestionLine,
 } from '@/app/(protected)/scm/services/fulfilmentService';
-import { cascadeTake, buildSpoScheduleMatrix, type SpoMatrixEntry } from './spoScheduleMatrix';
+import {
+  cascadeTake,
+  buildSpoScheduleMatrix,
+  bucketKeyFor,
+  type SpoMatrixBucket,
+  type SpoMatrixEntry,
+} from './spoScheduleMatrix';
 import { SpoScheduleMatrixTable } from './SpoScheduleMatrixTable';
 
 /**
@@ -251,7 +257,7 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
    *  Four dialogs mounted per row would be four Radix roots per row; the grid holds one and
    *  the cells only say what to put in it. */
   const [dialog, setDialog] = useState<
-    { kind: PlanRowDialogKind; line: SpoSuggestionLine } | null
+    { kind: PlanRowDialogKind; line: SpoSuggestionLine; bucket?: SpoMatrixBucket } | null
   >(null);
 
   useEffect(() => {
@@ -447,9 +453,19 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
    * cannot hold a second opinion about the same rows. On hand and Incoming SPO are the
    * SHARED reorder / loading-plan bodies, which fetch their own rows on open.
    */
-  const dialogBody = (kind: PlanRowDialogKind, ln: SpoSuggestionLine) => {
+  const dialogBody = (kind: PlanRowDialogKind, ln: SpoSuggestionLine, bucket?: SpoMatrixBucket) => {
     switch (kind) {
-      case 'po_takes':
+      case 'po_takes': {
+        // S4, AC-D3: opened from a schedule cell, the rows whose OWN date fell in that
+        // clicked week are marked - the same week function the matrix bucketed them into,
+        // so the picker cannot disagree with the cell that opened it.
+        const bucketHits = bucket
+          ? new Set(
+              ln.po_takes
+                .filter((t) => bucketKeyFor(t.expected_date) === bucket.key)
+                .map((t) => t.po_line_id),
+            )
+          : undefined;
         return (
           <PoTakesPicker
             takes={ln.po_takes}
@@ -457,9 +473,18 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
             onChange={(ids) => setTakeIds(ln, ids)}
             coveredQty={poCoveredFor(ln, takeIdsFor(ln))}
             packedQty={ln.packed_qty}
+            bucketHits={bucketHits}
           />
         );
-      case 'so_coverage':
+      }
+      case 'so_coverage': {
+        const bucketHits = bucket
+          ? new Set(
+              (ln.so_coverage ?? [])
+                .filter((c) => bucketKeyFor(c.required_date) === bucket.key)
+                .map((c) => c.key),
+            )
+          : undefined;
         return (
           <SoCoveragePicker
             coverage={ln.so_coverage ?? []}
@@ -471,8 +496,10 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
             takes={Object.fromEntries(
               coverageTakes(ln, soKeysFor(ln), qtyFor(ln)).map((t) => [t.entry.key, t.take]),
             )}
+            bucketHits={bucketHits}
           />
         );
+      }
       case 'on_hand':
         return <OnHandTable productId={ln.product_id} />;
       case 'spo':
@@ -717,8 +744,11 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
           row_key: ln.item_code ? `item:${ln.item_code}` : `line:${ln.shipment_line_id}`,
           row_label: ln.item_code ?? ln.product_name ?? 'Unresolved',
           row_description: null,
+          shipment_line_id: ln.shipment_line_id,
           date: t.expected_date,
           qty: t.takenQty,
+          // S5 fills this from `taken_qty` on the take itself; 0 until then.
+          taken_qty: 0,
           detail: { ...t, item_code: ln.item_code },
         });
       }
@@ -746,8 +776,11 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
           row_key: ln.item_code ? `item:${ln.item_code}` : `line:${ln.shipment_line_id}`,
           row_label: ln.item_code ?? ln.product_name ?? 'Unresolved',
           row_description: null,
+          shipment_line_id: ln.shipment_line_id,
           date: entry.required_date,
           qty: take,
+          // S5 fills this from `taken_qty` on the coverage line; 0 until then.
+          taken_qty: 0,
           detail: {
             so_number: entry.document,
             customer_name: entry.customer_name,
@@ -1030,21 +1063,14 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
               rows={poMatrix.rows}
               buckets={poMatrix.buckets}
               cells={poMatrix.cells}
-              renderDrill={(cell, label) => (
-                <>
-                  <p className="text-xs font-medium">{label}</p>
-                  <div className="space-y-1">
-                    {cell.entries.map((e) => (
-                      <div key={e.detail.po_line_id} className="flex items-center justify-between text-xs">
-                        <span className="truncate" title={`${e.detail.po_number} - ${e.detail.supplier_name ?? EM_DASH}`}>
-                          {e.detail.po_number}
-                        </span>
-                        <span className="tabular-nums">{fmtInt(e.qty)}</span>
-                      </div>
-                    ))}
-                  </div>
-                </>
-              )}
+              onCellClick={(cell, bucket) => {
+                // The clicked CELL's own first entry, not the row's: a row groups by item
+                // code and can hold more than one shipment line, and the row's own
+                // `shipment_line_id` names whichever line first CREATED the row - not
+                // necessarily the one behind THIS cell (S4, AC-D2).
+                const ln = lines.find((l) => l.shipment_line_id === cell.entries[0]?.shipment_line_id);
+                if (ln) setDialog({ kind: 'po_takes', line: ln, bucket });
+              }}
             />
           </div>
         )
@@ -1059,21 +1085,10 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
             rows={soMatrix.rows}
             buckets={soMatrix.buckets}
             cells={soMatrix.cells}
-            renderDrill={(cell, label) => (
-              <>
-                <p className="text-xs font-medium">{label}</p>
-                <div className="space-y-1">
-                  {cell.entries.map((e, i) => (
-                    <div key={`${e.detail.so_number}-${i}`} className="flex items-center justify-between text-xs">
-                      <span className="truncate" title={e.detail.customer_name ?? ''}>
-                        {e.detail.so_number ?? EM_DASH}
-                      </span>
-                      <span className="tabular-nums">{fmtInt(e.qty)}</span>
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
+            onCellClick={(cell, bucket) => {
+              const ln = lines.find((l) => l.shipment_line_id === cell.entries[0]?.shipment_line_id);
+              if (ln) setDialog({ kind: 'so_coverage', line: ln, bucket });
+            }}
           />
         </div>
       )}
@@ -1090,7 +1105,7 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
             if (!open) setDialog(null);
           }}
         >
-          {dialogBody(dialog.kind, dialog.line)}
+          {dialogBody(dialog.kind, dialog.line, dialog.bucket)}
         </PlanRowDialog>
       ) : null}
     </Card>

@@ -1284,3 +1284,109 @@ describe('S1 - planner chrome (AC-A1-AC-A7)', () => {
     expect(screen.getAllByText('SRTWT7443')).toHaveLength(1);
   });
 });
+
+/**
+ * S4 (feedback, 3 Sep) - schedule cells are coloured and clickable, and open the SAME
+ * lightbox the table's own PO covers / SO covered cells do (AC-D1-AC-D5).
+ *
+ * `plannerLine()`'s two PO takes land on 2026-09-01 (week of 30 Aug 2026) and 2026-08-01
+ * (week of 26 Jul 2026); the two default-ticked SO coverage entries land on 2026-09-10
+ * (week of 6 Sep 2026) and 2026-09-20 (week of 13 Sep 2026) - four different weeks, so a
+ * bucket-hit assertion can tell one row from its neighbour.
+ */
+describe('S4 - schedule cells (AC-D1-AC-D5)', () => {
+  beforeEach(() => {
+    state.suggestion = suggestion({ lines: [plannerLine()] });
+  });
+
+  const openSchedule = async () => {
+    await screen.findByRole('button', { name: /schedule/i });
+    fireEvent.click(screen.getByRole('button', { name: /schedule/i }));
+  };
+
+  const switchToSalesOrderView = async () => {
+    const control = await screen.findByRole('combobox', { name: 'View' });
+    fireEvent.click(control);
+    fireEvent.click(await screen.findByText('Sales order'));
+  };
+
+  it('the legend renders in schedule view but not in table view (AC-D5)', async () => {
+    renderTable();
+    await screen.findByText('SRTWT7443');
+    expect(screen.queryByTestId('spo-schedule-legend')).not.toBeInTheDocument();
+
+    await openSchedule();
+
+    await screen.findByTestId('spo-schedule-legend');
+    const legend = screen.getByTestId('spo-schedule-legend');
+    expect(legend.textContent).toContain('This SPO');
+    expect(legend.textContent).toContain('Another SPO');
+  });
+
+  it('clicking a cell in the Purchase order view opens "PO covers · <code>" (AC-D2)', async () => {
+    renderTable();
+    await openSchedule();
+
+    fireEvent.click(await screen.findByRole('button', { name: /SRTWT7443 - 30 Aug 2026/ }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText(/PO covers · SRTWT7443/)).toBeInTheDocument();
+    expect(document.querySelector('[data-radix-popper-content-wrapper]')).toBeNull();
+  });
+
+  it('clicking a cell in the Sales order view opens "SO covered · <code>" (AC-D2)', async () => {
+    renderTable();
+    await openSchedule();
+    await switchToSalesOrderView();
+
+    fireEvent.click(await screen.findByRole('button', { name: /SRTWT7443 - 6 Sep/ }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText(/SO covered · SRTWT7443/)).toBeInTheDocument();
+  });
+
+  it('inside the opened PO picker, the row in the clicked week carries data-bucket-hit and the row tint (AC-D3)', async () => {
+    renderTable();
+    await openSchedule();
+
+    fireEvent.click(await screen.findByRole('button', { name: /SRTWT7443 - 30 Aug 2026/ }));
+    const dialog = await screen.findByRole('dialog');
+
+    const hitRow = within(dialog).getByText('202605-S0060').closest('tr') as HTMLElement;
+    const otherRow = within(dialog).getByText('202606-S0099').closest('tr') as HTMLElement;
+    expect(hitRow).toHaveAttribute('data-bucket-hit', 'true');
+    expect(hitRow.className).toContain('bg-primary/10');
+    expect(otherRow).not.toHaveAttribute('data-bucket-hit');
+    expect(otherRow.className).not.toContain('bg-primary/10');
+  });
+
+  it('inside the opened SO picker, the row in the clicked week carries data-bucket-hit and the row tint (AC-D3)', async () => {
+    renderTable();
+    await openSchedule();
+    await switchToSalesOrderView();
+
+    fireEvent.click(await screen.findByRole('button', { name: /SRTWT7443 - 6 Sep/ }));
+    const dialog = await screen.findByRole('dialog');
+
+    const hitRow = within(dialog).getByText('SI26-0100').closest('tr') as HTMLElement;
+    const otherRow = within(dialog).getByText('SO-2201').closest('tr') as HTMLElement;
+    expect(hitRow).toHaveAttribute('data-bucket-hit', 'true');
+    expect(hitRow.className).toContain('bg-primary/10');
+    expect(otherRow).not.toHaveAttribute('data-bucket-hit');
+  });
+
+  it('the picker\'s own search is untouched by a bucket click - typing still narrows the rows (S4)', async () => {
+    renderTable();
+    await openSchedule();
+
+    fireEvent.click(await screen.findByRole('button', { name: /SRTWT7443 - 30 Aug 2026/ }));
+    const dialog = await screen.findByRole('dialog');
+
+    const search = within(dialog).getByPlaceholderText('Search POs');
+    fireEvent.change(search, { target: { value: '202606' } });
+    fireEvent.keyDown(search, { key: 'Enter' });
+
+    expect(within(dialog).getByText('202606-S0099')).toBeInTheDocument();
+    expect(within(dialog).queryByText('202605-S0060')).not.toBeInTheDocument();
+  });
+});
