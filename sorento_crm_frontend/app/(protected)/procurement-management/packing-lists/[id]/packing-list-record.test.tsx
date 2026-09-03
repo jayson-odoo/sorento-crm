@@ -293,10 +293,19 @@ describe('the toolbar over the tabs', () => {
     expect(screen.getByRole('heading', { name: 'SPO-0042' })).toBeInTheDocument();
   });
 
-  it('carries ONE primary action: downloading the container workbook', async () => {
+  it('carries ONE primary action: editing the packing list', async () => {
     await renderTab(<DetailsPage />);
 
-    fireEvent.click(screen.getByRole('button', { name: /download packing list/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+
+    expect(screen.getByRole('button', { name: 'Save packing list' })).toBeInTheDocument();
+  });
+
+  it('downloads the container workbook from the gear', async () => {
+    await renderTab(<DetailsPage />);
+    const menu = await openGear();
+
+    fireEvent.click(within(menu).getByText('Download packing list'));
 
     await waitFor(() => expect(downloadWorkbook).toHaveBeenCalledTimes(1));
     // Named after the container, never the id: a workbook in a downloads folder called
@@ -308,7 +317,7 @@ describe('the toolbar over the tabs', () => {
     await renderTab(<DetailsPage />);
     const menu = await openGear();
 
-    expect(within(menu).getByText('Edit')).toBeInTheDocument();
+    expect(within(menu).getByText('Download packing list')).toBeInTheDocument();
     expect(within(menu).getByText('Import Container Status workbook')).toBeInTheDocument();
     expect(within(menu).getByText('Delete')).toBeInTheDocument();
   });
@@ -497,7 +506,7 @@ describe('the Shipment lines tab', () => {
   it('edits in place: Edit, Cancel and Save never leave /lines', async () => {
     await renderTab(<LinesPage />);
 
-    fireEvent.click(within(await openGear()).getByText('Edit'));
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
     expect(screen.getByRole('button', { name: 'Save packing list' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: /Shipment lines/ })).toHaveAttribute(
       'aria-selected',
@@ -510,7 +519,7 @@ describe('the Shipment lines tab', () => {
     expect(routerState.push).not.toHaveBeenCalled();
     expect(routerState.replace).not.toHaveBeenCalled();
 
-    fireEvent.click(within(await openGear()).getByText('Edit'));
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Save packing list' }));
     });
@@ -524,33 +533,33 @@ describe('the edit draft, which now lives above every tab', () => {
   it('swaps values for inputs where the values were, on the Details tab', async () => {
     await renderTab(<DetailsPage />);
 
-    expect(screen.queryByLabelText('Bill of Lading Number')).not.toBeInTheDocument();
-    fireEvent.click(within(await openGear()).getByText('Edit'));
+    expect(screen.queryByLabelText('Bill of lading')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
 
-    expect(screen.getByLabelText('Shipping Container Number')).toHaveValue('FSCU8103365');
+    expect(screen.getByLabelText('Container no')).toHaveValue('FSCU8103365');
     // The three the container workbook prints, and the costs it apportions.
-    expect(screen.getByLabelText('Seal No')).toBeInTheDocument();
+    expect(screen.getByLabelText('Seal no')).toBeInTheDocument();
     expect(screen.getByLabelText('Shipper')).toBeInTheDocument();
-    expect(screen.getByLabelText('Forwarder order ref')).toBeInTheDocument();
+    expect(screen.getByLabelText('SO')).toBeInTheDocument();
     expect(screen.getByLabelText('Clearance cost')).toBeInTheDocument();
     expect(screen.getByLabelText('China freight cost')).toBeInTheDocument();
     expect(screen.getByLabelText('Insurance rate')).toBeInTheDocument();
     // The ones with no input counterpart stay as values - nothing moves between the two.
-    expect(screen.getByText('Total Items')).toBeInTheDocument();
+    expect(screen.getByText('Total items')).toBeInTheDocument();
     expect(screen.getByText('Source sheet')).toBeInTheDocument();
   });
 
-  it('renders the Container costs card whether or not anything is priced', async () => {
+  it('renders the Costs card whether or not anything is priced', async () => {
     await renderTab(<DetailsPage />);
 
-    expect(screen.getByText('Container costs')).toBeInTheDocument();
+    expect(screen.getByText('Costs')).toBeInTheDocument();
   });
 
   it('saves the header and the lines in one PUT', async () => {
     await renderTab(<DetailsPage />);
-    fireEvent.click(within(await openGear()).getByText('Edit'));
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
 
-    fireEvent.change(screen.getByLabelText('Seal No'), { target: { value: 'J0713349' } });
+    fireEvent.change(screen.getByLabelText('Seal no'), { target: { value: 'J0713349' } });
     fireEvent.change(screen.getByLabelText('Clearance cost'), { target: { value: '2700' } });
     fireEvent.click(screen.getByRole('button', { name: /^Save packing list$/i }));
 
@@ -565,7 +574,7 @@ describe('the edit draft, which now lives above every tab', () => {
   it('sends null for a cleared cost, never a zero that would be apportioned', async () => {
     state.packingList = mixedContainer({ clearance_cost: '2700.00' });
     await renderTab(<DetailsPage />);
-    fireEvent.click(within(await openGear()).getByText('Edit'));
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
 
     fireEvent.change(screen.getByLabelText('Clearance cost'), { target: { value: '' } });
     fireEvent.click(screen.getByRole('button', { name: /^Save packing list$/i }));
@@ -579,7 +588,7 @@ describe('the edit draft, which now lives above every tab', () => {
   it('edits the measurements on the lines tab and sends them', async () => {
     routerState.pathname = '/procurement-management/packing-lists/pl-1/lines';
     await renderTab(<LinesPage />);
-    fireEvent.click(within(await openGear()).getByText('Edit'));
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
 
     expect(screen.getByLabelText('Pcs per carton for SRTWT7443')).toHaveValue(10);
     fireEvent.change(screen.getByLabelText('Carton length for SRTWT7443'), {
@@ -606,7 +615,7 @@ describe('the edit draft, which now lives above every tab', () => {
   it('totals follow the draft while somebody is typing', async () => {
     routerState.pathname = '/procurement-management/packing-lists/pl-1/lines';
     await renderTab(<LinesPage />);
-    fireEvent.click(within(await openGear()).getByText('Edit'));
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
 
     fireEvent.change(screen.getByLabelText('Quantity for SRTWT7443'), {
       target: { value: '400' },
@@ -621,7 +630,7 @@ describe('the edit draft, which now lives above every tab', () => {
   it('drops a line from the draft on the first press, asking nothing (S6-10)', async () => {
     routerState.pathname = '/procurement-management/packing-lists/pl-1/lines';
     await renderTab(<LinesPage />);
-    fireEvent.click(within(await openGear()).getByText('Edit'));
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
 
     const row = screen.getByLabelText('Quantity for SRTWT7443').closest('tr') as HTMLElement;
     fireEvent.click(within(row).getByRole('button', { name: /remove/i }));
@@ -640,13 +649,13 @@ describe('the edit draft, which now lives above every tab', () => {
 
   it('restores the saved values on Cancel, writing nothing', async () => {
     await renderTab(<DetailsPage />);
-    fireEvent.click(within(await openGear()).getByText('Edit'));
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
 
-    fireEvent.change(screen.getByLabelText('Invoice Number'), { target: { value: 'INV-77' } });
+    fireEvent.change(screen.getByLabelText('Invoice number'), { target: { value: 'INV-77' } });
     fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
 
     expect(updatePackingList).not.toHaveBeenCalled();
-    expect(screen.queryByLabelText('Invoice Number')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Invoice number')).not.toBeInTheDocument();
   });
 });
 

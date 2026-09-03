@@ -1,5 +1,5 @@
 """Procurement schemas."""
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Optional, List
 from datetime import datetime, date
 from decimal import Decimal
@@ -309,8 +309,16 @@ class InboundShipmentUpdate(ClearanceFields, ContainerWorkbookFields):
     PUT accepted the payload and silently dropped it - `update_shipment` setattrs
     whatever `exclude_unset` yields, so a field absent from the schema never
     reaches the row and the save looks successful.
+
+    `extra="forbid"`: a mistyped or renamed key used to pass straight through as an
+    unknown-but-ignored field and the save looked successful with nothing written - the
+    same silent-drop failure mode `shipment_number` itself used to hit before it was
+    declared here. Now a typo 422s loudly instead.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
+    shipment_number: Optional[str] = None
     supplier_id: Optional[str] = None
     shipment_date: Optional[date] = None
     estimated_arrival_date: Optional[date] = None
