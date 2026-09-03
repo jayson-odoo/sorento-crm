@@ -564,8 +564,9 @@ def test_the_two_row_column_header_is_the_fscu_one(db):
         # `TOTAL RM` is the reference workbook's own heading, kept as it is written there.
         "LOGO", "REMARKS", "RMB", "TOTAL RM",
     ]
-    # The lines scroll under the header rather than past it.
-    assert ws.freeze_panes == "A17"
+    # Round 2 (captain, 3 Sep): the earlier freeze read as "freezing at the bottom" on first
+    # open. The reference freezes nothing, and neither does this sheet now.
+    assert ws.freeze_panes is None
 
 
 def test_one_block_per_factory_with_its_mocha_goods_under_their_own_heading(db):

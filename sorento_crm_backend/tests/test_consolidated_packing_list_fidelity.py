@@ -24,7 +24,12 @@ WHERE THE REFERENCE DISAGREES WITH ITSELF, one form is picked and named here:
     rule with two gaps in it reads as a missing figure rather than as a rule.
   * The grand total is a sum of every LINE cell in the reference. It sums the SUBTOTALS here
     (AC-F3.5 of part 3), which cannot count a quantity twice.
-  * The reference freezes no panes. This freezes below the column header (AC-F3.4).
+
+Round 2 (captain, 3 Sep): AC-F3.4's own freeze pane and the centred/wrapped header block were
+a deliberate deviation from the reference, and the captain read them as a defect - "freezing at
+the bottom", "very ugly on first open", "headers should be left aligned". Both are reverted here:
+the header block (rows 1-12) carries the reference's own alignment cell by cell, and the sheet
+freezes nothing, matching the reference exactly.
 """
 from __future__ import annotations
 
@@ -298,6 +303,37 @@ def test_the_column_widths_are_the_reference_ones(sheet, reference):
 def test_the_header_block_row_that_wraps_keeps_its_height(sheet, reference):
     out, _world = sheet
     assert out.row_dimensions[12].height == pytest.approx(reference.row_dimensions[12].height)
+
+
+def test_the_header_block_alignment_matches_the_reference_cell_by_cell(sheet, reference):
+    """Round 2: the header block used to be forced centre/centre/wrap-text. The reference's
+    own hand-typed file leaves most cells at Excel's default and left-aligns only a few - so
+    this compares against the reference cell by cell rather than restating a pattern."""
+    out, _world = sheet
+    for row in range(1, 13):
+        for column in ("A", "B"):
+            coord = f"{column}{row}"
+            assert out[coord].alignment.horizontal == reference[coord].alignment.horizontal, coord
+            assert out[coord].alignment.vertical == reference[coord].alignment.vertical, coord
+            assert out[coord].alignment.wrap_text == reference[coord].alignment.wrap_text, coord
+
+
+def test_a_long_container_number_overflows_rather_than_wraps(sheet, reference):
+    """Column B is 7.3 wide in both files - the same width the reference lets a long value
+    overflow into C at, rather than wrapping it into a taller row (AC-H1)."""
+    out, _world = sheet
+    assert out["B4"].alignment.wrap_text is None
+    assert out.column_dimensions["B"].width == pytest.approx(
+        reference.column_dimensions["B"].width, abs=0.05
+    )
+
+
+def test_the_workbook_has_no_freeze_pane(sheet, reference):
+    """The reference freezes nothing (AC-H3); the earlier `A17` freeze read as "freezing at
+    the bottom" and is reverted."""
+    out, _world = sheet
+    assert reference.freeze_panes is None
+    assert out.freeze_panes is None
 
 
 # --------------------------------------------------------------------------------- #

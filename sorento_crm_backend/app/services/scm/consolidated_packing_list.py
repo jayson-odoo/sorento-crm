@@ -355,6 +355,15 @@ _LETTERS = [spec[0] for spec in _COLUMNS_SPEC]
 #: payload holds, or Excel treats them as text.
 _HEADER_DATE_KEYS = {"loading_date", "etd", "eta"}
 
+#: Round 2 (captain, 3 Sep): the header block used to be forced centre/centre/wrap-text, and
+#: the captain read that as a defect - "headers should be left aligned", "very ugly on first
+#: open". The reference's own hand-typed file leaves every label at Excel's default and left
+#: -aligns only these value rows (dates, container no, SO no); the rest are default too, off
+#: `FSCU8103365.xlsx`. Read off the reference rather than guessed at, same as everything else
+#: in this module - a rule that invented "always left" would drift the moment a fifth row in
+#: the reference turned out to disagree.
+_HEADER_LEFT_B_ROWS = {1, 2, 3, 4, 6}
+
 #: The header block above the lines: (row, label, payload key on `header`).
 _HEADER_BLOCK = [
     (1, "LOADING : ", "loading_date"),
@@ -443,15 +452,22 @@ def to_xlsx(payload: dict) -> bytes:
     ws = wb.active or wb.create_sheet()
     ws.title = _SHEET_TITLE
     centred = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    # The header block (rows 1-12) is NOT centred - see `_HEADER_LEFT_B_ROWS`.
+    header_label = Alignment(vertical="center")
+    header_label_wrap = Alignment(vertical="center", wrap_text=True)
+    header_value = Alignment(vertical="center")
+    header_value_left = Alignment(horizontal="left", vertical="center")
 
-    def style(row: int, column: int, *, bold: bool = False, red: bool = False, fmt=None):
+    def style(
+        row: int, column: int, *, bold: bool = False, red: bool = False, fmt=None, alignment=None
+    ):
         """Every cell the sheet writes goes through here, so nothing is left at Excel's
         default 11pt in the middle of a 12pt document."""
         cell = ws.cell(row=row, column=column)
         cell.font = Font(
             name=_FONT_NAME, size=_FONT_SIZE, bold=bold, color=_RED if red else None
         )
-        cell.alignment = centred
+        cell.alignment = alignment if alignment is not None else centred
         if fmt:
             cell.number_format = fmt
         return cell
@@ -465,11 +481,13 @@ def to_xlsx(payload: dict) -> bytes:
 
     # ---- the header block ------------------------------------------------- #
     for row, label, key in _HEADER_BLOCK:
-        style(row, 1).value = label
+        label_alignment = header_label_wrap if row == 12 else header_label
+        style(row, 1, alignment=label_alignment).value = label
         value = header.get(key)
         if key == "free_days" and value is not None:
             value = f"{_qty(value)} FREEDAYS"
-        cell = style(row, 2)
+        value_alignment = header_value_left if row in _HEADER_LEFT_B_ROWS else header_value
+        cell = style(row, 2, alignment=value_alignment)
         # A date is written AS a date, in the reference's own format. Written as the ISO
         # string it arrives as, Excel left-aligns it as text: it cannot be sorted, cannot be
         # added to, and prints 2026-07-17 on a document everybody else reads dd/mm/yyyy.
@@ -662,10 +680,8 @@ def to_xlsx(payload: dict) -> bytes:
 
     for letter, width in _WIDTHS.items():
         ws.column_dimensions[letter].width = width
-    # The header block and the column headers stay put while the lines scroll: a container
-    # runs to sixty rows and a factory column nobody can see is a column nobody reads. The
-    # reference freezes nothing, which is the one place this sheet is deliberately better.
-    ws.freeze_panes = f"A{_SUBHEADER_ROW + 1}"
+    # Round 2 (captain, 3 Sep): a frozen band read as "freezing at the bottom" on first open.
+    # The reference freezes nothing, and neither does this sheet now.
 
     buf = BytesIO()
     wb.save(buf)
