@@ -291,7 +291,13 @@ export function SearchableSelect({
   };
 
   return (
-    <Popover open={open} onOpenChange={(o) => !isDisabled && setOpen(o)}>
+    // `modal` makes this popover its own react-remove-scroll lock: mounted inside an open
+    // Dialog, it becomes the active lock (the stack is last-one-wins) so a wheel over ITS
+    // list scrolls, where a plain (non-modal) popover portalled to <body> sits outside the
+    // Dialog's own lock target and every wheel over it is swallowed. `disableOutsidePointerEvents`
+    // and the focus trap that come with `modal` match how `Select`/`DropdownMenu` already
+    // behave while open, so nothing about this component's contract changes.
+    <Popover modal open={open} onOpenChange={(o) => !isDisabled && setOpen(o)}>
       <PopoverTrigger asChild>
         {renderTrigger ? (
           renderTrigger({ selected, open, disabled: isDisabled })
@@ -395,7 +401,16 @@ export function SearchableSelect({
                 {opts.map((opt) => (
                   <CommandItem
                     key={opt.value}
-                    value={opt.searchText ?? `${opt.label} ${opt.description ?? ''}`}
+                    // The item's `value` is cmdk's IDENTITY, not its filter text: two options
+                    // sharing a label (21 suppliers named "Testing Company" is a real prod
+                    // case) used to collide on `searchText ?? label + description` here, so
+                    // cmdk's single-highlight state matched every one of them at once and a
+                    // hover/arrow landed on all of them together. The id is unique by
+                    // construction; `shouldFilter={false}` above means this value never drives
+                    // filtering (that is `visibleOptions`, computed manually), so `keywords`
+                    // carries the searchable text instead, for parity with cmdk's contract.
+                    value={opt.value}
+                    keywords={[opt.label, opt.description ?? '']}
                     disabled={opt.disabled}
                     onSelect={() => select(opt)}
                     className="flex items-start gap-2"

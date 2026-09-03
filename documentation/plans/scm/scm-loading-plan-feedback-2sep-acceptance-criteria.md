@@ -247,3 +247,20 @@ the match.
 - **AC-J4** `[FE]` Usable and non-clipped at 375px and 1280px: the dialog's `sm:max-w-[95vw]`
   and `max-h-[85vh]` are unchanged: a wide grid scrolls sideways inside the dialog body, the
   page itself never scrolls sideways.
+
+## K. Captain's live-testing feedback batch, 3 Sep (S10)
+
+- **AC-K1** `[FE][T]` `SearchableSelect` identifies each option by `opt.value` (the id), not
+  `searchText ?? label + description`: two options sharing a label - 21 suppliers literally
+  named "Testing Company" is the real case - hover/arrow to only ONE of them, and the OTHER
+  never highlights alongside it; selecting either returns its own id (`keywords={[opt.label,
+  opt.description ?? '']}` carries the searchable text instead, for parity with cmdk's
+  contract - `shouldFilter={false}` means neither `value` nor `keywords` drives filtering
+  here, `visibleOptions` does). A `SearchableSelect` popover opened from inside an open
+  `Dialog` also scrolls on a real wheel gesture, the same as a popover outside any dialog: the
+  `Popover` `SearchableSelect` renders is `modal`, so it owns its own `react-remove-scroll`
+  lock (last-mounted wins on the shared lock stack) instead of sitting outside the Dialog's
+  own lock target and having every wheel event over it silently swallowed. Verified in "Plan a
+  container" (Supplier) and in one non-dialog consumer (a listing filter) at 375px and 1280px;
+  no change to focus-trap / outside-pointer behaviour beyond what `Select`/`DropdownMenu`
+  already do while open.

@@ -230,6 +230,27 @@ footer TOTAL row, the 12-month history tab included. See UAC section J (AC-J1-AC
 full contract; `DESIGN-LANGUAGE.md`'s `Tabs` row is amended to make line tabs the default
 everywhere, dialogs included.
 
+### 3.10 Captain's live-testing feedback batch, 3 Sep (S10)
+
+Three frontend fixes found while the captain worked the lane live, onto this same PR. UAC
+section K (AC-K1-AC-K3).
+
+- `components/common/SearchableSelect.tsx`: cmdk's per-`CommandItem` `value` was
+  `opt.searchText ?? label + description` - the identity cmdk highlights and tracks by, not
+  the string `shouldFilter={false}` filters on (that is manual, in `visibleOptions`). Two
+  options sharing a label collided on that identity, so hovering one highlighted every
+  option with the same label. Fixed to `opt.value` (the id), with `keywords={[opt.label,
+  opt.description ?? '']}` carrying the searchable text cmdk's own contract expects there.
+  Separately, the popover this component renders did not scroll on a real wheel gesture when
+  opened from inside a `Dialog`: Radix Dialog's own scroll lock (`react-remove-scroll`,
+  wrapping the Overlay with `shards: [contentRef]`) only exempts the Dialog's OWN content
+  subtree, and a `Popover` portalled to `<body>` sits outside it, so every wheel event over it
+  is swallowed regardless of the popover's own scroll capacity. `react-remove-scroll`'s lock
+  stack is last-mounted-wins, and Radix `Popover`'s `modal` mode wraps its OWN content in its
+  own `RemoveScroll` instance (`@radix-ui/react-popover`), so making the `Popover` `modal`
+  makes IT the active lock while open, letting its own list scroll - the same mechanism
+  `Select`/`DropdownMenu` already use. No dialog-side change.
+
 ## 4. What is reused, and what is deliberately not built
 
 - Reused: `RowActionsMenu`, `DetailActions`, `recordActions`, `useDeferredAction`,
