@@ -176,6 +176,10 @@ multi-team member can be RR-eligible in one team, excluded in another).
   failure; form row skips push; taker without respond_user_id skips push + warns.
 - Reassign: assignee→target, team/tier/clock unchanged, log written; scope-B picker enforced.
   Superseded 2026-09-03: reassign target = any team member (cross-team allowed); coverage + Team Tasks stay scope-B.
+  Superseded again 2026-09-03: reassign ACTOR gate dropped scope-B too, any team member (or admin)
+  may reassign any unresolved task, not just one the assignee shares a visible team with. Real case:
+  an agent's ticket escalated to her manager's (parent) team mid-click, outside her downward scope,
+  and she got denied reassigning her own task. Only "no team at all" is still rejected for the actor.
 - Notifications: new assignee always; old assignee only when actor≠them; self-reassign no self-notify.
 - Subscription fan-out: target's assignment/escalation copies to active subscribers, gated by
   subscriber's own channel toggles; expired/inactive skipped; no double-send when subscriber==assignee;
