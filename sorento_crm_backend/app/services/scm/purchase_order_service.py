@@ -132,7 +132,8 @@ class PurchaseOrderService:
 
     def serialize(self, po: PurchaseOrder, gr_reference: Optional[str] = None, *,
                   allocated_qty: float = 0.0,
-                  allocations: Optional[list[dict]] = None) -> dict:
+                  allocations: Optional[list[dict]] = None,
+                  spo_plan: Optional[dict] = None) -> dict:
         # Warehouse is carried at the line level; surface the first line's warehouse
         # as the PO's warehouse (M1 POs are effectively single-destination).
         wh_code = None
@@ -243,6 +244,11 @@ class PurchaseOrderService:
             "is_on_order": self._is_on_order(po),
             "source": _source_label(po.source_system),
             "gr_reference": gr_reference,
+            # R1's Plan card (AC-H7): a crm_spo PO's own pulls/covers, `None` on every other
+            # order - `response_model` drops it on the way out if it is not declared there,
+            # which is exactly how a carefully built figure goes out missing (see
+            # `PurchaseOrderPlacement`'s own docstring for the same lesson).
+            "spo_plan": spo_plan,
         }
 
     def _gr_refs_for(self, po_ids: list[str]) -> dict[str, str]:
@@ -798,11 +804,17 @@ class PurchaseOrderService:
         if po is None:
             return None
         gr_refs = self._gr_refs_for([po.id])
+        spo_plan = None
+        if po.source_system == CRM_SPO_SOURCE:
+            from app.services.scm.spo_conversion_service import plan_of
+
+            spo_plan = plan_of(self.db, str(po.id))
         return self.serialize(
             po,
             gr_refs.get(po.id),
             allocated_qty=self._allocated_by_po([str(po.id)]).get(str(po.id), 0.0),
             allocations=self._allocations_for(po),
+            spo_plan=spo_plan,
         )
 
     def list_supplier_options(

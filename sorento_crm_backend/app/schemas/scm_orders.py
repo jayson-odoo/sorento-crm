@@ -512,6 +512,32 @@ class PurchaseOrderLineAllocation(BaseModel):
     placements: List[PurchaseOrderPlacement] = Field(default_factory=list)
 
 
+class SpoPlanPull(BaseModel):
+    """One SOURCE purchase-order line a CRM SPO line pulled from (R1, AC-H5)."""
+
+    purchase_order_id: Optional[str] = None
+    po_number: Optional[str] = None
+    po_line_label: Optional[str] = None
+    qty: float = 0.0
+
+
+class SpoPlanCover(BaseModel):
+    """One retail sales-order line a CRM SPO line covers (R1, AC-H5)."""
+
+    so_number: Optional[str] = None
+    customer: Optional[str] = None
+    qty: float = 0.0
+    warehouse: Optional[str] = None
+
+
+class SpoPlan(BaseModel):
+    """The PO detail's Plan card (R1): a `crm_spo` order's own pulls/covers, read off its
+    lines' `source_ref`. Declared here or `response_model` drops it on the way out."""
+
+    pulls: List[SpoPlanPull] = Field(default_factory=list)
+    covers: List[SpoPlanCover] = Field(default_factory=list)
+
+
 class PurchaseOrder(BaseModel):
     id: str
     po_number: str
@@ -554,6 +580,8 @@ class PurchaseOrder(BaseModel):
     is_on_order: bool = False
     source: str = "manual"           # recommendation | import | manual
     gr_reference: Optional[str] = None
+    #: A `crm_spo` order's own pulls/covers (R1, AC-H7); `None` on every other order.
+    spo_plan: Optional[SpoPlan] = None
 
 
 class PurchaseOrderLineInput(BaseModel):

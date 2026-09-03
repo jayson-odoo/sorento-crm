@@ -27,6 +27,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 
 from app.models.inventory import Warehouse
+from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.procurement import (
     InboundShipment,
     InboundShipmentLine,
@@ -668,7 +669,11 @@ def test_create_succeeds_with_no_po_behind_the_ticked_line():
         assert svc.parse_source_ref(po_line.source_ref)["pulls"] == []
 
 
-def test_a_second_create_is_refused_409_naming_the_existing_spo():
+def test_a_second_create_after_full_conversion_is_422_nothing_left_not_409():
+    """R1 supersedes the old blanket-refusal contract: a fully converted shipment no longer
+    blocks `suggest` (which keeps reporting `already_converted: false` and lists the SPO in
+    `existing_spos`) and a second `create` with nothing left on any line is 422 `nothing_left`,
+    never a 409."""
     with pg_session() as db:
         w = World(db)
         supplier = w.supplier()
@@ -681,12 +686,210 @@ def test_a_second_create_is_refused_409_naming_the_existing_spo():
         with pytest.raises(AppException) as exc:
             svc.create(db, str(shipment.id), _confirm_all(lines), actor="tester")
 
-        assert exc.value.status_code == 409
-        assert first_number in str(exc.value.message if hasattr(exc.value, "message") else exc.value.detail or exc.value)
-        # suggest() must also report it as already converted, not re-offer a confirm screen.
+        assert exc.value.status_code == 422
+        assert exc.value.detail["detail"] == "nothing_left"
+        # suggest() must keep reporting `already_converted: false` (R1: it never flips any
+        # more) and still list the SPO already made.
         again = svc.suggest(db, str(shipment.id))
-        assert again["already_converted"] is True
+        assert again["already_converted"] is False
         assert again["existing_spos"][0]["po_number"] == first_number
+        assert _line(again, str(lines[0].id))["remaining_qty"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# R1 - many SPOs per container (AC-H1..H5)
+# --------------------------------------------------------------------------- #
+
+
+def test_suggest_after_a_partial_create_reports_the_remainder_and_the_existing_spo():
+    """AC-H1: `create` 40 of a line packed 100 (an open PO covers plenty); a second `suggest`
+    reports `already_converted: false`, one row in `existing_spos` naming the SPO with its
+    own line/qty/created/status figures, and the line's `remaining_qty` = packed minus what
+    that SPO already took - `packed_qty` stays the untouched physical fact."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        w.po("1", supplier, [("A", 200, 0)])
+        shipment, lines = w.shipment([("A", 100, supplier)])
+        line_id = str(lines[0].id)
+
+        created = svc.create(
+            db, str(shipment.id),
+            [{"shipment_line_id": line_id, "qty": 40, "include": True}],
+            actor="tester",
+        )
+        first_number = created["created_spos"][0]["po_number"]
+
+        out = svc.suggest(db, str(shipment.id))
+
+        assert out["already_converted"] is False
+        assert len(out["existing_spos"]) == 1
+        spo = out["existing_spos"][0]
+        assert spo["po_number"] == first_number
+        assert spo["line_count"] == 1
+        assert spo["total_qty"] == 40
+        assert spo["created_at"]
+        assert spo["status"] == "active"
+
+        line = _line(out, line_id)
+        assert line["packed_qty"] == 100
+        assert line["remaining_qty"] == 60
+        assert line["suggested_qty"] == min(line["po_covered_qty"], 60)
+        assert line["po_covered_qty"] <= 60
+
+
+def test_a_line_fully_spod_reads_remaining_zero_and_names_the_spo():
+    """AC-H2."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        w.po("1", supplier, [("A", 100, 0)])
+        shipment, lines = w.shipment([("A", 100, supplier)])
+
+        created = svc.create(db, str(shipment.id), _confirm_all(lines), actor="tester")
+        first_number = created["created_spos"][0]["po_number"]
+
+        out = svc.suggest(db, str(shipment.id))
+
+        line = _line(out, str(lines[0].id))
+        assert line["remaining_qty"] == 0
+        assert line["cannot_convert"] is True
+        assert line["reason"].startswith("Already on ")
+        assert first_number in line["reason"]
+
+
+def test_a_second_create_on_the_remainder_succeeds_a_third_with_nothing_left_is_422():
+    """AC-H3."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        w.po("1", supplier, [("A", 200, 0)])
+        shipment, lines = w.shipment([("A", 100, supplier)])
+        line_id = str(lines[0].id)
+
+        svc.create(
+            db, str(shipment.id),
+            [{"shipment_line_id": line_id, "qty": 40, "include": True}],
+            actor="tester",
+        )
+        second = svc.create(
+            db, str(shipment.id),
+            [{"shipment_line_id": line_id, "qty": 60, "include": True}],
+            actor="tester",
+        )
+        assert len(second["created_spos"]) == 1
+
+        out = svc.suggest(db, str(shipment.id))
+        assert len(out["existing_spos"]) == 2
+        line = _line(out, line_id)
+        assert line["remaining_qty"] == 0
+
+        with pytest.raises(AppException) as exc:
+            svc.create(
+                db, str(shipment.id),
+                [{"shipment_line_id": line_id, "qty": 100, "include": True}],
+                actor="tester",
+            )
+        assert exc.value.status_code == 422
+        assert exc.value.detail["detail"] == "nothing_left"
+
+
+def test_unwind_scoped_to_one_purchase_order_id_leaves_the_other_spo():
+    """AC-H4."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        w.po("1", supplier, [("A", 200, 0)])
+        shipment, lines = w.shipment([("A", 100, supplier)])
+        line_id = str(lines[0].id)
+
+        first = svc.create(
+            db, str(shipment.id),
+            [{"shipment_line_id": line_id, "qty": 40, "include": True}],
+            actor="tester",
+        )
+        second = svc.create(
+            db, str(shipment.id),
+            [{"shipment_line_id": line_id, "qty": 60, "include": True}],
+            actor="tester",
+        )
+        first_id = first["created_spos"][0]["purchase_order_id"]
+        second_id = second["created_spos"][0]["purchase_order_id"]
+
+        out = svc.unwind(db, str(shipment.id), purchase_order_id=first_id)
+
+        assert out["deleted_po_numbers"] == [first["created_spos"][0]["po_number"]]
+        assert out["deleted_spo_count"] == 1
+        assert db.query(PurchaseOrder).filter(PurchaseOrder.id == first_id).one_or_none() is None
+        assert db.query(PurchaseOrder).filter(PurchaseOrder.id == second_id).one_or_none() is not None
+
+        again = svc.suggest(db, str(shipment.id))
+        assert len(again["existing_spos"]) == 1
+        assert again["existing_spos"][0]["purchase_order_id"] == second_id
+        line = _line(again, line_id)
+        assert line["remaining_qty"] == 40, "only the surviving SPO's 60 stays taken off the 100 packed"
+
+        with pytest.raises(AppException) as exc:
+            svc.unwind(db, str(shipment.id), purchase_order_id=str(uuid.uuid4()))
+        assert exc.value.status_code == 404
+
+
+def test_plan_of_lists_pulls_and_covers_for_a_crm_spo_po_and_is_empty_for_an_import_po():
+    """AC-H5."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        wh = w.warehouse()
+        source_po = w.po("1", supplier, [("A", 100, 0)])
+        shipment, lines = w.shipment([("A", 100, supplier)])
+
+        customer = Customer(
+            id=_u(), customer_code=f"{MARKER}-C-{uuid.uuid4().hex[:6]}",
+            customer_name=f"{MARKER} dealer",
+        )
+        db.add(customer)
+        db.flush()
+        so = SalesOrder(
+            id=_u(), so_number=f"{MARKER}-SO-{uuid.uuid4().hex[:6]}",
+            customer_id=customer.id, order_date=date(2026, 7, 1), status="open",
+        )
+        db.add(so)
+        db.flush()
+        so_line = SalesOrderLine(
+            id=_u(), sales_order_id=so.id, product_id=w.product("A").id,
+            warehouse_id=wh.id, qty_ordered=100, qty_delivered=0,
+            required_date=date(2026, 9, 1), line_status="open",
+        )
+        db.add(so_line)
+        db.flush()
+
+        created = svc.create(
+            db, str(shipment.id),
+            [{
+                "shipment_line_id": str(lines[0].id), "qty": 100, "include": True,
+                "so_line_ids": [f"retail:{so_line.id}"],
+            }],
+            actor="tester",
+        )
+        po_id = created["created_spos"][0]["purchase_order_id"]
+
+        plan = svc.plan_of(db, po_id)
+
+        assert plan["pulls"] == [{
+            "purchase_order_id": str(source_po.id),
+            "po_number": source_po.po_number,
+            "po_line_label": w.product("A").product_code,
+            "qty": 100.0,
+        }]
+        assert len(plan["covers"]) == 1
+        cover = plan["covers"][0]
+        assert cover["so_number"] == so.so_number
+        assert cover["customer"] == customer.customer_name
+        assert cover["qty"] == 100.0
+        assert cover["warehouse"] == wh.warehouse_code
+
+        # An AutoCount (non-crm_spo) PO has no plan at all.
+        assert svc.plan_of(db, str(source_po.id)) == {"pulls": [], "covers": []}
 
 
 def test_draft_shipment_converts_too():
@@ -967,8 +1170,12 @@ def test_unwind_only_touches_this_shipments_spo_not_anothers():
         assert db.query(PurchaseOrder).filter(PurchaseOrder.id == po_b_id).one_or_none() is not None
         again_a = svc.suggest(db, str(shipment_a.id))
         assert again_a["already_converted"] is False
+        assert again_a["existing_spos"] == []
         again_b = svc.suggest(db, str(shipment_b.id))
-        assert again_b["already_converted"] is True
+        assert again_b["already_converted"] is False
+        assert again_b["existing_spos"][0]["purchase_order_id"] == po_b_id
+        line_b = _line(again_b, str(lines_b[0].id))
+        assert line_b["remaining_qty"] == 0
 
 
 def test_unwind_on_a_never_converted_shipment_is_404():
@@ -1050,10 +1257,19 @@ def test_heal_partial_alive_conversion_shows_the_alive_spo_and_notes_the_cleared
 
         out = svc.suggest(db, str(shipment.id))
 
-        assert out["already_converted"] is True
+        assert out["already_converted"] is False
         assert out["self_heal_note"] is not None
         remaining_ids = {s["purchase_order_id"] for s in out["existing_spos"]}
         assert remaining_ids == {alive["purchase_order_id"]}
+
+        jiangmen_line = next(l for l in lines if str(l.supplier_id) == str(jiangmen.id))
+        kailu_line = next(l for l in lines if str(l.supplier_id) == str(kailu.id))
+        assert _line(out, str(jiangmen_line.id))["remaining_qty"] == 50, (
+            "the healed (deleted) SPO's line is convertible again"
+        )
+        assert _line(out, str(kailu_line.id))["remaining_qty"] == 0, (
+            "the still-alive SPO's line stays fully spent"
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -1310,3 +1526,73 @@ def test_route_delete_spo_with_nothing_converted_is_404(scm_app):
     r = TestClient(app).delete(f"{_BASE}/{shipment.id}/spo")
 
     assert r.status_code == 404, r.text
+
+
+def test_route_delete_spo_scoped_to_one_purchase_order_id_leaves_the_other(scm_app):
+    """AC-H4, at the route: `?purchase_order_id=` deletes only that one SPO."""
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    shipment, line = _seed_route_shipment(db)
+    client = TestClient(app)
+
+    first = client.post(
+        f"{_BASE}/{shipment.id}/spo",
+        json={"lines": [{"shipment_line_id": str(line.id), "qty": 6, "include": True}]},
+    )
+    assert first.status_code == 201, first.text
+    second = client.post(
+        f"{_BASE}/{shipment.id}/spo",
+        json={"lines": [{"shipment_line_id": str(line.id), "qty": 9, "include": True}]},
+    )
+    assert second.status_code == 201, second.text
+    first_id = first.json()["created_spos"][0]["purchase_order_id"]
+    second_id = second.json()["created_spos"][0]["purchase_order_id"]
+
+    r = client.delete(f"{_BASE}/{shipment.id}/spo", params={"purchase_order_id": first_id})
+
+    assert r.status_code == 200, r.text
+    assert r.json()["deleted_spo_count"] == 1
+
+    again = client.get(f"{_BASE}/{shipment.id}/spo-suggestion")
+    existing_ids = {s["purchase_order_id"] for s in again.json()["existing_spos"]}
+    assert existing_ids == {second_id}
+
+    r2 = client.delete(
+        f"{_BASE}/{shipment.id}/spo", params={"purchase_order_id": str(uuid.uuid4())}
+    )
+    assert r2.status_code == 404, r2.text
+
+
+def test_route_purchase_order_detail_carries_spo_plan_for_a_crm_spo_po_and_none_for_import(
+    scm_app,
+):
+    """AC-H5/H7 through the API - `response_model` silently drops an undeclared field, so
+    this asserts `spo_plan` is actually present on the JSON, not merely on the service dict."""
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    shipment, line = _seed_route_shipment(db)
+    client = TestClient(app)
+
+    created = client.post(
+        f"{_BASE}/{shipment.id}/spo",
+        json={"lines": [{"shipment_line_id": str(line.id), "qty": 15, "include": True}]},
+    )
+    assert created.status_code == 201, created.text
+    spo_id = created.json()["created_spos"][0]["purchase_order_id"]
+
+    r = client.get(f"/api/v1/scm/purchase-orders/{spo_id}")
+
+    assert r.status_code == 200, r.text
+    plan = r.json()["spo_plan"]
+    assert plan is not None
+    assert len(plan["pulls"]) == 1
+    assert plan["pulls"][0]["qty"] == 15
+
+    # `_seed_route_shipment` also seeds ONE other (non-`crm_spo`) purchase order, to pull
+    # from - that one carries no plan at all.
+    source_po_id = str(
+        db.query(PurchaseOrder.id).filter(PurchaseOrder.id != spo_id).scalar()
+    )
+    r2 = client.get(f"/api/v1/scm/purchase-orders/{source_po_id}")
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["spo_plan"] is None
