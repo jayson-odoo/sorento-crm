@@ -1382,6 +1382,11 @@ export interface SpoPoTake {
    *  re-runs the walk over the lines still ticked, and `qty` alone cannot answer that: a
    *  line that gave 40 while its neighbour was ticked may have 150 to give without it. */
   open_qty: number;
+  /** How much of this line an EARLIER SPO already pulled, and its number(s) - oldest first
+   *  (S5). A row with `qty: 0` and `taken_qty > 0` is fully occupied elsewhere: never this
+   *  cascade's own take, always someone else's. */
+  taken_qty: number;
+  taken_by: string[];
 }
 
 /** One open SO line behind a location's `outstanding_so` - "what SO am I covering"
@@ -1419,6 +1424,11 @@ export interface SpoCoverageLine {
   /** Pre-ticked by the default walk: project by required date, then retail by required
    *  date, until the packed quantity is used up (Q4). */
   default_ticked: boolean;
+  /** How much of this row an EARLIER SPO already covers, and its number(s) - oldest first
+   *  (S5). A row with `qty: 0` and `taken_qty > 0` is fully occupied elsewhere: never
+   *  tickable, never this SPO's own tick. */
+  taken_qty: number;
+  taken_by: string[];
 }
 
 /** One candidate destination warehouse for a line's SPO qty, ranked. */

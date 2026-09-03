@@ -1099,10 +1099,11 @@ describe('R21 - the four figures open the shared lightbox', () => {
     expect(rows[2].textContent).toContain('SO-2201');
     expect(rows[3].textContent).toContain('SO-2202');
     // Open / Take per row, off the one walk: 40 and 30 are served in full, and the order
-    // nobody ticked gets nothing.
-    expect(rows[1].querySelectorAll('td')[6].textContent).toBe('40');
+    // nobody ticked gets nothing. Column 6 is S5's new Taken column (all dashes here -
+    // nothing in this fixture is covered by another SPO); Take moved to 7 to make room.
+    expect(rows[1].querySelectorAll('td')[7].textContent).toBe('40');
     expect(rows[3].querySelectorAll('td')[5].textContent).toBe('90');
-    expect(rows[3].querySelectorAll('td')[6].textContent).toBe('0');
+    expect(rows[3].querySelectorAll('td')[7].textContent).toBe('0');
     expect(within(dialog).getByText('Unassigned 30')).toBeInTheDocument();
   });
 
@@ -1289,10 +1290,11 @@ describe('S1 - planner chrome (AC-A1-AC-A7)', () => {
  * S4 (feedback, 3 Sep) - schedule cells are coloured and clickable, and open the SAME
  * lightbox the table's own PO covers / SO covered cells do (AC-D1-AC-D5).
  *
- * `plannerLine()`'s two PO takes land on 2026-09-01 (week of 30 Aug 2026) and 2026-08-01
- * (week of 26 Jul 2026); the two default-ticked SO coverage entries land on 2026-09-10
- * (week of 6 Sep 2026) and 2026-09-20 (week of 13 Sep 2026) - four different weeks, so a
- * bucket-hit assertion can tell one row from its neighbour.
+ * `plannerLine()`'s two PO takes land on 2026-09-01 (week of 31 Aug 2026) and 2026-08-01
+ * (week of 27 Jul 2026); the two default-ticked SO coverage entries land on 2026-09-10
+ * (week of 7 Sep 2026) and 2026-09-20 (week of 14 Sep 2026) - four different weeks, so a
+ * bucket-hit assertion can tell one row from its neighbour. These are the MONDAYS
+ * (`startOfWeekIso`, fixed S5) - a UTC+8 host used to print the SUNDAY before each one.
  */
 describe('S4 - schedule cells (AC-D1-AC-D5)', () => {
   beforeEach(() => {
@@ -1327,7 +1329,7 @@ describe('S4 - schedule cells (AC-D1-AC-D5)', () => {
     renderTable();
     await openSchedule();
 
-    fireEvent.click(await screen.findByRole('button', { name: /SRTWT7443 - 30 Aug 2026/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /SRTWT7443 - 31 Aug 2026/ }));
 
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText(/PO covers · SRTWT7443/)).toBeInTheDocument();
@@ -1339,7 +1341,7 @@ describe('S4 - schedule cells (AC-D1-AC-D5)', () => {
     await openSchedule();
     await switchToSalesOrderView();
 
-    fireEvent.click(await screen.findByRole('button', { name: /SRTWT7443 - 6 Sep/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /SRTWT7443 - 7 Sep/ }));
 
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText(/SO covered · SRTWT7443/)).toBeInTheDocument();
@@ -1349,7 +1351,7 @@ describe('S4 - schedule cells (AC-D1-AC-D5)', () => {
     renderTable();
     await openSchedule();
 
-    fireEvent.click(await screen.findByRole('button', { name: /SRTWT7443 - 30 Aug 2026/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /SRTWT7443 - 31 Aug 2026/ }));
     const dialog = await screen.findByRole('dialog');
 
     const hitRow = within(dialog).getByText('202605-S0060').closest('tr') as HTMLElement;
@@ -1365,7 +1367,7 @@ describe('S4 - schedule cells (AC-D1-AC-D5)', () => {
     await openSchedule();
     await switchToSalesOrderView();
 
-    fireEvent.click(await screen.findByRole('button', { name: /SRTWT7443 - 6 Sep/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /SRTWT7443 - 7 Sep/ }));
     const dialog = await screen.findByRole('dialog');
 
     const hitRow = within(dialog).getByText('SI26-0100').closest('tr') as HTMLElement;
@@ -1379,7 +1381,7 @@ describe('S4 - schedule cells (AC-D1-AC-D5)', () => {
     renderTable();
     await openSchedule();
 
-    fireEvent.click(await screen.findByRole('button', { name: /SRTWT7443 - 30 Aug 2026/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /SRTWT7443 - 31 Aug 2026/ }));
     const dialog = await screen.findByRole('dialog');
 
     const search = within(dialog).getByPlaceholderText('Search POs');
@@ -1388,5 +1390,153 @@ describe('S4 - schedule cells (AC-D1-AC-D5)', () => {
 
     expect(within(dialog).getByText('202606-S0099')).toBeInTheDocument();
     expect(within(dialog).queryByText('202605-S0060')).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * S5 (`PLAN-scm-spo-planner-feedback-3sep.md`) - a row already occupied by ANOTHER SPO is
+ * visible and grey, never tickable: `qty === 0 && taken_qty > 0`. Own fixture (not
+ * `plannerLine()`'s shared defaults) so these additions cannot perturb the many existing
+ * assertions built off the base two-take, three-coverage line.
+ */
+function takenPlannerLine() {
+  return plannerLine({
+    packed_qty: 60,
+    po_covered_qty: 60,
+    suggested_qty: 60,
+    po_takes: [
+      {
+        po_line_id: 'pol-1',
+        po_number: '202605-S0060',
+        qty: 60,
+        expected_date: '2026-09-01',
+        po_date: '2026-05-02',
+        supplier_name: 'Kailu',
+        open_qty: 60,
+        // Mixed: this SAME line also carries a pull from an EARLIER SPO - the cascade
+        // above still took 60 from it (whatever it gave was open), but another SPO has 25
+        // of it too, on the SAME week bucket (31 Aug 2026).
+        taken_qty: 25,
+        taken_by: ['CRM-SPO-2026/08-0005'],
+      },
+      {
+        // Taken-only: this cascade never draws from it (qty 0), a DIFFERENT week bucket
+        // (2026-10-01, week of 28 Sep 2026) so its cell is never mixed with the row above.
+        po_line_id: 'pol-taken',
+        po_number: '202607-S0120',
+        qty: 0,
+        expected_date: '2026-10-01',
+        po_date: '2026-01-05',
+        supplier_name: 'Kailu',
+        open_qty: 0,
+        taken_qty: 50,
+        taken_by: ['CRM-SPO-2026/08-0005'],
+      },
+    ],
+    so_coverage: [
+      {
+        key: 'project:row-1',
+        kind: 'project' as const,
+        document: 'SI26-0100',
+        customer_name: 'Sunway',
+        required_date: '2026-09-10',
+        qty: 40,
+        warehouse_id: 'wh-1',
+        warehouse_code: 'BRW',
+        default_ticked: true,
+        // Mixed: same week bucket (7 Sep 2026) as this row's own take.
+        taken_qty: 15,
+        taken_by: ['CRM-SPO-2026/08-0005'],
+      },
+      {
+        // Taken-only: never ticked (`default_ticked: false`, the server's own rule), a
+        // different week bucket (2026-10-15) so its cell stands alone.
+        key: 'retail:sol-taken',
+        kind: 'retail' as const,
+        document: 'SO-9000',
+        customer_name: 'Dealer C',
+        required_date: '2026-10-15',
+        qty: 0,
+        warehouse_id: 'wh-2',
+        warehouse_code: 'MWH',
+        default_ticked: false,
+        taken_qty: 20,
+        taken_by: ['CRM-SPO-2026/08-0005'],
+      },
+    ],
+  });
+}
+
+describe('S5 - occupied by another SPO (AC-E7, AC-E8)', () => {
+  beforeEach(() => {
+    state.suggestion = suggestion({ lines: [takenPlannerLine()] });
+  });
+
+  it('the taken PO line is never ticked by default, and PO covers excludes it (AC-E7)', async () => {
+    renderTable();
+
+    await screen.findByTitle(/which po covers this/i);
+    // Only the real take (60) counts - the taken-only line (qty 0) never joins the sum.
+    expect(screen.getByTitle(/which po covers this/i)).toHaveTextContent('60');
+
+    fireEvent.click(screen.getByTitle(/which po covers this/i));
+    const dialog = await screen.findByRole('dialog');
+
+    const checkbox = within(dialog).getByRole('checkbox', { name: 'Draw from 202607-S0120' });
+    expect(checkbox).not.toBeChecked();
+    expect(checkbox).toBeDisabled();
+  });
+
+  it('the taken SO row is never ticked by default, and SO covered excludes it (AC-E7)', async () => {
+    renderTable();
+
+    await screen.findByTitle(/which demand this spo is for/i);
+    // Project row (40) is the only real tick - the taken retail row (qty 0) contributes 0.
+    expect(screen.getByTitle(/which demand this spo is for/i)).toHaveTextContent('40');
+
+    fireEvent.click(screen.getByTitle(/which demand this spo is for/i));
+    const dialog = await screen.findByRole('dialog');
+
+    const checkbox = within(dialog).getByRole('checkbox', { name: 'Cover SO-9000' });
+    expect(checkbox).not.toBeChecked();
+    expect(checkbox).toBeDisabled();
+  });
+
+  it('a schedule cell whose only quantity is taken renders bg-muted (Purchase order view, AC-E8)', async () => {
+    renderTable();
+    await screen.findByRole('button', { name: /schedule/i });
+    fireEvent.click(screen.getByRole('button', { name: /schedule/i }));
+
+    // "Sep" not "Sep 2026" - `en-GB` abbreviates September as "Sept", so a regex requiring
+    // the space right after "Sep" would miss it (`SpoPlannerTable.test.tsx`'s own precedent).
+    const cell = await screen.findByRole('button', { name: /SRTWT7443 - 28 Sep/ });
+    expect(cell.className).toContain('bg-muted');
+    expect(cell.className).not.toContain('bg-primary/10');
+    expect(within(cell).getByText('50')).toBeTruthy();
+  });
+
+  it('a mixed schedule cell shows the tinted figure and "+N on SPO-..." (Purchase order view, AC-E8)', async () => {
+    renderTable();
+    await screen.findByRole('button', { name: /schedule/i });
+    fireEvent.click(screen.getByRole('button', { name: /schedule/i }));
+
+    const cell = await screen.findByRole('button', { name: /SRTWT7443 - 31 Aug 2026/ });
+    expect(cell.className).toContain('bg-primary/10');
+    expect(within(cell).getByText('60')).toBeTruthy();
+    expect(within(cell).getByText('+25 on CRM-SPO-2026/08-0005')).toBeTruthy();
+  });
+
+  it('a mixed schedule cell shows the tinted figure and "+N on SPO-..." (Sales order view, AC-E8)', async () => {
+    renderTable();
+    await screen.findByRole('button', { name: /schedule/i });
+    fireEvent.click(screen.getByRole('button', { name: /schedule/i }));
+    const control = await screen.findByRole('combobox', { name: 'View' });
+    fireEvent.click(control);
+    fireEvent.click(await screen.findByText('Sales order'));
+
+    const cell = await screen.findByRole('button', { name: /SRTWT7443 - 7 Sep/ });
+    expect(cell.className).toContain('bg-primary/10');
+    expect(within(cell).getByText('40')).toBeTruthy();
+    expect(within(cell).getByText('+15 on CRM-SPO-2026/08-0005')).toBeTruthy();
   });
 });

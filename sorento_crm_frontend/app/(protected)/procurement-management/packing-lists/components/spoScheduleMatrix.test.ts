@@ -82,4 +82,19 @@ describe('bucketKeyFor', () => {
 
     expect(matrix.buckets[0].key).toBe(bucketKeyFor('2026-09-01'));
   });
+
+  // S5: a real regression, not just the invariant above - `startOfWeekIso` used to format
+  // through `toISOString().slice(0, 10)` after LOCAL date arithmetic, so on a UTC+8 host the
+  // UTC conversion rolled every key (and the label built off it) back one further day, to
+  // the SUNDAY before the Monday it meant. Prod showed "30 Aug 2026" / "13 Sept 2026" -
+  // Sundays. These pin the literal so the bug cannot come back quietly.
+  it('returns the Monday of the week (2026-09-03, a Thursday, buckets to 2026-08-31)', () => {
+    expect(bucketKeyFor('2026-09-03')).toBe('2026-08-31');
+  });
+
+  it('labels the week by its Monday, never the prior Sunday', () => {
+    const matrix = buildSpoScheduleMatrix([entry({ date: '2026-09-03' })]);
+
+    expect(matrix.buckets[0].label).toBe('31 Aug 2026');
+  });
 });

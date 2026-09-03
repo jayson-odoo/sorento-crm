@@ -801,6 +801,8 @@ describe('PoTakesPicker', () => {
       expected_date: '2026-09-15',
       qty: 40,
       open_qty: 150,
+      taken_qty: 0,
+      taken_by: [],
     },
     {
       po_line_id: 'l2',
@@ -810,6 +812,8 @@ describe('PoTakesPicker', () => {
       expected_date: null,
       qty: 20,
       open_qty: 20,
+      taken_qty: 0,
+      taken_by: [],
     },
   ];
 
@@ -911,6 +915,8 @@ describe('PoTakesPicker', () => {
       expected_date: '2026-10-01',
       qty: 0,
       open_qty: 30,
+      taken_qty: 0,
+      taken_by: [],
     },
   ];
 
@@ -993,6 +999,49 @@ describe('PoTakesPicker', () => {
     expect(screen.getByLabelText('Draw from PO-9000')).toBeChecked();
     expect(onChange).not.toHaveBeenCalled();
   });
+
+  // S5, AC-E7: a row occupied by ANOTHER SPO entirely - `qty: 0`, `taken_qty > 0`.
+  const takenTakes = [
+    ...takes,
+    {
+      po_line_id: 'l4',
+      po_number: 'PO-24200',
+      supplier_name: 'JINBAICHUAN',
+      po_date: '2026-05-01',
+      expected_date: '2026-09-25',
+      qty: 0,
+      open_qty: 0,
+      taken_qty: 100,
+      taken_by: ['CRM-SPO-2026/09-0001'],
+    },
+  ];
+
+  it('a taken row renders grey, its checkbox disabled and unticked, with the figure and SPO number (AC-E7)', () => {
+    renderWithClient(
+      <PoTakesPicker takes={takenTakes} tickedIds={['l1']} onChange={() => {}} coveredQty={40} packedQty={60} />,
+    );
+
+    const checkbox = screen.getByLabelText('Draw from PO-24200');
+    expect(checkbox).toBeDisabled();
+    expect(checkbox).not.toBeChecked();
+
+    const row = checkbox.closest('tr') as HTMLElement;
+    expect(row).toHaveAttribute('data-taken', 'true');
+    expect(row.className).toContain('text-muted-foreground');
+    expect(within(row).getByText('100')).toBeTruthy();
+    expect(within(row).getByText('CRM-SPO-2026/09-0001')).toBeTruthy();
+  });
+
+  it('clicking a taken row\'s checkbox does not call onChange (AC-E7)', () => {
+    const onChange = vi.fn();
+    renderWithClient(
+      <PoTakesPicker takes={takenTakes} tickedIds={['l1']} onChange={onChange} coveredQty={40} packedQty={60} />,
+    );
+
+    fireEvent.click(screen.getByLabelText('Draw from PO-24200'));
+
+    expect(onChange).not.toHaveBeenCalled();
+  });
 });
 
 describe('SoCoveragePicker', () => {
@@ -1005,6 +1054,8 @@ describe('SoCoveragePicker', () => {
       required_date: '2026-09-30',
       qty: 40,
       warehouse_code: 'BRW',
+      taken_qty: 0,
+      taken_by: [],
     },
     {
       key: 'retail:2',
@@ -1014,6 +1065,8 @@ describe('SoCoveragePicker', () => {
       required_date: '2026-09-20',
       qty: 20,
       warehouse_code: null,
+      taken_qty: 0,
+      taken_by: [],
     },
   ];
 
@@ -1099,6 +1152,8 @@ describe('SoCoveragePicker', () => {
       required_date: '2026-11-01',
       qty: 10,
       warehouse_code: 'MWH',
+      taken_qty: 0,
+      taken_by: [],
     },
   ];
 
@@ -1178,6 +1233,49 @@ describe('SoCoveragePicker', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Clear search' }));
 
     expect(screen.getByLabelText('Cover SO404400')).toBeChecked();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  // S5, AC-E7: a row covered by ANOTHER SPO entirely - `qty: 0`, `taken_qty > 0`.
+  const takenCoverage = [
+    ...coverage,
+    {
+      key: 'retail:4',
+      kind: 'retail' as const,
+      document: 'SO404500',
+      customer_name: 'A THIRD DEALER',
+      required_date: '2026-10-05',
+      qty: 0,
+      warehouse_code: 'BRW',
+      taken_qty: 30,
+      taken_by: ['CRM-SPO-2026/09-0001'],
+    },
+  ];
+
+  it('a taken row renders grey, its checkbox disabled and unticked, with the figure and SPO number (AC-E7)', () => {
+    renderWithClient(
+      <SoCoveragePicker coverage={takenCoverage} tickedKeys={['project:1']} onChange={() => {}} unassigned={20} />,
+    );
+
+    const checkbox = screen.getByLabelText('Cover SO404500');
+    expect(checkbox).toBeDisabled();
+    expect(checkbox).not.toBeChecked();
+
+    const row = checkbox.closest('tr') as HTMLElement;
+    expect(row).toHaveAttribute('data-taken', 'true');
+    expect(row.className).toContain('text-muted-foreground');
+    expect(within(row).getByText('30')).toBeTruthy();
+    expect(within(row).getByText('CRM-SPO-2026/09-0001')).toBeTruthy();
+  });
+
+  it('clicking a taken row\'s checkbox does not call onChange (AC-E7)', () => {
+    const onChange = vi.fn();
+    renderWithClient(
+      <SoCoveragePicker coverage={takenCoverage} tickedKeys={['project:1']} onChange={onChange} unassigned={20} />,
+    );
+
+    fireEvent.click(screen.getByLabelText('Cover SO404500'));
+
     expect(onChange).not.toHaveBeenCalled();
   });
 });

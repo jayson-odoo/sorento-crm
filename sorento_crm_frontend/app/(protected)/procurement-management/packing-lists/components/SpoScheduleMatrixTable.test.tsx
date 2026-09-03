@@ -96,6 +96,44 @@ describe('SpoScheduleMatrixTable - cell tint (AC-D1, AC-E8)', () => {
     expect(within(button).queryByText(/line/)).toBeNull();
   });
 
+  it('a mixed cell names the SPO once `taken_by` carries one - "+N on SPO-..." (S5)', () => {
+    const matrix = buildSpoScheduleMatrix([
+      entry({ qty: 10, taken_qty: 5, taken_by: ['CRM-SPO-2026/09-0001'] }),
+    ]);
+    render(
+      <SpoScheduleMatrixTable
+        rowHeader="Product"
+        rows={matrix.rows}
+        buckets={matrix.buckets}
+        cells={matrix.cells}
+        onCellClick={() => {}}
+      />,
+    );
+
+    const button = screen.getByRole('button', { name: /ABC/ });
+    expect(within(button).getByText('+5 on CRM-SPO-2026/09-0001')).toBeTruthy();
+  });
+
+  it('a mixed cell names the FIRST SPO when several entries carry different ones (S5)', () => {
+    const matrix = buildSpoScheduleMatrix([
+      entry({ qty: 10, taken_qty: 3, taken_by: ['CRM-SPO-2026/09-0001'] }),
+      entry({ qty: 0, taken_qty: 2, taken_by: ['CRM-SPO-2026/09-0002'] }),
+    ]);
+    render(
+      <SpoScheduleMatrixTable
+        rowHeader="Product"
+        rows={matrix.rows}
+        buckets={matrix.buckets}
+        cells={matrix.cells}
+        onCellClick={() => {}}
+      />,
+    );
+
+    const button = screen.getByRole('button', { name: /ABC/ });
+    expect(within(button).getByText('+5 on CRM-SPO-2026/09-0001')).toBeTruthy();
+    expect(within(button).queryByText(/0002/)).toBeNull();
+  });
+
   it('an ordinary cell keeps the "N line(s)" second line', () => {
     const matrix = buildSpoScheduleMatrix([
       entry({ shipment_line_id: 'sl-1', detail: { id: 'e1' } }),

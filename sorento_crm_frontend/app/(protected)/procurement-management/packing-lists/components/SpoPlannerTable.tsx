@@ -135,6 +135,26 @@ type LineState = {
 };
 type ScheduleView = 'po' | 'so';
 
+/** A `po_takes` row occupied by ANOTHER SPO entirely (S5) - `qty: 0` is never this
+ *  cascade's own take, so the row can never be ticked. */
+function isTakenPo(t: SpoPoTake): boolean {
+  return t.qty === 0 && t.taken_qty > 0;
+}
+
+/** Every `po_line_id` this line's take set could TICK - a taken row is never one of them
+ *  (S5). The initial-tick default (every take, AC-G1) and a re-tick from the picker both
+ *  read through this so neither can hand a taken row's id back into state. */
+function tickablePoTakeIds(ln: SpoSuggestionLine): string[] {
+  return ln.po_takes.filter((t) => !isTakenPo(t)).map((t) => t.po_line_id);
+}
+
+/** A `so_coverage` row occupied by ANOTHER SPO entirely (S5) - `qty: 0` is never tickable
+ *  here either; `default_ticked` is already `false` for it server-side, so this only guards
+ *  a re-tick handed back by the picker. */
+function isTakenCoverage(c: SpoCoverageLine): boolean {
+  return c.qty === 0 && c.taken_qty > 0;
+}
+
 /**
  * What the ticked takes cover - the ceiling on this line's SPO quantity (AC-G2).
  *
@@ -267,8 +287,9 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
     const next: Record<string, LineState> = {};
     for (const ln of suggestion.data?.lines ?? []) {
       // Every take ticked and the server's own demand walk pre-ticked: the default IS the
-      // answer for most containers, and the ticks exist for the ones where it is not.
-      const poTakeIds = ln.po_takes.map((t) => t.po_line_id);
+      // answer for most containers, and the ticks exist for the ones where it is not - a
+      // TAKEN row (S5) is never one of them, no matter how it landed on `po_takes`.
+      const poTakeIds = tickablePoTakeIds(ln);
       const soKeys = defaultSoKeys(ln, ln.suggested_qty);
       next[ln.shipment_line_id] = {
         qty: ln.suggested_qty,
@@ -291,7 +312,7 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
     return {
       qty: ln.suggested_qty,
       typedQty: null,
-      poTakeIds: ln.po_takes.map((t) => t.po_line_id),
+      poTakeIds: tickablePoTakeIds(ln),
       soKeys,
       splits: splitsFromTicks(ln, soKeys, ln.suggested_qty),
     };
@@ -334,13 +355,17 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
    * they never touched is a derived default and follows the takes.
    */
   const setTakeIds = (ln: SpoSuggestionLine, poTakeIds: string[]) => {
+    // A taken row's checkbox is disabled in the picker, but its id is never trusted from the
+    // caller either way (S5) - the same defensiveness `_keep` uses server-side.
+    const tickable = new Set(tickablePoTakeIds(ln));
+    const nextIds = poTakeIds.filter((id) => tickable.has(id));
     const current = stateFor(ln);
-    const covered = poCoveredFor(ln, poTakeIds);
+    const covered = poCoveredFor(ln, nextIds);
     // Derived from the TYPED figure, never from the clamped one on screen: clamping is a
     // view of what can be sent right now, and storing it destroyed the decision behind it.
     const qty = current.typedQty === null ? covered : Math.min(current.typedQty, covered);
     patch(ln, {
-      poTakeIds,
+      poTakeIds: nextIds,
       qty,
       soKeys: current.soKeys,
       splits: splitsFromTicks(ln, current.soKeys, qty),
@@ -349,8 +374,14 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
 
   /** Tick the demand this SPO is for; the split follows (AC-G3, AC-G4). */
   const setSoKeys = (ln: SpoSuggestionLine, soKeys: string[]) => {
+    // Same defensiveness as `setTakeIds` (S5): a taken row's key is never trusted, however
+    // it arrived.
+    const takenKeys = new Set(
+      (ln.so_coverage ?? []).filter(isTakenCoverage).map((c) => c.key),
+    );
+    const nextKeys = soKeys.filter((key) => !takenKeys.has(key));
     const current = stateFor(ln);
-    patch(ln, { soKeys, splits: splitsFromTicks(ln, soKeys, current.qty) });
+    patch(ln, { soKeys: nextKeys, splits: splitsFromTicks(ln, nextKeys, current.qty) });
   };
 
   const confirmLines: SpoConfirmLine[] = useMemo(
@@ -738,17 +769,35 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
   const poMatrix = useMemo(() => {
     const entries: SpoMatrixEntry<SpoPoTake & { item_code: string | null }>[] = [];
     for (const ln of lines) {
+      const rowKey = ln.item_code ? `item:${ln.item_code}` : `line:${ln.shipment_line_id}`;
+      const rowLabel = ln.item_code ?? ln.product_name ?? 'Unresolved';
       const takes = cascadeTake(ln.po_takes, qtyFor(ln));
       for (const t of takes) {
         entries.push({
-          row_key: ln.item_code ? `item:${ln.item_code}` : `line:${ln.shipment_line_id}`,
-          row_label: ln.item_code ?? ln.product_name ?? 'Unresolved',
+          row_key: rowKey,
+          row_label: rowLabel,
           row_description: null,
           shipment_line_id: ln.shipment_line_id,
           date: t.expected_date,
           qty: t.takenQty,
-          // S5 fills this from `taken_qty` on the take itself; 0 until then.
           taken_qty: 0,
+          detail: { ...t, item_code: ln.item_code },
+        });
+      }
+      // S5 (AC-E8): every candidate line ANOTHER SPO already pulled from, on its own entry
+      // (`qty: 0`) - whether or not THIS cascade also took from the same line, so a mixed
+      // cell (both figures) and a taken-only cell (grey) both fall out of the same sum.
+      for (const t of ln.po_takes) {
+        if (!(t.taken_qty > 0)) continue;
+        entries.push({
+          row_key: rowKey,
+          row_label: rowLabel,
+          row_description: null,
+          shipment_line_id: ln.shipment_line_id,
+          date: t.expected_date,
+          qty: 0,
+          taken_qty: t.taken_qty,
+          taken_by: t.taken_by,
           detail: { ...t, item_code: ln.item_code },
         });
       }
@@ -764,6 +813,8 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
     const entries: SpoMatrixEntry<SpoDemandLine & { item_code: string | null }>[] = [];
     for (const ln of lines) {
       if (ln.cannot_convert) continue;
+      const rowKey = ln.item_code ? `item:${ln.item_code}` : `line:${ln.shipment_line_id}`;
+      const rowLabel = ln.item_code ?? ln.product_name ?? 'Unresolved';
       const keys = soKeysFor(ln);
       let left = qtyFor(ln);
       for (const entry of ln.so_coverage ?? []) {
@@ -773,13 +824,12 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
         if (take <= 0) continue;
         left -= take;
         entries.push({
-          row_key: ln.item_code ? `item:${ln.item_code}` : `line:${ln.shipment_line_id}`,
-          row_label: ln.item_code ?? ln.product_name ?? 'Unresolved',
+          row_key: rowKey,
+          row_label: rowLabel,
           row_description: null,
           shipment_line_id: ln.shipment_line_id,
           date: entry.required_date,
           qty: take,
-          // S5 fills this from `taken_qty` on the coverage line; 0 until then.
           taken_qty: 0,
           detail: {
             so_number: entry.document,
@@ -788,6 +838,30 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
             required_date: entry.required_date,
             order_date: null,
             qty: take,
+            item_code: ln.item_code,
+          },
+        });
+      }
+      // S5 (AC-E8): every piece of demand ANOTHER SPO already covers, on its own entry
+      // (`qty: 0`) - see the PO loop above for why this is separate from the take loop.
+      for (const entry of ln.so_coverage ?? []) {
+        if (!(entry.taken_qty > 0)) continue;
+        entries.push({
+          row_key: rowKey,
+          row_label: rowLabel,
+          row_description: null,
+          shipment_line_id: ln.shipment_line_id,
+          date: entry.required_date,
+          qty: 0,
+          taken_qty: entry.taken_qty,
+          taken_by: entry.taken_by,
+          detail: {
+            so_number: entry.document,
+            customer_name: entry.customer_name,
+            agent_name: null,
+            required_date: entry.required_date,
+            order_date: null,
+            qty: 0,
             item_code: ln.item_code,
           },
         });

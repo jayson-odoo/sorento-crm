@@ -164,10 +164,13 @@ export function SpoScheduleMatrixTable<T>({
                             {fmtInt(hasQty ? cell.qty : cell.taken_qty)}
                           </span>
                           {hasQty && hasTaken ? (
-                            // S4: the SPO number itself lands here once S5 carries `taken_by`;
-                            // the raw quantity is the placeholder until then.
+                            // S5: the FIRST SPO number behind `taken_qty`, "first if several"
+                            // (the plan's own words) - a name reads faster than a count, and
+                            // the picker this cell opens still lists every one of them.
                             <span className="text-[11px] text-muted-foreground">
-                              {`+${fmtInt(cell.taken_qty)} other SPO`}
+                              {cell.taken_by[0]
+                                ? `+${fmtInt(cell.taken_qty)} on ${cell.taken_by[0]}`
+                                : `+${fmtInt(cell.taken_qty)} other SPO`}
                             </span>
                           ) : hasQty ? (
                             <span className="text-[11px] text-muted-foreground">

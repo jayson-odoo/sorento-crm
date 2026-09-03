@@ -1237,6 +1237,11 @@ export interface PoTakeRow {
   qty: number;
   /** What the line has open, which is what it could give if a neighbour were unticked. */
   open_qty: number;
+  /** How much of this line an EARLIER SPO already pulled, and its number(s) - oldest first
+   *  (S5). `qty === 0 && taken_qty > 0` is a TAKEN row: never this cascade's own take, never
+   *  tickable. */
+  taken_qty: number;
+  taken_by: string[];
 }
 
 /**
@@ -1275,6 +1280,9 @@ export function PoTakesPicker({
 
   // S3: search + filter, over the FULL `takes` array - ticks and the footer's totals never
   // move with them (AC-C5); only which rows the grid shows does.
+  // S5: a row `qty === 0 && taken_qty > 0` is occupied by ANOTHER SPO entirely - never this
+  // cascade's own take, so it renders grey and its checkbox is always unticked and disabled.
+  const isTaken = (t: PoTakeRow) => t.qty === 0 && t.taken_qty > 0;
   const [searchInput, setSearchInput] = useState('');
   const [appliedSearch, setAppliedSearch] = useState('');
   const [draftConditions, setDraftConditions] = useState<PickerFilterCondition[]>([]);
@@ -1320,9 +1328,11 @@ export function PoTakesPicker({
         header: '',
         cell: ({ row }) => {
           const t = row.original;
+          const taken = isTaken(t);
           return (
             <Checkbox
-              checked={tickedIds.includes(t.po_line_id)}
+              checked={!taken && tickedIds.includes(t.po_line_id)}
+              disabled={taken}
               onCheckedChange={(checked) => toggle(t.po_line_id, !!checked)}
               aria-label={`Draw from ${t.po_number ?? t.po_line_id}`}
             />
@@ -1372,8 +1382,30 @@ export function PoTakesPicker({
         meta: RIGHT,
       },
       {
-        id: 'qty',
+        // S5: what an EARLIER SPO already pulled off this line - dash when none, the SPO
+        // number(s) as the tooltip AND under the figure, so the reader never has to hover
+        // to see who has it.
+        id: 'taken_qty',
         header: 'Taken',
+        cell: ({ row }) => {
+          const t = row.original;
+          if (!(t.taken_qty > 0)) return <span className="tabular-nums">{EM_DASH}</span>;
+          const names = t.taken_by.join(', ');
+          return (
+            <div className="flex flex-col items-end" title={names}>
+              <span className="tabular-nums">{fmtInt(t.taken_qty)}</span>
+              <span className="truncate text-2xs text-muted-foreground">{names}</span>
+            </div>
+          );
+        },
+        size: 110,
+        meta: RIGHT,
+      },
+      {
+        // S5: renamed from "Taken" (this cascade's own draw) to avoid reading like the
+        // column above it - "This SPO" matches the schedule legend's own words.
+        id: 'qty',
+        header: 'This SPO',
         cell: ({ row }) => fmtInt(row.original.qty),
         footer: () => fmtInt(coveredQty),
         size: 90,
@@ -1432,12 +1464,16 @@ export function PoTakesPicker({
         recordCount={rows.length}
         listingKey={null}
         tableLayout={{ width: 'fixed', columnsResizable: true }}
-        rowClassName={
-          bucketHits ? (t) => (bucketHits.has(t.po_line_id) ? 'bg-primary/10' : undefined) : undefined
+        rowClassName={(t) =>
+          cn(
+            isTaken(t) && 'text-muted-foreground',
+            bucketHits?.has(t.po_line_id) && 'bg-primary/10',
+          )
         }
-        rowAttributes={
-          bucketHits ? (t) => (bucketHits.has(t.po_line_id) ? { 'data-bucket-hit': 'true' } : {}) : undefined
-        }
+        rowAttributes={(t) => ({
+          ...(isTaken(t) ? { 'data-taken': 'true' } : {}),
+          ...(bucketHits?.has(t.po_line_id) ? { 'data-bucket-hit': 'true' } : {}),
+        })}
         emptyMessage="No open PO can back this line."
       >
         <DataGridTable />
@@ -1459,6 +1495,10 @@ export interface SoCoverageRow {
   required_date: string | null;
   qty: number;
   warehouse_code: string | null;
+  /** How much of this row an EARLIER SPO already covers, and its number(s) - oldest first
+   *  (S5). `qty === 0 && taken_qty > 0` is a TAKEN row: never tickable. */
+  taken_qty: number;
+  taken_by: string[];
 }
 
 /**
@@ -1490,6 +1530,10 @@ export function SoCoveragePicker({
 }) {
   const toggle = (key: string, on: boolean) =>
     onChange(on ? [...tickedKeys, key] : tickedKeys.filter((x) => x !== key));
+
+  // S5: a row `qty === 0 && taken_qty > 0` is covered by ANOTHER SPO entirely - never
+  // tickable, so it renders grey and its checkbox is always unticked and disabled.
+  const isTaken = (c: SoCoverageRow) => c.qty === 0 && c.taken_qty > 0;
 
   const totalQty = useMemo(() => coverage.reduce((s, c) => s + c.qty, 0), [coverage]);
   const totalTaken = useMemo(
@@ -1562,9 +1606,11 @@ export function SoCoveragePicker({
         header: '',
         cell: ({ row }) => {
           const c = row.original;
+          const taken = isTaken(c);
           return (
             <Checkbox
-              checked={tickedKeys.includes(c.key)}
+              checked={!taken && tickedKeys.includes(c.key)}
+              disabled={taken}
               onCheckedChange={(checked) => toggle(c.key, !!checked)}
               aria-label={`Cover ${c.document ?? c.key}`}
             />
@@ -1610,6 +1656,25 @@ export function SoCoveragePicker({
         header: 'Outstanding',
         cell: ({ row }) => fmtInt(row.original.qty),
         footer: () => fmtInt(totalQty),
+        size: 110,
+        meta: RIGHT,
+      },
+      {
+        // S5: what an EARLIER SPO already covers of this row - dash when none, the SPO
+        // number(s) as the tooltip AND under the figure.
+        id: 'taken_qty',
+        header: 'Taken',
+        cell: ({ row }) => {
+          const c = row.original;
+          if (!(c.taken_qty > 0)) return <span className="tabular-nums">{EM_DASH}</span>;
+          const names = c.taken_by.join(', ');
+          return (
+            <div className="flex flex-col items-end" title={names}>
+              <span className="tabular-nums">{fmtInt(c.taken_qty)}</span>
+              <span className="truncate text-2xs text-muted-foreground">{names}</span>
+            </div>
+          );
+        },
         size: 110,
         meta: RIGHT,
       },
@@ -1684,10 +1749,13 @@ export function SoCoveragePicker({
         recordCount={rows.length}
         listingKey={null}
         tableLayout={{ width: 'fixed', columnsResizable: true }}
-        rowClassName={bucketHits ? (c) => (bucketHits.has(c.key) ? 'bg-primary/10' : undefined) : undefined}
-        rowAttributes={
-          bucketHits ? (c) => (bucketHits.has(c.key) ? { 'data-bucket-hit': 'true' } : {}) : undefined
+        rowClassName={(c) =>
+          cn(isTaken(c) && 'text-muted-foreground', bucketHits?.has(c.key) && 'bg-primary/10')
         }
+        rowAttributes={(c) => ({
+          ...(isTaken(c) ? { 'data-taken': 'true' } : {}),
+          ...(bucketHits?.has(c.key) ? { 'data-bucket-hit': 'true' } : {}),
+        })}
         emptyMessage="No open demand this SPO could cover."
       >
         <DataGridTable />
