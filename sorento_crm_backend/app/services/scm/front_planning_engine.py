@@ -739,10 +739,12 @@ def _cross_group_borrow_reason(location: str, qty: Decimal) -> str:
 
 def other_group_reason(
     location: str,
-    qty: Decimal,
+    pile: Decimal,
     group_code: Optional[str],
     arrival_date: Optional[date] = None,
     document: Optional[str] = None,
+    lending_group: Optional[str] = None,
+    free_at: Optional[date] = None,
 ) -> str:
     """Step 1's second half (v7.1, R5, AC-S3-1): another PROJECT group's FREE pile.
 
@@ -750,6 +752,17 @@ def other_group_reason(
     why it is walked before either borrow step and why it is a Reserve rather than a
     Borrow. The sentence says whose stock it is, because "40 from DC1-NT" beside a `-BB`
     line reads as an error until it says the pile was free.
+
+    **IT STATES THE PILE AND THE DAY IT STOOD ON, NEVER THE TAKE** (R-M, 3 Sep 2026). It
+    used to be handed `min(need, capacity)`, so "BRW-IB has 4 free outside the BB group"
+    meant "we took 4" and said nothing at all about the pile it came off - which is how a
+    bin inside a group 447 short on its own book read as holding exactly what was needed.
+    `pile` is the measured offer and `free_at` is the date it was measured on; the take is
+    the quantity printed in front of the sentence.
+
+    `lending_group` is whose pile it is, and the closing clause is what the cap now makes
+    true of it: the offer is bounded by that group's WHOLE open book, so nothing in it is
+    owed to a later order of that group either.
 
     `arrival_date` is set when the free quantity is ON THE WATER rather than on a floor, and
     it is the day the WHOLE of the draw has landed by - the same rule the own half's
@@ -761,11 +774,25 @@ def other_group_reason(
     that truthfully (several documents share the bucket), and it is never guessed here.
     """
     whose = f" the {group_code} group" if group_code else " this line's group"
+    measured = f" at {date_text(free_at)}" if free_at else ""
     when = f", arriving {date_text(arrival_date)}" if arrival_date else ""
     named = f" ({document})" if document else ""
+    owed = f"a later {lending_group} order" if lending_group else "a later order"
     return (
-        f"{location} has {qty_text(qty)} free outside{whose}{when}{named}, and free stock "
-        "is owed to nobody"
+        f"{location} has {qty_text(pile)} free outside{whose}{measured}{when}{named}, none "
+        f"of it owed to {owed}"
+    )
+
+
+def other_group_short_reason(group_code: str, short: Decimal) -> str:
+    """Step 1's REFUSAL of another group's pile (R-M, 3 Sep 2026).
+
+    A group short on its own whole book has nothing to spare, however much a date-bounded
+    reading of one of its bins says is free that morning. The row would otherwise read 0
+    with no sentence at all, which a planner reads as "the ladder did not look".
+    """
+    return (
+        f"{group_code} group is {qty_text(short)} short on its own book, nothing to spare"
     )
 
 
@@ -946,6 +973,10 @@ def walk_line(
     reorder_coverage_until: Optional[date] = None,
     group_take_candidates: Optional[Sequence[Mapping[str, Any]]] = None,
     other_group_candidates: Optional[Sequence[Mapping[str, Any]]] = None,
+    #: R-M (3 Sep 2026): the OTHER groups the caller capped away entirely, and by how much
+    #: their own whole open book is short. They send no candidate, so this is the only way
+    #: step 1's row can say why it gave nothing (`other_group_short_reason`).
+    other_group_short: Optional[Mapping[str, Any]] = None,
     order_borrow_candidates: Optional[Sequence[Mapping[str, Any]]] = None,
     supply_borrow_candidates: Optional[Sequence[Mapping[str, Any]]] = None,
     pool_borrow_candidates: Optional[Sequence[Mapping[str, Any]]] = None,
@@ -1083,7 +1114,9 @@ def walk_line(
     # 1. use -----------------------------------------------------------------------------
     step_use = _Offer()
     _draw_group(step_use, group_take_candidates, need, group_code, group_offer)
-    _draw_other_groups(step_use, other_group_candidates, need, group_code)
+    _draw_other_groups(
+        step_use, other_group_candidates, need, group_code, other_group_short
+    )
     offers[STEP_USE] = step_use
 
     # 2. order_borrow ---------------------------------------------------------------------
@@ -1243,6 +1276,9 @@ class _Offer:
     #: group. Lets `_use_step_label` say what was actually composed - "our locations" beside
     #: a card that read "Use incoming" was the captain's own screenshot of the bug.
     other_group_names: List[str] = None  # type: ignore[assignment]
+    #: STEP 1 ONLY (R-M): why another group's pile gave nothing, where the reason is a fact
+    #: about that group rather than about this line. The option row prints it beside its 0.
+    refusal: Optional[str] = None
 
     def __post_init__(self) -> None:
         if self.components is None:
@@ -1325,6 +1361,7 @@ def _draw_other_groups(
     candidates: Optional[Sequence[Mapping[str, Any]]],
     need: Decimal,
     group_code: Optional[str],
+    short_books: Optional[Mapping[str, Any]] = None,
 ) -> None:
     """Step 1b (R5, AC-S3-1): the OTHER project groups' free piles.
 
@@ -1336,7 +1373,19 @@ def _draw_other_groups(
     as the own half does it: another group's incoming document is no more pickable than this
     group's, and composing it as a Reserve wrote a hold against goods on a ship and dated
     the whole option `today`.
+
+    `short_books` (R-M) is the groups the CALLER capped away entirely - short on their own
+    whole open book - and by how much. They contribute no candidate at all, so without this
+    the row would read 0 with nothing beside it; the sentences are sorted by group so a walk
+    naming two of them reads the same way twice.
     """
+    refusals = [
+        other_group_short_reason(str(name), _dec(amount))
+        for name, amount in sorted((short_books or {}).items())
+        if _dec(amount) > ZERO
+    ]
+    if refusals:
+        offer.refusal = "; ".join(refusals)
     for candidate in candidates or []:
         left = need - offer.qty
         if left <= ZERO:
@@ -1357,8 +1406,17 @@ def _draw_other_groups(
             Component(
                 kind=TIMELY_SPO if water else RESERVE,
                 qty=take,
+                # THE PILE, not the take (R-M): `capacity` is what the caller measured as
+                # free and `take` is what this line needs of it, and the sentence that
+                # printed the take read as a statement about the bin.
                 reason=other_group_reason(
-                    str(location), take, group_code, arrival, document
+                    str(location),
+                    capacity,
+                    group_code,
+                    arrival,
+                    document,
+                    lending_group=str(lending_group) if lending_group else None,
+                    free_at=_as_date(candidate.get("free_at")),
                 ),
                 source_location=str(location),
                 rung=RUNG_GROUP_TAKE,
@@ -1683,7 +1741,15 @@ def _options(
             whole = bool(share_whole or (chosen == STEP_POOL_SHARE and given >= whole_line))
         else:
             whole = bool(offer and offer.components and offer.qty >= need > ZERO)
-        reason = pool_share_reason_text if step == STEP_POOL_SHARE else None
+        if step == STEP_POOL_SHARE:
+            reason = pool_share_reason_text
+        elif step == STEP_USE and offer is not None and not whole:
+            # R-M: another group's book, where it is what stopped the step. Only where the
+            # step did NOT cover the line - beside a row that answered it in full, a note
+            # about a group nobody needed is noise.
+            reason = offer.refusal
+        else:
+            reason = None
         if not whole and not (step == STEP_POOL_SHARE and given > ZERO):
             out.append(
                 Option(

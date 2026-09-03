@@ -2690,8 +2690,12 @@ class FulfilmentBoardService:
         # (R24), and then the OTHER project groups' free piles (R5), which is the free stock
         # the retired `cross_group_borrow` rung used to call a Borrow. Both are one question,
         # because free stock is owed to nobody wherever it sits.
-        group_take_candidates, other_group_candidates, own_offer = (
-            ([], [], _ZERO)
+        # R-M's shorts map is DELIBERATELY discarded here: the trail states what this line
+        # was offered, and the refusal it explains is already printed on the `use` OPTION
+        # row, which the walk composes from the same map (`walk_line(other_group_short=)`).
+        # Printing it twice would say the same thing in two voices.
+        group_take_candidates, other_group_candidates, own_offer, _other_short = (
+            ([], [], _ZERO, {})
             if outside_window
             # `other_group_open` is step 1b's own ledger as this unit found it, passed for
             # exactly the reason `borrow_open` is: the proof has to be the answer the engine
@@ -4386,6 +4390,9 @@ class FulfilmentBoardService:
                 "stale": project_line_draft_service.is_stale(
                     entry["line_snapshot"], row.qty, row.required_date
                 ),
+                # D12 (#573): what the caller saved the draft AGAINST, echoed back opaque.
+                # Never read by `is_stale` above - see `SOSupplyDecisionDraft.proposed`.
+                "proposed": entry.get("proposed"),
             }
 
     def _contribution(self, row: _Row) -> Dict[str, Any]:

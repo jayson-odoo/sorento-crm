@@ -1752,3 +1752,151 @@ def test_a_shipment_backed_row_is_supply_the_group_holds():
 
     assert [c["rung"] for c in components] == ["group_take"]
     assert components[0]["qty"] == "40"
+
+
+# ------------------------------------------------------------------- R-M (3 Sep 2026)
+
+
+def _other_group_book(db, company_id, product, bin_, *, near, far):
+    """One other group's whole open book: what it holds, what is owed before the asker's
+    date, and what is owed after it."""
+    for qty, days in ((near, 20), (far, 90)):
+        if not qty:
+            continue
+        core_so = _core_so(db, company_id)
+        core_so.so_number = f"ZZT-SO-{_uid()[:8]}"
+        db.flush()
+        _core_line(
+            db, core_so, product, bin_, qty_ordered=str(qty),
+            required_date=date.today() + timedelta(days=days),
+        )
+
+
+def test_another_groups_free_pile_is_capped_by_that_groups_own_open_book():
+    """R-M, the captain's production cell (SO419417, SRTWT7443, 3 September 2026).
+
+    The other group holds 2,237 and owes 2,684 - 1,708 before the asker's date and 976
+    after - so it is 447 short on its own book. The date-bounded pile still reads 529 free
+    on the asker's day, because demand due AFTER that day never counted against it, and
+    that 529 is what the ladder used to offer a BB line of 4. A group whose whole book is
+    short gives NOTHING, and the step says why.
+    """
+    with blank_session() as db:
+        company_id, _eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own, _pool = sites["BRW"]
+        other = _warehouse(db, f"ZZTDC1-IB{_uid()[:3]}")
+        _stock(db, product, other, on_hand=2237)
+        _other_group_book(db, company_id, product, other, near=1708, far=976)
+        db.commit()
+
+        order, _line, _cso, _cline = _seed_line(
+            db, company_id, project, product, own, qty_ordered="4",
+        )
+        service = ProjectSupplyService(db)
+        facts = service._facts_for(order, service.lines_of(str(order.id)))
+        fact = next(iter(facts.values()))
+        _own, cross, _offer, short = service.use_candidates_for(fact)
+        other_code = other.warehouse_code
+        # The suffix, upper-cased, which is `group_of_warehouse_code`'s own rule.
+        other_group = other_code.split("-", 1)[1].upper()
+
+    assert sum(
+        (Decimal(str(c["qty"])) for c in cross if c["location"] == other_code),
+        Decimal("0"),
+    ) == Decimal("0"), "an oversold group has nothing free to offer, whatever the date says"
+    assert short == {other_group: Decimal("447")}
+
+
+def test_another_groups_free_pile_stands_where_that_groups_book_is_whole():
+    """The same cell with the far order gone: 2,237 against 1,708 owed is a book of 529, so
+    the pile the asker's date measured is genuinely free and the offer stands at 529."""
+    with blank_session() as db:
+        company_id, _eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own, _pool = sites["BRW"]
+        other = _warehouse(db, f"ZZTDC1-IB{_uid()[:3]}")
+        _stock(db, product, other, on_hand=2237)
+        _other_group_book(db, company_id, product, other, near=1708, far=0)
+        db.commit()
+
+        order, _line, _cso, _cline = _seed_line(
+            db, company_id, project, product, own, qty_ordered="4",
+        )
+        service = ProjectSupplyService(db)
+        facts = service._facts_for(order, service.lines_of(str(order.id)))
+        fact = next(iter(facts.values()))
+        _own, cross, _offer, short = service.use_candidates_for(fact)
+        other_code = other.warehouse_code
+
+    assert [(c["location"], c["qty"]) for c in cross] == [
+        (other_code, Decimal("529")),
+    ]
+    assert short == {}
+
+
+def test_one_lending_groups_book_is_spent_once_across_the_whole_walk():
+    """R-M's cap is a statement about the GROUP, so a BOARD spends it once (3 Sep 2026).
+
+    The cap was applied per unit, and the walk's own offer ledger is keyed by BIN, so two
+    units whose dates bring DIFFERENT bins of one lending group into view were each handed
+    the whole of that group's spare book. Here IB holds 100 on its floor and has 100 more
+    arriving on day 50, and owes 100 on day 45 and 60 on day 100: its book spares 40. The
+    BB line due on day 30 sees the floor (the day-45 order has not queued yet), the BB line
+    due on day 60 sees only the arrival (the floor is gone by then), and each was proposed
+    40 - 80 out of a book with 40 in it, both confirmable.
+
+    One budget for the group, spent once: the first unit takes the 40, the second is offered
+    nothing free, and the walk carries on down the rungs to a BORROW off the later IB order
+    holding that arrival - a take with a named donor and an order back, which is exactly the
+    continuation R-M rules for a group that has nothing to spare.
+    """
+    with blank_session() as db:
+        company_id, _eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own, _pool = sites["BRW"]
+
+        lender = f"IB{_uid()[:4]}"
+        floor = _warehouse(db, f"ZZTLA-{lender}")
+        water = _warehouse(db, f"ZZTLB-{lender}")
+        _stock(db, product, floor, on_hand=100)
+        _spo_line(db, product, water, qty=100, arrives=date.today() + timedelta(days=50))
+        for qty, days in ((100, 45), (60, 100)):
+            core_so = _core_so(db, company_id)
+            core_so.so_number = f"ZZT-SO-{_uid()[:8]}"
+            db.flush()
+            _core_line(
+                db, core_so, product, floor, qty_ordered=str(qty),
+                required_date=date.today() + timedelta(days=days),
+            )
+
+        core_so = _core_so(db, company_id)
+        core_so.so_number = f"ZZT-SO-{_uid()[:8]}"
+        db.flush()
+        near = _core_line(
+            db, core_so, product, own, qty_ordered="40",
+            required_date=date.today() + timedelta(days=30),
+        )
+        far = _core_line(
+            db, core_so, product, own, qty_ordered="40",
+            required_date=date.today() + timedelta(days=60),
+        )
+        order = _project_so(db, project, status=SO_STATUS_PUBLISHED)
+        _project_line(db, order, line_no=1, product=product, core_line=near)
+        _project_line(db, order, line_no=2, product=product, core_line=far)
+        db.commit()
+
+        proposal = ProjectSupplyService(db).proposal_for(order)
+        lines = {row["line_no"]: row["components"] for row in proposal["lines"]}
+        floor_code, water_code = floor.warehouse_code, water.warehouse_code
+
+    assert [
+        (c["rung"], c["qty"], c["source_location"]) for c in lines[1]
+    ] == [("group_take", "40", floor_code)]
+    assert not [c for c in lines[2] if c["rung"] == "group_take"], (
+        "the lending group's whole book went to the first unit, so its other bin is not "
+        "free stock for the second"
+    )
+    assert [(c["rung"], c["qty"], c["source_location"]) for c in lines[2]] == [
+        ("supply_borrow", "40", water_code)
+    ]

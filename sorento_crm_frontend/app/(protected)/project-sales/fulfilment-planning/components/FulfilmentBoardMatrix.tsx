@@ -1,9 +1,12 @@
 'use client';
 
 import * as React from 'react';
+import { Check, Undo2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
 import { PillOverflow, type PillItem } from '@/components/common/PillOverflow';
 import { bucketLabelText } from '../../_shared/lib/fulfilmentBoard';
+import { canQuickSave } from '../../_shared/lib/boardAmend';
 import { toMinor } from '../../_shared/lib/supplyComposition';
 import { BoardChangeTable } from './BoardChangeTable';
 import { BoardDecidedMarker, decidedRevisions } from './BoardDecidedMarker';
@@ -111,6 +114,8 @@ export function FulfilmentBoardMatrix({
   draft,
   annotations,
   onOpenCell,
+  onDecideMany,
+  onUndoMany,
 }: {
   dateBuckets: BoardDateBucket[];
   /** Whatever the vertical axis is: products, sales orders, customers or projects. */
@@ -129,6 +134,14 @@ export function FulfilmentBoardMatrix({
    */
   annotations?: Map<string, BoardChangeAnnotation[]>;
   onOpenCell: (cell: BoardCell) => void;
+  /**
+   * D15: a cell's own "save everything still eligible in this cell" icon posts through this -
+   * the same quiet-bulk path the board-wide "Save all suggested" button uses, one toast for
+   * the whole press.
+   */
+  onDecideMany: (keys: string[]) => Promise<{ saved: number; failed: number }>;
+  /** D15: the cell's own Undo, for a cell holding only drafted lines and nothing left to save. */
+  onUndoMany: (keys: string[]) => Promise<{ saved: number; failed: number }>;
 }) {
   // Keyed by the cell's ROW KEY, which is the item code on the product axis and an id on the
   // pivoted ones - two customers sharing a name must not share a row.
@@ -225,11 +238,23 @@ export function FulfilmentBoardMatrix({
                     )}
                   >
                     {cell ? (
-                      <>
+                      <div className="relative">
                         <BoardCellButton
                           cell={cell}
                           draft={draft}
                           onOpen={() => onOpenCell(cell)}
+                        />
+                        {/* D15: the cell's own save-everything / undo-everything icon, a
+                            SIBLING of the button rather than nested inside it - a button
+                            inside a button is invalid HTML the browser reflows out of it,
+                            which is why this is absolutely positioned in the cell's own
+                            corner instead. */}
+                        <BoardCellQuickAction
+                          cell={cell}
+                          bucketLabel={bucketLabelText(bucket.label)}
+                          draft={draft}
+                          onDecideMany={onDecideMany}
+                          onUndoMany={onUndoMany}
                         />
                         {/* What the re-uploaded book did to the lines in this cell
                             (AC-P3-2). A SIBLING of the button, never inside it: a table is
@@ -242,7 +267,7 @@ export function FulfilmentBoardMatrix({
                             <BoardChangeTable annotation={annotation} compact />
                           </div>
                         ))}
-                      </>
+                      </div>
                     ) : null}
                   </td>
                 );
@@ -416,4 +441,78 @@ function BoardCellButton({
       </span>
     </button>
   );
+}
+
+/**
+ * A cell's own save-everything / undo-everything icon (D15), pinned to the cell's own corner.
+ *
+ * A SIBLING of `BoardCellButton`, never a child of it: the button already fills the `td`, and
+ * a button nested inside a button is invalid HTML the browser reflows out of - the same reason
+ * the change-annotation table beside it is a sibling too. `event.stopPropagation()` alone would
+ * not have been enough on its own: without the sibling structure the click still bubbles through
+ * an ancestor `<button>`'s own click handler once the browser has un-nested the markup.
+ *
+ * SAVE wins over UNDO when a cell holds both an eligible line and a drafted one (the fact sheet's
+ * own rule): the drafted line's own Undo is still reachable inside the dialog, and a cell-wide
+ * verb has to pick one action per press.
+ */
+function BoardCellQuickAction({
+  cell,
+  bucketLabel,
+  draft,
+  onDecideMany,
+  onUndoMany,
+}: {
+  cell: BoardCell;
+  bucketLabel: string;
+  draft: BoardDraft;
+  onDecideMany: (keys: string[]) => Promise<{ saved: number; failed: number }>;
+  onUndoMany: (keys: string[]) => Promise<{ saved: number; failed: number }>;
+}) {
+  const eligible = cell.contributions.filter((entry) => canQuickSave(entry, draft));
+  const drafted = cell.contributions.filter((entry) => Boolean(draft[entry.key]));
+
+  if (eligible.length > 0) {
+    const keys = eligible.map((entry) => entry.key);
+    return (
+      <Button
+        type="button"
+        mode="icon"
+        variant="ghost"
+        size="sm"
+        className="absolute end-1 top-1 z-10 size-6 rounded-full bg-background/90 shadow-sm"
+        title="Save cell as suggested"
+        aria-label={`Save ${cell.item_code} ${bucketLabel} as suggested`}
+        onClick={(event) => {
+          event.stopPropagation();
+          void onDecideMany(keys);
+        }}
+      >
+        <Check className="size-3.5" aria-hidden />
+      </Button>
+    );
+  }
+
+  if (drafted.length > 0) {
+    const keys = drafted.map((entry) => entry.key);
+    return (
+      <Button
+        type="button"
+        mode="icon"
+        variant="ghost"
+        size="sm"
+        className="absolute end-1 top-1 z-10 size-6 rounded-full bg-background/90 shadow-sm"
+        title="Undo"
+        aria-label={`Undo ${cell.item_code} ${bucketLabel}`}
+        onClick={(event) => {
+          event.stopPropagation();
+          void onUndoMany(keys);
+        }}
+      >
+        <Undo2 className="size-3.5" aria-hidden />
+      </Button>
+    );
+  }
+
+  return null;
 }
