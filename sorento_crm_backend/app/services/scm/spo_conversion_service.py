@@ -198,7 +198,7 @@ import uuid
 from datetime import date as _date
 from decimal import Decimal
 from io import BytesIO
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
@@ -623,30 +623,110 @@ def _spo_pulls_by_po_line(db: Session, po_line_ids: list[str]) -> dict[str, list
     return out
 
 
+def _spo_so_coverage_rows(
+    db: Session, *, product_id: Optional[str] = None
+) -> list[tuple[str, str, float, str]]:
+    """Every `(so_line_id, spo_number, qty, po_line_id)` a CRM SPO line's own
+    `source_ref.so_coverage` names, oldest SPO number first - the shared row scan behind
+    `_spo_cover_by_so_line` (per-PRODUCT, S5's planner `taken_by`) and `coverage_for_so_lines`
+    (per-SO-LINE-ID set, S7's retail sales-order `linked_to`), so the planner's `taken_by`
+    and the sales order's "Linked to" column can never name a different SPO for the same
+    line. `po_line_id` is the SPO's OWN `purchase_order_lines.id` - the same id
+    `spo_allocations.po_line_id` carries - so a caller can join to the allocation for a
+    location / arrival date (`coverage_for_so_lines`).
+    """
+    q = (
+        db.query(PurchaseOrderLine.id, PurchaseOrderLine.source_ref, PurchaseOrder.po_number)
+        .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+        .filter(
+            PurchaseOrderLine.source_system == SOURCE_SYSTEM,
+            PurchaseOrderLine.source_ref.isnot(None),
+        )
+    )
+    if product_id is not None:
+        q = q.filter(PurchaseOrderLine.product_id == product_id)
+    out: list[tuple[str, str, float, str]] = []
+    for po_line_id, source_ref, po_number in q.all():
+        for so_line_id, qty in parse_source_ref(source_ref)["so_coverage"]:
+            out.append((so_line_id, po_number, qty, str(po_line_id)))
+    out.sort(key=lambda row: row[1] or "")
+    return out
+
+
 def _spo_cover_by_so_line(db: Session, product_id: str) -> dict[str, list[dict]]:
     """Every CRM SPO line pointed at a retail sales-order line for THIS product, oldest SPO
     number first - `{so_line_id: [{"spo_number", "qty"}]}` (S5, `so_coverage[].taken_qty` /
     `taken_by`, and `_retail_covered_qty`'s own totals below - one query, both answers).
 
-    Read off the SPO line's own `source_ref.so_coverage`, the same JSON `create` writes the
-    PO pulls into (`parse_source_ref`).
+    A thin grouping over `_spo_so_coverage_rows`, which does the actual read.
     """
-    rows = (
-        db.query(PurchaseOrderLine.source_ref, PurchaseOrder.po_number)
-        .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
-        .filter(
-            PurchaseOrderLine.source_system == SOURCE_SYSTEM,
-            PurchaseOrderLine.product_id == product_id,
-            PurchaseOrderLine.source_ref.isnot(None),
-        )
-        .all()
-    )
     out: dict[str, list[dict]] = {}
-    for source_ref, po_number in rows:
-        for so_line_id, qty in parse_source_ref(source_ref)["so_coverage"]:
-            out.setdefault(so_line_id, []).append({"spo_number": po_number, "qty": qty})
-    for entries in out.values():
-        entries.sort(key=lambda e: e["spo_number"] or "")
+    for so_line_id, spo_number, qty, _po_line_id in _spo_so_coverage_rows(
+        db, product_id=product_id
+    ):
+        out.setdefault(so_line_id, []).append({"spo_number": spo_number, "qty": qty})
+    return out
+
+
+def coverage_for_so_lines(db: Session, so_line_ids: Sequence[str]) -> dict[str, list[dict]]:
+    """`SalesOrderLineLink`-shaped entries for every retail sales-order line a CRM SPO
+    already covers (S7, AC-G2..G6) - `{so_line_id: [SalesOrderLineLink dict]}`.
+
+    `sales_order_service`'s "Linked to" column has something to read for a PROJECT line (an
+    `order_inquiry_links` row) but nothing for a RETAIL one: the retail tick is recorded only
+    on the covering SPO line's own `source_ref.so_coverage` - the links table hangs off an
+    inquiry row and a retail line has none - so without this a retail line an SPO already
+    promised reads "-" forever.
+
+    Shares its row scan with `_spo_cover_by_so_line` (`_spo_so_coverage_rows`), so the
+    planner's `taken_by` and this column can never name a different SPO for the same line.
+
+    `location` is the covering SPO line's OWN `spo_allocations` row - the warehouse the
+    container is actually going to, first by allocation id when the SPO line was split
+    across several - `None` while nothing has been allocated yet. `expected_date` is that
+    allocation's shipment ETA (`estimated_arrival_date`), `None` when the allocation carries
+    no booked shipment, or there is no allocation at all. `line_label` and `late`/`late_days`
+    are the fields `links_for_rows` states for an order-inquiry link that a retail line has
+    no equivalent of: no per-line numbering to print, and no `required_date` promise on the
+    retail line itself to compare an SPO's arrival against.
+    """
+    wanted = {sid for sid in so_line_ids if sid}
+    if not wanted:
+        return {}
+    rows = [row for row in _spo_so_coverage_rows(db) if row[0] in wanted]
+    if not rows:
+        return {}
+
+    po_line_ids = {po_line_id for _so, _spo, _qty, po_line_id in rows}
+    alloc_by_line: dict[str, tuple[Optional[str], Optional[_date]]] = {}
+    for po_line_id, warehouse_code, eta in (
+        db.query(
+            SPOAllocation.po_line_id, Warehouse.warehouse_code,
+            InboundShipment.estimated_arrival_date,
+        )
+        .outerjoin(Warehouse, Warehouse.id == SPOAllocation.warehouse_id)
+        .outerjoin(InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id)
+        .filter(SPOAllocation.po_line_id.in_(po_line_ids))
+        .order_by(SPOAllocation.id.asc())
+        .all()
+    ):
+        # First allocation for this SPO line wins (a split line has several) - the docstring's
+        # own "first if several".
+        alloc_by_line.setdefault(str(po_line_id), (warehouse_code, eta))
+
+    out: dict[str, list[dict]] = {}
+    for so_line_id, spo_number, qty, po_line_id in rows:
+        warehouse_code, eta = alloc_by_line.get(po_line_id, (None, None))
+        out.setdefault(so_line_id, []).append({
+            "kind": "spo",
+            "document": spo_number,
+            "line_label": None,
+            "qty": _g(qty),
+            "location": warehouse_code,
+            "expected_date": eta.isoformat() if eta else None,
+            "late": False,
+            "late_days": None,
+        })
     return out
 
 

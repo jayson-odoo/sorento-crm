@@ -1,0 +1,263 @@
+"""S7 - the retail SO line's own "Linked to" column names the SPO that covers it.
+
+`PLAN-scm-spo-planner-feedback-3sep.md` section S7, UAC AC-G2..G6.
+
+The retail half of the loop `sales_order_service._line_links` (AC-I9) never closed: a
+retail tick writes no `order_inquiry_links` row (that table hangs off an order-inquiry row,
+and a retail sales-order line has none), so `linked_to` read "-" for a retail line an SPO
+had already promised. `spo_conversion_service.coverage_for_so_lines` is the other half,
+sharing its row scan with S5's planner `taken_by` (`_spo_so_coverage_rows`) so the two
+surfaces can never name a different SPO for the same line.
+
+Postgres via `pg_session`, the same `World` builder `test_spo_conversion` and
+`test_spo_planner_selection` already share - a second world here would be a second set of
+assumptions about what a shipment or a retail demand line looks like.
+"""
+from __future__ import annotations
+
+import uuid
+from datetime import date
+from decimal import Decimal
+
+from fastapi.testclient import TestClient
+
+from app.services.scm import spo_conversion_service as svc
+from app.services.scm.sales_order_service import SalesOrderService
+from tests._pg_fixture import pg_session
+from tests.scm.conftest import requires_pg
+from tests.scm.test_outstanding_import_routes import as_company_user
+from tests.scm.test_spo_conversion import MARKER, World, _u
+from tests.scm.test_spo_planner_selection import _confirm, _retail_demand
+
+pytestmark = requires_pg
+
+
+def _linked_to(db, so_id: str, line_id: str):
+    body = SalesOrderService(db).get(so_id)
+    line = next(ln for ln in body["lines"] if str(ln["id"]) == str(line_id))
+    return line["linked_to"]
+
+
+def _link_core_line_to_a_project(db, so, core_line, *, po_line, qty, document):
+    """A CORE sales-order line registered as a project line, with ONE order-inquiry link
+    already on file - the mirror `_line_links` walks: `OrderInquiryRow.so_line_id` ->
+    `ProjectSalesOrderLine.id` -> `ProjectSalesOrderLine.core_sales_order_line_id` -> the
+    core `SalesOrderLine`. Used only by the AC-G5 test, which needs a core line that carries
+    BOTH an order-inquiry link and (separately, via `svc.create`'s retail tick) an SPO
+    coverage entry, to prove the two combine in the right order.
+    """
+    from app.models.project_so import (
+        INQUIRY_RAISED,
+        IV_ORDER,
+        OrderInquiry,
+        OrderInquiryLink,
+        OrderInquiryRow,
+        ProjectSalesOrder,
+        ProjectSalesOrderLine,
+    )
+
+    pso = ProjectSalesOrder(
+        id=_u(),
+        project_id=None,
+        so_id=so.id,
+        provisional_ref=f"{MARKER}-PSO-{uuid.uuid4().hex[:6]}",
+        status="published",
+    )
+    db.add(pso)
+    db.flush()
+    project_line = ProjectSalesOrderLine(
+        id=_u(),
+        project_sales_order_id=pso.id,
+        line_no=1,
+        core_sales_order_line_id=core_line.id,
+        product_id=core_line.product_id,
+        qty=Decimal(str(qty)),
+        unit_price=Decimal("0"),
+        amount=Decimal("0"),
+    )
+    db.add(project_line)
+    db.flush()
+    inquiry = OrderInquiry(id=_u(), project_sales_order_id=pso.id, state=INQUIRY_RAISED)
+    db.add(inquiry)
+    db.flush()
+    row = OrderInquiryRow(
+        id=_u(),
+        order_inquiry_id=inquiry.id,
+        so_line_id=project_line.id,
+        item_code=MARKER,
+        qty=Decimal(str(qty)),
+        verb=IV_ORDER,
+        state=INQUIRY_RAISED,
+    )
+    db.add(row)
+    db.flush()
+    db.add(OrderInquiryLink(
+        id=_u(), row_id=row.id, po_line_id=po_line.id, document=document,
+        qty=Decimal(str(qty)),
+    ))
+    db.flush()
+
+
+def test_a_retail_line_covered_by_one_spo_reads_one_spo_link():
+    """AC-G2."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        wh = w.warehouse()
+        w.po("A", supplier, [("A", 100, 0)])
+        retail, so = _retail_demand(db, w, "A", wh, qty=30, required=date(2026, 9, 1))
+
+        shipment, lines = w.shipment([("A", 30, supplier)])
+        created = svc.create(
+            db, str(shipment.id),
+            [_confirm(
+                lines[0], 30,
+                location_splits=[{"warehouse_id": str(wh.id), "qty": 30}],
+                so_line_ids=[f"retail:{retail.id}"],
+            )],
+        )
+        spo_number = created["created_spos"][0]["po_number"]
+
+        linked = _linked_to(db, str(so.id), str(retail.id))
+        assert linked == [{
+            "kind": "spo",
+            "document": spo_number,
+            "line_label": None,
+            "qty": "30",
+            "location": wh.warehouse_code,
+            "expected_date": None,
+            "late": False,
+            "late_days": None,
+        }]
+
+
+def test_covered_by_two_containers_reads_two_links_in_spo_number_order():
+    """AC-G3."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        wh = w.warehouse()
+        w.po("A", supplier, [("A", 100, 0)])
+        retail, so = _retail_demand(db, w, "A", wh, qty=50, required=date(2026, 9, 1))
+
+        first, first_lines = w.shipment([("A", 20, supplier)])
+        first_created = svc.create(
+            db, str(first.id),
+            [_confirm(
+                first_lines[0], 20,
+                location_splits=[{"warehouse_id": str(wh.id), "qty": 20}],
+                so_line_ids=[f"retail:{retail.id}"],
+            )],
+        )
+        first_spo = first_created["created_spos"][0]["po_number"]
+
+        second, second_lines = w.shipment([("A", 30, supplier)])
+        second_created = svc.create(
+            db, str(second.id),
+            [_confirm(
+                second_lines[0], 30,
+                location_splits=[{"warehouse_id": str(wh.id), "qty": 30}],
+                so_line_ids=[f"retail:{retail.id}"],
+            )],
+        )
+        second_spo = second_created["created_spos"][0]["po_number"]
+
+        linked = _linked_to(db, str(so.id), str(retail.id))
+        assert [l["document"] for l in linked] == sorted([first_spo, second_spo])
+        assert {l["document"] for l in linked} == {first_spo, second_spo}
+        assert sum(float(l["qty"]) for l in linked) == 50
+
+
+def test_after_unwind_the_line_reads_none_again():
+    """AC-G4."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        wh = w.warehouse()
+        w.po("A", supplier, [("A", 100, 0)])
+        retail, so = _retail_demand(db, w, "A", wh, qty=30, required=date(2026, 9, 1))
+
+        shipment, lines = w.shipment([("A", 30, supplier)])
+        svc.create(
+            db, str(shipment.id),
+            [_confirm(
+                lines[0], 30,
+                location_splits=[{"warehouse_id": str(wh.id), "qty": 30}],
+                so_line_ids=[f"retail:{retail.id}"],
+            )],
+        )
+        assert _linked_to(db, str(so.id), str(retail.id)) is not None
+
+        svc.unwind(db, str(shipment.id))
+
+        assert _linked_to(db, str(so.id), str(retail.id)) is None
+
+
+def test_a_line_with_an_inquiry_row_keeps_its_oi_links_first_then_the_spo_links():
+    """AC-G5."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        wh = w.warehouse()
+        other_po = w.po("OTHER", supplier, [("A", 20, 0)])
+        w.po("A", supplier, [("A", 100, 0)])
+
+        retail, so = _retail_demand(db, w, "A", wh, qty=30, required=date(2026, 9, 1))
+        _link_core_line_to_a_project(
+            db, so, retail, po_line=other_po.lines[0], qty=5, document=other_po.po_number,
+        )
+
+        shipment, lines = w.shipment([("A", 30, supplier)])
+        created = svc.create(
+            db, str(shipment.id),
+            [_confirm(
+                lines[0], 30,
+                location_splits=[{"warehouse_id": str(wh.id), "qty": 30}],
+                so_line_ids=[f"retail:{retail.id}"],
+            )],
+        )
+        spo_number = created["created_spos"][0]["po_number"]
+
+        linked = _linked_to(db, str(so.id), str(retail.id))
+        assert [l["kind"] for l in linked] == ["po", "spo"]
+        assert linked[0]["document"] == other_po.po_number
+        assert linked[1]["document"] == spo_number
+
+
+def test_the_route_carries_the_spo_link(scm_app):
+    """AC-G6: `response_model`-free route, but the additive shape still has to survive it -
+    same discipline `test_the_route_response_carries_taken_qty_and_taken_by` uses."""
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+    supplier = w.supplier()
+    wh = w.warehouse()
+    w.po("A", supplier, [("A", 100, 0)])
+    retail, so = _retail_demand(db, w, "A", wh, qty=30, required=date(2026, 9, 1))
+
+    shipment, lines = w.shipment([("A", 30, supplier)])
+    created = svc.create(
+        db, str(shipment.id),
+        [_confirm(
+            lines[0], 30,
+            location_splits=[{"warehouse_id": str(wh.id), "qty": 30}],
+            so_line_ids=[f"retail:{retail.id}"],
+        )],
+    )
+    spo_number = created["created_spos"][0]["po_number"]
+
+    client = TestClient(app)
+    r = client.get(f"/api/v1/scm/sales-orders/{so.id}")
+
+    assert r.status_code == 200, r.text
+    line = next(ln for ln in r.json()["lines"] if ln["id"] == str(retail.id))
+    assert line["linked_to"] == [{
+        "kind": "spo",
+        "document": spo_number,
+        "line_label": None,
+        "qty": "30",
+        "location": wh.warehouse_code,
+        "expected_date": None,
+        "late": False,
+        "late_days": None,
+    }]

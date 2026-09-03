@@ -367,8 +367,12 @@ class SalesOrderService:
         # so the two reads never disagree about which one covers a line.
         saved = self._saved_lines(so) if line_planning else {}
         # WHERE each line's Buy sits (AC-I9). Same gate, same reason: the list has no
-        # column for it.
+        # column for it. `links` covers a PROJECT line (an order-inquiry link);
+        # `spo_links` covers a RETAIL line's own SPO coverage (S7) - the retail tick
+        # writes no order-inquiry link at all, so without the second read a retail line
+        # an SPO already promised reads "-" forever.
         links = self._line_links(so) if line_planning else {}
+        spo_links = self._spo_line_links(so) if line_planning else {}
         total_qty = 0.0
         committed = 0.0
         lines = []
@@ -435,12 +439,13 @@ class SalesOrderService:
                 # caller asked for them (`line_planning`), and null on a line nobody has
                 # raised or decided anything on - which is most of the book.
                 "order_inquiry": inquiries.get(str(ln.id)),
-                # AC-I9: WHERE this line's Buy sits, off the SAME reader the order
-                # inquiry worklist's "Linked to" column and the PO occupancy panel use.
-                # `None` when no inquiry row covers the line at all, `[]` when one does
-                # and holds no link: "nobody was told" and "told, nothing linked" are
-                # different answers and the column says so.
-                "linked_to": links.get(str(ln.id)),
+                # AC-I9 / S7: WHERE this line's Buy sits - the order-inquiry link(s) a
+                # PROJECT line carries first, then a RETAIL line's own SPO coverage (S7,
+                # AC-G2..G6) after them. `None` when NEITHER exists (no inquiry row covers
+                # the line and no SPO has been pointed at it); `[]` when an inquiry row
+                # covers it but holds no link yet: "nobody was told" and "told, nothing
+                # linked" are different answers and the column says so.
+                "linked_to": self._linked_to_for(links.get(str(ln.id)), spo_links.get(str(ln.id))),
                 "decision_revision": (decided.get(str(ln.id)) or {}).get("revision_no"),
                 # The two compositions in the planning board's vocabulary. Both null on a
                 # line no active revision covers; `supply_decided` STAYS null there even
@@ -646,6 +651,40 @@ class SalesOrderService:
                     }
                 )
         return out
+
+    def _spo_line_links(self, so: SalesOrder) -> dict[str, list[dict]]:
+        """The RETAIL half of AC-I9 / S7: every CRM SPO already pointed at one of this
+        order's lines, keyed by CORE line id.
+
+        `_line_links` above reads `projects.order_inquiry_links`, which hangs off an
+        order-inquiry row - a PROJECT concept a retail line has none of. The retail tick
+        (`spo_conversion_service.create`'s `so_line_ids`) is recorded only on the covering
+        SPO line's own `source_ref.so_coverage`, so this is the other reader: ONE call into
+        `spo_conversion_service.coverage_for_so_lines`, the SAME row scan the SPO planner's
+        own `taken_by` reads (S5), so the two surfaces can never name a different SPO for the
+        same line.
+        """
+        from app.services.scm.spo_conversion_service import coverage_for_so_lines
+
+        core_ids = [str(ln.id) for ln in so.lines]
+        return coverage_for_so_lines(self.db, core_ids)
+
+    @staticmethod
+    def _linked_to_for(
+        oi_links: Optional[list[dict]], spo_cover: Optional[list[dict]]
+    ) -> Optional[list[dict]]:
+        """AC-G5: a PROJECT line's order-inquiry links first, a RETAIL line's SPO coverage
+        after them - `None` only when NEITHER source has anything to say about the line.
+
+        `oi_links` is `None` for a line with no inquiry row at all (never combined with
+        `spo_cover` in that case, or a retail line's coverage would print under a `[]` that
+        implies an inquiry row exists); `[]` for one that has a row but no link yet - both
+        distinct from `None`, and the serializer above tells them apart.
+        """
+        spo_cover = spo_cover or []
+        if oi_links is None and not spo_cover:
+            return None
+        return (oi_links or []) + spo_cover
 
     @staticmethod
     def _supply_components(components) -> list[dict]:
