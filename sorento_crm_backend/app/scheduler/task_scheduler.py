@@ -147,7 +147,11 @@ def _reconcile_orphan_import_jobs(db) -> int:
             continue
 
         try:
-            job_service.fail_job(rq_job_id, reason[:2000])
+            # S1 (fix round 5): the RAW text, whole. `fail_job` -> `_summarise_error`
+            # already caps its own OUTPUT to 2000 chars; slicing the INPUT here first cut
+            # a long traceback before the exception line - which sits at the END - was
+            # ever read, so the row stored a mid-stack frame instead of the failure.
+            job_service.fail_job(rq_job_id, reason)
             failed += 1
         except Exception:
             logger.exception("Failed to fail orphan import job %s", rq_job_id)
