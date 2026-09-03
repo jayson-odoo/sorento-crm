@@ -971,6 +971,21 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
           ) : null}
         </div>
         <div className="flex min-w-0 items-center justify-end gap-2 sm:ms-auto">
+          {/* S3 (review): these gate Create SPO in EITHER view, so they render in both - a
+              disabled Create SPO with no reason on screen reads as broken. They sit before
+              the schedule View select so the reason is read first. */}
+          {splitMismatch.size > 0 ? (
+            <span className="text-2xs text-end font-medium text-destructive">
+              {splitMismatch.size} line{splitMismatch.size === 1 ? '' : 's'} - location split does not add up
+              to the SPO qty
+            </span>
+          ) : null}
+          {overTicked.size > 0 ? (
+            <span className="text-2xs text-end font-medium text-destructive">
+              {[...overTicked.values()].flat().join(', ')} - this container has nothing left
+              for it. Untick it, or send more.
+            </span>
+          ) : null}
           {view === 'schedule' ? (
             <div className="flex items-center gap-2">
               <Label htmlFor="spo-schedule-mode" className="text-xs text-muted-foreground">
@@ -988,18 +1003,6 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
                 />
               </div>
             </div>
-          ) : null}
-          {view === 'table' && splitMismatch.size > 0 ? (
-            <span className="text-2xs text-end font-medium text-destructive">
-              {splitMismatch.size} line{splitMismatch.size === 1 ? '' : 's'} - location split does not add up
-              to the SPO qty
-            </span>
-          ) : null}
-          {view === 'table' && overTicked.size > 0 ? (
-            <span className="text-2xs text-end font-medium text-destructive">
-              {[...overTicked.values()].flat().join(', ')} - this container has nothing left
-              for it. Untick it, or send more.
-            </span>
           ) : null}
         </div>
       </div>

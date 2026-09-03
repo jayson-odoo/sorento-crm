@@ -886,6 +886,28 @@ describe('R22 - the destinations expand under the row', () => {
     expect(screen.getByRole('button', { name: /create spo/i })).toBeDisabled();
   });
 
+  it('the red split-mismatch reason stays visible in Schedule view too, before the View select (S3 review)', async () => {
+    renderTable();
+    fireEvent.click(await chevron());
+    await screen.findByText(/SRTWT7443 - destinations/);
+    fireEvent.change(qtyRow(1), { target: { value: '200' } });
+    await screen.findByText(/location split does not add up/);
+
+    fireEvent.click(screen.getByRole('button', { name: /schedule/i }));
+
+    // A disabled Create SPO with no reason on screen reads as broken - the reason has to
+    // survive the view switch, not only show in table view.
+    const reason = screen.getByText(/location split does not add up/);
+    expect(reason).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /create spo/i })).toBeDisabled();
+    // It comes BEFORE the schedule View select in document order (S3), so the reason a
+    // control is disabled is read first.
+    const viewLabel = screen.getByText('View');
+    expect(
+      reason.compareDocumentPosition(viewLabel) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
   it('removing a destination leaves its quantity unassigned', async () => {
     renderTable();
     fireEvent.click(await chevron());

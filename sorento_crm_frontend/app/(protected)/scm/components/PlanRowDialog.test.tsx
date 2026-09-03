@@ -64,6 +64,44 @@ vi.mock('../../project-sales/fulfilment-planning/components/StockDocumentsPanel'
   ),
 }));
 
+/**
+ * The pickers' Filters popover nests a `SearchableSelect` (the field, then the value) inside
+ * a Radix `DropdownMenu` - real Radix-in-Radix works in the browser, but jsdom has no repo
+ * precedent driving a portalled Popover from inside a portalled DropdownMenu, and the users
+ * list's own "Advanced filters" test (`PipelineClient.test.tsx`) sidesteps exactly this by
+ * standing in a native `<select>`. Same stand-in here, distinguished by `placeholder`: only
+ * the VALUE select gets one ("Any"), so the field select reads "Filter field" and the value
+ * select reads "Filter value".
+ */
+vi.mock('@/components/common/SearchableSelect', () => ({
+  SearchableSelect: ({
+    value,
+    onChange,
+    options,
+    placeholder,
+    clearable,
+  }: {
+    value: string;
+    onChange: (next: string) => void;
+    options?: { value: string; label: string }[];
+    placeholder?: string;
+    clearable?: boolean;
+  }) => (
+    <select
+      aria-label={placeholder ? 'Filter value' : 'Filter field'}
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+    >
+      {clearable ? <option value="">{placeholder ?? ''}</option> : null}
+      {(options ?? []).map((option) => (
+        <option key={option.value} value={option.value}>
+          {option.label}
+        </option>
+      ))}
+    </select>
+  ),
+}));
+
 import {
   IncomingPlTable,
   NO_SPO_TO_POOL,
@@ -836,6 +874,125 @@ describe('PoTakesPicker', () => {
 
     expect(screen.getByText('No open PO can back this line.')).toBeTruthy();
   });
+
+  it('headers name Delivery date and Outstanding, the family\'s own words (S3, AC-C1)', () => {
+    renderWithClient(
+      <PoTakesPicker takes={takes} tickedIds={[]} onChange={() => {}} coveredQty={0} packedQty={60} />,
+    );
+
+    expect(screen.getByRole('columnheader', { name: 'PO' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Supplier' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Doc date' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Delivery date' })).toBeTruthy();
+    expect(screen.queryByRole('columnheader', { name: 'Due' })).toBeNull();
+    expect(screen.getByRole('columnheader', { name: 'Outstanding' })).toBeTruthy();
+    expect(screen.queryByRole('columnheader', { name: 'Open' })).toBeNull();
+    expect(screen.getByRole('columnheader', { name: 'Taken' })).toBeTruthy();
+  });
+
+  it('renders as a DataGrid with resizable columns (S3, AC-C2)', () => {
+    const { container } = renderWithClient(
+      <PoTakesPicker takes={takes} tickedIds={[]} onChange={() => {}} coveredQty={0} packedQty={60} />,
+    );
+
+    expect(container.querySelector('[data-slot="data-grid-table"]')).toBeTruthy();
+    expect(container.querySelector('.cursor-col-resize')).toBeTruthy();
+  });
+
+  // A third row with its own supplier - the pre-tick fixture's two rows share one supplier,
+  // which cannot prove a Supplier filter actually narrows anything.
+  const filterTakes = [
+    ...takes,
+    {
+      po_line_id: 'l3',
+      po_number: 'PO-9000',
+      supplier_name: 'Kailu',
+      po_date: '2026-02-01',
+      expected_date: '2026-10-01',
+      qty: 0,
+      open_qty: 30,
+    },
+  ];
+
+  it('narrows on Enter to PO or Supplier, and the clear X restores every row (S3, AC-C3)', () => {
+    renderWithClient(
+      <PoTakesPicker takes={filterTakes} tickedIds={[]} onChange={() => {}} coveredQty={0} packedQty={60} />,
+    );
+
+    const search = screen.getByPlaceholderText('Search POs');
+    fireEvent.change(search, { target: { value: 'Kailu' } });
+    fireEvent.keyDown(search, { key: 'Enter' });
+
+    expect(screen.getByText('PO-9000')).toBeTruthy();
+    expect(screen.queryByText('PO-24118')).toBeNull();
+    expect(screen.queryByText('PO-24090')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear search' }));
+
+    expect(screen.getByText('PO-9000')).toBeTruthy();
+    expect(screen.getByText('PO-24118')).toBeTruthy();
+    expect(screen.getByText('PO-24090')).toBeTruthy();
+  });
+
+  it('filters by a condition, shows the active count, and Clear filters restores every row (S3, AC-C4)', () => {
+    const { container } = renderWithClient(
+      <PoTakesPicker takes={filterTakes} tickedIds={[]} onChange={() => {}} coveredQty={0} packedQty={60} />,
+    );
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: /filters/i }), { button: 0 });
+    fireEvent.click(screen.getByRole('button', { name: /add condition/i }));
+
+    fireEvent.change(screen.getByLabelText('Filter field'), { target: { value: 'supplier_name' } });
+    fireEvent.change(screen.getByLabelText('Filter value'), { target: { value: 'Kailu' } });
+    fireEvent.click(screen.getByRole('button', { name: /^apply$/i }));
+
+    expect(screen.getByText('PO-9000')).toBeTruthy();
+    expect(screen.queryByText('PO-24118')).toBeNull();
+    expect(screen.queryByText('PO-24090')).toBeNull();
+
+    // Radix marks the trigger `aria-hidden` while the popover is open (its own accessible
+    // name then resolves empty), so the active count is read off the DOM directly rather
+    // than through a role query.
+    const trigger = container.querySelector('[data-slot="dropdown-menu-trigger"]');
+    expect(trigger?.textContent).toContain('1');
+
+    fireEvent.click(screen.getByRole('button', { name: /clear filters/i }));
+
+    expect(screen.getByText('PO-9000')).toBeTruthy();
+    expect(screen.getByText('PO-24118')).toBeTruthy();
+    expect(screen.getByText('PO-24090')).toBeTruthy();
+  });
+
+  it('keeps a tick when a filter hides its row, calls onChange for none of it, and the footer figures hold (S3, AC-C5)', () => {
+    const onChange = vi.fn();
+    renderWithClient(
+      <PoTakesPicker
+        takes={filterTakes}
+        tickedIds={['l3']}
+        onChange={onChange}
+        coveredQty={0}
+        packedQty={60}
+      />,
+    );
+
+    expect(screen.getByLabelText('Draw from PO-9000')).toBeChecked();
+    expect(screen.getByText('1 of 3 POs · covers 0 of packed 60')).toBeTruthy();
+
+    const search = screen.getByPlaceholderText('Search POs');
+    fireEvent.change(search, { target: { value: 'PO-24118' } });
+    fireEvent.keyDown(search, { key: 'Enter' });
+
+    expect(screen.queryByLabelText('Draw from PO-9000')).toBeNull();
+    expect(onChange).not.toHaveBeenCalled();
+    // The footer's own totals read over ALL rows, not the filtered ones - only the shown
+    // count moves.
+    expect(screen.getByText('1 of 3 POs · covers 0 of packed 60 · 1 of 3 shown')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear search' }));
+
+    expect(screen.getByLabelText('Draw from PO-9000')).toBeChecked();
+    expect(onChange).not.toHaveBeenCalled();
+  });
 });
 
 describe('SoCoveragePicker', () => {
@@ -903,5 +1060,124 @@ describe('SoCoveragePicker', () => {
     );
 
     expect(screen.getByText('No open demand this SPO could cover.')).toBeTruthy();
+  });
+
+  it('headers name Delivery date and Outstanding, the family\'s own words (S3, AC-C1)', () => {
+    renderWithClient(
+      <SoCoveragePicker coverage={coverage} tickedKeys={[]} onChange={() => {}} unassigned={0} />,
+    );
+
+    expect(screen.getByRole('columnheader', { name: 'Sales order' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Customer' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Class' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Delivery date' })).toBeTruthy();
+    expect(screen.queryByRole('columnheader', { name: 'Required' })).toBeNull();
+    expect(screen.getByRole('columnheader', { name: 'Outstanding' })).toBeTruthy();
+    expect(screen.queryByRole('columnheader', { name: 'Open' })).toBeNull();
+    expect(screen.getByRole('columnheader', { name: 'Location' })).toBeTruthy();
+  });
+
+  it('renders as a DataGrid with resizable columns (S3, AC-C2)', () => {
+    const { container } = renderWithClient(
+      <SoCoveragePicker coverage={coverage} tickedKeys={[]} onChange={() => {}} unassigned={0} />,
+    );
+
+    expect(container.querySelector('[data-slot="data-grid-table"]')).toBeTruthy();
+    expect(container.querySelector('.cursor-col-resize')).toBeTruthy();
+  });
+
+  // A third row with its own customer/location - the pre-tick fixture's two rows are already
+  // distinct on Sales order/Customer, but a THIRD proves a filter actually narrows rather than
+  // just matching everything.
+  const coverageWithThird = [
+    ...coverage,
+    {
+      key: 'retail:3',
+      kind: 'retail' as const,
+      document: 'SO404400',
+      customer_name: 'ANOTHER DEALER',
+      required_date: '2026-11-01',
+      qty: 10,
+      warehouse_code: 'MWH',
+    },
+  ];
+
+  it('narrows on Enter to Sales order or Customer, and the clear X restores every row (S3, AC-C3)', () => {
+    renderWithClient(
+      <SoCoveragePicker coverage={coverageWithThird} tickedKeys={[]} onChange={() => {}} unassigned={0} />,
+    );
+
+    const search = screen.getByPlaceholderText('Search sales orders');
+    fireEvent.change(search, { target: { value: 'ANOTHER' } });
+    fireEvent.keyDown(search, { key: 'Enter' });
+
+    expect(screen.getByText('SO404400')).toBeTruthy();
+    expect(screen.queryByText('OI-0042')).toBeNull();
+    expect(screen.queryByText('SO404352')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear search' }));
+
+    expect(screen.getByText('OI-0042')).toBeTruthy();
+    expect(screen.getByText('SO404352')).toBeTruthy();
+    expect(screen.getByText('SO404400')).toBeTruthy();
+  });
+
+  it('filters by a condition, shows the active count, and Clear filters restores every row (S3, AC-C4)', () => {
+    const { container } = renderWithClient(
+      <SoCoveragePicker coverage={coverageWithThird} tickedKeys={[]} onChange={() => {}} unassigned={0} />,
+    );
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: /filters/i }), { button: 0 });
+    fireEvent.click(screen.getByRole('button', { name: /add condition/i }));
+
+    fireEvent.change(screen.getByLabelText('Filter field'), { target: { value: 'customer_name' } });
+    fireEvent.change(screen.getByLabelText('Filter value'), { target: { value: 'ANOTHER DEALER' } });
+    fireEvent.click(screen.getByRole('button', { name: /^apply$/i }));
+
+    expect(screen.getByText('SO404400')).toBeTruthy();
+    expect(screen.queryByText('OI-0042')).toBeNull();
+    expect(screen.queryByText('SO404352')).toBeNull();
+
+    // Radix marks the trigger `aria-hidden` while the popover is open (its own accessible
+    // name then resolves empty), so the active count is read off the DOM directly rather
+    // than through a role query.
+    const trigger = container.querySelector('[data-slot="dropdown-menu-trigger"]');
+    expect(trigger?.textContent).toContain('1');
+
+    fireEvent.click(screen.getByRole('button', { name: /clear filters/i }));
+
+    expect(screen.getByText('OI-0042')).toBeTruthy();
+    expect(screen.getByText('SO404352')).toBeTruthy();
+    expect(screen.getByText('SO404400')).toBeTruthy();
+  });
+
+  it('keeps a tick when a filter hides its row, calls onChange for none of it, and the footer figures hold (S3, AC-C5)', () => {
+    const onChange = vi.fn();
+    renderWithClient(
+      <SoCoveragePicker
+        coverage={coverageWithThird}
+        tickedKeys={['retail:3']}
+        onChange={onChange}
+        unassigned={5}
+      />,
+    );
+
+    expect(screen.getByLabelText('Cover SO404400')).toBeChecked();
+    expect(screen.getByText('Unassigned 5')).toBeTruthy();
+
+    const search = screen.getByPlaceholderText('Search sales orders');
+    fireEvent.change(search, { target: { value: 'OI-0042' } });
+    fireEvent.keyDown(search, { key: 'Enter' });
+
+    expect(screen.queryByLabelText('Cover SO404400')).toBeNull();
+    expect(onChange).not.toHaveBeenCalled();
+    // The footer's Unassigned figure reads over ALL rows, not the filtered ones - only the
+    // shown count moves.
+    expect(screen.getByText('Unassigned 5 · 1 of 3 shown')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear search' }));
+
+    expect(screen.getByLabelText('Cover SO404400')).toBeChecked();
+    expect(onChange).not.toHaveBeenCalled();
   });
 });

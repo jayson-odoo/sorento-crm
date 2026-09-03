@@ -9,7 +9,7 @@ import {
   getExpandedRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronRight, Plus, Trash2 } from 'lucide-react';
 
 import {
   Dialog,
@@ -20,11 +20,15 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridTable } from '@/components/ui/data-grid-table';
+import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { getStatusBadgeVariant, formatStatusLabel } from '@/lib/status-badge';
 import { cn } from '@/lib/utils';
@@ -1112,6 +1116,115 @@ export function PoTabs({ supplierId, productId }: { supplierId: string; productI
 // SPO planner - the two pickers (R21, AC-G1/AC-G2)
 // ---------------------------------------------------------------------------
 
+/** One field a picker's advanced filter can match on (S3). */
+interface PickerFilterField {
+  id: string;
+  label: string;
+  options: { value: string; label: string }[];
+}
+
+/** One condition row in a picker's Filters popover - field + value, ANDed with the rest. */
+interface PickerFilterCondition {
+  id: string;
+  field: string;
+  value: string;
+}
+
+/**
+ * The unique, sorted values a field's own value select offers - built off the picker's WHOLE
+ * row set, never the currently-shown one, so a condition someone is about to add still offers
+ * every choice rather than narrowing itself the moment a search or another condition applies.
+ */
+function distinctFieldOptions<T>(
+  rows: T[],
+  pick: (row: T) => string | null | undefined,
+): { value: string; label: string }[] {
+  const seen = new Set<string>();
+  const out: { value: string; label: string }[] = [];
+  for (const row of rows) {
+    const v = pick(row);
+    if (!v || seen.has(v)) continue;
+    seen.add(v);
+    out.push({ value: v, label: v });
+  }
+  out.sort((a, b) => a.label.localeCompare(b.label));
+  return out;
+}
+
+/**
+ * The advanced-filter condition editor a picker's `Filters` popover renders (S3): field select,
+ * value select, remove - the same shape the users list's own "Advanced filters" popover uses
+ * (`user-list.tsx`), parameterised on `fields` so the SO and PO pickers share one implementation
+ * rather than two copies that drift the first time one of them changes.
+ */
+function PickerFilterConditions({
+  fields,
+  conditions,
+  onChange,
+  onApply,
+  onClear,
+}: {
+  fields: PickerFilterField[];
+  conditions: PickerFilterCondition[];
+  onChange: (next: PickerFilterCondition[]) => void;
+  onApply: () => void;
+  onClear: () => void;
+}) {
+  const addCondition = () =>
+    onChange([...conditions, { id: crypto.randomUUID(), field: fields[0]?.id ?? '', value: '' }]);
+  const updateCondition = (id: string, patch: Partial<PickerFilterCondition>) =>
+    onChange(conditions.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+  const removeCondition = (id: string) => onChange(conditions.filter((c) => c.id !== id));
+
+  return (
+    <div className="space-y-3">
+      <p className="text-sm font-medium">Advanced filters</p>
+      <div className="space-y-2">
+        {conditions.map((cond) => {
+          const field = fields.find((f) => f.id === cond.field) ?? fields[0];
+          return (
+            <div key={cond.id} className="grid grid-cols-[1fr_1fr_auto] gap-2">
+              <SearchableSelect
+                value={cond.field}
+                onChange={(v) => updateCondition(cond.id, { field: v, value: '' })}
+                options={fields.map((f) => ({ value: f.id, label: f.label }))}
+              />
+              <SearchableSelect
+                value={cond.value}
+                onChange={(v) => updateCondition(cond.id, { value: v })}
+                options={field?.options ?? []}
+                placeholder="Any"
+                clearable
+              />
+              <Button
+                type="button"
+                mode="icon"
+                variant="ghost"
+                onClick={() => removeCondition(cond.id)}
+                aria-label="Remove filter condition"
+              >
+                <Trash2 className="size-4" />
+              </Button>
+            </div>
+          );
+        })}
+      </div>
+      <div className="flex gap-2">
+        <Button type="button" variant="outline" size="sm" className="flex-1" onClick={addCondition}>
+          <Plus className="size-4" />
+          Add condition
+        </Button>
+        <Button type="button" variant="outline" size="sm" className="flex-1" onClick={onApply}>
+          Apply
+        </Button>
+      </div>
+      <Button variant="outline" size="sm" className="w-full" onClick={onClear}>
+        Clear filters
+      </Button>
+    </div>
+  );
+}
+
 /** One PO this SPO can draw from. Structurally the planner's own `SpoPoTake`. */
 export interface PoTakeRow {
   po_line_id: string;
@@ -1140,6 +1253,9 @@ export function PoTakesPicker({
   onChange,
   coveredQty,
   packedQty,
+  // Accepted now, wired by S4 once a per-row class hook exists; see the prop's own doc below.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  bucketHits,
 }: {
   takes: PoTakeRow[];
   tickedIds: string[];
@@ -1148,9 +1264,56 @@ export function PoTakesPicker({
   coveredQty: number;
   /** What the shipment line packs, for the footer. */
   packedQty: number;
+  /**
+   * PO line ids whose date fell in the schedule week that opened this picker (S4, AC-D3).
+   * `DataGridTable`'s `<tr>` has no per-row class hook today (only the boolean `rowPending`
+   * predicate, which only ever toggles `data-pending` + a fixed dim style) - so this is wired
+   * through and otherwise unused until S4 either extends that table or reads it another way.
+   */
+  bucketHits?: Set<string>;
 }) {
   const toggle = (id: string, on: boolean) =>
     onChange(on ? [...tickedIds, id] : tickedIds.filter((x) => x !== id));
+
+  // S3: search + filter, over the FULL `takes` array - ticks and the footer's totals never
+  // move with them (AC-C5); only which rows the grid shows does.
+  const [searchInput, setSearchInput] = useState('');
+  const [appliedSearch, setAppliedSearch] = useState('');
+  const [draftConditions, setDraftConditions] = useState<PickerFilterCondition[]>([]);
+  const [appliedConditions, setAppliedConditions] = useState<PickerFilterCondition[]>([]);
+
+  const fields = useMemo<PickerFilterField[]>(
+    () => [
+      { id: 'po_number', label: 'PO', options: distinctFieldOptions(takes, (t) => t.po_number) },
+      {
+        id: 'supplier_name',
+        label: 'Supplier',
+        options: distinctFieldOptions(takes, (t) => t.supplier_name),
+      },
+    ],
+    [takes],
+  );
+
+  const rows = useMemo(() => {
+    let out = takes;
+    const needle = appliedSearch.trim().toLowerCase();
+    if (needle) {
+      out = out.filter(
+        (t) =>
+          (t.po_number ?? '').toLowerCase().includes(needle) ||
+          (t.supplier_name ?? '').toLowerCase().includes(needle),
+      );
+    }
+    for (const cond of appliedConditions) {
+      if (!cond.value) continue;
+      if (cond.field === 'po_number') out = out.filter((t) => t.po_number === cond.value);
+      if (cond.field === 'supplier_name') out = out.filter((t) => t.supplier_name === cond.value);
+    }
+    return out;
+  }, [takes, appliedSearch, appliedConditions]);
+
+  const activeCount = appliedConditions.filter((c) => c.value).length;
+  const isFiltered = Boolean(appliedSearch.trim()) || activeCount > 0;
 
   const columns = useMemo<ColumnDef<PoTakeRow>[]>(
     () => [
@@ -1196,17 +1359,18 @@ export function PoTakesPicker({
         meta: RIGHT,
       },
       {
+        // S3: the family's own word for this column (`PoTabs`, the purchase-order list).
         id: 'expected_date',
-        header: 'Due',
+        header: 'Delivery date',
         cell: ({ row }) => fmtDate(row.original.expected_date),
-        size: 100,
+        size: 120,
         meta: RIGHT,
       },
       {
         id: 'open_qty',
-        header: 'Open',
+        header: 'Outstanding',
         cell: ({ row }) => fmtInt(row.original.open_qty),
-        size: 90,
+        size: 110,
         meta: RIGHT,
       },
       {
@@ -1222,16 +1386,61 @@ export function PoTakesPicker({
     [tickedIds, coveredQty],
   );
 
+  const table = useReactTable({
+    columns,
+    data: rows,
+    getRowId: (t) => t.po_line_id,
+    getCoreRowModel: getCoreRowModel(),
+  });
+
   return (
     <div className="space-y-2">
-      <DrillTable
-        columns={columns}
-        rows={takes}
-        getRowId={(t) => t.po_line_id}
-        emptyMessage="No open PO can back this line."
+      <DataGridListToolbar
+        table={table}
+        searchSlot={
+          <ListSearchInput
+            value={searchInput}
+            onChange={(next) => {
+              setSearchInput(next);
+              if (!next) setAppliedSearch('');
+            }}
+            onSubmit={() => setAppliedSearch(searchInput)}
+            placeholder="Search POs"
+            className="w-full sm:w-64"
+          />
+        }
+        filters={{
+          kind: 'custom',
+          active: activeCount > 0,
+          activeCount,
+          content: (
+            <PickerFilterConditions
+              fields={fields}
+              conditions={draftConditions}
+              onChange={setDraftConditions}
+              onApply={() => setAppliedConditions(draftConditions)}
+              onClear={() => {
+                setDraftConditions([]);
+                setAppliedConditions([]);
+              }}
+            />
+          ),
+        }}
+        exportConfig={false}
+        showColumns={false}
       />
+      <DataGrid
+        table={table}
+        recordCount={rows.length}
+        listingKey={null}
+        tableLayout={{ width: 'fixed', columnsResizable: true }}
+        emptyMessage="No open PO can back this line."
+      >
+        <DataGridTable />
+      </DataGrid>
       <p className="border-t pt-2 text-2xs text-muted-foreground">
         {`${fmtInt(tickedIds.length)} of ${fmtInt(takes.length)} POs · covers ${fmtInt(coveredQty)} of packed ${fmtInt(packedQty)}`}
+        {isFiltered ? ` · ${fmtInt(rows.length)} of ${fmtInt(takes.length)} shown` : ''}
       </p>
     </div>
   );
@@ -1261,6 +1470,9 @@ export function SoCoveragePicker({
   onChange,
   unassigned,
   takes,
+  // Accepted now, wired by S4 once a per-row class hook exists; see the prop's own doc below.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  bucketHits,
 }: {
   coverage: SoCoverageRow[];
   tickedKeys: string[];
@@ -1270,6 +1482,10 @@ export function SoCoveragePicker({
    *  Omitted by a caller that holds no walk - the column then does not render at all,
    *  rather than reading 0 for every row and being mistaken for one. */
   takes?: Record<string, number>;
+  /** SO coverage keys whose date fell in the schedule week that opened this picker (S4,
+   *  AC-D3) - see `PoTakesPicker`'s own doc: no per-row class hook exists yet, so this is
+   *  accepted and otherwise unused. */
+  bucketHits?: Set<string>;
 }) {
   const toggle = (key: string, on: boolean) =>
     onChange(on ? [...tickedKeys, key] : tickedKeys.filter((x) => x !== key));
@@ -1279,6 +1495,64 @@ export function SoCoveragePicker({
     () => (takes ? coverage.reduce((s, c) => s + (takes[c.key] ?? 0), 0) : null),
     [coverage, takes],
   );
+
+  // S3: search + filter, over the FULL `coverage` array - see `PoTakesPicker` for why.
+  const [searchInput, setSearchInput] = useState('');
+  const [appliedSearch, setAppliedSearch] = useState('');
+  const [draftConditions, setDraftConditions] = useState<PickerFilterCondition[]>([]);
+  const [appliedConditions, setAppliedConditions] = useState<PickerFilterCondition[]>([]);
+
+  const fields = useMemo<PickerFilterField[]>(
+    () => [
+      {
+        id: 'document',
+        label: 'Sales order',
+        options: distinctFieldOptions(coverage, (c) => c.document),
+      },
+      {
+        id: 'customer_name',
+        label: 'Customer',
+        options: distinctFieldOptions(coverage, (c) => c.customer_name),
+      },
+      {
+        id: 'kind',
+        label: 'Class',
+        options: [
+          { value: 'project', label: 'Project' },
+          { value: 'retail', label: 'Retail' },
+        ],
+      },
+      {
+        id: 'warehouse_code',
+        label: 'Location',
+        options: distinctFieldOptions(coverage, (c) => c.warehouse_code),
+      },
+    ],
+    [coverage],
+  );
+
+  const rows = useMemo(() => {
+    let out = coverage;
+    const needle = appliedSearch.trim().toLowerCase();
+    if (needle) {
+      out = out.filter(
+        (c) =>
+          (c.document ?? '').toLowerCase().includes(needle) ||
+          (c.customer_name ?? '').toLowerCase().includes(needle),
+      );
+    }
+    for (const cond of appliedConditions) {
+      if (!cond.value) continue;
+      if (cond.field === 'document') out = out.filter((c) => c.document === cond.value);
+      if (cond.field === 'customer_name') out = out.filter((c) => c.customer_name === cond.value);
+      if (cond.field === 'kind') out = out.filter((c) => c.kind === cond.value);
+      if (cond.field === 'warehouse_code') out = out.filter((c) => c.warehouse_code === cond.value);
+    }
+    return out;
+  }, [coverage, appliedSearch, appliedConditions]);
+
+  const activeCount = appliedConditions.filter((c) => c.value).length;
+  const isFiltered = Boolean(appliedSearch.trim()) || activeCount > 0;
 
   const columns = useMemo<ColumnDef<SoCoverageRow>[]>(
     () => [
@@ -1323,18 +1597,19 @@ export function SoCoveragePicker({
         size: 90,
       },
       {
+        // S3: the family's own word for this column (`PoTabs`, the purchase-order list).
         id: 'required_date',
-        header: 'Required',
+        header: 'Delivery date',
         cell: ({ row }) => fmtDate(row.original.required_date),
-        size: 100,
+        size: 120,
         meta: RIGHT,
       },
       {
         id: 'qty',
-        header: 'Open',
+        header: 'Outstanding',
         cell: ({ row }) => fmtInt(row.original.qty),
         footer: () => fmtInt(totalQty),
-        size: 90,
+        size: 110,
         meta: RIGHT,
       },
       ...(takes
@@ -1360,16 +1635,61 @@ export function SoCoveragePicker({
     [tickedKeys, takes, totalQty, totalTaken],
   );
 
+  const table = useReactTable({
+    columns,
+    data: rows,
+    getRowId: (c) => c.key,
+    getCoreRowModel: getCoreRowModel(),
+  });
+
   return (
     <div className="space-y-2">
-      <DrillTable
-        columns={columns}
-        rows={coverage}
-        getRowId={(c) => c.key}
-        emptyMessage="No open demand this SPO could cover."
+      <DataGridListToolbar
+        table={table}
+        searchSlot={
+          <ListSearchInput
+            value={searchInput}
+            onChange={(next) => {
+              setSearchInput(next);
+              if (!next) setAppliedSearch('');
+            }}
+            onSubmit={() => setAppliedSearch(searchInput)}
+            placeholder="Search sales orders"
+            className="w-full sm:w-64"
+          />
+        }
+        filters={{
+          kind: 'custom',
+          active: activeCount > 0,
+          activeCount,
+          content: (
+            <PickerFilterConditions
+              fields={fields}
+              conditions={draftConditions}
+              onChange={setDraftConditions}
+              onApply={() => setAppliedConditions(draftConditions)}
+              onClear={() => {
+                setDraftConditions([]);
+                setAppliedConditions([]);
+              }}
+            />
+          ),
+        }}
+        exportConfig={false}
+        showColumns={false}
       />
+      <DataGrid
+        table={table}
+        recordCount={rows.length}
+        listingKey={null}
+        tableLayout={{ width: 'fixed', columnsResizable: true }}
+        emptyMessage="No open demand this SPO could cover."
+      >
+        <DataGridTable />
+      </DataGrid>
       <p className="border-t pt-2 text-2xs text-muted-foreground">
         {`Unassigned ${fmtInt(unassigned)}`}
+        {isFiltered ? ` · ${fmtInt(rows.length)} of ${fmtInt(coverage.length)} shown` : ''}
       </p>
     </div>
   );
