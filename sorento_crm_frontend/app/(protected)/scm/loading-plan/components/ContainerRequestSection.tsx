@@ -280,33 +280,6 @@ function toDemandLines(lines: ContainerRequestSoLine[]): PlanDemandLineRow[] {
   }));
 }
 
-/**
- * The figure the rows are supposed to add up to, said beside the title - so the reader can
- * see the total they came to check without adding the table up themselves.
- */
-function dialogContext(dialog: OpenPlanRowDialog, horizon: string | null): string {
-  const { kind, row } = dialog;
-  if (kind === 'project' || kind === 'retail') {
-    const qty = kind === 'project' ? row.project_qty : row.retail_qty;
-    const cutoff = horizon ? ` before cut-off ${formatDateInMalaysia(horizon)}` : '';
-    return `${fmtInt(qty)} open${cutoff}`;
-  }
-  if (kind === 'on_hand') return `${fmtInt(row.on_hand)} at site pools`;
-  if (kind === 'spo') return `${fmtInt(row.incoming_spo)} arriving at site pools`;
-  if (kind === 'incoming_pl') return `${fmtInt(row.incoming_pl)} on packing lists`;
-  if (kind === 'blocks') {
-    // The blocks that named THIS product, not the statement's own count: the cell beside it
-    // already says how many blocks the file is, and a title claiming five while the table
-    // lists two would read as a missing row.
-    const named = row.blocks?.length ?? 0;
-    // Short on purpose: the shell prints this beside the title, and at 375px a longer
-    // qualifier wraps under the close button.
-    return `${fmtInt(row.holding_qty ?? 0)} over ${fmtInt(named)} ${
-      named === 1 ? 'block' : 'blocks'
-    }`;
-  }
-  return `${fmtInt(row.outstanding_po)} still to come`;
-}
 
 /**
  * The two 12-month series, zipped per month - the dialog reads one row per month with both
@@ -1063,7 +1036,6 @@ export function ContainerRequestSection({
                 `${dialog.row.set_name ?? dialog.row.product_name ?? ''} · figures from ${dialog.row.driver_item_code ?? 'its driver member'}`
               : dialog.row.product_name
           }
-          context={dialogContext(dialog, build.data?.plan_horizon_date ?? null)}
           onOpenChange={(open) => {
             if (!open) setDialog(null);
           }}
@@ -1084,6 +1056,7 @@ export function ContainerRequestSection({
               )}
               history={toHistoryPoints(historyRef.current.get(dialog.row.product_id))}
               initialTab={dialog.onHistory ? 'history' : 'open'}
+              horizon={build.data?.plan_horizon_date ?? null}
               loading={build.isFetching || (dialog.onHistory && history.isFetching)}
             />
           ) : dialog.kind === 'on_hand' ? (

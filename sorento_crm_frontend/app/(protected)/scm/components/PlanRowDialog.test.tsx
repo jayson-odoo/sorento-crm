@@ -103,13 +103,12 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('PlanRowDialog', () => {
-  it('titles itself "<Kind> · <product code>" with the product name as the description', () => {
+  it('titles itself "<Kind> · <product code>" with the product name as the description, and no header context (S3, AC-C4)', () => {
     renderWithClient(
       <PlanRowDialog
         kind="spo"
         productCode="SRTWB241"
         productName="Wall hung basin 241"
-        context="117 arriving at site pools"
         onOpenChange={() => {}}
       >
         <p>body</p>
@@ -118,7 +117,6 @@ describe('PlanRowDialog', () => {
 
     const dialog = screen.getByRole('dialog');
     expect(within(dialog).getByText(/SPO · SRTWB241/)).toBeTruthy();
-    expect(within(dialog).getByText('117 arriving at site pools')).toBeTruthy();
     expect(within(dialog).getByText('Wall hung basin 241')).toBeTruthy();
     expect(within(dialog).getByText('body')).toBeTruthy();
   });
@@ -203,14 +201,22 @@ const HISTORY: PlanHistoryPoint[] = [
 ];
 
 describe('ProjectRetailTabs', () => {
-  it('lists the open lines and foots them to the figure the cell shows', () => {
+  it('lists the open lines and foots them to the figure the cell shows, its tab naming the sum (S3, AC-C1)', () => {
     renderWithClient(<ProjectRetailTabs channel="project" lines={LINES} history={HISTORY} />);
 
-    expect(screen.getByRole('tab', { name: 'Open project SO lines (2)' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Open (2,100)' })).toBeTruthy();
     expect(screen.getByText('SO404118')).toBeTruthy();
     expect(screen.getByText('Taman Sri Bayu Ph2')).toBeTruthy();
     expect(screen.getByText('Total')).toBeTruthy();
     expect(screen.getByText('2,100')).toBeTruthy();
+  });
+
+  it('names the cut-off in the open tab when a horizon is set (S3, AC-C1)', () => {
+    renderWithClient(
+      <ProjectRetailTabs channel="project" lines={LINES} history={HISTORY} horizon="2026-10-31" />,
+    );
+
+    expect(screen.getByRole('tab', { name: 'Open before cut-off 31/10/2026 (2,100)' })).toBeTruthy();
   });
 
   it('says so when the channel has nothing open', () => {
@@ -482,12 +488,12 @@ describe('SpoTabs', () => {
     expect(useContainerRequestDrill).toHaveBeenCalledWith('sup1', 'p1', 'spo');
   });
 
-  it('lists what is on the water and foots it to the cell', () => {
+  it('lists what is on the water and foots it to the cell, naming the sum in the tab (S3, AC-C2)', () => {
     useContainerRequestDrill.mockReturnValue(drill({ data: { rows, total: 117, history: [] } }));
 
     renderWithClient(<SpoTabs supplierId="sup1" productId="p1" />);
 
-    expect(screen.getByRole('tab', { name: 'Open to pools (2)' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Open to pools (117)' })).toBeTruthy();
     expect(screen.getByText('CRM-SPO-e372b1e9')).toBeTruthy();
     expect(screen.getByText('FSCU8103365')).toBeTruthy();
     // A packing list nobody has numbered reads as a draft, never as a blank.
@@ -501,7 +507,7 @@ describe('SpoTabs', () => {
     expect(screen.getByText(NO_SPO_TO_POOL)).toBeTruthy();
   });
 
-  it('switches to the landed shipments', () => {
+  it('switches to the landed shipments, naming the sum of what landed (S3, AC-C2)', () => {
     useContainerRequestDrill.mockReturnValue(
       drill({
         data: {
@@ -513,7 +519,7 @@ describe('SpoTabs', () => {
     );
 
     renderWithClient(<SpoTabs supplierId="sup1" productId="p1" />);
-    switchTab('History (1)');
+    switchTab('History (40)');
 
     const row = screen.getByText('CRM-SPO-e372b1e9').closest('tr') as HTMLElement;
     expect(within(row).getAllByText('40').length).toBe(2); // qty and received
@@ -602,19 +608,20 @@ describe('PoTabs', () => {
     },
   ];
 
-  it('lists the open lines, prices them in the PO currency and foots still-to-come', () => {
+  it('lists the open lines, prices them in the PO currency and foots still-to-come, naming the sum in the tab (S3, AC-C3)', () => {
     useContainerRequestDrill.mockReturnValue(drill({ data: { rows: open, total: 143, history: [] } }));
 
     renderWithClient(<PoTabs supplierId="sup1" productId="p1" />);
 
     expect(useContainerRequestDrill).toHaveBeenCalledWith('sup1', 'p1', 'po');
+    expect(screen.getByRole('tab', { name: 'Open (143)' })).toBeTruthy();
     expect(screen.getByText('PO-24118')).toBeTruthy();
     expect(screen.getByText(/CNY/)).toBeTruthy();
     const footer = screen.getByText('Total still to come').closest('tr') as HTMLElement;
     expect(within(footer).getByText('143')).toBeTruthy();
   });
 
-  it('switches to what was ordered before', () => {
+  it('switches to what was ordered before, naming the quantity that WAS ordered (S3, AC-C3)', () => {
     useContainerRequestDrill.mockReturnValue(
       drill({
         data: {
@@ -626,7 +633,8 @@ describe('PoTabs', () => {
     );
 
     renderWithClient(<PoTabs supplierId="sup1" productId="p1" />);
-    switchTab('History (1)');
+    // Sums qty_ordered, not still-to-come - a closed PO's still-to-come is always 0.
+    switchTab('History (200)');
 
     expect(screen.getByText('PO-24090')).toBeTruthy();
 

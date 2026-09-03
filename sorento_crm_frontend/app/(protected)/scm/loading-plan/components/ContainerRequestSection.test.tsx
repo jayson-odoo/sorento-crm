@@ -997,6 +997,18 @@ describe('ContainerRequestSection - the eight figures open the shared lightbox (
     );
   });
 
+  it('names no context beside the title any more (S3, AC-C4)', () => {
+    renderSection();
+
+    const dialog = openFigure('Open project sales orders');
+
+    // The header used to carry "N open before cut-off ..." beside the title; the tab now
+    // states its own sum, so nothing sits beside "Project · ITEM-1" any more.
+    expect(within(dialog).queryByText(/open before cut-off/i)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/still to come/i)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/at site pools/i)).not.toBeInTheDocument();
+  });
+
   it('Escape closes the lightbox (AC-B1)', async () => {
     renderSection();
     openFigure('Open project sales orders');

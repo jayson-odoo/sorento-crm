@@ -24,7 +24,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { cn } from '@/lib/utils';
 
 import { EM_DASH, fmtDate, fmtInt, fmtMoney, fmtSupplierCost } from '../lib/format';
@@ -350,12 +350,16 @@ export function ProjectRetailTabs({
   lines,
   history,
   initialTab = 'open',
+  horizon = null,
   loading,
 }: {
   channel: 'project' | 'retail' | 'need';
   lines: PlanDemandLineRow[];
   history: PlanHistoryPoint[];
   initialTab?: 'open' | 'history';
+  /** The plan's cut-off date, when one is set (S3). The open tab's own label states it -
+   *  there is no header context string any more. */
+  horizon?: string | null;
   loading?: boolean;
 }) {
   const total = useMemo(() => lines.reduce((sum, l) => sum + (l.qty || 0), 0), [lines]);
@@ -381,10 +385,11 @@ export function ProjectRetailTabs({
     () => history.reduce((sum, p) => sum + (p.retail_qty || 0), 0),
     [history],
   );
-  const openLabel =
-    channel === 'project'
-      ? `Open project SO lines (${fmtInt(lines.length)})`
-      : `Open sales orders (${fmtInt(lines.length)})`;
+  // S3: the tab used to name the LINE COUNT ("Open project SO lines (2)"); it now names the
+  // sum of qty, which is what the cell itself shows.
+  const openLabel = horizon
+    ? `Open before cut-off ${formatDateInMalaysia(horizon)} (${fmtInt(total)})`
+    : `Open (${fmtInt(total)})`;
 
   const openColumns = useMemo<ColumnDef<PlanDemandLineRow>[]>(() => {
     const columns: ColumnDef<PlanDemandLineRow>[] = [
@@ -820,8 +825,10 @@ export function SpoTabs({ supplierId, productId }: { supplierId: string; product
   return (
     <Tabs defaultValue="open">
       <TabsList variant="line">
-        <TabsTrigger value="open">{`Open to pools (${fmtInt(open.length)})`}</TabsTrigger>
-        <TabsTrigger value="history">{`History (${fmtInt(history.length)})`}</TabsTrigger>
+        {/* S3: the count of rows read as "how many documents", when the number the cell
+            actually names is the quantity they carry. */}
+        <TabsTrigger value="open">{`Open to pools (${fmtInt(openTotal)})`}</TabsTrigger>
+        <TabsTrigger value="history">{`History (${fmtInt(historyTotal)})`}</TabsTrigger>
       </TabsList>
       <TabsContent value="open">
         <DrillTable
@@ -1029,14 +1036,17 @@ export function PoTabs({ supplierId, productId }: { supplierId: string; productI
 
   const openStillToCome = drill.data?.total ?? open.reduce((s, r) => s + r.still_to_come, 0);
   const historyStillToCome = history.reduce((s, r) => s + r.still_to_come, 0);
+  // S3: the History tab names the quantity that WAS ordered, not what is still owed on it -
+  // a closed PO's still-to-come is always 0, so that sum would read "History (0)" forever.
+  const historyQtyOrdered = history.reduce((s, r) => s + r.qty_ordered, 0);
   const openColumns = useMemo(() => poColumns(openStillToCome), [openStillToCome]);
   const historyColumns = useMemo(() => poColumns(historyStillToCome), [historyStillToCome]);
 
   return (
     <Tabs defaultValue="open">
       <TabsList variant="line">
-        <TabsTrigger value="open">{`Open (${fmtInt(open.length)})`}</TabsTrigger>
-        <TabsTrigger value="history">{`History (${fmtInt(history.length)})`}</TabsTrigger>
+        <TabsTrigger value="open">{`Open (${fmtInt(openStillToCome)})`}</TabsTrigger>
+        <TabsTrigger value="history">{`History (${fmtInt(historyQtyOrdered)})`}</TabsTrigger>
       </TabsList>
       <TabsContent value="open">
         <DrillTable
@@ -1336,15 +1346,15 @@ export function SoCoveragePicker({
  * description (Radix wants one, and a sentence explaining the dialog would be an on-screen
  * explanation, which the standards forbid).
  *
- * `context` is the figure and its qualifier - "2,876 before cut-off 30/09/2026", "117
- * arriving at site pools" - so the reader can see what the rows are supposed to add up to
- * without reading them.
+ * S3: the header used to carry a `context` string beside the title - the figure and its
+ * qualifier, "2,876 before cut-off 30/09/2026". It is gone; each tab now states its own sum
+ * in its own label (`ProjectRetailTabs`' open tab, SPO/PO's Open and History), so the total
+ * is never claimed twice in two places that could drift.
  */
 export function PlanRowDialog({
   kind,
   productCode,
   productName,
-  context,
   open = true,
   onOpenChange,
   children,
@@ -1352,7 +1362,6 @@ export function PlanRowDialog({
   kind: PlanRowDialogKind;
   productCode: string;
   productName?: string | null;
-  context?: string | null;
   open?: boolean;
   onOpenChange: (open: boolean) => void;
   children: ReactNode;
@@ -1363,9 +1372,6 @@ export function PlanRowDialog({
         <DialogHeader className="shrink-0 space-y-1 border-b p-4 sm:p-6">
           <DialogTitle className="min-w-0 break-words">
             {`${PLAN_ROW_DIALOG_TITLES[kind]} · ${productCode}`}
-            {context ? (
-              <span className="ms-2 text-xs font-normal text-muted-foreground">{context}</span>
-            ) : null}
           </DialogTitle>
           <DialogDescription className="truncate text-xs" title={productName ?? undefined}>
             {productName ?? productCode}
