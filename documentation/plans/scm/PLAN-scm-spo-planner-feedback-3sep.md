@@ -235,3 +235,46 @@ supply this SPO, how many left, how many supplied, from the PO form; same for SO
 ## 4. Order
 
 S1 → S2 → S3 → S4 → S5 (BE test-first, then FE) → S7 (BE test-first) → S6. One coder at a time in this worktree.
+
+## 5. Round 2 (captain, 3 Sep late, on :3160 after S1-S7)
+
+**Status:** PROPOSAL, awaiting Lavish markup. Measured facts first, then slices R1-R5.
+
+| Saw | Measured cause |
+| --- | --- |
+| "SPO already created" is a badge list; one SPO per container; no link to the SPO; cannot recall the plan | `create` refuses a second run with 409 `already_converted` (`spo_conversion_service.py:1567`); `_existing_spos` returns `purchase_order_id` but the FE prints a `Badge`, not a link (`SpoPlannerTable.tsx:945`). The plan (pulls, SO cover) is on the SPO line's `source_ref` and nothing renders it. |
+| Qty input "choppy" | Input is clamped live to PO cover (`renderQtyCell` `Math.min`), every keystroke re-runs the tick walk and the red `overTicked` banner names every starved SO while typing, and it disables Create SPO. |
+| SO367360 reads Retail, the SO list says Project | Planner `kind` = where the row comes from: `project` = an order-inquiry row, `retail` = any sales-order-book line (`_retail_coverage`). The list's Type pill is `sales_orders.demand_class`. The two words collide. |
+| SO detail shows no SPO after Create | Image taken before Create; the `Linked to` column exists (S7) but sits last, off-screen at 1280. |
+| PO "Allocated to" overload | One block per PO LINE with three figures, "Dedicated to" chips, and a six-column table whose "Needed at" for an SPO row prints the warehouse split (`PurchaseOrderAllocations.tsx:168-177`). |
+
+### R1. Many SPOs per container, listed as a grid, each a link, each with its plan
+
+- `suggest` no longer flips to `already_converted`. It returns `existing_spos[]` (DataGrid rows: SPO number, supplier, lines, qty, created at, status pill, Delete) AND the planner for the **remainder**: per line `packed - sum(qty already on this container's SPO lines for that shipment line)` via `ShipmentLineSpoLink`. A line with no remainder renders qty 0, disabled, "Done".
+- `create` refuses (422 `nothing_left`) only when no line has a remainder. `unwind(shipment_id, purchase_order_id)` deletes ONE SPO; the row's Delete calls it (confirm dialog, as today).
+- SPO number links to `/scm/purchase-orders/{purchase_order_id}`. `PurchaseOrderDetail` gains a **Plan** card when `source_system == 'crm_spo'`: per SPO line, "Pulled from" (PO number, qty) and "Covers" (SO number, customer, qty, warehouse) read off `source_ref` through one new reader `spo_conversion_service.plan_of(db, purchase_order_id)`.
+- Route: `DELETE /inbound-shipments/{id}/spo?purchase_order_id=` (absent = every SPO, today's behaviour kept for the old callers/tests).
+
+### R2. Quantity is free to type; the warning is one dialog at Create
+
+- Input accepts any whole number; no live clamp, no live red banner, Create SPO enabled whenever any line has qty > 0 (split mismatch still blocks, it is arithmetic).
+- Create SPO opens **Review before creating**: per line, "Asked N, POs cover M, SPO will be M" when N > M; "Ticked SOs ask X, this SPO covers Y" when over-ticked; "No location" when no split. Confirm sends today's payload. The server caps at PO cover exactly as it does now (doctrine: an SPO only pulls from a PO; unchanged).
+- OPEN for the captain: keep the server cap (SPO qty can never exceed what open POs cover) - yes/no. The plan assumes yes.
+
+### R3. Class = the sales order's own class
+
+- Coverage rows carry `demand_class` (`sales_orders.demand_class`); the Class column prints it (Project / Retail / Unclassified) with the SO list's own `demandClassBadge`. An order-inquiry row prints "Project · inquiry".
+- Internal `kind` (inquiry vs book line) is unchanged; it decides where the link is written.
+- Cascade order becomes: inquiry rows, then book lines with `demand_class = project`, then the rest, each by delivery date. OPEN: confirm this order.
+
+### R4. SO detail: Linked to beside Outstanding
+
+- `SalesOrderDetail` lines: `linked_to` column moves to sit after `outstanding_qty`; default visible.
+
+### R5. PO "Allocated to": one flat table
+
+Proposal A (recommended): one DataGrid for the whole PO. Columns: **Line** (product code · location · delivery date), **Placed on** (SPO pill + number as a link, or inquiry number), **Document** (packing list or sales order, link), **Customer**, **Qty**, **Lands at** (warehouse split, `BRW-BB 135`), **ETA**. Group header row per PO line: `Outstanding 209 · Placed 135 · Free 74`. "Dedicated to" becomes rows of kind **Dedicated** (SO number, qty) in the same table. "Needed at" column is gone (it was the split).
+Proposal B: keep the blocks, drop the three-figure line to the group row, drop "Dedicated to" chips into rows, fix the SPO row to `Lands at`.
+Both keep `PurchaseOrderService._allocations_for` as the source; FE only.
+
+Order: R3, R4 (clear) → R2 → R1 → R5 (after the captain picks A or B).

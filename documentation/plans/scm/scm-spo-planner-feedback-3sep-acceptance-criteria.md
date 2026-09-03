@@ -107,3 +107,37 @@ agent-browser evidence on :3160 via the sidebar.
   pre-existing test-file errors.
 - **AC-F2** `[BE]` `pytest tests/scm/test_spo_planner_selection.py tests/scm/test_spo_conversion.py tests/scm/test_container_request_drill.py` green.
 - **AC-F3** `[E2E]` Evidence screenshots for AC-C6, AC-D4, AC-E9 attached to the PR.
+
+## H. Many SPOs per container (R1)
+
+- **AC-H1** `[BE]` After one Create SPO covering part of a line, `suggest` returns `already_converted: false`, `existing_spos` with one row, and that line's `packed_qty` remainder (packed minus the SPO'd qty).
+- **AC-H2** `[BE]` A line fully SPO'd returns `remaining_qty 0` and `cannot_convert` with reason "already on SPO-…".
+- **AC-H3** `[BE]` A second Create SPO on the remainder succeeds; a third with nothing left is 422 `nothing_left`.
+- **AC-H4** `[BE]` `DELETE …/spo?purchase_order_id=X` removes only X's lines, links and allocations; the other SPO stays.
+- **AC-H5** `[BE]` `plan_of(purchase_order_id)` lists pulls (PO number, qty) and covers (SO number, customer, qty, warehouse) for a crm_spo PO; empty for an AutoCount PO.
+- **AC-H6** `[FE]` Planner shows a DataGrid of created SPOs (number as link to the PO detail, supplier, lines, qty, created, status pill, Delete) above the remainder planner.
+- **AC-H7** `[FE]` PO detail of a crm_spo shows a Plan card with Pulled from / Covers tables.
+- **AC-H8** `[E2E]` Create SPO twice from one ZZT container (partial then remainder); both listed; open one; Plan card shows the SOs ticked; delete one; the other stays.
+
+## I. Free quantity, one review dialog (R2)
+
+- **AC-I1** `[FE]` Typing 500 in a line whose POs cover 409 keeps 500 in the input; no red banner; Create SPO stays enabled.
+- **AC-I2** `[FE]` Create SPO opens "Review before creating" listing that line as "Asked 500, POs cover 409, SPO will be 409"; over-ticked SOs listed as part-covered; lines with no location listed.
+- **AC-I3** `[FE]` Confirm sends the same payload as today; Cancel returns to the planner unchanged.
+- **AC-I4** `[BE]` unchanged: `create` caps at PO cover (existing tests).
+
+## J. Class (R3)
+
+- **AC-J1** `[BE]` A book line whose sales order has `demand_class = project` returns `demand_class: 'project'`; an inquiry row returns `demand_class: 'project'` and `kind: 'project'`.
+- **AC-J2** `[BE]` Cascade order: inquiry rows, then project-class book lines, then the rest, by delivery date.
+- **AC-J3** `[FE]` Class column shows the SO list's Project / Retail / Unclassified pill; inquiry rows read "Project · inquiry".
+
+## K. SO detail (R4)
+
+- **AC-K1** `[FE]` `Linked to` sits immediately after `Outstanding qty` in the lines grid and is visible at 1280 without horizontal scroll.
+
+## L. PO Allocated to (R5, after the captain picks A or B)
+
+- **AC-L1** `[FE]` One table for the PO (A) with Line / Placed on / Document / Customer / Qty / Lands at / ETA and a group row per PO line stating Outstanding · Placed · Free.
+- **AC-L2** `[FE]` An SPO row shows the SPO number as a link, the packing list, and `Lands at` as the warehouse split; no "Needed at".
+- **AC-L3** `[FE]` Dedicated sales orders appear as rows of kind Dedicated with their qty; no chips.
