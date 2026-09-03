@@ -140,11 +140,17 @@ describe('FulfilmentBoardListView', () => {
     fireEvent.click(screen.getByText('JEREMY'));
     fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
 
+    // D11: the composition rides along with an approval too - the exact shape is
+    // `BoardLineDecisionPanel.test.tsx`'s own job, this only checks the verdict still reaches
+    // `onDecide` from the row's expanded panel.
     await waitFor(() =>
-      expect(onDecide).toHaveBeenCalledWith('so-1:line-10', {
-        verdict: 'approved',
-        suspected_system_issue: false,
-      }),
+      expect(onDecide).toHaveBeenCalledWith(
+        'so-1:line-10',
+        expect.objectContaining({
+          verdict: 'approved',
+          suspected_system_issue: false,
+        }),
+      ),
     );
   });
 

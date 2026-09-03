@@ -621,6 +621,53 @@ def test_a_saved_but_unconfirmed_decision_shows_its_own_composition(scm_app):
     assert body["supply_decided"] is None
 
 
+def test_an_approved_draft_shows_its_composition_too(scm_app):
+    """D11: `BoardLineDecisionPanel.save()` now writes the suggested COMPOSITION onto an
+    approved draft, not only `{verdict: 'approved'}` - so a plain accept of the engine's
+    suggestion reads a Decided composition here too, the same as an amendment does
+    (`test_a_saved_but_unconfirmed_decision_shows_its_own_composition` above). No server
+    change was needed for this: `_saved_components` already reads any decision this shape,
+    verdict included or not.
+    """
+    app, db, uid = _as(scm_app)
+    core = _core_order(db)
+    core.demand_class = "project"
+    line = _core_line(db, core)
+    db.flush()
+    item_code = line.product.product_code
+
+    approved_decision = {
+        "verdict": "approved",
+        "reserve": [
+            {
+                "warehouse_id": "irrelevant-here",
+                "location": f"{MARKER}-BRW",
+                "qty": "3",
+                "rung": "pool",
+            }
+        ],
+        "borrow": [],
+        "buy_qty": "0",
+    }
+    _save_draft(db, core, 1, item_code, decision=approved_decision, saved_by=uid)
+
+    with TestClient(app) as c:
+        res = c.get(f"/api/v1/scm/sales-orders/{core.id}")
+
+    assert res.status_code == 200, res.text
+    body = next(l for l in res.json()["lines"] if l["id"] == line.id)
+    assert body["supply_saved"] == [
+        {
+            "kind": "reserve",
+            "qty": "3",
+            "source_location": f"{MARKER}-BRW",
+            "rung": "pool",
+            "donor_so_number": None,
+        },
+    ]
+    assert body["saved_stale"] is False
+
+
 def test_a_line_with_no_saved_decision_reads_null(scm_app):
     app, db, _uid_ = _as(scm_app)
     core = _core_order(db)
