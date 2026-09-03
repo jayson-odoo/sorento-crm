@@ -19,7 +19,8 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import date
+from datetime import date, datetime
+from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
@@ -35,6 +36,17 @@ from app.models.procurement import (
     Supplier,
 )
 from app.models.product import Product, ProductCategory, UnitOfMeasure
+from app.models.project_so import (
+    INQUIRY_RAISED,
+    IV_ORDER_BACK,
+    OrderInquiry,
+    OrderInquiryLink,
+    OrderInquiryRow,
+    ProjectSalesOrder,
+    ProjectSalesOrderLine,
+    SO_STATUS_DRAFT,
+)
+from app.models.projects import Project
 from app.models.scm import ProformaInvoice, ProformaInvoiceLine, ProformaInvoiceShipmentLink, ShipmentLineSpoLink
 from app.services.error_handler import AppException
 from app.services.scm import spo_conversion_service as svc
@@ -294,6 +306,67 @@ def test_a_po_ref_pin_still_matches_when_the_book_supplier_is_spelled_differentl
         assert line["suggested_qty"] == 100
         assert line["no_po_qty"] == 0
         assert line["cannot_convert"] is False
+
+
+def test_a_pin_to_an_exhausted_po_falls_back_to_the_product_match():
+    """F1 (review round, BLOCKER): PO-PIN is the STATED po_ref but has nothing open left
+    (100 ordered, 100 already received) - S5 stopped `_open_line_rows` dropping
+    `available == 0` lines, so `_candidate_lines_for_line` now RESOLVES the pin (it names a
+    real line) even though the cascade can take nothing from it. Before this fix
+    `matched_by` was set to `po_ref` whenever the pin resolved AT ALL, so the product-match
+    fallback below never ran and the line read `cannot_convert` with PO-OTHER (80 open, same
+    supplier and product) sitting right there.
+
+    NOTE: this test creates a PI row (`pi_po_ref`) the same way the pin tests above do, and
+    fails LOCALLY the same way they do on `UndefinedColumn: container_size_id` (the shared
+    dev DB's `create_all` convergence lags a migration - see `sorento_crm_backend/CLAUDE.md`).
+    It runs green on CI, which migrates to head.
+    `test_a_pin_to_an_exhausted_po_falls_back_to_the_product_match_without_a_pi_row` below
+    covers the identical fix without a PI row, so the fix itself is proven either way."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        pinned = w.po("PIN", supplier, [("A", 100, 100)])  # fully received, nothing open
+        w.po("OTHER", supplier, [("A", 80, 0)])
+        shipment, lines = w.shipment([("A", 80, supplier)])
+        w.pi_po_ref(lines[0], pinned.po_number)
+
+        out = svc.suggest(db, str(shipment.id))
+
+        line = _line(out, str(lines[0].id))
+        assert line["matched_by"] == "product"
+        assert line["po_covered_qty"] == 80
+        assert line["cannot_convert"] is False
+
+
+def test_a_pin_to_an_exhausted_po_falls_back_to_the_product_match_without_a_pi_row(monkeypatch):
+    """F1, direct: the same fix, with no `ProformaInvoice` row at all - avoids the
+    `container_size_id` dev-DB drift `test_a_pin_to_an_exhausted_po_falls_back_to_the_
+    product_match` above hits locally. `_po_refs_for_line` and `_pinned_po_candidates` are
+    monkeypatched to stand in for PI provenance and hand back the exhausted PO-PIN line
+    directly; PO-OTHER is a REAL open line to the same supplier/product so the fallback
+    cascade has something real to take from."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        pinned = w.po("PIN", supplier, [("A", 100, 100)])
+        w.po("OTHER", supplier, [("A", 80, 0)])
+        shipment, lines = w.shipment([("A", 80, supplier)])
+        ln = lines[0]
+
+        monkeypatch.setattr(
+            svc, "_po_refs_for_line", lambda db, shipment_line_id: {pinned.po_number}
+        )
+        monkeypatch.setattr(
+            svc,
+            "_pinned_po_candidates",
+            lambda db, po_number, supplier_id, product_id: [(pinned.lines[0], pinned, 0.0)],
+        )
+
+        matched_by, takes = svc._match_takes_for_line(db, ln, 80)
+
+        assert matched_by == "product"
+        assert sum(t[2] for t in takes) == 80
 
 
 def test_the_inference_path_still_refuses_a_cross_supplier_po_with_no_stated_ref():
@@ -690,6 +763,84 @@ def test_unwind_deletes_po_lines_headers_links_and_allocations_then_suggest_reco
         again = svc.suggest(db, str(shipment.id))
         assert again["already_converted"] is False
         assert again["lines"][0]["suggested_qty"] == 40
+
+
+def test_unwind_deletes_the_order_inquiry_link_before_the_allocation_it_points_at():
+    """F9 (review round, pre-existing bug): bulk-deleting `spo_allocations` an
+    `OrderInquiryLink` points at violates `ck_order_inquiry_links_one_target` - the FK is
+    `ON DELETE SET NULL`, not `CASCADE`, but the CHECK forbids a link with NEITHER target
+    set, so the SET NULL Postgres was about to apply left the row with neither and the
+    constraint fired: `unwind` raised instead of completing for any SPO an ORDER BACK
+    project row had been ticked against. `unwind` must delete this SPO's OWN order-inquiry
+    links first - the row simply returns unlinked, which `_project_coverage` then offers in
+    full, exactly what deleting the SPO should mean.
+
+    World setup mirrors `test_a_ticked_project_row_is_linked_to_the_spo_allocation_it_will_
+    be_served_by` (`test_spo_planner_selection.py`)."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        wh = w.warehouse()
+        w.po("A", supplier, [("A", 100, 0)])
+        shipment, lines = w.shipment([("A", 100, supplier)])
+
+        title = f"{MARKER} project {uuid.uuid4().hex[:6]}"
+        project = Project(
+            id=_u(), title=title, normalised_title=title.lower(),
+            project_code=f"{MARKER}-{uuid.uuid4().hex[:8]}",
+        )
+        db.add(project)
+        db.flush()
+        pso = ProjectSalesOrder(
+            id=_u(), project_id=project.id, area_group="TOWER",
+            provisional_ref=f"{MARKER}-PSO-{uuid.uuid4().hex[:6]}",
+            autocount_doc_no=f"{MARKER}-SI-{uuid.uuid4().hex[:6]}",
+            status=SO_STATUS_DRAFT, grouping_origin="area",
+            published_at=datetime(2026, 1, 2, 9, 0),
+        )
+        db.add(pso)
+        db.flush()
+        pso_line = ProjectSalesOrderLine(
+            id=_u(), project_sales_order_id=pso.id, line_no=1,
+            product_id=w.product("A").id, description=f"{MARKER} line",
+            qty=Decimal("40"), uom="UNIT", unit_price=Decimal("10.00"),
+            amount=Decimal("400"), delivery_date=date(2026, 9, 10),
+        )
+        db.add(pso_line)
+        db.flush()
+        inquiry = OrderInquiry(id=_u(), project_sales_order_id=pso.id, state=INQUIRY_RAISED)
+        db.add(inquiry)
+        db.flush()
+        row = OrderInquiryRow(
+            id=_u(), order_inquiry_id=inquiry.id, so_line_id=pso_line.id,
+            item_code=w.product("A").product_code, qty=Decimal("40"),
+            delivery_date=date(2026, 9, 10), verb=IV_ORDER_BACK, state=INQUIRY_RAISED,
+        )
+        db.add(row)
+        db.flush()
+
+        svc.create(
+            db, str(shipment.id),
+            [{
+                "shipment_line_id": str(lines[0].id), "qty": 100, "include": True,
+                "location_splits": [{"warehouse_id": str(wh.id), "qty": 100}],
+                "so_line_ids": [f"project:{row.id}"],
+            }],
+        )
+        link = db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row.id).one()
+        assert link.spo_allocation_id is not None, "sanity: the tick must have written a link"
+
+        out = svc.unwind(db, str(shipment.id))
+
+        assert out["deleted_spo_count"] == 1
+        assert db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row.id).count() == 0
+
+        again = svc.suggest(db, str(shipment.id))
+        assert again["already_converted"] is False
+        line_out = _line(again, str(lines[0].id))
+        taken_row = next(c for c in line_out["so_coverage"] if c["kind"] == "project")
+        assert taken_row["qty"] == 40
+        assert taken_row["taken_qty"] == 0
 
 
 def test_unwind_refuses_a_non_crm_spo_header_409_and_leaves_it_untouched():

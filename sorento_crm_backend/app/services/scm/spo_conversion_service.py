@@ -266,6 +266,22 @@ def _g(value: float) -> str:
     return f"{value:g}"
 
 
+def _qty_str(value: Any) -> str:
+    """`600`, not `600.0000` - and never `1.23457e+06`, which is where `_g`'s `%g` drifts
+    past six figures (F6, review round). Two `linked_to` entries in one sales-order line's
+    cell (S7's SPO coverage beside a project's own order-inquiry link) must format the SAME
+    quantity alike, so this is a copy of `project_order_inquiry_service._qty_str` - the
+    reasoning the module docstring already gives for `_cascade_take` applies here too: that
+    module is a large stateful class, and importing it for one three-line helper would drag
+    its whole dependency graph into a module that has none of it.
+    """
+    try:
+        dec = value if isinstance(value, Decimal) else Decimal(str(value))
+    except Exception:  # noqa: BLE001 - a malformed stored number is data, not a crash
+        dec = Decimal(0)
+    return format(dec.normalize(), "f")
+
+
 def _shipment_or_404(db: Session, shipment_id: str) -> InboundShipment:
     if not _is_uuid(shipment_id):
         raise AppException(404, "Inbound shipment not found")
@@ -573,7 +589,14 @@ def _match_takes_for_line(
         pinned_lines = _keep(candidates)
         if pinned_lines:
             takes = _cascade_take(pinned_lines, need)
-            matched_by = "po_ref"
+            # F1 (review round): a pin can resolve to a line with NOTHING open (S5 stopped
+            # dropping `available == 0` lines from the candidate set), so `matched_by` is
+            # `po_ref` only when the cascade actually took something from it - an exhausted
+            # pin otherwise blocked the product-match fallback below from ever running, and
+            # the line read `cannot_convert` with an open PO to the same supplier sitting
+            # right there.
+            if takes:
+                matched_by = "po_ref"
     if matched_by is None:
         # Either the resolution already landed on the product match, or a po_ref pin
         # existed but the buyer ticked out every one of its lines - the ORIGINAL fallback:
@@ -588,7 +611,9 @@ def _match_takes_for_line(
     return matched_by, takes
 
 
-def _spo_pulls_by_po_line(db: Session, po_line_ids: list[str]) -> dict[str, list[dict]]:
+def _spo_pulls_by_po_line(
+    db: Session, po_line_ids: Optional[list[str]] = None
+) -> dict[str, list[dict]]:
     """Every CRM SPO line that has pulled from one of these purchase-order lines, oldest SPO
     number first - `{po_line_id: [{"spo_number", "qty"}]}` (S5, `po_takes[].taken_qty` /
     `taken_by`).
@@ -600,10 +625,16 @@ def _spo_pulls_by_po_line(db: Session, po_line_ids: list[str]) -> dict[str, list
     the LANDING too (packing list, warehouses, arrival date) this helper does not fetch -
     the same one-query-per-purpose reasoning `_stock_context` above gives for not sharing a
     query across two different-shaped answers.
+
+    `po_line_ids=None` (F7, review round) answers for EVERY line any CRM SPO has ever pulled
+    from, not a chosen set - `suggest` calls this ONCE per shipment, for every candidate
+    across every shipment line, rather than once PER LINE the way it used to: each call scans
+    the whole `crm_spo` book regardless of how many ids it is asked about, so calling it once
+    per shipment line multiplied that scan by the shipment's own line count for no reason.
     """
-    if not po_line_ids:
+    if po_line_ids is not None and not po_line_ids:
         return {}
-    wanted = set(po_line_ids)
+    wanted = set(po_line_ids) if po_line_ids is not None else None
     rows = (
         db.query(PurchaseOrderLine.source_ref, PurchaseOrder.po_number)
         .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
@@ -616,7 +647,7 @@ def _spo_pulls_by_po_line(db: Session, po_line_ids: list[str]) -> dict[str, list
     out: dict[str, list[dict]] = {}
     for source_ref, po_number in rows:
         for po_line_id, qty in parse_source_ref(source_ref)["pulls"]:
-            if po_line_id in wanted:
+            if wanted is None or po_line_id in wanted:
                 out.setdefault(po_line_id, []).append({"spo_number": po_number, "qty": qty})
     for entries in out.values():
         entries.sort(key=lambda e: e["spo_number"] or "")
@@ -656,9 +687,16 @@ def _spo_so_coverage_rows(
 def _spo_cover_by_so_line(db: Session, product_id: str) -> dict[str, list[dict]]:
     """Every CRM SPO line pointed at a retail sales-order line for THIS product, oldest SPO
     number first - `{so_line_id: [{"spo_number", "qty"}]}` (S5, `so_coverage[].taken_qty` /
-    `taken_by`, and `_retail_covered_qty`'s own totals below - one query, both answers).
+    `taken_by`).
 
-    A thin grouping over `_spo_so_coverage_rows`, which does the actual read.
+    The retail half writes no link row - the links table hangs off an order-inquiry row and
+    a retail line has none - so `source_ref.so_coverage` is the only record that the
+    quantity has already been promised. Without it the same 30 pieces were offered, and
+    default-ticked, on every container of the month.
+
+    A thin grouping over `_spo_so_coverage_rows`, which does the actual read. An unwound SPO
+    takes its lines with it, so its record disappears with it, which is correct: the promise
+    was undone.
     """
     out: dict[str, list[dict]] = {}
     for so_line_id, spo_number, qty, _po_line_id in _spo_so_coverage_rows(
@@ -721,7 +759,7 @@ def coverage_for_so_lines(db: Session, so_line_ids: Sequence[str]) -> dict[str, 
             "kind": "spo",
             "document": spo_number,
             "line_label": None,
-            "qty": _g(qty),
+            "qty": _qty_str(qty),
             "location": warehouse_code,
             "expected_date": eta.isoformat() if eta else None,
             "late": False,
@@ -980,31 +1018,54 @@ def _project_coverage(db: Session, product_id: str) -> list[dict]:
     if not rows:
         return []
 
+    row_ids = [str(r.OrderInquiryRow.id) for r in rows]
+
     linked: dict[str, float] = {}
     for row_id, total in (
         db.query(OrderInquiryLink.row_id, func.sum(OrderInquiryLink.qty))
-        .filter(OrderInquiryLink.row_id.in_([str(r.OrderInquiryRow.id) for r in rows]))
+        .filter(OrderInquiryLink.row_id.in_(row_ids))
         .group_by(OrderInquiryLink.row_id)
         .all()
     ):
         linked[str(row_id)] = float(total or 0)
 
-    # `taken_by` (S5): the SPO number(s) currently backing each row's links - LIVE only, an
-    # inner join to `spo_allocations` so a link whose allocation was unwound (`spo_allocation
-    # _id` SET NULL, the FK's own rule) never names an SPO that no longer exists.
-    taken_by: dict[str, list[str]] = {}
+    # `taken_by` (S5/F3, review round): the document(s) currently backing each row's links.
+    # `taken_qty` above sums EVERY link regardless of target - a PO placement counts exactly
+    # the same as an SPO one - so `taken_by` has to name EVERY link's document too, or a row
+    # fully placed on a plain PO read `taken_qty > 0, taken_by: []`, "Another SPO" for a row
+    # no SPO ever touched. SPO numbers first (an inner join to `spo_allocations`, so a link
+    # whose allocation was removed - which now takes the link with it, `unwind`'s own F9 fix
+    # below - never names one that no longer exists), then PO numbers, each group sorted -
+    # the same shape `project_order_inquiry_service.links_for_rows` states for a project
+    # row's own "Linked to" column, read locally rather than imported (that module is the
+    # large stateful class the module docstring already gives the reason not to import).
+    spo_names: dict[str, list[str]] = {}
     for row_id, spo_number in (
         db.query(OrderInquiryLink.row_id, SPOAllocation.spo_number)
         .join(SPOAllocation, SPOAllocation.id == OrderInquiryLink.spo_allocation_id)
         .filter(
-            OrderInquiryLink.row_id.in_([str(r.OrderInquiryRow.id) for r in rows]),
+            OrderInquiryLink.row_id.in_(row_ids),
             SPOAllocation.spo_number.isnot(None),
         )
         .all()
     ):
-        taken_by.setdefault(str(row_id), []).append(spo_number)
-    for names in taken_by.values():
-        names.sort()
+        spo_names.setdefault(str(row_id), []).append(spo_number)
+    po_names: dict[str, list[str]] = {}
+    for row_id, po_number in (
+        db.query(OrderInquiryLink.row_id, PurchaseOrder.po_number)
+        .join(PurchaseOrderLine, PurchaseOrderLine.id == OrderInquiryLink.po_line_id)
+        .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+        .filter(
+            OrderInquiryLink.row_id.in_(row_ids),
+            PurchaseOrder.po_number.isnot(None),
+        )
+        .all()
+    ):
+        po_names.setdefault(str(row_id), []).append(po_number)
+    taken_by: dict[str, list[str]] = {
+        row_id: sorted(spo_names.get(row_id, [])) + sorted(po_names.get(row_id, []))
+        for row_id in set(spo_names) | set(po_names)
+    }
 
     codes = _warehouse_ids_by_code(db)
     out: list[dict] = []
@@ -1035,24 +1096,6 @@ def _warehouse_ids_by_code(db: Session) -> dict[str, str]:
         (code or "").strip().upper(): str(wid)
         for wid, code in db.query(Warehouse.id, Warehouse.warehouse_code).all()
         if code
-    }
-
-
-def _retail_covered_qty(db: Session, product_id: str) -> dict[str, float]:
-    """Per sales-order line, how much of it a CRM SPO has already been pointed at - a thin
-    sum over `_spo_cover_by_so_line` (one query, shared with S5's `taken_by`).
-
-    The retail half writes no link row - the links table hangs off an order-inquiry row and
-    a retail line has none - so `source_ref.so_coverage` is the only record that the
-    quantity has already been promised. Without it the same 30 pieces were offered, and
-    default-ticked, on every container of the month.
-
-    An unwound SPO takes its lines with it, so its record disappears with it, which is
-    correct: the promise was undone.
-    """
-    cover = _spo_cover_by_so_line(db, product_id)
-    return {
-        so_line_id: sum(e["qty"] for e in entries) for so_line_id, entries in cover.items()
     }
 
 
@@ -1307,6 +1350,9 @@ def suggest(db: Session, shipment_id: str) -> dict:
     # shipment lines of the same product (different suppliers, say) ask the same "where does
     # this land" question and must get the same ranked answer.
     location_cache: dict[str, dict] = {}
+    # ONE scan of the whole `crm_spo` book for the whole shipment (F7, review round) - every
+    # line below reads out of this same dict rather than re-querying it per line.
+    pulls_by_line = _spo_pulls_by_po_line(db)
 
     out_lines: list[dict] = []
     for ln in sorted(lines, key=lambda l: (products.get(str(l.product_id), (None, None))[0] or "", str(l.id))):
@@ -1354,7 +1400,6 @@ def suggest(db: Session, shipment_id: str) -> dict:
         # the two calls can never name a different candidate set for this line.
         _, candidates = _candidate_lines_for_line(db, ln)
         taken_ids = {str(line.id) for line, _po, _qty in takes}
-        pulls_by_line = _spo_pulls_by_po_line(db, [str(c[0].id) for c in candidates])
 
         def _po_take_row(line, po, qty: float) -> dict:
             entries = pulls_by_line.get(str(line.id), [])
@@ -1386,8 +1431,14 @@ def suggest(db: Session, shipment_id: str) -> dict:
         # (S5) - `qty: 0` (nothing left for THIS cascade to claim), kept in the candidates'
         # own order (earliest issue date first) so they read as a continuation of the takes
         # above rather than a second, differently-ordered list.
-        for line, po, _available in candidates:
+        for line, po, available in candidates:
             if str(line.id) in taken_ids:
+                continue
+            # F2 (review round): a taken-only row is for a line THIS cascade left NOTHING
+            # open on - one with real open balance the cascade simply did not walk to (a
+            # later PO in the queue, say) is a normal, tickable candidate, and showing it
+            # here greyed it out and made it untickable for no reason.
+            if available > 0:
                 continue
             row = _po_take_row(line, po, 0.0)
             if row["taken_qty"] > 0:
@@ -1930,6 +1981,16 @@ def unwind(db: Session, shipment_id: str) -> dict:
     now-untraceable allocation still counting as incoming supply - the exact half-undone state
     this action exists to avoid.
 
+    **F9 (review round): deletes the `OrderInquiryLink` rows this SPO's own allocations
+    carry BEFORE deleting the allocations.** `spo_allocation_id`'s FK is `ON DELETE SET
+    NULL`, not `CASCADE` - but `ck_order_inquiry_links_one_target` requires exactly ONE of
+    `po_line_id` / `spo_allocation_id` to be set, so a SET NULL that left a link with
+    NEITHER was never a legal end state for one of these rows: the bulk allocation delete
+    below raised a CHECK violation instead of completing. These links are this SPO's OWN
+    placements (S7's `place_on_po_allocations`), so deleting them first simply returns the
+    row to unlinked, which `_project_coverage` then offers in full - exactly what "delete
+    the SPO" should mean for the demand it was serving.
+
     Since the doctrine correction (module docstring, fifth amendment), also REVERSES the
     `qty_received` `create` advanced on every SOURCE PO line these SPO lines pulled from -
     parsed back out of each deleted line's own `source_ref` JSON. Without this, deleting a CRM
@@ -1982,6 +2043,21 @@ def unwind(db: Session, shipment_id: str) -> dict:
 
     deleted_allocations = 0
     if po_line_ids:
+        allocation_ids = [
+            str(row[0])
+            for row in db.query(SPOAllocation.id)
+            .filter(SPOAllocation.po_line_id.in_(po_line_ids))
+            .all()
+        ]
+        if allocation_ids:
+            # F9 (review round): this SPO's own order-inquiry placements, deleted BEFORE
+            # the allocations they point at - see the docstring above for why the bulk
+            # allocation delete raises without this.
+            from app.models.project_so import OrderInquiryLink
+
+            db.query(OrderInquiryLink).filter(
+                OrderInquiryLink.spo_allocation_id.in_(allocation_ids)
+            ).delete(synchronize_session=False)
         deleted_allocations = (
             db.query(SPOAllocation)
             .filter(SPOAllocation.po_line_id.in_(po_line_ids))

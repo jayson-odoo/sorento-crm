@@ -840,6 +840,35 @@ def test_a_project_row_linked_elsewhere_carries_taken_by_naming_the_spo():
         assert entry["taken_by"] == [spo_number]
 
 
+def test_a_project_row_placed_on_a_plain_po_carries_taken_by_naming_the_po():
+    """F3 (review round): `taken_qty` already sums EVERY `OrderInquiryLink` (a PO placement
+    counts exactly the same as an SPO one), but `taken_by` only ever named an SPO - a row
+    fully placed on a plain PO read `taken_qty: 40, taken_by: []`, "Another SPO" for a row
+    no SPO ever touched. `taken_by` must name the document for EVERY link, PO or SPO."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        po = w.po("A", supplier, [("A", 100, 0)])
+        po_line = po.lines[0]
+        row, _pso = _project_chain(db, w, "A", qty=40, delivery=date(2026, 9, 10))
+
+        db.add(OrderInquiryLink(
+            id=_u(), row_id=row.id, po_line_id=str(po_line.id), qty=Decimal("40"),
+            document=po.po_number,
+        ))
+        db.flush()
+
+        second, second_lines = w.shipment([("A", 100, supplier)])
+        coverage = _coverage(
+            _line(svc.suggest(db, str(second.id)), str(second_lines[0].id)), "project"
+        )
+
+        entry = next(c for c in coverage if str(row.id) in c["key"])
+        assert entry["qty"] == 0
+        assert entry["taken_qty"] == 40
+        assert entry["taken_by"] == [po.po_number]
+
+
 def test_a_po_line_fully_pulled_returns_taken_in_po_takes_on_a_second_shipment():
     """AC-E4: a line with nothing open, whose only reason is a prior SPO pull, is still
     RETURNED (never silently dropped) - `suggested_qty` for the line does not count it.
@@ -890,6 +919,51 @@ def test_a_po_line_fully_pulled_returns_taken_in_po_takes_on_a_second_shipment()
         assert entry["taken_by"] == [spo_po.po_number]
         assert line["suggested_qty"] == 0
         assert line["cannot_convert"] is True
+
+
+def test_a_po_line_with_real_open_balance_the_cascade_did_not_reach_stays_a_normal_row():
+    """F2 (review round): a taken-only row must be for a line THIS cascade left NOTHING
+    open on. PO-A (100 open) is what the 50-packed cascade takes from first; PO-B (200
+    ordered, 30 already pulled by an earlier SPO, so 170 open) is a line the cascade simply
+    never reached - it still has real open balance, so it must stay a normal, tickable
+    candidate rather than a second, greyed `po_takes` row for the same line PO-A already
+    covers. Before this fix ANY candidate with `taken_qty > 0` was appended regardless of
+    its own open balance, so PO-B (170 open) showed up greyed and untickable."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        po_a = w.po("A", supplier, [("A", 100, 0)], issue_date=date(2026, 1, 5))
+        po_b = w.po("B", supplier, [("A", 200, 0)], issue_date=date(2026, 3, 9))
+        po_b_line = po_b.lines[0]
+
+        # An earlier SPO already pulled 30 off PO-B's line (`create`'s own advance).
+        earlier_spo = PurchaseOrder(
+            id=_u(), po_number=f"{MARKER}-SPO0-{uuid.uuid4().hex[:6]}",
+            supplier_id=supplier.id, issue_date=date(2026, 2, 1), status="active",
+            source_system=svc.SOURCE_SYSTEM,
+        )
+        db.add(earlier_spo)
+        db.flush()
+        db.add(PurchaseOrderLine(
+            id=_u(), purchase_order_id=earlier_spo.id, product_id=w.product("A").id,
+            qty_ordered=30, qty_received=30, line_status="closed",
+            source_system=svc.SOURCE_SYSTEM,
+            source_ref=json.dumps(
+                {"pulls": [{"po_line_id": str(po_b_line.id), "qty": 30}], "so_coverage": []}
+            ),
+        ))
+        po_b_line.qty_received = 30
+        db.flush()
+
+        shipment, lines = w.shipment([("A", 50, supplier)])
+        line = _line(svc.suggest(db, str(shipment.id)), str(lines[0].id))
+
+        assert len(line["po_takes"]) == 1
+        take = line["po_takes"][0]
+        assert take["po_line_id"] == str(po_a.lines[0].id)
+        assert take["qty"] == 50
+        po_b_ids = [t["po_line_id"] for t in line["po_takes"] if t["po_line_id"] == str(po_b_line.id)]
+        assert po_b_ids == [], "PO-B has real open balance the cascade did not reach - not a taken-only row"
 
 
 def test_unwind_returns_the_same_rows_with_taken_qty_zero_and_full_qty():
