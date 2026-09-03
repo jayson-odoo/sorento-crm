@@ -545,6 +545,34 @@ def test_the_same_edit_naming_the_supplier_per_line_updates_the_right_one(db):
     }
 
 
+def test_editing_a_lines_product_into_a_collision_is_refused(db):
+    """The grid (S10) lets any row's product be repicked freely; picking one that lands on
+    the same (product, supplier) another row already holds would otherwise be silently
+    summed into that row by `_merge_shipment_lines` - the behaviour that helper exists FOR
+    when one upload states the same item twice at two prices
+    (`test_one_product_on_two_lines_at_two_prices_merges_to_the_weighted_average`, the import
+    channel). Here it is one operator editing one row on screen, not a packing list saying
+    the same thing twice, so the save is refused instead - naming the product the row now
+    collides with - rather than quietly losing the other row's identity.
+    """
+    w, shipment = _mixed_container(db)
+
+    with pytest.raises(AppException) as excinfo:
+        # Kailu's tap line repicked to Caizhou's sink - the same (product, supplier) pair
+        # Caizhou's own sink line already holds.
+        w.update(
+            shipment.id,
+            lines=[(w.sink, 10, str(w.caizhou.id)), (w.sink, 5, str(w.caizhou.id))],
+        )
+
+    assert excinfo.value.status_code == 409
+    assert w.sink.product_code in excinfo.value.detail["message"]
+    db.rollback()
+    # Nothing was written: both rows are exactly as they were.
+    lines = _by_product(w.lines(shipment.id))
+    assert set(lines.keys()) == {str(w.tap.id), str(w.sink.id)}
+
+
 def test_the_update_schema_carries_the_per_line_supplier_and_its_volume(db):
     """`InboundShipmentUpdate.shipment_lines` is the same line schema the upload uses.
 

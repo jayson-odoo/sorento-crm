@@ -552,6 +552,30 @@ def _merge_shipment_lines(lines_data, header_supplier_id: Optional[str]) -> list
     return list(merged.values())
 
 
+def _duplicate_line_product_id(
+    lines_data, header_supplier_id: Optional[str]
+) -> Optional[str]:
+    """The first `product_id` stated twice in one line set for the same effective supplier.
+
+    `_merge_shipment_lines` would silently SUM two lines that land on the same
+    `(product, supplier)` key - correct where a packing list legitimately states one item
+    twice at two prices, a mid-order renegotiation
+    (`test_one_product_on_two_lines_at_two_prices_merges_to_the_weighted_average`, the
+    import channel). `update_shipment`'s only caller is the Shipment lines grid, where the
+    same collision means an operator just repicked one row's product onto a row already on
+    screen - losing the other row's identity into a silent sum there reads as data loss, not
+    a stated fact about the container, so it is refused before the merge runs.
+    """
+    seen: set[tuple[str, Optional[str]]] = set()
+    for line_data in lines_data or []:
+        d = line_data.model_dump(exclude_unset=True) if hasattr(line_data, "model_dump") else dict(line_data)
+        key = (str(d["product_id"]), _effective_line_supplier(d, header_supplier_id))
+        if key in seen:
+            return d["product_id"]
+        seen.add(key)
+    return None
+
+
 def _line_company_kwargs(shipment: "InboundShipment") -> dict:
     """The company a new line of this container belongs to: its HEADER's.
 
@@ -1382,6 +1406,19 @@ class InboundShipmentService:
             # AND supplier - the same key `create_shipment` merges on, because the same
             # product from two factories is two rows).
             header_supplier = getattr(shipment, "supplier_id", None)
+            duplicate_product_id = _duplicate_line_product_id(
+                shipment_data.shipment_lines, header_supplier
+            )
+            if duplicate_product_id:
+                code = (
+                    self.db.query(Product.product_code)
+                    .filter(Product.id == duplicate_product_id)
+                    .scalar()
+                ) or duplicate_product_id
+                raise handle_conflict(
+                    f"Product {code} is on this line set twice for the same supplier; "
+                    "combine the two lines or pick a different product on one of them."
+                )
             self._upsert_shipment_lines(
                 shipment, _merge_shipment_lines(shipment_data.shipment_lines, header_supplier)
             )
