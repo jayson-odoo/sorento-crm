@@ -812,6 +812,19 @@ describe('ContainerRequestSection - the eight figures open the shared lightbox (
     expect(within(dialog).getByText('Total').closest('tr')).toHaveTextContent('4');
   });
 
+  it('the Need cell opens a dialog titled "Need · <code>" listing both channels together with a Channel column (S2, AC-B1/AC-B2)', () => {
+    renderSection();
+
+    const dialog = openFigure('Open demand, project and retail');
+
+    expect(dialog).toHaveTextContent('Need · ITEM-1');
+    expect(within(dialog).getByText('Channel')).toBeInTheDocument();
+    expect(within(dialog).getByText('SO-PROJ')).toBeInTheDocument();
+    expect(within(dialog).getByText('SO-RET')).toBeInTheDocument();
+    // Total = need = project (6) + retail (4).
+    expect(within(dialog).getByText('Total').closest('tr')).toHaveTextContent('10');
+  });
+
   it('the On hand figure opens the location table, pools only, footing to the cell (AC-B3)', () => {
     useLocationStock.mockReturnValue({
       data: {

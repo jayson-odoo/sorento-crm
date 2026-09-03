@@ -303,6 +303,53 @@ describe('ProjectRetailTabs', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Need - project and retail together (S2)
+// ---------------------------------------------------------------------------
+
+describe('ProjectRetailTabs - the Need channel', () => {
+  const NEED_LINES: PlanDemandLineRow[] = [
+    { ...LINES[0], channel: 'project' },
+    { ...LINES[1], channel: 'retail' },
+  ];
+
+  it('is titled "Need · <code>" by the shell and lists both channels with a Channel column (AC-B1/AC-B2)', () => {
+    renderWithClient(
+      <PlanRowDialog kind="need" productCode="SRTWB241" onOpenChange={() => {}}>
+        <ProjectRetailTabs channel="need" lines={NEED_LINES} history={HISTORY} />
+      </PlanRowDialog>,
+    );
+
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText(/Need · SRTWB241/)).toBeTruthy();
+    expect(within(dialog).getByText('Channel')).toBeTruthy();
+    expect(within(dialog).getByText('SO404118')).toBeTruthy();
+    expect(within(dialog).getByText('SO403990')).toBeTruthy();
+    // The Total foots to the Need figure, project and retail together.
+    expect(within(dialog).getByText('Total').closest('tr')).toHaveTextContent('2,100');
+  });
+
+  it('history carries a Total column, and its own peak (AC-B3)', () => {
+    const { container } = renderWithClient(
+      <ProjectRetailTabs channel="need" lines={NEED_LINES} history={HISTORY} />,
+    );
+
+    switchTab('12-month history');
+
+    expect(screen.getByRole('columnheader', { name: 'Total' })).toBeTruthy();
+    // Totals per month: 420, 1,704, 1,101 - the peak is Mar 26.
+    const totalPeak = container.querySelector('[data-peak="total"]');
+    expect(totalPeak?.textContent).toBe('1,704');
+    expect(totalPeak?.closest('tr')).toHaveTextContent('Mar 26');
+    // The project and retail peaks are still marked too.
+    expect(container.querySelector('[data-peak="project"]')?.textContent).toBe('1,504');
+    expect(container.querySelector('[data-peak="retail"]')?.textContent).toBe('701');
+    // The footer row sums the Total column too: 2,204 project + 1,021 retail.
+    const footerRow = container.querySelector('tfoot tr') as HTMLElement;
+    expect(within(footerRow).getByText('3,225')).toBeTruthy();
+  });
+});
+
 describe('monthLabel', () => {
   it('reads a month bucket as a month, never as a date', () => {
     expect(monthLabel('2026-03')).toBe('Mar 26');

@@ -70,6 +70,9 @@ import type {
 export type PlanRowDialogKind =
   | 'project'
   | 'retail'
+  // Project and retail together, unfiltered (S2): the Need cell's own lightbox, so a figure
+  // that is the SUM of two channels has a table that adds up to it too.
+  | 'need'
   | 'on_hand'
   | 'spo'
   | 'incoming_pl'
@@ -81,10 +84,11 @@ export type PlanRowDialogKind =
   // openable or it cannot be checked against the paper.
   | 'blocks';
 
-/** The word in front of the product code. Kept here so the eight titles cannot drift. */
+/** The word in front of the product code. Kept here so the titles cannot drift. */
 export const PLAN_ROW_DIALOG_TITLES: Record<PlanRowDialogKind, string> = {
   project: 'Project',
   retail: 'Retail',
+  need: 'Need',
   on_hand: 'On hand',
   spo: 'SPO',
   incoming_pl: 'Incoming PL',
@@ -280,6 +284,8 @@ export interface PlanDemandLineRow {
   required_date: string | null;
   /** The sales order's own page, when the caller can name one. */
   href?: string | null;
+  /** Which channel this line is on - only read by the Need dialog's Channel column (S2). */
+  channel?: 'project' | 'retail';
 }
 
 /** One month of the two 12-month series (AC-B2 / AC-B6). */
@@ -314,7 +320,7 @@ function PeakValueCell({
 }: {
   qty: number;
   isPeak: boolean;
-  mark: 'project' | 'retail';
+  mark: 'project' | 'retail' | 'total';
 }) {
   return (
     <span
@@ -330,6 +336,10 @@ function PeakValueCell({
  * One channel's demand, twice: what is still open before the plan's cut-off, and what the
  * product's order history says over the last twelve months.
  *
+ * `channel='need'` (S2) is project and retail TOGETHER, unfiltered - the Need cell's own
+ * lightbox, with an extra Channel column on the open tab and a Total column on the history
+ * tab, so a figure that is the sum of two channels has a table (and a peak) that says so.
+ *
  * Controlled and pure - the loading-plan grid already holds both payloads (the build's
  * `include_lines` read and the history read), so a second fetch here would ask the server for
  * what the caller is holding. `initialTab='history'` is how the Project peak / Retail peak
@@ -342,7 +352,7 @@ export function ProjectRetailTabs({
   initialTab = 'open',
   loading,
 }: {
-  channel: 'project' | 'retail';
+  channel: 'project' | 'retail' | 'need';
   lines: PlanDemandLineRow[];
   history: PlanHistoryPoint[];
   initialTab?: 'open' | 'history';
@@ -357,8 +367,12 @@ export function ProjectRetailTabs({
     () => peakIndexOf(history.map((p) => p.retail_qty)),
     [history],
   );
-  // AC-J3: the history tab foots BOTH series - the peak cell above states the biggest month,
-  // this states the whole twelve.
+  const totalPeakIndex = useMemo(
+    () => peakIndexOf(history.map((p) => p.project_qty + p.retail_qty)),
+    [history],
+  );
+  // AC-J3: the history tab foots every series it shows - the peak cell above states the
+  // biggest month, this states the whole twelve.
   const projectTotal = useMemo(
     () => history.reduce((sum, p) => sum + (p.project_qty || 0), 0),
     [history],
@@ -372,8 +386,8 @@ export function ProjectRetailTabs({
       ? `Open project SO lines (${fmtInt(lines.length)})`
       : `Open sales orders (${fmtInt(lines.length)})`;
 
-  const openColumns = useMemo<ColumnDef<PlanDemandLineRow>[]>(
-    () => [
+  const openColumns = useMemo<ColumnDef<PlanDemandLineRow>[]>(() => {
+    const columns: ColumnDef<PlanDemandLineRow>[] = [
       {
         id: 'so_number',
         header: 'Sales order',
@@ -391,6 +405,17 @@ export function ProjectRetailTabs({
         size: 130,
         meta: { skeleton: SKELETON_CELL },
       },
+    ];
+    if (channel === 'need') {
+      // AC-B2: which channel each line came off, since the two now sit in one table.
+      columns.push({
+        id: 'channel',
+        header: 'Channel',
+        cell: ({ row }) => (row.original.channel === 'project' ? 'Project' : 'Retail'),
+        size: 90,
+      });
+    }
+    columns.push(
       {
         id: 'customer',
         header: 'Customer',
@@ -440,12 +465,12 @@ export function ProjectRetailTabs({
         size: 110,
         meta: RIGHT,
       },
-    ],
-    [total],
-  );
+    );
+    return columns;
+  }, [total, channel]);
 
-  const historyColumns = useMemo<ColumnDef<PlanHistoryPoint>[]>(
-    () => [
+  const historyColumns = useMemo<ColumnDef<PlanHistoryPoint>[]>(() => {
+    const columns: ColumnDef<PlanHistoryPoint>[] = [
       {
         id: 'month',
         header: 'Month',
@@ -482,9 +507,26 @@ export function ProjectRetailTabs({
         size: 100,
         meta: RIGHT,
       },
-    ],
-    [projectPeakIndex, retailPeakIndex, projectTotal, retailTotal],
-  );
+    ];
+    if (channel === 'need') {
+      // AC-B3: the Need dialog's own column, one column no channel dialog needs.
+      columns.push({
+        id: 'total_qty',
+        header: 'Total',
+        cell: ({ row }) => (
+          <PeakValueCell
+            qty={row.original.project_qty + row.original.retail_qty}
+            isPeak={row.index === totalPeakIndex}
+            mark="total"
+          />
+        ),
+        footer: () => fmtInt(projectTotal + retailTotal),
+        size: 100,
+        meta: RIGHT,
+      });
+    }
+    return columns;
+  }, [channel, projectPeakIndex, retailPeakIndex, totalPeakIndex, projectTotal, retailTotal]);
 
   return (
     <Tabs defaultValue={initialTab}>
