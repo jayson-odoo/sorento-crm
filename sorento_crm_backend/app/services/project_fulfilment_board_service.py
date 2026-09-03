@@ -145,6 +145,19 @@ _MONTHS = (
 _PROJECT_NOTE_PREFIX = "Order Inquiry project:"
 
 
+def _own_pool_floor(fact: Any, pool_open: Optional[Mapping[str, Decimal]]) -> Decimal:
+    """The ASKING bin's own site pool floor, off the walk's free-floor ledger (AC-N.12).
+
+    `compose_lines` hands the proof one entry per pool since the R-N leftover was fixed -
+    every pool's floor is a running balance now, not just the asking bin's - and the two
+    sentences below still speak about the asking bin's own pool, so they read their own
+    entry out of it rather than a second live figure.
+    """
+    if not pool_open:
+        return _ZERO
+    return max(_dec((pool_open or {}).get(getattr(fact, "pool_code", None) or "")), _ZERO)
+
+
 def week_start(when: date) -> date:
     """The Monday of the ISO week containing `when`."""
     return when - timedelta(days=when.weekday())
@@ -2425,7 +2438,7 @@ class FulfilmentBoardService:
         row: _Row,
         fact: Any,
         components: Sequence[Any],
-        pool_open: Optional[Decimal],
+        pool_open: Optional[Mapping[str, Decimal]],
         borrow_open: Optional[Mapping[str, Decimal]] = None,
         net_open: Optional[Decimal] = None,
         as_of: Optional[date] = None,
@@ -2606,7 +2619,7 @@ class FulfilmentBoardService:
         pools_net_open = fact.pools_net if net_open is None else net_open
         pool_taken = took_at("pool")
         pool_pile = (
-            self._pool_pile(row, fact, max(_dec(pool_open), _ZERO))
+            self._pool_pile(row, fact, _own_pool_floor(fact, pool_open))
             if pool_code and pool_chain
             else None
         )
@@ -3105,7 +3118,7 @@ class FulfilmentBoardService:
         pool_chain: Sequence[Dict[str, Any]],
         taken: Decimal,
         pile: Optional[Dict[str, Any]],
-        pool_open: Optional[Decimal],
+        pool_open: Optional[Mapping[str, Decimal]],
         outcome: str,
         pools_net: Optional[Decimal] = None,
         borrow_donors: Sequence[Dict[str, Any]] = (),
@@ -3195,7 +3208,7 @@ class FulfilmentBoardService:
                 fact,
                 outcome,
                 pile,
-                max(_dec(pool_open), _ZERO),
+                _own_pool_floor(fact, pool_open),
                 capacity_by_location.get(fact.pool_code, _ZERO),
                 taken,
                 pools_net_refused,
