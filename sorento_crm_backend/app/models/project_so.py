@@ -1274,6 +1274,12 @@ class SOSupplyDecisionDraft(Base, CompanyScopedMixin):
     (`bucket_key_for`), so the same line is `2026-09-07` at week and `2026-09-09` at day.
     The core line id moves with none of that: it is the row the board, the mirror and the
     confirmation all agree names this line.
+
+    `company_id` (from `CompanyScopedMixin`) is nullable ONLY as the mixin's own backfill-
+    window convention (N5, fix round 5) - `uq_so_supply_decision_drafts_line` is
+    `(company_id, core_line_id)`, and Postgres does not treat two NULLs as equal, so that
+    constraint only holds one draft per line while every write actually carries a company
+    id; it assumes company-scoped writes, the same as `do_orm_execute`'s own filter does.
     """
 
     __tablename__ = "so_supply_decision_drafts"
