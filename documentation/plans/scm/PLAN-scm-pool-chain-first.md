@@ -1,8 +1,8 @@
 # PLAN - Pool step walks every site pool before another site's group bin (R-N)
 
-Status: S1 to S3 DONE + AC-N.12 floor ledger + review fix round + B1 ruled + golden (PR #607),
-on `feat/scm-pool-chain-first` (R-N, 3 Sep 2026; no sha here because the lane is rebased onto
-#575's final tip before it is pushed). Engine, board proof and docs landed;
+Status: S1 to S3 DONE + AC-N.12 floor ledger + review fix round + B1 ruled + golden (PR #607,
+merged on `origin/main`), and S4 to S6 (R-O, overdue grace, #586) on `feat/scm-pool-chain-ro`,
+stacked on #607, 3 Sep 2026. Engine, board proof and docs landed;
 `walk_line` step 0 walks the whole pool chain, R-L's spill block and `_draw_other_pools` are
 deleted, and the step 0 row is written from the pools that answered. Goldens AC-N.1 to AC-N.8
 are `_v8_inputs` cases in `tests/scm/front_planning_golden.py`, AC-N.9 is two confirm tests in
@@ -11,7 +11,19 @@ are `_v8_inputs` cases in `tests/scm/front_planning_golden.py`, AC-N.9 is two co
 and AC-N.11 is two vitest cases in `supplyComposition.test.ts`. AC-N.10 (browser evidence on
 SO419417) recorded 3 Sep. B1 (own-bin order) ruled by the captain 3 Sep and pinned by AC-N.13,
 a `_v8_inputs` case in `V8_WALK_CASES` - no engine change, the coded behaviour already matched
-the ruling. R-O (S4 to S6, overdue grace) NOT started - separate brief, issue #586.
+the ruling. AC-N.12 (every pool's free floor is one ledger, reported by the R-N coder) is
+`tests/scm/test_project_supply_service_ladder.py::test_another_sites_pool_free_floor_is_spent_once_across_the_whole_walk`.
+
+R-O (S4 to S6, overdue grace, #586) DONE: migration `464_overdue_grace`, the policy pair on
+`scm.priority_policy` with its form fields, `supply_assignment.counted_event` as the one
+place the rule lives, the lateness clause on every incoming rung's sentence
+(`front_planning_engine.late_document_reason`), and the assumed/stated dates on both stock
+ledgers. Tests: `tests/scm/test_overdue_grace_setting.py` (AC-O.5),
+`tests/scm/test_supply_assignment.py`'s R-O block (AC-O.1 to AC-O.4),
+`tests/scm/test_overdue_grace_ladder.py` (the compositions and the sentences),
+`tests/scm/test_stock_debt_routes.py` and `tests/test_fulfilment_board.py` (the ledger
+rows), plus vitest on the policy form and `StockDocumentsPanel`. AC-O.6 (browser evidence on
+SO419417) is still owed.
 RULED 3 Sep 2026 (R-N + R-O, Q1 by on hand, grace 14 / dead 90). Supersedes R-L's trigger.
 
 ## Why

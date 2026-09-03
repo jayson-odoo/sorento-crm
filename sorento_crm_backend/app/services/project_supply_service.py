@@ -957,6 +957,9 @@ class ProjectSupplyService:
         # is the same answer for every one of them.
         self._assignment_cache: Dict[date, Dict[str, Any]] = {}
         self._assignment_index: Dict[Tuple[str, date], Dict[str, Any]] = {}
+        #: (product, as_of) -> event key -> how late that COUNTED document is (R-O). Only
+        #: the late ones are in it, so a bucket with no entry costs nothing to ask about.
+        self._late_days_memo: Dict[Tuple[str, date], Dict[str, int]] = {}
         # The day the CURRENT walk is pinned to (`compose_lines`). A donor list asked for
         # outside the walk - the manual dialog's, say - has to read the same assignment the
         # walk did, or a board pinned to a simulated date pays for a second one against the
@@ -2195,6 +2198,36 @@ class ProjectSupplyService:
             self._assignment_index[(str(fact.product_id), as_of)] = index
         return index.get(str(line_id))
 
+    def _late_days(
+        self, fact: _LineFacts, *, as_of: Optional[date] = None
+    ) -> Dict[str, int]:
+        """How late each COUNTED document of this product's assignment is (R-O, #586).
+
+        `assign()` admits a document whose arrival has passed at an ASSUMED date and keeps
+        the lateness on the event; the walk's candidate lists carry only the event's KEY,
+        so this is the lookup that lets a water bucket naming exactly one document say
+        "SPO 2026/07-0031 is 41 days late, assumed by 17 Sep 2026" beside the promise.
+
+        Read off the ONE assignment this request already paid for (R21) and memoised, so
+        a board of 300 lines asks the question once per product.
+        """
+        if not fact.product_id:
+            return {}
+        as_of = as_of or self._walk_as_of or date.today()
+        key = (str(fact.product_id), as_of)
+        memo = self._late_days_memo.get(key)
+        if memo is None:
+            result = self.planning_assignments([fact.product_id], as_of=as_of).get(
+                str(fact.product_id)
+            )
+            memo = {
+                str(event.key): int(getattr(event, "days_late", 0) or 0)
+                for event in (result.supply if result is not None else ())
+                if int(getattr(event, "days_late", 0) or 0) > 0
+            }
+            self._late_days_memo[key] = memo
+        return memo
+
     def _unit_line_ids(self, fact: _LineFacts) -> List[str]:
         """The CORE line ids of the planning unit being walked.
 
@@ -2535,6 +2568,8 @@ class ProjectSupplyService:
                 event_key=event_key, event_ref=event_ref,
             )
 
+        late_days = self._late_days(fact, as_of=as_of)
+
         def rows(
             entries: Dict[Tuple[str, bool], Dict[str, Any]],
             *,
@@ -2590,7 +2625,13 @@ class ProjectSupplyService:
                         ),
                         **({"group": entry["group"]} if entry.get("group") else {}),
                         **(
-                            {"supply_key": single[0], "supply_document": single[1]}
+                            {
+                                "supply_key": single[0],
+                                "supply_document": single[1],
+                                # R-O: only a bucket that IS one document can say how late
+                                # that document is, which is the same test `single` makes.
+                                "late_days": late_days.get(str(single[0]), 0),
+                            }
                             if single
                             else {}
                         ),
@@ -2926,6 +2967,10 @@ class ProjectSupplyService:
                 "supply_kind": event.kind,
                 "supply_document": event.ref,
                 "arrival_date": arrival,
+                # R-O: how late the paperwork is, when `arrival` is the ASSUMED date the
+                # grace period gave it rather than the one the document states. 0 says
+                # there is nothing extra for the sentence to mention.
+                "late_days": int(getattr(event, "days_late", 0) or 0),
             }
             if unclaimed > _ZERO:
                 # Unclaimed first: it owes nobody - it is free, or it was already this

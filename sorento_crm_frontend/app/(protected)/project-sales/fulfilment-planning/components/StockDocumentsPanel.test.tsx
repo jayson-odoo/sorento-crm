@@ -184,6 +184,60 @@ describe('StockDocumentsPanel', () => {
     expect(table.textContent).toContain('332');
   });
 
+  it('a late document reads its ASSUMED date beside the stated one (R-O)', async () => {
+    // R-O (3 September 2026): an overdue document counts as supply landing
+    // `today + overdue_grace_days`, so the ledger row has to say which day the walk is
+    // planning against AND which day the paperwork claims - the first is what a promise
+    // gets made on, the second is what the buyer chases the supplier about.
+    getStockDetail.mockResolvedValue(
+      captainsPosition({
+        incoming: [
+          {
+            spo_number: 'SPO-2026/07-0031',
+            supplier_name: 'FOSHAN WORKS',
+            expected_date: '2026-07-24',
+            spo_qty: '100',
+            overdue_days: 41,
+            assumed_date: '2026-09-17',
+            counted: true,
+          },
+        ],
+      }),
+    );
+
+    renderPanel();
+
+    const table = await screen.findByRole('table');
+    // Through the shared `formatDateInMalaysia`, so the two dates read the same way as
+    // every other date in this table rather than in a spelling of their own.
+    expect(table.textContent).toContain('assumed 17/09/2026, stated 24/07/2026');
+    expect(table.textContent).toContain('(overdue 41 days)');
+  });
+
+  it('a DEAD document reads "not counted" and no date at all (R-O / R31)', async () => {
+    getStockDetail.mockResolvedValue(
+      captainsPosition({
+        incoming: [
+          {
+            spo_number: 'SPO-2026/01-0002',
+            supplier_name: 'FOSHAN WORKS',
+            expected_date: '2026-01-05',
+            spo_qty: '500',
+            overdue_days: 241,
+            assumed_date: null,
+            counted: false,
+          },
+        ],
+      }),
+    );
+
+    renderPanel();
+
+    const table = await screen.findByRole('table');
+    expect(table.textContent).toContain('Not counted');
+    expect(table.textContent).not.toContain('overdue 241');
+  });
+
   it('says nothing about overdue when the arrival is still ahead', async () => {
     getStockDetail.mockResolvedValue(
       captainsPosition({

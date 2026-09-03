@@ -136,6 +136,8 @@ export function StockDocumentsPanel({
         doc_date: order.doc_date ?? null,
         due_date: order.delivery_date ?? null,
         overdue_days: null,
+        assumed_date: null,
+        counted: true,
         qty: order.so_qty,
         // A sales order takes stock away from the pile.
         delta: -toMinor(order.so_qty),
@@ -168,6 +170,8 @@ export function StockDocumentsPanel({
         doc_date: null,
         due_date: leg.expected_date ?? null,
         overdue_days: leg.overdue_days ?? null,
+        assumed_date: leg.assumed_date ?? null,
+        counted: leg.counted !== false,
         qty: leg.spo_qty,
         delta: toMinor(leg.spo_qty),
         balance: null,
@@ -201,6 +205,8 @@ export function StockDocumentsPanel({
         doc_date: null,
         due_date: hold.required_date ?? null,
         overdue_days: null,
+        assumed_date: null,
+        counted: true,
         qty: hold.qty,
         delta: -toMinor(hold.qty),
         balance: null,
@@ -229,6 +235,8 @@ export function StockDocumentsPanel({
         doc_date: null,
         due_date: null,
         overdue_days: null,
+        assumed_date: null,
+        counted: true,
         qty: bin.qty_on_hand,
         delta: toMinor(bin.qty_on_hand),
         balance: null,
@@ -548,13 +556,10 @@ export function StockDocumentsPanel({
             'block truncate text-sm tabular-nums',
             emphasis(row.original),
           )}
+          title={dateCellText(row.original)}
         >
-          {row.original.due_date
-            ? formatDateInMalaysia(row.original.due_date)
-            : row.original.doc_type === 'On hand'
-              ? 'Held now'
-              : 'Not stated'}
-          {row.original.overdue_days ? (
+          {dateCellText(row.original)}
+          {row.original.overdue_days && row.original.counted ? (
             <span className="text-amber-600 ms-1">
               (overdue {row.original.overdue_days}{' '}
               {row.original.overdue_days === 1 ? 'day' : 'days'})
@@ -810,6 +815,28 @@ function isNegative(value: string | null): boolean {
   return value !== null && Number(value) < 0;
 }
 
+/**
+ * What the date cell says, in one place because three readings share it (R-O, 3 Sep 2026).
+ *
+ * A document the walk plans against a DIFFERENT day from the one it states says both:
+ * "assumed 17 Sep 2026, stated 24 Jul 2026". The assumed day is what a promise gets made
+ * on, and the stated one is what the buyer chases the supplier about, so printing only one
+ * of them loses the half the reader needs. A document so late the walk counts it as nothing
+ * says exactly that, because a date beside it would read as a promise.
+ *
+ * No new column: this is the existing cell's text.
+ */
+function dateCellText(row: StockDetailRow): string {
+  if (!row.counted) return 'Not counted';
+  const stated = row.due_date ? formatDateInMalaysia(row.due_date) : null;
+  if (row.assumed_date) {
+    const assumed = formatDateInMalaysia(row.assumed_date);
+    return stated ? `assumed ${assumed}, stated ${stated}` : `assumed ${assumed}`;
+  }
+  if (stated) return stated;
+  return row.doc_type === 'On hand' ? 'Held now' : 'Not stated';
+}
+
 interface StockDetailRow {
   key: string;
   doc_type: 'S/O' | 'SPO' | 'On hand' | 'Hold';
@@ -824,6 +851,14 @@ interface StockDetailRow {
   due_date: string | null;
   /** Days late, on a purchase document whose promised arrival has passed. */
   overdue_days: number | null;
+  /**
+   * The day the WALK plans a LATE document against (R-O, 3 September 2026). Set, the date
+   * cell reads "assumed 17 Sep 2026, stated 24 Jul" - the assumed day is what a promise is
+   * made on and the stated one is what the paperwork says, and a planner needs both.
+   */
+  assumed_date: string | null;
+  /** False on a document so late the walk counts it as nothing: the row reads "not counted". */
+  counted: boolean;
   qty: string;
   /** Signed minor units: supply adds to the pile, demand takes from it. */
   delta: number;
