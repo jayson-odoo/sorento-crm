@@ -1323,6 +1323,17 @@ describe('SalesOrderDetail - what has already been planned about a line', () => 
     expect(within(row).getByText('Rev 2')).toBeInTheDocument();
   });
 
+  it('sits Linked to immediately after Outstanding qty in the default column order (R4, AC-K1)', () => {
+    useSalesOrder.mockReturnValue({ data: planned(), isLoading: false, isError: false });
+    renderDetail();
+    openTab('Lines');
+
+    const headers = screen.getAllByRole('columnheader').map((h) => h.textContent?.trim());
+    const outstandingIndex = headers.indexOf('Outstanding qty');
+    expect(outstandingIndex).toBeGreaterThan(-1);
+    expect(headers[outstandingIndex + 1]).toBe('Linked to');
+  });
+
   it('prints a dash on a line nothing has been raised or decided on', () => {
     useSalesOrder.mockReturnValue({
       data: planned({ order_inquiry: null, decision_revision: null }),
