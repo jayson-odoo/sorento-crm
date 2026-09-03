@@ -408,8 +408,11 @@ export function SupplierCodesTab({
         cell: ({ row }) => {
           // The record's own clock (`PRINCIPLES.md`): stored naive UTC, rendered as Malaysia
           // wall-clock. `fmtDateTime` reads a zone-less string as LOCAL, so this column sat
-          // eight hours behind the "Started" line on the same screen.
-          const when = formatDateTimeInMalaysia(row.original.created_at);
+          // eight hours behind the "Started" line on the same screen. A row can carry no
+          // `created_at` at all (ADR 1e): unknown is EM_DASH, never a formatter crash.
+          const when = row.original.created_at
+            ? formatDateTimeInMalaysia(row.original.created_at)
+            : EM_DASH;
           return (
             <span className="block truncate text-sm text-muted-foreground" title={when}>
               {when}
