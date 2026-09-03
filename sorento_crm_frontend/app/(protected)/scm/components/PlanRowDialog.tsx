@@ -19,15 +19,18 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
+import { getStatusBadgeVariant, formatStatusLabel } from '@/lib/status-badge';
 import { cn } from '@/lib/utils';
 
 import { EM_DASH, fmtDate, fmtInt, fmtMoney, fmtSupplierCost } from '../lib/format';
+import { purchaseOrderStatusPill } from '../lib/purchaseOrderStatus';
 import { useContainerRequestDrill } from '../hooks/useContainerRequestDrill';
 import { useLocationStock } from '../reorder/hooks/useReorderRun';
 import { StockDocumentsPanel } from '../../project-sales/fulfilment-planning/components/StockDocumentsPanel';
@@ -70,6 +73,9 @@ import type {
 export type PlanRowDialogKind =
   | 'project'
   | 'retail'
+  // Project and retail together, unfiltered (S2): the Need cell's own lightbox, so a figure
+  // that is the SUM of two channels has a table that adds up to it too.
+  | 'need'
   | 'on_hand'
   | 'spo'
   | 'incoming_pl'
@@ -81,10 +87,11 @@ export type PlanRowDialogKind =
   // openable or it cannot be checked against the paper.
   | 'blocks';
 
-/** The word in front of the product code. Kept here so the eight titles cannot drift. */
+/** The word in front of the product code. Kept here so the titles cannot drift. */
 export const PLAN_ROW_DIALOG_TITLES: Record<PlanRowDialogKind, string> = {
   project: 'Project',
   retail: 'Retail',
+  need: 'Need',
   on_hand: 'On hand',
   spo: 'SPO',
   incoming_pl: 'Incoming PL',
@@ -280,6 +287,8 @@ export interface PlanDemandLineRow {
   required_date: string | null;
   /** The sales order's own page, when the caller can name one. */
   href?: string | null;
+  /** Which channel this line is on - only read by the Need dialog's Channel column (S2). */
+  channel?: 'project' | 'retail';
 }
 
 /** One month of the two 12-month series (AC-B2 / AC-B6). */
@@ -289,23 +298,50 @@ export interface PlanHistoryPoint {
   retail_qty: number;
 }
 
-function peakOf(history: PlanHistoryPoint[], channel: 'project' | 'retail') {
-  let peak: PlanHistoryPoint | null = null;
-  for (const point of history) {
-    const qty = channel === 'project' ? point.project_qty : point.retail_qty;
-    const best = peak ? (channel === 'project' ? peak.project_qty : peak.retail_qty) : -1;
-    if (qty > best) peak = point;
-  }
-  if (!peak) return null;
-  return {
-    month: peak.month,
-    qty: channel === 'project' ? peak.project_qty : peak.retail_qty,
-  };
+/**
+ * The index of a series' biggest month (S1, AC-A2): the FIRST occurrence wins a tie, and a
+ * series that never goes above 0 has no peak at all - `-1`, which no row index ever equals.
+ */
+function peakIndexOf(values: number[]): number {
+  let bestIndex = -1;
+  let bestValue = 0;
+  values.forEach((value, index) => {
+    if (value > bestValue) {
+      bestValue = value;
+      bestIndex = index;
+    }
+  });
+  return bestIndex;
+}
+
+/** One cell of the 12-month history table (S1): tinted and marked when it is its column's
+ *  peak, so the row it landed on reads at a glance rather than by scanning every month. */
+function PeakValueCell({
+  qty,
+  isPeak,
+  mark,
+}: {
+  qty: number;
+  isPeak: boolean;
+  mark: 'project' | 'retail' | 'total';
+}) {
+  return (
+    <span
+      data-peak={isPeak ? mark : undefined}
+      className={cn(isPeak && 'rounded bg-primary/10 px-1.5 py-0.5 font-semibold')}
+    >
+      {fmtInt(qty)}
+    </span>
+  );
 }
 
 /**
  * One channel's demand, twice: what is still open before the plan's cut-off, and what the
  * product's order history says over the last twelve months.
+ *
+ * `channel='need'` (S2) is project and retail TOGETHER, unfiltered - the Need cell's own
+ * lightbox, with an extra Channel column on the open tab and a Total column on the history
+ * tab, so a figure that is the sum of two channels has a table (and a peak) that says so.
  *
  * Controlled and pure - the loading-plan grid already holds both payloads (the build's
  * `include_lines` read and the history read), so a second fetch here would ask the server for
@@ -317,23 +353,33 @@ export function ProjectRetailTabs({
   lines,
   history,
   initialTab = 'open',
-  focus,
+  horizon = null,
   loading,
 }: {
-  channel: 'project' | 'retail';
+  channel: 'project' | 'retail' | 'need';
   lines: PlanDemandLineRow[];
   history: PlanHistoryPoint[];
   initialTab?: 'open' | 'history';
-  /** Which series the reader came in for. Defaults to the channel's own. */
-  focus?: 'project' | 'retail';
+  /** The plan's cut-off date, when one is set (S3). The open tab's own label states it -
+   *  there is no header context string any more. */
+  horizon?: string | null;
   loading?: boolean;
 }) {
-  const focused = focus ?? channel;
   const total = useMemo(() => lines.reduce((sum, l) => sum + (l.qty || 0), 0), [lines]);
-  const projectPeak = peakOf(history, 'project');
-  const retailPeak = peakOf(history, 'retail');
-  // AC-J3: the history tab foots BOTH series - the peak line above states the biggest month,
-  // this states the whole twelve.
+  const projectPeakIndex = useMemo(
+    () => peakIndexOf(history.map((p) => p.project_qty)),
+    [history],
+  );
+  const retailPeakIndex = useMemo(
+    () => peakIndexOf(history.map((p) => p.retail_qty)),
+    [history],
+  );
+  const totalPeakIndex = useMemo(
+    () => peakIndexOf(history.map((p) => p.project_qty + p.retail_qty)),
+    [history],
+  );
+  // AC-J3: the history tab foots every series it shows - the peak cell above states the
+  // biggest month, this states the whole twelve.
   const projectTotal = useMemo(
     () => history.reduce((sum, p) => sum + (p.project_qty || 0), 0),
     [history],
@@ -342,13 +388,14 @@ export function ProjectRetailTabs({
     () => history.reduce((sum, p) => sum + (p.retail_qty || 0), 0),
     [history],
   );
-  const openLabel =
-    channel === 'project'
-      ? `Open project SO lines (${fmtInt(lines.length)})`
-      : `Open sales orders (${fmtInt(lines.length)})`;
+  // S3: the tab used to name the LINE COUNT ("Open project SO lines (2)"); it now names the
+  // sum of qty, which is what the cell itself shows.
+  const openLabel = horizon
+    ? `Open before cut-off ${formatDateInMalaysia(horizon)} (${fmtInt(total)})`
+    : `Open (${fmtInt(total)})`;
 
-  const openColumns = useMemo<ColumnDef<PlanDemandLineRow>[]>(
-    () => [
+  const openColumns = useMemo<ColumnDef<PlanDemandLineRow>[]>(() => {
+    const columns: ColumnDef<PlanDemandLineRow>[] = [
       {
         id: 'so_number',
         header: 'Sales order',
@@ -366,6 +413,17 @@ export function ProjectRetailTabs({
         size: 130,
         meta: { skeleton: SKELETON_CELL },
       },
+    ];
+    if (channel === 'need') {
+      // AC-B2: which channel each line came off, since the two now sit in one table.
+      columns.push({
+        id: 'channel',
+        header: 'Channel',
+        cell: ({ row }) => (row.original.channel === 'project' ? 'Project' : 'Retail'),
+        size: 90,
+      });
+    }
+    columns.push(
       {
         id: 'customer',
         header: 'Customer',
@@ -415,12 +473,12 @@ export function ProjectRetailTabs({
         size: 110,
         meta: RIGHT,
       },
-    ],
-    [total],
-  );
+    );
+    return columns;
+  }, [total, channel]);
 
-  const historyColumns = useMemo<ColumnDef<PlanHistoryPoint>[]>(
-    () => [
+  const historyColumns = useMemo<ColumnDef<PlanHistoryPoint>[]>(() => {
+    const columns: ColumnDef<PlanHistoryPoint>[] = [
       {
         id: 'month',
         header: 'Month',
@@ -432,28 +490,51 @@ export function ProjectRetailTabs({
       {
         id: 'project_qty',
         header: 'Project',
-        cell: ({ row }) => fmtInt(row.original.project_qty),
+        cell: ({ row }) => (
+          <PeakValueCell
+            qty={row.original.project_qty}
+            isPeak={row.index === projectPeakIndex}
+            mark="project"
+          />
+        ),
         footer: () => fmtInt(projectTotal),
         size: 100,
-        meta: {
-          ...RIGHT,
-          cellClassName: cn(RIGHT.cellClassName, focused === 'project' && 'font-medium'),
-        },
+        meta: RIGHT,
       },
       {
         id: 'retail_qty',
         header: 'Retail',
-        cell: ({ row }) => fmtInt(row.original.retail_qty),
+        cell: ({ row }) => (
+          <PeakValueCell
+            qty={row.original.retail_qty}
+            isPeak={row.index === retailPeakIndex}
+            mark="retail"
+          />
+        ),
         footer: () => fmtInt(retailTotal),
         size: 100,
-        meta: {
-          ...RIGHT,
-          cellClassName: cn(RIGHT.cellClassName, focused === 'retail' && 'font-medium'),
-        },
+        meta: RIGHT,
       },
-    ],
-    [focused, projectTotal, retailTotal],
-  );
+    ];
+    if (channel === 'need') {
+      // AC-B3: the Need dialog's own column, one column no channel dialog needs.
+      columns.push({
+        id: 'total_qty',
+        header: 'Total',
+        cell: ({ row }) => (
+          <PeakValueCell
+            qty={row.original.project_qty + row.original.retail_qty}
+            isPeak={row.index === totalPeakIndex}
+            mark="total"
+          />
+        ),
+        footer: () => fmtInt(projectTotal + retailTotal),
+        size: 100,
+        meta: RIGHT,
+      });
+    }
+    return columns;
+  }, [channel, projectPeakIndex, retailPeakIndex, totalPeakIndex, projectTotal, retailTotal]);
 
   return (
     <Tabs defaultValue={initialTab}>
@@ -473,23 +554,13 @@ export function ProjectRetailTabs({
       </TabsContent>
 
       <TabsContent value="history">
-        <div className="space-y-2">
-          <div className="flex flex-wrap gap-4 text-xs">
-            <span className={cn(focused === 'project' && 'font-medium')}>
-              {`Project peak ${projectPeak ? `${fmtInt(projectPeak.qty)} ${monthLabel(projectPeak.month)}` : EM_DASH}`}
-            </span>
-            <span className={cn(focused === 'retail' && 'font-medium')}>
-              {`Retail peak ${retailPeak ? `${fmtInt(retailPeak.qty)} ${monthLabel(retailPeak.month)}` : EM_DASH}`}
-            </span>
-          </div>
-          <DrillTable
-            columns={historyColumns}
-            rows={history}
-            getRowId={(p) => p.month}
-            isLoading={loading}
-            emptyMessage="Nothing was ordered in the last twelve months."
-          />
-        </div>
+        <DrillTable
+          columns={historyColumns}
+          rows={history}
+          getRowId={(p) => p.month}
+          isLoading={loading}
+          emptyMessage="Nothing was ordered in the last twelve months."
+        />
       </TabsContent>
     </Tabs>
   );
@@ -689,10 +760,11 @@ function spoColumns(totalQty: number): ColumnDef<ContainerRequestDrillSpoRow>[] 
       meta: { skeleton: SKELETON_CELL },
     },
     {
-      id: 'packing_list',
-      header: 'Packing list',
-      cell: ({ row }) =>
-        row.original.shipment_id ? (row.original.shipment_number ?? 'Draft') : 'Not shipped',
+      // S4: what "Packing list" used to say (Draft / Not shipped) is now the status pill;
+      // this column is only ever the container the SPO landed on.
+      id: 'container',
+      header: 'Container',
+      cell: ({ row }) => textCell(row.original.container_number),
       size: 140,
     },
     {
@@ -726,8 +798,24 @@ function spoColumns(totalQty: number): ColumnDef<ContainerRequestDrillSpoRow>[] 
     {
       id: 'status',
       header: 'Status',
-      cell: ({ row }) => textCell(row.original.status),
-      size: 110,
+      cell: ({ row }) => {
+        const r = row.original;
+        // An allocation nobody has put on a shipment yet has no status word to format -
+        // "Not shipped" says the same thing the Container column's own dash used to.
+        if (!r.shipment_id) {
+          return (
+            <Badge variant="secondary" appearance="light" size="md">
+              Not shipped
+            </Badge>
+          );
+        }
+        return (
+          <Badge variant={getStatusBadgeVariant(r.status)} appearance="light" size="md">
+            {formatStatusLabel(r.status)}
+          </Badge>
+        );
+      },
+      size: 130,
     },
   ];
 }
@@ -757,8 +845,10 @@ export function SpoTabs({ supplierId, productId }: { supplierId: string; product
   return (
     <Tabs defaultValue="open">
       <TabsList variant="line">
-        <TabsTrigger value="open">{`Open to pools (${fmtInt(open.length)})`}</TabsTrigger>
-        <TabsTrigger value="history">{`History (${fmtInt(history.length)})`}</TabsTrigger>
+        {/* S3: the count of rows read as "how many documents", when the number the cell
+            actually names is the quantity they carry. */}
+        <TabsTrigger value="open">{`Open to pools (${fmtInt(openTotal)})`}</TabsTrigger>
+        <TabsTrigger value="history">{`History (${fmtInt(historyTotal)})`}</TabsTrigger>
       </TabsList>
       <TabsContent value="open">
         <DrillTable
@@ -807,31 +897,29 @@ export function IncomingPlTable({
   const columns = useMemo<ColumnDef<ContainerRequestDrillIncomingPlRow>[]>(
     () => [
       {
-        id: 'shipment_number',
-        header: 'Packing list',
+        // S5: the Packing list column is gone - the Container cell keeps the same link, and
+        // a row with no container number yet still reads a dash rather than losing the door
+        // onto the packing list.
+        id: 'container_number',
+        header: 'Container',
         cell: ({ row }) => {
           const r = row.original;
+          const label = r.container_number ?? EM_DASH;
           return onOpenShipment ? (
             <button
               type="button"
               className="underline-offset-2 hover:underline"
               onClick={() => onOpenShipment(r.shipment_id)}
             >
-              {r.shipment_number ?? 'Draft'}
+              {label}
             </button>
           ) : (
-            (r.shipment_number ?? 'Draft')
+            label
           );
         },
         footer: () => TOTAL_LABEL,
         size: 150,
         meta: { skeleton: SKELETON_CELL },
-      },
-      {
-        id: 'container_number',
-        header: 'Container',
-        cell: ({ row }) => textCell(row.original.container_number),
-        size: 130,
       },
       {
         id: 'supplier_name',
@@ -841,7 +929,7 @@ export function IncomingPlTable({
             {textCell(row.original.supplier_name)}
           </span>
         ),
-        size: 170,
+        size: 190,
       },
       {
         id: 'qty',
@@ -861,8 +949,12 @@ export function IncomingPlTable({
       {
         id: 'status',
         header: 'Status',
-        cell: ({ row }) => textCell(row.original.status),
-        size: 110,
+        cell: ({ row }) => (
+          <Badge variant={getStatusBadgeVariant(row.original.status)} appearance="light" size="md">
+            {formatStatusLabel(row.original.status)}
+          </Badge>
+        ),
+        size: 120,
       },
     ],
     [onOpenShipment, total],
@@ -883,14 +975,28 @@ export function IncomingPlTable({
 // PO - what is already ordered, and what was ordered before
 // ---------------------------------------------------------------------------
 
-/** Columns shared by the open and history tabs - only the footer total differs. */
-function poColumns(totalStillToCome: number): ColumnDef<ContainerRequestDrillPoRow>[] {
+/**
+ * Columns shared by the open and history tabs. `tab` decides two things that must agree with
+ * each other and with the tab's own label: which column carries the footer total (still-to-come
+ * on Open, qty-ordered on History - History's own `still_to_come` is always 0 on a closed line,
+ * so summing it there would read "Total outstanding 0" under a tab that already says otherwise)
+ * and whether a line counts as on order for the status pill. The backend's History predicate
+ * (`line_status <> 'open' OR qty_ordered <= qty_received`) leaves `still_to_come` nonzero on a
+ * line that closed short, so History never derives the pill off it - every History row reads
+ * Completed (or Cancelled/Draft off its own status).
+ */
+function poColumns(
+  tab: 'open' | 'history',
+  total: number,
+): ColumnDef<ContainerRequestDrillPoRow>[] {
+  const footerLabel = tab === 'open' ? 'Total outstanding' : 'Total ordered';
   return [
     {
       id: 'po_number',
       header: 'PO',
       cell: ({ row }) => textCell(row.original.po_number),
-      footer: () => <span className="text-muted-foreground">Total still to come</span>,
+      // S6: the purchase-order list's own word for this figure.
+      footer: () => <span className="text-muted-foreground">{footerLabel}</span>,
       size: 120,
       meta: { skeleton: SKELETON_CELL },
     },
@@ -908,14 +1014,15 @@ function poColumns(totalStillToCome: number): ColumnDef<ContainerRequestDrillPoR
       id: 'qty_ordered',
       header: 'Qty',
       cell: ({ row }) => fmtInt(row.original.qty_ordered),
+      footer: tab === 'history' ? () => fmtInt(total) : undefined,
       size: 90,
       meta: RIGHT,
     },
     {
       id: 'still_to_come',
-      header: 'Still to come',
+      header: 'Outstanding',
       cell: ({ row }) => fmtInt(row.original.still_to_come),
-      footer: () => fmtInt(totalStillToCome),
+      footer: tab === 'open' ? () => fmtInt(total) : undefined,
       size: 110,
       meta: RIGHT,
     },
@@ -940,16 +1047,34 @@ function poColumns(totalStillToCome: number): ColumnDef<ContainerRequestDrillPoR
     },
     {
       id: 'eta',
-      header: 'ETA',
+      // S6: the purchase-order list heads this "Delivery date" - "ETA" was the only column
+      // in the family still using the word.
+      header: 'Delivery date',
       cell: ({ row }) => fmtDate(row.original.eta),
-      size: 100,
+      size: 120,
       meta: RIGHT,
     },
     {
       id: 'status',
       header: 'Status',
-      cell: ({ row }) => textCell(row.original.status),
-      size: 100,
+      cell: ({ row }) => {
+        const r = row.original;
+        // The same pill the purchase-order list itself wears (S6): Outstanding / Completed
+        // is DERIVED off `still_to_come`, not the raw stored status word - but only on the
+        // Open tab, where `still_to_come > 0` means what it says. History rows can close short
+        // (`still_to_come` stays nonzero) and still belong under a tab called History, so
+        // History never counts as on order.
+        const pill = purchaseOrderStatusPill({
+          status: r.status ?? '',
+          is_on_order: tab === 'open' && r.still_to_come > 0,
+        });
+        return (
+          <Badge variant={pill.variant} appearance="light" size="md">
+            {pill.label}
+          </Badge>
+        );
+      },
+      size: 110,
     },
   ];
 }
@@ -965,15 +1090,22 @@ export function PoTabs({ supplierId, productId }: { supplierId: string; productI
   const history = (drill.data?.history ?? []) as ContainerRequestDrillPoRow[];
 
   const openStillToCome = drill.data?.total ?? open.reduce((s, r) => s + r.still_to_come, 0);
-  const historyStillToCome = history.reduce((s, r) => s + r.still_to_come, 0);
-  const openColumns = useMemo(() => poColumns(openStillToCome), [openStillToCome]);
-  const historyColumns = useMemo(() => poColumns(historyStillToCome), [historyStillToCome]);
+  // S3: the History tab names the quantity that WAS ordered, not what is still owed on it -
+  // a closed PO's still-to-come is always 0, so that sum would read "History (0)" forever. The
+  // footer sums the same figure (fix round, Opus review), so the tab label and the footer never
+  // disagree on a closed book.
+  const historyQtyOrdered = history.reduce((s, r) => s + r.qty_ordered, 0);
+  const openColumns = useMemo(() => poColumns('open', openStillToCome), [openStillToCome]);
+  const historyColumns = useMemo(
+    () => poColumns('history', historyQtyOrdered),
+    [historyQtyOrdered],
+  );
 
   return (
     <Tabs defaultValue="open">
       <TabsList variant="line">
-        <TabsTrigger value="open">{`Open (${fmtInt(open.length)})`}</TabsTrigger>
-        <TabsTrigger value="history">{`History (${fmtInt(history.length)})`}</TabsTrigger>
+        <TabsTrigger value="open">{`Open (${fmtInt(openStillToCome)})`}</TabsTrigger>
+        <TabsTrigger value="history">{`History (${fmtInt(historyQtyOrdered)})`}</TabsTrigger>
       </TabsList>
       <TabsContent value="open">
         <DrillTable
@@ -1273,15 +1405,15 @@ export function SoCoveragePicker({
  * description (Radix wants one, and a sentence explaining the dialog would be an on-screen
  * explanation, which the standards forbid).
  *
- * `context` is the figure and its qualifier - "2,876 before cut-off 30/09/2026", "117
- * arriving at site pools" - so the reader can see what the rows are supposed to add up to
- * without reading them.
+ * S3: the header used to carry a `context` string beside the title - the figure and its
+ * qualifier, "2,876 before cut-off 30/09/2026". It is gone; each tab now states its own sum
+ * in its own label (`ProjectRetailTabs`' open tab, SPO/PO's Open and History), so the total
+ * is never claimed twice in two places that could drift.
  */
 export function PlanRowDialog({
   kind,
   productCode,
   productName,
-  context,
   open = true,
   onOpenChange,
   children,
@@ -1289,7 +1421,6 @@ export function PlanRowDialog({
   kind: PlanRowDialogKind;
   productCode: string;
   productName?: string | null;
-  context?: string | null;
   open?: boolean;
   onOpenChange: (open: boolean) => void;
   children: ReactNode;
@@ -1300,9 +1431,6 @@ export function PlanRowDialog({
         <DialogHeader className="shrink-0 space-y-1 border-b p-4 sm:p-6">
           <DialogTitle className="min-w-0 break-words">
             {`${PLAN_ROW_DIALOG_TITLES[kind]} · ${productCode}`}
-            {context ? (
-              <span className="ms-2 text-xs font-normal text-muted-foreground">{context}</span>
-            ) : null}
           </DialogTitle>
           <DialogDescription className="truncate text-xs" title={productName ?? undefined}>
             {productName ?? productCode}

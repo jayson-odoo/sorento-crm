@@ -812,6 +812,19 @@ describe('ContainerRequestSection - the eight figures open the shared lightbox (
     expect(within(dialog).getByText('Total').closest('tr')).toHaveTextContent('4');
   });
 
+  it('the Need cell opens a dialog titled "Need · <code>" listing both channels together with a Channel column (S2, AC-B1/AC-B2)', () => {
+    renderSection();
+
+    const dialog = openFigure('Open demand, project and retail');
+
+    expect(dialog).toHaveTextContent('Need · ITEM-1');
+    expect(within(dialog).getByText('Channel')).toBeInTheDocument();
+    expect(within(dialog).getByText('SO-PROJ')).toBeInTheDocument();
+    expect(within(dialog).getByText('SO-RET')).toBeInTheDocument();
+    // Total = need = project (6) + retail (4).
+    expect(within(dialog).getByText('Total').closest('tr')).toHaveTextContent('10');
+  });
+
   it('the On hand figure opens the location table, pools only, footing to the cell (AC-B3)', () => {
     useLocationStock.mockReturnValue({
       data: {
@@ -909,7 +922,8 @@ describe('ContainerRequestSection - the eight figures open the shared lightbox (
     expect(within(dialog).getByText('FSCU8103365')).toBeInTheDocument();
     expect(within(dialog).getByText('Total').closest('tr')).toHaveTextContent('25');
 
-    fireEvent.click(within(dialog).getByRole('button', { name: 'PL-2608-004' }));
+    // S5: the Container cell carries the link the Packing list column used to.
+    fireEvent.click(within(dialog).getByRole('button', { name: 'FSCU8103365' }));
     expect(routerPush).toHaveBeenCalledWith('/procurement-management/packing-lists/ship-7');
   });
 
@@ -941,10 +955,10 @@ describe('ContainerRequestSection - the eight figures open the shared lightbox (
 
     expect(dialog).toHaveTextContent('PO · ITEM-1');
     expect(within(dialog).getByText('PO-77')).toBeInTheDocument();
-    expect(within(dialog).getByText('Total still to come').closest('tr')).toHaveTextContent('60');
+    expect(within(dialog).getByText('Total outstanding').closest('tr')).toHaveTextContent('60');
   });
 
-  it('a peak figure opens its channel dialog on the 12-month tab, focused on that series (AC-B6)', () => {
+  it('a peak figure opens its channel dialog on the 12-month tab, with both peak cells marked (AC-B6, S1)', () => {
     withHistory();
     renderSection();
 
@@ -962,8 +976,12 @@ describe('ContainerRequestSection - the eight figures open the shared lightbox (
       'data-state',
       'active',
     );
-    expect(within(dialog).getByText('Project peak 1,240 Jun 26')).toBeInTheDocument();
-    expect(within(dialog).getByText('Retail peak 320 Jul 26')).toBeInTheDocument();
+    const projectPeak = dialog.querySelector('[data-peak="project"]');
+    const retailPeak = dialog.querySelector('[data-peak="retail"]');
+    expect(projectPeak?.textContent).toBe('1,240');
+    expect(projectPeak?.closest('tr')).toHaveTextContent('Jun 26');
+    expect(retailPeak?.textContent).toBe('320');
+    expect(retailPeak?.closest('tr')).toHaveTextContent('Jul 26');
   });
 
   it('the Retail peak opens the retail dialog on the same tab', () => {
@@ -978,6 +996,18 @@ describe('ContainerRequestSection - the eight figures open the shared lightbox (
       'data-state',
       'active',
     );
+  });
+
+  it('names no context beside the title any more (S3, AC-C4)', () => {
+    renderSection();
+
+    const dialog = openFigure('Open project sales orders');
+
+    // The header used to carry "N open before cut-off ..." beside the title; the tab now
+    // states its own sum, so nothing sits beside "Project · ITEM-1" any more.
+    expect(within(dialog).queryByText(/open before cut-off/i)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/still to come/i)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/at site pools/i)).not.toBeInTheDocument();
   });
 
   it('Escape closes the lightbox (AC-B1)', async () => {

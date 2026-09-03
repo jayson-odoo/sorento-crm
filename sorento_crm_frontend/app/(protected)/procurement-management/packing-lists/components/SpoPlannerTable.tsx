@@ -510,16 +510,6 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
     }
   };
 
-  /** The figure the rows have to add up to, beside the title. */
-  const dialogContext = (kind: PlanRowDialogKind, ln: SpoSuggestionLine): string | null => {
-    if (kind === 'so_coverage') {
-      return `${fmtInt(tickedQty(ln, soKeysFor(ln), qtyFor(ln)))} of packed ${fmtInt(ln.packed_qty)}`;
-    }
-    if (kind === 'on_hand') return `${fmtInt(ln.on_hand)} at site pools`;
-    if (kind === 'spo') return `${fmtInt(ln.incoming_spo)} arriving at site pools`;
-    return null;
-  };
-
   /** A line nothing can be sent for has nowhere to send it, so it does not open (R22). */
   const cannotSplit = (ln: SpoSuggestionLine) =>
     ln.cannot_convert || qtyFor(ln) <= 0 || ln.location_options.length === 0;
@@ -1143,7 +1133,6 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
           kind={dialog.kind}
           productCode={dialog.line.item_code ?? dialog.line.product_name ?? EM_DASH}
           productName={dialog.line.product_name}
-          context={dialogContext(dialog.kind, dialog.line)}
           onOpenChange={(open) => {
             if (!open) setDialog(null);
           }}

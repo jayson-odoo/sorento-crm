@@ -79,6 +79,7 @@ import {
   type PlanHistoryPoint,
 } from './PlanRowDialog';
 import { PlanNumberButton } from './PlanNumberButton';
+import { EM_DASH } from '../lib/format';
 
 /** Radix's TabsTrigger switches on mouse down; a bare `click` leaves the old panel up. */
 function switchTab(name: string) {
@@ -103,13 +104,12 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('PlanRowDialog', () => {
-  it('titles itself "<Kind> · <product code>" with the product name as the description', () => {
+  it('titles itself "<Kind> · <product code>" with the product name as the description, and no header context (S3, AC-C4)', () => {
     renderWithClient(
       <PlanRowDialog
         kind="spo"
         productCode="SRTWB241"
         productName="Wall hung basin 241"
-        context="117 arriving at site pools"
         onOpenChange={() => {}}
       >
         <p>body</p>
@@ -118,7 +118,6 @@ describe('PlanRowDialog', () => {
 
     const dialog = screen.getByRole('dialog');
     expect(within(dialog).getByText(/SPO · SRTWB241/)).toBeTruthy();
-    expect(within(dialog).getByText('117 arriving at site pools')).toBeTruthy();
     expect(within(dialog).getByText('Wall hung basin 241')).toBeTruthy();
     expect(within(dialog).getByText('body')).toBeTruthy();
   });
@@ -203,14 +202,22 @@ const HISTORY: PlanHistoryPoint[] = [
 ];
 
 describe('ProjectRetailTabs', () => {
-  it('lists the open lines and foots them to the figure the cell shows', () => {
+  it('lists the open lines and foots them to the figure the cell shows, its tab naming the sum (S3, AC-C1)', () => {
     renderWithClient(<ProjectRetailTabs channel="project" lines={LINES} history={HISTORY} />);
 
-    expect(screen.getByRole('tab', { name: 'Open project SO lines (2)' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Open (2,100)' })).toBeTruthy();
     expect(screen.getByText('SO404118')).toBeTruthy();
     expect(screen.getByText('Taman Sri Bayu Ph2')).toBeTruthy();
     expect(screen.getByText('Total')).toBeTruthy();
     expect(screen.getByText('2,100')).toBeTruthy();
+  });
+
+  it('names the cut-off in the open tab when a horizon is set (S3, AC-C1)', () => {
+    renderWithClient(
+      <ProjectRetailTabs channel="project" lines={LINES} history={HISTORY} horizon="2026-10-31" />,
+    );
+
+    expect(screen.getByRole('tab', { name: 'Open before cut-off 31/10/2026 (2,100)' })).toBeTruthy();
   });
 
   it('says so when the channel has nothing open', () => {
@@ -227,16 +234,59 @@ describe('ProjectRetailTabs', () => {
     expect(container.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0);
   });
 
-  it('switches to the 12-month history and names both peaks', () => {
-    renderWithClient(<ProjectRetailTabs channel="project" lines={LINES} history={HISTORY} />);
+  it('marks each column\'s own peak cell, on whichever row it fell, with no peak text line (S1, AC-A1/A2)', () => {
+    const { container } = renderWithClient(
+      <ProjectRetailTabs channel="project" lines={LINES} history={HISTORY} />,
+    );
 
     switchTab('12-month history');
 
-    expect(screen.getByText('Project peak 1,504 Mar 26')).toBeTruthy();
-    expect(screen.getByText('Retail peak 701 Jul 26')).toBeTruthy();
+    expect(screen.queryByText(/Project peak/)).toBeNull();
+    expect(screen.queryByText(/Retail peak/)).toBeNull();
+
+    const projectPeak = container.querySelector('[data-peak="project"]');
+    const retailPeak = container.querySelector('[data-peak="retail"]');
+    expect(projectPeak?.textContent).toBe('1,504');
+    expect(projectPeak?.closest('tr')).toHaveTextContent('Mar 26');
+    expect(retailPeak?.textContent).toBe('701');
+    expect(retailPeak?.closest('tr')).toHaveTextContent('Jul 26');
   });
 
-  it('foots the 12-month history to BOTH series, under the peaks line (AC-J3)', () => {
+  it('marks both peaks on the same row when they coincide (S1)', () => {
+    const sameRow: PlanHistoryPoint[] = [
+      { month: '2026-02', project_qty: 100, retail_qty: 50 },
+      { month: '2026-03', project_qty: 900, retail_qty: 400 },
+    ];
+    const { container } = renderWithClient(
+      <ProjectRetailTabs channel="project" lines={[]} history={sameRow} />,
+    );
+
+    switchTab('12-month history');
+
+    const projectPeak = container.querySelector('[data-peak="project"]');
+    const retailPeak = container.querySelector('[data-peak="retail"]');
+    expect(projectPeak?.closest('tr')).toBe(retailPeak?.closest('tr'));
+  });
+
+  it('the first of a tie wins, and a column that never rises above 0 marks nothing (S1, AC-A2)', () => {
+    const tie: PlanHistoryPoint[] = [
+      { month: '2026-02', project_qty: 300, retail_qty: 0 },
+      { month: '2026-03', project_qty: 1504, retail_qty: 0 },
+      { month: '2026-04', project_qty: 1504, retail_qty: 0 },
+    ];
+    const { container } = renderWithClient(
+      <ProjectRetailTabs channel="project" lines={[]} history={tie} />,
+    );
+
+    switchTab('12-month history');
+
+    const projectPeaks = container.querySelectorAll('[data-peak="project"]');
+    expect(projectPeaks.length).toBe(1);
+    expect(projectPeaks[0].closest('tr')).toHaveTextContent('Mar 26');
+    expect(container.querySelectorAll('[data-peak="retail"]').length).toBe(0);
+  });
+
+  it('foots the 12-month history to BOTH series (AC-A3/AC-J3)', () => {
     renderWithClient(<ProjectRetailTabs channel="project" lines={LINES} history={HISTORY} />);
 
     switchTab('12-month history');
@@ -247,19 +297,63 @@ describe('ProjectRetailTabs', () => {
     expect(within(footer).getByText('1,021')).toBeTruthy();
   });
 
-  it('opens on the history tab when a peak cell was the trigger (AC-B6)', () => {
+  it('opens directly on the history tab when the trigger asked for it (AC-B6)', () => {
     renderWithClient(
-      <ProjectRetailTabs
-        channel="retail"
-        lines={LINES}
-        history={HISTORY}
-        initialTab="history"
-        focus="retail"
-      />,
+      <ProjectRetailTabs channel="retail" lines={LINES} history={HISTORY} initialTab="history" />,
     );
 
-    expect(screen.getByText('Retail peak 701 Jul 26')).toBeTruthy();
+    expect(screen.getByRole('tab', { name: '12-month history' })).toHaveAttribute(
+      'data-state',
+      'active',
+    );
     expect(screen.getByText('Mar 26')).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Need - project and retail together (S2)
+// ---------------------------------------------------------------------------
+
+describe('ProjectRetailTabs - the Need channel', () => {
+  const NEED_LINES: PlanDemandLineRow[] = [
+    { ...LINES[0], channel: 'project' },
+    { ...LINES[1], channel: 'retail' },
+  ];
+
+  it('is titled "Need · <code>" by the shell and lists both channels with a Channel column (AC-B1/AC-B2)', () => {
+    renderWithClient(
+      <PlanRowDialog kind="need" productCode="SRTWB241" onOpenChange={() => {}}>
+        <ProjectRetailTabs channel="need" lines={NEED_LINES} history={HISTORY} />
+      </PlanRowDialog>,
+    );
+
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText(/Need · SRTWB241/)).toBeTruthy();
+    expect(within(dialog).getByText('Channel')).toBeTruthy();
+    expect(within(dialog).getByText('SO404118')).toBeTruthy();
+    expect(within(dialog).getByText('SO403990')).toBeTruthy();
+    // The Total foots to the Need figure, project and retail together.
+    expect(within(dialog).getByText('Total').closest('tr')).toHaveTextContent('2,100');
+  });
+
+  it('history carries a Total column, and its own peak (AC-B3)', () => {
+    const { container } = renderWithClient(
+      <ProjectRetailTabs channel="need" lines={NEED_LINES} history={HISTORY} />,
+    );
+
+    switchTab('12-month history');
+
+    expect(screen.getByRole('columnheader', { name: 'Total' })).toBeTruthy();
+    // Totals per month: 420, 1,704, 1,101 - the peak is Mar 26.
+    const totalPeak = container.querySelector('[data-peak="total"]');
+    expect(totalPeak?.textContent).toBe('1,704');
+    expect(totalPeak?.closest('tr')).toHaveTextContent('Mar 26');
+    // The project and retail peaks are still marked too.
+    expect(container.querySelector('[data-peak="project"]')?.textContent).toBe('1,504');
+    expect(container.querySelector('[data-peak="retail"]')?.textContent).toBe('701');
+    // The footer row sums the Total column too: 2,204 project + 1,021 retail.
+    const footerRow = container.querySelector('tfoot tr') as HTMLElement;
+    expect(within(footerRow).getByText('3,225')).toBeTruthy();
   });
 });
 
@@ -369,6 +463,7 @@ describe('SpoTabs', () => {
       spo_number: 'CRM-SPO-e372b1e9',
       shipment_id: 's1',
       shipment_number: 'FSCU8103365',
+      container_number: 'FSCU8103365',
       warehouse_code: 'BRW',
       qty: 90,
       received: 0,
@@ -377,15 +472,17 @@ describe('SpoTabs', () => {
       status: 'in_transit',
     },
     {
+      // No shipment at all yet - the allocation is still on order (S4, AC-D3).
       spo_number: 'CRM-SPO-1a0c77',
-      shipment_id: 's2',
+      shipment_id: null,
       shipment_number: null,
+      container_number: null,
       warehouse_code: 'WH3',
       qty: 27,
       received: 0,
       eta: null,
       arrived_at: null,
-      status: 'draft',
+      status: null,
     },
   ];
 
@@ -395,16 +492,21 @@ describe('SpoTabs', () => {
     expect(useContainerRequestDrill).toHaveBeenCalledWith('sup1', 'p1', 'spo');
   });
 
-  it('lists what is on the water and foots it to the cell', () => {
+  it('lists what is on the water and foots it to the cell, naming the sum in the tab (S3, AC-C2)', () => {
     useContainerRequestDrill.mockReturnValue(drill({ data: { rows, total: 117, history: [] } }));
 
     renderWithClient(<SpoTabs supplierId="sup1" productId="p1" />);
 
-    expect(screen.getByRole('tab', { name: 'Open to pools (2)' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Open to pools (117)' })).toBeTruthy();
     expect(screen.getByText('CRM-SPO-e372b1e9')).toBeTruthy();
+    // Container, not "Packing list" (S4, AC-D2).
+    expect(screen.getByText('Container')).toBeTruthy();
+    expect(screen.queryByText('Packing list')).toBeNull();
     expect(screen.getByText('FSCU8103365')).toBeTruthy();
-    // A packing list nobody has numbered reads as a draft, never as a blank.
-    expect(screen.getByText('Draft')).toBeTruthy();
+    // A shipped row's status is the same formatted pill every other screen wears (AC-D3).
+    expect(screen.getByText('In Transit')).toBeTruthy();
+    // An allocation nobody has put on a shipment yet reads Not shipped, never Draft.
+    expect(screen.getByText('Not shipped')).toBeTruthy();
     expect(screen.getByText('117')).toBeTruthy();
   });
 
@@ -414,7 +516,7 @@ describe('SpoTabs', () => {
     expect(screen.getByText(NO_SPO_TO_POOL)).toBeTruthy();
   });
 
-  it('switches to the landed shipments', () => {
+  it('switches to the landed shipments, naming the sum of what landed (S3, AC-C2)', () => {
     useContainerRequestDrill.mockReturnValue(
       drill({
         data: {
@@ -426,7 +528,7 @@ describe('SpoTabs', () => {
     );
 
     renderWithClient(<SpoTabs supplierId="sup1" productId="p1" />);
-    switchTab('History (1)');
+    switchTab('History (40)');
 
     const row = screen.getByText('CRM-SPO-e372b1e9').closest('tr') as HTMLElement;
     expect(within(row).getAllByText('40').length).toBe(2); // qty and received
@@ -468,17 +570,23 @@ describe('IncomingPlTable', () => {
     },
   ];
 
-  it('lists the unreceived packing lists and foots them to the cell', () => {
+  it('lists the unreceived packing lists as Container · Supplier · Qty · ETA · Status, no Packing list column (S5, AC-E1)', () => {
     useContainerRequestDrill.mockReturnValue(drill({ data: { rows, total: 599, history: [] } }));
 
     renderWithClient(<IncomingPlTable supplierId="sup1" productId="p1" />);
 
     expect(useContainerRequestDrill).toHaveBeenCalledWith('sup1', 'p1', 'incoming_pl');
-    expect(screen.getByText('PL-2608-001')).toBeTruthy();
+    expect(screen.getByText('Container')).toBeTruthy();
+    expect(screen.queryByText('Packing list')).toBeNull();
+    expect(screen.getByText('FSCU8103365')).toBeTruthy();
+    // The row with no container number yet still reads a dash, not blank (AC-E2).
+    expect(screen.getAllByText(EM_DASH).length).toBeGreaterThan(0);
+    // The status is a formatted pill, the same family every screen wears (AC-E3).
+    expect(screen.getByText('In Transit')).toBeTruthy();
     expect(screen.getByText('599')).toBeTruthy();
   });
 
-  it('opens the packing list when the caller can navigate to one', () => {
+  it('opens the packing list when the caller can navigate to one, off the Container cell (AC-E2)', () => {
     const onOpenShipment = vi.fn();
     useContainerRequestDrill.mockReturnValue(drill({ data: { rows, total: 599, history: [] } }));
 
@@ -488,6 +596,18 @@ describe('IncomingPlTable', () => {
     fireEvent.click(screen.getByRole('button', { name: 'FSCU8103365' }));
 
     expect(onOpenShipment).toHaveBeenCalledWith('s1');
+  });
+
+  it('the Container cell stays a button even with no container number yet', () => {
+    const onOpenShipment = vi.fn();
+    useContainerRequestDrill.mockReturnValue(drill({ data: { rows, total: 599, history: [] } }));
+
+    renderWithClient(
+      <IncomingPlTable supplierId="sup1" productId="p1" onOpenShipment={onOpenShipment} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: EM_DASH }));
+
+    expect(onOpenShipment).toHaveBeenCalledWith('s2');
   });
 
   it('says so when nothing is on its way', () => {
@@ -515,19 +635,71 @@ describe('PoTabs', () => {
     },
   ];
 
-  it('lists the open lines, prices them in the PO currency and foots still-to-come', () => {
+  it('lists the open lines, prices them in the PO currency and foots to Outstanding, naming the sum in the tab (S3/S6, AC-C3/F2)', () => {
     useContainerRequestDrill.mockReturnValue(drill({ data: { rows: open, total: 143, history: [] } }));
 
     renderWithClient(<PoTabs supplierId="sup1" productId="p1" />);
 
     expect(useContainerRequestDrill).toHaveBeenCalledWith('sup1', 'p1', 'po');
+    expect(screen.getByRole('tab', { name: 'Open (143)' })).toBeTruthy();
     expect(screen.getByText('PO-24118')).toBeTruthy();
     expect(screen.getByText(/CNY/)).toBeTruthy();
-    const footer = screen.getByText('Total still to come').closest('tr') as HTMLElement;
+    // "Still to come" is now Outstanding, "ETA" is now Delivery date.
+    expect(screen.getByRole('columnheader', { name: 'Outstanding' })).toBeTruthy();
+    expect(screen.queryByRole('columnheader', { name: 'Still to come' })).toBeNull();
+    expect(screen.getByRole('columnheader', { name: 'Delivery date' })).toBeTruthy();
+    expect(screen.queryByRole('columnheader', { name: 'ETA' })).toBeNull();
+    const footer = screen.getByText('Total outstanding').closest('tr') as HTMLElement;
     expect(within(footer).getByText('143')).toBeTruthy();
   });
 
-  it('switches to what was ordered before', () => {
+  it('the status pill reads Outstanding while owed, Completed once nothing is, Cancelled when the order is (S6, AC-F1)', () => {
+    const rows = [
+      { ...open[0], po_number: 'PO-OUT', still_to_come: 5, status: 'active' },
+      { ...open[0], po_number: 'PO-DONE', still_to_come: 0, status: 'active' },
+      { ...open[0], po_number: 'PO-CANCEL', still_to_come: 5, status: 'cancelled' },
+    ];
+    useContainerRequestDrill.mockReturnValue(drill({ data: { rows, total: 10, history: [] } }));
+
+    renderWithClient(<PoTabs supplierId="sup1" productId="p1" />);
+
+    expect(
+      within(screen.getByText('PO-OUT').closest('tr') as HTMLElement).getByText('Outstanding'),
+    ).toBeTruthy();
+    expect(
+      within(screen.getByText('PO-DONE').closest('tr') as HTMLElement).getByText('Completed'),
+    ).toBeTruthy();
+    expect(
+      within(screen.getByText('PO-CANCEL').closest('tr') as HTMLElement).getByText('Cancelled'),
+    ).toBeTruthy();
+  });
+
+  it('a line that closed short still reads Completed on History even though still_to_come is nonzero (fix round, Opus review)', () => {
+    const closedShortRow = {
+      ...open[0],
+      po_number: 'PO-SHORT',
+      still_to_come: 5,
+      status: 'active',
+    };
+    useContainerRequestDrill.mockReturnValue(
+      drill({ data: { rows: [closedShortRow], total: 5, history: [closedShortRow] } }),
+    );
+
+    renderWithClient(<PoTabs supplierId="sup1" productId="p1" />);
+
+    // Same row, Open tab: still owed, so Outstanding.
+    expect(
+      within(screen.getByText('PO-SHORT').closest('tr') as HTMLElement).getByText('Outstanding'),
+    ).toBeTruthy();
+
+    // Same row, History tab: closed short, so Completed - not Outstanding.
+    switchTab('History (200)');
+    expect(
+      within(screen.getByText('PO-SHORT').closest('tr') as HTMLElement).getByText('Completed'),
+    ).toBeTruthy();
+  });
+
+  it('switches to what was ordered before, naming the quantity that WAS ordered (S3, AC-C3)', () => {
     useContainerRequestDrill.mockReturnValue(
       drill({
         data: {
@@ -539,13 +711,16 @@ describe('PoTabs', () => {
     );
 
     renderWithClient(<PoTabs supplierId="sup1" productId="p1" />);
-    switchTab('History (1)');
+    // Sums qty_ordered, not still-to-come - a closed PO's still-to-come is always 0.
+    switchTab('History (200)');
 
     expect(screen.getByText('PO-24090')).toBeTruthy();
 
-    // AC-J3: the history tab foots its own still-to-come too (here, a closed PO: 0).
-    const footer = screen.getByText('Total still to come').closest('tr') as HTMLElement;
-    expect(within(footer).getByText('0')).toBeTruthy();
+    // Fix round (Opus review): the History footer names the SAME figure as the tab label -
+    // "Total ordered", not "Total outstanding" (a closed line's still_to_come is always 0,
+    // which would disagree with a tab label that already says 200).
+    const footer = screen.getByText('Total ordered').closest('tr') as HTMLElement;
+    expect(within(footer).getByText('200')).toBeTruthy();
   });
 
   it('says so when nothing is on order', () => {
