@@ -35,10 +35,10 @@ fi
 
 echo "==> Active=${ACTIVE} New=${NEW} IMAGE_TAG=${IMAGE_TAG}"
 
-# 1. Pull new images (SHA-tagged) + worker (uses backend image)
+# 1. Pull new images (SHA-tagged) + worker + worker_fast (both use backend image)
 echo "==> Pulling images"
 docker compose --profile "${NEW}" pull "backend_${NEW}" "frontend_${NEW}" "mcp_${NEW}"
-docker compose pull worker
+docker compose pull worker worker_fast
 
 # 2. Bring up new color. start.sh runs `alembic upgrade head` before gunicorn
 #    so the new container only goes healthy after schema is at HEAD. If alembic
@@ -90,9 +90,10 @@ sudo nginx -s reload
 echo "==> Draining ${DRAIN_SECONDS}s"
 sleep "$DRAIN_SECONDS"
 
-# 6. Recreate worker on new image (small background-job blip; safe — RQ pulls atomically)
-echo "==> Recreating worker on new image"
-docker compose up -d --force-recreate --no-deps worker
+# 6. Recreate worker + worker_fast on new image (small background-job blip;
+#    safe — RQ pulls atomically)
+echo "==> Recreating worker + worker_fast on new image"
+docker compose up -d --force-recreate --no-deps worker worker_fast
 
 # 6b. Verify the worker's APScheduler actually started. The worker has no HTTP
 #     healthcheck; historically a circular import could kill the scheduler while
@@ -126,6 +127,40 @@ done
 if [ -z "$worker_ok" ]; then
   echo "ERROR: worker scheduler did not log startup within $((WORKER_WAIT_TICKS * TICK_SECONDS))s"
   docker logs --tail=100 "$worker_cid" || true
+  exit 1
+fi
+
+# 6c. Verify worker_fast came up on the queues it owns. It runs no scheduler
+#     (ENABLE_SCHEDULER=false, unlike worker) so there is no scheduler line to
+#     wait for — just the RQ startup line naming its queue list. A wrong or
+#     missing WORKER_QUEUES here silently drops media/respond_io/notifications
+#     jobs behind whatever `worker` is doing (see #569).
+echo "==> Verifying worker_fast queue startup"
+worker_fast_cid=$(docker compose ps -q worker_fast)
+if [ -z "$worker_fast_cid" ]; then
+  echo "ERROR: worker_fast container not found after recreate"; exit 1
+fi
+i=0
+worker_fast_ok=""
+while [ $i -lt "$WORKER_WAIT_TICKS" ]; do
+  if docker logs "$worker_fast_cid" 2>&1 | grep -q "Starting RQ worker for queues: media, respond_io, notifications"; then
+    worker_fast_ok=1
+    echo "    worker_fast queues started after $((i * TICK_SECONDS))s"
+    break
+  fi
+  restarts=$(docker inspect --format='{{.RestartCount}}' "$worker_fast_cid" 2>/dev/null || echo 0)
+  status=$(docker inspect --format='{{.State.Status}}' "$worker_fast_cid" 2>/dev/null || echo unknown)
+  if [ "$restarts" -gt 0 ] || [ "$status" != "running" ]; then
+    echo "ERROR: worker_fast unhealthy (status=${status} restarts=${restarts})"
+    docker logs --tail=100 "$worker_fast_cid" || true
+    exit 1
+  fi
+  sleep $TICK_SECONDS
+  i=$((i + 1))
+done
+if [ -z "$worker_fast_ok" ]; then
+  echo "ERROR: worker_fast did not log its queue startup line within $((WORKER_WAIT_TICKS * TICK_SECONDS))s"
+  docker logs --tail=100 "$worker_fast_cid" || true
   exit 1
 fi
 

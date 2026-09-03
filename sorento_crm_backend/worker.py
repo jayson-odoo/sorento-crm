@@ -106,9 +106,16 @@ def _maybe_start_scheduler():
 # The failure is silent by construction - the enqueue succeeds and no exception
 # is raised anywhere - so tests/test_worker_queue_defaults.py pins it.
 #
-# PRODUCTION: the compose file on the server is hand-edited and gitignored. If it
-# pins WORKER_QUEUES explicitly, a queue added here does NOT reach production
-# until that file is edited too. Adding a queue is therefore a two-place change.
+# PRODUCTION: the compose file on the server is hand-edited and gitignored. Since
+# #569, these queues are split across two services by latency class - `worker`
+# (WORKER_QUEUES=imports,catalogue_render,project_docs,flyer_read) and
+# `worker_fast` (WORKER_QUEUES=media,respond_io,notifications, no scheduler) -
+# so a slow batch job (imports) never sits behind a customer-facing one (media,
+# respond_io, notifications) on the same drain loop. If the compose file pins
+# WORKER_QUEUES explicitly, a queue added here does NOT reach production until
+# both service lists are updated too. Adding a queue is therefore a three-place
+# change: this list, the two WORKER_QUEUES lines in the compose file, and the
+# server's hand-edited copy of it.
 DEFAULT_QUEUES = (
     'imports',
     'respond_io',
