@@ -21,7 +21,7 @@ Every AC is checked in a real browser on the dev server (agent-browser, sidebar 
 - **AC-A14** Typing a suggested qty enables Save (N) where N = rows differing from `engine_qty`; Save writes `PUT /loading-plans/{id}/edits` (whole map, one transaction) and a reload shows the typed values; Save (0) is disabled.
 - **AC-A15** Send to supplier with unsaved edits saves first; the sent xlsx carries the typed quantities. Navigating away with unsaved edits prompts.
 - **AC-A16** Refresh suggestion with edits present asks "Drop your N typed quantities?" and clears `line_edits` on confirm.
-- **AC-A17** Uploading a newer stock list for the same supplier from a NEW plan changes an older open plan's On hand / Packed figures on next open (documented behaviour, R2), and the older plan's Document subtitle still names ITS file.
+- **AC-A17** ~~Uploading a newer stock list for the same supplier from a NEW plan changes an older open plan's On hand / Packed figures on next open (documented behaviour, R2), and the older plan's Document subtitle still names ITS file.~~ **SUPERSEDED 2 Sep 2026 by AC-F6** (`scm-loading-plan-feedback-2sep-acceptance-criteria.md`, S6). The captain's markup ruled the opposite: "the data in the plan should be respective to the plan, not per supplier". Migration 454 stamps every row an upload writes with the plan it was uploaded into, and a plan reads its own rows, so a newer stock list started from a NEW plan now leaves an older plan's figures, codes tab and subtitle unchanged. The tests that pinned this line are rewritten in `tests/scm/test_plan_owned_statement.py`.
 
 ## B. Lightboxes (S2)
 

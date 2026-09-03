@@ -1335,6 +1335,16 @@ class SupplierInventory(Base, CompanyScopedMixin):
     uploaded_by = Column(String, nullable=True)
     source_system = Column(String, nullable=True)
     source_ref = Column(String, nullable=True)
+    #: WHICH loading plan this snapshot belongs to (S6, migration 454). A plan reads its own
+    #: rows and nobody else's: before this the snapshot was one per supplier, so a plan
+    #: started with no file at all still showed the last file anybody had uploaded for that
+    #: supplier - and said "No file" while doing it. NULL is the standalone stock-list page's
+    #: upload, and every row that predates 454.
+    loading_plan_id = Column(
+        UUID(as_uuid=False), ForeignKey("scm.loading_plan.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
@@ -1344,13 +1354,20 @@ class SupplierInventory(Base, CompanyScopedMixin):
         Index("ix_scm_supplier_inventory_supplier", "supplier_id"),
         Index("ix_scm_supplier_inventory_product", "product_id"),
         Index("ix_scm_supplier_inventory_set", "product_set_id"),
-        # Declared on the MODEL as well as in migration 336, because a CI database is built
-        # with `create_all` and never runs a migration body: without it the guard against a
-        # doubled packed quantity exists in production and nowhere else.
+        Index("ix_scm_supplier_inventory_loading_plan", "loading_plan_id"),
+        # Declared on the MODEL as well as in migrations 336 and 454, because a CI database is
+        # built with `create_all` and never runs a migration body: without it the guard
+        # against a doubled packed quantity exists in production and nowhere else.
+        #
+        # The plan is IN the key (454), coalesced for the same reason the company is: Postgres
+        # treats every NULL as distinct, and the identity has to hold across the plan-less
+        # rows too. Without it the second plan to upload one model number for a supplier
+        # collides with the first and the upload fails.
         Index(
             "uq_scm_supplier_inventory_identity",
             text("coalesce(company_id, '%s'::uuid)" % _NIL_COMPANY),
             "supplier_id",
+            text("coalesce(loading_plan_id, '%s'::uuid)" % _NIL_COMPANY),
             "item_code",
             unique=True,
         ),
@@ -1597,6 +1614,15 @@ class ProformaInvoice(Base, CompanyScopedMixin):
         nullable=True,
     )
     revision_no = Column(Integer, nullable=False, server_default=text("1"))
+    #: The loading plan this invoice was uploaded INTO (S6, migration 454). One sheet holds
+    #: five stacked invoice blocks, and the plan binds to every one of them, so its "They
+    #: hold" figure is the sum across its own blocks rather than whichever single invoice
+    #: sorted first for the supplier. NULL on the standalone proforma page's uploads and on
+    #: every row that predates 454.
+    loading_plan_id = Column(
+        UUID(as_uuid=False), ForeignKey("scm.loading_plan.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     #: `current` or `superseded`. A superseded revision is KEPT and read-only: it is what the
     #: supplier actually sent on the day, and the diff against it is the reason anybody looks
     #: at the new one. It is never a cost and never converts (AC-E9, AC-E10).
@@ -1615,6 +1641,7 @@ class ProformaInvoice(Base, CompanyScopedMixin):
     __table_args__ = (
         Index("ix_scm_proforma_invoice_supplier", "supplier_id"),
         Index("ix_scm_proforma_invoice_revision_of", "revision_of_id"),
+        Index("ix_scm_proforma_invoice_loading_plan", "loading_plan_id"),
         CheckConstraint(
             "status IN ('current', 'superseded')", name="ck_scm_proforma_invoice_status"
         ),

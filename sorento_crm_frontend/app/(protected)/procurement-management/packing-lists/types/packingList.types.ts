@@ -186,7 +186,9 @@ export interface PackingListFormData {
    */
   shipment_number?: string | null;
   supplier_id?: string | null;
-  shipment_date: string;
+  /** Nullable like every other date here (AC-F3): the backend's update schema already treats
+   *  it as optional, and sending the raw empty string on a clear used to 422 instead. */
+  shipment_date?: string | null;
   estimated_arrival_date?: string | null;
   actual_arrival_date?: string | null;
   bill_of_lading_number?: string | null;

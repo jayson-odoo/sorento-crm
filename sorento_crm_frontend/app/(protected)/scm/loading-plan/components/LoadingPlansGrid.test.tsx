@@ -1,10 +1,12 @@
 /**
- * The loading plans list (part 4, R3 / AC-A1, A2, A3, A8, A9).
+ * The loading plans list (part 4, R3; S1 AC-A1, AC-A3, AC-A4, AC-A5).
  *
  * What this suite pins is the LIST's own contract, not the grid component's: the columns the
  * captain named, the default Active filter, the single Upload primary, the whole-row click,
- * and the two row actions - Cancel behind a confirmation, Delete refused once a notice has
- * gone out. The record page behind the row is `LoadingPlanView.test.tsx`.
+ * and the row's "..." menu (Send to supplier, Cancel plan, separator, Delete plan) - Cancel
+ * and Delete both park a deferred action rather than opening a confirm dialog, and Delete is
+ * refused with a reason once a notice has gone out. The record page behind the row is
+ * `LoadingPlanView.test.tsx`.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -23,7 +25,7 @@ vi.mock('@/services/pendingActionService', () => ({
   getCurrentPendingAction: vi.fn().mockResolvedValue({ pending: null, last_outcome: null }),
 }));
 
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 if (!window.matchMedia) {
@@ -76,14 +78,12 @@ vi.mock('./PlanContainerDialog', () => ({
 }));
 
 const getLoadingPlanList = vi.fn();
-const cancelLoadingPlan = vi.fn();
 const deleteLoadingPlan = vi.fn();
 vi.mock('../../services/fulfilmentService', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../services/fulfilmentService')>();
   return {
     ...actual,
     getLoadingPlanList: (...a: unknown[]) => getLoadingPlanList(...a),
-    cancelLoadingPlan: (...a: unknown[]) => cancelLoadingPlan(...a),
     deleteLoadingPlan: (...a: unknown[]) => deleteLoadingPlan(...a),
   };
 });
@@ -100,6 +100,7 @@ const PLANNING = {
   document_kind: 'stock_list' as const,
   document_label: 'Stock list 27/07/2026',
   source_attachment_id: null,
+  source_attachment_filename: null,
   status: 'planning' as const,
   sent_channel: null,
   sent_at: null,
@@ -138,11 +139,22 @@ function renderGrid() {
   );
 }
 
+/**
+ * The row's "..." menu (`RowActionsMenu`/D15). Radix opens on pointerdown, which jsdom
+ * does not synthesize from a click, so drive it by keyboard instead (ArrowDown opens and
+ * focuses the first item). Both rows share the accessible name, so a caller picks by index.
+ */
+async function openRowMenu(index: number) {
+  const triggers = await screen.findAllByRole('button', { name: 'loading plan actions' });
+  triggers[index].focus();
+  fireEvent.keyDown(triggers[index], { key: 'ArrowDown', code: 'ArrowDown' });
+  return within(await screen.findByRole('menu'));
+}
+
 describe('LoadingPlansGrid', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getLoadingPlanList.mockResolvedValue({ data: [PLANNING, SENT], total: 2 });
-    cancelLoadingPlan.mockResolvedValue({ ...PLANNING, status: 'cancelled' });
     deleteLoadingPlan.mockResolvedValue(undefined);
   });
 
@@ -203,45 +215,58 @@ describe('LoadingPlansGrid', () => {
     expect(push).toHaveBeenCalledWith('/scm/loading-plan/plan-1');
   });
 
-  it('asks before cancelling, and the confirm names what the supplier loses', async () => {
+  it('the row menu offers Send to supplier, Cancel plan and Delete plan, in that order (AC-A1)', async () => {
     renderGrid();
 
-    const buttons = await screen.findAllByRole('button', { name: 'Cancel plan' });
-    fireEvent.click(buttons[0]);
+    const menu = await openRowMenu(0);
+    const items = menu.getAllByRole('menuitem').map((el) => el.textContent);
+    expect(items).toEqual(['Send to supplier', 'Cancel plan', 'Delete plan']);
+  });
 
-    expect(await screen.findByText('Cancel this plan?')).toBeTruthy();
-    expect(screen.getByText(/supplier link stops working/i)).toBeTruthy();
-    // The row action must not ALSO open the record behind the dialog.
+  it('parks a cancel from the row menu, no dialog in the way (AC-A3)', async () => {
+    renderGrid();
+
+    const menu = await openRowMenu(0);
+    fireEvent.click(menu.getByRole('menuitem', { name: 'Cancel plan' }));
+
+    await waitFor(() =>
+      expect(createPendingAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actionKey: 'loading_plan.cancel',
+          entityType: 'loading_plan',
+          entityId: 'plan-1',
+        }),
+      ),
+    );
+    expect(screen.queryByText('Cancel this plan?')).not.toBeInTheDocument();
+    // The row action must not ALSO open the record.
     expect(push).not.toHaveBeenCalled();
   });
 
-  it('cancels through the service once the dialog is confirmed', async () => {
-    renderGrid();
-    fireEvent.click((await screen.findAllByRole('button', { name: 'Cancel plan' }))[0]);
-    await screen.findByText('Cancel this plan?');
-
-    const confirms = screen.getAllByRole('button', { name: 'Cancel plan' });
-    fireEvent.click(confirms[confirms.length - 1]);
-
-    await waitFor(() => expect(cancelLoadingPlan).toHaveBeenCalledWith('plan-1'));
-  });
-
-  it('refuses to delete a sent plan and says why (Q5)', async () => {
+  it('refuses to delete a sent plan and says why (Q5, AC-A5)', async () => {
     renderGrid();
 
-    const deletes = await screen.findAllByRole('button', { name: 'Delete plan' });
     // Row order is the response order: the sent plan is the second row.
-    expect((deletes[1] as HTMLButtonElement).disabled).toBe(true);
-    expect(deletes[1].getAttribute('title')).toBe('Sent plans are cancelled, not deleted');
-    expect((deletes[0] as HTMLButtonElement).disabled).toBe(false);
+    const menu = await openRowMenu(1);
+    const del = menu.getByRole('menuitem', { name: 'Delete plan' });
+    expect(del.getAttribute('aria-disabled')).toBe('true');
+    expect(del.getAttribute('title')).toBe('Sent plans are cancelled, not deleted');
+
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    const firstMenu = await openRowMenu(0);
+    expect(
+      firstMenu.getByRole('menuitem', { name: 'Delete plan' }).getAttribute('aria-disabled'),
+    ).toBeNull();
   });
 
-  it('parks the delete of an unsent plan, with no dialog in the way (S6-10)', async () => {
+  it('parks the delete of an unsent plan, with no dialog in the way (S6-10, AC-A4)', async () => {
     renderGrid();
-    fireEvent.click((await screen.findAllByRole('button', { name: 'Delete plan' }))[0]);
+
+    const menu = await openRowMenu(0);
+    fireEvent.click(menu.getByRole('menuitem', { name: 'Delete plan' }));
 
     // D7: the press IS the action. The sent-plan rule is still the server's, and it
-    // is stated up front by the disabled button in the test above.
+    // is stated up front by the disabled item in the test above.
     await waitFor(() =>
       expect(createPendingAction).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -253,6 +278,15 @@ describe('LoadingPlansGrid', () => {
     );
     expect(deleteLoadingPlan).not.toHaveBeenCalled();
     expect(screen.queryByText('Delete this plan?')).not.toBeInTheDocument();
+  });
+
+  it('sends from the row menu by opening the record with the send dialog queued', async () => {
+    renderGrid();
+
+    const menu = await openRowMenu(0);
+    fireEvent.click(menu.getByRole('menuitem', { name: 'Send to supplier' }));
+
+    expect(push).toHaveBeenCalledWith('/scm/loading-plan/plan-1?send=1');
   });
 
   it('says what an empty list means rather than showing an empty table', async () => {

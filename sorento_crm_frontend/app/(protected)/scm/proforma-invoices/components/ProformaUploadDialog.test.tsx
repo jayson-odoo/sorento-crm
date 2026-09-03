@@ -151,6 +151,7 @@ const PREVIEW = {
   currency: 'CNY',
   currency_source: 'document' as const,
   priced_lines_without_currency: 0,
+  supplier_check: null,
 };
 
 const CANDIDATE = {

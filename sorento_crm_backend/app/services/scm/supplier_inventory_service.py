@@ -1,10 +1,15 @@
 """Hold one supplier's current stock list, so a container can be planned against it.
 
-A SNAPSHOT per supplier, replaced whole on every upload. The alternative - merging the new
-file into the old rows - keeps an item the supplier no longer lists as loadable stock forever,
-and the first symptom is a container planned around something that is not in their warehouse.
-Replacement is stated in the result (`rows_replaced`) rather than done quietly, because it is
-the one destructive thing this upload does.
+A SNAPSHOT, replaced whole on every upload. The alternative - merging the new file into the
+old rows - keeps an item the supplier no longer lists as loadable stock forever, and the first
+symptom is a container planned around something that is not in their warehouse. Replacement is
+stated in the result (`rows_replaced`) rather than done quietly, because it is the one
+destructive thing this upload does.
+
+A snapshot per PLAN since S6, when the upload names one (`loading_plan_id`); per supplier when
+it does not, which is the standalone stock-list page. It was per supplier alone, and that is
+what let a plan started with no file at all run on a stock list somebody had uploaded from a
+different plan for the same supplier - while its own subtitle read "No file".
 
 Which supplier the file describes cannot be derived: the sheet carries model numbers and
 quantities, never the name of who wrote it. So it is asked for, once, in the dialog - the only
@@ -27,6 +32,10 @@ from sqlalchemy.orm import Session
 from app.models.product import Product
 from app.models.scm import SupplierInventory
 from app.services.scm.supplier_inventory_reader import InventoryReadResult, read_workbook
+from app.services.scm.supplier_scope import (
+    supplier_check as _supplier_check,
+    supplier_mismatch_warning as _supplier_mismatch_warning,
+)
 from app.services.scm.upload_validation import envelope, named
 
 logger = logging.getLogger(__name__)
@@ -99,8 +108,21 @@ def _supplier_label(db: Session, supplier_id: str) -> Optional[str]:
 
 
 def _summarise(
-    db: Session, parsed: InventoryReadResult, supplier_id: Optional[str] = None
+    db: Session,
+    parsed: InventoryReadResult,
+    supplier_id: Optional[str] = None,
+    *,
+    check_supplier: bool = True,
 ) -> dict[str, Any]:
+    """What the file holds, described. `rows` is what the verdict card calls "L rows" and
+    `items_unmatched` is its "U codes unknown" (AC-G4) - both already computed below.
+    `supplier_check` (AC-G3) is `{letterhead, chosen_supplier_name, other_supplier_name |
+    null}`, or `None` when the file states no letterhead above its header row.
+
+    `check_supplier=False` skips that check, which scans every active supplier for the
+    company: only the VERDICT card asks the question, and by the time `apply` runs, the
+    warning has already been shown and Confirm pressed anyway (it warns, it never refuses).
+    """
     codes = {r.item_code for r in parsed.rows}
     known = _products_by_code(db, codes, supplier_id=supplier_id, remember=False)
     unmatched = sorted(c for c in codes if c not in known)
@@ -128,18 +150,38 @@ def _summarise(
         "unmeasured_item_codes": sorted(set(unmeasured))[:50],
         "unmapped_headers": parsed.unmapped_headers,
         "unreadable_rows": len(parsed.problems),
+        "supplier_check": (
+            _supplier_check(db, parsed.letterhead, supplier_id=supplier_id)
+            if check_supplier
+            else None
+        ),
     }
 
 
-def preview(db: Session, data: bytes, *, supplier_id: str) -> dict:
-    """What the file says, and what it would replace, before anything is written."""
+def preview(
+    db: Session, data: bytes, *, supplier_id: str, loading_plan_id: Optional[str] = None
+) -> dict:
+    """What the file says, and what it would replace, before anything is written.
+
+    `rows_held_now` (the "Replaces" tile) has to count the SAME rows `apply` would delete, or
+    the preview promises a destruction the apply does not perform. It used to count every row
+    on file for the supplier regardless of plan, which over-stated a plan-bound preview by
+    everything OTHER plans and the standalone page hold for that supplier. `loading_plan_id`
+    absent (the standalone stock-list page, and the "Plan a container" dialog - which previews
+    before the plan it will apply into exists, so there is nothing of that plan's own to
+    count) narrows to `loading_plan_id IS NULL`, exactly as `apply`'s own replace scope does.
+    """
     parsed = _parse(db, data)
     summary = _summarise(db, parsed, supplier_id) if parsed.ok else {}
-    held = (
-        db.query(SupplierInventory)
-        .filter(SupplierInventory.supplier_id == supplier_id)
-        .count()
+    held_scope = db.query(SupplierInventory).filter(
+        SupplierInventory.supplier_id == supplier_id
     )
+    held_scope = (
+        held_scope.filter(SupplierInventory.loading_plan_id == loading_plan_id)
+        if loading_plan_id
+        else held_scope.filter(SupplierInventory.loading_plan_id.is_(None))
+    )
+    held = held_scope.count()
     return {
         "readable": parsed.ok,
         "missing_columns": parsed.missing_columns,
@@ -201,6 +243,9 @@ def validate(db: Session, data: bytes, *, supplier_id: str) -> dict:
             many="columns are not recognised and will be ignored",
         ),
     ]
+    mismatch = _supplier_mismatch_warning(summary.get("supplier_check"))
+    if mismatch:
+        warnings.append(mismatch)
     if not summary["rows"]:
         return envelope(
             ok=False,
@@ -218,8 +263,17 @@ def apply(
     supplier_id: str,
     as_of: Optional[date] = None,
     actor: Optional[str] = None,
+    loading_plan_id: Optional[str] = None,
 ) -> dict:
-    """Replace this supplier's snapshot with the file. Does not commit."""
+    """Replace a snapshot with the file. Does not commit.
+
+    WHOSE snapshot is what `loading_plan_id` decides (S6, AC-F3). Stated, this replaces only
+    that plan's rows and stamps the new ones with it, so a re-upload into the same plan is
+    still a replace and no other plan's figures move. Absent - the standalone stock-list page
+    - it replaces the rows no plan owns (`loading_plan_id IS NULL`), which is what "the
+    supplier's snapshot" has meant since 454: a plan's rows belong to that plan, and a
+    standalone upload must not delete them.
+    """
     parsed = _parse(db, data)
     if not parsed.ok:
         return {
@@ -230,17 +284,21 @@ def apply(
             "summary": {},
         }
 
-    summary = _summarise(db, parsed, supplier_id)
+    summary = _summarise(db, parsed, supplier_id, check_supplier=False)
     stamp = as_of or datetime.now().date()
     known = _products_by_code(
         db, {r.item_code for r in parsed.rows}, supplier_id=supplier_id, actor=actor
     )
 
-    replaced = (
-        db.query(SupplierInventory)
-        .filter(SupplierInventory.supplier_id == supplier_id)
-        .delete(synchronize_session=False)
+    scope = db.query(SupplierInventory).filter(
+        SupplierInventory.supplier_id == supplier_id
     )
+    scope = (
+        scope.filter(SupplierInventory.loading_plan_id == loading_plan_id)
+        if loading_plan_id
+        else scope.filter(SupplierInventory.loading_plan_id.is_(None))
+    )
+    replaced = scope.delete(synchronize_session=False)
     # The delete has to reach the database before the inserts, or the unique identity index
     # rejects a model number that appears in both the old snapshot and the new one.
     db.flush()
@@ -286,6 +344,7 @@ def apply(
                 spec=v["spec"],
                 remark=v["remark"],
                 as_of=stamp,
+                loading_plan_id=loading_plan_id,
                 uploaded_by=actor,
                 source_system=SOURCE_SYSTEM,
                 source_ref="supplier_inventory",
@@ -399,4 +458,39 @@ def latest_stock_list_attachment(db: Session, *, supplier_id: str) -> Optional[d
         "attachment_id": str(row.id),
         "filename": row.stored_filename or row.original_filename,
         "uploaded_at": row.uploaded_at,
+    }
+
+
+def snapshot(db: Session, *, supplier_id: str) -> dict:
+    """What the STANDALONE stock-list page shows: the supplier's own snapshot.
+
+    `loading_plan_id IS NULL` is the whole scope, and it is what "the supplier's snapshot"
+    has meant since migration 454: a plan's rows belong to that plan and are read on its
+    record. Unscoped, the page listed the same model number once per plan that had ever
+    uploaded it and dated the whole list off whichever of them was newest.
+    """
+    rows = (
+        db.query(SupplierInventory)
+        .filter(
+            SupplierInventory.supplier_id == supplier_id,
+            SupplierInventory.loading_plan_id.is_(None),
+        )
+        .order_by(SupplierInventory.qty_packed.desc())
+        .all()
+    )
+    return {
+        "supplier_id": supplier_id,
+        "as_of": max((r.as_of for r in rows), default=None),
+        "rows": [
+            {
+                "item_code": r.item_code,
+                "product_id": str(r.product_id) if r.product_id else None,
+                "product_name": r.product_name,
+                "qty_packed": float(r.qty_packed or 0),
+                "qty_unfinished": float(r.qty_unfinished or 0),
+                "cbm_per_unit": float(r.cbm_per_unit) if r.cbm_per_unit is not None else None,
+                "matched": r.product_id is not None,
+            }
+            for r in rows
+        ],
     }

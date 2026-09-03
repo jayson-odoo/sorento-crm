@@ -10,6 +10,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
+import { focusIsInsideFloating } from '@/components/common/floatingAncestry';
 import {
   SearchableSelect,
   type SearchableSelectOption,
@@ -699,11 +700,19 @@ export function InlineLineTable<TRow>({
     }
   };
 
-  /** Is this where focus landed still part of the table, or of something it opened? */
+  /**
+   * Is this where focus landed still part of the table, or of something it opened?
+   *
+   * `focusIsInsideFloating` also covers `[data-radix-focus-guard]` - Radix's tab-trap
+   * sentinel, appended as a sibling of every portal root rather than inside any of them.
+   * A real browser can hop focus through one for a tick while a picker's modal Popover
+   * settles its own focus trap; reading that transient hop as "left the table" would
+   * discard the row before the hop resolves.
+   */
   const stillInside = (node: Element | null, container: HTMLElement) => {
     if (!node) return false;
     if (container.contains(node)) return true;
-    return Boolean(node.closest('[data-radix-popper-content-wrapper], [role="dialog"]'));
+    return focusIsInsideFloating(node);
   };
 
   const handleFocusOut = (event: React.FocusEvent<HTMLDivElement>) => {

@@ -60,7 +60,19 @@ export async function extractApiError(
   if (typeof detail === 'string' && detail) return detail;
   if (Array.isArray(detail) && detail.length > 0) {
     const first = detail[0];
-    return typeof first === 'string' ? first : (first?.msg ?? first?.message ?? JSON.stringify(first));
+    if (typeof first === 'string') return first;
+    const msg = first?.msg ?? first?.message;
+    if (msg) {
+      // A pydantic error's `msg` never names the field on its own ("Field required"
+      // could be any one of thirty) - `loc` does (`["body", "shipment_date"]`), so a
+      // 422 toasts "shipment_date: Field required" rather than an anonymous complaint.
+      const loc: unknown[] = Array.isArray(first?.loc) ? first.loc : [];
+      const field = loc
+        .filter((seg) => typeof seg === 'string' && !['body', 'query', 'path', 'header'].includes(seg))
+        .pop();
+      return typeof field === 'string' ? `${field}: ${msg}` : String(msg);
+    }
+    return JSON.stringify(first);
   }
   if (detail && typeof detail === 'object' && detail.message) return String(detail.message);
   if (error.message) return String(error.message);

@@ -55,6 +55,44 @@ describe('SearchableSelect filtering', () => {
   });
 });
 
+// A supplier picker sat on 21 rows literally named "Testing Company" (prod data): cmdk used
+// to key each item's identity off `searchText ?? label + description`, so every option sharing
+// a label collided on the SAME identity and hovering/arrowing to one highlighted all of them.
+// AC: hovering one highlights only that one; picking the second of two duplicates returns its
+// own id (S10 fix 1a).
+describe('SearchableSelect identity with duplicate labels', () => {
+  const DUPES: SearchableSelectOption[] = [
+    { value: 'sup-1', label: 'Testing Company' },
+    { value: 'sup-2', label: 'Testing Company' },
+  ];
+  const options = () => [...document.querySelectorAll('[role="option"]')];
+
+  it('highlights only the hovered option among identically labelled ones', async () => {
+    render(<SearchableSelect value="" onChange={vi.fn()} options={DUPES} />);
+    openMenu();
+    await waitFor(() => expect(options()).toHaveLength(2));
+
+    fireEvent.pointerMove(options()[1]);
+
+    await waitFor(() => {
+      const [first, second] = options();
+      expect(first.getAttribute('aria-selected')).toBe('false');
+      expect(second.getAttribute('aria-selected')).toBe('true');
+    });
+  });
+
+  it('selecting the second of two identically labelled options returns its own id', async () => {
+    const onChange = vi.fn();
+    render(<SearchableSelect value="" onChange={onChange} options={DUPES} />);
+    openMenu();
+    await waitFor(() => expect(options()).toHaveLength(2));
+
+    fireEvent.click(options()[1]);
+
+    expect(onChange).toHaveBeenCalledWith('sup-2');
+  });
+});
+
 describe('SearchableSelect async pagination', () => {
   const page = (n: number, size: number) =>
     Array.from({ length: size }, (_, i) => ({ value: `p${n}-${i}`, label: `Item ${n}-${i}` }));

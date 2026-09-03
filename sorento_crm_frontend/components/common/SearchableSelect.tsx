@@ -17,6 +17,8 @@ import {
   type SelectTriggerSize,
 } from '@/components/common/select-trigger-variants';
 import { SEARCH_DEBOUNCE_MS } from '@/hooks/useDebouncedSearch';
+import { isInsideOpenDialog } from '@/components/common/floatingAncestry';
+import { PopoverScrollLock } from '@/components/common/PopoverScrollLock';
 
 export type SearchableSelectOption = {
   value: string;
@@ -160,6 +162,42 @@ export function SearchableSelect({
   const isAsync = typeof fetchOptions === 'function';
   const [open, setOpen] = React.useState(false);
 
+  /**
+   * A popover portalled inside an open Dialog needs to win the Dialog's own
+   * `react-remove-scroll` lock, or a wheel over its own list is silently swallowed (the
+   * Dialog's lock exempts only its OWN content subtree, and this popover portals to
+   * `<body>`, outside it). Radix's `Popover` `modal` prop gets that lock, but bundles in
+   * two things nobody asked for: `hideOthers` marks EVERYTHING outside the popover
+   * `aria-hidden` while it is open, and it traps focus - both fine for a real modal, wrong
+   * here twice over. Nested in an editable table row, that hid the row's OTHER cells the
+   * instant one cell's own dropdown opened ("keeps a freshly added row alive when its
+   * picker is opened", InlineLineTable.test.tsx). Nested in a real Dialog, it hid the
+   * DIALOG's OWN Update/Save button, because that button lives in a SEPARATE portal
+   * subtree from the popover's - Radix Dialog is itself portalled, so from `hideOthers`'
+   * point of view the dialog's whole content is just another sibling to hide
+   * (ContactAccessTypesAdmin.portalForms.test.tsx, a `SearchableMultiSelect` whose list
+   * stays open across multiple picks and only then submits).
+   *
+   * So neither component ever asks Radix `Popover` for `modal`. The ONE thing actually
+   * needed - winning the scroll-lock stack - is applied by hand: `RemoveScroll` (the same
+   * library Radix's own modal Popover uses internally) wraps `PopoverContent` via `Slot`
+   * so it adds no DOM node, scoped to when the trigger is physically inside an open
+   * Dialog's content (detected once from the trigger's own DOM position - no call site
+   * needs a new prop, out of 278 combined consumers of the two components).
+   * `renderTrigger` callers get the wrap unconditionally: composing a ref through an
+   * arbitrary custom trigger element has no evidenced Dialog-nested case yet, and the
+   * wrap has no aria/focus side effect to weigh against defaulting it on.
+   */
+  const triggerElRef = React.useRef<HTMLElement | null>(null);
+  const [triggerInsideDialog, setTriggerInsideDialog] = React.useState(false);
+  const setTriggerRef = React.useCallback((node: HTMLElement | null) => {
+    triggerElRef.current = node;
+  }, []);
+  React.useEffect(() => {
+    setTriggerInsideDialog(isInsideOpenDialog(triggerElRef.current));
+  }, []);
+  const needsDialogScrollLock = renderTrigger ? true : triggerInsideDialog;
+
   // Async state
   const [asyncOptions, setAsyncOptions] = React.useState<SearchableSelectOption[]>([]);
   const [loading, setLoading] = React.useState(false);
@@ -291,12 +329,14 @@ export function SearchableSelect({
   };
 
   return (
+    // See `needsDialogScrollLock` above for why `Popover` never gets `modal`.
     <Popover open={open} onOpenChange={(o) => !isDisabled && setOpen(o)}>
       <PopoverTrigger asChild>
         {renderTrigger ? (
           renderTrigger({ selected, open, disabled: isDisabled })
         ) : (
         <button
+          ref={setTriggerRef}
           type="button"
           disabled={isDisabled}
           id={id}
@@ -360,6 +400,7 @@ export function SearchableSelect({
       </PopoverTrigger>
       {/* Portalled so a dialog's overflow can't clip the menu when it flips upward. */}
       <PopoverPortal>
+      <PopoverScrollLock active={needsDialogScrollLock}>
       <PopoverContent
         className={cn(
             // Cap to the space Radix measured, or a long list makes the menu taller than
@@ -395,7 +436,16 @@ export function SearchableSelect({
                 {opts.map((opt) => (
                   <CommandItem
                     key={opt.value}
-                    value={opt.searchText ?? `${opt.label} ${opt.description ?? ''}`}
+                    // The item's `value` is cmdk's IDENTITY, not its filter text: two options
+                    // sharing a label (21 suppliers named "Testing Company" is a real prod
+                    // case) used to collide on `searchText ?? label + description` here, so
+                    // cmdk's single-highlight state matched every one of them at once and a
+                    // hover/arrow landed on all of them together. The id is unique by
+                    // construction; `shouldFilter={false}` above means this value never drives
+                    // filtering (that is `visibleOptions`, computed manually), so `keywords`
+                    // carries the searchable text instead, for parity with cmdk's contract.
+                    value={opt.value}
+                    keywords={[opt.label, opt.description ?? '']}
                     disabled={opt.disabled}
                     onSelect={() => select(opt)}
                     className="flex items-start gap-2"
@@ -457,6 +507,7 @@ export function SearchableSelect({
           </CommandList>
         </Command>
       </PopoverContent>
+      </PopoverScrollLock>
       </PopoverPortal>
     </Popover>
   );

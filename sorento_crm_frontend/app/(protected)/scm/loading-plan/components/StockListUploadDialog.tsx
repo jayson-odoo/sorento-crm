@@ -15,13 +15,14 @@ import {
 import { FileDropzone } from '@/components/common/FileDropzone';
 import { MAX_SIZE_MB, useTwoStepUpload } from '../../reorder/hooks/useTwoStepUpload';
 import { CountTile } from '../../reorder/components/UploadCountTile';
-import { UploadTestVerdict } from '../../reorder/components/UploadTestVerdict';
+import { stockListCountsNote, UploadTestVerdict } from '../../reorder/components/UploadTestVerdict';
 import {
   applyStockList,
   previewStockList,
   testStockList,
   type StockListPreview,
   type StockListResult,
+  type StockListSummary,
 } from '../../services/fulfilmentService';
 import { fmtInt } from '../../lib/format';
 
@@ -58,7 +59,13 @@ export function StockListUploadDialog({
   });
 
   const { preview, result } = upload;
-  const summary = preview && 'rows' in (preview.summary ?? {}) ? preview.summary : null;
+  const summary: StockListSummary | null =
+    preview && 'rows' in (preview.summary ?? {}) ? (preview.summary as StockListSummary) : null;
+  // "L rows · U codes unknown" (AC-G4), added onto the server's own verdict.
+  const testVerdict =
+    summary && upload.testResult
+      ? { ...upload.testResult, notes: [stockListCountsNote(summary)] }
+      : upload.testResult;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -130,7 +137,7 @@ export function StockListUploadDialog({
             </div>
           ) : null}
 
-          {upload.testResult ? <UploadTestVerdict result={upload.testResult} /> : null}
+          {testVerdict ? <UploadTestVerdict result={testVerdict} /> : null}
 
           {result ? (
             <Alert>

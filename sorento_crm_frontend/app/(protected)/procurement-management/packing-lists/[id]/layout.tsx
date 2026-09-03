@@ -171,9 +171,12 @@ function PackingListToolbar({ id }: { id: string }) {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={beginEdit} disabled={!packingList}>
-                    <Edit className="size-4" />
-                    Edit
+                  <DropdownMenuItem
+                    onClick={() => exportWorkbook.mutate()}
+                    disabled={exportWorkbook.isPending || !packingList}
+                  >
+                    <Download className="size-4" />
+                    Download packing list
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => setImportOpen(true)}>
                     <Upload className="size-4" />
@@ -192,12 +195,9 @@ function PackingListToolbar({ id }: { id: string }) {
               </DropdownMenu>
             }
             primary={
-              <Button
-                onClick={() => exportWorkbook.mutate()}
-                disabled={exportWorkbook.isPending || !packingList}
-              >
-                <Download className="size-4" />
-                Download packing list
+              <Button onClick={beginEdit} disabled={!packingList}>
+                <Edit className="size-4" />
+                Edit
               </Button>
             }
           />

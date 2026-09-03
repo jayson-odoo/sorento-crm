@@ -59,6 +59,9 @@ const state = {
   sourceInvoices: undefined as unknown,
   /** The container's audit trail, which is what the Timeline's History card lists. */
   history: undefined as unknown,
+  /** The consolidated `build()` JSON (S7) - brand-per-line for the Lines grid's Logo
+   *  column, and the whole payload for the Split card beneath it. */
+  consolidated: undefined as unknown,
 };
 
 const updatePackingList = vi.fn();
@@ -114,6 +117,21 @@ const downloadWorkbook = vi.fn<(id: string, fallback?: string | null) => Promise
 vi.mock('@/app/(protected)/scm/services/fulfilmentService', () => ({
   downloadPackingListExport: (id: string, fallback?: string | null) =>
     downloadWorkbook(id, fallback),
+}));
+
+vi.mock('@/app/(protected)/scm/hooks/useFulfilment', () => ({
+  useConsolidatedPackingList: () => ({
+    data: state.consolidated,
+    isLoading: false,
+    isError: false,
+    error: null,
+  }),
+}));
+
+// The Lines grid carries a real `listingKey` (S7); a live column-preferences query has
+// nothing to talk to in jsdom.
+vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
+  useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
 }));
 
 vi.mock('../components/PackingListNavigation', () => ({ default: () => null }));
@@ -257,6 +275,7 @@ beforeEach(async () => {
   state.packingList = mixedContainer();
   state.sourceInvoices = undefined;
   state.history = undefined;
+  state.consolidated = undefined;
   updatePackingList.mockReset();
   updatePackingList.mockResolvedValue({});
 });
@@ -293,10 +312,19 @@ describe('the toolbar over the tabs', () => {
     expect(screen.getByRole('heading', { name: 'SPO-0042' })).toBeInTheDocument();
   });
 
-  it('carries ONE primary action: downloading the container workbook', async () => {
+  it('carries ONE primary action: editing the packing list', async () => {
     await renderTab(<DetailsPage />);
 
-    fireEvent.click(screen.getByRole('button', { name: /download packing list/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+
+    expect(screen.getByRole('button', { name: 'Save packing list' })).toBeInTheDocument();
+  });
+
+  it('downloads the container workbook from the gear', async () => {
+    await renderTab(<DetailsPage />);
+    const menu = await openGear();
+
+    fireEvent.click(within(menu).getByText('Download packing list'));
 
     await waitFor(() => expect(downloadWorkbook).toHaveBeenCalledTimes(1));
     // Named after the container, never the id: a workbook in a downloads folder called
@@ -308,7 +336,7 @@ describe('the toolbar over the tabs', () => {
     await renderTab(<DetailsPage />);
     const menu = await openGear();
 
-    expect(within(menu).getByText('Edit')).toBeInTheDocument();
+    expect(within(menu).getByText('Download packing list')).toBeInTheDocument();
     expect(within(menu).getByText('Import Container Status workbook')).toBeInTheDocument();
     expect(within(menu).getByText('Delete')).toBeInTheDocument();
   });
@@ -406,10 +434,36 @@ describe('the Shipment lines tab', () => {
     routerState.pathname = '/procurement-management/packing-lists/pl-1/lines';
   });
 
-  it('states what the workbook measures each line by', async () => {
+  it('states what the workbook measures each line by, in its own column order (AC-G1)', async () => {
     await renderTab(<LinesPage />);
 
-    for (const name of ['Material', 'Pcs/ctn', 'L', 'W', 'H', 'NW', 'GW', 'CBM']) {
+    for (const name of [
+      'Factory',
+      'No',
+      'Model',
+      'Description',
+      'Material',
+      'Qty',
+      'Pcs/ctn',
+      'Ctn qty',
+      'L',
+      'W',
+      'H',
+      'CBM/ctn',
+      'Total CBM',
+      'NW',
+      'GW',
+      'Total NW',
+      'Total GW',
+      'Logo',
+      'Remarks',
+      'Price',
+      'Amount',
+      'From PI',
+      'SPO allocated',
+      'Received',
+      'Status',
+    ]) {
       expect(screen.getByRole('columnheader', { name })).toBeInTheDocument();
     }
     const kailu = screen.getByText('SRTWT7443').closest('tr') as HTMLElement;
@@ -418,19 +472,27 @@ describe('the Shipment lines tab', () => {
     expect(within(kailu).getByText('34')).toBeInTheDocument();
     expect(within(kailu).getByText('7')).toBeInTheDocument();
     expect(within(kailu).getByText('8.3')).toBeInTheDocument();
+    // Derived off pcs/ctn and the carton size, the same rule the export's formulas use
+    // (AC-G2): ctn qty = 490/10 = 49, cbm/ctn = 34*24*30/10^6, total cbm = ctn*cbm/ctn.
+    expect(within(kailu).getByText('49')).toBeInTheDocument();
+    expect(within(kailu).getByText('0.02448')).toBeInTheDocument();
+    expect(within(kailu).getByText('1.2')).toBeInTheDocument();
   });
 
   it('reads the one old weight as the gross one, and "-" where nothing was measured', async () => {
     await renderTab(<LinesPage />);
 
     const unmeasured = screen.getByText('SRTBT2200').closest('tr') as HTMLElement;
-    // `weight_per_carton` is the only weight most containers hold, and it is the gross.
+    // `weight_per_carton` is the only weight most containers hold, and it is the gross -
+    // the per-carton cell reads it, and so does the total (135 = 4.5 * the stored 30 ctn).
     expect(within(unmeasured).getByText('4.5')).toBeInTheDocument();
-    // Material, pcs/ctn, L, W, H, NW and CBM all state nothing rather than 0.
+    expect(within(unmeasured).getByText('135')).toBeInTheDocument();
+    // Material, pcs/ctn and total cbm all state nothing rather than 0 - no carton size was
+    // ever given for this line, so there is no formula to derive a volume from.
     const cells = Array.from(unmeasured.querySelectorAll('td')).map((c) => c.textContent);
-    expect(cells[3]).toBe('-'); // material
-    expect(cells[4]).toBe('-'); // pcs per carton
-    expect(cells[11]).toBe('-'); // cbm
+    expect(cells[4]).toBe('-'); // material
+    expect(cells[6]).toBe('-'); // pcs per carton
+    expect(cells[12]).toBe('-'); // total cbm
   });
 
   it('names the factory that loaded each line, and guesses no owner for the rest', async () => {
@@ -439,17 +501,48 @@ describe('the Shipment lines tab', () => {
     const kailu = screen.getByText('SRTWT7443').closest('tr') as HTMLElement;
     expect(within(kailu).getByText('KAILU HARDWARE FACTORY')).toBeInTheDocument();
     const unclaimed = screen.getByText('SRTBT2200').closest('tr') as HTMLElement;
-    expect(unclaimed.querySelectorAll('td')[1]).toHaveTextContent('-');
+    expect(unclaimed.querySelectorAll('td')[0]).toHaveTextContent('-');
   });
 
-  it('totals the volume under the column and counts what is unmeasured', async () => {
+  it('sorts rows factory then no, with the unclaimed line last (AC-G3)', async () => {
+    await renderTab(<LinesPage />);
+
+    // CAIZHOU (l-2) sorts ahead of KAILU (l-1) alphabetically; the unclaimed line (l-3,
+    // no factory) sorts after both regardless of its product code.
+    const rows = screen.getAllByRole('row').slice(1); // drop the header row
+    const codes = rows.map((r) => within(r).queryByText(/^(MCHWT1200|SRTWT7443|SRTBT2200)$/)?.textContent);
+    expect(codes.filter(Boolean)).toEqual(['MCHWT1200', 'SRTWT7443', 'SRTBT2200']);
+  });
+
+  it('totals qty, ctn qty, total cbm (with its unmeasured caveat), nw, gw and amount (AC-G3)', async () => {
     await renderTab(<LinesPage />);
 
     const total = screen.getByText('Total').closest('tr') as HTMLElement;
-    expect(within(total).getByText('19.75')).toBeInTheDocument();
+    expect(within(total).getByText('1510')).toBeInTheDocument(); // qty
+    expect(within(total).getByText('134')).toBeInTheDocument(); // ctn qty
+    expect(within(total).getByText('8.45')).toBeInTheDocument(); // total cbm
     expect(within(total).getByText('(1 unmeasured)')).toBeInTheDocument();
-    expect(within(total).getByText('1510')).toBeInTheDocument();
-    expect(within(total).getByText('171')).toBeInTheDocument();
+    expect(within(total).getByText('343')).toBeInTheDocument(); // total nw
+    expect(within(total).getByText('541.7')).toBeInTheDocument(); // total gw
+    expect(within(total).getByText('32095')).toBeInTheDocument(); // amount
+  });
+
+  it('reads the brand off the consolidated packing list as the Logo column (AC-G1)', async () => {
+    state.consolidated = {
+      factories: [
+        {
+          supplier_id: 'sup-a',
+          lines: [{ line_id: 'l-1', brand: 'SORENTO' }],
+        },
+      ],
+      total: { lines: 1, qty: 490, cartons: 49, cbm: 1.2 },
+      split: [],
+      costs: { clearance_cost: null, china_freight_cost: null, insurance_rate: null },
+    };
+    await renderTab(<LinesPage />);
+
+    const kailu = screen.getByText('SRTWT7443').closest('tr') as HTMLElement;
+    expect(within(kailu).getByText('SORENTO')).toBeInTheDocument();
   });
 
   it('names the invoice per line', async () => {
@@ -497,7 +590,7 @@ describe('the Shipment lines tab', () => {
   it('edits in place: Edit, Cancel and Save never leave /lines', async () => {
     await renderTab(<LinesPage />);
 
-    fireEvent.click(within(await openGear()).getByText('Edit'));
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
     expect(screen.getByRole('button', { name: 'Save packing list' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: /Shipment lines/ })).toHaveAttribute(
       'aria-selected',
@@ -510,11 +603,9 @@ describe('the Shipment lines tab', () => {
     expect(routerState.push).not.toHaveBeenCalled();
     expect(routerState.replace).not.toHaveBeenCalled();
 
-    fireEvent.click(within(await openGear()).getByText('Edit'));
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Save packing list' }));
-    });
-    expect(updatePackingList).toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save packing list' }));
+    await waitFor(() => expect(updatePackingList).toHaveBeenCalled());
     expect(routerState.push).not.toHaveBeenCalled();
     expect(routerState.replace).not.toHaveBeenCalled();
   });
@@ -524,33 +615,33 @@ describe('the edit draft, which now lives above every tab', () => {
   it('swaps values for inputs where the values were, on the Details tab', async () => {
     await renderTab(<DetailsPage />);
 
-    expect(screen.queryByLabelText('Bill of Lading Number')).not.toBeInTheDocument();
-    fireEvent.click(within(await openGear()).getByText('Edit'));
+    expect(screen.queryByLabelText('Bill of lading')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
 
-    expect(screen.getByLabelText('Shipping Container Number')).toHaveValue('FSCU8103365');
+    expect(screen.getByLabelText('Container no')).toHaveValue('FSCU8103365');
     // The three the container workbook prints, and the costs it apportions.
-    expect(screen.getByLabelText('Seal No')).toBeInTheDocument();
+    expect(screen.getByLabelText('Seal no')).toBeInTheDocument();
     expect(screen.getByLabelText('Shipper')).toBeInTheDocument();
-    expect(screen.getByLabelText('Forwarder order ref')).toBeInTheDocument();
+    expect(screen.getByLabelText('SO')).toBeInTheDocument();
     expect(screen.getByLabelText('Clearance cost')).toBeInTheDocument();
     expect(screen.getByLabelText('China freight cost')).toBeInTheDocument();
     expect(screen.getByLabelText('Insurance rate')).toBeInTheDocument();
     // The ones with no input counterpart stay as values - nothing moves between the two.
-    expect(screen.getByText('Total Items')).toBeInTheDocument();
+    expect(screen.getByText('Total items')).toBeInTheDocument();
     expect(screen.getByText('Source sheet')).toBeInTheDocument();
   });
 
-  it('renders the Container costs card whether or not anything is priced', async () => {
+  it('renders the Costs card whether or not anything is priced', async () => {
     await renderTab(<DetailsPage />);
 
-    expect(screen.getByText('Container costs')).toBeInTheDocument();
+    expect(screen.getByText('Costs')).toBeInTheDocument();
   });
 
   it('saves the header and the lines in one PUT', async () => {
     await renderTab(<DetailsPage />);
-    fireEvent.click(within(await openGear()).getByText('Edit'));
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
 
-    fireEvent.change(screen.getByLabelText('Seal No'), { target: { value: 'J0713349' } });
+    fireEvent.change(screen.getByLabelText('Seal no'), { target: { value: 'J0713349' } });
     fireEvent.change(screen.getByLabelText('Clearance cost'), { target: { value: '2700' } });
     fireEvent.click(screen.getByRole('button', { name: /^Save packing list$/i }));
 
@@ -565,7 +656,7 @@ describe('the edit draft, which now lives above every tab', () => {
   it('sends null for a cleared cost, never a zero that would be apportioned', async () => {
     state.packingList = mixedContainer({ clearance_cost: '2700.00' });
     await renderTab(<DetailsPage />);
-    fireEvent.click(within(await openGear()).getByText('Edit'));
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
 
     fireEvent.change(screen.getByLabelText('Clearance cost'), { target: { value: '' } });
     fireEvent.click(screen.getByRole('button', { name: /^Save packing list$/i }));
@@ -579,7 +670,7 @@ describe('the edit draft, which now lives above every tab', () => {
   it('edits the measurements on the lines tab and sends them', async () => {
     routerState.pathname = '/procurement-management/packing-lists/pl-1/lines';
     await renderTab(<LinesPage />);
-    fireEvent.click(within(await openGear()).getByText('Edit'));
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
 
     expect(screen.getByLabelText('Pcs per carton for SRTWT7443')).toHaveValue(10);
     fireEvent.change(screen.getByLabelText('Carton length for SRTWT7443'), {
@@ -606,22 +697,28 @@ describe('the edit draft, which now lives above every tab', () => {
   it('totals follow the draft while somebody is typing', async () => {
     routerState.pathname = '/procurement-management/packing-lists/pl-1/lines';
     await renderTab(<LinesPage />);
-    fireEvent.click(within(await openGear()).getByText('Edit'));
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
 
+    // Ctn qty and total cbm are DERIVED (AC-G2), so typing into the inputs that feed the
+    // formula - quantity and pack size - is what the footer has to follow, not a raw total
+    // input (there is none any more; the export never had one either).
     fireEvent.change(screen.getByLabelText('Quantity for SRTWT7443'), {
       target: { value: '400' },
     });
-    fireEvent.change(screen.getByLabelText('CBM for SRTWT7443'), { target: { value: '10' } });
+    fireEvent.change(screen.getByLabelText('Pcs per carton for SRTWT7443'), {
+      target: { value: '20' },
+    });
 
     const total = screen.getByText('Total').closest('tr') as HTMLElement;
-    expect(within(total).getByText('1420')).toBeInTheDocument();
-    expect(within(total).getByText('17.25')).toBeInTheDocument();
+    expect(within(total).getByText('1420')).toBeInTheDocument(); // qty
+    expect(within(total).getByText('105')).toBeInTheDocument(); // ctn qty
+    expect(within(total).getByText('7.74')).toBeInTheDocument(); // total cbm
   });
 
   it('drops a line from the draft on the first press, asking nothing (S6-10)', async () => {
     routerState.pathname = '/procurement-management/packing-lists/pl-1/lines';
     await renderTab(<LinesPage />);
-    fireEvent.click(within(await openGear()).getByText('Edit'));
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
 
     const row = screen.getByLabelText('Quantity for SRTWT7443').closest('tr') as HTMLElement;
     fireEvent.click(within(row).getByRole('button', { name: /remove/i }));
@@ -640,13 +737,13 @@ describe('the edit draft, which now lives above every tab', () => {
 
   it('restores the saved values on Cancel, writing nothing', async () => {
     await renderTab(<DetailsPage />);
-    fireEvent.click(within(await openGear()).getByText('Edit'));
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
 
-    fireEvent.change(screen.getByLabelText('Invoice Number'), { target: { value: 'INV-77' } });
+    fireEvent.change(screen.getByLabelText('Invoice number'), { target: { value: 'INV-77' } });
     fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
 
     expect(updatePackingList).not.toHaveBeenCalled();
-    expect(screen.queryByLabelText('Invoice Number')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Invoice number')).not.toBeInTheDocument();
   });
 });
 

@@ -271,3 +271,96 @@ def test_the_preview_says_how_much_is_loadable_and_what_it_would_replace():
         # nothing rather than zero-volume free capacity.
         assert out["summary"]["loadable_cbm"] == pytest.approx(2.0)
         assert out["summary"]["items_unmeasured"] == 1
+
+
+def _plan(db, supplier_id: str):
+    from app.services.scm import loading_plan_service as plan_svc
+
+    return plan_svc.create_record(
+        db,
+        supplier_id=supplier_id,
+        plan_horizon_date=None,
+        document_kind="stock_list",
+        source_attachment_id=None,
+        actor="Ms Tee",
+    )
+
+
+def test_rows_held_now_counts_only_this_plans_own_rows_not_the_whole_supplier():
+    """`rows_held_now` used to count every row on file for the supplier, plan or none - so a
+    fresh plan's preview claimed it would replace rows belonging to OTHER plans and the
+    standalone snapshot, none of which `apply` (given the same `loading_plan_id`) would ever
+    touch."""
+    with pg_session() as db:
+        codes = Codes()
+        supplier_id = seed(db, codes)
+        # The standalone snapshot, and another plan's own - neither is this plan's business.
+        svc.apply(db, workbook([[codes.known, "a", 1, 0, 0.2, ""]]), supplier_id=supplier_id)
+        other = _plan(db, supplier_id)
+        svc.apply(
+            db,
+            workbook([[codes.also_known, "b", 2, 0, 0.2, ""]]),
+            supplier_id=supplier_id,
+            loading_plan_id=str(other.id),
+        )
+
+        fresh = _plan(db, supplier_id)
+        out = svc.preview(
+            db,
+            workbook([[codes.known, "a", 10, 0, 0.2, ""]]),
+            supplier_id=supplier_id,
+            loading_plan_id=str(fresh.id),
+        )
+
+        assert out["rows_held_now"] == 0
+
+
+def test_rows_held_now_counts_a_plans_own_stamped_rows():
+    with pg_session() as db:
+        codes = Codes()
+        supplier_id = seed(db, codes)
+        plan = _plan(db, supplier_id)
+        svc.apply(
+            db,
+            workbook(
+                [
+                    [f"{codes.known}-{i}", "a", 1, 0, 0.2, ""]
+                    for i in range(5)
+                ]
+            ),
+            supplier_id=supplier_id,
+            loading_plan_id=str(plan.id),
+        )
+
+        out = svc.preview(
+            db,
+            workbook([[codes.known, "a", 10, 0, 0.2, ""]]),
+            supplier_id=supplier_id,
+            loading_plan_id=str(plan.id),
+        )
+
+        assert out["rows_held_now"] == 5
+
+
+def test_rows_held_now_with_no_plan_id_reads_the_loading_plan_id_is_null_count_only():
+    """The standalone page's own scope, exactly as `apply` reads it (BL-1): a plan's stamped
+    rows are not "held now" for the page that has no plan at all."""
+    with pg_session() as db:
+        codes = Codes()
+        supplier_id = seed(db, codes)
+        svc.apply(db, workbook([[codes.known, "a", 1, 0, 0.2, ""]]), supplier_id=supplier_id)
+        plan = _plan(db, supplier_id)
+        svc.apply(
+            db,
+            workbook([[codes.also_known, "b", 2, 0, 0.2, ""]]),
+            supplier_id=supplier_id,
+            loading_plan_id=str(plan.id),
+        )
+
+        out = svc.preview(
+            db,
+            workbook([[codes.known, "a", 10, 0, 0.2, ""]]),
+            supplier_id=supplier_id,
+        )
+
+        assert out["rows_held_now"] == 1
