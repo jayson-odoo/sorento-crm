@@ -19,6 +19,15 @@ than assumed, the same reasoning `test_packing_list_number_and_notes.py` documen
 dev database may already hold a rule whose counter has issued numbers, and CI's database is
 built with `create_all` and never runs a migration body. Cleared first so every assertion reads
 `S-SPO-yyyy/mm-0001` regardless of what either database already holds.
+
+**Own company, not Sorento (captain's fix, 4 Sep):** `tests/conftest.py` defaults every session's
+company scope to the REAL Sorento company (`00000000-0000-0000-0000-000000000001`) so legacy
+unscoped tests keep working. Left at that default, `_spo_number`'s rule lookup and the SPO's own
+`purchase_orders` insert both land in Sorento too - the same company real traffic writes into on
+the shared dev DB (a prod copy) - so a rolled-back test run can still collide with a REAL row on
+`uq_purchase_orders_company_po_number` (`S-SPO-2026/09-0001` already existed there once). Every
+test here creates its own throwaway `ZZT-` company and puts the session's scope on it, so the
+number it writes lands in a company nothing else has ever written to.
 """
 from __future__ import annotations
 
@@ -30,6 +39,8 @@ from pathlib import Path
 
 from sqlalchemy import text
 
+from app.models.base import set_company_scope
+from app.models.company import Company
 from app.models.procurement import PurchaseOrder
 from app.services.numbering_defaults import CRM_SPO_DOC_TYPE
 from app.services.scm import spo_conversion_service as svc
@@ -42,6 +53,20 @@ pytestmark = requires_pg
 _NUMBER_RE = re.compile(r"^S-SPO-\d{4}/\d{2}-\d{4}$")
 
 
+def _zzt_company(db) -> str:
+    """A throwaway company this test alone writes into, scoped for the rest of the test.
+
+    `Company` itself carries no `company_id` (it is not `CompanyScopedMixin`), so the insert
+    needs no scope; every row created afterwards (the numbering rule, the SPO's `purchase_
+    orders` header) does, so the scope is set to exactly this one company before returning.
+    """
+    company_id = str(uuid.uuid4())
+    db.add(Company(id=company_id, name=f"ZZT-spo-numbering-{company_id[:8]}", code=f"ZZT{company_id[:8]}"))
+    db.flush()
+    set_company_scope(db, frozenset({company_id}))
+    return company_id
+
+
 def _migration_470():
     versions = Path(__file__).resolve().parents[2] / "alembic" / "versions"
     spec = importlib.util.spec_from_file_location(
@@ -52,48 +77,29 @@ def _migration_470():
     return module
 
 
-def _clear_numbering(db) -> None:
-    """No rule for the CRM SPO series at all - the state that produced `CRM-SPO-7bcb4582`."""
+def _clear_numbering(db, company_id: str) -> None:
+    """No rule for the CRM SPO series in THIS company - the state that produced
+    `CRM-SPO-7bcb4582`. Scoped to `company_id` alone so it never touches another
+    company's real rule (Sorento's included) inside the same rolled-back transaction."""
     db.execute(
-        text("delete from document_numbering_rules where doc_type = :d"),
-        {"d": CRM_SPO_DOC_TYPE},
+        text("delete from document_numbering_rules where doc_type = :d and company_id = :c"),
+        {"d": CRM_SPO_DOC_TYPE, "c": company_id},
     )
     db.flush()
 
 
-def _seed_numbering(db) -> None:
-    """Migration 470's own seed, at a known starting value.
+def _seed_numbering(db, company_id: str) -> None:
+    """Migration 470's own seed, scoped to `company_id` alone, at a known starting value.
 
-    Cleared first so the assertion is `S-SPO-yyyy/mm-0001` on any database, however many
-    numbers the rule on it has already issued. Both statements are inside the rolled-back
-    transaction.
+    Cleared first so the assertion is `S-SPO-yyyy/mm-0001` regardless of what this company
+    already holds - the same "never assume" reasoning `test_packing_list_number_and_notes.py`
+    documents, even though `company_id` names a company `_zzt_company` only just created.
+    Passing `company_id` explicitly (never `None`) keeps the insert scoped to this one company
+    row, so it can never seed - or collide with - the real Sorento rule.
     """
     module = _migration_470()
-    _clear_numbering(db)
-    module.seed_crm_spo_rule(db.connection())
-    seeded = db.execute(
-        text("select count(*) from document_numbering_rules where doc_type = :d"),
-        {"d": module.DOC_TYPE},
-    ).scalar()
-    if not seeded:
-        # A database with no `companies` rows at all (CI). The rule still has to exist for
-        # the series to work, and a company-less rule applies to everybody.
-        db.execute(
-            text(
-                """
-                insert into document_numbering_rules
-                    (id, company_id, doc_type, enabled, prefix_template, number_digits,
-                     next_value, start_value, reset_policy, created_at, updated_at)
-                values (gen_random_uuid(), null, :d, true, :p, :n, 1, 1, :r, now(), now())
-                """
-            ),
-            {
-                "d": module.DOC_TYPE,
-                "p": module.PREFIX_TEMPLATE,
-                "n": module.NUMBER_DIGITS,
-                "r": module.RESET_POLICY,
-            },
-        )
+    _clear_numbering(db, company_id)
+    module.seed_crm_spo_rule(db.connection(), company_id=company_id)
     db.flush()
 
 
@@ -113,7 +119,8 @@ def _create_one(db, w: World) -> str:
 
 def test_a_created_spo_is_numbered_from_the_monthly_rule():
     with pg_session() as db:
-        _seed_numbering(db)
+        company_id = _zzt_company(db)
+        _seed_numbering(db, company_id)
         w = World(db)
 
         number = _create_one(db, w)
@@ -123,7 +130,8 @@ def test_a_created_spo_is_numbered_from_the_monthly_rule():
 
 def test_two_create_spo_runs_in_one_month_take_the_next_number_each():
     with pg_session() as db:
-        _seed_numbering(db)
+        company_id = _zzt_company(db)
+        _seed_numbering(db, company_id)
         w = World(db)
 
         first = _create_one(db, w)
@@ -141,7 +149,8 @@ def test_a_company_with_no_series_yet_gets_one_rather_than_the_random_hex_fallba
     `S-SPO-yyyy/mm-0001`.
     """
     with pg_session() as db:
-        _clear_numbering(db)
+        company_id = _zzt_company(db)
+        _clear_numbering(db, company_id)
         w = World(db)
 
         first = _create_one(db, w)
@@ -157,10 +166,14 @@ def test_a_disabled_rule_falls_back_to_the_random_hex_rather_than_blocking_the_c
     series, which refuses outright) - `_spo_number`'s own last-resort fallback, kept for
     exactly this case."""
     with pg_session() as db:
-        _seed_numbering(db)
+        company_id = _zzt_company(db)
+        _seed_numbering(db, company_id)
         db.execute(
-            text("update document_numbering_rules set enabled = false where doc_type = :d"),
-            {"d": CRM_SPO_DOC_TYPE},
+            text(
+                "update document_numbering_rules set enabled = false "
+                "where doc_type = :d and company_id = :c"
+            ),
+            {"d": CRM_SPO_DOC_TYPE, "c": company_id},
         )
         db.flush()
         w = World(db)
