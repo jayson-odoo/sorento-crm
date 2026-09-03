@@ -77,9 +77,18 @@ or a rule: those live once on the Policies page.
     date it was measured on - "BRW-IB has 529 free outside the BB group at 5 Oct 2026, none
     of it owed to a later IB order" - beside a Reserve of 4. The `use` row reads 4, whole,
     chosen, labelled "Use IB group stock".
-  - Board side [BE]: `use_candidates_for` on an oversold other group returns that group's
-    bins with qty 0 and names it in the shorts map; where the book is whole it returns the
-    measured pile (529).
+  - Board side [BE]: `use_candidates_for` on an oversold other group returns NO row for
+    that group's bins at all - a bin with nothing to offer is omitted, the same way every
+    other exhausted candidate is - and names the group in the shorts map, which is what the
+    `use` option row prints; where the book is whole it returns the measured pile (529).
+  - AC-2.12c **one book, spent once across the whole walk (review fix, 3 Sep).** The cap is
+    a statement about the GROUP, so a board spends it once: the lending group's spare book
+    is seeded into the walk's own offer ledger and drawn down by what each unit composed, so
+    two units whose dates bring DIFFERENT bins of that group into view (one seeing the
+    floor, the next an arrival) share one budget instead of each being handed the whole of
+    it. Confirm carries the same bound through `_CapacityLedger` under the group's own key,
+    so a second line of one confirmation reserving at another bin of a group already lent to
+    its budget is refused with "<bin> now has 0 free for this line, and N was asked for".
   - Pill [FE]: the Suggestion card and the summary cards read an other-group source as
     "Use IB group stock" (water: "Use incoming from IB group"), and an own-group source as
     "Use own location", unchanged.
@@ -130,13 +139,15 @@ or a rule: those live once on the Policies page.
   view, ticking N selectable rows (not already confirmed, not already saved) and pressing
   "Save as suggested (N)" saves each ticked row with the engine's own composition - the same
   object an untouched Save on that row would post - and every one of those rows now reads
-  Saved with the saver's own stamp; (b) in a cell's breakdown dialog, the same "Save as
-  suggested (N)" sits beside the existing bulk Approve/Reject-selected buttons, and a
-  header-level "Save all suggested" saves every still-selectable line in the cell with no
-  selection needed, skipping a confirmed line and a line already saved; (c) Undo on one saved
-  row (list or dialog) returns that row alone to Suggested and deletes its server draft, with
-  no confirmation dialog - it is reversible with another quick save - and every other row's
-  own state is untouched.
+  Saved with the saver's own stamp; (b) in a cell's breakdown dialog, the SAME composition is
+  what "Approve selected" writes (D11: an approval carries the suggestion, so approving in
+  bulk and saving as suggested were one verb, and the dialog has one button for it), a row
+  already saved is not selectable there either ("Already saved. Undo it before saving it
+  again."), and a header-level "Save all suggested" saves every still-selectable line in the
+  cell with no selection needed, skipping a confirmed line and a line already saved; (c) Undo
+  on one saved row (list or dialog) returns that row alone to Suggested and deletes its
+  server draft, with no confirmation dialog - it is reversible with another quick save - and
+  every other row's own state is untouched.
 
 ## S5 upload
 

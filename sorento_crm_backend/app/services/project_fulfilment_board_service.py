@@ -2690,6 +2690,10 @@ class FulfilmentBoardService:
         # (R24), and then the OTHER project groups' free piles (R5), which is the free stock
         # the retired `cross_group_borrow` rung used to call a Borrow. Both are one question,
         # because free stock is owed to nobody wherever it sits.
+        # R-M's shorts map is DELIBERATELY discarded here: the trail states what this line
+        # was offered, and the refusal it explains is already printed on the `use` OPTION
+        # row, which the walk composes from the same map (`walk_line(other_group_short=)`).
+        # Printing it twice would say the same thing in two voices.
         group_take_candidates, other_group_candidates, own_offer, _other_short = (
             ([], [], _ZERO, {})
             if outside_window

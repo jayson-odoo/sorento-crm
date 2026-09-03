@@ -394,12 +394,18 @@ export function BoardCellBreakdownDialog({
   );
 
   /**
-   * D14: a quick save of the engine's own composition, ticked row by ticked row - the same
-   * loop `decideSelected` runs, but each key gets ITS OWN suggestion rather than one decision
-   * applied to every row, because "approved" is not one object across lines with different
-   * suggestions the way "rejected" is.
+   * APPROVE, ticked row by ticked row - the same loop `decideSelected` runs, but each key
+   * gets ITS OWN suggestion rather than one decision applied to every row, because
+   * "approved" is not one object across lines with different suggestions the way "rejected"
+   * is.
+   *
+   * D11 is why this is the only approve verb here: a bare `{verdict: 'approved'}` carries no
+   * composition, so a Save-untouched confirms nothing the engine proposed and the sales order
+   * page reads it as Decided "-". An approval IS the suggested composition, which is exactly
+   * what `BoardLineDecisionPanel`'s own untouched Save posts - so approving in bulk and
+   * "saving as suggested" were one verb with two buttons, and this is the one.
    */
-  const saveSelectedAsSuggested = React.useCallback(() => {
+  const approveSelected = React.useCallback(() => {
     for (const key of selectedKeys) {
       const contribution = cell.contributions.find((entry) => entry.key === key);
       if (!contribution) continue;
@@ -449,11 +455,22 @@ export function BoardCellBreakdownDialog({
       // The repo's own select column, the one the users list uses, so the header select-all and
       // its indeterminate state are not a second implementation.
       buildSelectColumn<BoardContribution>({
-        enableRow: (row) => !row.original.unplannable && !row.original.covered,
+        // Already SAVED is out here for the same reason it is out of the list view and out
+        // of "Save all suggested": a quick save would overwrite an amended draft with the
+        // engine's own composition, which is the one thing a planner who amended it does
+        // not want. Undo is how a saved row comes back into play.
+        enableRow: (row) =>
+          !row.original.unplannable &&
+          !row.original.covered &&
+          !draft[row.original.key],
         disabledReason: (row) =>
           row.original.covered
             ? 'This line is already confirmed. Amend it to change what was decided.'
-            : 'This line cannot be decided here: its sales order states no fulfilment location.',
+            : row.original.unplannable
+              ? 'This line cannot be decided here: its sales order states no fulfilment location.'
+              : draft[row.original.key]
+                ? 'Already saved. Undo it before saving it again.'
+                : undefined,
         rowLabel: (row) =>
           `Select ${row.original.so_number} line ${row.original.line_no}`,
       }),
@@ -845,7 +862,7 @@ export function BoardCellBreakdownDialog({
                   mode="icon"
                   variant="ghost"
                   size="sm"
-                  aria-label={`Undo line ${row.original.line_no}`}
+                  aria-label={`Undo ${row.original.so_number} line ${row.original.line_no}`}
                   onClick={(event) => {
                     event.stopPropagation();
                     onDecide(key, null);
@@ -1151,9 +1168,13 @@ export function BoardCellBreakdownDialog({
                 onRowSelectionChange={setRowSelection}
                 // A covered row is not selectable either: the bulk verbs are Approve and Reject,
                 // and a bulk Reject sweeping up a confirmed line would silently un-decide it,
-                // which is the very defect the covered state exists to stop.
+                // which is the very defect the covered state exists to stop. Nor is a row that
+                // already carries a draft - a bulk verb would overwrite an amended composition
+                // with the engine's own, which is the list view's rule too.
                 enableRowSelection={(row) =>
-                  !row.original.unplannable && !row.original.covered
+                  !row.original.unplannable &&
+                  !row.original.covered &&
+                  !draft[row.original.key]
                 }
                 toolbar={
                   <div className="flex flex-wrap items-center gap-2">
@@ -1194,9 +1215,7 @@ export function BoardCellBreakdownDialog({
                         <Button
                           type="button"
                           size="sm"
-                          onClick={() =>
-                            decideSelected({ verdict: 'approved' })
-                          }
+                          onClick={approveSelected}
                         >
                           <Check className="size-4" aria-hidden />
                           Approve selected
@@ -1214,14 +1233,6 @@ export function BoardCellBreakdownDialog({
                         >
                           <X className="size-4" aria-hidden />
                           Reject selected
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          onClick={saveSelectedAsSuggested}
-                        >
-                          {`Save as suggested (${selectedKeys.length})`}
                         </Button>
                         <Button
                           type="button"

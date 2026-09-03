@@ -405,6 +405,11 @@ export function decisionFromAmendDraft(draft: DraftLine, reason: string): BoardD
  * `verdict: 'approved'` and reason `''`, because nothing was amended - `decisionFromAmendDraft`
  * on its own always writes `'amended'`, which is right for that function's other callers but
  * wrong for an approval, so this wraps it the same way the panel's `save()` does.
+ *
+ * `suspected_system_issue` is deliberately NOT set: a quick save flags nothing, and every
+ * reader coerces an absent flag to false (`fulfilmentBoard.ts:370,427`,
+ * `BoardDecisionPill.tsx:115`), so writing `false` would only be a second way to say the
+ * same thing.
  */
 export function suggestedDecisionFor(contribution: BoardContribution): BoardDecision {
   return {

@@ -1713,6 +1713,82 @@ def test_a_pool_reserve_across_two_lines_of_one_confirmation_shares_the_pools_av
     )
 
 
+def test_one_lending_groups_book_is_spent_once_across_a_confirmations_lines(api):
+    """R-M (3 Sep 2026) bounds the LENDING GROUP, so one confirmation spends it once.
+
+    The recheck seeded its capacity per (product, location) from each unit's own capped
+    read, and a unit's read is capped by the group's book on its own. Two units whose dates
+    bring DIFFERENT bins of one lending group into view therefore each cleared the whole
+    budget: the group here holds 100 at each of two bins and owes 160 (100 on day 45, 60 on
+    day 100), so its book spares 40, and a line due on day 30 reserving 40 at the first bin
+    and a line due on day 60 reserving 40 at the second both landed - 80 written out of a
+    book with 40 in it, on the lending group's own short.
+
+    The second line is now refused, in the same wording every other exhausted location gets.
+    """
+    from app.models.project_so import SOSupplyDecision
+
+    client, world = api
+    db = world.db
+    lender = f"LN{_suffix()}"
+    bins = [_warehouse(db, f"ZZTA-{lender}"), _warehouse(db, f"ZZTB-{lender}")]
+    for row in bins:
+        _stock(db, world.product, row, on_hand=100)
+    # The assignment draws a group's pile oldest first, and two on-hand piles agree about
+    # the day - so the tie falls to the event key, `on_hand:<warehouse id>`. Read here
+    # rather than assumed, so the case does not depend on which id Postgres minted.
+    first, second = sorted(bins, key=lambda row: f"on_hand:{row.id}")
+    theirs = _behind_ours(_core_so(db, world.company_id))
+    _core_line(
+        db, theirs, world.product, first, qty_ordered="100",
+        required_date=date.today() + timedelta(days=45),
+    )
+    _core_line(
+        db, theirs, world.product, first, qty_ordered="60",
+        required_date=date.today() + timedelta(days=100),
+    )
+
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    near = _core_line(
+        db, core_so, world.product, world.own_wh, qty_ordered="40",
+        required_date=date.today() + timedelta(days=30),
+    )
+    far = _core_line(
+        db, core_so, world.product, world.own_wh, qty_ordered="40",
+        required_date=date.today() + timedelta(days=60),
+    )
+    line_one = _project_line(db, order, line_no=1, product=world.product, core_line=near)
+    line_two = _project_line(db, order, line_no=2, product=world.product, core_line=far)
+    db.commit()
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(
+                    line_one.id, reserve=[{"warehouse_id": first.id, "qty": "40"}],
+                ),
+                _line_payload(
+                    line_two.id, reserve=[{"warehouse_id": second.id, "qty": "40"}],
+                ),
+            ]
+        },
+    )
+    assert response.status_code == 409, response.text
+    body = response.json()
+    assert {row["line_no"] for row in body["failing_lines"]} == {2}, body
+    reason = body["failing_lines"][0]["reason"]
+    assert second.warehouse_code in reason and "now has 0 free" in reason, reason
+
+    # Atomic (AC-C01): nothing is written, the first line's own Reserve included.
+    assert (
+        db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == order.id)
+        .first()
+        is None
+    )
+
 # --------------------------------------------------- the donor's availability nets holds
 
 

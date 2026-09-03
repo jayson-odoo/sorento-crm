@@ -362,7 +362,7 @@ export function FulfilmentBoardListView({
                   mode="icon"
                   variant="ghost"
                   size="sm"
-                  aria-label={`Undo line ${row.original.line_no}`}
+                  aria-label={`Undo ${row.original.so_number} line ${row.original.line_no}`}
                   onClick={(event) => {
                     event.stopPropagation();
                     onDecide(key, null);

@@ -796,3 +796,33 @@ def test_saving_with_no_proposal_still_saves_the_decision(api):
 
     saved = _contribution(_board(client, core_so), core_so.so_number)["draft"]
     assert saved["proposed"] is None
+
+
+def test_a_re_save_with_no_proposal_keeps_the_one_already_stored(api):
+    """A re-save the caller could not resolve a contribution for must not ERASE the
+    suggestion the first save stored.
+
+    `proposed` is optional (the test above), and "absent" has always meant "I am not
+    telling you about it" - so the column keeps what it holds. The screen that reads it is
+    the Sales Order page's Suggested column (D12, #573), and a second Save from a surface
+    that has no board contribution to hand would otherwise blank it back to Decided "-".
+    """
+    client, world, core_so, _core_line, _order, _line = _world(api)
+    key = _contribution(_board(client, core_so), core_so.so_number)["key"]
+    proposed = [
+        {
+            "kind": "reserve",
+            "qty": "10",
+            "location": "ZZT-BRW",
+            "reason": "Reserve from BRW",
+            "rung": "pool",
+        }
+    ]
+    assert _save(client, key, proposed=proposed).status_code == 200
+
+    again = _save(client, key)
+
+    assert again.status_code == 200, again.text
+    assert again.json()["proposed"][0]["location"] == "ZZT-BRW"
+    saved = _contribution(_board(client, core_so), core_so.so_number)["draft"]
+    assert saved["proposed"][0]["qty"] == "10"

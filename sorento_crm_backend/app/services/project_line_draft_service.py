@@ -228,7 +228,8 @@ def save_draft(
 
     `proposed` (D12, #573): the caller's own board contribution `sources` at this moment,
     stored opaque and NEVER read here - see `SOSupplyDecisionDraft.proposed`'s own
-    docstring for why it exists and why it is not `line_snapshot`.
+    docstring for why it exists and why it is not `line_snapshot`. OMITTING it leaves the
+    stored one alone; only a caller that has one replaces it.
     """
     sales_order_id, line_no, item_code, bucket_key = parse_contribution_key(key)
     core_line = _resolve_core_line(db, sales_order_id, line_no, item_code)
@@ -248,7 +249,12 @@ def save_draft(
     row.item_code = item_code
     row.bucket_key = bucket_key
     row.decision = decision
-    row.proposed = proposed
+    if proposed is not None:
+        # ABSENT is "I am not telling you", never "there is none": a caller with no board
+        # contribution to hand (an older client, or a surface that saves the verdict alone)
+        # would otherwise erase the suggestion the first save stored, and the Sales Order
+        # page's Suggested column would fall back to Decided "-" on a line that had one.
+        row.proposed = proposed
     row.line_snapshot = _line_snapshot(core_line)
     row.saved_by = actor_user_id
     row.saved_at = datetime.utcnow()

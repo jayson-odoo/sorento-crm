@@ -1882,7 +1882,11 @@ describe('BoardCellBreakdownDialog: bulk approve and reject', () => {
 
     expect(onDecide).toHaveBeenCalledTimes(3);
     for (const call of onDecide.mock.calls) {
-      expect(call[1]).toEqual({ verdict: 'approved' });
+      // D11: an approval CARRIES the engine's composition. A bare `{verdict: 'approved'}`
+      // confirms nothing that was proposed, and the sales order page reads it as Decided "-".
+      expect(call[1]).toEqual(
+        expect.objectContaining({ verdict: 'approved', buy_qty: '100' }),
+      );
     }
   });
 
@@ -1971,9 +1975,10 @@ describe('BoardCellBreakdownDialog: bulk approve and reject', () => {
 
     // Only the ticked row carries the bulk verdict.
     expect(onDecide).toHaveBeenCalledTimes(1);
-    expect(onDecide).toHaveBeenCalledWith('so-a|1|WESERP10B|2026-08-31', {
-      verdict: 'approved',
-    });
+    expect(onDecide).toHaveBeenCalledWith(
+      'so-a|1|WESERP10B|2026-08-31',
+      expect.objectContaining({ verdict: 'approved', buy_qty: '100' }),
+    );
 
     // Row 2 is untouched: still Suggested, and still expandable and decidable on its own -
     // the bulk verb is an addition, never a replacement for the per-row decision.
@@ -2014,9 +2019,7 @@ describe('BoardCellBreakdownDialog: quick save as suggested and per-line undo', 
     openLines();
 
     selectAll();
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Save as suggested (3)' }),
-    );
+    fireEvent.click(screen.getByRole('button', { name: 'Approve selected' }));
 
     expect(onDecide).toHaveBeenCalledTimes(3);
     for (const call of onDecide.mock.calls) {
@@ -2025,6 +2028,41 @@ describe('BoardCellBreakdownDialog: quick save as suggested and per-line undo', 
       );
     }
     expect(screen.queryByText('3 selected')).not.toBeInTheDocument();
+  });
+
+  it('has ONE control for the bulk quick save, not a second one beside Approve', () => {
+    renderDialog(threeLines());
+    openLines();
+
+    selectAll();
+    // "Approve selected" IS the quick save since D11 (an approval carries the composition),
+    // so a "Save as suggested (N)" beside it was one verb with two buttons.
+    expect(
+      screen.queryByRole('button', { name: /^Save as suggested/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('will not tick a line that is already saved, and says why on its own checkbox', () => {
+    const draft: BoardDraft = {
+      'so-b|2|WESERP10B|2026-08-31': { verdict: 'approved', buy_qty: '100' },
+    };
+    const { onDecide } = renderDialog(threeLines(), {}, draft);
+    openLines();
+
+    selectAll();
+    expect(screen.getByText('2 selected')).toBeInTheDocument();
+    expect(
+      screen.getAllByTitle('Already saved. Undo it before saving it again.'),
+    ).not.toHaveLength(0);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Approve selected' }));
+
+    // The saved row keeps whatever was saved on it: a quick save would overwrite an amended
+    // composition with the engine's own, which is what Undo exists for.
+    expect(onDecide).toHaveBeenCalledTimes(2);
+    expect(onDecide.mock.calls.map((call) => call[0]).sort()).toEqual(
+      ['so-a|1|WESERP10B|2026-08-31', 'so-c|3|WESERP10B|2026-08-31'].sort(),
+    );
   });
 
   it('Save all suggested reaches every selectable line with no selection needed', () => {
@@ -2085,7 +2123,7 @@ describe('BoardCellBreakdownDialog: quick save as suggested and per-line undo', 
     openLines();
 
     expect(
-      screen.queryByRole('button', { name: /^Undo line/ }),
+      screen.queryByRole('button', { name: /^Undo SO/ }),
     ).not.toBeInTheDocument();
   });
 
@@ -2096,7 +2134,7 @@ describe('BoardCellBreakdownDialog: quick save as suggested and per-line undo', 
     const { onDecide } = renderDialog(threeLines(), {}, draft);
     openLines();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Undo line 1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Undo SO000001 line 1' }));
 
     expect(onDecide).toHaveBeenCalledTimes(1);
     expect(onDecide).toHaveBeenCalledWith('so-a|1|WESERP10B|2026-08-31', null);

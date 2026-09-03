@@ -519,7 +519,7 @@ describe('FulfilmentBoardListView: quick save as suggested and per-line undo', (
 
     await screen.findByText('SO397450');
     expect(
-      screen.queryByRole('button', { name: /^Undo line/ }),
+      screen.queryByRole('button', { name: /^Undo SO/ }),
     ).not.toBeInTheDocument();
   });
 
@@ -531,7 +531,7 @@ describe('FulfilmentBoardListView: quick save as suggested and per-line undo', (
     });
 
     await screen.findByText('SO397450');
-    fireEvent.click(screen.getByRole('button', { name: 'Undo line 10' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Undo SO397450 line 10' }));
 
     expect(onDecide).toHaveBeenCalledWith('so-1:line-10', null);
   });
