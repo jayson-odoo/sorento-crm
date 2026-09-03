@@ -263,7 +263,9 @@ the match.
   own lock target and having every wheel event over it silently swallowed. Verified in "Plan a
   container" (Supplier) and in one non-dialog consumer (a listing filter) at 375px and 1280px;
   no change to focus-trap / outside-pointer behaviour beyond what `Select`/`DropdownMenu`
-  already do while open.
+  already do while open. `SearchableMultiSelect` gets the same `modal` Popover fix (its
+  `CommandItem` `value` was already `opt.value`, so only the dialog-scroll half applied);
+  verified in `role-edit-dialog.tsx` (Dialog) and `ScmFilterBar.tsx` (non-dialog).
 - **AC-K2** `[FE][T]` The Supplier codes tab's "Needs a decision" header carries a **Confirm
   (N)** button, left of Refresh matching, where N = codes decided (matched or dismissed) THIS
   VISIT and still present in the unmatched queue - disabled at N = 0. Clicking it writes

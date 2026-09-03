@@ -232,7 +232,14 @@ export function SearchableMultiSelect({
   };
 
   return (
-    <Popover open={open} onOpenChange={(o) => !isDisabled && setOpen(o)}>
+    // `modal` makes this popover its own react-remove-scroll lock: mounted inside an open
+    // Dialog, it becomes the active lock (the stack is last-one-wins) so a wheel over ITS
+    // list scrolls, where a plain (non-modal) popover portalled to <body> sits outside the
+    // Dialog's own lock target and every wheel over it is swallowed. `disableOutsidePointerEvents`
+    // and the focus trap that come with `modal` match how `Select`/`DropdownMenu` already
+    // behave while open, so nothing about this component's contract changes. Same fix as
+    // SearchableSelect - the two halves of this standard are kept identical on purpose.
+    <Popover modal open={open} onOpenChange={(o) => !isDisabled && setOpen(o)}>
       <PopoverTrigger asChild>
         {renderTrigger ? (
           renderTrigger({ selected: chosen, open, disabled: isDisabled })
