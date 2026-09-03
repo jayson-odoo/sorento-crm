@@ -257,7 +257,7 @@ describe('SalesOrdersList - dynamic filters', () => {
     fireEvent.click(option);
 
     await waitFor(() => {
-      expect(lastQuery()).toMatchObject({ customerId: '300-R009' });
+      expect(lastQuery()).toMatchObject({ customerCode: '300-R009' });
     });
   });
 

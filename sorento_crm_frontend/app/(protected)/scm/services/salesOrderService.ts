@@ -55,7 +55,7 @@ export interface SalesOrderListQuery {
   /** Order date, inclusive of both ends. ISO `yyyy-mm-dd`. */
   dateFrom?: string | null;
   dateTo?: string | null;
-  customerId?: string | null;
+  customerCode?: string | null;
   /** Keep only orders with quantity still owed. `false` narrows nothing. */
   outstanding?: boolean;
   salesAgentId?: string | null;
@@ -131,7 +131,7 @@ export async function getSalesOrders(
       // `useCustomerOptions`' option value already IS the code, never an id - a `customer_id`
       // key here would silently match nothing (found during the view-memory rollout: the
       // filter was a no-op since 8 Aug 2026, cb1abae5e0).
-      customer_code: params.customerId || undefined,
+      customer_code: params.customerCode || undefined,
       // Only when ON. Sending `outstanding=false` would put a param on the URL that means
       // "no filter", which then rides into the detail URL and reads as an active filter.
       outstanding: params.outstanding ? 'true' : undefined,

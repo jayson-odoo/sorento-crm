@@ -1135,8 +1135,10 @@ class SalesOrderService:
             # The START of the delivery span the list prints - "what is due first", which is
             # the question that column is scanned with. In SQL over the SAME
             # `min(required_date)` the serializer prints, so the header's order and the cell
-            # cannot come apart. Null placement is Postgres's default, the same as the
-            # `order_date` sort beside it: an order no line has dated sorts last ascending.
+            # cannot come apart. Null placement is explicit, not Postgres's default: `_order_by`
+            # calls `nullslast()` on every sorted column in both directions, this one included,
+            # the same as the `order_date` sort beside it - an order no line has dated sorts
+            # last whichever way the column is read.
             "delivery_date_from": (
                 select(func.min(SalesOrderLine.required_date))
                 .where(SalesOrderLine.sales_order_id == SalesOrder.id)

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import {
@@ -388,7 +388,7 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
     source: sourceFilter || null,
     dateFrom: dateFrom || null,
     dateTo: dateTo || null,
-    customerId: customerFilter || null,
+    customerCode: customerFilter || null,
     outstanding: outstandingOnly,
     salesAgentId: effectiveAgentId,
     demandClass: demandClassFilter || null,
@@ -403,9 +403,18 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
   const createMut = useCreateSalesOrder();
   const resetMut = useResetSalesOrderPlanning();
 
-  // Filter changes reset the page themselves (`applyFilters`/`clearFilters`); search is the
-  // only thing left that needs its own reset here.
+  // A search brings the reader back to page 0 to see the matches - but not on the FIRST
+  // run, or this would wipe the page `useListStateFromUrl` just restored from Back's own
+  // query string, landing every "Back to sales orders" on page 1 (mirrors
+  // `StockInquiriesList.tsx`'s own `searchMounted` guard). Filter changes reset the page
+  // themselves (`applyFilters`/`clearFilters`); search is the only thing left that needs
+  // its own reset here.
+  const searchMounted = useRef(false);
   useEffect(() => {
+    if (!searchMounted.current) {
+      searchMounted.current = true;
+      return;
+    }
     setPagination((p) => ({ ...p, pageIndex: 0 }));
   }, [searchQuery]);
 
@@ -858,7 +867,8 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
 
   // The chip's plain-words label (PLAN-listing-view-memory). Every axis states a NAME, never
   // a raw code or id; an axis whose name has not resolved yet (the customer/agent list still
-  // loading) is left out rather than shown blank.
+  // loading) states its axis word (Customer, Agent) until the name arrives, so the chip is
+  // never blank.
   const activeFilterLabel = useMemo(() => {
     const parts: string[] = [];
     if (statusFilter) parts.push(salesOrderStatusLabel(statusFilter));
@@ -874,13 +884,17 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
     if (dateFrom && dateTo) parts.push(`Dates ${fmtDate(dateFrom)} to ${fmtDate(dateTo)}`);
     else if (dateFrom) parts.push(`Dates from ${fmtDate(dateFrom)}`);
     else if (dateTo) parts.push(`Dates to ${fmtDate(dateTo)}`);
+    // Customer/agent options are a multi-thousand-row master that loads slower than the
+    // grid's own first paint, so "not resolved yet" is the NORMAL first render for a user
+    // who has only a customer or agent filter remembered - not a rare edge. The axis word
+    // stands in until the name arrives, so the chip is never blank.
     if (customerFilter) {
       const name = optionLabel(customerOptions.data ?? [], customerFilter);
-      if (name) parts.push(name);
+      parts.push(name ?? 'Customer');
     }
     if (!pinnedToAgent && agentFilter) {
       const name = optionLabel(agentOptions.options ?? [], agentFilter);
-      if (name) parts.push(name);
+      parts.push(name ?? 'Agent');
     }
     if (outstandingOnly) parts.push('Outstanding qty');
     return parts.join(', ');
@@ -955,8 +969,12 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
                 activeCount: filtersActive,
                 // The chip states what is active in plain words, and its Clear is the SAME
                 // function the popover's own "Clear filters" button calls below - one clear
-                // path, not two (PLAN-listing-view-memory).
-                activeSummary: { label: activeFilterLabel, onClear: clearFilters },
+                // path, not two (PLAN-listing-view-memory). Only passed once there is a word
+                // to show - an empty label would otherwise render a blank chip with an
+                // `aria-label="Clear filter: "`.
+                activeSummary: activeFilterLabel
+                  ? { label: activeFilterLabel, onClear: clearFilters }
+                  : undefined,
                 content: (
                   <div className="space-y-4">
                     <div className="flex items-center justify-between gap-3 rounded-md border p-2.5">

@@ -38,11 +38,14 @@ if (!window.ResizeObserver) {
 Element.prototype.scrollIntoView = vi.fn();
 
 const push = vi.fn();
+// Mutable per test: `useListStateFromUrl` reads this to restore pagination/search from a
+// Back-to-list query string (S3-01). Empty by default - a fresh sidebar-click open.
+const nav = vi.hoisted(() => ({ search: '' }));
 vi.mock('next/navigation', async (importOriginal) => ({
   ...(await importOriginal<typeof import('next/navigation')>()),
   useRouter: () => ({ push }),
   usePathname: () => '/scm/sales-orders',
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => new URLSearchParams(nav.search),
 }));
 
 vi.mock('sonner', () => ({
@@ -69,11 +72,14 @@ vi.mock('@/hooks/usePermissions', () => ({
 }));
 
 const EMPTY = { data: [], isLoading: false };
+// Mutable per test: the customer master is a multi-thousand-row list that resolves later
+// than the grid's own first paint, so a test needs to simulate "not resolved yet".
+const customerOptionsResult = vi.hoisted(() => ({
+  data: [{ value: 'C001', label: 'Acme Kitchens' }] as { value: string; label: string }[],
+  isLoading: false,
+}));
 vi.mock('../../hooks/useScmOptions', () => ({
-  useCustomerOptions: () => ({
-    data: [{ value: 'C001', label: 'Acme Kitchens' }],
-    isLoading: false,
-  }),
+  useCustomerOptions: () => customerOptionsResult,
   useOrderTypeOptions: () => EMPTY,
   useProductOptions: () => EMPTY,
   useSupplierOptions: () => EMPTY,
@@ -143,7 +149,7 @@ type ListParams = {
   sorting: { id: string; desc: boolean }[];
   searchQuery: string;
   status: string | null;
-  customerId: string | null;
+  customerCode: string | null;
   outstanding: boolean;
   salesAgentId: string | null;
   enabled: boolean;
@@ -220,6 +226,9 @@ function enabledFetches(): ListParams[] {
 beforeEach(() => {
   cleanup();
   vi.clearAllMocks();
+  nav.search = '';
+  customerOptionsResult.data = [{ value: 'C001', label: 'Acme Kitchens' }];
+  customerOptionsResult.isLoading = false;
 });
 
 afterEach(() => {
@@ -253,7 +262,7 @@ describe('SalesOrdersGrid remembered view', () => {
     expect(service.upsertUserListColumnConfig).not.toHaveBeenCalled();
   });
 
-  it('fetches once with a stored sort and filters already applied, and states them on the chip by name (AC-B3 / AC-C1)', async () => {
+  it('every enabled fetch carries the stored sort and filters, and states them on the chip by name (AC-B3 / AC-C1)', async () => {
     storedConfig({
       version: 1,
       sorting: [{ id: 'so_number', desc: false }],
@@ -270,7 +279,7 @@ describe('SalesOrdersGrid remembered view', () => {
     for (const p of fetched) {
       expect(p.sorting).toEqual([{ id: 'so_number', desc: false }]);
       expect(p.status).toBe('open');
-      expect(p.customerId).toBe('C001');
+      expect(p.customerCode).toBe('C001');
       expect(p.outstanding).toBe(true);
     }
 
@@ -282,13 +291,33 @@ describe('SalesOrdersGrid remembered view', () => {
     expect(chipText).not.toContain('C001');
   });
 
+  it('falls back to the axis word while the customer name has not resolved yet, never a blank chip', async () => {
+    // The normal first paint for a user with only a customer filter remembered: the
+    // multi-thousand-row customer master has not answered yet.
+    customerOptionsResult.data = [];
+    storedConfig({
+      version: 1,
+      sorting: [{ id: 'order_date', desc: true }],
+      filters: { customer_code: 'C001' },
+      filtersVersion: 2,
+    });
+    mockList([order()]);
+    renderGrid();
+
+    const clear = await screen.findByRole('button', { name: 'Clear filter: Customer' });
+    expect(clear.closest('span')?.textContent).toBe('Customer');
+    expect(clear.closest('span')?.textContent).not.toContain('C001');
+  });
+
   it('discards a filter blob written by an older page shape but keeps the sort (AC-B4)', async () => {
     storedConfig({
       version: 1,
       sorting: [{ id: 'so_number', desc: false }],
-      // An older shape of this page stored a different key under `filters`.
-      filters: { statuses: ['open'] },
-      filtersVersion: 0,
+      // A key this shape DOES read, under a version the shipped one is not - so a broken
+      // gate would surface as a real, visible bug (a chip and a filtered fetch), not as a
+      // test that stays green whether or not the gate runs.
+      filters: { status: 'open' },
+      filtersVersion: 1,
     });
     mockList([order()]);
     renderGrid();
@@ -403,5 +432,21 @@ describe('SalesOrdersGrid remembered view', () => {
     expect(
       screen.queryByRole('button', { name: /^Clear filter:/ }),
     ).not.toBeInTheDocument();
+  });
+
+  it('Back to sales orders restores the page it carries, not page 1 (S3-01 vs the search reset effect)', async () => {
+    // The detail page's Back button hands the list its own query string back
+    // (`useListStateFromUrl`). Page 3 must survive the mount, not be wiped by the
+    // search-reset effect firing once on its own first run.
+    nav.search = 'page=3&limit=25&sort=order_date&dir=desc';
+    storedConfig(null);
+    mockList([order()]);
+    renderGrid();
+
+    expect(await screen.findByText('SO900001')).toBeInTheDocument();
+
+    const fetched = enabledFetches();
+    expect(fetched.length).toBeGreaterThan(0);
+    expect(fetched[0].pageIndex).toBe(2);
   });
 });

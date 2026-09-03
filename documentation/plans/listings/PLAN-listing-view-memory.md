@@ -264,12 +264,13 @@ first, replacing the implicit `created_at desc` fallback - the captain's call, s
 on what came in most recently rather than on insertion order. No backend change: `order_date`
 was already a sortable column (`_order_by` in `app/services/scm/sales_order_service.py`).
 
-**Blob shape**, `filtersVersion: 1`:
+**Blob shape**, `filtersVersion: 2` (bumped from 1 once the customer axis below moved to
+`customer_code`, so an older stored blob is discarded rather than silently read as empty):
 
 ```ts
 type SalesOrdersFilters = {
   status?: string; priority?: string; source?: string;
-  date_from?: string; date_to?: string; customer_id?: string;
+  date_from?: string; date_to?: string; customer_code?: string;
   sales_agent_id?: string; demand_class?: string; outstanding?: true;
 };
 ```

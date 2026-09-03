@@ -32,7 +32,7 @@ describe('salesOrderService', () => {
     await getSalesOrders({
       pageIndex: 0,
       pageSize: 25,
-      customerId: 'C001',
+      customerCode: 'C001',
     });
     const u = new URL(String(apiFetch.mock.calls[0][0]), 'http://x');
     expect(u.searchParams.get('customer_code')).toBe('C001');
