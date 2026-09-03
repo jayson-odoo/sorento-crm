@@ -3873,6 +3873,10 @@ def test_a_location_with_no_pool_of_its_own_still_draws_another_active_site_pool
         assert step["answer"] == "yes"
         assert step["took"] == "10"
         assert pool2.warehouse_code in (step["note"] or "")
+        # AC-N.10: the note is a sentence of its own - capitalized and full-stopped -
+        # rather than a lowercase fragment that reads as the `why` sentence above it
+        # running on into "checked ...".
+        assert step["note"] == f"Checked {pool2.warehouse_code}."
         kinds = [(s["kind"], s["qty"], s["location"]) for s in contribution["sources"]]
         assert kinds == [("reserve", "10", pool2.warehouse_code)]
 

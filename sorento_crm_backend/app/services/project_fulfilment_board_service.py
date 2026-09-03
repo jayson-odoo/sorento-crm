@@ -3110,7 +3110,11 @@ class FulfilmentBoardService:
         opened = ", ".join(
             str(entry.get("location")) for entry in pool_chain if entry.get("location")
         )
-        return f"checked {opened}" if opened else None
+        # AC-N.10: this note sits under the pool question's own `why` sentence, which ends
+        # in a period - a lowercase, unpunctuated "checked ..." read as that sentence
+        # running on rather than a note of its own, so it is capitalized and terminated
+        # here to stand as its own sentence.
+        return f"Checked {opened}." if opened else None
 
     def _pool_answer_why(
         self,
