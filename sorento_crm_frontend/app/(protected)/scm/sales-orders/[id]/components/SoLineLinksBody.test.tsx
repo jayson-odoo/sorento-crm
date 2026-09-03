@@ -44,6 +44,7 @@ const LINKS: SalesOrderLineLink[] = [
   {
     kind: 'po',
     document: '202607-S0105',
+    purchase_order_id: 'po-105',
     qty: '5',
     location: 'BRW-NTC',
     expected_date: '2026-08-01',
@@ -66,6 +67,15 @@ describe('SoLineLinksBody', () => {
     renderWithClient(<SoLineLinksBody links={LINKS} />);
 
     expect(screen.getByText('late 3 d')).toBeInTheDocument();
+  });
+
+  it('links the document to its own PO detail when purchase_order_id is present (L4, review round)', () => {
+    renderWithClient(<SoLineLinksBody links={LINKS} />);
+
+    const link = screen.getByRole('link', { name: '202607-S0105' });
+    expect(link).toHaveAttribute('href', '/scm/purchase-orders/po-105');
+    // The SPO link has no `purchase_order_id` in this fixture, so it stays plain text.
+    expect(screen.queryByRole('link', { name: 'SPO-2026/08-0061' })).toBeNull();
   });
 
   it('says Not linked, rather than an empty table, when there are no links', () => {

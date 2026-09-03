@@ -1543,7 +1543,12 @@ export function SalesOrderDetail({ id }: { id: string }) {
             // A real key, not the empty "do not persist" one: a 200-line order is read with
             // the same few columns every time, and the choice has to survive the visit. Keyed
             // off the permission slug plus a stable id, never the record's own path.
-            listingKey="scm.dashboard.view::sales-order-lines"
+            // -v2 (F4, review round): R4 moved `linked_to` earlier in the column order, but a
+            // saved preference keeps whatever POSITION a user last dragged it to - so anyone
+            // who had already used this screen kept the OLD 13th-of-16 slot regardless of the
+            // code change (AC-K1 failed on a live account for exactly this reason). A fresh
+            // key means everyone reads R4's own order once, same as a first-time visitor.
+            listingKey="scm.dashboard.view::sales-order-lines-v2"
           >
             <Card>
               <CardHeader className="flex-wrap gap-3">

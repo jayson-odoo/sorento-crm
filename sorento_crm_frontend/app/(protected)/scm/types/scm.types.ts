@@ -350,6 +350,12 @@ export interface SalesOrderLineLink {
   document: string;
   /** `L3` when the book numbered the line. Absent when it did not - never invented. */
   line_label?: string | null;
+  /**
+   * The PO/SPO header this link points at (L4, review round). Never rendered as text - it
+   * makes `document` a link to `/scm/purchase-orders/{id}`. Absent when the caller building
+   * this row does not have the id at hand, in which case `document` stays plain text.
+   */
+  purchase_order_id?: string | null;
   qty: string;
   location?: string | null;
   expected_date?: string | null;
@@ -614,6 +620,11 @@ export interface PurchaseOrderPlacement {
   kind?: 'inquiry' | 'spo';
   /** The SPO that took this quantity - `spo` rows only. */
   spo_number?: string | null;
+  /**
+   * The SPO's own header id (L2, review round). Never rendered as text - makes
+   * `spo_number` a link to `/scm/purchase-orders/{id}`. `spo` rows only.
+   */
+  purchase_order_id?: string | null;
   /** The container it is on, by container number or shipment number - `spo` rows only. */
   packing_list?: string | null;
   /** Where it is landing, and how much at each - `spo` rows only. */

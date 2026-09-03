@@ -49,6 +49,7 @@ const LINE: PurchaseOrderLineAllocation = {
     {
       kind: 'spo',
       spo_number: 'CRM-SPO-2026/08-0007',
+      purchase_order_id: 'spo-po-7',
       packing_list: 'FSCU8103365',
       qty: 95,
       warehouses: [{ warehouse_code: 'BRW', qty: 95 }],
@@ -70,6 +71,13 @@ describe('PoLinePlacementsBody', () => {
     expect(screen.getByText('SPO')).toBeInTheDocument();
     expect(screen.getByText('CRM-SPO-2026/08-0007')).toBeInTheDocument();
     expect(screen.getByText('FSCU8103365')).toBeInTheDocument();
+  });
+
+  it('links the SPO number to its own PO detail (L2, review round)', () => {
+    renderWithClient(<PoLinePlacementsBody allocation={LINE} />);
+
+    const link = screen.getByRole('link', { name: 'CRM-SPO-2026/08-0007' });
+    expect(link).toHaveAttribute('href', '/scm/purchase-orders/spo-po-7');
   });
 
   it('shows a dedication row with the Dedicated badge and the sales order', () => {

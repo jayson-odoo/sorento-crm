@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
+import Link from 'next/link';
 import { type ColumnDef } from '@tanstack/react-table';
 
 import { Badge } from '@/components/ui/badge';
@@ -20,10 +21,9 @@ import type { PurchaseOrderLineAllocation } from '../../../types/scm.types';
  * both this body's footer and `PurchaseOrderDetail`'s own "Placed" column read, so the two
  * numbers cannot disagree.
  *
- * NOTE (measured, R5): `PurchaseOrderPlacement` carries no purchase-order id for an `spo`
- * row (only `spo_number`), so the SPO number renders as text here, not a link - the plan
- * text assumed one. Linking it needs a backend field and is out of scope for this
- * frontend-only slice.
+ * L2 (review round): `PurchaseOrderPlacement` now carries `purchase_order_id` for an `spo`
+ * row, so the SPO number renders as a link to its own PO detail, same as the planner's own
+ * Created SPOs grid (`SpoPlannerTable`) - text only when the id is absent.
  */
 
 export function placedQtyOf(allocation: PurchaseOrderLineAllocation): number {
@@ -39,6 +39,8 @@ interface PlacementRow {
   key: string;
   kind: 'spo' | 'inquiry' | 'dedicated';
   number: string | null;
+  /** The SPO header id `number` links to - `spo` rows only, absent otherwise (L2). */
+  purchaseOrderId: string | null;
   document: string | null;
   customer: string | null;
   qty: number;
@@ -54,6 +56,7 @@ function rowsFor(allocation: PurchaseOrderLineAllocation): PlacementRow[] {
         key: `spo-${index}`,
         kind: 'spo',
         number: p.spo_number ?? null,
+        purchaseOrderId: p.purchase_order_id ?? null,
         document: p.packing_list ?? null,
         customer: p.customer,
         qty: p.qty,
@@ -68,6 +71,7 @@ function rowsFor(allocation: PurchaseOrderLineAllocation): PlacementRow[] {
       key: `inquiry-${index}`,
       kind: 'inquiry',
       number: p.inquiry_no,
+      purchaseOrderId: null,
       document: p.so_number,
       customer: p.customer,
       qty: p.qty,
@@ -81,6 +85,7 @@ function rowsFor(allocation: PurchaseOrderLineAllocation): PlacementRow[] {
       key: `dedicated-${index}`,
       kind: 'dedicated',
       number: null,
+      purchaseOrderId: null,
       document: d.so_number,
       customer: null,
       qty: d.unplaced,
@@ -112,7 +117,17 @@ export function PoLinePlacementsBody({ allocation }: { allocation: PurchaseOrder
                 <Badge variant="info" appearance="light" size="sm">
                   SPO
                 </Badge>
-                <span className="font-medium">{r.number || EM_DASH}</span>
+                {r.number && r.purchaseOrderId ? (
+                  <Link
+                    href={`/scm/purchase-orders/${r.purchaseOrderId}`}
+                    className="font-medium text-primary hover:underline"
+                    title={`Open ${r.number}`}
+                  >
+                    {r.number}
+                  </Link>
+                ) : (
+                  <span className="font-medium">{r.number || EM_DASH}</span>
+                )}
               </span>
             );
           }

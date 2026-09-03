@@ -243,6 +243,10 @@ export function DrillTable<TRow extends object>({
     data: rows,
     getRowId,
     getCoreRowModel: getCoreRowModel(),
+    // F15 (review round): the DataGrid rule (CLAUDE.md) is `columnResizeMode: 'onChange'`
+    // alongside `columnsResizable: true` - every lightbox that shares this shell inherits it
+    // from here rather than each caller having to remember it.
+    columnResizeMode: 'onChange',
   });
 
   return (

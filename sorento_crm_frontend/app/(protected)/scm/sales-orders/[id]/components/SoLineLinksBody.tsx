@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
+import Link from 'next/link';
 import { type ColumnDef } from '@tanstack/react-table';
 
 import { DrillTable, RIGHT } from '../../../components/PlanRowDialog';
@@ -12,9 +13,10 @@ import type { SalesOrderLineLink } from '../../../types/scm.types';
  * What one sales-order line is linked to - the lightbox the "Linked" column opens (R5,
  * AC-L4), replacing the inline multi-link text the "Linked to" cell used to render.
  *
- * NOTE (measured, R5): `SalesOrderLineLink` carries no purchase-order/SPO id, only the
- * document NUMBER, so the Document cell is text here, not a link. Linking it needs a
- * backend field and is out of scope for this frontend-only slice.
+ * L4 (review round): `SalesOrderLineLink` now carries `purchase_order_id` for both `po` and
+ * `spo` kinds where the backend knows it, so the Document cell is a link to
+ * `/scm/purchase-orders/{id}` when present - plain text otherwise, same fallback the PO
+ * detail's own placements lightbox (`PoLinePlacementsBody`) uses.
  */
 
 function textCell(value: string | null | undefined) {
@@ -40,7 +42,17 @@ export function SoLineLinksBody({ links }: { links: SalesOrderLineLink[] }) {
         cell: ({ row }) => {
           const link = row.original;
           const withLabel = link.line_label ? `${link.document} ${link.line_label}` : link.document;
-          return textCell(withLabel);
+          if (!withLabel) return textCell(withLabel);
+          if (!link.purchase_order_id) return textCell(withLabel);
+          return (
+            <Link
+              href={`/scm/purchase-orders/${link.purchase_order_id}`}
+              className="font-medium text-primary hover:underline"
+              title={`Open ${withLabel}`}
+            >
+              {withLabel}
+            </Link>
+          );
         },
         size: 170,
       },

@@ -64,8 +64,8 @@ import {
   useDownloadSpoWorksheet,
   useSpoSuggestion,
 } from '@/app/(protected)/scm/hooks/useFulfilment';
-import { fmtDate } from '@/app/(protected)/scm/lib/format';
 import { purchaseOrderStatusPill } from '@/app/(protected)/scm/lib/purchaseOrderStatus';
+import { formatDateInMalaysia } from '@/lib/helpers';
 import type {
   SpoConfirmLine,
   SpoCoverageLine,
@@ -730,7 +730,13 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
       {
         id: 'created_at',
         header: 'Created',
-        cell: ({ row }) => fmtDate(row.original.created_at),
+        // F2 (review round): `created_at` is a naive UTC ISO string - `fmtDate`'s
+        // `new Date(iso)` + `toLocaleDateString` reads it in the BROWSER's own timezone,
+        // which prints the wrong civil date for anyone not on UTC. Malaysia is the one
+        // timezone this product runs in, so `formatDateInMalaysia` is the correct read
+        // everywhere else this column's own sibling dates are shown.
+        cell: ({ row }) =>
+          row.original.created_at ? formatDateInMalaysia(row.original.created_at) : EM_DASH,
         size: 110,
         enableSorting: false,
       },

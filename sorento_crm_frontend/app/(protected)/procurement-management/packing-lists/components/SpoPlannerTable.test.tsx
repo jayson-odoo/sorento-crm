@@ -3,8 +3,9 @@
  * amendment, captain live case 21 Aug): the AlertDialog names the SPO numbers and count
  * per ADR-PRODUCT-STANDARDS, the delete actually fires the DELETE route, and a self-heal
  * note (a stale link cleaned up on read) shows as an informational banner rather than a
- * toast. The confirm-table (non-converted) path is exercised by `CreateSpoPanel.test.tsx`'s
- * older sibling; this file covers what changed on `SpoPlannerTable` itself.
+ * toast. The confirm-table (non-converted) path was exercised by `CreateSpoPanel.test.tsx`'s
+ * older sibling before that file was deleted (F5, review round 2: `CreateSpoPanel.tsx` was
+ * dead, imported nowhere); this file covers what changed on `SpoPlannerTable` itself.
  *
  * A note on the query style here: a `findBy*` result is never used directly -
  * the find is awaited, then the SAME query is repeated with `getBy*`, and that
@@ -107,7 +108,11 @@ const existingSpos = () => [
     supplier_name: 'Kailu',
     line_count: 1,
     total_qty: 40,
-    created_at: '2026-08-30T00:00:00',
+    // F2 (review round): a naive UTC timestamp late enough in the day (17:30 UTC) that
+    // Malaysia's own civil date (UTC+8) is already the NEXT day - 31 Aug, not 30 Aug -
+    // so a browser-local read (which happens to be UTC in this test runner) would print
+    // the wrong date if the fix regressed.
+    created_at: '2026-08-30T17:30:00',
     status: 'active',
   },
 ];
@@ -127,6 +132,9 @@ describe('SpoPlannerTable - Created SPOs grid (R1)', () => {
     expect(link).toHaveAttribute('href', '/scm/purchase-orders/po-1');
     expect(screen.getByText('Kailu')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /download worksheet/i })).toBeInTheDocument();
+    // F2 (review round): 17:30 UTC on the 30th is already 31 Aug in Malaysia (UTC+8) -
+    // a browser-local read of the naive timestamp would print the 30th instead.
+    expect(screen.getByText('31/08/2026')).toBeInTheDocument();
   });
 
   it('Delete on a row opens the confirm naming that row\'s own SPO', async () => {
