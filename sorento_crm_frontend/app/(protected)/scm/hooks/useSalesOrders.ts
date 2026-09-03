@@ -88,26 +88,34 @@ export const salesOrdersPagerQuery = {
   },
 };
 
-export function useSalesOrders(params: UseSalesOrdersParams) {
+/**
+ * `enabled` lets the list hold the fetch until the user's remembered sort and filter have
+ * resolved, so the grid is fetched ONCE with the view already applied instead of fetching the
+ * defaults and immediately refetching (PLAN-listing-view-memory, AC-B3). Kept OUT of the query
+ * key - it is a fetch gate, not part of what was fetched.
+ */
+export function useSalesOrders(params: UseSalesOrdersParams & { enabled?: boolean }) {
+  const { enabled = true, ...listParams } = params;
   return useQuery({
-    queryKey: salesOrdersListQueryKey(params),
+    queryKey: salesOrdersListQueryKey(listParams),
     queryFn: () =>
       getSalesOrders({
-        pageIndex: params.pageIndex,
-        pageSize: params.pageSize,
-        sortField: params.sorting?.[0]?.id,
-        sortDir: params.sorting?.[0]?.desc ? 'desc' : 'asc',
-        searchQuery: params.searchQuery,
-        status: params.status,
-        priority: params.priority,
-        source: params.source ?? null,
-        dateFrom: params.dateFrom ?? null,
-        dateTo: params.dateTo ?? null,
-        customerId: params.customerId ?? null,
-        outstanding: params.outstanding ?? false,
-        salesAgentId: params.salesAgentId ?? null,
-        demandClass: params.demandClass ?? null,
+        pageIndex: listParams.pageIndex,
+        pageSize: listParams.pageSize,
+        sortField: listParams.sorting?.[0]?.id,
+        sortDir: listParams.sorting?.[0]?.desc ? 'desc' : 'asc',
+        searchQuery: listParams.searchQuery,
+        status: listParams.status,
+        priority: listParams.priority,
+        source: listParams.source ?? null,
+        dateFrom: listParams.dateFrom ?? null,
+        dateTo: listParams.dateTo ?? null,
+        customerId: listParams.customerId ?? null,
+        outstanding: listParams.outstanding ?? false,
+        salesAgentId: listParams.salesAgentId ?? null,
+        demandClass: listParams.demandClass ?? null,
       }),
+    enabled,
     staleTime: 10_000,
     refetchOnWindowFocus: false,
     retry: 1,
