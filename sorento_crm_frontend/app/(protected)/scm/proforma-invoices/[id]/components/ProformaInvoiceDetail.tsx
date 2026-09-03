@@ -231,6 +231,14 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
     successMessage: 'Match forgotten.',
     invalidateKeys: [['scm', 'proforma-invoices', 'detail', id]],
   });
+  // Destructured for the Lines grid's `columns` memo below: `run` is the only thing that
+  // memo calls, and it never changes reference (`useDeferredRowAction`'s own `useCallback`
+  // has an empty dep array). Depending on `matchForgetting` WHOLE ties every row's cells to
+  // `isPending`/`targetId`, which flip the moment ANY row's Forget starts, counts down or
+  // commits - a background pending-action watch settling while a product picker on a
+  // DIFFERENT row is open recomputed every column, remounted every row's `SearchableSelect`,
+  // and silently closed the open popover (reproduced in isolation, S2 tester).
+  const forgetMatch = matchForgetting.run;
 
   // The tab lives in the URL, not component state (S1, AC-A1-A4): reload, the record's own
   // prev/next pager, and pressing Edit all have to land back on the tab she was reading.
@@ -979,7 +987,7 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
                     className="h-6 px-1.5 text-2xs"
                     onClick={() =>
                       line.match_id &&
-                      matchForgetting.run({
+                      forgetMatch({
                         id: line.match_id,
                         subject: `${line.item_code} means ${line.product_code ?? 'this product'}`,
                       })
@@ -1032,7 +1040,8 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
         enableSorting: false,
       },
     ],
-    [data?.currency, editing, canAdjust, fetchProducts, matchForgetting, uomSelectOptions],
+    // `forgetMatch`, not `matchForgetting` - see the note where it is destructured above.
+    [data?.currency, editing, canAdjust, fetchProducts, forgetMatch, uomSelectOptions],
   );
 
   const table = useReactTable({

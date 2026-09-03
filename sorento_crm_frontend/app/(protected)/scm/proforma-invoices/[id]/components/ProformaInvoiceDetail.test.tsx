@@ -29,7 +29,7 @@ vi.mock('@/services/pendingActionService', () => ({
   getCurrentPendingAction: vi.fn().mockResolvedValue({ pending: null, last_outcome: null }),
 }));
 
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ProformaInvoiceDetail as ProformaInvoiceDetailData } from '../../../services/proformaInvoiceService';
 
@@ -98,13 +98,22 @@ vi.mock('@/app/(protected)/master-data-management/products/services/productServi
 }));
 
 // The master list (AC-B4), not free text - fed to every UoM cell's SearchableSelect.
+// `vi.hoisted` because the array has to exist before `vi.mock`'s own hoisting runs it: the
+// real `useUOMSelectQuery` is a `useQuery` with `staleTime: Infinity`, so `data` is the SAME
+// reference across renders once loaded - a fresh literal returned from the mock on every
+// call would fabricate an instability the real hook does not have, and cascade into the
+// Lines grid's `columns` memo recomputing (and remounting every row's `SearchableSelect`)
+// on every unrelated render.
+const { UOM_OPTIONS } = vi.hoisted(() => ({
+  UOM_OPTIONS: [
+    { id: 'u-pcs', uom_code: 'PCS', uom_name: 'Pieces' },
+    { id: 'u-box', uom_code: 'BOX', uom_name: 'Box' },
+    { id: 'u-set', uom_code: 'SET', uom_name: 'Set' },
+  ],
+}));
 vi.mock('@/app/(protected)/master-data-management/shared/hooks/use-uom-select-query', () => ({
   useUOMSelectQuery: () => ({
-    data: [
-      { id: 'u-pcs', uom_code: 'PCS', uom_name: 'Pieces' },
-      { id: 'u-box', uom_code: 'BOX', uom_name: 'Box' },
-      { id: 'u-set', uom_code: 'SET', uom_name: 'Set' },
-    ],
+    data: UOM_OPTIONS,
     isLoading: false,
   }),
 }));
@@ -331,24 +340,6 @@ beforeEach(() => {
  *  UoM, and only the UoM select carries its own accessible name. */
 function lineRow(itemCodeAriaLabel: string): HTMLElement {
   return screen.getByLabelText(itemCodeAriaLabel).closest('tr') as HTMLElement;
-}
-
-/**
- * Flushes the microtask the record's own background watch queries settle on (the delete
- * pending-action check `useDeferredAction` mounts unconditionally, `watchFromMount: true`).
- *
- * The Lines grid's `columns` memo is keyed in part on `useDeferredRowAction`'s returned
- * object, a fresh reference every render - so if that settle lands WHILE a product picker's
- * own async fetch is in flight, the row's cells recompute mid-flight and the popover that
- * was opening is torn down with it (reproduced in isolation: an unmemoized `columns` plus
- * an unrelated parent re-render loses an in-flight `SearchableSelect` popover every time).
- * Called once, right after a line's row is on screen and before its picker opens, so that
- * settle has already happened and cannot race the pick.
- */
-async function settleBackgroundQueries(): Promise<void> {
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 20));
-  });
 }
 
 describe('ProformaInvoiceDetail - loading / error / data states', () => {
@@ -1169,7 +1160,6 @@ describe('S2 - the Product select carries a matched line through edit, and UoM c
     renderDetail();
     beginEdit();
     openTab('Lines');
-    await settleBackgroundQueries();
 
     const productCombo = within(lineRow('Item code for line 1')).getAllByRole('combobox')[0];
     fireEvent.click(productCombo);
@@ -1225,10 +1215,8 @@ describe('S2 - the Product select carries a matched line through edit, and UoM c
     renderDetail();
     beginEdit();
     openTab('Lines');
-    await settleBackgroundQueries();
 
     fireEvent.click(screen.getByRole('button', { name: /add line/i }));
-    await settleBackgroundQueries();
     const productCombo = within(lineRow('Item code for line 2')).getAllByRole('combobox')[0];
     fireEvent.click(productCombo);
     fireEvent.click(await screen.findByRole('option', { name: 'HAND-1 - Hand basin' }));
