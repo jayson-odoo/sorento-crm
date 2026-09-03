@@ -2752,6 +2752,128 @@ describe('FulfilmentBoardPanel: an order whose change is already applied is not 
 });
 
 /**
+ * D15: a board-wide "Save all suggested" button, left of the gear - every line the board is
+ * showing that a quick save could still touch, in one press, one toast.
+ */
+describe('FulfilmentBoardPanel: Save all suggested (D15)', () => {
+  function twoLines() {
+    return [
+      demand({ item_code: 'WESERP10B', line_no: 1 }),
+      demand({
+        item_code: 'WESERP20B',
+        line_no: 1,
+        sales_order_id: 'so-b',
+        so_number: 'SO398322',
+      }),
+    ];
+  }
+
+  it('is disabled at zero before there is a board to save', () => {
+    getPlanningBoard.mockResolvedValue(boardOf([]));
+    renderPanel(['SO403340']);
+
+    expect(
+      screen.getByRole('button', { name: 'Save all suggested (0)' }),
+    ).toBeDisabled();
+  });
+
+  it('counts every eligible line across the board, not just what is on screen', async () => {
+    getPlanningBoard.mockResolvedValue(boardOf(twoLines()));
+    renderPanel(['SO403340', 'SO398322']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    expect(
+      screen.getByRole('button', { name: 'Save all suggested (2)' }),
+    ).not.toBeDisabled();
+  });
+
+  it('drops a line from the count once a product search hides it', async () => {
+    getPlanningBoard.mockResolvedValue(boardOf(twoLines()));
+    renderPanel(['SO403340', 'SO398322']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    fireEvent.change(
+      screen.getByPlaceholderText('Search sales order, customer, project or product'),
+      { target: { value: 'WESERP10B' } },
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Save all suggested (1)' }),
+      ).toBeInTheDocument(),
+    );
+  });
+
+  it('saves every eligible line quietly and toasts ONCE with the count, not once per line', async () => {
+    getPlanningBoard.mockResolvedValue(boardOf(twoLines()));
+    renderPanel(['SO403340', 'SO398322']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save all suggested (2)' }));
+
+    await waitFor(() => expect(putLineDraft).toHaveBeenCalledTimes(2));
+    expect(toast.success).toHaveBeenCalledTimes(1);
+    expect(toast.success).toHaveBeenCalledWith(
+      expect.stringMatching(/^2 lines saved · \d+ to confirm$/),
+    );
+    // Never the D14/S4 per-line wording - a bulk press is one action, one toast.
+    expect(toast.success).not.toHaveBeenCalledWith(expect.stringMatching(/^Line \d/));
+  });
+
+  it('both lines read Saved once the press settles', async () => {
+    getPlanningBoard.mockResolvedValue(boardOf(twoLines()));
+    renderPanel(['SO403340', 'SO398322']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save all suggested (2)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+
+    await waitFor(() =>
+      expect(screen.getAllByTestId(/^decision-pill-/)).toHaveLength(2),
+    );
+    for (const pill of screen.getAllByTestId(/^decision-pill-/)) {
+      expect(pill).toHaveTextContent('Saved');
+    }
+  });
+});
+
+/**
+ * D15: a grid cell's own undo icon, for a cell holding only drafted lines - `undoMany` deletes
+ * every one of them and toasts once, rather than the per-line Undo's silent single delete.
+ */
+describe('FulfilmentBoardPanel: a cell’s own Undo saves and toasts once (D15)', () => {
+  it('undoes every drafted line in the cell together, with one toast', async () => {
+    getPlanningBoard.mockResolvedValue(
+      boardOf([
+        demand({ line_no: 1, sales_order_id: 'so-a', so_number: 'SO403340' }),
+        demand({ line_no: 1, sales_order_id: 'so-b', so_number: 'SO398322' }),
+      ]),
+    );
+    renderPanel(['SO403340', 'SO398322']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    // Both lines share one product and one date, so they land in the same cell - drafting
+    // both through the board-wide button first.
+    fireEvent.click(screen.getByRole('button', { name: /^Save all suggested/ }));
+    await waitFor(() => expect(putLineDraft).toHaveBeenCalledTimes(2));
+    vi.mocked(toast.success).mockClear();
+
+    fireEvent.click(
+      screen.getByRole('button', { name: /^Undo WESERP10B/ }),
+    );
+
+    await waitFor(() => expect(deleteLineDraft).toHaveBeenCalledTimes(2));
+    expect(toast.success).toHaveBeenCalledTimes(1);
+    expect(toast.success).toHaveBeenCalledWith('2 lines back to suggested');
+
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+    for (const pill of screen.getAllByTestId(/^decision-pill-/)) {
+      expect(pill).toHaveTextContent('Suggested');
+    }
+  });
+});
+
+/**
  * The notice beside the button (R11): a line the planner composed is NAMED, capped at five,
  * and the lines nobody touched are counted - there can be hundreds of those, and a wall of
  * names is read by nobody.

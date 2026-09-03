@@ -8,6 +8,7 @@
  * load time.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { BoardSource } from '../types/fulfilmentPlanning.types';
 
 beforeEach(() => {
   vi.resetModules();
@@ -440,6 +441,24 @@ describe('fulfilmentPlanningService: saved decisions (S4)', () => {
         JSON.parse((apiFetch.mock.calls[0][1] as RequestInit).body as string),
       ),
     ).toEqual(['decision']);
+  });
+
+  it('carries `proposed` when given (D12, #573): the draft keeps the engine\'s suggestion at save time', async () => {
+    apiFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ decision: {}, saved_by: 'Eling', saved_at: '', stale: false }),
+    } as Response);
+    const { putLineDraft } = await loadService();
+    const proposed: BoardSource[] = [
+      { kind: 'reserve', qty: '3', location: 'BRW', reason: 'Reserve from BRW' },
+    ];
+
+    await putLineDraft(KEY, { verdict: 'approved' }, proposed);
+
+    expect(JSON.parse((apiFetch.mock.calls[0][1] as RequestInit).body as string)).toEqual({
+      decision: { verdict: 'approved' },
+      proposed,
+    });
   });
 
   it('reports a refused save through the shared extractor', async () => {

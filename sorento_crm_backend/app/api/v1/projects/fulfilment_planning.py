@@ -336,6 +336,13 @@ def save_line_draft(
             db,
             contribution_key,
             decision=payload.decision,
+            # D12 (#573): dumped here, not left as pydantic models, so the JSONB column
+            # stores exactly what a board GET already serialises a live `BoardSource` as.
+            proposed=(
+                [item.model_dump(mode="json") for item in payload.proposed]
+                if payload.proposed is not None
+                else None
+            ),
             actor_user_id=current_user["id"],
         )
         db.commit()

@@ -63,6 +63,35 @@ or a rule: those live once on the Policies page.
 - AC-2.9 SO407733, SO407735, SO414617 produce the same proposals as v7.1 (pool free 0).
 - AC-2.10 `test_ladder_v7_borrow.py` step-order test rewritten for the v8 order; goldens
   re-blessed with the diff listed in the PR body (count of rows changed per step).
+- AC-2.12 **Another group's free pile is capped by that group's own book (R-M) [BE][T].**
+  Two goldens in `tests/scm/front_planning_golden.py`, from the production cell (SO419417,
+  SRTWT7443, 3 Sep 2026):
+  - AC-2.12a **the lending group is short.** BB line 4 due 5 Oct at BRW-BB, own group offer
+    0, pool share 0 (BRW has nothing to spare), the IB group holding 2,237 against 2,684 of
+    open demand so its book is -447 (or -191 counting the assignment's own incoming), and a
+    later IB order lendable: the proposal is BORROW 4 from that later order (or Buy where
+    step 2's own rules refuse it), NEVER "Reserve 4 @ BRW-IB". The `use` options row reads
+    0 with "IB group is 447 short on its own book, nothing to spare".
+  - AC-2.12b **the lending group's book is whole.** The same cell with IB owing only 1,708
+    against 2,237: the take stands, and the component's sentence states the PILE and the
+    date it was measured on - "BRW-IB has 529 free outside the BB group at 5 Oct 2026, none
+    of it owed to a later IB order" - beside a Reserve of 4. The `use` row reads 4, whole,
+    chosen, labelled "Use IB group stock".
+  - Board side [BE]: `use_candidates_for` on an oversold other group returns NO row for
+    that group's bins at all - a bin with nothing to offer is omitted, the same way every
+    other exhausted candidate is - and names the group in the shorts map, which is what the
+    `use` option row prints; where the book is whole it returns the measured pile (529).
+  - AC-2.12c **one book, spent once across the whole walk (review fix, 3 Sep).** The cap is
+    a statement about the GROUP, so a board spends it once: the lending group's spare book
+    is seeded into the walk's own offer ledger and drawn down by what each unit composed, so
+    two units whose dates bring DIFFERENT bins of that group into view (one seeing the
+    floor, the next an arrival) share one budget instead of each being handed the whole of
+    it. Confirm carries the same bound through `_CapacityLedger` under the group's own key,
+    so a second line of one confirmation reserving at another bin of a group already lent to
+    its budget is refused with "<bin> now has 0 free for this line, and N was asked for".
+  - Pill [FE]: the Suggestion card and the summary cards read an other-group source as
+    "Use IB group stock" (water: "Use incoming from IB group"), and an own-group source as
+    "Use own location", unchanged.
 
 ## S3 reserve add-location
 
@@ -106,6 +135,37 @@ or a rule: those live once on the Policies page.
   decision as Decided `<composition>` with a Saved pill and Decision "Saved" naming the
   saver, until Confirm replaces it with Rev N. An approval with no typed composition prints
   Decided "-" beside the Saved pill - there is nothing to state beyond the pill itself.
+- AC-4.7 (D14, captain 3 Sep) Quick save as suggested and per-line Undo: (a) in the list
+  view, ticking N selectable rows (not already confirmed, not already saved) and pressing
+  "Save as suggested (N)" saves each ticked row with the engine's own composition - the same
+  object an untouched Save on that row would post - and every one of those rows now reads
+  Saved with the saver's own stamp; (b) in a cell's breakdown dialog, the SAME composition is
+  what "Approve selected" writes (D11: an approval carries the suggestion, so approving in
+  bulk and saving as suggested were one verb, and the dialog has one button for it), a row
+  already saved is not selectable there either ("Already saved. Undo it before saving it
+  again."), and a header-level "Save all suggested" saves every still-selectable line in the
+  cell with no selection needed, skipping a confirmed line and a line already saved; (c) Undo
+  on one saved row (list or dialog) returns that row alone to Suggested and deletes its
+  server draft, with no confirmation dialog - it is reversible with another quick save - and
+  every other row's own state is untouched.
+- AC-4.8 (D15, captain 3 Sep) One-click save without opening a row, on every surface, and a
+  board-wide button: (a) the list's Verdict column carries a save icon beside the pill on
+  every row a quick save could touch (not covered, not unplannable, not already drafted) -
+  pressing it saves that ONE line with the engine's own composition and toasts "Line N saved
+  · K to confirm", the same as today's Save-inside-the-row; the icon and the per-line Undo
+  never both show, since a drafted row is never quick-save-eligible; (b) a grid cell carries
+  its own small icon in its own corner, a save (posts every eligible line in the cell in one
+  press) when the cell holds at least one eligible line, or an Undo (posts every drafted line
+  in the cell) when it holds only drafted ones and nothing left to save - neither icon opens
+  the cell underneath it; (c) the board's action bar carries a "Save all suggested (N)"
+  button, left of the gear, where N is every quick-save-eligible line the board is CURRENTLY
+  SHOWING (product search and the decision-strip filter narrow it, a day-window scroll does
+  not hide a line from the count on the other views) - pressing it saves all N with one toast
+  ("N lines saved · M to confirm"), disabled at zero, no confirmation dialog since Undo all
+  reverses it; (d) every bulk quick save on this screen - the list's own "Save as suggested
+  (N)", the dialog's "Approve selected" and "Save all suggested", the cell icon and the
+  board-wide button - posts through the same quiet-bulk path and toasts EXACTLY ONCE for the
+  whole press, closing the D14 rough edge where a bulk quick save toasted once per line.
 
 ## S5 upload
 

@@ -1489,6 +1489,59 @@ describe('SalesOrderDetail - what has already been planned about a line', () => 
     expect(within(row).getByText('Rev 2')).toBeInTheDocument();
     expect(within(row).queryByText('Saved')).not.toBeInTheDocument();
   });
+
+  /**
+   * D12 (#573, captain 3 Sep): a saved draft keeps the engine's suggestion at save time,
+   * so the Suggested column shows it here the same way the board's list view does ("BRW 3
+   * (BRW)") until Confirm freezes a revision. Before this the column read `supply_proposed`
+   * off the confirmed revision alone, so a line saved but not yet confirmed read "-" beside
+   * a live composition.
+   */
+  it('shows a saved draft\'s suggested composition too, before any revision is confirmed', () => {
+    useSalesOrder.mockReturnValue({
+      data: planned({
+        decision_revision: null,
+        supply_proposed: [{ kind: 'reserve', qty: '3', source_location: 'BRW', rung: 'pool' }],
+        supply_decided: null,
+        supply_saved: [{ kind: 'reserve', qty: '3', source_location: 'BRW', rung: 'pool' }],
+        saved_by: 'Leena',
+        saved_at: '2026-09-03T02:30:00Z',
+        saved_stale: false,
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    const row = screen.getByText('SKU-PLANNED').closest('tr') as HTMLElement;
+    expect(within(row).getAllByText('BRW 3 (BRW)')).toHaveLength(2);
+  });
+
+  it('reads "-", not "Not recorded", for a saved line with no suggestion at all', () => {
+    useSalesOrder.mockReturnValue({
+      data: planned({
+        decision_revision: null,
+        supply_proposed: null,
+        supply_decided: null,
+        supply_saved: [{ kind: 'buy', qty: '3', source_location: null, rung: null }],
+        saved_by: 'Leena',
+        saved_at: '2026-09-03T02:30:00Z',
+        saved_stale: false,
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    const row = screen.getByText('SKU-PLANNED').closest('tr') as HTMLElement;
+    // The Decided column already reads the saved "Buy 3"; the Suggested column, with
+    // nothing recorded for it, reads a plain absence rather than "Not recorded" - that
+    // word is reserved for a CONFIRMED revision frozen before the proposal was recorded.
+    expect(within(row).getAllByText('-').length).toBeGreaterThanOrEqual(1);
+    expect(within(row).queryByText('Not recorded')).not.toBeInTheDocument();
+  });
 });
 
 /**

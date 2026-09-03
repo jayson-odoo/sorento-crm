@@ -18,6 +18,7 @@ import type {
   BoardBorrowComponent,
   BoardContribution,
   BoardDecision,
+  BoardDraft,
   BoardReserveComponent,
   BoardSource,
   BorrowCandidate,
@@ -395,6 +396,46 @@ export function decisionFromAmendDraft(draft: DraftLine, reason: string): BoardD
         ? draft.cited_document.trim() || undefined
         : undefined,
   };
+}
+
+/**
+ * The engine's own suggestion, posted exactly as `BoardLineDecisionPanel`'s Save button posts
+ * an untouched line (D14, the captain: a quick save from the list or the grid has to be
+ * byte-identical to opening the line and pressing Save with nothing changed).
+ *
+ * `verdict: 'approved'` and reason `''`, because nothing was amended - `decisionFromAmendDraft`
+ * on its own always writes `'amended'`, which is right for that function's other callers but
+ * wrong for an approval, so this wraps it the same way the panel's `save()` does.
+ *
+ * `suspected_system_issue` is deliberately NOT set: a quick save flags nothing, and every
+ * reader coerces an absent flag to false (`fulfilmentBoard.ts:370,427`,
+ * `BoardDecisionPill.tsx:115`), so writing `false` would only be a second way to say the
+ * same thing.
+ */
+export function suggestedDecisionFor(contribution: BoardContribution): BoardDecision {
+  return {
+    ...decisionFromAmendDraft(suggestionDraftFrom(contribution), ''),
+    verdict: 'approved',
+  };
+}
+
+/**
+ * Whether a quick save - a row's own icon, a cell's, the board-wide button, or any of the D14
+ * bulk verbs above it - has anything left to write for this line (D15).
+ *
+ * The one predicate the list view, the dialog's select column, "Save all suggested" and this
+ * round's new icons all wrote out by hand as the same three clauses: not COVERED (there is
+ * nothing to approve on a line an active decision already confirms - Amend is how that one
+ * changes), not UNPLANNABLE (its sales order names no fulfilment location, so there is no
+ * suggestion to save), and not already carrying a DRAFT of its own (a second quick save would
+ * overwrite an amendment with the engine's composition, which is the one thing a planner who
+ * amended it does not want - Undo is how a saved line comes back into play).
+ */
+export function canQuickSave(
+  contribution: BoardContribution,
+  draft: BoardDraft,
+): boolean {
+  return !contribution.covered && !contribution.unplannable && !draft[contribution.key];
 }
 
 /**

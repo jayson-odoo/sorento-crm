@@ -24,6 +24,7 @@ import type {
   BoardDecision,
   BoardGranularity,
   BoardLineDraft,
+  BoardSource,
   ConfirmManyBody,
   ConfirmSupplyBody,
   FulfilmentPlanningListParams,
@@ -423,8 +424,15 @@ export function useLineDraftMutation() {
   const queryClient = useQueryClient();
 
   const save = useMutation({
-    mutationFn: ({ key, decision }: { key: string; decision: BoardDecision }) =>
-      putLineDraft(key, decision),
+    mutationFn: ({
+      key,
+      decision,
+      proposed,
+    }: {
+      key: string;
+      decision: BoardDecision;
+      proposed?: BoardSource[];
+    }) => (proposed ? putLineDraft(key, decision, proposed) : putLineDraft(key, decision)),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [PLANNING_BOARD_KEY] });
     },
@@ -441,12 +449,18 @@ export function useLineDraftMutation() {
 
   return {
     /**
-     * NO `proposed` (S1, code review round 3): the server snapshots the LINE's own facts
-     * (outstanding qty, required date) at save time, never the proposal - see
-     * `putLineDraft`'s own note. The SAVER comes off the caller's own JWT and is never sent.
+     * `proposed` is OPTIONAL and NEVER what staleness is judged against (S1, code review
+     * round 3 still holds: the server snapshots the LINE's own facts at save time for
+     * that) - see `putLineDraft`'s own note. It exists so `FulfilmentBoardPanel.decide()`
+     * can pass the contribution's own `sources` (D12, #573), which the Sales Order page
+     * reads back on a saved-but-unconfirmed line. The SAVER comes off the caller's own
+     * JWT and is never sent.
      */
-    save: (key: string, decision: BoardDecision): Promise<BoardLineDraft> =>
-      save.mutateAsync({ key, decision }),
+    save: (
+      key: string,
+      decision: BoardDecision,
+      proposed?: BoardSource[],
+    ): Promise<BoardLineDraft> => save.mutateAsync({ key, decision, proposed }),
     remove: (key: string): Promise<void> => remove.mutateAsync(key),
   };
 }

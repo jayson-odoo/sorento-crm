@@ -316,11 +316,26 @@ export function BoardLineDecisionPanel({
    * panel opens on what was DECIDED, so resetting to that put the frozen numbers back and
    * called it the suggestion - SO404352 line 22 stayed at 8 / 16 under a pill reading
    * Approved. The reason goes with it, because an approval overrides nothing.
+   *
+   * D11: the approval carries the suggested COMPOSITION too - reserve, borrow, buy_qty,
+   * timely_spo_qty - not only the verdict. `saveLineDraft` writes this object verbatim to
+   * `so_supply_decision_drafts.decision`, and `_saved_components` (`sales_order_service.py`)
+   * reads it back for the sales order page's own "Decided" column; a bare
+   * `{verdict: 'approved'}` read there as no components at all, so an accepted suggestion
+   * showed Saved beside a blank Decided. `confirmLinesFor` (`fulfilmentBoard.ts`) already
+   * solves the identical problem at Confirm time through the same pair
+   * (`decisionFromAmendDraft(suggestionDraftFrom(contribution), '')`), so this is the same
+   * derivation one step earlier - a draft and its own confirmation cannot disagree about what
+   * an approval actually composed.
    */
   const save = async () => {
     let ok: boolean | void;
     if (approving) {
-      ok = await onDecide({ verdict: 'approved', suspected_system_issue: suspected });
+      ok = await onDecide({
+        ...decisionFromAmendDraft(suggestionDraftFrom(contribution), ''),
+        verdict: 'approved',
+        suspected_system_issue: suspected,
+      });
     } else {
       ok = await onDecide({
         ...decisionFromAmendDraft(draft, reason),
