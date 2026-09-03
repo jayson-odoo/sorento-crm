@@ -887,6 +887,22 @@ def test_the_grace_and_the_dead_line_are_read_off_the_arguments():
     assert [event.key for event in dead_sooner.uncounted] == ["spo:late"]
 
 
+def test_the_dead_line_itself_is_still_counted_not_uncounted():
+    """Review fix round nit: the boundary `days_late == overdue_dead_days` is pinned
+    explicitly beside the two arguments above. `counted_event` refuses only what is
+    STRICTLY past the dead line (`days_late > dead`), so a document exactly as late as the
+    dead line still counts - the 41-day-late document against a dead line of 41 lands, not
+    uncounted."""
+    exactly_dead_line = assign(
+        "p", as_of=R_O_AS_OF, tba_from=TBA, lead_days=90,
+        supply=[_late_spo(R_O_STATED)],
+        demand=[_line("waiting", "BRW-BB", date(2026, 9, 20), 50)],
+        overdue_grace_days=14, overdue_dead_days=41,
+    )
+    assert [event.key for event in exactly_dead_line.uncounted] == []
+    assert {e.key: e.at for e in exactly_dead_line.supply}["spo:late"] == R_O_ASSUMED
+
+
 def test_a_group_book_counts_a_late_alive_document_and_not_a_dead_one():
     """AC-O.4. `group_book_positions` follows the counted-events rule and nothing else, so
     the board's lending cap and the walk can never disagree about a late document."""

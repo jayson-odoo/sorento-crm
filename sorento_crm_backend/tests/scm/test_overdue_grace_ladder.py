@@ -124,6 +124,45 @@ def test_the_same_document_at_a_group_sibling_reads_the_same_sentence():
     assert _late_sentence(spo_number) in components[0]["reason"], components[0]["reason"]
 
 
+def test_a_bucket_of_two_late_documents_still_states_the_lateness():
+    """The captain's own cell, 3 September 2026: BRW-BB on SO419417 carried 725 units
+    across TWO late SPOs (24 Jul and 6 Aug) and `group_water_reason` printed ", arriving
+    17 Sep 2026" with no lateness clause at all, because the code that carried `late_days`
+    only fired when the bucket resolved to exactly one document (`single`).
+
+    Two late documents sharing one bucket are each late on their own, so the sentence must
+    still carry "days late, assumed by" even though neither is named - the same clause
+    `late_document_reason(None, days, arrival)` already produces for that case.
+    """
+    due = TODAY + timedelta(days=GRACE_DAYS + 3)
+    with blank_session() as db:
+        company_id, _eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own, _pool = sites["BRW"]
+        _policy(db)
+        # Neither document alone covers the line, so the walk draws from BOTH and the
+        # bucket resolves to two documents rather than `single`.
+        _spo_line(db, product, own, qty=30, arrives=STATED)
+        _spo_line(db, product, own, qty=40, arrives=STATED - timedelta(days=5))
+        db.commit()
+
+        order, _line, _cso, _cline = _seed_line(
+            db, company_id, project, product, own, qty_ordered="50",
+            required_date=due,
+        )
+        components = _components(ProjectSupplyService(db).proposal_for(order))
+
+    assert [(c["kind"], c["qty"], c["source_location"]) for c in components] == [
+        ("timely_spo", "50", own.warehouse_code)
+    ]
+    reason = components[0]["reason"]
+    # The MORE overdue of the two (46 days, from the 6 Aug document) - the bucket's
+    # lateness cannot be less than its worst document's.
+    assert reason.endswith(
+        f". the document is 46 days late, assumed by {date_text(ASSUMED)}"
+    ), reason
+
+
 # --------------------------------------------------------------------------- AC-O.2
 
 

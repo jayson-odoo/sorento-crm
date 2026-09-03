@@ -527,6 +527,82 @@ describe('StockDocumentsPanel: the group reading', () => {
     expect(short.className).toContain('text-destructive');
   });
 
+  it('a document counted as nothing does not move the balance, only labels itself (review fix round, S5)', async () => {
+    // The row still lists (that is what "Not counted" is FOR - a planner sees the document
+    // and why it does not help), but 5000 units the walk itself refused must not silently
+    // inflate the running pile: the balance after this row is exactly what the opening pile
+    // already was.
+    getStockDetail.mockResolvedValue({
+      ...groupPosition(),
+      sales_orders: [],
+      incoming: [
+        {
+          spo_number: 'SPO-2026/01-0002',
+          supplier_name: 'FOSHAN WORKS',
+          location: 'BRW-IB',
+          expected_date: '2026-01-05',
+          spo_qty: '5000',
+          overdue_days: 241,
+          assumed_date: null,
+          counted: false,
+        },
+      ],
+    });
+
+    renderPanel('IB');
+    const table = await screen.findByRole('table');
+
+    expect(table.textContent).toContain('Not counted');
+    const documents = rowsOf().map((cells) => [cells[1], cells[7]]);
+    expect(documents).toEqual([
+      ['-', '100'],
+      ['-', '120'],
+      ['SPO-2026/01-0002', '120'],
+    ]);
+  });
+
+  it('sorts a late-but-alive document at its ASSUMED date, not its stated one (review fix round, S5)', async () => {
+    // The document states 24 Jul - sorted on THAT date it opens the walk, ahead of the
+    // fresh SPO stated 1 Sep. It is the walk's ASSUMED arrival (17 Sep,
+    // `today + overdue_grace_days`) that decides when it actually lands, so the fresh SPO
+    // must come FIRST once the ledger sorts by the date each document really lands on.
+    getStockDetail.mockResolvedValue({
+      ...groupPosition(),
+      sales_orders: [],
+      incoming: [
+        {
+          spo_number: 'SPO-2026/07-0031',
+          supplier_name: 'FOSHAN WORKS',
+          location: 'BRW-IB',
+          expected_date: '2026-07-24',
+          spo_qty: '50',
+          overdue_days: 41,
+          assumed_date: '2026-09-17',
+          counted: true,
+        },
+        {
+          spo_number: 'SPO-2026/09-0002',
+          supplier_name: 'FOSHAN WORKS',
+          location: 'BRW-IB',
+          expected_date: '2026-09-01',
+          spo_qty: '20',
+        },
+      ],
+    });
+
+    renderPanel('IB');
+    const table = await screen.findByRole('table');
+
+    expect(table.textContent).toContain('assumed 17/09/2026, stated 24/07/2026');
+    const documents = rowsOf().map((cells) => [cells[1], cells[7]]);
+    expect(documents).toEqual([
+      ['-', '100'],
+      ['-', '120'],
+      ['SPO-2026/09-0002', '140'],
+      ['SPO-2026/07-0031', '190'],
+    ]);
+  });
+
   // NO LOCAL "My line" BUTTON HERE ANYMORE (retired, review round S3): it duplicated the
   // sticky toolbar's own "My line" (`BoardCellBreakdownDialog`), which already reaches this
   // exact row through `jumpTarget` and lands it WITH the flash this local button never had -

@@ -158,34 +158,41 @@ export function StockDocumentsPanel({
         ),
         is_document: false,
       })),
-      ...data.incoming.map((leg, index) => ({
-        key: `spo-${index}-${leg.spo_number}`,
-        doc_type: 'SPO' as const,
-        doc_no: leg.spo_number,
-        sales_order_id: null,
-        party: leg.supplier_name ?? null,
-        agent_code: null,
-        project_label: null,
-        location: leg.location ?? null,
-        doc_date: null,
-        due_date: leg.expected_date ?? null,
-        overdue_days: leg.overdue_days ?? null,
-        assumed_date: leg.assumed_date ?? null,
-        counted: leg.counted !== false,
-        qty: leg.spo_qty,
-        delta: toMinor(leg.spo_qty),
-        balance: null,
-        line_id: null,
-        is_this_line: false,
-        is_donor: false,
-        // AC-3.4: the SPO the active suggestion named. Normalised on both sides - the
-        // engine's sentence always says "SPO ...", the drill's own number does not always.
-        is_document: Boolean(
-          documentInfo &&
-          normalizeSpoNumber(leg.spo_number) ===
-            normalizeSpoNumber(documentInfo.spoNumber),
-        ),
-      })),
+      ...data.incoming.map((leg, index) => {
+        // R-O, review fix round S5: a document the walk counts as nothing (past the dead
+        // line) still LISTS, labelled "Not counted" (`dateCellText`), but must not move
+        // the balance - it is the row that says "the walk gave you nothing here", and a
+        // delta from it would silently add supply the ladder itself refused.
+        const counted = leg.counted !== false;
+        return {
+          key: `spo-${index}-${leg.spo_number}`,
+          doc_type: 'SPO' as const,
+          doc_no: leg.spo_number,
+          sales_order_id: null,
+          party: leg.supplier_name ?? null,
+          agent_code: null,
+          project_label: null,
+          location: leg.location ?? null,
+          doc_date: null,
+          due_date: leg.expected_date ?? null,
+          overdue_days: leg.overdue_days ?? null,
+          assumed_date: leg.assumed_date ?? null,
+          counted,
+          qty: leg.spo_qty,
+          delta: counted ? toMinor(leg.spo_qty) : 0,
+          balance: null,
+          line_id: null,
+          is_this_line: false,
+          is_donor: false,
+          // AC-3.4: the SPO the active suggestion named. Normalised on both sides - the
+          // engine's sentence always says "SPO ...", the drill's own number does not always.
+          is_document: Boolean(
+            documentInfo &&
+            normalizeSpoNumber(leg.spo_number) ===
+              normalizeSpoNumber(documentInfo.spoNumber),
+          ),
+        };
+      }),
     ];
     if (!isGroup) return documents;
 
@@ -791,13 +798,18 @@ export function StockDocumentsPanel({
  * date it is wanted or lands on, supply before demand on a tie - the ordering
  * `supply_assignment` walks, so a container cleared in the morning covers a despatch due the
  * same day. A document with no date lists last: "not stated" is not "wanted immediately".
+ *
+ * A late-but-alive document sorts on its ASSUMED date (R-O, review fix round S5), never the
+ * stated one it is dated after: the walk and the drill-down both plan against `as_of + grace`,
+ * and a ledger ordered by the stated date would slot a document that is really landing in two
+ * weeks in among documents from months ago, well ahead of demand it cannot actually cover.
  */
 function compareByEngineDate(
   left: StockDetailRow,
   right: StockDetailRow,
 ): number {
-  const leftDate = left.due_date ?? '';
-  const rightDate = right.due_date ?? '';
+  const leftDate = left.assumed_date ?? left.due_date ?? '';
+  const rightDate = right.assumed_date ?? right.due_date ?? '';
   if (!leftDate !== !rightDate) return leftDate ? -1 : 1;
   if (leftDate !== rightDate) return leftDate < rightDate ? -1 : 1;
   const leftSupply = left.delta >= 0 ? 0 : 1;

@@ -55,8 +55,8 @@ reads the same answer so the board and the view can never disagree about what is
    line will need. Their whole quantity is debt, in their own bucket. Unlocated is tested
    FIRST: no location is a fact about what can be done, and it holds whatever the date says.
 5. **An overdue document counts as supply after a GRACE PERIOD** (R-O, 3 Sep 2026,
-   superseding R31). A document whose arrival has passed with nothing received is still
-   owed - the captain, on SO419417: "Available for Project" at BRW read 355 off 725 SPO
+   superseding R31). A document whose arrival has passed is still owed on its outstanding
+   balance - the captain, on SO419417: "Available for Project" at BRW read 355 off 725 SPO
    units dated 24 July and 6 August while the ladder lent 4 off the 11 on the floor, and
    the display was the honest one. So a late document counts as supply landing on
    `as_of + overdue_grace_days` (policy, `scm.priority_policy`, default 14): a line due
@@ -77,7 +77,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from dataclasses import replace as dataclass_replace
-from datetime import date
+from datetime import date, timedelta
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from app.services.scm.coverage_timeline import QTY_PRECISION
@@ -370,8 +370,8 @@ def counted_event(
     * on hand is held NOW, whatever date the caller stamped it with;
     * an UNDATED document cannot be placed on the axis at all, so it counts as nothing;
     * a document dated on or after `as_of` counts as itself;
-    * a document whose arrival has passed with nothing received counts as supply landing
-      on `as_of + overdue_grace_days` - the ASSUMED date, which is what it carries from
+    * a document whose arrival has passed counts as supply on its outstanding balance,
+      landing on `as_of + overdue_grace_days` - the ASSUMED date, which is what it carries from
       here on, with the date the paperwork states kept beside it (`stated_at`) and the
       lateness counted for the sentence (`days_late`);
     * unless it is later than `overdue_dead_days`, when it counts as nothing (R31 kept for
@@ -385,8 +385,6 @@ def counted_event(
         return None
     if event.at >= as_of:
         return event
-    from datetime import timedelta
-
     grace = max(
         int(
             DEFAULT_OVERDUE_GRACE_DAYS
@@ -501,10 +499,12 @@ def assign(
             left[hold.supply_key] -= take
             event = events[hold.supply_key]
         elif hold.supply_key in uncounted_by_key:
-            # An OVERDUE document somebody has already been promised. The promise stands
+            # A DEAD document (R-O) somebody has already been promised - `uncounted_by_key`
+            # holds only what `counted_event` refused outright, past `overdue_dead_days`, a
+            # late-but-alive document having already been counted above. The promise stands
             # (the line reads `pinned`) and the drill names the order the document is
-            # placed against - but the document is still not supply (R31), so it adds
-            # nothing to the month. Chasing it is the action the red cell is asking for.
+            # placed against - but the document is still not supply, so it adds nothing to
+            # the month. Chasing it is the action the red cell is asking for.
             take = min(float(hold.qty), state.remaining)
             if take <= EPSILON:
                 continue

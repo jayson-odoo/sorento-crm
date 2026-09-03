@@ -50,8 +50,10 @@ All goldens are `_v8_inputs` fixtures in `tests/scm/front_planning_golden.py`, f
   100 into BRW-BB dated 24 Jul, nothing received. A line of 50 due 20 Sep at BRW-BB with 0 on
   hand composes incoming 50, arrival 17 Sep, sentence "SPO <no> is 41 days late, assumed by
   17 Sep 2026".
-- AC-O.2 [DONE] (line due inside the grace gets nothing from it). Same document, line due 10 Sep:
-  the document is not offered; the walk continues (borrow / buy).
+- AC-O.2 [DONE] (line due inside the grace gets nothing from question 1, but step 3 still takes it
+  whole). Same document, line due 10 Sep: question 1 offers none of it (the assumed date is after
+  the line's own), and the walk continues to step 3, which takes the same document whole under
+  R32 - it still beats buying - dated by the assumed arrival.
 - AC-O.3 [DONE] (dead document counts as nothing). Same document dated 1 May 2026 (125 days late,
   dead > 90): not supply, exactly as R31, and its row on the Stock tab reads "not counted".
 - AC-O.4 [DONE] (group book, R-M). `group_book_positions` counts a late-alive document as supply and

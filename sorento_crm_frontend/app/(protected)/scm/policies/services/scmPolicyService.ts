@@ -73,7 +73,7 @@
  *
  *    R-O (3 Sep, migration 464) adds two more to the same row and the same route:
  *      + overdue_grace_days : int, 0-365, default 14. A document whose arrival has passed
- *          with nothing received counts as supply landing `today + this`.
+ *          counts as supply on its outstanding balance, landing `today + this`.
  *      + overdue_dead_days : int, 0-365, default 90. Past this much lateness it counts as
  *          nothing at all.
  *    Phase 1 (this file, pre-migration): the panel sends both on every save the same way it

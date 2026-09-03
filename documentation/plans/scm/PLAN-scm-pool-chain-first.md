@@ -23,7 +23,15 @@ ledgers. Tests: `tests/scm/test_overdue_grace_setting.py` (AC-O.5),
 `tests/scm/test_overdue_grace_ladder.py` (the compositions and the sentences),
 `tests/scm/test_stock_debt_routes.py` and `tests/test_fulfilment_board.py` (the ledger
 rows), plus vitest on the policy form and `StockDocumentsPanel`. AC-O.6 (browser evidence on
-SO419417) is still owed.
+SO419417) is still owed. FOUR pre-existing fixtures, written when every past arrival was
+uncounted (R31), were re-dated past `overdue_dead_days` so they keep stating the rule they
+were written for - the landing commit's own body undercounts them as three:
+`test_ac_s2_4b_a_dead_document_counts_as_nothing_and_is_still_listed`,
+`test_a_pin_on_a_dead_document_holds_the_line_without_counting_the_document` and
+`test_a_groups_book_position_counts_the_supply_the_assignment_counted` in
+`tests/scm/test_supply_assignment.py`, plus
+`test_a_dead_promise_is_still_inside_the_groups_net_and_still_draws_nothing` in
+`tests/scm/test_project_supply_service_ladder.py`.
 RULED 3 Sep 2026 (R-N + R-O, Q1 by on hand, grace 14 / dead 90). Supersedes R-L's trigger.
 
 ## Why

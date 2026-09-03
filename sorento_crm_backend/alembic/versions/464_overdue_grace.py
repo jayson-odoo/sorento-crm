@@ -7,8 +7,8 @@ units dated 24 July and 6 August sat unreceived. The display was right and the e
 ignoring a late document.
 
 `overdue_grace_days` (integer, not null, default 14) - a document whose arrival has passed
-with nothing received counts as supply landing on `today + this`, so a line due before that
-day still gets nothing from it.
+counts as supply on its outstanding balance, landing on `today + this`, so a line due before
+that day still gets nothing from it.
 
 `overdue_dead_days` (integer, not null, default 90) - past this much lateness the document
 counts as nothing at all, which is R31 kept for the dead.

@@ -2614,6 +2614,16 @@ class ProjectSupplyService:
                 # aggregate sentence still says the quantity and the arrival either way.
                 documents = entry.get("documents") or {}
                 single = next(iter(documents.items())) if len(documents) == 1 else None
+                # R-O: the BUCKET's lateness, not just a single document's - two late
+                # documents sharing one bucket (BRW-BB on SO419417, 24 Jul + 6 Aug) are
+                # each late on their own, so the sentence must still carry the clause even
+                # though `single` is None here. `late_document_reason(None, days, arrival)`
+                # already reads a None document as "the document".
+                bucket_late_days = (
+                    max((late_days.get(str(key), 0) for key in documents), default=0)
+                    if documents
+                    else 0
+                )
                 out.append(
                     {
                         "location": code,
@@ -2625,14 +2635,13 @@ class ProjectSupplyService:
                         ),
                         **({"group": entry["group"]} if entry.get("group") else {}),
                         **(
-                            {
-                                "supply_key": single[0],
-                                "supply_document": single[1],
-                                # R-O: only a bucket that IS one document can say how late
-                                # that document is, which is the same test `single` makes.
-                                "late_days": late_days.get(str(single[0]), 0),
-                            }
+                            {"supply_key": single[0], "supply_document": single[1]}
                             if single
+                            else {}
+                        ),
+                        **(
+                            {"late_days": bucket_late_days}
+                            if bucket_late_days > 0
                             else {}
                         ),
                     }

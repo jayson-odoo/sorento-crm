@@ -809,7 +809,7 @@ class StockDetailIncoming(BaseModel):
     #: and the assumed date travels beside it rather than instead of it.
     expected_date: Optional[date] = None
     spo_qty: str
-    #: Days late, when the promised arrival has passed with nothing received. The service
+    #: Days late, on the outstanding balance of a promised arrival that has passed. The service
     #: has always stated it and the panel has always rendered it; undeclared here, the
     #: response model dropped it on the way out, so every row read as fresh.
     overdue_days: Optional[int] = None

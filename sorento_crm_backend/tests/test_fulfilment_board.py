@@ -2917,6 +2917,38 @@ def test_the_drill_down_states_the_assumed_arrival_of_a_late_document():
     assert dead["counted"] is False
 
 
+def test_an_empty_settings_read_still_uses_the_walks_own_grace_and_dead_defaults():
+    """Review fix round, S4: `_fulfilment_settings()` returns `{}` on its own defensive
+    except (no policy row, or a mid-migration branch), and the ledger used to read that as
+    grace=0/dead=0 - a document 41 days late then failed `days_late > dead` (41 > 0) and
+    the row printed "Not counted" while the walk itself (which falls back to 14/90 the same
+    way `compute_overdue_event` does) still counted it as supply. The two disagreeing about
+    the same book is exactly what R-O exists to prevent.
+    """
+    from datetime import timedelta
+
+    today = date.today()
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        _stock(db, product, warehouse, on_hand=0)
+        _incoming(
+            db, product, warehouse, spo_number="ZZT-SPO-LATE", allocated=100,
+            received=0, arrives=today - timedelta(days=41),
+        )
+
+        service = _service(db)
+        service.supply.fulfilment_settings = lambda: {}
+        rows = {
+            row["spo_number"]: row
+            for row in service.stock_detail(str(product.id), str(warehouse.id))["incoming"]
+        }
+
+    late = rows["ZZT-SPO-LATE"]
+    assert late["counted"] is True, "the walk's own default grace/dead (14/90) still apply"
+    assert late["assumed_date"] == today + timedelta(days=14)
+
+
 def test_the_drill_down_total_is_the_same_number_the_cell_printed():
     """The list has to ADD UP to the strip, or the drill-down justifies nothing.
 

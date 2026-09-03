@@ -86,6 +86,7 @@ from app.services.project_supply_service import (
 )
 from app.services.scm import priority
 from app.services.scm import sales_agent_service
+from app.services.scm import supply_assignment
 from app.services.scm.history_sources import SPO_HISTORY_SOURCE
 from app.services.scm.planning_predicate import (
     OUTSIDE_FULFILMENT_PLANNING,
@@ -891,8 +892,27 @@ class FulfilmentBoardService:
         # policy row the walk itself reads, so the ledger and the ladder can never disagree
         # about which documents are still being counted on.
         settings = self.supply.fulfilment_settings()
-        grace = max(int(settings.get("overdue_grace_days") or 0), 0)
-        dead = max(int(settings.get("overdue_dead_days") or 0), 0)
+        # Same defaults `supply_assignment.compute_overdue_event` falls back to when the
+        # walk itself finds no policy row: `_fulfilment_settings()` returns `{}` on its own
+        # defensive except, and `or 0` here used to read that as grace=0/dead=0, which
+        # labelled every late-but-alive document "Not counted" while the walk (14/90) still
+        # counted it as supply - the ledger and the ladder disagreeing about the same book.
+        grace = max(
+            int(
+                settings.get("overdue_grace_days")
+                if settings.get("overdue_grace_days") is not None
+                else supply_assignment.DEFAULT_OVERDUE_GRACE_DAYS
+            ),
+            0,
+        )
+        dead = max(
+            int(
+                settings.get("overdue_dead_days")
+                if settings.get("overdue_dead_days") is not None
+                else supply_assignment.DEFAULT_OVERDUE_DEAD_DAYS
+            ),
+            0,
+        )
         today = date.today()
         assumed_arrival = today + timedelta(days=grace)
 
