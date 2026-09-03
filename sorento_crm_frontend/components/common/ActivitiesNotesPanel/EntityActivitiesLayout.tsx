@@ -153,7 +153,7 @@ export default function EntityActivitiesLayout({
         <Button
           variant="primary"
           size="icon"
-          className="fixed end-12 bottom-4 z-30 size-12 rounded-full shadow-xl bg-red-600 hover:bg-red-700 animate-pulse"
+          className="fixed end-12 bottom-4 z-30 size-12 rounded-full shadow-xl bg-destructive hover:bg-destructive/90"
           aria-label="Open activities & notes"
           onClick={() => setOpen(true)}
         >
@@ -166,7 +166,7 @@ export default function EntityActivitiesLayout({
         className={cn(
           'fixed top-0 right-0 z-30 h-full bg-background border-l shadow-xl flex flex-col',
           'w-full lg:w-[420px]',
-          'transition-transform duration-200 ease-out',
+          'transition-transform duration-(--duration-base) ease-(--ease-standard)',
           open ? 'translate-x-0' : 'translate-x-full',
         )}
         aria-hidden={!open}

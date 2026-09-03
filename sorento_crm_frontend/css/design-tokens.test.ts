@@ -16,6 +16,13 @@ import path from 'path';
 const root = path.resolve(__dirname, '..');
 const read = (rel: string) => fs.readFileSync(path.join(root, rel), 'utf8');
 
+/**
+ * A hard-coded transition duration: `duration-150` and `duration-[150ms]` alike.
+ * `duration-(--duration-fast)` is the token form and is what these tests want to
+ * see instead, so it deliberately does not match.
+ */
+const LITERAL_DURATION = /\bduration-(?:\d+\b|\[)/;
+
 const configCss = read('css/config.reui.css');
 const stylesCss = read('css/styles.css');
 
@@ -376,7 +383,7 @@ describe('S2-06 motion tokens', () => {
 
   it('leaves no literal transition duration in components/ui', () => {
     const offenders = uiFiles.filter(
-      (file) => !animationPeriodAllowlist.has(file) && /\bduration-\d+/.test(fs.readFileSync(path.join(uiDir, file), 'utf8')),
+      (file) => !animationPeriodAllowlist.has(file) && LITERAL_DURATION.test(fs.readFileSync(path.join(uiDir, file), 'utf8')),
     );
     expect(offenders).toEqual([]);
   });
@@ -395,8 +402,351 @@ describe('S2-06 motion tokens', () => {
     // the spring, it has no fixed duration to key per direction).
     const sheet = read('components/ui/sheet.tsx');
     expect(sheet).not.toMatch(/data-\[state=(open|closed)\]:duration-/);
-    expect(sheet).not.toMatch(/\bduration-\d+/);
+    expect(sheet).not.toMatch(LITERAL_DURATION);
     expect(sheet).toContain("from '@/lib/motion'");
     expect(sheet).toContain('surfaceTransition(');
+  });
+});
+
+/**
+ * M1-02 .. M1-04 - motion perimeter hygiene, widened from `components/ui`
+ * (S2-06 above) out to `app/**`, `components/**` and `css/**`. The audit that
+ * sized this slice found 12 `transition-all` sites and 10 literal `duration-N`
+ * classes outside `components/ui`; this is the guardrail that keeps both at
+ * zero (or explicitly, narrowly allowlisted) from here on.
+ *
+ * Same reasoning as the other inventory tests in this repo: these are source
+ * scans, not renders, because the property being asserted ("nothing in the
+ * whole tree does X") is not one a mounted component can speak for.
+ */
+describe('M1 motion perimeter hygiene', () => {
+  /**
+   * `app/components/layouts/demo2` through `demo10` are vendor Metronic shells
+   * with zero live routes - see the identical exclusion, and its justification,
+   * in `components/ui/a11y-guardrails.inventory.test.ts`. Scanning them here
+   * would force a "fix" on dead markup nothing in the app can reach; `demo1` (the
+   * layout `app/(protected)/layout.tsx` actually mounts) is NOT excluded.
+   */
+  const DEAD_LAYOUT_PREFIX = /^app\/components\/layouts\/demo(?:[2-9]|10)\//;
+
+  function sourceFiles(): string[] {
+    const out: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of fs.readdirSync(path.join(root, dir), { withFileTypes: true })) {
+        const rel = path.posix.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name === 'node_modules' || entry.name === '.next') continue;
+          walk(rel);
+        } else if (/\.(tsx?|css)$/.test(entry.name) && !entry.name.includes('.test.')) {
+          if (DEAD_LAYOUT_PREFIX.test(rel)) continue;
+          out.push(rel);
+        }
+      }
+    };
+    walk('app');
+    walk('components');
+    walk('css');
+    // `lib/motion.ts` is where the springs and the reduced-motion transition
+    // live, so a raw cubic-bezier or a hard-coded duration there is exactly the
+    // leak these scans exist to catch.
+    walk('lib');
+    return out;
+  }
+
+  const files = sourceFiles();
+
+  /**
+   * A comment MENTIONING a class token (the OTP caret note) must not read as the
+   * class itself. Blanks out comment bodies char-by-char rather than deleting
+   * them, so every line number below the comment stays what `grep`/the editor
+   * would report - a multi-line `/* ... *\/` collapsed by a plain `.replace(..., '')`
+   * shifts every later match's reported line by the comment's own height.
+   */
+  function stripBlockComments(src: string): string {
+    return src.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '));
+  }
+
+  /**
+   * An allowlist entry is a claim about ONE line. When the line moves, or the
+   * class it exempts leaves it, the entry stops describing anything and silently
+   * exempts whatever moved in - so a key that no longer matches its own matcher
+   * fails the same test its live siblings pass.
+   */
+  function staleAllowlistKeys(keys: string[], matches: (line: string) => boolean): string[] {
+    return keys.filter((key) => {
+      const at = key.lastIndexOf(':');
+      const file = key.slice(0, at);
+      if (!fs.existsSync(path.join(root, file))) return true;
+      const lines = stripBlockComments(read(file)).split('\n');
+      return !matches(lines[Number(key.slice(at + 1)) - 1] ?? '');
+    });
+  }
+
+  /**
+   * Every string literal in a source file, with the line its opening quote sits on.
+   *
+   * A class string is the only place a bare `transition` can be a Tailwind
+   * utility, so the M1-02 scan below needs literals, not lines. One pass over the
+   * characters rather than a per-line regex, because the two shapes that matter
+   * most both defeat a per-line one: a template literal opened by
+   * `` className={`... transition ${ `` closes on a LATER line (five of the
+   * offenders this guard exists for are exactly that), and a `//` comment can
+   * carry an apostrophe that would otherwise read as an opening quote.
+   *
+   * `${...}` interpolations are blanked (brace-balanced) so an expression inside
+   * one cannot donate tokens to the literal that holds it.
+   */
+  function stringLiterals(src: string): { text: string; line: number }[] {
+    const out: { text: string; line: number }[] = [];
+    let line = 1;
+    let i = 0;
+    while (i < src.length) {
+      const ch = src[i];
+      if (ch === '\n') {
+        line += 1;
+        i += 1;
+      } else if (ch === '/' && src[i + 1] === '/') {
+        while (i < src.length && src[i] !== '\n') i += 1;
+      } else if (ch === '/' && src[i + 1] === '*') {
+        i += 2;
+        while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) {
+          if (src[i] === '\n') line += 1;
+          i += 1;
+        }
+        i += 2;
+      } else if (ch === "'" || ch === '"' || ch === '`') {
+        const quote = ch;
+        const startLine = line;
+        let text = '';
+        i += 1;
+        while (i < src.length && src[i] !== quote) {
+          if (src[i] === '\\') {
+            i += 2;
+            text += ' ';
+          } else if (src[i] === '\n') {
+            line += 1;
+            text += '\n';
+            i += 1;
+          } else if (quote === '`' && src[i] === '$' && src[i + 1] === '{') {
+            const interpolationLine = line;
+            i += 1; // the `{` itself, so the brace count below starts at 1
+            const from = i + 1;
+            let depth = 0;
+            do {
+              if (src[i] === '{') depth += 1;
+              else if (src[i] === '}') depth -= 1;
+              else if (src[i] === '\n') line += 1;
+              i += 1;
+            } while (i < src.length && depth > 0);
+            // The expression is scanned in its own right: a class string can hide
+            // one level down, as `${interactive ? 'hover:bg-muted/70 transition' : ''}`.
+            for (const nested of stringLiterals(src.slice(from, i - 1))) {
+              out.push({ text: nested.text, line: interpolationLine + nested.line - 1 });
+            }
+            text += ' ';
+          } else {
+            text += src[i];
+            i += 1;
+          }
+        }
+        i += 1;
+        out.push({ text, line: startLine });
+      } else {
+        i += 1;
+      }
+    }
+    return out;
+  }
+
+  /**
+   * A whitespace-run token that looks like a Tailwind utility: lower-case head,
+   * then at least one of `-` `:` `/` `[` (`w-full`, `hover:bg-muted/70`,
+   * `-translate-y-1/2`, `text-2xs`, `active:scale-[0.97]`). Deliberately shallow -
+   * it only has to tell a class string apart from a sentence, and every sentence
+   * in this tree that contains the word "transition" ("Failed to create the
+   * transition", "Who can use this transition") carries no token of this shape.
+   */
+  const UTILITY_TOKEN = /^-?[a-z][a-z0-9.]*(?:[-:/[][^\s]*)+$/;
+
+  describe('M1-02 no transition-all, no bare `transition` shorthand', () => {
+    it('leaves zero transition-all sites (audit baseline: 12)', () => {
+      const offenders: string[] = [];
+      for (const file of files) {
+        const src = stripBlockComments(read(file));
+        src.split('\n').forEach((line, i) => {
+          if (/\btransition-all\b/.test(line) || /transition:\s*all\b/.test(line)) {
+            offenders.push(`${file}:${i + 1}`);
+          }
+        });
+      }
+      expect(offenders).toEqual([]);
+    });
+
+    it('leaves zero bare `transition` (multi-property shorthand) utility classes', () => {
+      // A bare `transition` is only a Tailwind utility, not the English word (a
+      // "status transition", a destructured `transition` from useSortable /
+      // lib/motion, a "Delete transition" aria-label), when it stands as its own
+      // token INSIDE A STRING LITERAL that also carries another Tailwind utility.
+      //
+      // The first cut of this guard gated on the same LINE also naming
+      // `duration-` or `ease-`, on the theory that every real class string pairs
+      // the two. It does not: a bare `transition` is exactly the site that
+      // inherits both from the theme and names neither, so that matcher fired on
+      // 0 lines while 19 bare `transition` utilities survived in `app/**`.
+      const offenders: string[] = [];
+      for (const file of files) {
+        for (const literal of stringLiterals(read(file))) {
+          const tokens = literal.text.split(/\s+/).filter(Boolean);
+          if (!tokens.includes('transition')) continue;
+          if (!tokens.some((t) => t !== 'transition' && UTILITY_TOKEN.test(t))) continue;
+          // A template literal can open on one line and carry the offending token
+          // on another, so report the token's line, not the quote's.
+          const at = literal.text.search(/(^|\s)transition(\s|$)/);
+          const ahead = literal.text.slice(0, Math.max(at, 0)).split('\n').length - 1;
+          offenders.push(`${file}:${literal.line + ahead}`);
+        }
+      }
+      expect(offenders).toEqual([]);
+    });
+  });
+
+  describe('M1-03 no literal duration-<N>, no ease-in on an entering element', () => {
+    /**
+     * Every entry here is a documented exception, not a miss: the OTP caret's
+     * blink PERIOD (not a transition), and the three countdown/panel bars M3
+     * converts to a `scaleX` transform on the tokens.
+     */
+    const DURATION_ALLOWLIST: Record<string, string> = {
+      'components/ui/input-otp.tsx:54': 'OTP caret blink PERIOD, not a transition duration',
+      'app/(protected)/sla-management/conversation-sla-tracking/components/TakeoverCountdown.tsx:85':
+        'M3 converts this bar to a scaleX transform on the tokens',
+      'components/common/DeferredActionButton.tsx:99':
+        'M3 converts this bar to a scaleX transform on the tokens',
+      'components/common/ActivitiesNotesPanel/EntityActivitiesLayout.tsx:144':
+        'M3 stops animating margin here; the literal duration is untouched by M1',
+    };
+
+    it('leaves zero literal duration-<N> classes outside the allowlist (audit baseline: 10)', () => {
+      expect(staleAllowlistKeys(Object.keys(DURATION_ALLOWLIST), (line) => LITERAL_DURATION.test(line))).toEqual([]);
+
+      const offenders: string[] = [];
+      for (const file of files) {
+        // css/** is out of scope for this assertion (M1-03 globs are app/** and
+        // components/**); css/** literal timings are covered by M1-02 and the
+        // ease-in check below instead.
+        if (!file.startsWith('app/') && !file.startsWith('components/')) continue;
+        const src = stripBlockComments(read(file));
+        src.split('\n').forEach((line, i) => {
+          if (LITERAL_DURATION.test(line)) {
+            const key = `${file}:${i + 1}`;
+            if (!DURATION_ALLOWLIST[key]) offenders.push(key);
+          }
+        });
+      }
+      expect(offenders).toEqual([]);
+    });
+
+    /**
+     * The two accepted alternating pulses - guide-spotlight and takeover-flash -
+     * repeat forever and never "enter", which is what the hard-fail in
+     * DESIGN-LANGUAGE.md section 3 actually bans.
+     *
+     * Everything else is banned FLAT, entering or not, and that is a choice
+     * rather than a shortcut in the matcher: `ease-in` accelerating out of rest
+     * is the one curve the house language has no use for, and deciding "is this
+     * element entering?" from source text is guesswork. An exit that genuinely
+     * wants it argues its case here, on its own line, the way these two did.
+     */
+    const EASE_IN_ALLOWLIST = new Set(['css/styles.css:49', 'css/styles.css:73']);
+
+    it('leaves zero ease-in/ease-in-out on an entering element outside the allowlist', () => {
+      expect(staleAllowlistKeys([...EASE_IN_ALLOWLIST], (line) => /\bease-in\b/.test(line))).toEqual([]);
+
+      const offenders: string[] = [];
+      for (const file of files) {
+        const src = stripBlockComments(read(file));
+        src.split('\n').forEach((line, i) => {
+          if (/\bease-in\b/.test(line)) {
+            const key = `${file}:${i + 1}`;
+            if (!EASE_IN_ALLOWLIST.has(key)) offenders.push(key);
+          }
+        });
+      }
+      expect(offenders).toEqual([]);
+    });
+  });
+
+  describe('M1-04 raw cubic-bezier stays in config.reui.css only', () => {
+    it('leaves zero raw cubic-bezier( outside css/config.reui.css', () => {
+      const offenders: string[] = [];
+      for (const file of files) {
+        if (file === 'css/config.reui.css') continue;
+        // A comment quoting the house curve, next to the token that replaced it,
+        // is documentation and not a second curve.
+        stripBlockComments(read(file))
+          .split('\n')
+          .forEach((line, i) => {
+            if (line.includes('cubic-bezier(')) offenders.push(`${file}:${i + 1}`);
+          });
+      }
+      expect(offenders).toEqual([]);
+    });
+  });
+
+  describe('M1-07 drawer overlay shares the one scrim', () => {
+    it('drawer.tsx overlay uses OVERLAY_CLASS_STATIC instead of its own bg-black/80', () => {
+      const drawer = read('components/ui/drawer.tsx');
+      expect(drawer).toContain('OVERLAY_CLASS_STATIC');
+      expect(drawer).not.toContain('bg-black/80');
+    });
+  });
+
+  describe('M1-01 the shared press token carries the house curve', () => {
+    it('PRESSED_CLASS names duration-fast and ease-standard', () => {
+      const primitiveClasses = read('components/ui/primitive-classes.ts');
+      expect(primitiveClasses).toContain('duration-(--duration-fast)');
+      expect(primitiveClasses).toContain('ease-(--ease-standard)');
+    });
+
+    it('@theme points the Tailwind transition-* utility defaults at the same tokens', () => {
+      expect(themeVars['--default-transition-timing-function']).toBe('var(--ease-standard)');
+      expect(themeVars['--default-transition-duration']).toBe('var(--duration-fast)');
+    });
+  });
+
+  /**
+   * One more widening, after every fix above: no `transition-[...]` naming a
+   * layout-affecting property (`width`, `height`, `margin*`, `padding*`,
+   * `inset*`) outside a narrow allowlist. Every entry is M3 work - the
+   * countdown/budget bars there become `scaleX` transforms instead. The three
+   * accordion/collapsible content sites never reach this list: their
+   * transition was DROPPED outright in M1-02 (their height comes from the
+   * animate-accordion and animate-collapsible keyframes, not a transition).
+   */
+  describe('M1 no transition-[width|height|margin|padding|inset] outside M3', () => {
+    const PROPERTY_ALLOWLIST: Record<string, string> = {
+      'app/(protected)/sla-management/conversation-sla-tracking/components/TakeoverCountdown.tsx:85': 'M3',
+      'app/(protected)/scm/reorder/components/CashBudgetPanel.tsx:120': 'M3',
+      'components/common/ActivitiesNotesPanel/EntityActivitiesLayout.tsx:144': 'M3',
+      'components/common/DeferredActionButton.tsx:99': 'M3',
+    };
+    const LAYOUT_PROPERTY =
+      /transition-\[[^\]]*\b(width|height|margin(?:-[a-z]+)?|padding(?:-[a-z]+)?|inset(?:-[a-z]+)?)\b[^\]]*\]/;
+
+    it('leaves zero transition-[width|height|margin|padding|inset] outside the M3 allowlist', () => {
+      expect(staleAllowlistKeys(Object.keys(PROPERTY_ALLOWLIST), (line) => LAYOUT_PROPERTY.test(line))).toEqual([]);
+
+      const offenders: string[] = [];
+      for (const file of files) {
+        const src = stripBlockComments(read(file));
+        src.split('\n').forEach((line, i) => {
+          if (LAYOUT_PROPERTY.test(line)) {
+            const key = `${file}:${i + 1}`;
+            if (!PROPERTY_ALLOWLIST[key]) offenders.push(key);
+          }
+        });
+      }
+      expect(offenders).toEqual([]);
+    });
   });
 });

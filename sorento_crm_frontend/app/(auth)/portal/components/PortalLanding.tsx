@@ -730,7 +730,7 @@ function SubmissionCard({
       onMouseDown={startPress}
       onMouseUp={clearPress}
       onMouseLeave={clearPress}
-      className={`relative block rounded-lg border ${tintClass} px-3.5 py-3 pr-3 hover:brightness-95 active:brightness-90 transition select-none cursor-pointer`}
+      className={`relative block rounded-lg border ${tintClass} px-3.5 py-3 pr-3 hover:brightness-95 active:brightness-90 transition-[filter] select-none cursor-pointer`}
     >
       {/* Status badge anchored top-right; allows multi-word status to wrap
           onto two lines without colliding with the primary text. */}

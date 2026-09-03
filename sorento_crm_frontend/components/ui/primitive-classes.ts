@@ -42,10 +42,32 @@ export const OVERLAY_CLASS_STATIC =
  * Pressed feedback: the control answers on pointer DOWN, not on release.
  *
  * A 3% shrink is enough to read as a physical press at every control size, and
- * it is suppressed for anyone who asked for less motion.
+ * it is suppressed for anyone who asked for less motion. `duration-fast` and
+ * `ease-standard` are named explicitly (M1-01) rather than left to inherit the
+ * Tailwind default, even though `css/config.reui.css` now points that default
+ * at the same two tokens - a reader of just this file should not have to go
+ * looking for the theme to know what curve a press runs on.
  */
 export const PRESSED_CLASS =
   'transition-[transform,color,background-color,border-color,box-shadow] ' +
+  'duration-(--duration-fast) ease-(--ease-standard) ' +
+  'active:scale-[0.97] motion-reduce:active:scale-100';
+
+/**
+ * The same press cue for a KEYBOARD-NAVIGATED item: the shrink, nothing else.
+ *
+ * `CommandItem`, `ContextMenuItem` and `MenubarItem` move their highlight with
+ * the arrow keys. Put those colours on a transition and the highlight fades
+ * across 150ms as the selection travels, which is motion on a keyboard-initiated
+ * action - a hard-fail in DESIGN-LANGUAGE.md section 3. So the press cue keeps
+ * `transform` and the highlight stays instant.
+ *
+ * `DropdownMenuItem` is not on this list: it already carried `transition-colors`
+ * in its own base string before M1, so its colours were never instant, and it is
+ * the one of the four that is normally driven by a pointer.
+ */
+export const PRESSED_TRANSFORM_CLASS =
+  'transition-transform duration-(--duration-fast) ease-(--ease-standard) ' +
   'active:scale-[0.97] motion-reduce:active:scale-100';
 
 /**

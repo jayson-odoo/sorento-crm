@@ -119,7 +119,7 @@ function TimelinessCard({
       tabIndex={0}
       onClick={() => onSelect({ view, state: 'all' })}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect({ view, state: 'all' }); } }}
-      className={`cursor-pointer transition ${activeRing(isView)}`}
+      className={`cursor-pointer transition-shadow ${activeRing(isView)}`}
     >
       <CardContent className="py-4">
         <div className="flex items-baseline justify-between">
@@ -162,7 +162,7 @@ function StageCard({
       tabIndex={0}
       onClick={() => onSelect({ view, state: 'all' })}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect({ view, state: 'all' }); } }}
-      className={`cursor-pointer transition ${activeRing(isView)}`}
+      className={`cursor-pointer transition-shadow ${activeRing(isView)}`}
     >
       <CardContent className="py-4">
         <div className="flex items-center gap-2">

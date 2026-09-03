@@ -27,6 +27,7 @@ import {
   type AIAssistantConversationSummary,
   type AIAssistantMessage,
 } from '@/lib/aiAssistantChatApi';
+import { PRESSED_CLASS } from '@/components/ui/primitive-classes';
 import { getPageSnapshot } from '@/lib/aiPageSnapshot';
 import { useHasPermission } from '@/hooks/usePermissions';
 
@@ -447,7 +448,7 @@ export default function AIAssistantBubble() {
           data-testid="ai-assistant-tab"
           aria-label="Open AI assistant"
           aria-expanded={false}
-          className={`flex w-8 flex-col items-center justify-center gap-2 rounded-s-lg border border-e-0 border-primary/20 bg-primary py-3 text-primary-foreground shadow-lg transition-all hover:w-9 ${isSending ? 'animate-pulse' : ''}`}
+          className={`flex w-8 flex-col items-center justify-center gap-2 rounded-s-lg border border-e-0 border-primary/20 bg-primary py-3 text-primary-foreground shadow-lg hover:bg-primary/90 ${PRESSED_CLASS} ${isSending ? 'animate-pulse' : ''}`}
           onClick={() => setOpenPersisted(true)}
         >
           <Sparkles className="size-4 shrink-0" />

@@ -244,7 +244,7 @@ export function MultiPillInput({
                   role="option"
                   aria-selected={isActive}
                   className={
-                    'block w-full text-left px-3 py-2 text-sm transition ' +
+                    'block w-full text-left px-3 py-2 text-sm transition-colors ' +
                     (isActive
                       ? 'bg-accent text-accent-foreground'
                       : 'hover:bg-accent/60')

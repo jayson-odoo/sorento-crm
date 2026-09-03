@@ -1,8 +1,8 @@
 @layer components {
   /* Variables */
   .demo1 {
-    --sidebar-transition-duration: 0.3s;
-    --sidebar-transition-timing: ease;
+    --sidebar-transition-duration: var(--duration-base);
+    --sidebar-transition-timing: var(--ease-standard);
     --sidebar-width: 280px;
     --sidebar-width-collapse: 80px;
     --sidebar-default-width: 280px;

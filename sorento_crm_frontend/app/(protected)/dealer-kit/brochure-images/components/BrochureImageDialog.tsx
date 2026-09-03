@@ -93,7 +93,7 @@ export function BrochureImageDialog({
                   onClick={() => onChoose(row.productId, candidate.attachmentId, isChosen)}
                   aria-pressed={isChosen}
                   data-dk-bi-candidate={candidate.filename}
-                  className={`group flex flex-col gap-2 rounded-lg border p-2 text-start transition ${
+                  className={`group flex flex-col gap-2 rounded-lg border p-2 text-start transition-[border-color,box-shadow] ${
                     isChosen
                       ? 'border-primary ring-2 ring-primary/25'
                       : 'border-border hover:border-primary/50'
