@@ -127,14 +127,15 @@ export function UploadSessionRow({
                 {timeAgo(session.started_at)}
               </span>
             </div>
-            {/* A failed import's `job_error` can be a full Python traceback, which
-                as one unbroken line overflowed the drawer and pushed the row's
-                status icon off the edge (`summariseImportJob` returns `job_error`
-                verbatim). `truncate` keeps this to one line, `errorSummary` picks
-                just the exception - not the traceback header - and the full text
-                is still one hover away via `title`. */}
+            {/* N4 (fix round 5): `errorSummary` now strips the traceback down to just
+                the exception line, so there is no long unbroken line left to cut mid
+                word - `truncate` (one line, ellipsis) was doing that job for a
+                one-line RQ failure string, cutting a short sentence mid-timestamp.
+                `line-clamp-2 break-all` restores the earlier, pre-D-nit intent: wrap
+                onto two lines and only clip past that, with the full text still one
+                hover away via `title`. */}
             <div
-              className="text-xs text-muted-foreground mt-1 truncate"
+              className="text-xs text-muted-foreground mt-1 line-clamp-2 break-all"
               title={summary}
             >
               {errorSummary(summary)}

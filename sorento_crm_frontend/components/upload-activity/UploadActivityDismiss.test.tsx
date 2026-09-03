@@ -121,9 +121,11 @@ describe('upload activity badge dismissal', () => {
     const summary = await screen.findByText(RQ_ERROR);
     // A real production traceback overflowed the row and pushed the status icon
     // off the drawer's edge (`errorSummary` picks the last line; a single-line
-    // RQ failure string like this one passes through unchanged). `truncate`
-    // keeps the row to one line; the full text is still one hover away.
-    expect(summary.className).toContain('truncate');
+    // RQ failure string like this one passes through unchanged). `line-clamp-2
+    // break-all` (N4, fix round 5) wraps the row rather than cutting a short
+    // sentence mid-word; the full text is still one hover away.
+    expect(summary.className).toContain('line-clamp-2');
+    expect(summary.className).not.toContain('truncate');
     expect(summary.getAttribute('title')).toBe(RQ_ERROR);
   });
 });

@@ -42,11 +42,16 @@ function session(overrides: Partial<UploadActivitySession> = {}): UploadActivity
 }
 
 describe('UploadSessionRow - failed import with a traceback error', () => {
-  it('renders one truncated line whose text is the last line of the error', () => {
+  it('renders the last line of the error, clamped rather than cut mid-word (N4, fix round 5)', () => {
     render(<UploadSessionRow session={session()} />);
     const summaryEl = screen.getByText(EXCEPTION_LINE);
     expect(summaryEl.textContent).toBe(EXCEPTION_LINE);
-    expect(summaryEl.className).toContain('truncate');
+    // `errorSummary` already strips the traceback down to this one line, so a plain
+    // `truncate` (single line, ellipsis mid-word) is no longer needed to keep the row
+    // from overflowing - `line-clamp-2 break-all` wraps it instead.
+    expect(summaryEl.className).toContain('line-clamp-2');
+    expect(summaryEl.className).toContain('break-all');
+    expect(summaryEl.className).not.toContain('truncate');
   });
 
   it('never carries the raw traceback header in the visible text', () => {
