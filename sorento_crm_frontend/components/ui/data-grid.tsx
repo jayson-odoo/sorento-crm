@@ -79,6 +79,18 @@ export interface DataGridProps<TData extends object> {
    * from `usePendingEntityKeys()`.
    */
   rowPending?: (row: TData) => boolean;
+  /**
+   * Extra classes layered onto a row (S4, AC-D3): a picker opened from a schedule cell
+   * tints the rows whose date fell in the clicked week, so the click reads as "these rows"
+   * once the dialog opens.
+   */
+  rowClassName?: (row: TData) => string | undefined;
+  /**
+   * Extra DOM attributes for a row (S4, AC-D3) - `data-bucket-hit` is the first caller.
+   * Kept apart from `rowClassName` because a test (or a future reader) asserting the row's
+   * own IDENTITY should not have to assert a CSS class string to do it.
+   */
+  rowAttributes?: (row: TData) => Record<string, string | undefined>;
   isLoading?: boolean;
   loadingMode?: 'skeleton' | 'spinner';
   loadingMessage?: ReactNode | string;

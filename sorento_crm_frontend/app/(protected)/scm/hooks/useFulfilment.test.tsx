@@ -137,10 +137,10 @@ describe('useDeleteSpo', () => {
     });
     const { result } = renderHook(() => useDeleteSpo('ship-1'), { wrapper });
 
-    result.current.mutate();
+    result.current.mutate(undefined);
 
     await waitFor(() => expect(success).toHaveBeenCalled());
-    expect(deleteSpo).toHaveBeenCalledWith('ship-1');
+    expect(deleteSpo).toHaveBeenCalledWith('ship-1', undefined);
     expect(success).toHaveBeenCalledWith('Deleted SPO CRM-SPO-0001.');
   });
 
@@ -154,7 +154,7 @@ describe('useDeleteSpo', () => {
     });
     const { result } = renderHook(() => useDeleteSpo('ship-1'), { wrapper });
 
-    result.current.mutate();
+    result.current.mutate(undefined);
 
     await waitFor(() => expect(success).toHaveBeenCalled());
     expect(success).toHaveBeenCalledWith('Deleted 2 SPOs: CRM-SPO-0001, CRM-SPO-0002.');
@@ -166,7 +166,7 @@ describe('useDeleteSpo', () => {
     );
     const { result } = renderHook(() => useDeleteSpo('ship-1'), { wrapper });
 
-    result.current.mutate();
+    result.current.mutate(undefined);
 
     await waitFor(() =>
       expect(error).toHaveBeenCalledWith(

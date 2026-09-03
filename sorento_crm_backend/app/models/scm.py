@@ -1827,12 +1827,16 @@ class ShipmentLineSpoLink(Base, CompanyScopedMixin):
     table). A shipment line reached from a real packing-list upload with no PI behind it at
     all still gets a row here; the PI half of the trail is simply absent for it.
 
-    One row per shipment line "Create SPO" touched - matched (points at the new SPO
-    line) or skipped, with `unmatched_reason` naming why (already covered by an open PO,
-    covered by stock, no supplier on the line, or simply left unticked). Existence of ANY
-    row for a shipment is what makes a second "Create SPO" on it refused rather than
-    silently doubling what the office is asked to key into AutoCount - the same idempotency
-    shape `ProformaInvoiceShipmentLink` uses for the PI convert.
+    One row per shipment line PER "Create SPO" run that touched it - matched (points at
+    the new SPO line) or skipped, with `unmatched_reason` naming why (no remainder left to
+    pull, no supplier on the line, or simply left unticked). A shipment line can carry
+    SEVERAL matched rows over its life (R1, `PLAN-scm-spo-planner-feedback-3sep.md`: "many
+    SPOs per container") - one Create SPO run can leave a remainder for a later run to
+    convert, and each run that matches the line writes its own row rather than replacing
+    the one before it. `inbound_shipment_line_id` therefore carries a plain (non-unique)
+    index (migration 469 dropped the UNIQUE one migration 406 first wrote, when one row per
+    line, ever, was still the rule) - a line's total already-SPO'd quantity is the SUM of
+    every matched row's own PO line `qty_ordered`, read by `spo_conversion_service`.
     """
     __tablename__ = "shipment_line_spo_link"
 
@@ -1863,8 +1867,10 @@ class ShipmentLineSpoLink(Base, CompanyScopedMixin):
         Index("ix_scm_shipment_spo_link_po", "purchase_order_id"),
         # The FK check when a purchase order line is deleted (see OrderLinkClaim).
         Index("ix_scm_shipment_spo_link_po_line", "purchase_order_line_id"),
-        # One conversion outcome per shipment line, ever - what makes a second "Create SPO"
-        # attempt on an already-converted shipment detectable rather than a silent duplicate.
-        Index("uq_scm_shipment_spo_link_line", "inbound_shipment_line_id", unique=True),
+        # One conversion OUTCOME per shipment line per Create SPO run - NOT unique (R1,
+        # migration 469 dropped the unique index migration 406 first wrote): a line can
+        # carry several matched rows across several runs once a remainder is convertible
+        # again. Kept as a plain index since every reader still filters/aggregates by it.
+        Index("ix_scm_shipment_spo_link_line", "inbound_shipment_line_id"),
         {"schema": "scm"},
     )

@@ -795,6 +795,7 @@ def test_the_sales_order_detail_states_where_each_lines_buy_sits(world):
     one does and holds no link: "nobody was told" and "told, nothing linked" are different
     answers and the column prints each in its own words."""
     from app.models.order import SalesOrder
+    from app.models.procurement import PurchaseOrder
     from app.services.scm.sales_order_service import SalesOrderService
 
     orders = _two_purchase_orders(world)
@@ -851,6 +852,11 @@ def test_the_sales_order_detail_states_where_each_lines_buy_sits(world):
 
     order = world.db.query(SalesOrder).filter(SalesOrder.id == core_so).first()
     body = SalesOrderService(world.db).serialize(order, line_planning=True)
+    april_po_id = str(
+        world.db.query(PurchaseOrder.id)
+        .filter(PurchaseOrder.po_number == "202604-S0083")
+        .scalar()
+    )
 
     linked = body["lines"][0]["linked_to"]
     assert linked == [
@@ -858,6 +864,8 @@ def test_the_sales_order_detail_states_where_each_lines_buy_sits(world):
             "kind": "po",
             "document": "202604-S0083",
             "line_label": "L1",
+            # L4 (review round): the header id, so `document` can be a link.
+            "purchase_order_id": april_po_id,
             "qty": "5",
             "location": "BRW-IB",
             # AC-P3-7: the document lands 2026-08-19 and the line wants it 2026-09-01, so

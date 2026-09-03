@@ -1029,17 +1029,21 @@ def spo_suggestion(
     _user: dict = Depends(_READ),
     db: Session = Depends(get_db),
 ):
-    """The SPO planner table: per shipment line, what an open PO PULLS this SPO up to - never
-    a deduction (doctrine correction, `spo_conversion_service`'s module docstring, "fifth
-    amendment") - and why a line cannot convert (no supplier, or nothing open to pull from at
-    all). Also carries `po_takes` (the earliest-first per-PO breakdown behind `po_covered_qty`,
+    """The SPO planner table: per shipment line, what an open PO PULLS this SPO up to as the
+    DEFAULT the input starts at, never a cap (doctrine correction, `spo_conversion_service`'s
+    module docstring, "fifth amendment", amended again by the sixth: the PO cap is removed) -
+    and why a line cannot convert (no supplier - a line with no open PO is still convertible,
+    written without a pull, `reason` names the shortfall as information only). Also carries
+    `po_takes` (the earliest-first per-PO breakdown behind `po_covered_qty`,
     each now naming its own PO date and supplier) and `location_options` +
     `suggested_warehouse_id` (candidate destination warehouses, ranked by Fulfilment Priority,
     each carrying `demand_lines` - the open SO demand this SPO would go on to serve there).
-    `already_converted: true` when this shipment already has SPOs (409 on the write below); the
-    caller shows the existing SPOs instead of the confirm screen. `self_heal_note` is non-null
-    only when this call actually cleaned up a stale link (a CRM SPO removed some other way than
-    the DELETE below) - see `spo_conversion_service._heal_stale_links`.
+    `already_converted` never flips any more (R1: a shipment can carry many SPOs); `existing_
+    spos` always lists every SPO this shipment has made and `lines` is always the REMAINDER
+    planner, each line's `remaining_qty` netting out what a prior run already took
+    (`cannot_convert` + a reason naming the SPO(s) once nothing is left). `self_heal_note` is
+    non-null only when this call actually cleaned up a stale link (a CRM SPO removed some
+    other way than the DELETE below) - see `spo_conversion_service._heal_stale_links`.
     """
     out = spo_conversion_service.suggest(db, shipment_id)
     db.commit()  # persists any self-heal cleanup (get_db closes without commit)
@@ -1055,8 +1059,9 @@ def create_spo(
 ):
     """One CRM SPO per supplier represented on this shipment, from the confirmed lines.
 
-    Refused (409) if this shipment already has one - re-running "Create SPO" must not
-    double what the office is asked to key into AutoCount.
+    A shipment can carry MANY SPOs (R1) - each line is judged against its own remainder, so
+    a partial run followed by another on the rest is normal, not a re-run. Refused (422,
+    `nothing_left`) only once no line has anything left to convert at all.
     """
     out = spo_conversion_service.create(
         db,
@@ -1072,16 +1077,21 @@ def create_spo(
 @router.delete("/inbound-shipments/{shipment_id}/spo")
 def delete_spo(
     shipment_id: str,
+    purchase_order_id: Optional[str] = Query(
+        None, description="Delete only this SPO; absent deletes every SPO this shipment made."
+    ),
     current_user: dict = Depends(_WRITE),
     db: Session = Depends(get_db),
 ):
-    """Unwind this shipment's SPO conversion - the Delete action on the planner's
-    already-converted state. The mirror of `create_spo` above: same permission, same
-    shipment scoping. Refused (409) if any header this shipment is linked to was not created
-    by Create SPO (`source_system != crm_spo`) - an AutoCount import is never touched here.
-    404 when this shipment has no SPO to delete (nothing ever converted, or a prior self-heal
-    already cleared it)."""
-    out = spo_conversion_service.unwind(db, shipment_id)
+    """Unwind this shipment's SPO conversion - the Delete action on the planner's Created
+    SPOs grid, per row (R1). The mirror of `create_spo` above: same permission, same
+    shipment scoping. `purchase_order_id` narrows the delete to that one SPO; absent deletes
+    every SPO this shipment ever made (the legacy shape). Refused (409) if any header
+    touched was not created by Create SPO (`source_system != crm_spo`) - an AutoCount import
+    is never touched here. 404 when this shipment has no SPO to delete (nothing ever
+    converted, a prior self-heal already cleared it, or `purchase_order_id` does not name one
+    of this shipment's own SPOs)."""
+    out = spo_conversion_service.unwind(db, shipment_id, purchase_order_id=purchase_order_id)
     db.commit()
     return out
 

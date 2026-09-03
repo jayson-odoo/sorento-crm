@@ -18,14 +18,18 @@ Postgres only, marker-prefixed, every test seeds its own chain (CI's database is
 from __future__ import annotations
 
 import json
+import threading
 import uuid
-from datetime import date
+from datetime import date, datetime
+from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
+from app.database import SessionLocal
 from app.models.inventory import Warehouse
+from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.procurement import (
     InboundShipment,
     InboundShipmentLine,
@@ -35,6 +39,17 @@ from app.models.procurement import (
     Supplier,
 )
 from app.models.product import Product, ProductCategory, UnitOfMeasure
+from app.models.project_so import (
+    INQUIRY_RAISED,
+    IV_ORDER_BACK,
+    OrderInquiry,
+    OrderInquiryLink,
+    OrderInquiryRow,
+    ProjectSalesOrder,
+    ProjectSalesOrderLine,
+    SO_STATUS_DRAFT,
+)
+from app.models.projects import Project
 from app.models.scm import ProformaInvoice, ProformaInvoiceLine, ProformaInvoiceShipmentLink, ShipmentLineSpoLink
 from app.services.error_handler import AppException
 from app.services.scm import spo_conversion_service as svc
@@ -199,17 +214,22 @@ def _line(out: dict, shipment_line_id: str) -> dict:
 # --------------------------------------------------------------------------- #
 
 
-def test_suggest_with_no_open_po_at_all_cannot_convert_and_names_why():
-    """DOCTRINE CORRECTION (captain, 21 Aug): "when there is PO, then we only can do SPO...
-    it is when we got PO, then we only can pull from the PO to form SPO." A packed line with
-    NO open PO behind it has nothing to pull from, so it cannot become an SPO line at all -
-    the opposite of the pre-correction behaviour, where an absent PO meant "ask for the full
-    packed qty". `packed_qty` still reports the PACKED figure (`quantity_shipped`, never the
-    PI's invoiced one - the Amendment's own correction, still true), just no PO exists here to
-    seed anything to pull."""
+def test_suggest_with_no_open_po_at_all_is_still_convertible_and_names_why():
+    """CAPTAIN'S RULING (3 Sep, sixth amendment): the PO cap is removed. A packed line with NO
+    open PO behind it is still convertible - `cannot_convert` is now true ONLY for a line with
+    no supplier at all - the reason it has nothing to pull from is kept as INFORMATION
+    (`reason == _REASON_NO_PO`), not a block. `packed_qty` still reports the PACKED figure
+    (`quantity_shipped`, never the PI's invoiced one - the Amendment's own correction, still
+    true). Location options and SO coverage are computed for this line too, since it can
+    still be confirmed (previously both were skipped for a `cannot_convert` line).
+
+    A warehouse is seeded so `_location_options`'s own fallback (`_default_warehouse`, "the
+    one counts-as-available warehouse") has something to find - CI's database starts empty,
+    unlike the local dev DB, which is a prod copy already carrying real warehouses."""
     with pg_session() as db:
         w = World(db)
         supplier = w.supplier()
+        w.warehouse()
         shipment, lines = w.shipment([("A", 120, supplier)])
 
         out = svc.suggest(db, str(shipment.id))
@@ -219,8 +239,10 @@ def test_suggest_with_no_open_po_at_all_cannot_convert_and_names_why():
         assert line["po_covered_qty"] == 0
         assert line["suggested_qty"] == 0
         assert line["no_po_qty"] == 120
-        assert line["cannot_convert"] is True
+        assert line["cannot_convert"] is False
         assert line["reason"] == svc._REASON_NO_PO
+        assert line["location_options"], "still convertible, so a destination is offered"
+        assert line["so_coverage"] is not None
 
 
 def test_an_open_po_line_to_the_same_supplier_forms_the_suggested_qty():
@@ -296,11 +318,73 @@ def test_a_po_ref_pin_still_matches_when_the_book_supplier_is_spelled_differentl
         assert line["cannot_convert"] is False
 
 
+def test_a_pin_to_an_exhausted_po_falls_back_to_the_product_match():
+    """F1 (review round, BLOCKER): PO-PIN is the STATED po_ref but has nothing open left
+    (100 ordered, 100 already received) - S5 stopped `_open_line_rows` dropping
+    `available == 0` lines, so `_candidate_lines_for_line` now RESOLVES the pin (it names a
+    real line) even though the cascade can take nothing from it. Before this fix
+    `matched_by` was set to `po_ref` whenever the pin resolved AT ALL, so the product-match
+    fallback below never ran and the line read `cannot_convert` with PO-OTHER (80 open, same
+    supplier and product) sitting right there.
+
+    NOTE: this test creates a PI row (`pi_po_ref`) the same way the pin tests above do, and
+    fails LOCALLY the same way they do on `UndefinedColumn: container_size_id` (the shared
+    dev DB's `create_all` convergence lags a migration - see `sorento_crm_backend/CLAUDE.md`).
+    It runs green on CI, which migrates to head.
+    `test_a_pin_to_an_exhausted_po_falls_back_to_the_product_match_without_a_pi_row` below
+    covers the identical fix without a PI row, so the fix itself is proven either way."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        pinned = w.po("PIN", supplier, [("A", 100, 100)])  # fully received, nothing open
+        w.po("OTHER", supplier, [("A", 80, 0)])
+        shipment, lines = w.shipment([("A", 80, supplier)])
+        w.pi_po_ref(lines[0], pinned.po_number)
+
+        out = svc.suggest(db, str(shipment.id))
+
+        line = _line(out, str(lines[0].id))
+        assert line["matched_by"] == "product"
+        assert line["po_covered_qty"] == 80
+        assert line["cannot_convert"] is False
+
+
+def test_a_pin_to_an_exhausted_po_falls_back_to_the_product_match_without_a_pi_row(monkeypatch):
+    """F1, direct: the same fix, with no `ProformaInvoice` row at all - avoids the
+    `container_size_id` dev-DB drift `test_a_pin_to_an_exhausted_po_falls_back_to_the_
+    product_match` above hits locally. `_po_refs_for_line` and `_pinned_po_candidates` are
+    monkeypatched to stand in for PI provenance and hand back the exhausted PO-PIN line
+    directly; PO-OTHER is a REAL open line to the same supplier/product so the fallback
+    cascade has something real to take from."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        pinned = w.po("PIN", supplier, [("A", 100, 100)])
+        w.po("OTHER", supplier, [("A", 80, 0)])
+        shipment, lines = w.shipment([("A", 80, supplier)])
+        ln = lines[0]
+
+        monkeypatch.setattr(
+            svc, "_po_refs_for_line", lambda db, shipment_line_id: {pinned.po_number}
+        )
+        monkeypatch.setattr(
+            svc,
+            "_pinned_po_candidates",
+            lambda db, po_number, supplier_id, product_id: [(pinned.lines[0], pinned, 0.0)],
+        )
+
+        matched_by, takes = svc._match_takes_for_line(db, ln, 80)
+
+        assert matched_by == "product"
+        assert sum(t[2] for t in takes) == 80
+
+
 def test_the_inference_path_still_refuses_a_cross_supplier_po_with_no_stated_ref():
     """No po_ref at all - the UN-pinned (product-match) path must still refuse a PO booked
     under a different supplier, or the pin fix above would silently widen inference too. With
-    nothing pullable at all, the line is `cannot_convert` (doctrine correction) rather than
-    offered at the full packed qty."""
+    nothing pullable at all, `po_covered_qty` stays 0 (doctrine correction). Sixth amendment
+    (captain's ruling, 3 Sep): a supplier is still on the line, so it is NOT `cannot_convert` -
+    only a missing supplier blocks conversion now."""
     with pg_session() as db:
         w = World(db)
         book_supplier = w.supplier("KAILU")
@@ -314,7 +398,8 @@ def test_the_inference_path_still_refuses_a_cross_supplier_po_with_no_stated_ref
         assert line["matched_by"] is None
         assert line["po_covered_qty"] == 0
         assert line["suggested_qty"] == 0
-        assert line["cannot_convert"] is True
+        assert line["cannot_convert"] is False
+        assert line["no_po_qty"] == 100
 
 
 def test_on_hand_and_incoming_spo_are_context_only_and_do_not_net_the_suggested_qty():
@@ -492,16 +577,53 @@ def test_create_marks_source_system_crm_spo_and_records_the_pull():
         assert float(source_line.qty_received) == 40, "the source PO line's own accounting must advance"
 
 
-def test_create_writes_shipment_line_spo_link_rows_for_matched_and_skipped_lines():
-    """DOCTRINE CORRECTION: line A now needs a seeded PO to be pullable at all - it is the
-    INCLUDED line here, so without one this create would produce nothing to match."""
+def test_create_writes_the_full_line_qty_when_the_po_only_covers_part_of_it():
+    """AC-I4 (captain's ruling, 3 Sep, sixth amendment): an open PO for 409 to the same
+    supplier, a shipment line packed 500, confirmed at 500. The SPO line is written at 500 (not
+    capped at what the PO covers); `source_ref.pulls` totals only the 409 the PO actually gave
+    up; the source PO line advances by exactly 409, never the full 500; `no_po_qty` on
+    `source_ref` records the uncovered 91."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        source_po = w.po("1", supplier, [("A", 409, 0)])
+        source_line = db.query(PurchaseOrderLine).filter(
+            PurchaseOrderLine.purchase_order_id == source_po.id
+        ).one()
+        shipment, lines = w.shipment([("A", 500, supplier)])
+
+        out = svc.create(db, str(shipment.id), _confirm_all(lines), actor="tester")
+
+        po_id = out["created_spos"][0]["purchase_order_id"]
+        po_line = db.query(PurchaseOrderLine).filter(
+            PurchaseOrderLine.purchase_order_id == po_id
+        ).one()
+        assert float(po_line.qty_ordered) == 500
+
+        recorded = json.loads(po_line.source_ref)
+        assert recorded["pulls"] == [{"po_line_id": str(source_line.id), "qty": 409.0}]
+        assert recorded["no_po_qty"] == 91.0
+        assert svc.parse_source_ref(po_line.source_ref)["pulls"] == [
+            (str(source_line.id), 409.0)
+        ]
+
+        db.refresh(source_line)
+        assert float(source_line.qty_received) == 409, "advances by only what it actually pulled"
+
+
+def test_create_writes_shipment_line_spo_link_rows_for_matched_selected_and_unpo_backed_lines():
+    """CAPTAIN'S RULING (3 Sep, sixth amendment): line C, ticked but backed by no open PO at
+    all, is NO LONGER a skip - it gets its own SPO line, matched (a link row with a
+    `purchase_order_line_id`, not an `unmatched_reason`), same as PO-backed line A. Only B
+    (deliberately left unticked) is skipped, and only for `_REASON_NOT_SELECTED` - the
+    "every line accounted for" contract is exercised on all three outcomes in one create."""
     with pg_session() as db:
         w = World(db)
         supplier = w.supplier()
         w.po("1", supplier, [("A", 40, 0)])
         # A: included, backed by an open PO. B: deliberately left unticked, so the "every
         # line accounted for" contract is exercised on both outcomes in one create. C: ALSO
-        # ticked (doctrine correction, new outcome) but backed by no PO at all - re-checked
+        # ticked, backed by no PO at all - convertible since the sixth amendment, re-checked
         # at write time, never trusted off `suggest`'s earlier read.
         shipment, lines = w.shipment([("A", 40, supplier), ("B", 10, supplier), ("C", 5, supplier)])
         include_ids = {str(lines[0].id), str(lines[2].id)}
@@ -522,28 +644,88 @@ def test_create_writes_shipment_line_spo_link_rows_for_matched_and_skipped_lines
         assert not_selected.purchase_order_line_id is None
         assert not_selected.unmatched_reason == svc._REASON_NOT_SELECTED
         no_po = links[str(lines[2].id)]
-        assert no_po.purchase_order_line_id is None
-        assert no_po.unmatched_reason == svc._REASON_NO_PO
+        assert no_po.purchase_order_line_id is not None
+        assert no_po.unmatched_reason is None
+        no_po_line = db.query(PurchaseOrderLine).filter(
+            PurchaseOrderLine.id == no_po.purchase_order_line_id
+        ).one()
+        assert float(no_po_line.qty_ordered) == 5
+        assert svc.parse_source_ref(no_po_line.source_ref)["pulls"] == []
 
 
-def test_create_refuses_when_nothing_ticked_has_a_po_behind_it():
-    """DOCTRINE CORRECTION, new outcome: a ticked line with no open PO behind it is skipped
-    at write time too (never trusted off `suggest`'s earlier read) - same shape as the
-    no-supplier skip, which already made a shipment with nothing groupable a 422 rather than
-    an empty success (`test_route_create_spo_all_unconvertible_no_supplier_is_422`)."""
+def test_f7_two_runs_leave_exactly_one_skip_row_per_still_skipped_line():
+    """F7 (review round): a skip-reason `shipment_line_spo_link` row (`purchase_order_id IS
+    NULL`) carries no PO to scope by, unlike a matched row, and used to be written fresh on
+    EVERY `create` run with no disposal of the old one - so a line skipped twice in a row
+    accumulated TWO skip rows, growing without bound on every re-run. B is deliberately left
+    unticked on BOTH runs; only ONE skip row for it must survive the second run. A, ticked a
+    little more each run, still gets a NEW matched row per run (R1's own "one row per run"
+    contract for matched rows, migration 469 - untouched by this fix)."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        w.po("1", supplier, [("A", 100, 0)])
+        shipment, lines = w.shipment([("A", 100, supplier), ("B", 10, supplier)])
+        a_id, b_id = str(lines[0].id), str(lines[1].id)
+
+        svc.create(
+            db, str(shipment.id),
+            [
+                {"shipment_line_id": a_id, "qty": 10, "include": True},
+                {"shipment_line_id": b_id, "qty": 0, "include": False},
+            ],
+            actor="tester",
+        )
+        svc.create(
+            db, str(shipment.id),
+            [
+                {"shipment_line_id": a_id, "qty": 20, "include": True},
+                {"shipment_line_id": b_id, "qty": 0, "include": False},
+            ],
+            actor="tester",
+        )
+
+        links = db.query(ShipmentLineSpoLink).filter(
+            ShipmentLineSpoLink.inbound_shipment_id == shipment.id
+        ).all()
+        a_links = [l for l in links if str(l.inbound_shipment_line_id) == a_id]
+        b_links = [l for l in links if str(l.inbound_shipment_line_id) == b_id]
+
+        assert len(a_links) == 2, "matched rows still accumulate one per run (R1)"
+        assert all(l.purchase_order_line_id is not None for l in a_links)
+
+        assert len(b_links) == 1, "the stale skip row from the first run must be gone"
+        assert b_links[0].unmatched_reason == svc._REASON_NOT_SELECTED
+
+
+def test_create_succeeds_with_no_po_behind_the_ticked_line():
+    """CAPTAIN'S RULING (3 Sep, sixth amendment, AC-I5): a ticked line with a supplier but no
+    open PO behind it is convertible - `create` writes it at `need` (the full packed qty, here)
+    with no pull. Was a 422 refusal pre-ruling (see the docs); the shape of that guard
+    (`test_route_create_spo_all_unconvertible_no_supplier_is_422`) is still true for the
+    no-supplier case, which this test does not touch."""
     with pg_session() as db:
         w = World(db)
         supplier = w.supplier()
         shipment, lines = w.shipment([("A", 40, supplier)])
 
-        with pytest.raises(AppException) as exc:
-            svc.create(db, str(shipment.id), _confirm_all(lines), actor="tester")
+        out = svc.create(db, str(shipment.id), _confirm_all(lines), actor="tester")
 
-        assert exc.value.status_code == 422
-        assert exc.value.detail["detail"] == "nothing_selected"
+        assert len(out["created_spos"]) == 1
+        assert not out["skipped"]
+        po_id = out["created_spos"][0]["purchase_order_id"]
+        po_line = db.query(PurchaseOrderLine).filter(
+            PurchaseOrderLine.purchase_order_id == po_id
+        ).one()
+        assert float(po_line.qty_ordered) == 40
+        assert svc.parse_source_ref(po_line.source_ref)["pulls"] == []
 
 
-def test_a_second_create_is_refused_409_naming_the_existing_spo():
+def test_a_second_create_after_full_conversion_is_422_nothing_left_not_409():
+    """R1 supersedes the old blanket-refusal contract: a fully converted shipment no longer
+    blocks `suggest` (which keeps reporting `already_converted: false` and lists the SPO in
+    `existing_spos`) and a second `create` with nothing left on any line is 422 `nothing_left`,
+    never a 409."""
     with pg_session() as db:
         w = World(db)
         supplier = w.supplier()
@@ -556,12 +738,352 @@ def test_a_second_create_is_refused_409_naming_the_existing_spo():
         with pytest.raises(AppException) as exc:
             svc.create(db, str(shipment.id), _confirm_all(lines), actor="tester")
 
-        assert exc.value.status_code == 409
-        assert first_number in str(exc.value.message if hasattr(exc.value, "message") else exc.value.detail or exc.value)
-        # suggest() must also report it as already converted, not re-offer a confirm screen.
+        assert exc.value.status_code == 422
+        assert exc.value.detail["detail"] == "nothing_left"
+        # suggest() must keep reporting `already_converted: false` (R1: it never flips any
+        # more) and still list the SPO already made.
         again = svc.suggest(db, str(shipment.id))
-        assert again["already_converted"] is True
+        assert again["already_converted"] is False
         assert again["existing_spos"][0]["po_number"] == first_number
+        assert _line(again, str(lines[0].id))["remaining_qty"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# R1 - many SPOs per container (AC-H1..H5)
+# --------------------------------------------------------------------------- #
+
+
+def test_suggest_after_a_partial_create_reports_the_remainder_and_the_existing_spo():
+    """AC-H1: `create` 40 of a line packed 100 (an open PO covers plenty); a second `suggest`
+    reports `already_converted: false`, one row in `existing_spos` naming the SPO with its
+    own line/qty/created/status figures, and the line's `remaining_qty` = packed minus what
+    that SPO already took - `packed_qty` stays the untouched physical fact."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        w.po("1", supplier, [("A", 200, 0)])
+        shipment, lines = w.shipment([("A", 100, supplier)])
+        line_id = str(lines[0].id)
+
+        created = svc.create(
+            db, str(shipment.id),
+            [{"shipment_line_id": line_id, "qty": 40, "include": True}],
+            actor="tester",
+        )
+        first_number = created["created_spos"][0]["po_number"]
+
+        out = svc.suggest(db, str(shipment.id))
+
+        assert out["already_converted"] is False
+        assert len(out["existing_spos"]) == 1
+        spo = out["existing_spos"][0]
+        assert spo["po_number"] == first_number
+        assert spo["line_count"] == 1
+        assert spo["total_qty"] == 40
+        assert spo["created_at"]
+        assert spo["status"] == "active"
+
+        line = _line(out, line_id)
+        assert line["packed_qty"] == 100
+        assert line["remaining_qty"] == 60
+        assert line["suggested_qty"] == min(line["po_covered_qty"], 60)
+        assert line["po_covered_qty"] <= 60
+
+
+def test_a_line_fully_spod_reads_remaining_zero_and_names_the_spo():
+    """AC-H2."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        w.po("1", supplier, [("A", 100, 0)])
+        shipment, lines = w.shipment([("A", 100, supplier)])
+
+        created = svc.create(db, str(shipment.id), _confirm_all(lines), actor="tester")
+        first_number = created["created_spos"][0]["po_number"]
+
+        out = svc.suggest(db, str(shipment.id))
+
+        line = _line(out, str(lines[0].id))
+        assert line["remaining_qty"] == 0
+        assert line["cannot_convert"] is True
+        assert line["reason"].startswith("Already on ")
+        assert first_number in line["reason"]
+
+
+def test_a_second_create_on_the_remainder_succeeds_a_third_with_nothing_left_is_422():
+    """AC-H3."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        w.po("1", supplier, [("A", 200, 0)])
+        shipment, lines = w.shipment([("A", 100, supplier)])
+        line_id = str(lines[0].id)
+
+        svc.create(
+            db, str(shipment.id),
+            [{"shipment_line_id": line_id, "qty": 40, "include": True}],
+            actor="tester",
+        )
+        second = svc.create(
+            db, str(shipment.id),
+            [{"shipment_line_id": line_id, "qty": 60, "include": True}],
+            actor="tester",
+        )
+        assert len(second["created_spos"]) == 1
+
+        out = svc.suggest(db, str(shipment.id))
+        assert len(out["existing_spos"]) == 2
+        line = _line(out, line_id)
+        assert line["remaining_qty"] == 0
+
+        with pytest.raises(AppException) as exc:
+            svc.create(
+                db, str(shipment.id),
+                [{"shipment_line_id": line_id, "qty": 100, "include": True}],
+                actor="tester",
+            )
+        assert exc.value.status_code == 422
+        assert exc.value.detail["detail"] == "nothing_left"
+
+
+def test_f1_a_second_create_on_the_remainder_never_pulls_from_the_first_spos_own_line():
+    """F1 (review round, BLOCKER, live evidence): neither candidate query excluded a CRM
+    SPO's own line, so a second `create` on the same shipment's remainder pulled from the
+    FIRST SPO's own open line instead of the real PO behind it - live case: SPO-2 pulled 34
+    from SPO-1 and advanced SPO-1's own `qty_received`, which is backwards - a CRM SPO line
+    is the SHIPMENT LEG of an existing PO, never itself a PO to pull from.
+
+    One open real PO for 409, packed 500: the first `create` asks for the 409 the PO can
+    give (fully spending it), leaving a 91 remainder; the second `create` asks for that 91,
+    which has nothing REAL left to pull from and must not reach into SPO-1's own 409-qty
+    line. SPO-1's own line must be untouched (`qty_received` stays 0 - nothing has pulled
+    FROM it), and a wholly separate second shipment for the same product/supplier must also
+    see nothing pullable, never either CRM SPO line counted as an open "PO"."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        w.po("1", supplier, [("A", 409, 0)])
+        shipment, lines = w.shipment([("A", 500, supplier)])
+        line_id = str(lines[0].id)
+
+        first = svc.create(
+            db, str(shipment.id),
+            [{"shipment_line_id": line_id, "qty": 409, "include": True}],
+            actor="tester",
+        )
+        first_po_line = db.query(PurchaseOrderLine).filter(
+            PurchaseOrderLine.purchase_order_id == first["created_spos"][0]["purchase_order_id"]
+        ).one()
+
+        second = svc.create(
+            db, str(shipment.id),
+            [{"shipment_line_id": line_id, "qty": 91, "include": True}],
+            actor="tester",
+        )
+        second_po_line = db.query(PurchaseOrderLine).filter(
+            PurchaseOrderLine.purchase_order_id == second["created_spos"][0]["purchase_order_id"]
+        ).one()
+
+        assert svc.parse_source_ref(second_po_line.source_ref)["pulls"] == []
+        db.refresh(first_po_line)
+        assert float(first_po_line.qty_received) == 0, "nothing may pull FROM SPO-1's own line"
+
+        # A wholly separate shipment of the same product/supplier must not see either CRM
+        # SPO line as something a fresh cascade could pull from.
+        third_shipment, third_lines = w.shipment([("A", 50, supplier)])
+        out = svc.suggest(db, str(third_shipment.id))
+        line = _line(out, str(third_lines[0].id))
+        assert line["po_covered_qty"] == 0
+        assert not any(
+            (t.get("po_number") or "").startswith("CRM-SPO-") for t in line["po_takes"]
+        )
+
+
+def test_f3_concurrent_create_calls_on_the_same_shipment_are_serialised_by_the_row_lock():
+    """F3 (review round): nothing serialised two concurrent `create` calls on one shipment -
+    both could read the same open-PO remainder and both cascade against it. `create` now
+    locks the shipment row (`_shipment_or_404(..., for_update=True)`, `SELECT ... FOR
+    UPDATE`) before reading anything.
+
+    Real, committed Postgres via `SessionLocal` (not `pg_session`): the whole point is what a
+    SECOND connection sees while the first holds the lock, which a rollback-scoped session on
+    one connection cannot show - mirrors `test_media_quota_serialization.py`'s own pattern for
+    the identical reason. Cleaned up by hand in `finally` since nothing here rolls back."""
+    seed_db = SessionLocal()
+    try:
+        w = World(seed_db)
+        supplier = w.supplier()
+        po = w.po("1", supplier, [("A", 100, 0)])
+        shipment, lines = w.shipment([("A", 50, supplier)])
+        shipment_id = str(shipment.id)
+        product_id = str(w.product("A").id)
+        supplier_id = str(supplier.id)
+        po_id = str(po.id)
+        cat_id = str(w.cat.id)
+        uom_id = str(w.uom.id)
+        seed_db.commit()
+    finally:
+        seed_db.close()
+
+    session_a = SessionLocal()
+    session_b = SessionLocal()
+    # A brand-new `SessionLocal` scopes its very FIRST statement before the test
+    # process's own `after_begin` listener has filled in `session.info['company_scope']`
+    # (`tests/conftest.py`), which reads back as the row being invisible - nothing to do
+    # with the lock under test. A trivial warm-up query settles the scope first, exactly
+    # the ordering every route's own `Depends(get_db)` already gives it in production.
+    session_a.execute(text("SELECT 1"))
+    session_b.execute(text("SELECT 1"))
+    b_started = threading.Event()
+    b_done = threading.Event()
+    try:
+        svc._shipment_or_404(session_a, shipment_id, for_update=True)
+
+        def _b():
+            b_started.set()
+            svc._shipment_or_404(session_b, shipment_id, for_update=True)
+            b_done.set()
+
+        thread = threading.Thread(target=_b)
+        thread.start()
+        assert b_started.wait(timeout=2), "session B never started"
+        assert not b_done.wait(timeout=0.5), "session B must block behind A's row lock"
+
+        session_a.rollback()  # releases A's lock
+        assert b_done.wait(timeout=5), "session B must unblock once A releases the lock"
+        thread.join(timeout=5)
+    finally:
+        session_a.rollback()
+        session_b.rollback()
+        session_a.close()
+        session_b.close()
+        cleanup = SessionLocal()
+        try:
+            cleanup.query(InboundShipmentLine).filter(
+                InboundShipmentLine.shipment_id == shipment_id
+            ).delete(synchronize_session=False)
+            cleanup.query(InboundShipment).filter(
+                InboundShipment.id == shipment_id
+            ).delete(synchronize_session=False)
+            cleanup.query(PurchaseOrderLine).filter(
+                PurchaseOrderLine.purchase_order_id == po_id
+            ).delete(synchronize_session=False)
+            cleanup.query(PurchaseOrder).filter(PurchaseOrder.id == po_id).delete(
+                synchronize_session=False
+            )
+            cleanup.query(Supplier).filter(Supplier.id == supplier_id).delete(
+                synchronize_session=False
+            )
+            cleanup.query(Product).filter(Product.id == product_id).delete(
+                synchronize_session=False
+            )
+            cleanup.query(ProductCategory).filter(ProductCategory.id == cat_id).delete(
+                synchronize_session=False
+            )
+            cleanup.query(UnitOfMeasure).filter(UnitOfMeasure.id == uom_id).delete(
+                synchronize_session=False
+            )
+            cleanup.commit()
+        finally:
+            cleanup.close()
+
+
+def test_unwind_scoped_to_one_purchase_order_id_leaves_the_other_spo():
+    """AC-H4."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        w.po("1", supplier, [("A", 200, 0)])
+        shipment, lines = w.shipment([("A", 100, supplier)])
+        line_id = str(lines[0].id)
+
+        first = svc.create(
+            db, str(shipment.id),
+            [{"shipment_line_id": line_id, "qty": 40, "include": True}],
+            actor="tester",
+        )
+        second = svc.create(
+            db, str(shipment.id),
+            [{"shipment_line_id": line_id, "qty": 60, "include": True}],
+            actor="tester",
+        )
+        first_id = first["created_spos"][0]["purchase_order_id"]
+        second_id = second["created_spos"][0]["purchase_order_id"]
+
+        out = svc.unwind(db, str(shipment.id), purchase_order_id=first_id)
+
+        assert out["deleted_po_numbers"] == [first["created_spos"][0]["po_number"]]
+        assert out["deleted_spo_count"] == 1
+        assert db.query(PurchaseOrder).filter(PurchaseOrder.id == first_id).one_or_none() is None
+        assert db.query(PurchaseOrder).filter(PurchaseOrder.id == second_id).one_or_none() is not None
+
+        again = svc.suggest(db, str(shipment.id))
+        assert len(again["existing_spos"]) == 1
+        assert again["existing_spos"][0]["purchase_order_id"] == second_id
+        line = _line(again, line_id)
+        assert line["remaining_qty"] == 40, "only the surviving SPO's 60 stays taken off the 100 packed"
+
+        with pytest.raises(AppException) as exc:
+            svc.unwind(db, str(shipment.id), purchase_order_id=str(uuid.uuid4()))
+        assert exc.value.status_code == 404
+
+
+def test_plan_of_lists_pulls_and_covers_for_a_crm_spo_po_and_is_empty_for_an_import_po():
+    """AC-H5."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        wh = w.warehouse()
+        source_po = w.po("1", supplier, [("A", 100, 0)])
+        shipment, lines = w.shipment([("A", 100, supplier)])
+
+        customer = Customer(
+            id=_u(), customer_code=f"{MARKER}-C-{uuid.uuid4().hex[:6]}",
+            customer_name=f"{MARKER} dealer",
+        )
+        db.add(customer)
+        db.flush()
+        so = SalesOrder(
+            id=_u(), so_number=f"{MARKER}-SO-{uuid.uuid4().hex[:6]}",
+            customer_id=customer.id, order_date=date(2026, 7, 1), status="open",
+        )
+        db.add(so)
+        db.flush()
+        so_line = SalesOrderLine(
+            id=_u(), sales_order_id=so.id, product_id=w.product("A").id,
+            warehouse_id=wh.id, qty_ordered=100, qty_delivered=0,
+            required_date=date(2026, 9, 1), line_status="open",
+        )
+        db.add(so_line)
+        db.flush()
+
+        created = svc.create(
+            db, str(shipment.id),
+            [{
+                "shipment_line_id": str(lines[0].id), "qty": 100, "include": True,
+                "so_line_ids": [f"retail:{so_line.id}"],
+            }],
+            actor="tester",
+        )
+        po_id = created["created_spos"][0]["purchase_order_id"]
+
+        plan = svc.plan_of(db, po_id)
+
+        assert plan["pulls"] == [{
+            "purchase_order_id": str(source_po.id),
+            "po_number": source_po.po_number,
+            "po_line_label": w.product("A").product_code,
+            "qty": 100.0,
+        }]
+        assert len(plan["covers"]) == 1
+        cover = plan["covers"][0]
+        assert cover["so_number"] == so.so_number
+        assert cover["customer"] == customer.customer_name
+        assert cover["qty"] == 100.0
+        assert cover["warehouse"] == wh.warehouse_code
+
+        # An AutoCount (non-crm_spo) PO has no plan at all.
+        assert svc.plan_of(db, str(source_po.id)) == {"pulls": [], "covers": []}
 
 
 def test_draft_shipment_converts_too():
@@ -692,6 +1214,109 @@ def test_unwind_deletes_po_lines_headers_links_and_allocations_then_suggest_reco
         assert again["lines"][0]["suggested_qty"] == 40
 
 
+def test_unwind_on_a_line_with_no_pulls_still_succeeds():
+    """CAPTAIN'S RULING (3 Sep, sixth amendment): a line with no supporting PO at all still
+    creates an SPO line with an EMPTY `source_ref.pulls`. `unwind`'s reversal walk
+    (`_reverse_advances`) must not choke on a line with nothing to reverse - it simply finds
+    zero reversals for that line and moves on; the SPO still deletes cleanly."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        shipment, lines = w.shipment([("A", 40, supplier)])
+
+        created = svc.create(db, str(shipment.id), _confirm_all(lines), actor="tester")
+        po_id = created["created_spos"][0]["purchase_order_id"]
+        po_number = created["created_spos"][0]["po_number"]
+
+        out = svc.unwind(db, str(shipment.id))
+
+        assert out["deleted_spo_count"] == 1
+        assert out["deleted_po_numbers"] == [po_number]
+        assert out["restored_po_line_count"] == 0
+        assert db.query(PurchaseOrder).filter(PurchaseOrder.id == po_id).one_or_none() is None
+
+        again = svc.suggest(db, str(shipment.id))
+        assert again["already_converted"] is False
+
+
+def test_unwind_deletes_the_order_inquiry_link_before_the_allocation_it_points_at():
+    """F9 (review round, pre-existing bug): bulk-deleting `spo_allocations` an
+    `OrderInquiryLink` points at violates `ck_order_inquiry_links_one_target` - the FK is
+    `ON DELETE SET NULL`, not `CASCADE`, but the CHECK forbids a link with NEITHER target
+    set, so the SET NULL Postgres was about to apply left the row with neither and the
+    constraint fired: `unwind` raised instead of completing for any SPO an ORDER BACK
+    project row had been ticked against. `unwind` must delete this SPO's OWN order-inquiry
+    links first - the row simply returns unlinked, which `_project_coverage` then offers in
+    full, exactly what deleting the SPO should mean.
+
+    World setup mirrors `test_a_ticked_project_row_is_linked_to_the_spo_allocation_it_will_
+    be_served_by` (`test_spo_planner_selection.py`)."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        wh = w.warehouse()
+        w.po("A", supplier, [("A", 100, 0)])
+        shipment, lines = w.shipment([("A", 100, supplier)])
+
+        title = f"{MARKER} project {uuid.uuid4().hex[:6]}"
+        project = Project(
+            id=_u(), title=title, normalised_title=title.lower(),
+            project_code=f"{MARKER}-{uuid.uuid4().hex[:8]}",
+        )
+        db.add(project)
+        db.flush()
+        pso = ProjectSalesOrder(
+            id=_u(), project_id=project.id, area_group="TOWER",
+            provisional_ref=f"{MARKER}-PSO-{uuid.uuid4().hex[:6]}",
+            autocount_doc_no=f"{MARKER}-SI-{uuid.uuid4().hex[:6]}",
+            status=SO_STATUS_DRAFT, grouping_origin="area",
+            published_at=datetime(2026, 1, 2, 9, 0),
+        )
+        db.add(pso)
+        db.flush()
+        pso_line = ProjectSalesOrderLine(
+            id=_u(), project_sales_order_id=pso.id, line_no=1,
+            product_id=w.product("A").id, description=f"{MARKER} line",
+            qty=Decimal("40"), uom="UNIT", unit_price=Decimal("10.00"),
+            amount=Decimal("400"), delivery_date=date(2026, 9, 10),
+        )
+        db.add(pso_line)
+        db.flush()
+        inquiry = OrderInquiry(id=_u(), project_sales_order_id=pso.id, state=INQUIRY_RAISED)
+        db.add(inquiry)
+        db.flush()
+        row = OrderInquiryRow(
+            id=_u(), order_inquiry_id=inquiry.id, so_line_id=pso_line.id,
+            item_code=w.product("A").product_code, qty=Decimal("40"),
+            delivery_date=date(2026, 9, 10), verb=IV_ORDER_BACK, state=INQUIRY_RAISED,
+        )
+        db.add(row)
+        db.flush()
+
+        svc.create(
+            db, str(shipment.id),
+            [{
+                "shipment_line_id": str(lines[0].id), "qty": 100, "include": True,
+                "location_splits": [{"warehouse_id": str(wh.id), "qty": 100}],
+                "so_line_ids": [f"project:{row.id}"],
+            }],
+        )
+        link = db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row.id).one()
+        assert link.spo_allocation_id is not None, "sanity: the tick must have written a link"
+
+        out = svc.unwind(db, str(shipment.id))
+
+        assert out["deleted_spo_count"] == 1
+        assert db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row.id).count() == 0
+
+        again = svc.suggest(db, str(shipment.id))
+        assert again["already_converted"] is False
+        line_out = _line(again, str(lines[0].id))
+        taken_row = next(c for c in line_out["so_coverage"] if c["kind"] == "project")
+        assert taken_row["qty"] == 40
+        assert taken_row["taken_qty"] == 0
+
+
 def test_unwind_refuses_a_non_crm_spo_header_409_and_leaves_it_untouched():
     """A defensive guard: `unwind` must never delete a PO it did not itself create, however
     it ended up linked - simulate an AutoCount-imported PO wired to this shipment by some
@@ -739,8 +1364,12 @@ def test_unwind_only_touches_this_shipments_spo_not_anothers():
         assert db.query(PurchaseOrder).filter(PurchaseOrder.id == po_b_id).one_or_none() is not None
         again_a = svc.suggest(db, str(shipment_a.id))
         assert again_a["already_converted"] is False
+        assert again_a["existing_spos"] == []
         again_b = svc.suggest(db, str(shipment_b.id))
-        assert again_b["already_converted"] is True
+        assert again_b["already_converted"] is False
+        assert again_b["existing_spos"][0]["purchase_order_id"] == po_b_id
+        line_b = _line(again_b, str(lines_b[0].id))
+        assert line_b["remaining_qty"] == 0
 
 
 def test_unwind_on_a_never_converted_shipment_is_404():
@@ -763,8 +1392,9 @@ def test_heal_stale_link_cleans_up_a_link_pointing_at_a_deleted_po_and_suggest_a
     NOT reverse the `qty_received` advance `create` made on the source line (only `unwind`
     does that, per its own docstring) - self-heal clears the ORPHANED link so the planner is
     never stuck, but the source PO's balance stays spent, exactly the documented limitation.
-    So the line comes back `cannot_convert` (nothing left to pull), not restored to 40 - the
-    honest answer here, not the pre-correction expectation."""
+    So the line comes back with nothing left to pull (`suggested_qty` 0, `no_po_qty` 40), not
+    restored to 40 - the honest answer here. Sixth amendment (3 Sep): `cannot_convert` is now
+    False, because a supplier is still on the line - only a missing supplier blocks it."""
     with pg_session() as db:
         w = World(db)
         supplier = w.supplier()
@@ -786,8 +1416,9 @@ def test_heal_stale_link_cleans_up_a_link_pointing_at_a_deleted_po_and_suggest_a
 
         assert out["already_converted"] is False
         assert out["self_heal_note"] is not None
-        assert out["lines"][0]["cannot_convert"] is True
+        assert out["lines"][0]["cannot_convert"] is False
         assert out["lines"][0]["suggested_qty"] == 0
+        assert out["lines"][0]["no_po_qty"] == 40
         assert db.query(ShipmentLineSpoLink).filter(
             ShipmentLineSpoLink.inbound_shipment_id == shipment.id
         ).count() == 0
@@ -820,10 +1451,19 @@ def test_heal_partial_alive_conversion_shows_the_alive_spo_and_notes_the_cleared
 
         out = svc.suggest(db, str(shipment.id))
 
-        assert out["already_converted"] is True
+        assert out["already_converted"] is False
         assert out["self_heal_note"] is not None
         remaining_ids = {s["purchase_order_id"] for s in out["existing_spos"]}
         assert remaining_ids == {alive["purchase_order_id"]}
+
+        jiangmen_line = next(l for l in lines if str(l.supplier_id) == str(jiangmen.id))
+        kailu_line = next(l for l in lines if str(l.supplier_id) == str(kailu.id))
+        assert _line(out, str(jiangmen_line.id))["remaining_qty"] == 50, (
+            "the healed (deleted) SPO's line is convertible again"
+        )
+        assert _line(out, str(kailu_line.id))["remaining_qty"] == 0, (
+            "the still-alive SPO's line stays fully spent"
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -1080,3 +1720,73 @@ def test_route_delete_spo_with_nothing_converted_is_404(scm_app):
     r = TestClient(app).delete(f"{_BASE}/{shipment.id}/spo")
 
     assert r.status_code == 404, r.text
+
+
+def test_route_delete_spo_scoped_to_one_purchase_order_id_leaves_the_other(scm_app):
+    """AC-H4, at the route: `?purchase_order_id=` deletes only that one SPO."""
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    shipment, line = _seed_route_shipment(db)
+    client = TestClient(app)
+
+    first = client.post(
+        f"{_BASE}/{shipment.id}/spo",
+        json={"lines": [{"shipment_line_id": str(line.id), "qty": 6, "include": True}]},
+    )
+    assert first.status_code == 201, first.text
+    second = client.post(
+        f"{_BASE}/{shipment.id}/spo",
+        json={"lines": [{"shipment_line_id": str(line.id), "qty": 9, "include": True}]},
+    )
+    assert second.status_code == 201, second.text
+    first_id = first.json()["created_spos"][0]["purchase_order_id"]
+    second_id = second.json()["created_spos"][0]["purchase_order_id"]
+
+    r = client.delete(f"{_BASE}/{shipment.id}/spo", params={"purchase_order_id": first_id})
+
+    assert r.status_code == 200, r.text
+    assert r.json()["deleted_spo_count"] == 1
+
+    again = client.get(f"{_BASE}/{shipment.id}/spo-suggestion")
+    existing_ids = {s["purchase_order_id"] for s in again.json()["existing_spos"]}
+    assert existing_ids == {second_id}
+
+    r2 = client.delete(
+        f"{_BASE}/{shipment.id}/spo", params={"purchase_order_id": str(uuid.uuid4())}
+    )
+    assert r2.status_code == 404, r2.text
+
+
+def test_route_purchase_order_detail_carries_spo_plan_for_a_crm_spo_po_and_none_for_import(
+    scm_app,
+):
+    """AC-H5/H7 through the API - `response_model` silently drops an undeclared field, so
+    this asserts `spo_plan` is actually present on the JSON, not merely on the service dict."""
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    shipment, line = _seed_route_shipment(db)
+    client = TestClient(app)
+
+    created = client.post(
+        f"{_BASE}/{shipment.id}/spo",
+        json={"lines": [{"shipment_line_id": str(line.id), "qty": 15, "include": True}]},
+    )
+    assert created.status_code == 201, created.text
+    spo_id = created.json()["created_spos"][0]["purchase_order_id"]
+
+    r = client.get(f"/api/v1/scm/purchase-orders/{spo_id}")
+
+    assert r.status_code == 200, r.text
+    plan = r.json()["spo_plan"]
+    assert plan is not None
+    assert len(plan["pulls"]) == 1
+    assert plan["pulls"][0]["qty"] == 15
+
+    # `_seed_route_shipment` also seeds ONE other (non-`crm_spo`) purchase order, to pull
+    # from - that one carries no plan at all.
+    source_po_id = str(
+        db.query(PurchaseOrder.id).filter(PurchaseOrder.id != spo_id).scalar()
+    )
+    r2 = client.get(f"/api/v1/scm/purchase-orders/{source_po_id}")
+    assert r2.status_code == 200, r2.text
+    assert r2.json()["spo_plan"] is None

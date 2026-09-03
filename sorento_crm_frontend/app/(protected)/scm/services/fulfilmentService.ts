@@ -1321,30 +1321,55 @@ export async function downloadPackingListExport(
  *     Never a remainder after PO/stock is subtracted.
  *   * `on_hand` / `incoming_spo` are CONTEXT ONLY - shown, never netted.
  *   * `no_po_qty = max(packed_qty - po_covered_qty, 0)` - the portion nothing open can back.
- *     When `po_covered_qty` is zero, the WHOLE line is `cannot_convert` (same shape as the
- *     no-supplier case, unselectable) with `reason` "No PO to pull from - raise the PO in
- *     AutoCount first."; a PARTIALLY-backed line stays selectable at `po_covered_qty`, with
- *     the shortfall named on `reason` too.
  *   * `covered` is GONE - it meant "nothing left to ask for", a concept that only existed
  *     when a PO was a deduction.
  *
+ * ── R2 (captain's ruling, 3 Sep) - the PO CAP is also removed ────────────────
+ * `create`'s `need = min(requested, packed)` is now the SPO line's quantity outright; the PO
+ * cascade still pulls and advances only what it reaches, and whatever is left over is written
+ * on the SAME line with no pull (`source_ref.no_po_qty` on the backend). `suggested_qty` /
+ * `po_covered_qty` is only the DEFAULT the FE's qty input starts at, never a ceiling - it can
+ * be typed past. `cannot_convert` is true ONLY for a line with no supplier at all; a line with
+ * a supplier and no open PO (`po_covered_qty` zero) is fully convertible, `reason` naming the
+ * shortfall as information (`_REASON_NO_PO`, backend), never a block.
+ *
+ * ── R1 (captain's ruling, 3 Sep) - many SPOs per container, no blanket refusal ──
+ * A container is routinely converted in more than one pass (a partial tick today, the
+ * remainder once the rest is ready). `already_converted` NEVER flips to `true` any more -
+ * kept on the response, always `false`, only so an older build reading it does not break.
+ * `existing_spos` is ALWAYS populated (every SPO this shipment has ever produced, oldest
+ * first, each now carrying `line_count` / `total_qty` / `created_at` / `status` for the
+ * Created SPOs grid) and `lines` is ALWAYS the REMAINDER planner: `packed_qty` stays the
+ * untouched physical fact while the new `remaining_qty` is what is left to convert -
+ * `packed_qty` minus every prior `create` run's own take on that line. A line with nothing
+ * left (`remaining_qty <= 0`) is `cannot_convert: true`, `reason` "Already on <SPO
+ * number(s)>" - the same disabled-row shape the no-supplier case already used.
+ *
  * ── BACKEND CONTRACT (app/api/v1/scm/fulfilment.py) ─────────────────────────
  *  GET  /api/v1/scm/inbound-shipments/{id}/spo-suggestion -> 200 SpoSuggestion. Auth:
- *       `scm.dashboard.view`. `already_converted: true` when this shipment already has
- *       SPOs from a prior run - `lines` is empty and `existing_spos` names them instead.
+ *       `scm.dashboard.view`.
  *  POST /api/v1/scm/inbound-shipments/{id}/spo -> 201 SpoCreateResult. Body:
  *       { lines: [{shipment_line_id, qty, include, location_splits}] } - EVERY line on the
  *       shipment, ticked or not. `qty`/`location_splits` are RE-VALIDATED server-side against
  *       LIVE PO data, never trusted off an earlier `suggest` read - a line whose pull shrinks
- *       to zero between the two calls is skipped, not overdrawn. 409 when this shipment was
- *       already converted (names the existing SPOs). Auth: `scm.reorder.run` (a PO-book
- *       write, same permission the packing-list apply and PI-convert paths use).
+ *       to zero between the two calls is skipped, not overdrawn. 422 `nothing_left` when NO
+ *       line has anything left to convert at all (R1 - never a 409 any more; `nothing_selected`
+ *       stays the answer for "something is left, but nothing was ticked"). Auth: `scm.reorder.
+ *       run` (a PO-book write, same permission the packing-list apply and PI-convert paths
+ *       use).
+ *  DELETE /api/v1/scm/inbound-shipments/{id}/spo?purchase_order_id= -> 200 SpoDeleteResult.
+ *       `purchase_order_id` (R1) narrows the delete to ONE SPO - the Delete action on a row
+ *       of the Created SPOs grid; absent deletes every SPO the shipment ever made (the
+ *       legacy shape). 404 when `purchase_order_id` does not name one of this shipment's own
+ *       SPOs.
  *  GET  /api/v1/scm/inbound-shipments/{id}/spo-worksheet/export -> 200 .xlsx bytes. The
- *       AutoCount handoff - what to key, per supplier. 404 until "Create SPO" has run.
+ *       AutoCount handoff - what to key, per supplier, across every SPO ever created off
+ *       this shipment. 404 until "Create SPO" has run at all.
  *
  * One SPO per SUPPLIER represented on the shipment - a container is routinely several
  * factories, and AutoCount POs are per supplier too. A line with no supplier recorded (the
- * n8n PDF path), or with nothing pullable from any open PO, cannot convert.
+ * n8n PDF path) cannot convert; a line WITH a supplier but nothing pullable from any open PO
+ * is still convertible since R2 (captain's ruling, 3 Sep), just written without a pull.
  *
  * **Recording the pull, and the honesty decision the plan asked to settle.** `create`
  * ADVANCES the source PO line's own `qty_received` by what it pulls (the IDENTICAL write
@@ -1382,22 +1407,25 @@ export async function downloadPackingListExport(
  * He created SPOs, then deleted their `spo_allocations` on the SPO Allocations screen, and
  * the planner stayed stuck on "SPO already created" with no way back. Two additions:
  *
- *  DELETE /api/v1/scm/inbound-shipments/{id}/spo -> 200 SpoDeleteResult. Auth: `scm.reorder.
- *       run` (same as create). Unwinds the whole conversion for this shipment - every
- *       `purchase_orders` header it minted, their lines, the `shipment_line_spo_link` rows,
- *       any `spo_allocations` left hanging off those PO lines, AND (doctrine correction)
- *       REVERSES the `qty_received` advance `create` made on every source PO line those
- *       lines pulled from (`restored_po_line_count`). 409 (`not_crm_spo`) when a linked
- *       header was not created by Create SPO (an AutoCount import) - refused, not skipped.
- *       404 when this shipment has no SPO to delete. Exposed on the planner as the Delete
- *       action on the already-converted state.
+ *  DELETE /api/v1/scm/inbound-shipments/{id}/spo?purchase_order_id= -> 200 SpoDeleteResult.
+ *       Auth: `scm.reorder.run` (same as create). Unwinds ONE SPO (R1: `purchase_order_id`
+ *       narrows it - absent unwinds every SPO the shipment ever made, the legacy shape) -
+ *       its `purchase_orders` header, its lines, the MATCHED `shipment_line_spo_link` rows
+ *       pointing at it, any `spo_allocations` left hanging off those PO lines, AND (doctrine
+ *       correction) REVERSES the `qty_received` advance `create` made on every source PO
+ *       line those lines pulled from (`restored_po_line_count`). 409 (`not_crm_spo`) when a
+ *       linked header was not created by Create SPO (an AutoCount import) - refused, not
+ *       skipped. 404 when this shipment has no SPO to delete, or `purchase_order_id` does
+ *       not name one of its own. Exposed on the planner as the Delete action on a row of the
+ *       Created SPOs grid.
  *  `SpoSuggestion.self_heal_note` - non-null only when THIS `spo-suggestion` call actually
  *       cleaned up a link left behind by a CRM SPO removed some OTHER way than the DELETE
  *       above (a generic PO delete, a bad migration) - shown as a small informational note,
  *       never a toast, since it describes something that already happened silently. That
  *       bypass path does NOT reverse the source PO's advance (only `unwind` does), so a
- *       self-healed line can come back `cannot_convert` rather than restored - a documented
- *       limitation, not a bug.
+ *       self-healed line can come back with nothing left to pull (`po_covered_qty` 0) rather
+ *       than restored - still convertible since R2 (unbacked, not `cannot_convert`) - a
+ *       documented limitation, not a bug.
  */
 export type SpoMatchedBy = 'po_ref' | 'product' | null;
 
@@ -1416,6 +1444,11 @@ export interface SpoPoTake {
    *  re-runs the walk over the lines still ticked, and `qty` alone cannot answer that: a
    *  line that gave 40 while its neighbour was ticked may have 150 to give without it. */
   open_qty: number;
+  /** How much of this line an EARLIER SPO already pulled, and its number(s) - oldest first
+   *  (S5). A row with `qty: 0` and `taken_qty > 0` is fully occupied elsewhere: never this
+   *  cascade's own take, always someone else's. */
+  taken_qty: number;
+  taken_by: string[];
 }
 
 /** One open SO line behind a location's `outstanding_so` - "what SO am I covering"
@@ -1453,6 +1486,15 @@ export interface SpoCoverageLine {
   /** Pre-ticked by the default walk: project by required date, then retail by required
    *  date, until the packed quantity is used up (Q4). */
   default_ticked: boolean;
+  /** How much of this row an EARLIER SPO already covers, and its number(s) - oldest first
+   *  (S5). A row with `qty: 0` and `taken_qty > 0` is fully occupied elsewhere: never
+   *  tickable, never this SPO's own tick. */
+  taken_qty: number;
+  taken_by: string[];
+  /** `sales_orders.demand_class` as stored - what the SO ITSELF is classified as, distinct
+   *  from `kind` (which family the row came from). A project row is always `'project'`; a
+   *  book line carries whatever its own sales order was stamped, including `null` (R3). */
+  demand_class: 'project' | 'retail' | null;
 }
 
 /** One candidate destination warehouse for a line's SPO qty, ranked. */
@@ -1481,6 +1523,11 @@ export interface SpoSuggestionLine {
   supplier_id: string | null;
   supplier_name: string | null;
   packed_qty: number;
+  /** What is left to convert on this line (R1): `packed_qty` minus every prior `create` run's
+   *  own take on it. `0` once every prior run has claimed it all - `cannot_convert: true`,
+   *  `reason` names the SPO(s). Every other figure on this line (`po_covered_qty`,
+   *  `suggested_qty`, `no_po_qty`, `so_coverage`) is computed against THIS, not `packed_qty`. */
+  remaining_qty: number;
   po_covered_qty: number;
   matched_po_number: string | null;
   matched_by: SpoMatchedBy;
@@ -1490,17 +1537,19 @@ export interface SpoSuggestionLine {
   on_hand: number;
   incoming_spo: number;
   /** `po_covered_qty`, capped at `packed_qty` by the cascade - what the PO(s) PULL this SPO
-   *  up to. Editable, but cannot exceed `po_covered_qty` (nothing more to pull). */
+   *  up to. R2 (captain's ruling, 3 Sep): only the DEFAULT the FE's qty input starts at, no
+   *  longer a ceiling - the buyer can type past it, up to `packed_qty`. */
   suggested_qty: number;
-  /** `max(packed_qty - po_covered_qty, 0)` - the portion nothing open can back. Shown as
-   *  context on a selectable line; the reason the WHOLE line is `cannot_convert` when it
-   *  equals `packed_qty`. */
+  /** `max(packed_qty - po_covered_qty, 0)` - the portion nothing open can back, at the
+   *  DEFAULT quantity. Shown as context on a selectable line. */
   no_po_qty: number;
-  /** No supplier recorded, OR nothing at all is pullable from an open PO - cannot become an
-   *  SPO line, like the no-supplier case. */
+  /** No supplier recorded - the ONLY reason a line cannot become an SPO line (R2, captain's
+   *  ruling, 3 Sep). A line with a supplier and nothing pullable from any open PO is fully
+   *  convertible, simply unbacked. */
   cannot_convert: boolean;
-  /** Why `cannot_convert`, or a note about a partially-uncovered remainder. Null on a line
-   *  fully backed by an open PO. */
+  /** Informational only since R2: names why `po_covered_qty` falls short of `packed_qty`
+   *  (or is zero), never a reason the line is blocked. Null on a line fully backed by an
+   *  open PO. */
   reason: string | null;
   unit_cost: number | null;
   currency: string | null;
@@ -1518,14 +1567,20 @@ export interface SpoRef {
   po_number: string | null;
   supplier_id: string | null;
   supplier_name: string | null;
+  /** How many SPO lines this one header carries - one `create` run always writes exactly
+   *  one header per supplier, so this is that header's whole content. */
+  line_count: number;
+  total_qty: number;
+  created_at: string | null;
+  status: string;
 }
 
 export interface SpoSuggestion {
   shipment_id: string;
   shipment_number: string | null;
   shipment_status: string | null;
-  /** True when this shipment already has SPOs from a prior "Create SPO" - `lines` is empty
-   *  and the caller shows `existing_spos` instead of a confirm screen. */
+  /** R1: never flips to `true` any more - kept only so an older build reading it does not
+   *  break. `existing_spos` and `lines` (the remainder planner) are always both populated. */
   already_converted: boolean;
   existing_spos: SpoRef[];
   lines: SpoSuggestionLine[];
@@ -1607,7 +1662,7 @@ export async function createSpo(
   return readJson<SpoCreateResult>(res, 'Failed to create the SPO');
 }
 
-/** The result of the Delete action on an already-converted planner row. */
+/** The result of the Delete action on a row of the Created SPOs grid. */
 export interface SpoDeleteResult {
   shipment_id: string;
   shipment_number: string | null;
@@ -1618,8 +1673,16 @@ export interface SpoDeleteResult {
   restored_po_line_count: number;
 }
 
-export async function deleteSpo(shipmentId: string): Promise<SpoDeleteResult> {
-  const res = await apiFetch(`/api/v1/scm/inbound-shipments/${shipmentId}/spo`, {
+/** `purchaseOrderId` (R1) deletes only that one SPO; absent deletes every SPO this shipment
+ *  ever made (the legacy shape). */
+export async function deleteSpo(
+  shipmentId: string,
+  purchaseOrderId?: string,
+): Promise<SpoDeleteResult> {
+  const query = purchaseOrderId
+    ? `?purchase_order_id=${encodeURIComponent(purchaseOrderId)}`
+    : '';
+  const res = await apiFetch(`/api/v1/scm/inbound-shipments/${shipmentId}/spo${query}`, {
     method: 'DELETE',
   });
   return readJson<SpoDeleteResult>(res, 'Failed to delete the SPO');
