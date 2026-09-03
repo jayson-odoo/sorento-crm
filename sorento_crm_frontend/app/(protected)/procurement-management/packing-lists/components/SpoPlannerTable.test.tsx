@@ -293,6 +293,7 @@ function plannerLine(over: Record<string, unknown> = {}) {
       {
         key: 'project:row-1',
         kind: 'project' as const,
+        demand_class: 'project' as const,
         document: 'SI26-0100',
         customer_name: 'Sunway',
         required_date: '2026-09-10',
@@ -304,6 +305,7 @@ function plannerLine(over: Record<string, unknown> = {}) {
       {
         key: 'retail:sol-9',
         kind: 'retail' as const,
+        demand_class: 'retail' as const,
         document: 'SO-2201',
         customer_name: 'Dealer A',
         required_date: '2026-09-20',
@@ -315,6 +317,7 @@ function plannerLine(over: Record<string, unknown> = {}) {
       {
         key: 'retail:sol-10',
         kind: 'retail' as const,
+        demand_class: 'retail' as const,
         document: 'SO-2202',
         customer_name: 'Dealer B',
         required_date: '2026-10-02',
@@ -505,6 +508,7 @@ function shortCoveredLine(over: Record<string, unknown> = {}) {
       {
         key: 'project:row-a',
         kind: 'project' as const,
+        demand_class: 'project' as const,
         document: 'SI26-0100',
         customer_name: 'Sunway',
         required_date: '2026-09-10',
@@ -516,6 +520,7 @@ function shortCoveredLine(over: Record<string, unknown> = {}) {
       {
         key: 'retail:sol-a',
         kind: 'retail' as const,
+        demand_class: 'retail' as const,
         document: 'SO-2201',
         customer_name: 'Dealer A',
         required_date: '2026-09-20',
@@ -527,6 +532,7 @@ function shortCoveredLine(over: Record<string, unknown> = {}) {
       {
         key: 'retail:sol-b',
         kind: 'retail' as const,
+        demand_class: 'retail' as const,
         document: 'SO-2202',
         customer_name: 'Dealer B',
         required_date: '2026-10-02',
@@ -1437,6 +1443,7 @@ function takenPlannerLine() {
       {
         key: 'project:row-1',
         kind: 'project' as const,
+        demand_class: 'project' as const,
         document: 'SI26-0100',
         customer_name: 'Sunway',
         required_date: '2026-09-10',
@@ -1453,6 +1460,7 @@ function takenPlannerLine() {
         // different week bucket (2026-10-15) so its cell stands alone.
         key: 'retail:sol-taken',
         kind: 'retail' as const,
+        demand_class: 'retail' as const,
         document: 'SO-9000',
         customer_name: 'Dealer C',
         required_date: '2026-10-15',

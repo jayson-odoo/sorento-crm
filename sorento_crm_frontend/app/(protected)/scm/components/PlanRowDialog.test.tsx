@@ -1086,6 +1086,7 @@ describe('SoCoveragePicker', () => {
     {
       key: 'project:1',
       kind: 'project' as const,
+      demand_class: 'project' as const,
       document: 'OI-0042',
       customer_name: 'PEMBINAAN MAJU',
       required_date: '2026-09-30',
@@ -1097,6 +1098,7 @@ describe('SoCoveragePicker', () => {
     {
       key: 'retail:2',
       kind: 'retail' as const,
+      demand_class: 'retail' as const,
       document: 'SO404352',
       customer_name: 'SYARIKAT PERNIAGAAN KL',
       required_date: '2026-09-20',
@@ -1167,6 +1169,56 @@ describe('SoCoveragePicker', () => {
     expect(screen.getByRole('columnheader', { name: 'Location' })).toBeTruthy();
   });
 
+  it('the Class column paints the sales-order list\'s own pill, with "· inquiry" on a project row (R3, AC-J3)', () => {
+    const { container } = renderWithClient(
+      <SoCoveragePicker coverage={coverage} tickedKeys={[]} onChange={() => {}} unassigned={0} />,
+    );
+
+    const rows = screen.getAllByRole('row');
+    // The inquiry row: the pill reads "Project", plus the "· inquiry" suffix naming where
+    // the row itself came from.
+    expect(within(rows[1] as HTMLElement).getByText('Project')).toBeTruthy();
+    expect(within(rows[1] as HTMLElement).getByText('· inquiry')).toBeTruthy();
+    // The book-line row: the same pill, no suffix - it did not come from an inquiry.
+    expect(within(rows[2] as HTMLElement).getByText('Retail')).toBeTruthy();
+    expect(within(rows[2] as HTMLElement).queryByText('· inquiry')).toBeNull();
+    // Actually rendered as the `Badge` primitive, not a plain string (AC-J3's "same pill").
+    expect(container.querySelectorAll('[data-slot="badge"]').length).toBeGreaterThan(0);
+  });
+
+  it('an unclassified book line reads Unclassified, and the Class filter narrows by demand_class (R3, AC-J3)', () => {
+    const withUnclassified = [
+      ...coverage,
+      {
+        key: 'retail:5',
+        kind: 'retail' as const,
+        demand_class: null,
+        document: 'SO404600',
+        customer_name: 'A FOURTH DEALER',
+        required_date: '2026-11-15',
+        qty: 5,
+        warehouse_code: null,
+        taken_qty: 0,
+        taken_by: [],
+      },
+    ];
+    renderWithClient(
+      <SoCoveragePicker coverage={withUnclassified} tickedKeys={[]} onChange={() => {}} unassigned={0} />,
+    );
+
+    expect(screen.getByText('Unclassified')).toBeTruthy();
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: /filters/i }), { button: 0 });
+    fireEvent.click(screen.getByRole('button', { name: /add condition/i }));
+    fireEvent.change(screen.getByLabelText('Filter field'), { target: { value: 'demand_class' } });
+    fireEvent.change(screen.getByLabelText('Filter value'), { target: { value: 'unclassified' } });
+    fireEvent.click(screen.getByRole('button', { name: /^apply$/i }));
+
+    expect(screen.getByText('SO404600')).toBeTruthy();
+    expect(screen.queryByText('OI-0042')).toBeNull();
+    expect(screen.queryByText('SO404352')).toBeNull();
+  });
+
   it('renders as a DataGrid with resizable columns (S3, AC-C2)', () => {
     const { container } = renderWithClient(
       <SoCoveragePicker coverage={coverage} tickedKeys={[]} onChange={() => {}} unassigned={0} />,
@@ -1184,6 +1236,7 @@ describe('SoCoveragePicker', () => {
     {
       key: 'retail:3',
       kind: 'retail' as const,
+      demand_class: 'retail' as const,
       document: 'SO404400',
       customer_name: 'ANOTHER DEALER',
       required_date: '2026-11-01',
@@ -1279,6 +1332,7 @@ describe('SoCoveragePicker', () => {
     {
       key: 'retail:4',
       kind: 'retail' as const,
+      demand_class: 'retail' as const,
       document: 'SO404500',
       customer_name: 'A THIRD DEALER',
       required_date: '2026-10-05',

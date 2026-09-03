@@ -33,6 +33,7 @@ import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { getStatusBadgeVariant, formatStatusLabel } from '@/lib/status-badge';
 import { cn } from '@/lib/utils';
 
+import { demandClassBadge } from '../lib/demandClass';
 import { EM_DASH, fmtDate, fmtInt, fmtMoney, fmtSupplierCost } from '../lib/format';
 import { purchaseOrderStatusPill } from '../lib/purchaseOrderStatus';
 import { useContainerRequestDrill } from '../hooks/useContainerRequestDrill';
@@ -1524,6 +1525,10 @@ export interface SoCoverageRow {
    *  (S5). `qty === 0 && taken_qty > 0` is a TAKEN row: never tickable. */
   taken_qty: number;
   taken_by: string[];
+  /** `sales_orders.demand_class` as stored - what the SO ITSELF is classified as, distinct
+   *  from `kind` (which family the row came from). A project row is always `'project'`; a
+   *  book line carries whatever its own sales order was stamped, including `null` (R3). */
+  demand_class: 'project' | 'retail' | null;
 }
 
 /**
@@ -1585,11 +1590,15 @@ export function SoCoveragePicker({
         options: distinctFieldOptions(coverage, (c) => c.customer_name),
       },
       {
-        id: 'kind',
+        // R3: the FILTER reads `demand_class` (what the SO itself is classified as), not
+        // `kind` (where the row came from) - an inquiry row's `demand_class` is always
+        // `'project'`, so it still filters under Project.
+        id: 'demand_class',
         label: 'Class',
         options: [
           { value: 'project', label: 'Project' },
           { value: 'retail', label: 'Retail' },
+          { value: 'unclassified', label: 'Unclassified' },
         ],
       },
       {
@@ -1615,7 +1624,11 @@ export function SoCoveragePicker({
       if (!cond.value) continue;
       if (cond.field === 'document') out = out.filter((c) => c.document === cond.value);
       if (cond.field === 'customer_name') out = out.filter((c) => c.customer_name === cond.value);
-      if (cond.field === 'kind') out = out.filter((c) => c.kind === cond.value);
+      if (cond.field === 'demand_class') {
+        out = out.filter((c) =>
+          cond.value === 'unclassified' ? !c.demand_class : c.demand_class === cond.value,
+        );
+      }
       if (cond.field === 'warehouse_code') out = out.filter((c) => c.warehouse_code === cond.value);
     }
     return out;
@@ -1663,10 +1676,26 @@ export function SoCoveragePicker({
         size: 170,
       },
       {
+        // R3: the SAME pill the sales-order list paints for `demand_class`, not a private
+        // Project/Retail string - an inquiry row's own SO has no `demand_class` to read, so
+        // it reads "Project" off the row's `demand_class` (always 'project' for that family)
+        // with "· inquiry" naming where the row itself came from.
         id: 'kind',
         header: 'Class',
-        cell: ({ row }) => (row.original.kind === 'project' ? 'Project' : 'Retail'),
-        size: 90,
+        cell: ({ row }) => {
+          const cls = demandClassBadge(row.original.demand_class);
+          return (
+            <div className="flex items-center gap-1">
+              <Badge variant={cls.variant} appearance="light" size="md">
+                {cls.label}
+              </Badge>
+              {row.original.kind === 'project' ? (
+                <span className="text-2xs text-muted-foreground">· inquiry</span>
+              ) : null}
+            </div>
+          );
+        },
+        size: 130,
       },
       {
         // S3: the family's own word for this column (`PoTabs`, the purchase-order list).

@@ -42,11 +42,18 @@ from tests._pg_fixture import pg_session
 from tests.scm.test_spo_conversion import MARKER, World, _line, _u
 
 
-def _project_chain(db, w: World, product_key: str, *, qty: int, delivery: date):
+def _project_chain(
+    db, w: World, product_key: str, *, qty: int, delivery: date, core_sales_order_line_id=None
+):
     """A project order-inquiry row asking for `qty` of this product, linked to nothing yet.
 
     The whole chain, because an inquiry row without one has no product to match against and
     no document number to read: project -> project sales order -> line -> inquiry -> row.
+
+    `core_sales_order_line_id` wires the mirror (`ProjectSalesOrderLine.core_sales_order_
+    line_id`) to an AutoCount book line - unset by default (an inquiry row raised with no
+    matching book line, the common case), set by the dedupe test to prove a book line and
+    its own inquiry row collapse into one coverage entry.
     """
     title = f"{MARKER} project {uuid.uuid4().hex[:6]}"
     project = Project(
@@ -82,6 +89,7 @@ def _project_chain(db, w: World, product_key: str, *, qty: int, delivery: date):
         unit_price=Decimal("10.00"),
         amount=Decimal(str(qty * 10)),
         delivery_date=delivery,
+        core_sales_order_line_id=core_sales_order_line_id,
     )
     db.add(line)
     db.flush()
@@ -107,8 +115,13 @@ def _project_chain(db, w: World, product_key: str, *, qty: int, delivery: date):
     return row, pso
 
 
-def _retail_demand(db, w: World, product_key: str, wh, *, qty: int, required: date):
-    """One open sales-order book line - the retail half of the tick list (R1)."""
+def _retail_demand(
+    db, w: World, product_key: str, wh, *, qty: int, required: date, demand_class: str | None = None
+):
+    """One open sales-order book line - the retail half of the tick list (R1).
+
+    `demand_class` defaults to unset (None), the same as an order nobody classified; R3's
+    tests pass it explicitly to build a book line whose OWN sales order reads project."""
     customer = Customer(
         id=_u(),
         customer_code=f"{MARKER}-C-{uuid.uuid4().hex[:6]}",
@@ -122,6 +135,7 @@ def _retail_demand(db, w: World, product_key: str, wh, *, qty: int, required: da
         customer_id=customer.id,
         order_date=date(2026, 7, 1),
         status="open",
+        demand_class=demand_class,
     )
     db.add(so)
     db.flush()
@@ -1035,3 +1049,128 @@ def test_the_route_response_carries_taken_qty_and_taken_by(scm_app):
     assert line["so_coverage"]
     assert "taken_qty" in line["so_coverage"][0]
     assert "taken_by" in line["so_coverage"][0]
+
+
+# --------------------------------------------------------------------------- #
+# R3 - Class is the sales order's own class, not where the row came from
+# --------------------------------------------------------------------------- #
+
+
+def test_a_book_line_carries_its_own_sales_orders_demand_class():
+    """AC-J1: a book line whose sales order reads project carries `demand_class: 'project'`;
+    a plainly-retail one carries `'retail'`; an inquiry row carries `'project'` regardless -
+    it has no `sales_orders.demand_class` to read, project demand is what an inquiry row IS."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        wh = w.warehouse()
+        w.po("A", supplier, [("A", 100, 0)])
+        shipment, lines = w.shipment([("A", 100, supplier)])
+        project_line, _project_so = _retail_demand(
+            db, w, "A", wh, qty=10, required=date(2026, 9, 1), demand_class="project"
+        )
+        retail_line, _retail_so = _retail_demand(
+            db, w, "A", wh, qty=10, required=date(2026, 9, 2), demand_class="retail"
+        )
+        _project_chain(db, w, "A", qty=10, delivery=date(2026, 9, 3))
+
+        out = svc.suggest(db, str(shipment.id))
+
+        coverage = _line(out, str(lines[0].id))["so_coverage"]
+        retail_entries = _coverage(_line(out, str(lines[0].id)), "retail")
+        project_book_entry = next(c for c in retail_entries if str(project_line.id) in c["key"])
+        retail_book_entry = next(c for c in retail_entries if str(retail_line.id) in c["key"])
+        inquiry_entry = next(c for c in coverage if c["kind"] == "project")
+
+        assert project_book_entry["demand_class"] == "project"
+        assert retail_book_entry["demand_class"] == "retail"
+        assert inquiry_entry["demand_class"] == "project"
+        assert inquiry_entry["kind"] == "project"
+
+
+def test_project_demand_merges_inquiry_rows_and_project_class_book_lines_by_date():
+    """AC-J2 (captain's course correction, 3 Sep): project demand is ONE group - order-
+    inquiry rows AND book lines whose own sales order is project-class, merged and sorted
+    TOGETHER by delivery date, not inquiry rows automatically ahead of every book line
+    regardless of date. Retail (or unclassified) demand is still the OTHER group, behind
+    every piece of project demand, regardless of its own date."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        wh = w.warehouse()
+        w.po("A", supplier, [("A", 100, 0)])
+        shipment, lines = w.shipment([("A", 100, supplier)])
+        # Retail is needed EARLIEST of the three - and still walks LAST: it is not project
+        # demand, so date inside the other group cannot pull it ahead.
+        retail_line, _retail_so = _retail_demand(
+            db, w, "A", wh, qty=10, required=date(2026, 9, 1), demand_class="retail"
+        )
+        # The project-class book line is needed BEFORE the inquiry row - it now sorts FIRST
+        # within the merged project-demand group, which the old "inquiry rows always first"
+        # rule could not produce.
+        project_line, _project_so = _retail_demand(
+            db, w, "A", wh, qty=10, required=date(2026, 9, 5), demand_class="project"
+        )
+        _project_chain(db, w, "A", qty=10, delivery=date(2026, 9, 10))
+
+        out = svc.suggest(db, str(shipment.id))
+
+        coverage = _line(out, str(lines[0].id))["so_coverage"]
+        assert [c["required_date"] for c in coverage] == [
+            "2026-09-05",
+            "2026-09-10",
+            "2026-09-01",
+        ]
+        assert str(project_line.id) in coverage[0]["key"]
+        assert coverage[1]["kind"] == "project"
+        assert str(retail_line.id) in coverage[2]["key"]
+
+
+def test_a_book_line_already_covered_by_its_own_inquiry_row_is_offered_once():
+    """Dedupe (course correction): a book line whose project SO line already carries an
+    ORDER BACK inquiry row is the SAME piece of demand as that row - `_project_coverage` and
+    `_retail_coverage` read two different tables for it (the inquiry row, and the AutoCount
+    book line `ProjectSalesOrderLine.core_sales_order_line_id` mirrors) and would otherwise
+    both offer it. `_so_coverage` drops the book-line copy, so the operator sees it once, as
+    the project entry."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        wh = w.warehouse()
+        w.po("A", supplier, [("A", 100, 0)])
+        shipment, lines = w.shipment([("A", 100, supplier)])
+        core_line, _core_so = _retail_demand(
+            db, w, "A", wh, qty=40, required=date(2026, 9, 10), demand_class="project"
+        )
+        _project_chain(
+            db, w, "A", qty=40, delivery=date(2026, 9, 10),
+            core_sales_order_line_id=core_line.id,
+        )
+
+        out = svc.suggest(db, str(shipment.id))
+
+        coverage = _line(out, str(lines[0].id))["so_coverage"]
+        assert len(coverage) == 1
+        assert coverage[0]["kind"] == "project"
+        assert coverage[0]["demand_class"] == "project"
+
+
+def test_a_book_line_whose_inquiry_row_covers_a_different_line_is_still_offered():
+    """The dedupe is scoped to the SAME core line - two unrelated pieces of project demand
+    (one book line, one inquiry row for a different line) both survive."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        wh = w.warehouse()
+        w.po("A", supplier, [("A", 100, 0)])
+        shipment, lines = w.shipment([("A", 100, supplier)])
+        _retail_demand(
+            db, w, "A", wh, qty=15, required=date(2026, 9, 3), demand_class="project"
+        )
+        _project_chain(db, w, "A", qty=25, delivery=date(2026, 9, 12))
+
+        out = svc.suggest(db, str(shipment.id))
+
+        coverage = _line(out, str(lines[0].id))["so_coverage"]
+        assert len(coverage) == 2
+        assert {c["kind"] for c in coverage} == {"project", "retail"}

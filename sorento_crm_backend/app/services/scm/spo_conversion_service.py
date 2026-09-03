@@ -219,6 +219,7 @@ from app.models.scm import ProformaInvoiceLine, ProformaInvoiceShipmentLink, Shi
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
 from app.services.numbering_service import NumberingService
+from app.services.scm.demand_class import PROJECT as _DEMAND_CLASS_PROJECT
 from app.services.scm.pool_predicate import ACTIVE_SITE_POOL_SQL
 from app.services.scm.supplier_scope import is_uuid as _is_uuid
 
@@ -1085,6 +1086,9 @@ def _project_coverage(db: Session, product_id: str) -> list[dict]:
             "taken_by": taken_by.get(str(row.id), []),
             "warehouse_id": warehouse_id,
             "warehouse_code": location,
+            # An order-inquiry row IS project demand by definition (R3, AC-J1) - there is no
+            # `sales_orders.demand_class` to read here, so this is a constant, not a lookup.
+            "demand_class": _DEMAND_CLASS_PROJECT,
         })
     return out
 
@@ -1151,6 +1155,7 @@ def _retail_coverage(db: Session, product_id: str) -> list[dict]:
             SalesOrderLine.warehouse_id,
             Warehouse.warehouse_code,
             SalesOrder.so_number,
+            SalesOrder.demand_class,
             Customer.customer_name,
             SalesOrderLine.required_date,
             owed.label("qty"),
@@ -1189,6 +1194,10 @@ def _retail_coverage(db: Session, product_id: str) -> list[dict]:
             "taken_by": [e["spo_number"] for e in entries],
             "warehouse_id": str(r.warehouse_id) if r.warehouse_id else None,
             "warehouse_code": r.warehouse_code,
+            # `sales_orders.demand_class` as stored - 'project' / 'retail' / None (R3, AC-J1).
+            # Distinct from `kind` above: `kind` says WHERE the row came from (an inquiry row
+            # vs a book line), `demand_class` says what the SO ITSELF is classified as.
+            "demand_class": r.demand_class,
         })
     return out
 
@@ -1196,21 +1205,71 @@ def _retail_coverage(db: Session, product_id: str) -> list[dict]:
 def _so_coverage(db: Session, product_id: str, packed: float) -> list[dict]:
     """What this SPO could be for, and what the default ticks claim (Q4, AC-G3).
 
-    Project by need-by date, THEN retail by need-by date - the priority policy's own order,
-    stated here as a walk rather than a score because the operator is being asked to confirm
-    a list, not to read a ranking. Ticks run down that list until the packed quantity is used
-    up; everything after that is offered unticked, and what no tick claims is free stock
-    (the "Unassigned" remainder the screen names). A row already fully taken by an earlier
-    container walks to `qty: 0` here, so `take` is always 0 for it and `default_ticked` is
-    always `False` - it is visible (S5), never tickable.
+    TWO groups, each by need-by date, oldest first (R3, AC-J2, captain's course correction 3
+    Sep): PROJECT DEMAND - order-inquiry rows AND book lines whose own sales order is
+    project-class, merged and sorted together by date rather than the inquiry rows jumping
+    ahead of every book line regardless of date - then everything else (retail / unclassified
+    book lines). The old two-way split (inquiry rows, then EVERY book line) conflated "where
+    the row comes from" with "what the order is classified as": a retail-book-line SO stamped
+    `demand_class = project` used to walk behind every retail line regardless of its own
+    priority. A single stable sort over the combined list does the merge; a same-date tie
+    keeps each source query's own relative order (Python's sort is stable).
+
+    Dedupe: a book line whose project SO line already carries an ORDER BACK inquiry row is
+    the SAME piece of demand as that row, not a second one - `_project_coverage` and
+    `_retail_coverage` read two different tables for it (the inquiry row, and the AutoCount
+    book line it mirrors) and would otherwise both offer it. Dropped here, once, rather than
+    in each reader, because only this function holds both lists at once to compare them.
     """
-    coverage = _project_coverage(db, product_id) + _retail_coverage(db, product_id)
+    from app.models.project_so import OrderInquiryRow, ProjectSalesOrderLine
+
+    project_rows = _project_coverage(db, product_id)
+    retail_rows = _retail_coverage(db, product_id)
+
+    inquiry_row_ids = [row["key"].split(":", 1)[1] for row in project_rows]
+    covered_core_line_ids: set[str] = set()
+    if inquiry_row_ids:
+        # The mirror chain `sales_order_service._line_inquiries` reads the other way:
+        # `OrderInquiryRow.so_line_id` -> `ProjectSalesOrderLine.id` ->
+        # `ProjectSalesOrderLine.core_sales_order_line_id` - the book line's own id, which is
+        # the `so_line_id` half of a `retail:<id>` coverage key.
+        covered_core_line_ids = {
+            str(r[0])
+            for r in (
+                db.query(ProjectSalesOrderLine.core_sales_order_line_id)
+                .join(OrderInquiryRow, OrderInquiryRow.so_line_id == ProjectSalesOrderLine.id)
+                .filter(OrderInquiryRow.id.in_(inquiry_row_ids))
+                .all()
+            )
+            if r[0] is not None
+        }
+    if covered_core_line_ids:
+        retail_rows = [
+            row
+            for row in retail_rows
+            if row["key"].split(":", 1)[1] not in covered_core_line_ids
+        ]
+
+    coverage = project_rows + retail_rows
+    coverage.sort(key=_so_coverage_sort_key)
     left = packed
     for entry in coverage:
         take = min(entry["qty"], left) if left > 0 else 0.0
         entry["default_ticked"] = take > 0
         left -= take
     return coverage
+
+
+def _so_coverage_sort_key(entry: dict) -> tuple[int, bool, str]:
+    """(0, ...) = project demand - an inquiry row OR a book line whose own SO is
+    project-class; (1, ...) = everything else. Within a group, ascending by need-by date,
+    no-date last - the same `nulls_last` reading the source queries' own `ORDER BY` uses,
+    restated here because the merge happens in Python, across two already-sorted lists."""
+    is_project_demand = (
+        entry["kind"] == _COVERAGE_PROJECT or entry.get("demand_class") == _DEMAND_CLASS_PROJECT
+    )
+    date = entry.get("required_date")
+    return (0 if is_project_demand else 1, date is None, date or "")
 
 
 def _location_options(db: Session, product_id: str) -> dict:
