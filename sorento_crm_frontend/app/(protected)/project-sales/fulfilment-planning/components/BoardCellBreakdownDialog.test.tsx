@@ -886,10 +886,16 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
     fireEvent.click(screen.getByText('SO403340'));
     fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
 
-    expect(onDecide).toHaveBeenCalledWith('so-a|1|WESERP10B|2026-08-31', {
-      verdict: 'approved',
-      suspected_system_issue: false,
-    });
+    // D11: the composition rides along with the approval too - the exact shape is
+    // `BoardLineDecisionPanel.test.tsx`'s own job, this only checks the row's Save reaches
+    // this dialog's `onDecide` with the right verdict.
+    expect(onDecide).toHaveBeenCalledWith(
+      'so-a|1|WESERP10B|2026-08-31',
+      expect.objectContaining({
+        verdict: 'approved',
+        suspected_system_issue: false,
+      }),
+    );
   });
 
   it('reject, from the row, needs a reason', () => {
@@ -1008,10 +1014,14 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
 
-    expect(onDecide).toHaveBeenCalledWith('so-a|1|WESERP10B|2026-08-31', {
-      verdict: 'approved',
-      suspected_system_issue: false,
-    });
+    // D11: the composition rides along with the approval too.
+    expect(onDecide).toHaveBeenCalledWith(
+      'so-a|1|WESERP10B|2026-08-31',
+      expect.objectContaining({
+        verdict: 'approved',
+        suspected_system_issue: false,
+      }),
+    );
   });
 });
 
