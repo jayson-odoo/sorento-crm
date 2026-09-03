@@ -64,7 +64,6 @@ function renderView(
     draft?: BoardDraft;
     onDecide?: (key: string, decision: BoardDecision | null) => void;
     onDecideMany?: (keys: string[]) => Promise<{ saved: number; failed: number }>;
-    isLoading?: boolean;
   } = {},
 ) {
   const rows = overrides.contributions ?? [contribution()];
@@ -90,7 +89,6 @@ function renderView(
       draft={overrides.draft ?? {}}
       onDecide={onDecide}
       onDecideMany={onDecideMany}
-      isLoading={overrides.isLoading}
     />,
   );
   return { ...utils, onDecide, onDecideMany };

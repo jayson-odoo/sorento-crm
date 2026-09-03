@@ -70,6 +70,13 @@
  *          nothing.
  *      + pool_share_pct : int, 0-100, default 50. Percent of the site pool's free pile kept
  *          back for dealers before a project line may take a share.
+ *
+ *    R-O (3 Sep, migration 464) adds two more to the same row and the same route:
+ *      + overdue_grace_days : int, 0-365, SHIPPED default 0. A document whose arrival has
+ *          passed counts as supply on its outstanding balance, landing `today + this`.
+ *      + overdue_dead_days : int, 0-365, SHIPPED default 0. Past this much lateness it
+ *          counts as nothing at all - 0 reproduces R31 exactly (captain's ruling, 3 Sep
+ *          2026); 14 / 90 is the RECOMMENDED pair once the grace is turned on.
  *    Phase 1 (this file, pre-migration): the panel sends both on every save the same way it
  *    always sends `transfer_days`; until the backend column exists the values are accepted
  *    and silently dropped (Pydantic ignores unrecognised fields), and a GET that predates

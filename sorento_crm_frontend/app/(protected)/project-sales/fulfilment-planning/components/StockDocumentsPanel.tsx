@@ -8,6 +8,7 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { formatDateInMalaysia } from '@/lib/helpers';
+import { spoDetailHref } from '@/lib/spo-detail';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
 import { useStockDetail } from '../../_shared/hooks/useFulfilmentPlanning';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
@@ -136,6 +137,8 @@ export function StockDocumentsPanel({
         doc_date: order.doc_date ?? null,
         due_date: order.delivery_date ?? null,
         overdue_days: null,
+        assumed_date: null,
+        counted: true,
         qty: order.so_qty,
         // A sales order takes stock away from the pile.
         delta: -toMinor(order.so_qty),
@@ -156,32 +159,41 @@ export function StockDocumentsPanel({
         ),
         is_document: false,
       })),
-      ...data.incoming.map((leg, index) => ({
-        key: `spo-${index}-${leg.spo_number}`,
-        doc_type: 'SPO' as const,
-        doc_no: leg.spo_number,
-        sales_order_id: null,
-        party: leg.supplier_name ?? null,
-        agent_code: null,
-        project_label: null,
-        location: leg.location ?? null,
-        doc_date: null,
-        due_date: leg.expected_date ?? null,
-        overdue_days: leg.overdue_days ?? null,
-        qty: leg.spo_qty,
-        delta: toMinor(leg.spo_qty),
-        balance: null,
-        line_id: null,
-        is_this_line: false,
-        is_donor: false,
-        // AC-3.4: the SPO the active suggestion named. Normalised on both sides - the
-        // engine's sentence always says "SPO ...", the drill's own number does not always.
-        is_document: Boolean(
-          documentInfo &&
-          normalizeSpoNumber(leg.spo_number) ===
-            normalizeSpoNumber(documentInfo.spoNumber),
-        ),
-      })),
+      ...data.incoming.map((leg, index) => {
+        // R-O, review fix round S5: a document the walk counts as nothing (past the dead
+        // line) still LISTS, labelled "Not counted" (`dateCellText`), but must not move
+        // the balance - it is the row that says "the walk gave you nothing here", and a
+        // delta from it would silently add supply the ladder itself refused.
+        const counted = leg.counted !== false;
+        return {
+          key: `spo-${index}-${leg.spo_number}`,
+          doc_type: 'SPO' as const,
+          doc_no: leg.spo_number,
+          sales_order_id: null,
+          party: leg.supplier_name ?? null,
+          agent_code: null,
+          project_label: null,
+          location: leg.location ?? null,
+          doc_date: null,
+          due_date: leg.expected_date ?? null,
+          overdue_days: leg.overdue_days ?? null,
+          assumed_date: leg.assumed_date ?? null,
+          counted,
+          qty: leg.spo_qty,
+          delta: counted ? toMinor(leg.spo_qty) : 0,
+          balance: null,
+          line_id: null,
+          is_this_line: false,
+          is_donor: false,
+          // AC-3.4: the SPO the active suggestion named. Normalised on both sides - the
+          // engine's sentence always says "SPO ...", the drill's own number does not always.
+          is_document: Boolean(
+            documentInfo &&
+            normalizeSpoNumber(leg.spo_number) ===
+              normalizeSpoNumber(documentInfo.spoNumber),
+          ),
+        };
+      }),
     ];
     if (!isGroup) return documents;
 
@@ -201,6 +213,8 @@ export function StockDocumentsPanel({
         doc_date: null,
         due_date: hold.required_date ?? null,
         overdue_days: null,
+        assumed_date: null,
+        counted: true,
         qty: hold.qty,
         delta: -toMinor(hold.qty),
         balance: null,
@@ -229,6 +243,8 @@ export function StockDocumentsPanel({
         doc_date: null,
         due_date: null,
         overdue_days: null,
+        assumed_date: null,
+        counted: true,
         qty: bin.qty_on_hand,
         delta: toMinor(bin.qty_on_hand),
         balance: null,
@@ -413,6 +429,22 @@ export function StockDocumentsPanel({
               >
                 {row.original.doc_no}
               </Link>
+            ) : row.original.doc_type === 'SPO' && row.original.doc_no !== '-' ? (
+              // The captain's own complaint (3 Sep 2026, SO418869 SRTWCX7405-RL-S-PJ): the
+              // sentence above the table jumps TO this row, but there was no way OUT of the
+              // dialog onto the document itself. `stopPropagation` because a row here may
+              // one day carry its own click handler, the way the group reading's rows do.
+              <Link
+                href={spoDetailHref(row.original.doc_no)}
+                onClick={(event) => event.stopPropagation()}
+                className={cn(
+                  'truncate text-sm font-medium text-primary hover:underline',
+                  emphasis(row.original),
+                )}
+                title={row.original.doc_no}
+              >
+                {row.original.doc_no}
+              </Link>
             ) : (
               <span
                 className={cn(
@@ -548,13 +580,10 @@ export function StockDocumentsPanel({
             'block truncate text-sm tabular-nums',
             emphasis(row.original),
           )}
+          title={dateCellText(row.original)}
         >
-          {row.original.due_date
-            ? formatDateInMalaysia(row.original.due_date)
-            : row.original.doc_type === 'On hand'
-              ? 'Held now'
-              : 'Not stated'}
-          {row.original.overdue_days ? (
+          {dateCellText(row.original)}
+          {row.original.overdue_days && row.original.counted ? (
             <span className="text-amber-600 ms-1">
               (overdue {row.original.overdue_days}{' '}
               {row.original.overdue_days === 1 ? 'day' : 'days'})
@@ -786,13 +815,18 @@ export function StockDocumentsPanel({
  * date it is wanted or lands on, supply before demand on a tie - the ordering
  * `supply_assignment` walks, so a container cleared in the morning covers a despatch due the
  * same day. A document with no date lists last: "not stated" is not "wanted immediately".
+ *
+ * A late-but-alive document sorts on its ASSUMED date (R-O, review fix round S5), never the
+ * stated one it is dated after: the walk and the drill-down both plan against `as_of + grace`,
+ * and a ledger ordered by the stated date would slot a document that is really landing in two
+ * weeks in among documents from months ago, well ahead of demand it cannot actually cover.
  */
 function compareByEngineDate(
   left: StockDetailRow,
   right: StockDetailRow,
 ): number {
-  const leftDate = left.due_date ?? '';
-  const rightDate = right.due_date ?? '';
+  const leftDate = left.assumed_date ?? left.due_date ?? '';
+  const rightDate = right.assumed_date ?? right.due_date ?? '';
   if (!leftDate !== !rightDate) return leftDate ? -1 : 1;
   if (leftDate !== rightDate) return leftDate < rightDate ? -1 : 1;
   const leftSupply = left.delta >= 0 ? 0 : 1;
@@ -810,6 +844,28 @@ function isNegative(value: string | null): boolean {
   return value !== null && Number(value) < 0;
 }
 
+/**
+ * What the date cell says, in one place because three readings share it (R-O, 3 Sep 2026).
+ *
+ * A document the walk plans against a DIFFERENT day from the one it states says both:
+ * "assumed 17 Sep 2026, stated 24 Jul 2026". The assumed day is what a promise gets made
+ * on, and the stated one is what the buyer chases the supplier about, so printing only one
+ * of them loses the half the reader needs. A document so late the walk counts it as nothing
+ * says exactly that, because a date beside it would read as a promise.
+ *
+ * No new column: this is the existing cell's text.
+ */
+function dateCellText(row: StockDetailRow): string {
+  if (!row.counted) return 'Not counted';
+  const stated = row.due_date ? formatDateInMalaysia(row.due_date) : null;
+  if (row.assumed_date) {
+    const assumed = formatDateInMalaysia(row.assumed_date);
+    return stated ? `assumed ${assumed}, stated ${stated}` : `assumed ${assumed}`;
+  }
+  if (stated) return stated;
+  return row.doc_type === 'On hand' ? 'Held now' : 'Not stated';
+}
+
 interface StockDetailRow {
   key: string;
   doc_type: 'S/O' | 'SPO' | 'On hand' | 'Hold';
@@ -824,6 +880,14 @@ interface StockDetailRow {
   due_date: string | null;
   /** Days late, on a purchase document whose promised arrival has passed. */
   overdue_days: number | null;
+  /**
+   * The day the WALK plans a LATE document against (R-O, 3 September 2026). Set, the date
+   * cell reads "assumed 17 Sep 2026, stated 24 Jul" - the assumed day is what a promise is
+   * made on and the stated one is what the paperwork says, and a planner needs both.
+   */
+  assumed_date: string | null;
+  /** False on a document so late the walk counts it as nothing: the row reads "not counted". */
+  counted: boolean;
   qty: string;
   /** Signed minor units: supply adds to the pile, demand takes from it. */
   delta: number;

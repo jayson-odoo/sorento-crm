@@ -65,13 +65,25 @@ LEAD_DAYS = 30
 WINDOW_DAY = LEAD_DAYS + 14
 
 
-def _policy(db, name: str | None = None):
+def _policy(
+    db,
+    name: str | None = None,
+    *,
+    overdue_grace_days: int | None = None,
+    overdue_dead_days: int | None = None,
+):
     priority.create_revision(
         db,
         name=name or f"zzt-v7-{_uid()[:6]}",
         factors={},
         demand_class_weights={},
         reorder_coverage_until=None,
+        # None-means-unchanged all the way down to `create_revision`, which takes the
+        # column's own SHIPPED default (0 / 0, captain's ruling 3 Sep 2026) when a caller
+        # never asks for the grace explicitly - a caller that DOES care about it (R-O's own
+        # suite) passes both.
+        overdue_grace_days=overdue_grace_days,
+        overdue_dead_days=overdue_dead_days,
     )
     db.commit()
 

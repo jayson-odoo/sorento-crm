@@ -137,7 +137,7 @@ def _line_sort_key(ln: SalesOrderLine):
 
 
 def _order_by(sort_cols: dict, sort: Optional[str], direction: str) -> list:
-    """The sort, always made total by `id`.
+    """The sort, always made total by `id`, and always NULLS LAST.
 
     11,006 of the orders in this book share ONE `created_at`: they were absorbed in a single
     import. Ordering on that column alone leaves their relative order up to the planner, so
@@ -146,11 +146,17 @@ def _order_by(sort_cols: dict, sort: Optional[str], direction: str) -> list:
     shuffle of the same rows, and how a row can appear on two pages or neither.
 
     `id` is arbitrary but it is STABLE, which is the whole requirement.
+
+    `nullslast()` on both directions: Postgres defaults DESC to NULLS FIRST, which would put
+    a row nobody dated at the very top of a "latest first" list (the shipped default for
+    `order_date`, PLAN-listing-view-memory) - read as the newest thing in the book rather
+    than as the unfiled row it is. Unsortable belongs at the end whichever way the column
+    is read.
     """
     col = sort_cols.get(sort or "", SalesOrder.created_at)
     if direction == "asc":
-        return [col.asc(), SalesOrder.id.asc()]
-    return [col.desc(), SalesOrder.id.desc()]
+        return [col.asc().nullslast(), SalesOrder.id.asc()]
+    return [col.desc().nullslast(), SalesOrder.id.desc()]
 
 
 class SalesOrderService:
@@ -1168,8 +1174,10 @@ class SalesOrderService:
             # The START of the delivery span the list prints - "what is due first", which is
             # the question that column is scanned with. In SQL over the SAME
             # `min(required_date)` the serializer prints, so the header's order and the cell
-            # cannot come apart. Null placement is Postgres's default, the same as the
-            # `order_date` sort beside it: an order no line has dated sorts last ascending.
+            # cannot come apart. Null placement is explicit, not Postgres's default: `_order_by`
+            # calls `nullslast()` on every sorted column in both directions, this one included,
+            # the same as the `order_date` sort beside it - an order no line has dated sorts
+            # last whichever way the column is read.
             "delivery_date_from": (
                 select(func.min(SalesOrderLine.required_date))
                 .where(SalesOrderLine.sales_order_id == SalesOrder.id)
