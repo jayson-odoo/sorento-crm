@@ -1727,3 +1727,56 @@ describe('S5 - occupied by another SPO (AC-E7, AC-E8)', () => {
     expect(within(cell).getByText('+15 on CRM-SPO-2026/08-0005')).toBeTruthy();
   });
 });
+
+/**
+ * Live bug (captain, 4 Sep): the SPO qty input lost focus after EVERY keystroke, so the
+ * operator had to click back into it for each digit.
+ *
+ * `flexRender` renders a column's `cell` FUNCTION as a React component type
+ * (`createElement(columnDef.cell, ctx)`), so a `columns` array rebuilt on each keystroke
+ * hands React a new element TYPE for every cell - which unmounts the old input and mounts
+ * a fresh one, taking the caret with it. The assertion is node IDENTITY: the element that
+ * had focus before the change is still `document.activeElement` after it.
+ */
+describe('editable cells keep focus while typing (live bug, 4 Sep)', () => {
+  beforeEach(() => {
+    state.suggestion = suggestion({ lines: [plannerLine()] });
+  });
+
+  it('the SPO qty input is still the focused node after each keystroke', async () => {
+    renderTable();
+    await screen.findByTestId('spo-qty-input');
+
+    const input = screen.getByTestId('spo-qty-input');
+    input.focus();
+    expect(document.activeElement).toBe(input);
+
+    fireEvent.change(input, { target: { value: '4' } });
+    expect(document.activeElement).toBe(input);
+    expect(screen.getByTestId('spo-qty-input')).toBe(input);
+    expect(input).toHaveValue(4);
+
+    fireEvent.change(input, { target: { value: '40' } });
+    expect(document.activeElement).toBe(input);
+    expect(screen.getByTestId('spo-qty-input')).toBe(input);
+    expect(input).toHaveValue(40);
+  });
+
+  it('the destination quantity input in the expanded row keeps focus too', async () => {
+    renderTable();
+    await screen.findByTitle('Where this SPO lands');
+    fireEvent.click(screen.getByTitle('Where this SPO lands'));
+
+    const input = await screen.findByLabelText('Quantity for destination 1');
+    input.focus();
+    expect(document.activeElement).toBe(input);
+
+    fireEvent.change(input, { target: { value: '7' } });
+    expect(document.activeElement).toBe(input);
+    expect(input).toHaveValue(7);
+
+    fireEvent.change(input, { target: { value: '70' } });
+    expect(document.activeElement).toBe(input);
+    expect(input).toHaveValue(70);
+  });
+});
