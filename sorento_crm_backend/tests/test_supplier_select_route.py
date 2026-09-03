@@ -7,9 +7,10 @@ were indistinguishable, and a tenant with hundreds of suppliers could never reac
 
 Ordered by `supplier_name, supplier_code` so a name collision still sorts deterministically
 and the code (rendered by the FE as `<code> - <name>`) tells the rows apart. `page` is
-OPTIONAL: passed, the endpoint pages (`limit`, default 50, max 100) and returns
-`{items, has_more}`; omitted, it returns the legacy bare array (capped at 100) so any other
-caller of this endpoint keeps working unchanged.
+OPTIONAL: passed, the endpoint pages (`limit`, default 50, capped at `MAX_PAGE_LIMIT` - the
+same ceiling every other DataGrid list endpoint uses, `test_list_pagination_limit.py`) and
+returns `{items, has_more}`; omitted, it returns the legacy bare array (capped at 100) so any
+other caller of this endpoint keeps working unchanged.
 
 Postgres only, on a blank schema (empty - no real supplier rows to filter around).
 """
@@ -24,6 +25,7 @@ from app.dependencies import get_current_user, get_current_user_or_api_key
 from app.main import app
 from app.models.base import company_scope
 from app.models.procurement import Supplier
+from app.schemas.common import MAX_PAGE_LIMIT
 from app.services.company_scope_resolver import apply_company_scope
 
 from ._pg_fixture import blank_session
@@ -112,12 +114,15 @@ def test_paged_shape_and_has_more(seeded):
 
 
 def test_limit_default_and_cap(seeded):
-    """`limit` defaults to 50 and is capped at 100 (422 past it)."""
+    """`limit` defaults to 50 and is capped at `MAX_PAGE_LIMIT` - the same ceiling every
+    other DataGrid list endpoint uses (422 past it), not a bespoke 100."""
     resp = seeded.get(URL, params={"query": MARKER, "page": 1})
     assert resp.status_code == 200
     assert resp.json()["has_more"] is False  # only 3 rows, well under the default 50
 
-    over_cap = seeded.get(URL, params={"query": MARKER, "page": 1, "limit": 101})
+    over_cap = seeded.get(
+        URL, params={"query": MARKER, "page": 1, "limit": MAX_PAGE_LIMIT + 1}
+    )
     assert over_cap.status_code == 422
 
 

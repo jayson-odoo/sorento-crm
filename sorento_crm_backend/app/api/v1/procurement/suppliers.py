@@ -66,7 +66,7 @@ async def get_suppliers_select(
     page: Optional[int] = Query(
         None, ge=1, description="Enables paging; omitted, the legacy bare array is returned."
     ),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -75,10 +75,11 @@ async def get_suppliers_select(
     `page` is optional for backward compatibility with any other caller of this endpoint.
     Omitted, this returns the legacy bare array (capped at 100) - the PI list filter and the
     incoming-containers filter want the whole list at once, not a picker. Passed, it pages
-    (`limit`, default 50, max 100) and returns `{items, has_more}` so a picker (the PI upload
-    dialog, the loading plan container dialog) can offer Load more past the first page - two
-    suppliers sharing a name (a real duplicate-data case) no longer land in an arbitrary
-    order, and a tenant with hundreds of suppliers can reach all of them.
+    (`limit`, default 50, capped at `MAX_PAGE_LIMIT` - same ceiling as every other DataGrid
+    list endpoint, `test_list_pagination_limit.py`) and returns `{items, has_more}` so a
+    picker (the PI upload dialog, the loading plan container dialog) can offer Load more past
+    the first page - two suppliers sharing a name (a real duplicate-data case) no longer land
+    in an arbitrary order, and a tenant with hundreds of suppliers can reach all of them.
     """
     try:
         from sqlalchemy import or_
