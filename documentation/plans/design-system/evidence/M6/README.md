@@ -159,3 +159,87 @@ delete path for a sent message, and none was requested). No Complaint or Stock I
 created (the Complaint attempt 500'd server-side before any row was written; the Stock Inquiry
 route was inspected but not used to avoid the "BASER" contact - see note above). No deferred-delete
 countdown was armed at any point in this run.
+
+## Run 2 (after fix round, HEAD 2bee38e52)
+
+Worktree `motion2-M6`, branch `feat/motion2-M6-composer-mobile-toasts`, HEAD `2bee38e52`. FE
+`PORT=3081 npm run dev` (parent `next dev` PID `62462`, `next-server` child PID `62463`), BE
+reused read-only on `:8120` (unchanged `.env.local` from run 1, confirmed `FASTAPI_INTERNAL_URL`,
+`NEXTAUTH_URL=http://localhost:3081`, `AUTH_TRUST_HOST=true`). `lsof -i :3081` empty before
+starting; load average (1 min) `8.48` at the start, under the 12 guard. Login via
+`E2E_EMAIL`/`E2E_PASSWORD`. Session `--session m6run2` (isolated browser, agent-browser 0.27.0).
+Navigated by sidebar clicks from `/` throughout (Products via the "Products" accordion, Conversations
+via the "SLA" accordion's "Conversations" link - both needed the same pointer-event-dispatch
+workaround the run-1 README already documents for sidebar accordions and off-CLI link clicks;
+`agent-browser`'s own `click` worked unassisted for the "All" tab and ordinary buttons).
+
+**Method: same direct-CDP approach as run 1**, re-derived independently this run rather than
+reusing run 1's script files (not committed, scratchpad-only per policy): a Node 22 script
+attached over native `WebSocket` to the page's own `webSocketDebuggerUrl` (fetched from
+`agent-browser get cdp-url`'s host's `/json/list`, matched by `url.includes('localhost:3081')`).
+`Fetch.enable` + `Fetch.fulfillRequest` forced a 500 on `GET /api/v1/master-data/products` (twice,
+for the query's `retry: 1`) and two 403s on a product detail's two concurrent queries; a THIRD use
+of `Fetch.enable` held a `POST .../reply` request paused indefinitely (no `continueRequest` /
+`fulfillRequest` call while the composer needed to sit in `sending`), then `DOM.setFileInputFiles`
+against the composer's hidden `[data-testid="composer-file-input"]` staged a real file via a real
+native `change` event (took roughly 200ms-1s to land in React state, not synchronous - the check's
+poll loop accounted for this). No message ever reached Respond.io: both `POST .../reply` calls in
+this run were intercepted and fulfilled with a 500 before leaving the browser process; the one
+real send that could have gone through was never allowed to reach `continueRequest`.
+
+### Findings summary (pass/fail table)
+
+| Check | Target | Result | Measured value |
+| --- | --- | --- | --- |
+| M6-04 | Query error (500 on `GET /api/v1/master-data/products`, forced twice for `retry:1`): top-center, close button, persists past 6s | **PASS (fixed)** | Toast text "Something went wrong. Please try again.", `data-y-position=top data-x-position=center`. Close affordance is `[data-slot="alert-close"]` (the shared `Alert` component's own X, not Sonner's `[data-close-button]` - the wrong selector is why an early probe in this same run mis-read it as absent), confirmed present and clickable at t+4s, t+6s, and multiple minutes later (duration `Infinity`, source: `query-provider.tsx`'s `toast.custom(..., { duration: Infinity })` now applies to BOTH branches). Clicking the X removed the toast (`found: false` on the next read) |
+| M6-04 | Permission-denied 403 on a GET: same top-center + close treatment | PASS | Forced `GET /api/v1/master-data/products/{id}` to 403 with body `{"message": "Permission required: ..."}` (the product-detail service reads `error.message`); toast rendered "You don't have permission to view this. Ask an administrator.", top-center, `[data-slot="alert-close"]` present |
+| M6-04 | Two simultaneous 403s collapse into one toast (fixed `id: 'permission-denied'` dedupe) | PASS | Forced BOTH the product-detail GET (`error.message` shape) and its concurrent purchase-history GET (`error.detail`/FastAPI shape) to 403 with a permission-shaped body on the same page load; both have `retry: 1` so 4 requests were intercepted total, all near-simultaneous; DOM read after settling: `totalToasts: 1, permissionToasts: 1` - never stacked |
+| M6-01 (reviewer finding 1) | Composer mid-send staging: a file attached while `sending=true` stages as a chip; a subsequent send failure leaves the chip staged and removes the pending bubble | PASS | `POST .../reply` held pending via `Fetch.enable` with no `continueRequest`/`fulfillRequest` call; confirmed composer entered `sending` (`Send` button `disabled: true`, `Attach` button `disabled: false`) before ever touching the file input. `DOM.setFileInputFiles` against the hidden file input landed within one 200ms poll tick: `stillSending: true, chipCount: 1, chipTexts: ["m6-test-image.png"], pendingBubbleCount: 1` - chip and the dimmed optimistic bubble coexisted while the request was STILL held (reconfirmed `sendStillDisabled: true` immediately before fulfilling). Fulfilling the held request with a 500 then read: `sendDisabledAfter: false, chipCountAfter: 1` (same file name, still staged), `pendingBubbleCountAfter: 0` (bubble gone) - exactly the fix's claimed behavior (`SharedConversationComposer.tsx`'s `finally` block always removes the pending bubble; the failure `catch` branch never touches `files` state, so anything staged - before or during the send - survives a failed send untouched) |
+| Console | Zero errors | PASS | `console` filtered for `error`/`warn` (excluding the app's own `[debug]` JWT lines) returned nothing across the whole run, including through both forced-500 sequences and the held-then-failed send |
+
+### M6-01 mid-send note: why two intercept scripts were needed
+
+The first attempt at the mid-send check (`DOM.setFileInputFiles` fired, then a single 500ms poll
+before deciding "no chip") mis-read the timing: the native `change` event dispatched by
+`setFileInputFiles` does not land in React state synchronously, and 500ms was not always enough
+headroom. The composer's own behavior was never in question - a second run with a 200ms polling
+loop (up to 4s) run against a FRESH send (fresh text, fresh held request, cleared any stray chip
+left by the first attempt) caught the chip appearing at the very first poll tick while the request
+was still provably held. This is a harness-timing artifact of driving a real native file-input
+event through CDP, not a product defect - flagged per the same policy run 1 used for its own
+tool-quirk notes.
+
+### Screenshots in this directory (run 2)
+
+- `run2-m6-04-query-error-with-close.png` - forced 500 on the products list query: black toast,
+  top-center, with a visible X (the `[data-slot="alert-close"]` button run 1 missed by probing the
+  wrong selector).
+- `run2-m6-04-permission-denied-dedupe.png` - forced 403s on two concurrent product-detail queries:
+  exactly one "You don't have permission..." toast, top-center, with its own close X.
+- `run2-m6-01-mid-send-before-attach.png` - composer mid-send (Send disabled, request held), before
+  the file attach in the first (imperfect-timing) attempt.
+- `run2-m6-01-mid-send-chip-staged.png` - the file chip (`m6-test-image.png`) staged in the
+  composer AND the dimmed optimistic bubble both visible in the thread, while the held `reply`
+  request has still not been fulfilled.
+- `run2-m6-01-mid-send-after-failure-still-staged.png` - after the held request was fulfilled with
+  a 500: the optimistic bubble is gone from the thread, the file chip is still staged with its
+  remove (X) affordance, Send is re-enabled, and the typed text is still in the textarea for a
+  retry.
+
+### Cleanup
+
+Dev server killed: `kill 62462` (parent `npm run dev`); its `next-server` child (`62463`) exited
+with it - confirmed via a follow-up `lsof -i :3081` returning empty. Only the `m6run2`
+agent-browser session was closed (`close`, not `close --all`). Every CDP script disabled its own
+`Fetch` domain interception before closing its `WebSocket` and none left a paused request behind
+(the one held request in the mid-send check was always fulfilled before the script exited). The
+composer was returned to empty (chip removed, textarea cleared) before moving on. `.env.local` and
+the two untracked plan docs were left untouched.
+
+**Data:** zero real WhatsApp sends this run - both `reply` POSTs that reached the network were
+intercepted and fulfilled with a forced 500 before leaving the browser process, per this run's own
+explicit no-send instruction. The composer's typed text (`ZZT-M6 run2 mid-send stage test...`,
+`ZZT-M6 run2 final mid-send stage test...`) and the staged throwaway file (`m6-test-image.png`, a
+1x1 PNG generated in the scratchpad, not committed) never reached Respond.io or the "Jayson"
+contact - both were cleared from the composer at the end of the run. No record was created, edited,
+or deleted; no deferred-delete countdown was armed.
