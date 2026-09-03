@@ -833,6 +833,64 @@ describe('FulfilmentBoardPanel: the confirm counter is selection-scoped, not win
 });
 
 /**
+ * D16 (captain, 3 Sep, screenshots: "very choppy"). A save or Undo no longer reaches this at
+ * all - `useLineDraftMutation` patches the cache without asking for a refetch - so what is
+ * left to prove here is Confirm's OWN background refetch, on the SAME selection: the rows
+ * already on screen must stay mounted and merely dim, never drop to a skeleton or an empty
+ * state, for the length of that round trip. (A granularity/day-window turn is a genuinely
+ * DIFFERENT selection and keeps the true skeleton - see the note on `usePlanningBoard`.)
+ */
+describe('FulfilmentBoardPanel: a background refetch dims the board, never blanks it (D16)', () => {
+  it('keeps the matrix mounted and dims it while Confirm’s own refetch is in flight', async () => {
+    getPlanningBoard.mockResolvedValueOnce(boardOf([demand()]));
+    confirmMany.mockResolvedValue({
+      results: [
+        {
+          pso_id: 'pso-so-a',
+          ok: true,
+          decision_revision: 1,
+          inquiry_rows_created: 0,
+          transfers_written: 0,
+        },
+      ],
+    });
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    expect(screen.getByTestId('board-content')).toHaveClass('opacity-100');
+
+    // Confirm's own success invalidates the board (it changes what every OTHER order can be
+    // offered) - held open here so the in-flight moment can be asserted.
+    let resolveRefetch: (value: PlanningBoard) => void = () => {};
+    getPlanningBoard.mockImplementationOnce(
+      () =>
+        new Promise<PlanningBoard>((resolve) => {
+          resolveRefetch = resolve;
+        }),
+    );
+
+    fireEvent.click(screen.getByTestId('board-confirm'));
+    await screen.findByRole('alertdialog');
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+
+    // In flight: the row already on screen stays mounted and dims - never a skeleton, never
+    // the empty state - which is the flicker itself (the captain, 3 Sep: "very choppy").
+    await waitFor(() =>
+      expect(screen.getByTestId('board-content')).toHaveClass('opacity-60'),
+    );
+    expect(screen.getByTestId('fulfilment-board-matrix')).toBeInTheDocument();
+    expect(screen.queryByText(/Nothing is outstanding/)).not.toBeInTheDocument();
+
+    resolveRefetch(boardOf([demand()]));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('board-content')).toHaveClass('opacity-100'),
+    );
+  });
+});
+
+/**
  * C4 (code review round 3 batch 2): a stale saved line is dropped from Confirm with no
  * trace beyond the pill, which is easy to miss on a board of forty lines - `changed` names
  * it in the header and again in the Confirm dialog.
@@ -2634,13 +2692,18 @@ describe('FulfilmentBoardPanel: Undo all asks first (D2)', () => {
 });
 
 /**
- * C1 (code review round 3 batch 2): the seeding effect that carries a server-saved line
- * back onto the board (S4, AC-4.5) must not re-seed a key whose OWN Undo is still on the
- * wire, even when a DIFFERENT line's save invalidates the board and the refetch that lands
- * still carries the being-undone key's server draft (a read racing the delete that removes
- * it). `pendingDeletes` is the ref that closes that window.
+ * C1 (code review round 3 batch 2), updated for D16: the seeding effect that carries a
+ * server-saved line back onto the board (S4, AC-4.5) must not re-seed a key whose OWN Undo
+ * is still on the wire, even when a DIFFERENT line's save touches the SAME cached board.
+ *
+ * The trigger changed with D16 (a save no longer invalidates/refetches the board - it
+ * patches the cache), but the hazard did not: `patchContributionDraft` only replaces the ONE
+ * contribution its own write named, so Y's save still hands `FulfilmentBoardPanel` a board
+ * object with a NEW top-level `contributions` array - which re-runs the seeding effect - while
+ * X's OWN entry inside it is untouched and still carries X's server draft, because X's own
+ * DELETE has not landed yet. `pendingDeletes` is the ref that closes that window.
  */
-describe('FulfilmentBoardPanel: a line mid-Undo is not re-seeded by a concurrent refetch (C1)', () => {
+describe('FulfilmentBoardPanel: a line mid-Undo is not re-seeded by a sibling save (C1, D16)', () => {
   function pillFor(itemCode: string): HTMLElement {
     const pill = screen
       .getAllByTestId(/^decision-pill-/)
@@ -2649,7 +2712,7 @@ describe('FulfilmentBoardPanel: a line mid-Undo is not re-seeded by a concurrent
     return pill;
   }
 
-  it('keeps X off the board once its Undo settles, even though a Y-triggered refetch landed mid-flight still carrying X’s server draft', async () => {
+  it('keeps X off the board once its Undo settles, even though a Y save patched the SAME cached board mid-flight', async () => {
     const twoLines = [
       demand(),
       demand({
@@ -2659,27 +2722,13 @@ describe('FulfilmentBoardPanel: a line mid-Undo is not re-seeded by a concurrent
         item_code: 'WESERP20B',
       }),
     ];
-    const xSavedServerSide = withContribution(
-      boardOf(twoLines),
-      (entry) => entry.item_code === 'WESERP10B',
-      (entry) => ({
-        ...entry,
-        draft: {
-          decision: { verdict: 'approved' },
-          saved_by: 'Test Planner',
-          saved_at: '2026-09-03T00:00:00Z',
-          stale: false,
-        },
-      }),
-    );
 
     getPlanningBoard.mockResolvedValue(boardOf(twoLines));
     renderPanel(['SO403340', 'SO398322']);
     await screen.findByTestId('fulfilment-board-matrix');
     fireEvent.click(screen.getByRole('button', { name: 'List' }));
 
-    // X is saved, its own board read (post-save refetch) now carries the server draft.
-    getPlanningBoard.mockResolvedValueOnce(xSavedServerSide);
+    // X is saved (D16: patches the cache, no refetch).
     fireEvent.click(await screen.findByText('WESERP10B'));
     fireEvent.click(await screen.findByRole('button', { name: 'Save decision' }));
     await waitFor(() => expect(pillFor('WESERP10B')).toHaveTextContent('Saved'));
@@ -2699,9 +2748,9 @@ describe('FulfilmentBoardPanel: a line mid-Undo is not re-seeded by a concurrent
     fireEvent.click(await screen.findByRole('button', { name: 'Discard' }));
     await waitFor(() => expect(settleDelete).not.toBeNull());
 
-    // While X's DELETE is still unsettled, Y is saved - its OWN board refetch still shows
-    // X's server draft (the DELETE has not committed at the read X's own request raced).
-    getPlanningBoard.mockResolvedValueOnce(xSavedServerSide);
+    // While X's DELETE is still unsettled, Y is saved too - its own patch replaces the
+    // board's top-level array (re-running the seeding effect) but leaves X's OWN cached
+    // contribution untouched, still carrying X's server draft (the DELETE has not landed).
     fireEvent.click(await screen.findByText('WESERP20B'));
     fireEvent.click(await screen.findByRole('button', { name: 'Save decision' }));
     await waitFor(() => expect(pillFor('WESERP20B')).toHaveTextContent('Saved'));
@@ -2709,7 +2758,7 @@ describe('FulfilmentBoardPanel: a line mid-Undo is not re-seeded by a concurrent
     // X's own Undo settles.
     settleDelete!();
     await waitFor(() => expect(pillFor('WESERP10B')).toHaveTextContent('Suggested'));
-    // Still Suggested a beat later - nothing re-seeds it back off the stale read.
+    // Still Suggested a beat later - nothing re-seeds it back off the sibling's write.
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(pillFor('WESERP10B')).toHaveTextContent('Suggested');
   });

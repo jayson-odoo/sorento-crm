@@ -148,6 +148,12 @@ or a rule: those live once on the Policies page.
   on one saved row (list or dialog) returns that row alone to Suggested and deletes its
   server draft, with no confirmation dialog - it is reversible with another quick save - and
   every other row's own state is untouched.
+- AC-4.9 (D16, captain 3 Sep) Saving or undoing a draft decision never refetches the board and
+  never shows a skeleton: the pill flips Suggested/Saved in place off a cache patch, every other
+  card on screen keeps its own object identity (no re-render, no flicker), and the rows never
+  drop out from under the reader. Confirm still refetches the board (its write changes what the
+  engine can offer every OTHER order) - its rows dim in place while the fresh read lands, never
+  blank to a skeleton, since the previous board is kept on screen for the round trip.
 
 ## S5 upload
 

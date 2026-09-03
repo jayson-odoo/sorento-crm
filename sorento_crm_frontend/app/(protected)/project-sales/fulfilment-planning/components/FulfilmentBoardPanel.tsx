@@ -265,6 +265,24 @@ export function FulfilmentBoardPanel({
   );
 
   /**
+   * A Confirm's own refetch is on the wire, on the SAME selection/granularity/window - a
+   * draft save/undo never lands here any more (D16: `useLineDraftMutation` patches the cache
+   * in place and asks for no refetch at all). React Query already keeps the last successful
+   * `data` on screen through a same-key refetch with no extra wiring; the only gap was that
+   * `FulfilmentBoardListView` was fed this flag AS `PanelDataGrid`'s `isLoading`, which
+   * skeleton-wipes a grid that already had every row it needed - the flicker itself (the
+   * captain, 3 September 2026: "very choppy"). Read here instead to DIM the board rather than
+   * blank it.
+   *
+   * Deliberately NOT extended to a granularity/day-window turn (that IS a key change, so it
+   * would need `placeholderData` to keep the old rows up) - measured, not theoretical: turning
+   * that on made a cell opened moments after a granularity switch close itself, because the
+   * click landed on the OLD granularity's cell before the fresh read replaced it and
+   * `liveCell` then matched nothing. See `usePlanningBoard`'s own note.
+   */
+  const boardRefreshing = board.isFetching;
+
+  /**
    * Move the day window by a whole window at a time.
    *
    * The FIRST window is the server's: it opens on the earliest date still to come, falling
@@ -1191,72 +1209,90 @@ export function FulfilmentBoardPanel({
               every label in its own colour, so a legend was the same six words twice - and
               the one a reader meets first should be the one with the numbers on it. */}
 
-          {/* Suggested vs decided across the selection, card per kind (AC-D2). */}
-          <DecisionStrip
-            contributions={stripContributions}
-            draft={draft}
-            active={kindFilter}
-            onToggle={(kind) =>
-              setKindFilter((current) => (current === kind ? null : kind))
-            }
-          />
-
-          {/* The movements this board's confirmations raised, ABOVE the matrix (R13). They
-              used to be reachable only from the transfers screen, so the promise was made
-              here and the movement it implied was approved by somebody who had not seen the
-              order it was for. */}
-          <BoardTransfersPanel
-            soNumbers={soNumbers}
-            justConfirmed={batchResults !== null}
-            inquiryRows={(batchResults ?? [])
-              .filter((result) => result.ok)
-              .reduce((total, result) => total + (result.inquiry_rows_created ?? 0), 0)}
-          />
-
-          {view === 'list' ? (
-            /* D2: one row per contributing line across every cell of the WHOLE selection, not
-               the pivoted/windowed rows the grid shows - the point is an overview, so the row
-               axis and product search that shape the grid do not narrow it. */
-            <FulfilmentBoardListView
-              contributions={visibleListContributions}
+          {/* Dims rather than blanks (D16): Confirm's own refetch of this SAME selection
+              leaves every row mounted, so a card's own open/closed state and scroll position
+              survive it - a skeleton in their place would not. `boardRefreshing` above. A
+              draft save/undo never lands here at all any more; it patches the cache without
+              asking for a refetch. A granularity/day-window turn is a DIFFERENT selection and
+              still shows the true skeleton (`board.isLoading` above) - see the note on
+              `usePlanningBoard`. */}
+          <div
+            data-testid="board-content"
+            className={`space-y-4 transition-opacity duration-150 ${
+              boardRefreshing ? 'opacity-60' : 'opacity-100'
+            }`}
+          >
+            {/* Suggested vs decided across the selection, card per kind (AC-D2). */}
+            <DecisionStrip
+              contributions={stripContributions}
               draft={draft}
-              onDecide={decide}
-              isLoading={board.isFetching}
+              active={kindFilter}
+              onToggle={(kind) =>
+                setKindFilter((current) => (current === kind ? null : kind))
+              }
             />
-          ) : (
-            <>
-              {/* How much of the board is on screen. Only while a filter is on, and stated as
-                  a fraction, so a narrowed board is never mistaken for the whole one. */}
-              {filtering && (
-                <p className="text-sm text-muted-foreground tabular-nums">
-                  {`${visibleProductRows.length} of ${axis.rows.length} ${ROW_AXIS_NOUNS[rowAxis]}`}
-                </p>
-              )}
 
-              {visibleProductRows.length === 0 ? (
-                <Card>
-                  <CardContent className="px-6 py-10 text-center">
-                    <PackageSearch className="mx-auto size-6 text-muted-foreground" aria-hidden />
-                    {/* NOT the "owes nothing" copy: the selection owes plenty, the filter
-                        simply matched none of it. */}
-                    <h3 className="mt-2 text-sm font-semibold">No products match</h3>
-                  </CardContent>
-                </Card>
-              ) : (
-                <FulfilmentBoardMatrix
-                  dateBuckets={board.data.dateBuckets}
-                  rows={visibleProductRows}
-                  rowHeader={
-                    ROW_AXIS_OPTIONS.find((option) => option.value === rowAxis)?.label ?? 'Product'
-                  }
-                  cells={visibleCells}
-                  draft={draft}
-                  annotations={changeAnnotations}
-                  onOpenCell={(cell) => setOpenCell(cell)}
-                />
-              )}
-            </>
-          )}
+            {/* The movements this board's confirmations raised, ABOVE the matrix (R13). They
+                used to be reachable only from the transfers screen, so the promise was made
+                here and the movement it implied was approved by somebody who had not seen the
+                order it was for. */}
+            <BoardTransfersPanel
+              soNumbers={soNumbers}
+              justConfirmed={batchResults !== null}
+              inquiryRows={(batchResults ?? [])
+                .filter((result) => result.ok)
+                .reduce((total, result) => total + (result.inquiry_rows_created ?? 0), 0)}
+            />
+
+            {view === 'list' ? (
+              /* D2: one row per contributing line across every cell of the WHOLE selection, not
+                 the pivoted/windowed rows the grid shows - the point is an overview, so the row
+                 axis and product search that shape the grid do not narrow it.
+
+                 NO `isLoading` HERE (D16): this only ever mounts once `board.data` already has
+                 cells, so passing the query's `isFetching` skeleton-wiped a list that already
+                 had every row it needed - the flicker itself. The dim wrapper above says the
+                 same thing without discarding what is on screen. */
+              <FulfilmentBoardListView
+                contributions={visibleListContributions}
+                draft={draft}
+                onDecide={decide}
+              />
+            ) : (
+              <>
+                {/* How much of the board is on screen. Only while a filter is on, and stated as
+                    a fraction, so a narrowed board is never mistaken for the whole one. */}
+                {filtering && (
+                  <p className="text-sm text-muted-foreground tabular-nums">
+                    {`${visibleProductRows.length} of ${axis.rows.length} ${ROW_AXIS_NOUNS[rowAxis]}`}
+                  </p>
+                )}
+
+                {visibleProductRows.length === 0 ? (
+                  <Card>
+                    <CardContent className="px-6 py-10 text-center">
+                      <PackageSearch className="mx-auto size-6 text-muted-foreground" aria-hidden />
+                      {/* NOT the "owes nothing" copy: the selection owes plenty, the filter
+                          simply matched none of it. */}
+                      <h3 className="mt-2 text-sm font-semibold">No products match</h3>
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <FulfilmentBoardMatrix
+                    dateBuckets={board.data.dateBuckets}
+                    rows={visibleProductRows}
+                    rowHeader={
+                      ROW_AXIS_OPTIONS.find((option) => option.value === rowAxis)?.label ?? 'Product'
+                    }
+                    cells={visibleCells}
+                    draft={draft}
+                    annotations={changeAnnotations}
+                    onOpenCell={(cell) => setOpenCell(cell)}
+                  />
+                )}
+              </>
+            )}
+          </div>
 
           {/* NO COMMIT SECTION (R13). It was one card per sales order carrying a Confirm,
               a "N of M lines decided" counter and a paragraph explaining where Buy rows and
