@@ -955,7 +955,7 @@ describe('ContainerRequestSection - the eight figures open the shared lightbox (
 
     expect(dialog).toHaveTextContent('PO · ITEM-1');
     expect(within(dialog).getByText('PO-77')).toBeInTheDocument();
-    expect(within(dialog).getByText('Total still to come').closest('tr')).toHaveTextContent('60');
+    expect(within(dialog).getByText('Total outstanding').closest('tr')).toHaveTextContent('60');
   });
 
   it('a peak figure opens its channel dialog on the 12-month tab, with both peak cells marked (AC-B6, S1)', () => {

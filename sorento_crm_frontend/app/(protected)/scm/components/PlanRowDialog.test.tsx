@@ -635,7 +635,7 @@ describe('PoTabs', () => {
     },
   ];
 
-  it('lists the open lines, prices them in the PO currency and foots still-to-come, naming the sum in the tab (S3, AC-C3)', () => {
+  it('lists the open lines, prices them in the PO currency and foots to Outstanding, naming the sum in the tab (S3/S6, AC-C3/F2)', () => {
     useContainerRequestDrill.mockReturnValue(drill({ data: { rows: open, total: 143, history: [] } }));
 
     renderWithClient(<PoTabs supplierId="sup1" productId="p1" />);
@@ -644,8 +644,34 @@ describe('PoTabs', () => {
     expect(screen.getByRole('tab', { name: 'Open (143)' })).toBeTruthy();
     expect(screen.getByText('PO-24118')).toBeTruthy();
     expect(screen.getByText(/CNY/)).toBeTruthy();
-    const footer = screen.getByText('Total still to come').closest('tr') as HTMLElement;
+    // "Still to come" is now Outstanding, "ETA" is now Delivery date.
+    expect(screen.getByRole('columnheader', { name: 'Outstanding' })).toBeTruthy();
+    expect(screen.queryByRole('columnheader', { name: 'Still to come' })).toBeNull();
+    expect(screen.getByRole('columnheader', { name: 'Delivery date' })).toBeTruthy();
+    expect(screen.queryByRole('columnheader', { name: 'ETA' })).toBeNull();
+    const footer = screen.getByText('Total outstanding').closest('tr') as HTMLElement;
     expect(within(footer).getByText('143')).toBeTruthy();
+  });
+
+  it('the status pill reads Outstanding while owed, Completed once nothing is, Cancelled when the order is (S6, AC-F1)', () => {
+    const rows = [
+      { ...open[0], po_number: 'PO-OUT', still_to_come: 5, status: 'active' },
+      { ...open[0], po_number: 'PO-DONE', still_to_come: 0, status: 'active' },
+      { ...open[0], po_number: 'PO-CANCEL', still_to_come: 5, status: 'cancelled' },
+    ];
+    useContainerRequestDrill.mockReturnValue(drill({ data: { rows, total: 10, history: [] } }));
+
+    renderWithClient(<PoTabs supplierId="sup1" productId="p1" />);
+
+    expect(
+      within(screen.getByText('PO-OUT').closest('tr') as HTMLElement).getByText('Outstanding'),
+    ).toBeTruthy();
+    expect(
+      within(screen.getByText('PO-DONE').closest('tr') as HTMLElement).getByText('Completed'),
+    ).toBeTruthy();
+    expect(
+      within(screen.getByText('PO-CANCEL').closest('tr') as HTMLElement).getByText('Cancelled'),
+    ).toBeTruthy();
   });
 
   it('switches to what was ordered before, naming the quantity that WAS ordered (S3, AC-C3)', () => {
@@ -665,8 +691,8 @@ describe('PoTabs', () => {
 
     expect(screen.getByText('PO-24090')).toBeTruthy();
 
-    // AC-J3: the history tab foots its own still-to-come too (here, a closed PO: 0).
-    const footer = screen.getByText('Total still to come').closest('tr') as HTMLElement;
+    // AC-J3: the history tab foots its own outstanding too (here, a closed PO: 0).
+    const footer = screen.getByText('Total outstanding').closest('tr') as HTMLElement;
     expect(within(footer).getByText('0')).toBeTruthy();
   });
 

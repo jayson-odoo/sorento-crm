@@ -30,6 +30,7 @@ import { getStatusBadgeVariant, formatStatusLabel } from '@/lib/status-badge';
 import { cn } from '@/lib/utils';
 
 import { EM_DASH, fmtDate, fmtInt, fmtMoney, fmtSupplierCost } from '../lib/format';
+import { purchaseOrderStatusPill } from '../lib/purchaseOrderStatus';
 import { useContainerRequestDrill } from '../hooks/useContainerRequestDrill';
 import { useLocationStock } from '../reorder/hooks/useReorderRun';
 import { StockDocumentsPanel } from '../../project-sales/fulfilment-planning/components/StockDocumentsPanel';
@@ -981,7 +982,8 @@ function poColumns(totalStillToCome: number): ColumnDef<ContainerRequestDrillPoR
       id: 'po_number',
       header: 'PO',
       cell: ({ row }) => textCell(row.original.po_number),
-      footer: () => <span className="text-muted-foreground">Total still to come</span>,
+      // S6: the purchase-order list's own word for this figure.
+      footer: () => <span className="text-muted-foreground">Total outstanding</span>,
       size: 120,
       meta: { skeleton: SKELETON_CELL },
     },
@@ -1004,7 +1006,7 @@ function poColumns(totalStillToCome: number): ColumnDef<ContainerRequestDrillPoR
     },
     {
       id: 'still_to_come',
-      header: 'Still to come',
+      header: 'Outstanding',
       cell: ({ row }) => fmtInt(row.original.still_to_come),
       footer: () => fmtInt(totalStillToCome),
       size: 110,
@@ -1031,16 +1033,31 @@ function poColumns(totalStillToCome: number): ColumnDef<ContainerRequestDrillPoR
     },
     {
       id: 'eta',
-      header: 'ETA',
+      // S6: the purchase-order list heads this "Delivery date" - "ETA" was the only column
+      // in the family still using the word.
+      header: 'Delivery date',
       cell: ({ row }) => fmtDate(row.original.eta),
-      size: 100,
+      size: 120,
       meta: RIGHT,
     },
     {
       id: 'status',
       header: 'Status',
-      cell: ({ row }) => textCell(row.original.status),
-      size: 100,
+      cell: ({ row }) => {
+        const r = row.original;
+        // The same pill the purchase-order list itself wears (S6): Outstanding / Completed
+        // is DERIVED off `still_to_come`, not the raw stored status word.
+        const pill = purchaseOrderStatusPill({
+          status: r.status ?? '',
+          is_on_order: r.still_to_come > 0,
+        });
+        return (
+          <Badge variant={pill.variant} appearance="light" size="md">
+            {pill.label}
+          </Badge>
+        );
+      },
+      size: 110,
     },
   ];
 }
