@@ -31,14 +31,18 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { useRowPending } from '@/hooks/useDeferredRowAction';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
-import { useDeleteTagSize, useTagSizesQuery } from '../hooks/useTagSizes';
+import { useDeleteTagSizePreset, useTagSizesQuery } from '../hooks/useTagSizes';
 import type { TagSizeRecord } from '../../services/tagSizeService';
 import { TagSizeDialog } from './TagSizeDialog';
 
 export function TagSizesList() {
   const { data: sizes = [], isLoading } = useTagSizesQuery();
-  const deleteMutation = useDeleteTagSize();
+  // Delete asks nothing (D7): the row dims and a toast counts down with
+  // Cancel, exactly like `TagTemplatesList`'s own row delete.
+  const deletion = useDeleteTagSizePreset();
+  const rowPending = useRowPending<TagSizeRecord>('tag_size_preset');
 
   const [search, setSearch] = useState('');
   const [pagination, setPagination] = useState<PaginationState>({
@@ -131,7 +135,9 @@ export function TagSizesList() {
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 variant="destructive"
-                onClick={() => deleteMutation.mutate(row.original)}
+                onClick={() =>
+                  deletion.run({ id: row.original.id, subject: row.original.name })
+                }
               >
                 Delete size
               </DropdownMenuItem>
@@ -141,7 +147,7 @@ export function TagSizesList() {
         enableResizing: false,
       },
     ],
-    [deleteMutation],
+    [deletion],
   );
 
   const table = useReactTable({
@@ -193,6 +199,7 @@ export function TagSizesList() {
             recordCount={filtered.length}
             isLoading={isLoading}
             tableLayout={{ width: 'fixed', columnsResizable: true }}
+            rowPending={rowPending}
             emptyAction={listPrimaryAction}
           >
             <DataGridTable />

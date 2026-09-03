@@ -164,7 +164,7 @@ vi.mock('../../../../services/priceTagRequestService', () => ({
 // the resize flow unchanged.
 vi.mock('../../../../tag-sizes/hooks/useTagSizes', () => ({
   useTagSizesQuery: () => ({ data: [] }),
-  useDeleteTagSize: () => ({ mutate: vi.fn() }),
+  useDeleteTagSizePreset: () => ({ run: vi.fn(), targetId: null, isPending: false }),
   useCreateTagSize: () => ({ mutateAsync: vi.fn(async () => ({})), isPending: false }),
 }));
 

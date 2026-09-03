@@ -114,7 +114,10 @@ import { listPublishedTemplates } from '../../../../services/tagTemplateService'
 import { FocusShell, FocusToggle } from '../../../../components/FocusMode';
 import { AutosaveIndicator } from '../../../../components/AutosaveIndicator';
 import { SaveAsSizeDialog } from './SaveAsSizeDialog';
-import { useDeleteTagSize, useTagSizesQuery } from '../../../../tag-sizes/hooks/useTagSizes';
+import {
+  useDeleteTagSizePreset,
+  useTagSizesQuery,
+} from '../../../../tag-sizes/hooks/useTagSizes';
 
 let idSeq = 0;
 function newTagId(): string {
@@ -661,19 +664,21 @@ export function RequestTagDesigner({
     selectedLine ? lineFamily(selectedLine, selectedLineCode) : 'ala_carte'
   ) as TagTemplateFamily;
 
-  const handleTemplateCreated = useCallback((created: TagTemplate) => {
-    // PHASE 1: the mock answers a template the real backend does not have
-    // yet, so the picker's source is appended to directly - `loadTemplates()`
-    // (a genuine refetch) replaces this line in Phase 2, once the backend
-    // really does return it published.
-    setTemplates((prev) => [...prev, created]);
-    toast.success(`Template "${created.name}" published`, {
-      action: {
-        label: 'Open',
-        onClick: () => router.push(`/dealer-kit/tag-templates/${created.id}`),
-      },
-    });
-  }, [router]);
+  const handleTemplateCreated = useCallback(
+    (created: TagTemplate) => {
+      // A real refetch, not a local splice: the picker's source is the
+      // backend's own published list (AC-S4-8), and this is what keeps it
+      // agreeing with what a reload would show.
+      loadTemplates();
+      toast.success(`Template "${created.name}" published`, {
+        action: {
+          label: 'Open',
+          onClick: () => router.push(`/dealer-kit/tag-templates/${created.id}`),
+        },
+      });
+    },
+    [router, loadTemplates],
+  );
 
   // -- Render ----------------------------------------------------------------
 
@@ -1100,7 +1105,7 @@ function TagSizeControl({
   // templates and stays read-only here.
   const savedSizesQuery = useTagSizesQuery();
   const savedSizes = savedSizesQuery.data ?? [];
-  const deleteSavedSize = useDeleteTagSize();
+  const deleteSavedSize = useDeleteTagSizePreset();
   const [saveSizeOpen, setSaveSizeOpen] = useState(false);
 
   if (!tag) {
@@ -1211,7 +1216,7 @@ function TagSizeControl({
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    deleteSavedSize.mutate(saved);
+                    deleteSavedSize.run({ id: saved.id, subject: saved.name });
                   }}
                 >
                   <X className="size-3.5" />

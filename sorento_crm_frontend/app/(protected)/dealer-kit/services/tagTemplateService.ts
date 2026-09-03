@@ -200,26 +200,19 @@ export interface CreateTemplateFromTagInput {
 }
 
 /**
- * PHASE 1 MOCK - swapped for apiFetch (`POST ${BASE}/from-tag`) in Phase 2.
- * Creates AND publishes v1 in one call (AC-S4-7); the mock answers exactly
- * that shape so the toast/"Open" link and the picker refresh work the same
- * way they will once the route exists.
+ * Creates AND publishes v1 in one call (AC-S4-7). Declared before
+ * `/{template_id}` on the backend, same reason `/resolve-preview` is.
  */
 export async function createTemplateFromTag(
   input: CreateTemplateFromTagInput,
 ): Promise<TagTemplate> {
-  await new Promise((resolve) => setTimeout(resolve, 300));
-  const id = `mock-template-${Date.now()}`;
-  const now = new Date().toISOString();
-  return {
-    id,
-    name: input.name,
-    family: input.family,
-    doc: input.doc,
-    print_size: input.print_size,
-    created_at: now,
-    updated_at: now,
-    published_version_id: `mock-version-${id}`,
-    published_version_no: 1,
-  };
+  const response = await apiFetch(`${BASE}/from-tag`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to save this template'));
+  }
+  return response.json();
 }

@@ -27,8 +27,10 @@
  *     (`tag_templates.py`).
  * ============================================================================
  */
-// PHASE 1 MOCK - `apiFetch`/`extractApiError`/`BASE` come back with the real
-// calls in Phase 2; every function below reads the in-memory array instead.
+import { apiFetch } from '@/lib/api';
+import { extractApiError } from '@/lib/api-client';
+
+const BASE = '/api/v1/dealer-kit/tag-sizes';
 
 /** A saved tag size, as the API answers it. Not `TagSizePreset` (`request-tags.ts`
  *  already owns that name for a dropdown OPTION, template-derived or saved). */
@@ -49,102 +51,47 @@ export interface TagSizeInput {
   height_mm: number;
 }
 
-// ---------------------------------------------------------------------------
-// PHASE 1 MOCK - swapped for apiFetch in Phase 2, and this whole block goes
-// with it. Held in module scope so create/update/delete are visible across
-// every mounted consumer (the listing page and the request designer's Tag
-// Size control) for the length of one tab's session, which is enough to
-// verify the flow end to end before the real table exists.
-// ---------------------------------------------------------------------------
-
-const MOCK_DELAY_MS = 250;
-
-function mockDelay(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, MOCK_DELAY_MS));
-}
-
-let mockSizes: TagSizeRecord[] = [
-  {
-    id: 'mock-size-shelf-rail',
-    name: 'Shelf rail',
-    width_mm: 95,
-    height_mm: 44.5,
-    created_by: 'mock-user',
-    created_by_name: 'Jayson',
-    created_at: '2026-09-01T02:00:00',
-    updated_at: '2026-09-01T02:00:00',
-  },
-  {
-    id: 'mock-size-hanging-tag',
-    name: 'Hanging tag',
-    width_mm: 60,
-    height_mm: 90,
-    created_by: 'mock-user',
-    created_by_name: 'Jayson',
-    created_at: '2026-09-01T02:00:00',
-    updated_at: '2026-09-01T02:00:00',
-  },
-];
-let mockSeq = 1;
-
-function duplicateNameError(name: string): Error {
-  return new Error(`A tag size named "${name}" already exists.`);
-}
-
-/** PHASE 1 MOCK - swapped for apiFetch in Phase 2. */
 export async function listTagSizes(): Promise<TagSizeRecord[]> {
-  await mockDelay();
-  return [...mockSizes].sort((a, b) => a.name.localeCompare(b.name));
-}
-
-/** PHASE 1 MOCK - swapped for apiFetch in Phase 2. */
-export async function createTagSize(input: TagSizeInput): Promise<TagSizeRecord> {
-  await mockDelay();
-  const name = input.name.trim();
-  if (mockSizes.some((s) => s.name.toLowerCase() === name.toLowerCase())) {
-    throw duplicateNameError(name);
+  const response = await apiFetch(BASE);
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load tag sizes'));
   }
-  const row: TagSizeRecord = {
-    id: `mock-size-${mockSeq++}`,
-    name,
-    width_mm: input.width_mm,
-    height_mm: input.height_mm,
-    created_by: 'mock-user',
-    created_by_name: 'You',
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  };
-  mockSizes = [...mockSizes, row];
-  return row;
+  return response.json();
 }
 
-/** PHASE 1 MOCK - swapped for apiFetch in Phase 2. */
+export async function createTagSize(input: TagSizeInput): Promise<TagSizeRecord> {
+  const response = await apiFetch(BASE, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to create tag size'));
+  }
+  return response.json();
+}
+
 export async function updateTagSize(
   id: string,
   input: Partial<TagSizeInput>,
 ): Promise<TagSizeRecord> {
-  await mockDelay();
-  const existing = mockSizes.find((s) => s.id === id);
-  if (!existing) throw new Error('Tag size not found');
-  const name = input.name !== undefined ? input.name.trim() : existing.name;
-  if (
-    input.name !== undefined &&
-    mockSizes.some((s) => s.id !== id && s.name.toLowerCase() === name.toLowerCase())
-  ) {
-    throw duplicateNameError(name);
+  const response = await apiFetch(`${BASE}/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to update tag size'));
   }
-  const updated: TagSizeRecord = {
-    ...existing,
-    ...input,
-    name,
-    updated_at: new Date().toISOString(),
-  };
-  mockSizes = mockSizes.map((s) => (s.id === id ? updated : s));
-  return updated;
+  return response.json();
 }
 
-/** PHASE 1 MOCK - swapped for apiFetch in Phase 2. */
+/** The immediate delete - see the API contract banner above for who calls it. */
 export async function deleteTagSize(id: string): Promise<void> {
-  await mockDelay();
-  mockSizes = mockSizes.filter((s) => s.id !== id);
+  const response = await apiFetch(`${BASE}/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to delete tag size'));
+  }
 }
