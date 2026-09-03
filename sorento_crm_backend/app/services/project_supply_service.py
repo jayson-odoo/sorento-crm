@@ -689,11 +689,26 @@ class _CapacityLedger:
         #: The date-aware slices claimed against it, summed (`offer`).
         self._claimed: Dict[Tuple[str, str], Decimal] = {}
 
-    def capacity(self, product_id: Optional[str], warehouse_id: str, live_qty: Decimal) -> Decimal:
+    def capacity(
+        self,
+        product_id: Optional[str],
+        warehouse_id: str,
+        live_qty: Decimal,
+        *,
+        own: bool = False,
+    ) -> Decimal:
         key = (product_id or "", warehouse_id)
         if key not in self._left:
             self._left[key] = live_qty
             self._basis[key] = live_qty
+        elif own:
+            # THE OWNING LINE'S OWN NETTING NEVER LOSES TO AN EARLIER SEED (review fix
+            # round, S2's confirm-time counterpart): an earlier line's chain reached this
+            # pool as one of its OTHERS and seeded it here unclaimed, and the line that
+            # actually owns the pool - whose `live_qty` already nets the claims ranked
+            # ahead of IT specifically - intersects the running balance with its own
+            # reading rather than trusting whatever an unrelated line seeded first.
+            self._left[key] = min(self._left[key], live_qty)
         return self._left[key]
 
     def offer(
@@ -1464,7 +1479,21 @@ class ProjectSupplyService:
                     # reason (AC-N.12): the share is what the policy lets a pool lend and
                     # the floor is what it physically holds, and a pool whose floor is the
                     # lower of the two is spent by the first line that reaches it.
-                    if code not in floors:
+                    #
+                    # THE OWNING UNIT'S OWN NETTING NEVER LOSES TO AN EARLIER SEED (review
+                    # fix round, S2): `unit_fact.pool_free` already nets OUT the claims
+                    # ranked ahead of this unit at its OWN pool, but an earlier unit at a
+                    # DIFFERENT site reads that same pool as one of its OTHERS and seeds it
+                    # RAW - unclaimed. Seeding once (`if code not in floors`) for every pool
+                    # then kept that raw figure for good, so the unit that actually owns the
+                    # pool lost its own claim netting to whichever unit's walk happened to
+                    # reach the ledger first. The owning unit always intersects the ledger
+                    # with its OWN reading instead of only seeding once.
+                    if code == unit_fact.pool_code:
+                        floors[code] = min(
+                            floors.get(code, unit_fact.pool_free), unit_fact.pool_free
+                        )
+                    elif code not in floors:
                         floors[code] = max(_dec(entry.get("free")), _ZERO)
             # A fact with no product cannot borrow at all (`_cross_group_borrow_candidates`
             # refuses it by rule), so it keeps no ledger either - one bucket keyed by the
@@ -1548,7 +1577,7 @@ class ProjectSupplyService:
                         (
                             component.qty
                             for component in components
-                            if component.kind == RESERVE and component.rung == "pool"
+                            if component.kind == RESERVE and component.rung == RUNG_POOL
                         ),
                         _ZERO,
                     )
@@ -1558,7 +1587,7 @@ class ProjectSupplyService:
                     # not spend BRW's share, and the free half is what the share bounds -
                     # a pool BORROW (R34) is a later order's stock, not the pile's share.
                     for component in components:
-                        if component.kind != RESERVE or component.rung != "pool":
+                        if component.kind != RESERVE or component.rung != RUNG_POOL:
                             continue
                         code = component.source_location
                         if not code:
@@ -4369,7 +4398,8 @@ class ProjectSupplyService:
                 continue
             location_ids[location] = str(source.id)
             capacity[location] = capacity_left.capacity(
-                fact.product_id, str(source.id), live_qty
+                fact.product_id, str(source.id), live_qty,
+                own=(location == unit.fact.pool_code),
             )
         # STEP 1's OWN half, read TWICE and reconciled into one pile.
         #

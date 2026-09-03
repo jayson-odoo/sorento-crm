@@ -286,6 +286,156 @@ def test_another_sites_pool_free_floor_is_spent_once_across_the_whole_walk():
     )
 
 
+def test_a_second_sites_own_pool_still_nets_its_own_claim_after_an_earlier_units_raw_seed():
+    """Review fix round S2: `pool_free_left` seeded a pool's floor RAW the first time any
+    unit's chain reached it - including a unit for which that pool is only an OTHER pool,
+    read unclaimed - and never revisited it once seeded. The pool's OWNING unit then read
+    that stale, unclaimed figure back off the ledger instead of its OWN netted floor.
+
+    BRW's own bin is walked first (line 1) and its chain reaches MWH's pool as one of its
+    OTHERS - raw, 10 on hand, seeded into the ledger unclaimed. MWH's own bin is walked
+    second (line 2): a separate order's line sits directly on MWH's pool, due sooner, and
+    claims 3 of its 10 ahead of line 2 - so line 2's own floor there is 7, not 10. Without
+    the fix the ledger still says 10 and line 2's 8 comes whole off the pool; with it, line
+    2's own reading intersects the ledger the moment its own seeding runs, and only 7 do.
+    """
+    near = date.today() + timedelta(days=10)
+    far = date.today() + timedelta(days=17)
+    with blank_session() as db:
+        company_id, _eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own1, pool1 = sites["BRW"]
+        own2, pool2 = sites["MWH"]
+        _stock(db, product, pool1, on_hand=0)
+        _stock(db, product, pool2, on_hand=10)
+        # 20 on the water at MWH's pool, so its ALLOWANCE (available x share) is well above
+        # the 7 its floor actually nets to - the floor, not the share, is what is under
+        # test here.
+        _spo_line(db, product, pool2, qty=20, arrives=far + timedelta(days=30))
+        # A SEPARATE order's line, held directly at MWH's own pool and due sooner, so it
+        # ranks ahead of line 2 and claims 3 of the pool's floor.
+        theirs = _core_so(db, company_id)
+        _core_line(db, theirs, product, pool2, qty_ordered="3", required_date=near)
+        db.commit()
+
+        from tests.scm.test_ladder_v6_order_unit import _seed_order
+
+        _core, order, _mirrors = _seed_order(
+            db, company_id, project, product,
+            lines=[(1, "1", own1, far), (2, "8", own2, far)],
+        )
+        lines = {
+            line["line_no"]: line
+            for line in ProjectSupplyService(db).proposal_for(order)["lines"]
+        }
+
+    stated = {
+        line_no: [(c["kind"], c["qty"], c["source_location"]) for c in line["components"]]
+        for line_no, line in lines.items()
+    }
+    assert stated[2] == [
+        ("reserve", "7", pool2.warehouse_code),
+        ("buy", "1", None),
+    ], "MWH's own claimed 3 units must never be offered to the line that owns its pool"
+
+
+def test_confirm_reads_the_same_claim_netting_as_the_proposal_did():
+    """Review fix round S2, the CONFIRM-time counterpart: `_check_line` reads its pool
+    capacity through `_CapacityLedger`, which has the identical seed-once shape as
+    `pool_free_left` above - an earlier line's chain reaches this pool as one of its
+    OTHERS and seeds the ledger unclaimed, and the line that owns the pool then reads that
+    stale figure back instead of its own claim-netted one. Same world as the proposal-time
+    test above, checked at the write path the board actually calls.
+    """
+    near = date.today() + timedelta(days=10)
+    far = date.today() + timedelta(days=17)
+    with blank_session() as db:
+        company_id, eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own1, pool1 = sites["BRW"]
+        own2, pool2 = sites["MWH"]
+        _stock(db, product, pool1, on_hand=0)
+        _stock(db, product, pool2, on_hand=10)
+        _spo_line(db, product, pool2, qty=20, arrives=far + timedelta(days=30))
+        theirs = _core_so(db, company_id)
+        _core_line(db, theirs, product, pool2, qty_ordered="3", required_date=near)
+        db.commit()
+
+        from app.schemas.project_supply import ConfirmLine, ConfirmSupplyBody
+        from tests.scm.test_ladder_v6_order_unit import _seed_order
+
+        _core, order, _mirrors = _seed_order(
+            db, company_id, project, product,
+            lines=[(1, "1", own1, far), (2, "8", own2, far)],
+        )
+        lines_by_no = {
+            line.line_no: line for line in ProjectSupplyService(db).lines_of(str(order.id))
+        }
+
+        # Asking for the whole 8 must be REFUSED at 7, the line's own netted floor - not
+        # silently accepted off the ledger's stale, unclaimed 10.
+        with pytest.raises(AppException) as refused:
+            ProjectSupplyService(db).confirm(
+                order,
+                ConfirmSupplyBody(
+                    lines=[
+                        ConfirmLine(project_line_id=lines_by_no[1].id, buy_qty="1"),
+                        ConfirmLine(
+                            project_line_id=lines_by_no[2].id,
+                            reserve=[{"warehouse_id": str(pool2.id), "qty": "8"}],
+                        ),
+                    ]
+                ),
+                actor_user_id=eling,
+            )
+        failing = refused.value.detail["failing_lines"]
+        assert len(failing) == 1
+        assert failing[0]["reason"] == (
+            f"{pool2.warehouse_code} now has 7 free for this line, and 8 was asked for."
+        )
+
+    with blank_session() as db:
+        company_id, eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own1, pool1 = sites["BRW"]
+        own2, pool2 = sites["MWH"]
+        _stock(db, product, pool1, on_hand=0)
+        _stock(db, product, pool2, on_hand=10)
+        _spo_line(db, product, pool2, qty=20, arrives=far + timedelta(days=30))
+        theirs = _core_so(db, company_id)
+        _core_line(db, theirs, product, pool2, qty_ordered="3", required_date=near)
+        db.commit()
+
+        from app.schemas.project_supply import ConfirmLine, ConfirmSupplyBody
+        from tests.scm.test_ladder_v6_order_unit import _seed_order
+
+        _core, order, _mirrors = _seed_order(
+            db, company_id, project, product,
+            lines=[(1, "1", own1, far), (2, "8", own2, far)],
+        )
+        lines_by_no = {
+            line.line_no: line for line in ProjectSupplyService(db).lines_of(str(order.id))
+        }
+
+        # The netted 7 itself is exactly what the line's own pool may still give it.
+        result = ProjectSupplyService(db).confirm(
+            order,
+            ConfirmSupplyBody(
+                lines=[
+                    ConfirmLine(project_line_id=lines_by_no[1].id, buy_qty="1"),
+                    ConfirmLine(
+                        project_line_id=lines_by_no[2].id,
+                        reserve=[{"warehouse_id": str(pool2.id), "qty": "7"}],
+                        buy_qty="1",
+                    ),
+                ]
+            ),
+            actor_user_id=eling,
+        )
+    assert result["lines_decided"] == 2
+    assert result["exceptions"] == []
+
+
 def test_a_pool_with_negative_available_offers_nothing_not_a_floor_of_zero_read_as_some():
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)

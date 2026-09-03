@@ -560,27 +560,6 @@ def pool_reserve_capacity(
     return out
 
 
-def pool_reason(location: str, qty: Decimal, pools_net: Any) -> str:
-    """Why this pool may lend this much. RETIRED VOCABULARY, read and never written.
-
-    Ladder v8's step 0 writes `pool_share_reason` instead - the share, not the raw pile -
-    so nothing composes this sentence any more. It stays for the same reason `STEP_POOL`
-    does: a proposal frozen under v4 to v7.1 still has to render in the words it was made
-    with.
-
-    Built from what is actually TAKEN, beside the pile's own net - the same shape
-    `group_take_reason` has, and for the same reason: under v4 the number is a share of a
-    SET's position, so "Pool BRW has 30 available" reads as though BRW alone held it.
-
-    Public because the supply service builds this sentence when it reads a CONFIRMED
-    component back off a snapshot, exactly as it does for the group rung.
-    """
-    return (
-        f"Pool {location} lends {qty_text(qty)} of the {qty_text(_dec(pools_net))} the "
-        "site pools net between them"
-    )
-
-
 def pool_share_reason(location: str, qty: Decimal, allowance: Decimal) -> str:
     """LADDER V8 (R-A/R-B): why the site pool may lend a PROJECT line this much.
 
@@ -588,8 +567,8 @@ def pool_share_reason(location: str, qty: Decimal, allowance: Decimal) -> str:
     is kept back and the five-pool net has had its say - and never the raw pile, because
     "Pool BRW lends 3 of the 47 free" invites the next planner to ask for the other 44.
 
-    Public for the same reason `pool_reason` is: the supply service builds this sentence
-    when it reads a CONFIRMED component back off a frozen snapshot.
+    Public because the supply service builds this sentence when it reads a CONFIRMED
+    component back off a frozen snapshot.
     """
     return (
         f"Pool {location} spares {qty_text(qty)} of the {qty_text(allowance)} it may lend "
@@ -640,8 +619,12 @@ def pool_share_option_reason(
         # older sentence sent a planner looking at an empty floor that was not empty.
         if not immediate and free is not None and ZERO < _dec(free) < open_qty:
             when = f"{window_days} days" if window_days is not None else "the window"
+            # PLURAL GRAMMAR (review fix round, nit): "BRW and WH3 GIVE", never "gives",
+            # once the chain names more than one pool - `" and "` is the one join
+            # `_pool_share_label`/the caller ever puts between two pool names here.
+            verb = "give" if " and " in location else "gives"
             return (
-                f"{location} gives whole lines only beyond {when}, and "
+                f"{location} {verb} whole lines only beyond {when}, and "
                 f"{qty_text(_dec(free))} on the floor cannot cover {qty_text(open_qty)}"
             )
         if free is not None and _dec(free) <= ZERO:
@@ -919,8 +902,8 @@ def pool_borrow_reason(
 ) -> str:
     """Step 4's borrow half (R34): a LATER pool order lends its on hand and is owed it back.
 
-    The pool's free pile raises nothing (`pool_reason`); this does, because the quantity
-    was already promised to somebody's order.
+    The pool's free pile raises nothing (`pool_share_reason`); this does, because the
+    quantity was already promised to somebody's order.
     """
     who = donor_so_number or "a later pool order"
     when = f", due {date_text(donor_required_date)}" if donor_required_date else ""
@@ -1224,7 +1207,7 @@ def walk_line(
             # BRW spares 4 of the 355 it may lend a project"). Under R-N step 0 may be
             # several pools at once, and one option-row sentence about the asking pool
             # could not state a split it did not make.
-            ". ".join(component.reason for component in answered)
+            " ".join(component.reason for component in answered)
             if answered
             else (
                 # NOTHING ANSWERED, so the row explains the CHAIN's refusal and not the
@@ -1234,15 +1217,30 @@ def walk_line(
                     " and ".join(pool_names),
                     open_qty=open_amount,
                     allowance=(
-                        sum((allowance for _l, _c, allowance in chain), ZERO)
+                        min(
+                            sum((allowance for _l, _c, allowance in chain), ZERO),
+                            max(_dec(pools_net), ZERO),
+                        )
                         if chain
                         else pool_allowance(
                             (pools or [None])[0], pools_net, pool_share_pct, pool_share_left
                         )
                     ),
                     share=share_qty,
+                    # SUM ONLY THE CHAIN'S OWN POOLS, never every pool the location holds
+                    # (review fix round, S1): `pool_names` is the chain `pool_share_capacity`
+                    # actually walked, and a pool that walk skipped - allowance spent to 0,
+                    # or nothing left of the net - was still handed a floor here, so a
+                    # refusal read "BRW has nothing free on the floor to spare" beside a pool
+                    # BRW that in fact had 100 on hand, because WH3's 250 (asked for nothing)
+                    # was added into the same sum.
                     free=sum(
-                        (max(_dec(pool.get("free")), ZERO) for pool in pools or ()), ZERO
+                        (
+                            max(_dec(pool.get("free")), ZERO)
+                            for pool in pools or ()
+                            if str(pool.get("location")) in pool_names
+                        ),
+                        ZERO,
                     ),
                     immediate=immediate,
                     window_days=window_days,

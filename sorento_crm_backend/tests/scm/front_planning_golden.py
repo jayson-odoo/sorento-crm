@@ -1501,7 +1501,7 @@ TWO_POOLS_COVER_ONE_LINE_CASE = WalkCase(
             # each of them spared and out of what allowance, which is the arithmetic a
             # planner checks the split against.
             reason=(
-                "Pool BRW spares 4 of the 355 it may lend a project. "
+                "Pool BRW spares 4 of the 355 it may lend a project "
                 "Pool WH3 spares 4 of the 343 it may lend a project"
             ),
             chosen=True,
@@ -1556,7 +1556,7 @@ THE_OWN_POOL_GIVES_WHAT_IT_HAS_AND_THE_CHAIN_FINISHES_CASE = WalkCase(
             whole=True,
             gives_qty=Decimal("8"),
             reason=(
-                "Pool BRW spares 1 of the 355 it may lend a project. "
+                "Pool BRW spares 1 of the 355 it may lend a project "
                 "Pool WH3 spares 7 of the 343 it may lend a project"
             ),
             chosen=True,
@@ -1609,7 +1609,7 @@ THE_OLD_SPILL_ANSWER_ARRIVES_AT_STEP_0_CASE = WalkCase(
             whole=True,
             gives_qty=Decimal("8"),
             reason=(
-                "Pool BRW spares 3 of the 355 it may lend a project. "
+                "Pool BRW spares 3 of the 355 it may lend a project "
                 "Pool WH3 spares 5 of the 343 it may lend a project"
             ),
             chosen=True,
@@ -1698,7 +1698,7 @@ BEYOND_THE_WINDOW_THE_CHAIN_IS_WHOLE_CASE = WalkCase(
             whole=True,
             gives_qty=Decimal("300"),
             reason=(
-                "Pool BRW spares 100 of the 100 it may lend a project. "
+                "Pool BRW spares 100 of the 100 it may lend a project "
                 "Pool WH3 spares 200 of the 250 it may lend a project"
             ),
             chosen=True,
@@ -1801,7 +1801,7 @@ THE_NET_BOUNDS_THE_WHOLE_STEP_0_CHAIN_CASE = WalkCase(
             whole=False,
             gives_qty=Decimal("120"),
             reason=(
-                "Pool BRW spares 100 of the 100 it may lend a project. "
+                "Pool BRW spares 100 of the 100 it may lend a project "
                 "Pool WH3 spares 20 of the 20 it may lend a project"
             ),
             label="Use BRW and WH3 stock",
@@ -1861,6 +1861,92 @@ THE_SHARE_LEDGER_IS_PER_POOL_ACROSS_THE_CHAIN_CASE = WalkCase(
 )
 
 
+THE_CHAIN_REFUSAL_COUNTS_ONLY_THE_POOLS_IT_WALKED_CASE = WalkCase(
+    ac="S1",
+    title=(
+        "review fix round S1: the refusal's floor is the pools the chain actually WALKED, "
+        "not every pool the location holds - WH3's allowance is 0 so it never joins the "
+        "chain, and its 250 on the floor must not read as BRW's own free stock"
+    ),
+    inputs=_v8_inputs(
+        open_qty=Decimal("300"),
+        required_date=FAR_DATE,
+        pools=[
+            {"location": POOL_LOCATION, "free": Decimal("100"), "available": Decimal("1200")},
+            {"location": V8_OTHER_POOL, "free": Decimal("250"), "available": Decimal("0")},
+        ],
+        pools_net=Decimal("1000"),
+    ),
+    components=(
+        Component(
+            kind=BUY,
+            qty=Decimal("300"),
+            reason="Only 0 of 300 can be covered from stock - buy the whole line",
+        ),
+    ),
+    options=(
+        OptionRow(
+            step="pool_share",
+            whole=False,
+            gives_qty=Decimal("0"),
+            # WH3's allowance is 0, so `pool_share_capacity` never adds it to the chain -
+            # the refusal is BRW's alone, and its own 100 on the floor is what cannot cover
+            # 300. Summing `free` over every pool the location holds (the bug this pins)
+            # added WH3's 250 in and the message read "BRW has nothing free on the floor
+            # to spare" over a floor that plainly was not empty.
+            reason="BRW gives whole lines only beyond 30 days, and 100 on the floor cannot cover 300",
+        ),
+        OptionRow(step="use", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="order_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="supply_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="buy", whole=True, gives_qty=Decimal("300"), chosen=True),
+    ),
+)
+
+
+THE_CHAIN_ALLOWANCE_NEVER_EXCEEDS_THE_NET_CASE = WalkCase(
+    ac="S1b",
+    title=(
+        "review fix round S1: two pools each individually allowed close to the net, so a "
+        "naive sum of their allowances (120 + 115 = 235) claims almost double the 120 the "
+        "five pools actually net - the refusal's 'can spare' figure is capped at the net"
+    ),
+    inputs=_v8_inputs(
+        open_qty=Decimal("150"),
+        required_date=FAR_DATE,
+        pools=[
+            {"location": POOL_LOCATION, "free": Decimal("5"), "available": Decimal("1000")},
+            {"location": V8_OTHER_POOL, "free": Decimal("200"), "available": Decimal("1000")},
+        ],
+        pools_net=Decimal("120"),
+    ),
+    components=(
+        Component(
+            kind=BUY,
+            qty=Decimal("150"),
+            reason="Only 0 of 150 can be covered from stock - buy the whole line",
+        ),
+    ),
+    options=(
+        OptionRow(
+            step="pool_share",
+            whole=False,
+            gives_qty=Decimal("0"),
+            # BRW's tiny floor (5) barely spends the net, so WH3's own allowance still
+            # reads 115 of it - and 120 + 115 is 235, an allowance the five pools do not
+            # have between them. The floor (5 + 200 = 205) covers the 150 needed, so the
+            # sentence is decided by the allowance and not the floor: capped at the net
+            # (120), 150 is still more than the pools can spare.
+            reason="150 is more than the 120 BRW and WH3 can spare",
+        ),
+        OptionRow(step="use", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="order_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="supply_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="buy", whole=True, gives_qty=Decimal("150"), chosen=True),
+    ),
+)
+
+
 V8_WALK_CASES = (
     IMMEDIATE_SHARE_CASE,
     SMALL_LINE_WHOLE_FROM_POOL_CASE,
@@ -1882,4 +1968,6 @@ V8_WALK_CASES = (
     BEYOND_THE_WINDOW_THE_CHAIN_IS_SHORT_CASE,
     THE_NET_BOUNDS_THE_WHOLE_STEP_0_CHAIN_CASE,
     THE_SHARE_LEDGER_IS_PER_POOL_ACROSS_THE_CHAIN_CASE,
+    THE_CHAIN_REFUSAL_COUNTS_ONLY_THE_POOLS_IT_WALKED_CASE,
+    THE_CHAIN_ALLOWANCE_NEVER_EXCEEDS_THE_NET_CASE,
 )

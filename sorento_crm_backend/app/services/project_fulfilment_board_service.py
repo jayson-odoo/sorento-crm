@@ -3165,7 +3165,7 @@ class FulfilmentBoardService:
             and getattr(component, "source_location", None)
         ]
         if len({component.source_location for component in share}) > 1:
-            return ". ".join(component.reason for component in share)
+            return " ".join(component.reason for component in share)
         if not pool_chain:
             if borrow_donors:
                 named = ", ".join(
