@@ -464,8 +464,11 @@ const SUPPLIER_PAGE_SIZE = 50;
 
 /**
  * Suppliers, from the existing procurement select. Value is the id the API needs; label is
- * `<code> - <name>` so two suppliers sharing a name (a real duplicate-data case, "Testing
- * Company" x3 in the lane DB) are still told apart, in the trigger AND in the list.
+ * the supplier NAME only (captain, 3 Sep) - `SearchableSelect` already keys each option on
+ * its id, so two suppliers sharing a name (a real duplicate-data case, "Testing Company" x3
+ * in the lane DB) are distinct OPTIONS even though their labels read the same; a `<code> -
+ * <name>` label was tried and reverted, since the code is not something a person reads a
+ * supplier by.
  *
  * `pageIndex` is optional and 0-based (`SearchableSelect`'s `fetchOptions` contract): passed,
  * this pages the backend (`page = pageIndex + 1`, `limit = 50`) so a `paginated` select (the
@@ -490,7 +493,7 @@ export async function getFulfilmentSuppliers(
   const res = await apiFetch(`/api/v1/procurement/suppliers/select${qs}`);
   const toOption = (s: SupplierSelectRow) => ({
     value: s.id,
-    label: `${s.supplier_code} - ${s.supplier_name}`,
+    label: s.supplier_name,
   });
   if (pageIndex !== undefined) {
     const body = await readJson<{ items: SupplierSelectRow[]; has_more: boolean }>(

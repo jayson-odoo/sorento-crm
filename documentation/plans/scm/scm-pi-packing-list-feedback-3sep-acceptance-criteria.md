@@ -89,9 +89,11 @@ loading plan's Supplier codes tab is not brought onto the PI.
   and the chip row is empty. `placement` still works from the filter popover and the URL.
 - **AC-D2 [BE]** `GET /procurement/suppliers/select` orders by `supplier_name, supplier_code`,
   accepts `page` + `limit` (default 50, max 100) and returns `{items, has_more}`.
-- **AC-D3 [FE]** Supplier options are labelled `<code> - <name>` so two rows sharing a name are
-  distinguishable; the PI upload dialog, loading plan container dialog and PI list filter all
-  read through `getFulfilmentSuppliers` and inherit it.
+- **AC-D3 [FE]** Supplier options are labelled by the supplier NAME only (captain, 3 Sep - the
+  code is not something a person reads a supplier by; `SearchableSelect` already keys each
+  option on its id, so two rows sharing a name are distinct options even with the same label).
+  The PI upload dialog, loading plan container dialog and PI list filter all read through
+  `getFulfilmentSuppliers` and inherit it.
 - **AC-D4 [FE]** The select is `paginated` (Load more after 50) and the list scrolls with the
   wheel inside a Dialog at 1280 and 375.
 - **AC-D5 [T]** Pytest on the select endpoint: ordering, paging, `has_more`.
