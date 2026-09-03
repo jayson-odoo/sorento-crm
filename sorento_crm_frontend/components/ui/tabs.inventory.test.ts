@@ -58,8 +58,6 @@ const LINE_MIGRATED = [
  */
 const SEGMENTED_KEEPERS = [
   'app/(protected)/system-management/companies/components/CompanyAccessDialog.tsx',
-  'app/(protected)/scm/reorder/components/PlanRowDialogs.tsx',
-  'app/(protected)/scm/components/PlanRowDialog.tsx',
   'app/(protected)/dealer-kit/design/components/RoomDesigner.tsx',
   'app/(protected)/dealer-kit/components/ProductPickerDialog.tsx',
   'app/(protected)/dealer-kit/components/PageEditor.tsx',
