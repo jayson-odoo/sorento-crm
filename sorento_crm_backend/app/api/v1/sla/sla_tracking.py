@@ -559,8 +559,9 @@ async def reassign_sla_tracking(
     _perm: dict = Depends(require_permission("sla_management.conversation_sla_tracking.reassign")),
     db: Session = Depends(get_db),
 ):
-    """Reassign a task to a chosen person (keeps team + clocks). Target must be in
-    the actor's visible scope (scope-B)."""
+    """Reassign a task to a chosen person (keeps team + clocks). Actor and target
+    each need at least one team membership (or actor is an admin); hand-off may
+    cross teams in either direction (decision 2026-09-03)."""
     try:
         service = ConversationSLATrackingService(db)
         tracking = service.reassign(tracking_id, current_user["id"], payload.user_id)
