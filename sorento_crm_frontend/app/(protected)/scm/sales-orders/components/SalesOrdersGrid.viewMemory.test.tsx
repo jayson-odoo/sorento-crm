@@ -257,8 +257,8 @@ describe('SalesOrdersGrid remembered view', () => {
     storedConfig({
       version: 1,
       sorting: [{ id: 'so_number', desc: false }],
-      filters: { status: 'open', customer_id: 'C001', outstanding: true },
-      filtersVersion: 1,
+      filters: { status: 'open', customer_code: 'C001', outstanding: true },
+      filtersVersion: 2,
     });
     mockList([order()]);
     renderGrid();
@@ -353,7 +353,7 @@ describe('SalesOrdersGrid remembered view', () => {
       version: 1,
       sorting: [{ id: 'order_date', desc: true }],
       filters: { status: 'open' },
-      filtersVersion: 1,
+      filtersVersion: 2,
     });
     mockList([order()]);
     renderGrid();
@@ -386,7 +386,7 @@ describe('SalesOrdersGrid remembered view', () => {
       version: 1,
       sorting: [{ id: 'order_date', desc: true }],
       filters: { sales_agent_id: 'AG1' },
-      filtersVersion: 1,
+      filtersVersion: 2,
     });
     mockList([order()]);
     renderGrid({ salesAgentId: 'agent-pin' });

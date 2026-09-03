@@ -218,8 +218,12 @@ const DEFAULT_SORTING: SortingState = [{ id: 'order_date', desc: true }];
  * BUMP whenever this shape changes, so a blob written by the old shape is discarded rather
  * than applied (AC-B4). `outstanding` is `true` or absent - there is no "explicitly off"
  * state to store, an absent key already means off.
+ *
+ * v2: the customer axis is keyed `customer_code`, not `customer_id` - the value the
+ * Customer select actually holds is a customer code, and `customer_id` was never read by
+ * anything on the wire (the Customer filter itself was a no-op, fixed alongside this bump).
  */
-const FILTERS_VERSION = 1;
+const FILTERS_VERSION = 2;
 
 type SalesOrdersFilters = {
   status?: string;
@@ -227,7 +231,7 @@ type SalesOrdersFilters = {
   source?: string;
   date_from?: string;
   date_to?: string;
-  customer_id?: string;
+  customer_code?: string;
   sales_agent_id?: string;
   demand_class?: string;
   outstanding?: true;
@@ -312,7 +316,7 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
   // orders are these, and what is still owed.
   const dateFrom = viewFilters?.date_from ?? '';
   const dateTo = viewFilters?.date_to ?? '';
-  const customerFilter = viewFilters?.customer_id ?? '';
+  const customerFilter = viewFilters?.customer_code ?? '';
   // The planning class the classification agents resolved - `order_type_label` is the ERP
   // document type and is blank on almost every row, so it never answered this question.
   const demandClassFilter = viewFilters?.demand_class ?? '';
@@ -333,7 +337,7 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
       if (merged.source) cleaned.source = merged.source;
       if (merged.date_from) cleaned.date_from = merged.date_from;
       if (merged.date_to) cleaned.date_to = merged.date_to;
-      if (merged.customer_id) cleaned.customer_id = merged.customer_id;
+      if (merged.customer_code) cleaned.customer_code = merged.customer_code;
       if (merged.sales_agent_id) cleaned.sales_agent_id = merged.sales_agent_id;
       if (merged.demand_class) cleaned.demand_class = merged.demand_class;
       if (merged.outstanding) cleaned.outstanding = true;
@@ -976,7 +980,7 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
                       <SearchableSelect
                         id="so-customer"
                         value={customerFilter}
-                        onChange={(v) => applyFilters({ customer_id: v || undefined })}
+                        onChange={(v) => applyFilters({ customer_code: v || undefined })}
                         options={customerOptions.data ?? []}
                         placeholder="All customers"
                         clearable

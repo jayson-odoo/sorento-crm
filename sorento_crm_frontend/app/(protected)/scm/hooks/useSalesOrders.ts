@@ -56,7 +56,9 @@ export function salesOrdersListParamsFromUrl(
     source: params.filters.source || null,
     dateFrom: params.filters.date_from || null,
     dateTo: params.filters.date_to || null,
-    customerId: params.filters.customer_id || null,
+    // The detail URL carries `customer_code` - `buildDetailSearch`'s own key on this page
+    // (`SalesOrdersGrid.tsx`'s `detailSearch`) - never `customer_id`.
+    customerId: params.filters.customer_code || null,
     outstanding: params.filters.outstanding === 'true',
     salesAgentId: params.filters.sales_agent_id || null,
     demandClass: params.filters.demand_class || null,

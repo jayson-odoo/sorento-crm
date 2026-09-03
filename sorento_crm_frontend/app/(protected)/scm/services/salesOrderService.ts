@@ -8,7 +8,7 @@
  * warehouse by its code, addressed by id in the path.
  *
  *   GET    /sales-orders            list (page/limit/sort/dir/query/status/priority/source,
-                                   date_from/date_to/customer_id/outstanding/sales_agent_id,
+                                   date_from/date_to/customer_code/outstanding/sales_agent_id,
                                    demand_class: project | retail | unclassified)
  *   GET    /sales-orders/agents     sales-agent options for the Agent filter/select. Gated on
  *                                   `scm.dashboard.view` - the same read permission as this
@@ -127,7 +127,11 @@ export async function getSalesOrders(
       source: params.source ?? undefined,
       date_from: params.dateFrom || undefined,
       date_to: params.dateTo || undefined,
-      customer_id: params.customerId || undefined,
+      // The route's own param is `customer_code` (`app/api/v1/scm/sales_orders.py`), and
+      // `useCustomerOptions`' option value already IS the code, never an id - a `customer_id`
+      // key here would silently match nothing (found during the view-memory rollout: the
+      // filter was a no-op since 8 Aug 2026, cb1abae5e0).
+      customer_code: params.customerId || undefined,
       // Only when ON. Sending `outstanding=false` would put a param on the URL that means
       // "no filter", which then rides into the detail URL and reads as an active filter.
       outstanding: params.outstanding ? 'true' : undefined,

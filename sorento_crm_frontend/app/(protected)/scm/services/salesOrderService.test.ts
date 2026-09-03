@@ -27,6 +27,18 @@ describe('salesOrderService', () => {
     expect(u.searchParams.get('priority')).toBe('high');
   });
 
+  it('list forwards the customer filter as customer_code, the route\'s own param (was customer_id, a no-op since 8 Aug 2026)', async () => {
+    apiFetch.mockResolvedValue(ok({ data: [], empty: true, pagination: { total: 0, page: 1 } }));
+    await getSalesOrders({
+      pageIndex: 0,
+      pageSize: 25,
+      customerId: 'C001',
+    });
+    const u = new URL(String(apiFetch.mock.calls[0][0]), 'http://x');
+    expect(u.searchParams.get('customer_code')).toBe('C001');
+    expect(u.searchParams.has('customer_id')).toBe(false);
+  });
+
   it('create forwards a line uom the caller set (9a730b5dc: uom is a real, editable field)', async () => {
     apiFetch.mockResolvedValue(ok({ id: 'so-1' }, 201));
     const form: SalesOrderFormData = {

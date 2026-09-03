@@ -2,7 +2,9 @@
 
 **Status:** Implemented on `fm/listing-view-memory` (pilot: Stock Inquiries). Rolled out to SCM
 Sales Orders on `feat/scm-sales-orders-view-memory`, 3 Sep 2026 (section 8 below) - vitest +
-agent-browser evidence run done, no backend change needed.
+agent-browser evidence run done. Two pre-existing bugs the rollout exposed (null order_date
+sort order, a no-op customer filter) were fixed in the same lane as a second commit; see
+section 8.
 **Classification:** CORE - `public` schema, no new table, no migration
 **UAC (the contract):** `documentation/plans/listings/listing-view-memory-acceptance-criteria.md`
 **Pilot listing:** Procurement Management -> Stock Inquiries
@@ -306,36 +308,52 @@ Clear (AC-C2), and the pinned-agent case above. The seven pre-existing
 (`listColumnPreferencesService`, resolving `config: null` fast) so their real
 `useListingViewPreferences` fetch unblocks the gate; no assertion in them was touched.
 
-**Found, not fixed, in this rollout (both pre-existing, unrelated to this change):**
+**Found AND fixed in this rollout, as a second commit (both pre-existing, and each one defeats
+the feature just shipped - a null-dated row on top of "latest first"; a remembered customer
+filter that filters nothing):**
 
-- **`_order_by`'s `order_date` sort has no NULLS LAST.** Postgres defaults `ORDER BY ... DESC` to
-  NULLS FIRST, so any row with a null `order_date` sorts to the very top of the new default view
-  regardless of how recent it actually is - even though the same row's serializer already
+- **`_order_by`'s `order_date` sort had no NULLS LAST.** Postgres defaults `ORDER BY ... DESC` to
+  NULLS FIRST, so any row with a null `order_date` sorted to the very top of the new default
+  view regardless of how recent it actually is - even though the same row's serializer already
   falls back to `created_at` for DISPLAY (`sales_order_service.py` line ~481). Verified against
   the dev DB: exactly one row out of 14,210 sales orders has a null `order_date` (a smoke-test
-  fixture, `AC-SMOKE-SO-1`), so the practical blast radius today is one row - but a manually
-  created SO that skips the create-time default would hit it too, and a user who clicks the
-  Document date header to sort manually already hits it, pre-dating this rollout. Fix is a
-  one-line `.desc().nullslast()` (or sort on `coalesce(order_date, created_at)` to match the
-  serializer), left for a follow-up since it is backend logic outside this task's scope.
-- **The Customer filter has been a no-op since 8 Aug 2026.** `getSalesOrders` in
-  `app/(protected)/scm/services/salesOrderService.ts` sends the selected customer as
+  fixture, `AC-SMOKE-SO-1`), so the practical blast radius was one row - but a manually created
+  SO that skips the create-time default would hit it too, and a user who clicks the Document
+  date header to sort manually already hit it, pre-dating this rollout. Fixed test-first:
+  `_order_by` now returns `col.desc().nullslast()` / `col.asc().nullslast()`, tie-break by `id`
+  unchanged. `tests/scm/test_sales_order_list_filters.py::
+  test_order_date_desc_puts_a_null_dated_order_last_not_first` seeds three orders (one undated)
+  and asserts the undated row is last in BOTH directions; confirmed red without the fix (the
+  desc case put it first), green with it. The pre-existing
+  `test_the_sort_is_always_made_total_by_id` needed its own assertion widened to
+  `NULLS LAST`.
+- **The Customer filter had been a no-op since 8 Aug 2026.** `getSalesOrders` in
+  `app/(protected)/scm/services/salesOrderService.ts` sent the selected customer as
   `customer_id`, but the route (`app/api/v1/scm/sales_orders.py`) declares the param
-  `customer_code` - so every customer filter on this list has silently matched everything.
-  `detailSearch` on the very same page already uses the correct `customer_code` key (that is
-  the one the prev/next pager and this rollout's remembered blob both carry), so only the list
-  FETCH itself is wrong. This rollout wires the remembered `customer_id` key through faithfully
-  (chip label and persistence are both verified correct in the browser run below) - it did not
-  introduce the mismatch and is not the right place to fix it, but it is the reason the "set a
-  customer filter" browser step did not visibly narrow the grid.
+  `customer_code`, and `useCustomerOptions`' option value IS a customer code (never an id) - so
+  every customer filter on this list silently matched everything (`getSalesOrders({customerId:
+  'C001', ...})` produced `?customer_id=C001`, which the route does not read at all). The
+  SAME mismatch was independently present in `salesOrdersListParamsFromUrl` (the detail page's
+  prev/next pager rebuilds its list query from `params.filters.customer_id`, but the URL the
+  page itself writes carries `customer_code` - so the pager's own reconstruction never saw a
+  customer filter either). Fixed both call sites to use `customer_code`; the FE's opaque
+  `SalesOrdersFilters` blob key was renamed `customer_id` -> `customer_code` to match, with
+  `FILTERS_VERSION` bumped 1 -> 2 so a blob written under the old key is discarded rather than
+  silently read as empty (no real user is on v1 yet - this branch is unmerged - so the bump is
+  precautionary, not a backfill). `salesOrderService.test.ts` gained a request-URL assertion;
+  `SalesOrdersGrid.viewMemory.test.tsx`'s stored-config fixtures moved to `customer_code` /
+  `filtersVersion: 2`. Re-verified live: picking UNIJOH DEVELOPMENT SDN BHD narrowed the grid
+  from 14,210 rows to 131, all that customer.
 
-**Browser evidence (agent-browser, 1280x800, session `orders-vm`):** signed in, sidebar Supply
-Chain -> Orders -> Sales Orders. Default load sorted by Document date descending
-(`sort=order_date&dir=desc`, one request). Set status=Outstanding and customer=UNIJOH via the
-Filters popover; chip read "Clear filter: Outstanding, UNIJOH DEVELOPMENT SDN BHD (PROJECT)" -
-no raw code. Opened a row, "Back to sales orders" returned to the list with the chip and the
-filtered request still applied. A bare reload of `/scm/sales-orders` (no query string) still
-carried the same chip and exactly one fetch, already filtered. Clear on the chip returned the
-grid to the default sort with no filter and no chip. Opened a sales-agent record's Sales orders
-tab: loaded with the default sort, the pinned agent id, and none of the main list's remembered
-filters or agent column/filter.
+**Browser evidence (agent-browser, 1280x800):** signed in, sidebar Supply Chain -> Orders ->
+Sales Orders (session `orders-vm`). Default load sorted by Document date descending
+(`sort=order_date&dir=desc`, one request, `AC-SMOKE-SO-1`'s null date no longer at the top after
+the fix). Set status=Outstanding and customer=UNIJOH via the Filters popover; chip read "Clear
+filter: Outstanding, UNIJOH DEVELOPMENT SDN BHD (PROJECT)" - no raw code. Opened a row, "Back to
+sales orders" returned to the list with the chip and the filtered request still applied. A bare
+reload of `/scm/sales-orders` (no query string) still carried the same chip and exactly one
+fetch, already filtered. Clear on the chip returned the grid to the default sort with no filter
+and no chip. Opened a sales-agent record's Sales orders tab: loaded with the default sort, the
+pinned agent id, and none of the main list's remembered filters or agent column/filter. Second
+pass (session `orders-vm2`, after the customer-filter fix): total dropped from 14,210 to 131 on
+picking UNIJOH, with `customer_code=300-U003` on the wire and every visible row that customer's.
