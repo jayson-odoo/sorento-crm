@@ -444,6 +444,37 @@ def test_the_remarks_are_the_suppliers_own_words_and_only_those(db):
     assert _line(kailu, "3MAT")["remarks"] is None
 
 
+def test_the_description_is_the_suppliers_wording_and_the_product_name_when_it_has_none(db):
+    """S9 - a shipment line carried from a PI keeps the factory's own wording (AC-I4); a
+    line with none (the n8n PDF path, or a container drafted before this column existed)
+    falls back to the product's name rather than printing a blank."""
+    w = World(db)
+    basin = w.product("7BASIN")
+    w.line(w.caizhou, basin, qty=5, cartons=1, description="304 STAINLESS STEEL BASIN TAP")
+
+    out = svc.build(db, str(w.shipment.id))
+    caizhou = _factory(out, "B-CAIZHOU")
+
+    assert _line(caizhou, "7BASIN")["description"] == "304 STAINLESS STEEL BASIN TAP"
+    # `4SINK` was seeded with no description in `World.__init__`.
+    assert _line(caizhou, "4SINK")["description"] == "4SINK product"
+
+
+def test_the_export_column_d_prints_the_description_not_the_product_name(db):
+    w = World(db)
+    basin = w.product("7BASIN")
+    w.line(w.caizhou, basin, qty=5, cartons=1, description="304 STAINLESS STEEL BASIN TAP")
+
+    out = svc.build(db, str(w.shipment.id))
+    ws = _sheet(out)
+
+    row = _row_of(ws, "C", f"{MARKER}-{w.tag}-7BASIN")
+    assert ws[f"D{row}"].value == "304 STAINLESS STEEL BASIN TAP"
+    # `4SINK` has no description, so column D falls back to the product's name.
+    row = _row_of(ws, "C", f"{MARKER}-{w.tag}-4SINK")
+    assert ws[f"D{row}"].value == "4SINK product"
+
+
 # --------------------------------------------------------------------------- #
 # the edges
 # --------------------------------------------------------------------------- #
@@ -564,8 +595,9 @@ def test_the_two_row_column_header_is_the_fscu_one(db):
         # `TOTAL RM` is the reference workbook's own heading, kept as it is written there.
         "LOGO", "REMARKS", "RMB", "TOTAL RM",
     ]
-    # The lines scroll under the header rather than past it.
-    assert ws.freeze_panes == "A17"
+    # Round 2 (captain, 3 Sep): the earlier freeze read as "freezing at the bottom" on first
+    # open. The reference freezes nothing, and neither does this sheet now.
+    assert ws.freeze_panes is None
 
 
 def test_one_block_per_factory_with_its_mocha_goods_under_their_own_heading(db):

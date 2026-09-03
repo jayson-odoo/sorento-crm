@@ -89,9 +89,11 @@ loading plan's Supplier codes tab is not brought onto the PI.
   and the chip row is empty. `placement` still works from the filter popover and the URL.
 - **AC-D2 [BE]** `GET /procurement/suppliers/select` orders by `supplier_name, supplier_code`,
   accepts `page` + `limit` (default 50, max 100) and returns `{items, has_more}`.
-- **AC-D3 [FE]** Supplier options are labelled `<code> - <name>` so two rows sharing a name are
-  distinguishable; the PI upload dialog, loading plan container dialog and PI list filter all
-  read through `getFulfilmentSuppliers` and inherit it.
+- **AC-D3 [FE]** Supplier options are labelled by the supplier NAME only (captain, 3 Sep - the
+  code is not something a person reads a supplier by; `SearchableSelect` already keys each
+  option on its id, so two rows sharing a name are distinct options even with the same label).
+  The PI upload dialog, loading plan container dialog and PI list filter all read through
+  `getFulfilmentSuppliers` and inherit it.
 - **AC-D4 [FE]** The select is `paginated` (Load more after 50) and the list scrolls with the
   wheel inside a Dialog at 1280 and 375.
 - **AC-D5 [T]** Pytest on the select endpoint: ordering, paging, `has_more`.
@@ -158,3 +160,49 @@ loading plan's Supplier codes tab is not brought onto the PI.
   Download writes: spot-check three lines and the split card against the workbook.
 - **AC-G7 [FE]** Usable at 375 (horizontal scroll inside the grid, page never scrolls
   sideways) and 1280.
+
+### H. Export fidelity (S8)
+
+- **AC-H1 [BE][T]** Header rows 1-12: column A cells carry the fixture's alignment (default),
+  column B values `horizontal=left`, `wrap_text` unset on both; asserted cell by cell against
+  `fixtures/FSCU8103365.xlsx`.
+- **AC-H2 [BE][T]** Date values in B1..B3 are real dates carrying the fixture's number format; no
+  `######` at the fixture's column width.
+- **AC-H3 [BE][T]** The sheet has no freeze pane (fixture has none).
+- **AC-H4 [E2E]** Download from a real packing list opens in Excel/WPS looking like the business
+  file: header left, one line per value, no frozen band.
+
+### I. Description carried from the PI (S9)
+
+- **AC-I1 [BE]** Migration adds `inbound_shipment_lines.description` (Text, NULL) and backfills
+  every line linked from a PI line with that PI line's description.
+- **AC-I2 [BE][T]** Convert copies the PI line description onto the shipment line.
+- **AC-I3 [FE]** Shipment lines grid shows Description from the line (product name when NULL) and
+  it is editable in edit mode; Save persists it.
+- **AC-I4 [BE][T]** Export column D prints the line description, product name when NULL.
+
+### J. Lines grid editing (S10)
+
+- **AC-J1 [FE][T]** Typing three digits into Qty keeps focus and the value; same for every numeric
+  cell.
+- **AC-J2 [FE]** Picking a product on a new line shows the picked product in the select at once.
+- **AC-J3 [FE][BE]** An existing line's product can be changed; a duplicate
+  (shipment, product, supplier) is refused with a message naming the product.
+- **AC-J4 [FE]** Ctn qty is an input bound to `cartons_count` when Pcs/ctn is blank; when Pcs/ctn
+  is set it is derived and read-only; Total NW / Total GW / Total CBM follow either way.
+- **AC-J5 [FE]** Material, Pcs/ctn, L, W, H, NW, GW, Remarks, Price are inputs on every row.
+
+### K. Mixed-company split (S11)
+
+- **AC-K1 [E2E]** A packing list with SORENTO and MOCHA lines: Split card, XLSX footer and a hand
+  calculation agree on CBM, Clearance, Insurance, China freight and Amount per company.
+
+### L. One volume rule (S12)
+
+- **AC-L1 [BE][T]** A shipment line with no stored cbm but carton L/W/H and pcs/ctn (or cartons)
+  contributes `ctn * L*W*H/1e6` to `build()`'s per-company CBM and to the shipment's `total_cbm`.
+- **AC-L2 [BE][T]** `build()` for a container with one SORENTO and one MOCHA dims-only line yields
+  the same per-company CBM, Clearance, Insurance, China freight and Amount as the XLSX formulas.
+- **AC-L3 [FE][T]** Emptying Clearance, China freight or Insurance rate and saving sends `null`
+  and the value reads `-` after reload.
+- **AC-L4 [E2E]** Split card equals the downloaded workbook's footer on a mixed container.

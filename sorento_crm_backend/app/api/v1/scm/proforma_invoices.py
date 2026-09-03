@@ -60,11 +60,11 @@ class ConvertToDraftShipmentRequest(BaseModel):
         description="Per PI line id, how much to place. A line left out places what it has "
                     "left, which is the normal case (AC-F10).",
     )
-
-
-class ProformaInvoiceUpdate(BaseModel):
     container_size_id: Optional[str] = Field(
-        None, description="Which box this invoice is fitted into. Null = the tenant default."
+        None,
+        description="The box the convert dialog chose (S5, ruling 1). Null = the tenant "
+                    "default. Written onto the draft shipment; the over-capacity check "
+                    "compares the COMBINED volume of every selected invoice against it.",
     )
 
 
@@ -77,10 +77,19 @@ class ProformaLineWrite(BaseModel):
 
     `id` present = update that line; absent = a line the operator added. A line already on
     the invoice and missing from the array is deleted - the array IS the document.
+
+    `product_id` and `product_set_id` follow the whole-document rule below: a key this line
+    does not mention is left alone, and an explicit `null` unbinds it (AC-B3). The route reads
+    `model_fields_set` PER LINE to tell "not sent" from "sent as null" - a naive
+    `model_dump()` fills in Pydantic's own default and would make every untouched line look
+    like an explicit unbind.
     """
 
     id: Optional[str] = Field(None, description="The line to update. Absent = a new line.")
     product_id: Optional[str] = Field(None, description="The catalogue product, when known.")
+    product_set_id: Optional[str] = Field(
+        None, description="The catalogue product SET, when the line names one instead (R19)."
+    )
     item_code: str = Field(..., max_length=100, description="The supplier's own code.")
     description: Optional[str] = None
     qty: float = Field(..., ge=0)
@@ -95,11 +104,11 @@ class ProformaLineWrite(BaseModel):
 
 class ProformaInvoiceWrite(BaseModel):
     """The whole document, as one Save. Every field is optional and an ABSENT field is left
-    alone - `container_size_id: null` means the tenant default, which is a different
-    instruction from not mentioning it."""
+    alone. No `container_size_id` here (S5): capacity is a property of the container this
+    invoice's goods end up sharing with however many others, chosen on the convert dialog,
+    never on the invoice itself."""
 
     pi_number: Optional[str] = Field(None, max_length=100)
-    container_size_id: Optional[str] = None
     lines: Optional[List[ProformaLineWrite]] = None
 
 
@@ -259,6 +268,7 @@ def convert_proforma_invoices_to_draft_shipment(
         override_capacity=payload.override_capacity,
         override_reason=payload.override_reason,
         line_quantities=payload.line_quantities,
+        container_size_id=payload.container_size_id,
     )
     db.commit()
     return out
@@ -350,19 +360,22 @@ def export_proforma_invoice(
     )
 
 
-@router.patch("/proforma-invoices/{invoice_id}")
-def update_proforma_invoice(
-    invoice_id: str,
-    payload: ProformaInvoiceUpdate = Body(...),
-    _user: dict = Depends(_UPLOAD),
-    db: Session = Depends(get_db),
-):
-    """Which container this invoice is being fitted into (AC-D4)."""
-    out = proforma_invoice_service.set_container_size(
-        db, invoice_id, payload.container_size_id
-    )
-    db.commit()
-    return out
+def _line_write_dict(line: ProformaLineWrite) -> dict:
+    """One `ProformaLineWrite` as the service's `_write_lines` reads it - `product_id` and
+    `product_set_id` are OMITTED from the dict when the caller never sent the key, so
+    `_write_lines`'s own `"product_id" in row` check reads "leave it alone" for exactly the
+    lines the operator did not touch. A plain `model_dump()` cannot make this distinction: it
+    fills BOTH fields with Pydantic's own `None` default whether the line named the key or
+    not, so every untouched line would read as an explicit "unbind" (AC-B3, the silent
+    data-loss bug this route used to ship).
+    """
+    line_fields = line.model_fields_set
+    data = line.model_dump(exclude={"product_id", "product_set_id"})
+    if "product_id" in line_fields:
+        data["product_id"] = line.product_id
+    if "product_set_id" in line_fields:
+        data["product_set_id"] = line.product_set_id
+    return data
 
 
 @router.put("/proforma-invoices/{invoice_id}")
@@ -375,26 +388,20 @@ def replace_proforma_invoice(
     """The whole document as the edit screen holds it, in ONE write.
 
     The detail page edits a LOCAL DRAFT - nothing is written until Save - so a save is one
-    call carrying the number, the container size and the whole line array. Rows with an `id`
-    update, rows without create, and a line the array no longer names is deleted; sending
-    them one at a time would leave a half-applied document on screen if the third refused.
+    call carrying the number and the whole line array. Rows with an `id` update, rows without
+    create, and a line the array no longer names is deleted; sending them one at a time would
+    leave a half-applied document on screen if the third refused.
 
-    A field the caller does not mention is left alone. That is why the sentinels below read
-    `model_fields_set` rather than testing for `None`: `container_size_id: null` means the
-    tenant's default size, and saying nothing means keep whatever this invoice already has.
+    A field the caller does not mention is left alone. That is why the sentinel below reads
+    `model_fields_set` rather than testing for `None`.
     """
     sent = payload.model_fields_set
     out = proforma_invoice_service.update_invoice(
         db,
         invoice_id,
         pi_number=payload.pi_number if "pi_number" in sent else proforma_invoice_service.UNSET,
-        container_size_id=(
-            payload.container_size_id
-            if "container_size_id" in sent
-            else proforma_invoice_service.UNSET
-        ),
         lines=(
-            [line.model_dump() for line in (payload.lines or [])]
+            [_line_write_dict(line) for line in (payload.lines or [])]
             if "lines" in sent
             else proforma_invoice_service.UNSET
         ),

@@ -57,6 +57,7 @@ import type {
   ProformaPlacement,
 } from '../../services/proformaInvoiceService';
 import { EM_DASH, fmtDate, fmtInt, fmtQty, fmtSupplierCost } from '../../lib/format';
+import { ConvertToPackingListDialog } from './ConvertToPackingListDialog';
 import { OverCapacityDialog } from './OverCapacityDialog';
 import { ProformaUploadDialog } from './ProformaUploadDialog';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
@@ -86,9 +87,12 @@ import { ListSearchInput } from '@/components/common/ListSearchInput';
  *
  * Convert takes the whole selection, any suppliers - a container is routinely several
  * factories' PIs - and runs AT ONCE (R15): every ticked invoice places what it has left
- * into ONE NEW draft packing list. The only interruption is the container being over its
- * volume, which is a question (`OverCapacityDialog`), not a failure. Placing PART of an
- * invoice is a deliberate act made on ONE document, so it lives on the PI detail page.
+ * into ONE NEW draft packing list, after `ConvertToPackingListDialog` asks which container
+ * size it is going into (S5, ruling 1; the SAME dialog the PI detail page's per-invoice
+ * convert uses, minus the per-line quantity question that only makes sense for one
+ * document). The only interruption is the container being over its volume, which is a
+ * question (`OverCapacityDialog`), not a failure. Placing PART of an invoice is a
+ * deliberate act made on ONE document, so it lives on the PI detail page.
  */
 
 const UPLOAD_PERMISSION = 'scm.proforma_invoice.upload';
@@ -155,9 +159,12 @@ export function ProformaInvoicesView() {
     reset: resetSearchQuery,
   } = useDebouncedSearch();
   const [supplierId, setSupplierId] = useState<string | null>(null);
-  // Defaulted to what has NOT been converted, because that is the question being asked by
-  // anyone opening this screen: which of these still has to go into a container (AC-F6).
-  const [placement, setPlacement] = useState<ProformaPlacement | null>('not_converted');
+  // No default filter (AC-D1, S4): a fresh visit shows every invoice, newest first. The
+  // Aug plan's default of `not_converted` (AC-F6) looked like missing data - a book where
+  // everything was already placed read as empty rather than as "nothing left to place",
+  // and the chip was silently applied before anyone chose it. `placement` is still honoured
+  // from the URL, one click away in the filter popover.
+  const [placement, setPlacement] = useState<ProformaPlacement | null>(null);
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
 
   // Back hands the list its own query string back, and the pager keeps
@@ -171,8 +178,14 @@ export function ProformaInvoicesView() {
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [uploadOpen, setUploadOpen] = useState(false);
   const [bulkDeleteIds, setBulkDeleteIds] = useState<string[] | null>(null);
+  const [convertOpen, setConvertOpen] = useState(false);
   const [overCapacity, setOverCapacity] = useState<string | null>(null);
   const [overrideReason, setOverrideReason] = useState('');
+  // Held so an over-capacity refusal can be re-submitted with the reason WITHOUT asking
+  // the operator to re-pick the container size they already chose.
+  const [convertArgs, setConvertArgs] = useState<{ containerSizeId: string | null } | null>(
+    null,
+  );
 
   useEffect(() => {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
@@ -428,19 +441,25 @@ export function ProformaInvoicesView() {
   }, [placement, supplierId, suppliers.data]);
 
   /**
-   * The convert, in one press (R15). No dialog stands between the tick and the container:
-   * every ticked invoice places what it has LEFT, which is what the backend does anyway,
-   * so a dialog asking to confirm it was a screen that only ever said yes.
+   * The convert, once the container size is picked (R15, S5 ruling 1). No per-line
+   * question stands between the tick and the container: every ticked invoice places what
+   * it has LEFT, which is what the backend does anyway.
    */
-  const runConvert = async (reason?: string) => {
+  const runConvert = async (
+    args: { containerSizeId: string | null } | null,
+    reason?: string,
+  ) => {
     if (!selectedIds.length) return;
+    setConvertArgs(args);
     try {
       const result = await convertToDraftShipment.mutateAsync({
         invoiceIds: selectedIds,
         overrideReason: reason,
+        containerSizeId: args?.containerSizeId ?? null,
       });
       setOverCapacity(null);
       setOverrideReason('');
+      setConvertOpen(false);
       table.resetRowSelection();
       const skippedMsg =
         result.lines_skipped > 0
@@ -658,7 +677,7 @@ export function ProformaInvoicesView() {
                           <DropdownMenuItem
                             disabled={!hasSelection}
                             title={hasSelection ? undefined : NO_SELECTION}
-                            onClick={hasSelection ? () => void runConvert() : undefined}
+                            onClick={hasSelection ? () => setConvertOpen(true) : undefined}
                           >
                             <Boxes className="size-4" />
                             {hasSelection
@@ -692,12 +711,22 @@ export function ProformaInvoicesView() {
           user dismisses it themselves once they have read the result. */}
       <ProformaUploadDialog open={uploadOpen} onOpenChange={setUploadOpen} />
 
+      {/* How many cbm the WHOLE selection is, and which container it is going into (S5,
+          ruling 1). No per-line quantity question here - that is the PI detail's own. */}
+      <ConvertToPackingListDialog
+        open={convertOpen}
+        onOpenChange={setConvertOpen}
+        invoiceIds={selectedIds}
+        pending={convertToDraftShipment.isPending}
+        onConvert={(args) => void runConvert({ containerSizeId: args.containerSizeId })}
+      />
+
       <OverCapacityDialog
         message={overCapacity}
         reason={overrideReason}
         onReasonChange={setOverrideReason}
         onCancel={() => setOverCapacity(null)}
-        onConfirm={() => void runConvert(overrideReason.trim())}
+        onConfirm={() => void runConvert(convertArgs, overrideReason.trim())}
         pending={convertToDraftShipment.isPending}
       />
 

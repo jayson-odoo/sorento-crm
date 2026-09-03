@@ -1,5 +1,6 @@
 'use client';
 
+import { useRef } from 'react';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 
 const PAGE_SIZE = 50;
@@ -15,6 +16,17 @@ export interface ProductComboboxSearchableProps {
   onChange: (value: string) => void;
   /** Fetch products from API: (searchQuery, pageIndex) => Promise<{ data: ProductOption[] }> */
   fetchProducts: (query: string, pageIndex: number) => Promise<{ data: ProductOption[] }>;
+  /**
+   * The FULL product just picked (or `null` on clear) - not only its id.
+   *
+   * A caller that keeps its own copy of the code/name beside the id (a line-table draft
+   * that renders those columns separately, rather than re-deriving them from `value` on
+   * every render) has to update all three together. Without this the id changed but the
+   * code/name it was fed as `productFallback` stayed the PREVIOUS product's, and
+   * `renderTriggerLabel` below - which trusts `productFallback` once its `id` matches the
+   * new `value` - printed the old product's code under the new selection.
+   */
+  onOptionChange?: (option: ProductOption | null) => void;
   productFallback?: ProductOption | null;
   placeholder?: string;
   disabled?: boolean;
@@ -34,6 +46,7 @@ const itemLabel = (p: ProductOption) =>
 export function ProductComboboxSearchable({
   value,
   onChange,
+  onOptionChange,
   fetchProducts,
   productFallback,
   placeholder = 'Search or select product',
@@ -41,10 +54,20 @@ export function ProductComboboxSearchable({
   className,
   truncateTriggerLabel,
 }: ProductComboboxSearchableProps) {
+  // Every product the last search returned, by id - so a pick can hand the caller the
+  // FULL product (code + name), not only the id `onChange` carries. A `ref`, not state:
+  // it is read once, at select time, and never drives a render itself.
+  const fetchedRef = useRef(new Map<string, ProductOption>());
+
   return (
     <SearchableSelect
       value={value}
       onChange={onChange}
+      onOptionChange={
+        onOptionChange
+          ? (opt) => onOptionChange(opt ? (fetchedRef.current.get(opt.value) ?? null) : null)
+          : undefined
+      }
       disabled={disabled}
       placeholder={placeholder}
       emptyMessage="No product found."
@@ -54,6 +77,7 @@ export function ProductComboboxSearchable({
       pageSize={PAGE_SIZE}
       fetchOptions={async (query, pageIndex) => {
         const { data } = await fetchProducts(query, pageIndex);
+        for (const p of data) fetchedRef.current.set(p.id, p);
         return data.map((p) => ({
           value: p.id,
           label: itemLabel(p),

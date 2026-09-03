@@ -368,24 +368,135 @@ def test_removing_a_line_drops_it_from_the_returned_invoice(scm_app):
     assert all(ln["id"] != line_id for ln in body["lines"])
 
 
-def test_the_container_size_is_settable_and_clearable_on_the_route(scm_app):
-    from app.models.scm import ContainerSize
-
+def test_the_patch_route_for_container_size_is_gone(scm_app):
+    """S5, ruling 1: the box is chosen on the convert dialog now, never PATCHed onto the PI.
+    No PATCH handler is registered for this path at all, so FastAPI answers 405 rather than
+    routing into a container-size arm that no longer exists."""
     client, db = _client(scm_app, upload=True, view=True)
     detail, _ = _applied_invoice(client, db)
-    size = ContainerSize(
-        id=_u(), code=unique_code("BOX")[:30], label="test box", cbm=30, is_active=True
+
+    r = client.patch(f"{URL}/{detail['id']}", json={"container_size_id": _u()})
+
+    assert r.status_code == 405, r.text
+
+
+# --------------------------------------------------------------------------------- #
+# AC-B1 / AC-B3 - the whole-document PUT, at the HTTP layer (S2, issue #579)
+#
+# The bug lived in the route, not the service: `ProformaLineWrite.model_dump()` fills in
+# Pydantic's own `None` default for a field the JSON body never mentioned, so a save that
+# changed nothing about the product match still told `_write_lines` "unbind it" for every
+# line. A service-level test calling `update_invoice` with a hand-built dict cannot catch a
+# regression back to that - these go through the real request body.
+# --------------------------------------------------------------------------------- #
+
+
+def _line_write_payload(ln: dict, **overrides) -> dict:
+    """The fields the edit screen's Save sends for one line, read off the GET response - the
+    same shape `ProformaInvoiceDetail.tsx`'s `saveEdit` builds. `product_id` is included only
+    via `overrides`, so the default call is exactly "the operator did not touch this line".
+    """
+    data = {
+        "id": ln["id"],
+        "item_code": ln["item_code"],
+        "description": ln["description"],
+        "qty": ln["qty"],
+        "uom": ln["uom"],
+        "cartons": ln["cartons"],
+        "cbm_per_unit": ln["cbm_per_unit"],
+        "unit_price": ln["unit_price"],
+        "net_weight": ln["net_weight"],
+        "gross_weight": ln["gross_weight"],
+    }
+    data.update(overrides)
+    return data
+
+
+def test_the_line_payload_carries_product_id_and_product_set_id_over_http(scm_app):
+    client, db = _client(scm_app, upload=True, view=True)
+    detail, _ = _applied_invoice(client, db)
+
+    matched = next(ln for ln in detail["lines"] if ln["matched"])
+    assert matched["product_id"]
+    assert matched["product_set_id"] is None
+
+
+def test_saving_the_document_without_mentioning_product_id_keeps_every_match(scm_app):
+    client, db = _client(scm_app, upload=True, view=True)
+    detail, _ = _applied_invoice(client, db)
+    matched = next(ln for ln in detail["lines"] if ln["matched"])
+
+    r = client.put(
+        f"{URL}/{detail['id']}",
+        json={"lines": [_line_write_payload(ln) for ln in detail["lines"]]},
     )
-    db.add(size)
-    db.flush()
 
-    r = client.patch(f"{URL}/{detail['id']}", json={"container_size_id": str(size.id)})
     assert r.status_code == 200, r.text
-    assert r.json()["container_cbm"] == 30
+    after = next(ln for ln in r.json()["lines"] if ln["id"] == matched["id"])
+    assert after["product_id"] == matched["product_id"]
+    assert after["matched"] is True
 
-    cleared = client.patch(f"{URL}/{detail['id']}", json={"container_size_id": None})
-    assert cleared.status_code == 200, cleared.text
-    assert cleared.json()["container_size_id"] != str(size.id)
+
+def test_saving_a_line_with_product_id_explicitly_null_unbinds_it_over_http(scm_app):
+    client, db = _client(scm_app, upload=True, view=True)
+    detail, _ = _applied_invoice(client, db)
+    matched = next(ln for ln in detail["lines"] if ln["matched"])
+
+    r = client.put(
+        f"{URL}/{detail['id']}",
+        json={
+            "lines": [
+                _line_write_payload(ln, product_id=None)
+                if ln["id"] == matched["id"]
+                else _line_write_payload(ln)
+                for ln in detail["lines"]
+            ]
+        },
+    )
+
+    assert r.status_code == 200, r.text
+    after = next(ln for ln in r.json()["lines"] if ln["id"] == matched["id"])
+    assert after["product_id"] is None
+    assert after["matched"] is False
+
+
+def test_saving_a_line_with_a_new_product_id_rebinds_it_over_http(scm_app):
+    client, db = _client(scm_app, upload=True, view=True)
+    supplier, product_a = _seed_supplier_and_product(db)
+    tag = uuid.uuid4().hex[:8].upper()
+    product_b = Product(
+        id=_u(), product_code=f"{MARKER}-B-{tag}", product_name="B",
+        category_id=product_a.category_id, base_uom_id=product_a.base_uom_id,
+        list_price=0, is_active=True, is_discontinued=False,
+    )
+    db.add(product_b)
+    db.flush()
+    client.post(
+        f"{URL}/apply",
+        files=_upload(kailu_proforma_workbook({"SRTWT7443": product_a.product_code})),
+        data={"supplier_id": str(supplier.id)},
+    )
+    listed = client.get(URL, params={"supplier_id": str(supplier.id)}).json()
+    detail = client.get(f"{URL}/{listed['data'][0]['id']}").json()
+    matched = next(ln for ln in detail["lines"] if ln["matched"])
+    assert matched["product_id"] == str(product_a.id)
+
+    r = client.put(
+        f"{URL}/{detail['id']}",
+        json={
+            "lines": [
+                _line_write_payload(ln, product_id=str(product_b.id))
+                if ln["id"] == matched["id"]
+                else _line_write_payload(ln)
+                for ln in detail["lines"]
+            ]
+        },
+    )
+
+    assert r.status_code == 200, r.text
+    after = next(ln for ln in r.json()["lines"] if ln["id"] == matched["id"])
+    assert after["product_id"] == str(product_b.id)
+    assert after["product_code"] == product_b.product_code
 
 
 def test_the_export_route_returns_a_workbook_named_after_the_invoice(scm_app):

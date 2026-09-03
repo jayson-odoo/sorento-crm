@@ -37,6 +37,21 @@ describe('listNavQuery round-trip', () => {
     expect(parsed.filters.status).toBe('responded');
   });
 
+  // S1, AC-A2: the record's `?tab=` is not one of the reserved page/limit/sort/dir/query
+  // params, so it rides through as an ordinary filter - which is exactly what lets the
+  // pager (`useListPager` -> `stepHref` -> `buildDetailSearch`) carry it from one record to
+  // the next without either the pager or `useUrlTab` having to know about the other.
+  it('carries an arbitrary detail-only param like ?tab= through the round-trip (AC-A2)', () => {
+    const search = buildDetailSearch(
+      { pageIndex: 0, pageSize: 50, sorting: [], searchQuery: '' },
+      { tab: 'lines' },
+    );
+
+    const parsed = parseDetailSearch(new URLSearchParams(search));
+
+    expect(parsed.filters.tab).toBe('lines');
+  });
+
   it('round-trips an ascending sort', () => {
     const search = buildDetailSearch({
       pageIndex: 0,

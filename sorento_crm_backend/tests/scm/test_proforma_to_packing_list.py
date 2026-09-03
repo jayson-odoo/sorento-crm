@@ -159,6 +159,54 @@ def test_converting_carries_the_material_carton_and_weights_onto_the_shipment_li
         assert float(line.gross_weight_per_carton) == pytest.approx(8.3)
 
 
+def test_converting_carries_the_lines_description_onto_the_shipment_line():
+    """AC-I2 - the factory's own wording for the item survives the convert, so the container
+    workbook and the shipment grid print what the supplier called it rather than only our
+    catalogue's name for the same product."""
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        svc.apply(db, kailu_proforma_workbook({"SRTWT7443": w.code("A")}),
+                  supplier_id=str(w.supplier.id))
+        invoice = _invoices(db, w)[0]
+        pi_line = next(ln for ln in _lines(db, invoice.id) if ln.product_id)
+        pi_line.description = "STAINLESS STEEL BASIN TAP - CHROME"
+        db.flush()
+
+        out = svc.convert_to_draft_shipment(db, [str(invoice.id)])
+
+        line = next(
+            ln for ln in _shipment_lines(db, out["shipment_id"])
+            if str(ln.product_id) == str(pi_line.product_id)
+        )
+        assert line.description == "STAINLESS STEEL BASIN TAP - CHROME"
+
+
+def test_an_invoice_line_that_states_no_description_leaves_the_shipment_line_null():
+    # `kailu_proforma_workbook` itself always names a description; the null case is a PI line
+    # nobody typed one on, which is set directly here rather than sourced from a fixture.
+    # SRTWT7443 names TWO lines on this workbook (they merge into one shipment line), so
+    # every one of them has to be cleared or the second still supplies the group's value.
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        svc.apply(db, kailu_proforma_workbook({"SRTWT7443": w.code("A")}),
+                  supplier_id=str(w.supplier.id))
+        invoice = _invoices(db, w)[0]
+        pi_lines = [ln for ln in _lines(db, invoice.id) if ln.product_id]
+        for ln in pi_lines:
+            ln.description = None
+        db.flush()
+
+        out = svc.convert_to_draft_shipment(db, [str(invoice.id)])
+
+        line = next(
+            ln for ln in _shipment_lines(db, out["shipment_id"])
+            if str(ln.product_id) == str(pi_lines[0].product_id)
+        )
+        assert line.description is None
+
+
 def test_an_invoice_that_measures_nothing_leaves_the_measurements_null():
     # Same rule as the volume: an unstated carton and a carton of no size are different
     # answers, and only one of them can be printed on a document a factory reads back.

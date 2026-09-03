@@ -60,18 +60,32 @@ async def get_suppliers(
         raise handle_internal_error(str(e))
 
 
-@router.get("/select", response_model=List[SupplierResponse])
+@router.get("/select")
 async def get_suppliers_select(
     query: Optional[str] = Query(None),
+    page: Optional[int] = Query(
+        None, ge=1, description="Enables paging; omitted, the legacy bare array is returned."
+    ),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get suppliers for select dropdowns."""
+    """Suppliers for select dropdowns, ordered by name then code.
+
+    `page` is optional for backward compatibility with any other caller of this endpoint.
+    Omitted, this returns the legacy bare array (capped at 100) - the PI list filter and the
+    incoming-containers filter want the whole list at once, not a picker. Passed, it pages
+    (`limit`, default 50, capped at `MAX_PAGE_LIMIT` - same ceiling as every other DataGrid
+    list endpoint, `test_list_pagination_limit.py`) and returns `{items, has_more}` so a
+    picker (the PI upload dialog, the loading plan container dialog) can offer Load more past
+    the first page - two suppliers sharing a name (a real duplicate-data case) no longer land
+    in an arbitrary order, and a tenant with hundreds of suppliers can reach all of them.
+    """
     try:
         from sqlalchemy import or_
         from app.models.procurement import Supplier
         q = db.query(Supplier).filter(Supplier.is_active == True)
-        
+
         if query:
             q = q.filter(
                 or_(
@@ -79,9 +93,18 @@ async def get_suppliers_select(
                     Supplier.supplier_name.ilike(f"%{query}%")
                 )
             )
-        
-        suppliers = q.limit(100).all()
-        return suppliers
+
+        q = q.order_by(Supplier.supplier_name, Supplier.supplier_code)
+
+        if page is None:
+            suppliers = q.limit(100).all()
+            return [SupplierResponse.model_validate(s) for s in suppliers]
+
+        offset = (page - 1) * limit
+        rows = q.offset(offset).limit(limit + 1).all()
+        has_more = len(rows) > limit
+        items = [SupplierResponse.model_validate(s) for s in rows[:limit]]
+        return {"items": items, "has_more": has_more}
     except Exception as e:
         raise handle_internal_error(str(e))
 

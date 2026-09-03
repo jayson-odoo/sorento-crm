@@ -282,10 +282,11 @@ export function ProformaUploadDialog({
                 value={supplierId ?? ''}
                 onChange={(v: string) => setSupplierId(v || null)}
                 onOptionChange={setSupplierOption}
-                // Server-searched (S8-followup): the `/select` endpoint ilikes code + name and
-                // caps at 100 rows, so a client-filtered static list silently hid any supplier
-                // past that page.
-                fetchOptions={(query) => getFulfilmentSuppliers(query)}
+                // Server-searched (S8-followup) AND paginated (S4, AC-D4): the `/select`
+                // endpoint pages past its first 50, so a supplier list running into the
+                // hundreds stays reachable via Load more rather than silently stopping.
+                fetchOptions={getFulfilmentSuppliers}
+                paginated
                 selectedOption={supplierOption ?? undefined}
                 placeholder="Choose a supplier"
                 disabled={previewing || applying}
