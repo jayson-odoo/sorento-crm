@@ -122,7 +122,7 @@ agent-browser evidence on :3160 via the sidebar.
 ## I. Free quantity, one review dialog (R2)
 
 - **AC-I1** `[FE]` Typing 500 in a line whose POs cover 409 keeps 500 in the input; no red banner; Create SPO stays enabled.
-- **AC-I2** `[FE]` Create SPO opens "Review before creating" listing that line as "Asked 500, POs cover 409, SPO will be 409"; over-ticked SOs listed as part-covered; lines with no location listed.
+- **AC-I2** (superseded by AC-I6, captain 3 Sep) `[FE]` Create SPO opens "Review before creating" listing that line as "Asked 500, POs cover 409, SPO will be 409"; over-ticked SOs listed as part-covered; lines with no location listed.
 - **AC-I3** `[FE]` Confirm sends the same payload as today; Cancel returns to the planner unchanged.
 - **AC-I4** `[BE]` `create` with qty 500 on a line packed 500 whose POs cover 409 writes an SPO line of 500, `source_ref.pulls` totalling 409, and the source PO lines advance by 409 only.
 - **AC-I5** `[BE]` A line with no open PO and a supplier is convertible; `create` writes its SPO line with no pulls.
@@ -141,7 +141,7 @@ agent-browser evidence on :3160 via the sidebar.
 ## L. Placements lightbox on PO and SO lines (R5)
 
 - **AC-L1** `[FE]` PO detail lines grid has a **Placed** column; its figure is a button; clicking opens `Placed on · <code>` with a DataGrid of Placed on / Document / Customer / Qty / Lands at / ETA and a footer `Outstanding N · Placed M · Free F`.
-- **AC-L2** `[FE]` An SPO row shows the SPO number as a link and the packing list; a dedication shows a Dedicated pill and the SO; no "Needed at" anywhere.
+- **AC-L2** (amended, review round 2) `[FE]` An SPO row shows the SPO number as a link to the SPO when the payload carries its id, plain text otherwise, and the packing list; a dedication shows a Dedicated pill and the SO; no "Needed at" anywhere.
 - **AC-L3** `[FE]` The "Allocated to" card no longer renders on the PO detail.
-- **AC-L4** `[FE]` SO detail lines grid shows **Linked** as a figure button; clicking opens `Linked to · <code>` with Kind / Document / Qty / Lands at / ETA / Late rows; a line with no links shows a dash and no button.
+- **AC-L4** (amended, review round 2) `[FE]` SO detail lines grid's **Linked to** column header stays "Linked to" (never renamed to "Linked" - the figure inside it is the button, not the header) with a figure button; clicking opens `Linked to · <code>` with Kind / Document / Qty / Lands at / ETA / Late rows, `Document` a link when its `purchase_order_id` is known; a line with `linked_to: null` (no inquiry row at all) shows a dash and no button, `linked_to: []` (an inquiry row with nothing linked) shows "Not linked" and no button.
 - **AC-L5** `[E2E]` After Create SPO on :3160, the source PO line's Placed figure opens the dialog naming the SPO and packing list; the covered SO line's Linked figure opens the dialog naming the SPO.

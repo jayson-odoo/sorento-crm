@@ -1,6 +1,6 @@
 # PLAN - SPO planner feedback, 3 Sep 2026
 
-**Status:** DRAFT + Lavish round 1 folded (legend, S7). Captain's screenshot round 3 Sep 2026 (evening). UAC:
+**Status:** IMPLEMENTED (rounds 1 + 2, review round 2 folded) - PR #623. UAC:
 `scm-spo-planner-feedback-3sep-acceptance-criteria.md`.
 Lane: `feat/scm-spo-planner-feedback-3sep`, worktree `.claude/worktrees/spo-planner-3sep`,
 stack FE :3160 / BE :8160, Redis db 14. **Stacked on `feat/scm-loading-plan-lightbox-3sep`**
