@@ -7,7 +7,7 @@
  * Type-specific sections render below based on `layer.props.kind`.
  */
 
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import {
   Bold,
   Braces,
@@ -39,6 +39,7 @@ import type {
 } from '@/lib/dealer-kit/tag-template-types';
 import { imageSourceOf } from '@/lib/dealer-kit/tag-template-types';
 import { isDynamic } from '@/lib/dealer-kit/product-block';
+import { tagColours } from '@/lib/dealer-kit/colour';
 import { ColorPicker } from './ColorPicker';
 
 // ---------------------------------------------------------------------------
@@ -167,6 +168,8 @@ interface InspectorPanelProps {
   layer: TagLayer | null;
   onUpdate: (id: string, changes: Partial<TagLayer>) => void;
   onUpdateProps: (id: string, changes: Partial<TagLayerProps>) => void;
+  /** The whole tag, so the colour picker can derive "This tag" (S3, AC-S3-5). */
+  layers?: TagLayer[];
   /** What this layer's slot currently resolves to, for the unlink/relink pair. */
   resolvedText?: string | null;
   /** Human-readable name of what the selected group is bound to. No UUIDs. */
@@ -199,6 +202,7 @@ export function InspectorPanel({
   layer,
   onUpdate,
   onUpdateProps,
+  layers,
   resolvedText,
   bindingLabel,
   fontOptions,
@@ -214,6 +218,8 @@ export function InspectorPanel({
   onPreviewBlock,
   onClearBlockPreview,
 }: InspectorPanelProps) {
+  const usedColours = useMemo(() => tagColours(layers ?? []), [layers]);
+
   const update = useCallback(
     (changes: Partial<TagLayer>) => {
       if (layer) onUpdate(layer.id, changes);
@@ -364,13 +370,14 @@ export function InspectorPanel({
               fontOptions={fontOptions ?? STATIC_FONT_OPTIONS}
               onUploadFont={onUploadFont}
               onInsertField={onInsertField}
+              usedColours={usedColours}
             />
           )}
           {layer.props.kind === 'price_badge' && (
-            <PriceBadgeInspector props={layer.props} onChange={updateProps} />
+            <PriceBadgeInspector props={layer.props} onChange={updateProps} usedColours={usedColours} />
           )}
           {layer.props.kind === 'shape' && (
-            <ShapeInspector props={layer.props} onChange={updateProps} />
+            <ShapeInspector props={layer.props} onChange={updateProps} usedColours={usedColours} />
           )}
           {layer.props.kind === 'image' && (
             <ImageInspector
@@ -418,6 +425,7 @@ function TextInspector({
   fontOptions,
   onUploadFont,
   onInsertField,
+  usedColours,
 }: {
   layer: TagLayer;
   props: Extract<TagLayerProps, { kind: 'text' }>;
@@ -427,6 +435,7 @@ function TextInspector({
   fontOptions: SearchableSelectOption[];
   onUploadFont?: () => void;
   onInsertField?: () => void;
+  usedColours: string[];
 }) {
   // A slot-bound layer is edited through `text_override`, never through
   // `props.text`: the binding survives the edit, so "Relink" is simply clearing
@@ -585,6 +594,7 @@ function TextInspector({
           label="Colour"
           value={props.color}
           onChange={(v) => onChange({ ...props, color: v })}
+          usedColours={usedColours}
         />
         <div className="flex flex-col gap-1">
           <Label className="text-xs text-muted-foreground">Align</Label>
@@ -632,9 +642,11 @@ function TextInspector({
 function ShapeInspector({
   props,
   onChange,
+  usedColours,
 }: {
   props: Extract<TagLayerProps, { kind: 'shape' }>;
   onChange: (changes: Partial<TagLayerProps>) => void;
+  usedColours: string[];
 }) {
   return (
     <section>
@@ -654,11 +666,13 @@ function ShapeInspector({
           label="Fill"
           value={props.fill}
           onChange={(v) => onChange({ ...props, fill: v })}
+          usedColours={usedColours}
         />
         <ColorPicker
           label="Stroke"
           value={props.stroke}
           onChange={(v) => onChange({ ...props, stroke: v })}
+          usedColours={usedColours}
         />
         <div className="grid grid-cols-2 gap-2">
           <NumberInput
@@ -754,9 +768,11 @@ function ImageInspector({
 function PriceBadgeInspector({
   props,
   onChange,
+  usedColours,
 }: {
   props: Extract<TagLayerProps, { kind: 'price_badge' }>;
   onChange: (changes: Partial<TagLayerProps>) => void;
+  usedColours: string[];
 }) {
   return (
     <section>
@@ -778,11 +794,13 @@ function PriceBadgeInspector({
           label="Box Fill"
           value={props.fill}
           onChange={(v) => onChange({ ...props, fill: v })}
+          usedColours={usedColours}
         />
         <ColorPicker
           label="Text Colour"
           value={props.textColor}
           onChange={(v) => onChange({ ...props, textColor: v })}
+          usedColours={usedColours}
         />
         <NumberInput
           label="Corner Radius"

@@ -2980,6 +2980,7 @@ export function TagCanvasEditor({
               layer={selectedLayer}
               onUpdate={updateLayer}
               onUpdateProps={updateLayerProps}
+              layers={layers}
               resolvedText={selectedResolvedText}
               bindingLabel={selectedBindingLabel}
               fontOptions={library.fontOptions}
