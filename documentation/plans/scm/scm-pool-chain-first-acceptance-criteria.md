@@ -31,6 +31,11 @@ All goldens are `_v8_inputs` fixtures in `tests/scm/front_planning_golden.py`, f
   pool rows 4 and 4, group rows untouched. Browser evidence recorded.
 - AC-N.11 (sheet). The planning sheet's `lineBlockers` accepts a two-pool step 0 composition
   without a blocker (vitest).
+- AC-N.12 (every pool's free floor is one ledger). Two lines of ONE walk at BRW-BB, with
+  MWH's site pool holding 5 on the floor and 600 on the water (allowance 302, floor 5). The
+  first line composes Reserve 5 at MWH; the second is offered nothing by the pool chain and
+  buys. `compose_lines` carried a running balance for the asking bin's OWN pool only, and
+  R-N made the other pools' path the common one.
 
 ## R-O overdue grace (supersedes R31)
 

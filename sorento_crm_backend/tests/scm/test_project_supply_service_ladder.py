@@ -236,6 +236,56 @@ def test_the_asking_bins_pool_spares_its_share_and_another_site_covers_the_remai
     assert sum(Decimal(c["qty"]) for c in components) == Decimal("40")
 
 
+def test_another_sites_pool_free_floor_is_spent_once_across_the_whole_walk():
+    """AC-N.12 (R-N leftover, 3 Sep 2026): every pool's FREE FLOOR is one ledger.
+
+    `compose_lines` carried a running balance for the asking bin's OWN site pool and one
+    for each pool's project SHARE, and nothing at all for another pool's free floor - it
+    was re-read live on every line. R-N made that path the common one: step 0 now walks
+    the whole chain, so two lines of one walk each reached WH3 and each were told it held
+    all 5 of its floor, and the walk promised 10 off a pool holding 5.
+
+    Here MWH's pool holds 5 on hand with 600 on the water, so its allowance is 302 and its
+    floor is 5 - the shape where the share ledger cannot stand in for the floor. The first
+    line takes the 5; the second must be offered NOTHING by the pool and buy.
+    """
+    near = date.today() + timedelta(days=10)
+    far = date.today() + timedelta(days=17)
+    with blank_session() as db:
+        company_id, _eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own, own_pool = sites["BRW"]
+        _other_own, other_pool = sites["MWH"]
+        _stock(db, product, own_pool, on_hand=0)
+        _stock(db, product, other_pool, on_hand=5)
+        # 600 on the water at MWH's pool: the pool's AVAILABLE (and so its allowance) is
+        # far above the 5 units actually standing on its floor.
+        _spo_line(db, product, other_pool, qty=600, arrives=far + timedelta(days=30))
+        db.commit()
+
+        from tests.scm.test_ladder_v6_order_unit import _seed_order
+
+        _core_so, order, _mirrors = _seed_order(
+            db, company_id, project, product,
+            lines=[(1, "5", own, near), (2, "5", own, far)],
+        )
+        lines = {
+            line["line_no"]: line
+            for line in ProjectSupplyService(db).proposal_for(order)["lines"]
+        }
+
+    stated = {
+        line_no: [(c["kind"], c["qty"], c["source_location"]) for c in line["components"]]
+        for line_no, line in lines.items()
+    }
+    assert stated[1] == [("reserve", "5", other_pool.warehouse_code)], (
+        "the first line takes the whole of MWH's floor"
+    )
+    assert stated[2] == [("buy", "5", None)], (
+        "and the second is offered none of it again - one ledger per pool floor"
+    )
+
+
 def test_a_pool_with_negative_available_offers_nothing_not_a_floor_of_zero_read_as_some():
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)

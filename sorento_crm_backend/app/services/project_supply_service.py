@@ -624,16 +624,6 @@ class _LineFacts:
     def pool_code(self) -> Optional[str]:
         return self.pool.warehouse_code if self.pool else None
 
-    @property
-    def pool_key(self) -> str:
-        """Ledger key for pool draws: one bucket per PRODUCT per pool warehouse.
-
-        `pool_free` is this product's free stock at the pool, so the running balance
-        must be scoped the same way. Keyed by warehouse alone, a second product on the
-        same SO would read the first product's remaining headroom as its own.
-        """
-        return f"{self.product_id}:{self.pool.id}" if self.pool else ""
-
 
 class _BorrowLedger:
     """What is still borrowable as one confirmation's lines are checked in turn.
@@ -678,7 +668,7 @@ class _CapacityLedger:
     confirmation (S7).
 
     `_check_line` used to build a fresh capacity dict per line from live figures, and only
-    carried the line's OWN site pool forward (the old `pool_left`). Every OTHER pool in the
+    carried the line's OWN site pool forward. Every OTHER pool in the
     chain and every group-take sibling was re-read live on each line with no memory of
     what earlier lines of the SAME confirmation had already drawn - so two lines of one
     order could each be offered the whole of a secondary pool, or the whole of a sibling's
@@ -1230,7 +1220,7 @@ class ProjectSupplyService:
         self,
         fact: _LineFacts,
         *,
-        pool_free_left: Optional[Decimal] = None,
+        pool_free_left: Optional[Mapping[str, Decimal]] = None,
         borrow_left: Optional[Mapping[str, Decimal]] = None,
         as_of: Optional[date] = None,
         pools_net_left: Optional[Decimal] = None,
@@ -1258,7 +1248,7 @@ class ProjectSupplyService:
         own_offer = _ZERO
         other_group_short: Dict[str, Decimal] = {}
         if not outside_window:
-            pools = self._pool_chain(fact, own_pool_free_left=pool_free_left)
+            pools = self._pool_chain(fact, pool_free_left=pool_free_left)
             group_take, other_group, own_offer, other_group_short = (
                 self.use_candidates_for(
                     fact, as_of=as_of, other_left=other_group_left,
@@ -1333,8 +1323,9 @@ class ProjectSupplyService:
         `entries` is `(key, fact, unit_key)` in walk order, and the answer for each key is
         `(components, pool_open, borrow_open, net_open, options, other_group_open,
         supply_open, share_open, own_group_open)` - the composition, the five options behind
-        it (R36), and what EVERY shared pile held when this LINE was reached: this line's
-        own site pool's free stock, the cross-group donors by warehouse id, the five site
+        it (R36), and what EVERY shared pile held when this LINE was reached: every site
+        pool's free FLOOR by pool location (AC-N.12 - the asking bin's own pool used to be
+        the only one carried), the cross-group donors by warehouse id, the five site
         pools' NET (the number that bounds rung 2, `pool_reserve_capacity`), what is left of
         each site pool's PROJECT SHARE (v8, R-B), and what is left of the unit's own
         ownership-group pile (v8, R-E). The board's proof states them from HERE rather than
@@ -1356,7 +1347,7 @@ class ProjectSupplyService:
         A unit of one line is `compose_line` exactly as before, on the fact itself.
 
         THE SHARED PILES are drawn once per unit, and this is the only place any of the
-        ledgers lives: the own-site pool's free stock (`pool_free_left`), the cross-group
+        ledgers lives: every site pool's free floor (`pool_free_left`), the cross-group
         donors (`borrow_left`), and the site pools' net (`pools_net_left`, per product -
         the net is ONE pile across all five pools, section 1d). All three callers used to
         keep the pool one and none of them kept the donor one - which is how four delivery
@@ -1396,7 +1387,13 @@ class ProjectSupplyService:
             as_of=self._walk_as_of,
         )
 
-        pool_left: Dict[str, Decimal] = {}
+        # product id -> POOL LOCATION -> what is LEFT of that pool's FREE FLOOR in this
+        # walk (AC-N.12, the R-N leftover). One ledger for EVERY pool, the asking bin's own
+        # included: the old one carried the own pool alone (keyed by product and pool id)
+        # and every other pool's floor was re-read live per line. Under R-N step 0 walks
+        # the whole chain, so two lines of one walk were each offered the whole of another
+        # site pool's floor and the walk promised 10 units off a pool holding 5.
+        pool_free_left: Dict[str, Dict[str, Decimal]] = {}
         # product id -> what the five site pools still net between them in this walk.
         # Keyed by PRODUCT alone: the net is one pile across every pool (section 1d), so a
         # draw at any of them is a draw on the same number.
@@ -1439,9 +1436,6 @@ class ProjectSupplyService:
             # 1440" while 135 sat on the floor at BRW-BB, because 145 could not cover 1440
             # whole. The unit is still one board cell - what changed is the walk inside it.
             members = self._members_in_walk_order(arrived)
-            pool_key = unit_fact.pool_key
-            if pool_key and pool_key not in pool_left:
-                pool_left[pool_key] = unit_fact.pool_free
             # Whether or not this location names a pool of its own: rung 2 draws the OTHER
             # site pools too (`_pool_chain`'s `rest`), and a bare site code with no
             # `pool_warehouse_id` (BRW-IB on the live book) still draws BRW through them.
@@ -1456,13 +1450,22 @@ class ProjectSupplyService:
                 # BRW's share to. Seeded once per pool and then drawn down: a pool nobody
                 # asks about costs nothing.
                 shares = share_left.setdefault(product_id, {})
+                floors = pool_free_left.setdefault(product_id, {})
                 pct = self._fulfilment_settings().get("pool_share_pct")
                 for entry in self.pool_chain_for(unit_fact):
                     code = str(entry.get("location") or "")
-                    if code and code not in shares:
+                    if not code:
+                        continue
+                    if code not in shares:
                         shares[code] = available_for_project(
                             entry.get("available"), unit_fact.pools_net, pct
                         )
+                    # The FLOOR beside the share, off the same chain and for the same
+                    # reason (AC-N.12): the share is what the policy lets a pool lend and
+                    # the floor is what it physically holds, and a pool whose floor is the
+                    # lower of the two is spent by the first line that reaches it.
+                    if code not in floors:
+                        floors[code] = max(_dec(entry.get("free")), _ZERO)
             # A fact with no product cannot borrow at all (`_cross_group_borrow_candidates`
             # refuses it by rule), so it keeps no ledger either - one bucket keyed by the
             # empty string would pool every such line's donors together.
@@ -1497,7 +1500,7 @@ class ProjectSupplyService:
                 # Captured BEFORE this line's own draw: the proof states what each pile held
                 # when the LINE was reached, and reading it back afterwards would state what
                 # was left instead.
-                pool_open = pool_left.get(pool_key, _ZERO) if pool_key else None
+                floors_open = pool_free_left.get(product_id) if product_id else None
                 net_open = net_left.get(product_id) if product_id else None
                 share_open = share_left.get(product_id) if product_id else None
                 borrow_open = dict(donors) if donors is not None else {}
@@ -1508,10 +1511,14 @@ class ProjectSupplyService:
                 # UNIT's own ownership-group pile. Copies, because the walk below draws both
                 # down in place and the proof has to state what this line was offered.
                 share_snapshot = dict(share_open) if share_open is not None else {}
+                # The floors this LINE was offered, in the same shape and for the same
+                # reason: the board's proof states what each pool held when the line was
+                # reached, and the walk below draws the ledger down in place.
+                pool_open = dict(floors_open) if floors_open is not None else {}
                 own_group_open = dict(own_group)
                 walked = self.walk(
                     fact,
-                    pool_free_left=pool_open,
+                    pool_free_left=floors_open,
                     borrow_left=donors,
                     as_of=as_of,
                     pools_net_left=net_open,
@@ -1521,19 +1528,19 @@ class ProjectSupplyService:
                     pool_share_left=share_open,
                 )
                 components = walked.components
-                if pool_key and fact.pool_code:
-                    drawn = sum(
-                        (
-                            component.qty
-                            for component in components
-                            if component.kind == RESERVE
-                            and component.source_location == fact.pool_code
-                        ),
-                        _ZERO,
-                    )
-                    pool_left[pool_key] = max(
-                        pool_left.get(pool_key, _ZERO) - drawn, _ZERO
-                    )
+                if floors_open is not None:
+                    # Every POOL rung draw, at whichever pool gave it (AC-N.12). The old
+                    # drawdown matched `fact.pool_code` and so knew about the asking bin's
+                    # own pool alone; step 0 answers from the whole chain since R-N.
+                    for component in components:
+                        if component.kind != RESERVE or component.rung != RUNG_POOL:
+                            continue
+                        code = component.source_location
+                        if not code:
+                            continue
+                        floors_open[code] = max(
+                            floors_open.get(code, _ZERO) - component.qty, _ZERO
+                        )
                 if product_id and net_open is not None:
                     # EVERY pool draw, not only the own pool's: the step may spill into the
                     # other site pools, and all of it comes off the one net.
@@ -1824,11 +1831,15 @@ class ProjectSupplyService:
     # ---------------------------------------- ladder v3 rung candidates, for the trail
 
     def pool_chain_for(
-        self, fact: _LineFacts, *, pool_free_left: Optional[Decimal] = None
+        self, fact: _LineFacts, *, pool_free_left: Optional[Mapping[str, Decimal]] = None
     ) -> List[Dict[str, Any]]:
         """`compose_line`'s pool candidate list (section 1b rung 3), public so the board's
-        trail can show every pool the ladder actually consulted, not only this line's own."""
-        return self._pool_chain(fact, own_pool_free_left=pool_free_left)
+        trail can show every pool the ladder actually consulted, not only this line's own.
+
+        `pool_free_left` is the walk's free-floor ledger by pool LOCATION (AC-N.12), which
+        `compose_lines` hands the board back per line so the proof states the floors this
+        line was actually offered rather than the ones the first line of the walk saw."""
+        return self._pool_chain(fact, pool_free_left=pool_free_left)
 
     def group_take_candidates_for(self, fact: _LineFacts) -> List[Dict[str, Any]]:
         """`compose_line`'s group candidate list (section 1b rung 2), public for the
@@ -1911,7 +1922,7 @@ class ProjectSupplyService:
         return self._site_pool_warehouses()
 
     def _pool_chain(
-        self, fact: _LineFacts, *, own_pool_free_left: Optional[Decimal]
+        self, fact: _LineFacts, *, pool_free_left: Optional[Mapping[str, Decimal]]
     ) -> List[Dict[str, Any]]:
         """The DRAW ORDER for rung 3: this line's own site pool first, then every other
         active site pool BY ON HAND (section 1d).
@@ -1924,15 +1935,24 @@ class ProjectSupplyService:
         `available` is still carried per pool: nothing caps a draw with it any more, but the
         board's trail and the cell table print it, and it is the term the pile's net is
         summed from.
+
+        `pool_free_left` is the WALK's running free floor, by pool LOCATION and for EVERY
+        pool of the chain (AC-N.12, R-N leftover). It used to be one Decimal for the asking
+        bin's own pool alone, and every other pool's floor was re-read live on each line -
+        which R-N turned from a corner into the common path: step 0 walks the whole chain
+        now, so two lines of one walk were each told WH3 held all 5 units of its floor and
+        the walk promised 10 off a pool holding 5. A pool the ledger has nothing to say
+        about is read live, which is what a single line on its own may draw.
         """
         chain: List[Dict[str, Any]] = []
         if fact.pool_code and fact.pool:
+            stated = (
+                None if pool_free_left is None else pool_free_left.get(fact.pool_code)
+            )
             chain.append(
                 {
                     "location": fact.pool_code,
-                    "free": (
-                        fact.pool_free if own_pool_free_left is None else own_pool_free_left
-                    ),
+                    "free": fact.pool_free if stated is None else stated,
                     "available": fact.pool_available,
                     "on_hand": self._pile_facts()
                     .get(
@@ -1949,7 +1969,14 @@ class ProjectSupplyService:
         for pool_id, pool in self._site_pool_warehouses().items():
             if pool_id in seen:
                 continue
-            free = self._free_at(fact.product_id, pool_id)
+            stated = (
+                None
+                if pool_free_left is None
+                else pool_free_left.get(pool.warehouse_code)
+            )
+            free = (
+                self._free_at(fact.product_id, pool_id) if stated is None else stated
+            )
             triple = self._pile_facts().get(
                 (fact.product_id, pool_id), {"on_hand": _ZERO, "so_qty": _ZERO, "spo_qty": _ZERO}
             )
@@ -4330,7 +4357,7 @@ class ProjectSupplyService:
         # LADDER V6: seeded from the UNIT's fact, which is the quantity the ladder walked
         # these rungs with. The ledger is shared across the whole confirmation, so the unit's
         # members draw the same seeded balance down between them in payload order.
-        pools = self._pool_chain(unit.fact, own_pool_free_left=None)
+        pools = self._pool_chain(unit.fact, pool_free_left=None)
         capacity: Dict[str, Decimal] = {}
         location_ids: Dict[str, str] = {}
         for location, live_qty in pool_reserve_capacity(
@@ -6528,7 +6555,7 @@ class ProjectSupplyService:
         """The rule's own sentence for a confirmed Reserve component, at whichever
         location it named - ladder v3's GROUP first (this line's own location, then its
         siblings), then the pool chain (own site pool, then every other)."""
-        pool_chain = self._pool_chain(fact, own_pool_free_left=None)
+        pool_chain = self._pool_chain(fact, pool_free_left=None)
         for candidate, qty in pool_reserve_capacity(
             pools=pool_chain, pools_net=fact.pools_net
         ):
