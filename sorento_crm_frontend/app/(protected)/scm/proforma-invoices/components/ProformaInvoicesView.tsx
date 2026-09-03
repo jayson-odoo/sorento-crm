@@ -155,9 +155,12 @@ export function ProformaInvoicesView() {
     reset: resetSearchQuery,
   } = useDebouncedSearch();
   const [supplierId, setSupplierId] = useState<string | null>(null);
-  // Defaulted to what has NOT been converted, because that is the question being asked by
-  // anyone opening this screen: which of these still has to go into a container (AC-F6).
-  const [placement, setPlacement] = useState<ProformaPlacement | null>('not_converted');
+  // No default filter (AC-D1, S4): a fresh visit shows every invoice, newest first. The
+  // Aug plan's default of `not_converted` (AC-F6) looked like missing data - a book where
+  // everything was already placed read as empty rather than as "nothing left to place",
+  // and the chip was silently applied before anyone chose it. `placement` is still honoured
+  // from the URL, one click away in the filter popover.
+  const [placement, setPlacement] = useState<ProformaPlacement | null>(null);
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
 
   // Back hands the list its own query string back, and the pager keeps

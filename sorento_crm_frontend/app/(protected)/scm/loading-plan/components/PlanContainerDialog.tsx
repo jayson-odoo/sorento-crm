@@ -252,10 +252,11 @@ export function PlanContainerDialog({
               value={supplierId}
               onChange={setSupplierId}
               onOptionChange={setSupplierOption}
-              // Server-searched, as on every other supplier picker in SCM: the `/select`
-              // endpoint ilikes code + name and caps at 100 rows, so a client-filtered
-              // static list silently hides anyone past that page.
-              fetchOptions={(query) => getFulfilmentSuppliers(query)}
+              // Server-searched AND paginated (S4, AC-D4), as on every other supplier picker
+              // in SCM: the `/select` endpoint pages past its first 50, so a supplier list
+              // running into the hundreds stays reachable via Load more.
+              fetchOptions={getFulfilmentSuppliers}
+              paginated
               selectedOption={supplierOption ?? undefined}
               placeholder="Choose a supplier"
               className="w-full"

@@ -259,15 +259,42 @@ beforeEach(() => {
 });
 
 describe('ProformaInvoicesView - loading / empty / error / data states', () => {
-  it('says nothing is waiting for a container, under the default filter', () => {
-    // The list opens on "Not converted" (AC-F6), so its empty state answers THAT question -
-    // one sentence that is true whether nothing was uploaded or everything is placed.
+  it('opens with no filter applied (AC-D1): the true-empty state, no Show-every-invoice CTA', () => {
+    // Superseded AC-F6 (Aug plan): a fresh visit no longer defaults to "Not converted" - a
+    // book where everything was already placed used to read as empty rather than as
+    // "nothing left to place". The CTA to clear filters has nothing to do while none are set.
     state.data = { data: [], total: 0 };
     renderView();
 
     expect(
+      screen.getByText(
+        'No proforma invoice read yet. Upload the supplier’s proforma workbook to hold its priced lines.',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /show every invoice/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('answers "waiting for a container" once that filter is chosen', async () => {
+    state.data = { data: [], total: 0 };
+    renderView();
+
+    openFilters();
+    fireEvent.change(screen.getByLabelText('Packing list filter'), {
+      target: { value: 'not_converted' },
+    });
+
+    expect(
       screen.getByText('No proforma invoice is waiting for a container.'),
     ).toBeInTheDocument();
+
+    // The popover marks the rest of the page aria-hidden while open (Radix `hideOthers`),
+    // so the Show-every-invoice button underneath is unreachable by role until it closes.
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    await waitFor(() =>
+      expect(screen.queryByLabelText('Packing list filter')).not.toBeInTheDocument(),
+    );
     expect(screen.getByRole('button', { name: /show every invoice/i })).toBeInTheDocument();
   });
 
@@ -276,8 +303,6 @@ describe('ProformaInvoicesView - loading / empty / error / data states', () => {
     renderView();
 
     openFilters();
-    // Off the placement filter first: with it on, the empty state answers that question.
-    fireEvent.change(screen.getByLabelText('Packing list filter'), { target: { value: '' } });
     fireEvent.change(screen.getByLabelText('Supplier'), { target: { value: 'sup-1' } });
 
     expect(
@@ -326,7 +351,9 @@ describe('ProformaInvoicesView - loading / empty / error / data states', () => {
     renderView();
 
     expect(
-      screen.getByText('No proforma invoice is waiting for a container.'),
+      screen.getByText(
+        'No proforma invoice read yet. Upload the supplier’s proforma workbook to hold its priced lines.',
+      ),
     ).toBeInTheDocument();
   });
 
@@ -372,13 +399,22 @@ describe('ProformaInvoicesView - the standard toolbar', () => {
     expect(screen.getByLabelText('Packing list filter')).toBeInTheDocument();
   });
 
-  it('states the active filter on screen, with a way to clear it', () => {
+  it('states a CHOSEN filter on screen, with a way to clear it (no chip by default, AC-D1)', () => {
     state.data = { data: [invoiceRow()], total: 1 };
     renderView();
 
-    // The default IS a filter, so it says so - a sticky default the reader did not set is
-    // otherwise indistinguishable from missing data. ("Not converted" is also the row's own
-    // Packing list cell, so the chip is identified by its clear button, not by the words.)
+    // No default, so nothing to clear yet.
+    expect(
+      screen.queryByRole('button', { name: /clear filter/i }),
+    ).not.toBeInTheDocument();
+
+    openFilters();
+    fireEvent.change(screen.getByLabelText('Packing list filter'), {
+      target: { value: 'not_converted' },
+    });
+
+    // ("Not converted" is also the row's own Packing list cell, so the chip is identified by
+    // its clear button, not by the words.)
     const clear = screen.getByRole('button', { name: /clear filter: not converted/i });
     expect(clear).toBeInTheDocument();
     fireEvent.click(clear);
@@ -515,7 +551,8 @@ describe('ProformaInvoicesView - the whole row opens the invoice', () => {
     expect(push).toHaveBeenCalledTimes(1);
     const href = push.mock.calls[0][0] as string;
     expect(href).toContain('/scm/proforma-invoices/pi-1');
-    expect(href).toContain('placement=not_converted');
+    // AC-D1: no filter applied by default, so none travels into the detail URL either.
+    expect(href).not.toContain('placement=');
   });
 
   it('keeps the PI number a real anchor, and stops it opening the row twice', () => {
