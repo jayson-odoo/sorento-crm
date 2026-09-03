@@ -264,7 +264,9 @@ function PeakCell({
   );
 }
 
-/** The build's SO lines in the shape the shared lightbox lists them (AC-B2). */
+/** The build's SO lines in the shape the shared lightbox lists them (AC-B2). Every line
+ *  carries its own channel too (S2): the Need dialog lists project and retail together, and
+ *  needs to say which is which. */
 function toDemandLines(lines: ContainerRequestSoLine[]): PlanDemandLineRow[] {
   return lines.map((l) => ({
     so_number: l.so_number,
@@ -274,35 +276,8 @@ function toDemandLines(lines: ContainerRequestSoLine[]): PlanDemandLineRow[] {
     price: l.unit_price,
     qty: l.qty,
     required_date: l.required_date,
+    channel: l.demand_class === 'project' ? 'project' : 'retail',
   }));
-}
-
-/**
- * The figure the rows are supposed to add up to, said beside the title - so the reader can
- * see the total they came to check without adding the table up themselves.
- */
-function dialogContext(dialog: OpenPlanRowDialog, horizon: string | null): string {
-  const { kind, row } = dialog;
-  if (kind === 'project' || kind === 'retail') {
-    const qty = kind === 'project' ? row.project_qty : row.retail_qty;
-    const cutoff = horizon ? ` before cut-off ${formatDateInMalaysia(horizon)}` : '';
-    return `${fmtInt(qty)} open${cutoff}`;
-  }
-  if (kind === 'on_hand') return `${fmtInt(row.on_hand)} at site pools`;
-  if (kind === 'spo') return `${fmtInt(row.incoming_spo)} arriving at site pools`;
-  if (kind === 'incoming_pl') return `${fmtInt(row.incoming_pl)} on packing lists`;
-  if (kind === 'blocks') {
-    // The blocks that named THIS product, not the statement's own count: the cell beside it
-    // already says how many blocks the file is, and a title claiming five while the table
-    // lists two would read as a missing row.
-    const named = row.blocks?.length ?? 0;
-    // Short on purpose: the shell prints this beside the title, and at 375px a longer
-    // qualifier wraps under the close button.
-    return `${fmtInt(row.holding_qty ?? 0)} over ${fmtInt(named)} ${
-      named === 1 ? 'block' : 'blocks'
-    }`;
-  }
-  return `${fmtInt(row.outstanding_po)} still to come`;
 }
 
 /**
@@ -560,6 +535,8 @@ export function ContainerRequestSection({
       {
         id: 'open_so_need',
         header: ({ column }) => <DataGridColumnHeader title="Need" column={column} />,
+        // S2: the figure that used to be plain text now opens its OWN dialog - project and
+        // retail together, since Need is the sum of both.
         cell: ({ row }) => {
           const original = row.original;
           if (original.has_demand === false) {
@@ -570,9 +547,12 @@ export function ContainerRequestSection({
             );
           }
           return (
-            <span className="tabular-nums" title="Need">
-              {fmtInt(original.open_so_need)}
-            </span>
+            <PlanNumberButton
+              value={fmtInt(original.open_so_need)}
+              label="Open demand, project and retail"
+              disabled={!original.open_so_need}
+              onClick={() => setDialog({ kind: 'need', row: original })}
+            />
           );
         },
         size: 100,
@@ -1055,24 +1035,27 @@ export function ContainerRequestSection({
                 `${dialog.row.set_name ?? dialog.row.product_name ?? ''} · figures from ${dialog.row.driver_item_code ?? 'its driver member'}`
               : dialog.row.product_name
           }
-          context={dialogContext(dialog, build.data?.plan_horizon_date ?? null)}
           onOpenChange={(open) => {
             if (!open) setDialog(null);
           }}
         >
-          {dialog.kind === 'project' || dialog.kind === 'retail' ? (
+          {dialog.kind === 'project' || dialog.kind === 'retail' || dialog.kind === 'need' ? (
             <ProjectRetailTabs
               channel={dialog.kind}
               lines={toDemandLines(
-                (linesByProduct.get(dialog.row.product_id) ?? []).filter((l) =>
-                  dialog.kind === 'project'
-                    ? l.demand_class === 'project'
-                    : l.demand_class !== 'project',
-                ),
+                // Need lists both channels unfiltered (S2); Project/Retail keep the split
+                // they always had.
+                dialog.kind === 'need'
+                  ? (linesByProduct.get(dialog.row.product_id) ?? [])
+                  : (linesByProduct.get(dialog.row.product_id) ?? []).filter((l) =>
+                      dialog.kind === 'project'
+                        ? l.demand_class === 'project'
+                        : l.demand_class !== 'project',
+                    ),
               )}
               history={toHistoryPoints(historyRef.current.get(dialog.row.product_id))}
               initialTab={dialog.onHistory ? 'history' : 'open'}
-              focus={dialog.kind}
+              horizon={build.data?.plan_horizon_date ?? null}
               loading={build.isFetching || (dialog.onHistory && history.isFetching)}
             />
           ) : dialog.kind === 'on_hand' ? (

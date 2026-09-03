@@ -18,13 +18,16 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from app.models.procurement import ProductSupplier
+from app.models.procurement import ProductSupplier, Supplier
 from app.models.scm import SupplierProductCodeAlias
+from app.models.user import SystemSetting
 from app.services.procurement_service import ProductSupplierService
 from app.services.scm import supplier_code_alias_service as alias_svc
 from app.services.scm import supplier_code_matcher
 from tests._pg_fixture import pg_session
 from tests.scm.test_supplier_code_matcher import World, _u
+
+import scripts.backfill_manual_alias_links as backfill
 
 
 def _link(db, w: World, product, lead_time: int) -> ProductSupplier:
@@ -99,12 +102,27 @@ def test_a_tie_in_lead_times_picks_the_larger():
         assert link.standard_lead_time_days == 45
 
 
-def test_a_supplier_with_no_existing_link_gets_no_row():
-    """There is no honest lead time to invent - the alias alone (AC-D3) already carries the
-    product into the universe, so a link is sourcing data on top of it, not a prerequisite."""
+def test_a_supplier_with_no_existing_link_falls_back_to_the_products_own_link():
+    """AC-G1 (S8, issue #605): a supplier whose whole universe came from the stock list has
+    ZERO `product_suppliers` rows of its own, so the ladder falls to what the PRODUCT already
+    waits on across its other suppliers - here DEFAULT at 90 - rather than leaving the row
+    unwritten. The alias alone (AC-D3) already carried the product into the universe; this
+    link is the sourcing fact the manual match is supposed to state."""
     with pg_session() as db:
         w = World(db)
         target = w.product("NEW")
+        other_supplier = Supplier(
+            id=_u(), supplier_code=f"{w.tag}-OTHER", supplier_name="DEFAULT", is_active=True
+        )
+        db.add(other_supplier)
+        db.flush()
+        db.add(
+            ProductSupplier(
+                id=_u(), product_id=target.id, supplier_id=other_supplier.id,
+                standard_lead_time_days=90,
+            )
+        )
+        db.flush()
 
         out = alias_svc.create(
             db,
@@ -115,7 +133,39 @@ def test_a_supplier_with_no_existing_link_gets_no_row():
         )
 
         assert out["product_id"] == str(target.id)
-        assert _link_for(db, w, target) is None
+        link = _link_for(db, w, target)
+        assert link is not None
+        assert link.standard_lead_time_days == 90
+        assert link.is_primary_supplier is False
+
+
+def test_a_supplier_and_product_with_no_links_falls_back_to_the_system_default():
+    """AC-G2: neither the supplier nor the product has a book to read a lead time off, so the
+    last rung is the system default (`system_settings.default_product_standard_lead_time_days`,
+    90 when unset). Set explicitly here so the assertion does not depend on whatever this
+    shared database happens to hold."""
+    with pg_session() as db:
+        w = World(db)
+        target = w.product("NEW")
+        row = db.query(SystemSetting).first()
+        if row is not None:
+            row.default_product_standard_lead_time_days = 21
+        else:
+            db.add(SystemSetting(id=_u(), name="ZZT test", default_product_standard_lead_time_days=21))
+        db.flush()
+
+        alias_svc.create(
+            db,
+            supplier_id=str(w.supplier.id),
+            supplier_code=w.supplier_code("NEW-CODE"),
+            product_id=str(target.id),
+            actor="Ms Tee",
+        )
+
+        link = _link_for(db, w, target)
+        assert link is not None
+        assert link.standard_lead_time_days == 21
+        assert link.is_primary_supplier is False
 
 
 def test_matching_a_code_to_a_product_already_linked_is_a_noop():
@@ -310,3 +360,76 @@ def test_ac_d2_the_field_survives_the_response_model():
         dumped = serialized.model_dump()
         assert "supplier_item_code" in dumped
         assert dumped["supplier_item_code"] == w.supplier_code("THEIR-SPELLING")
+
+
+# --------------------------------------------------------------------------------- #
+# AC-G5 - the repair script for rows written before the ladder had this fallback
+# --------------------------------------------------------------------------------- #
+
+
+def _simulate_pre_fix_orphan(db, w: World, target) -> None:
+    """The state the old code left on disk: a manual alias whose link was never written
+    because the supplier had no book of its own. Built by calling the real match path and
+    then deleting the link it wrote, rather than constructing the alias row by hand, so the
+    fixture stays honest about what a real orphan looks like."""
+    alias_svc.create(
+        db,
+        supplier_id=str(w.supplier.id),
+        supplier_code=w.supplier_code("NEW-CODE"),
+        product_id=str(target.id),
+        actor="Ms Tee",
+    )
+    db.query(ProductSupplier).filter(
+        ProductSupplier.product_id == target.id,
+        ProductSupplier.supplier_id == w.supplier.id,
+    ).delete()
+    db.flush()
+
+
+def test_a_dry_run_reports_the_orphan_and_writes_nothing():
+    with pg_session() as db:
+        w = World(db)
+        target = w.product("NEW")
+        _simulate_pre_fix_orphan(db, w, target)
+        assert _link_for(db, w, target) is None
+
+        candidates = backfill.find_candidates(db)
+        pairs = {(str(c.product_id), str(c.supplier_id)) for c in candidates}
+        assert (str(target.id), str(w.supplier.id)) in pairs
+
+        summary = backfill.run(db, apply=False)
+
+        assert _link_for(db, w, target) is None
+        # Fix round (Opus review): a dry-run has no link row to read the lead time back off,
+        # so it must be COMPUTED, not `None` - the same ladder `--apply` would write.
+        reported = {
+            (row["product_id"], row["supplier_id"]): row["lead_time"] for row in summary["rows"]
+        }
+        lead_time = reported[(str(target.id), str(w.supplier.id))]
+        assert isinstance(lead_time, int)
+        assert lead_time == alias_svc.lead_time_for_link(db, str(w.supplier.id), str(target.id))
+
+
+def test_apply_writes_the_link_and_a_second_apply_is_a_noop():
+    with pg_session() as db:
+        w = World(db)
+        target = w.product("NEW")
+        _simulate_pre_fix_orphan(db, w, target)
+
+        backfill.run(db, apply=True)
+
+        link = _link_for(db, w, target)
+        assert link is not None
+        assert link.is_primary_supplier is False
+        first_link_id = str(link.id)
+
+        # No more an orphan, so a second pass does not touch it.
+        candidates = backfill.find_candidates(db)
+        pairs = {(str(c.product_id), str(c.supplier_id)) for c in candidates}
+        assert (str(target.id), str(w.supplier.id)) not in pairs
+
+        backfill.run(db, apply=True)
+
+        link_again = _link_for(db, w, target)
+        assert str(link_again.id) == first_link_id
+        assert link_again.standard_lead_time_days == link.standard_lead_time_days

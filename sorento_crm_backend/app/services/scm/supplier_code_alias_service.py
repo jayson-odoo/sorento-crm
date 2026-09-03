@@ -175,6 +175,44 @@ def dismiss(
     }
 
 
+def _mode_lead_time(db: Session, column, value) -> Optional[int]:
+    """Mode of `standard_lead_time_days` on `product_suppliers` filtered by `column == value`,
+    ties broken toward the larger figure. `None` when there are no matching rows."""
+    row = (
+        db.query(ProductSupplier.standard_lead_time_days)
+        .filter(column == value)
+        .group_by(ProductSupplier.standard_lead_time_days)
+        .order_by(
+            func.count(ProductSupplier.standard_lead_time_days).desc(),
+            ProductSupplier.standard_lead_time_days.desc(),
+        )
+        .first()
+    )
+    return row[0] if row is not None else None
+
+
+def _default_lead_time(db: Session) -> int:
+    """The system-wide default, same source and same 90-day fallback as
+    `ProductService._default_standard_lead_time_days` - one constant, read through the one
+    method that already owns it rather than duplicated here."""
+    from app.services.product_service import ProductService
+
+    return ProductService(db)._default_standard_lead_time_days()
+
+
+def lead_time_for_link(db: Session, supplier_id: str, product_id: str) -> int:
+    """The lead time `_ensure_product_supplier_link` would pick for this pair, without writing
+    anything - the same three-rung ladder, so a dry-run report and the write it previews always
+    agree. Public (no leading underscore) because `backfill_manual_alias_links.py` calls it to
+    print the figure a `--dry-run` cannot read back off a link row that does not exist yet."""
+    lead_time = _mode_lead_time(db, ProductSupplier.supplier_id, supplier_id)
+    if lead_time is None:
+        lead_time = _mode_lead_time(db, ProductSupplier.product_id, product_id)
+    if lead_time is None:
+        lead_time = _default_lead_time(db)
+    return lead_time
+
+
 def _ensure_product_supplier_link(db: Session, supplier_id: str, product_id: str) -> None:
     """A manual match is a statement of what the supplier makes for us (ruling, section 2 of
     the plan), so it reaches `product_suppliers` - the very link that puts a product in a
@@ -184,11 +222,14 @@ def _ensure_product_supplier_link(db: Session, supplier_id: str, product_id: str
     called: it 409s on a duplicate and demands a full sourcing payload this call does not
     have, where a match dialog is naming a product, not pricing a relationship.
 
-    Lead time is the MODE of the supplier's existing links, ties broken toward the larger
-    figure - an honest "what this supplier usually takes" read off their own book, never
-    invented. A supplier with no existing link at all gets no row: there is no honest lead
-    time to write, and the alias alone already carries the product into the universe (AC-D3);
-    this link is sourcing data on top of it, not a requirement for it.
+    Lead time is a ladder, each rung an honest read of what is already on file rather than
+    an invented figure: (1) the MODE of the SUPPLIER's existing links, ties broken toward the
+    larger figure; (2) else the MODE of the PRODUCT's own links across its other suppliers -
+    what we already wait for this product; (3) else the system default
+    (`system_settings.default_product_standard_lead_time_days`, 90 when unset), all via
+    `lead_time_for_link`. The row is ALWAYS written on a manual product match - a supplier
+    with no book of its own still gets a link, priced off the product's or the system's
+    honest default rather than left blank.
 
     Only called from the manual match path (`create`, product target). Never from the
     ladder's own remember (`supplier_code_matcher._remember`, an automatic guess, not a
@@ -204,24 +245,13 @@ def _ensure_product_supplier_link(db: Session, supplier_id: str, product_id: str
     )
     if existing is not None:
         return
-    mode_lead_time = (
-        db.query(ProductSupplier.standard_lead_time_days)
-        .filter(ProductSupplier.supplier_id == supplier_id)
-        .group_by(ProductSupplier.standard_lead_time_days)
-        .order_by(
-            func.count(ProductSupplier.standard_lead_time_days).desc(),
-            ProductSupplier.standard_lead_time_days.desc(),
-        )
-        .first()
-    )
-    if mode_lead_time is None:
-        return
+    lead_time = lead_time_for_link(db, supplier_id, product_id)
     db.add(
         ProductSupplier(
             id=_uuid(),
             product_id=product_id,
             supplier_id=supplier_id,
-            standard_lead_time_days=mode_lead_time[0],
+            standard_lead_time_days=lead_time,
             is_primary_supplier=False,
         )
     )
