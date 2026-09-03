@@ -1380,9 +1380,13 @@ export function SoCoveragePicker({
 // ---------------------------------------------------------------------------
 
 /**
- * The one dialog a grid mounts, titled "<Kind> · <product code>" with the product name as its
- * description (Radix wants one, and a sentence explaining the dialog would be an on-screen
- * explanation, which the standards forbid).
+ * The one dialog a grid mounts, titled "<Kind> · <product code>". The product name is Radix's
+ * required description, but it renders VISIBLY only when it says something the title does not:
+ * on this master `product_name` is often identical to the item code (case-insensitive, once
+ * trimmed), and printing "SRTWB241" under a title that already reads "SPO · SRTWB241" is the
+ * repeat the captain flagged, not new information. When it matches (or is empty) the
+ * description falls back to `sr-only` holding the code, so Radix still has one for assistive
+ * tech and nothing repeats on screen.
  *
  * S3: the header used to carry a `context` string beside the title - the figure and its
  * qualifier, "2,876 before cut-off 30/09/2026". It is gone; each tab now states its own sum
@@ -1404,6 +1408,7 @@ export function PlanRowDialog({
   onOpenChange: (open: boolean) => void;
   children: ReactNode;
 }) {
+  const showName = !!productName && productName.trim().toLowerCase() !== productCode.trim().toLowerCase();
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex max-h-[85vh] w-full flex-col overflow-hidden p-0 sm:max-w-[95vw]">
@@ -1411,8 +1416,11 @@ export function PlanRowDialog({
           <DialogTitle className="min-w-0 break-words">
             {`${PLAN_ROW_DIALOG_TITLES[kind]} · ${productCode}`}
           </DialogTitle>
-          <DialogDescription className="truncate text-xs" title={productName ?? undefined}>
-            {productName ?? productCode}
+          <DialogDescription
+            className={showName ? 'truncate text-xs' : 'sr-only'}
+            title={showName ? (productName ?? undefined) : undefined}
+          >
+            {showName ? productName : productCode}
           </DialogDescription>
         </DialogHeader>
         <DialogBody className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">{children}</DialogBody>

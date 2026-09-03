@@ -122,6 +122,52 @@ describe('PlanRowDialog', () => {
     expect(within(dialog).getByText('body')).toBeTruthy();
   });
 
+  it('renders the description sr-only when the product name matches the code (AC-B1)', () => {
+    renderWithClient(
+      <PlanRowDialog
+        kind="spo"
+        productCode="SRTWB241"
+        productName="srtwb241"
+        onOpenChange={() => {}}
+      >
+        <p>body</p>
+      </PlanRowDialog>,
+    );
+
+    const dialog = screen.getByRole('dialog');
+    const description = within(dialog).getByText('SRTWB241');
+    expect(description).toHaveClass('sr-only');
+  });
+
+  it('renders the description sr-only when the product name is empty (AC-B1)', () => {
+    renderWithClient(
+      <PlanRowDialog kind="spo" productCode="SRTWB241" productName={null} onOpenChange={() => {}}>
+        <p>body</p>
+      </PlanRowDialog>,
+    );
+
+    const dialog = screen.getByRole('dialog');
+    const description = within(dialog).getByText('SRTWB241');
+    expect(description).toHaveClass('sr-only');
+  });
+
+  it('renders the description visibly when the product name differs from the code (AC-B2)', () => {
+    renderWithClient(
+      <PlanRowDialog
+        kind="spo"
+        productCode="SRTWB241"
+        productName="Wall hung basin 241"
+        onOpenChange={() => {}}
+      >
+        <p>body</p>
+      </PlanRowDialog>,
+    );
+
+    const dialog = screen.getByRole('dialog');
+    const description = within(dialog).getByText('Wall hung basin 241');
+    expect(description).not.toHaveClass('sr-only');
+  });
+
   it('closes on Escape', () => {
     const onOpenChange = vi.fn();
     renderWithClient(
