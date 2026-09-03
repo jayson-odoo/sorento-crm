@@ -264,3 +264,12 @@ the match.
   container" (Supplier) and in one non-dialog consumer (a listing filter) at 375px and 1280px;
   no change to focus-trap / outside-pointer behaviour beyond what `Select`/`DropdownMenu`
   already do while open.
+- **AC-K2** `[FE][T]` The Supplier codes tab's "Needs a decision" header carries a **Confirm
+  (N)** button, left of Refresh matching, where N = codes decided (matched or dismissed) THIS
+  VISIT and still present in the unmatched queue - disabled at N = 0. Clicking it writes
+  nothing (the aliases a pick or a dismiss makes already exist) and only invalidates the
+  unmatched-codes and alias queries, so the decided rows move into Remembered, the tab's own
+  badge drops, and Confirm's own count falls back to 0 as soon as the refetch lands - without
+  waiting for a reload or for the operator to leave the tab (AC-C3's other two triggers are
+  unchanged). Undo stays available on a row until it is confirmed; once confirmed, Forget is
+  what reaches it, on the Remembered list.

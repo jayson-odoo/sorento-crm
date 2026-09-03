@@ -168,6 +168,20 @@ export function useUndoSupplierCodeDecision() {
   });
 }
 
+/**
+ * "Confirm (N)" on the Needs a decision queue (S10 fix 2).
+ *
+ * A pick or a dismiss already wrote its alias the moment it happened (AC-C1/AC-C2) - this
+ * writes nothing. It only asks the plan's own queue and the supplier's memory to refetch, so
+ * the rows decided this visit stop waiting for a reload (or leaving the tab) to join
+ * Remembered: the unmatched list drops them because the ladder now resolves them, and the
+ * alias list picks them up, same as `useMatchSupplierCode`'s own invalidation.
+ */
+export function useConfirmSupplierCodeDecisions() {
+  const qc = useQueryClient();
+  return () => void qc.invalidateQueries({ queryKey: KEY });
+}
+
 // Forgetting a REMEMBERED match has no mutation hook: both screens that offer it park
 // `supplier_code_alias.forget` through `useDeferredRowAction` instead (D7), so the
 // server applies it when the window lapses and the same three lists are refetched

@@ -17,6 +17,7 @@ import {
 } from '../../components/productOrSetPicker';
 import { useDeferredRowAction, useRowPending } from '@/hooks/useDeferredRowAction';
 import {
+  useConfirmSupplierCodeDecisions,
   useDismissSupplierCodeInPlace,
   useMatchSupplierCodeInPlace,
   useSupplierCodeAliases,
@@ -46,8 +47,11 @@ import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
  *   was just chosen and swaps the picker for the answer plus an Undo link; Undo runs the
  *   same DELETE `Forget` uses, immediately (no countdown - undoing a pick made seconds ago
  *   is a correction, not a destructive act on someone else's data), and that IS when the
- *   query is invalidated, along with on unmount (leaving the tab), so a decided row only
- *   truly leaves the queue on the next load (AC-C3).
+ *   query is invalidated. A decided row otherwise waits for the next load - leaving the tab
+ *   (unmount) invalidates the same query - or for "Confirm (N)" beside Refresh matching
+ *   (S10 fix 2): N = rows decided this visit, disabled at 0, and the click writes nothing
+ *   (the aliases already exist) - it only asks the queue and the memory to refetch, so the
+ *   decided rows move into Remembered without waiting for a reload (AC-C3).
  * - "Remembered": every ruling this supplier has ever had, matched and dismissed alike -
  *   the memory R16 built and nowhere showed. Forget is the existing deferred row action
  *   (5s, reversible), unchanged from the old dismissed-only list.
@@ -130,6 +134,7 @@ export function SupplierCodesTab({
   const match = useMatchSupplierCodeInPlace();
   const dismiss = useDismissSupplierCodeInPlace();
   const undo = useUndoSupplierCodeDecision();
+  const confirmDecisions = useConfirmSupplierCodeDecisions();
   // The same action the proforma detail and the old panel deferred, unchanged (D7): forgetting
   // a ruling un-binds every row it held, so it asks nothing up front and counts down instead.
   const forget = useDeferredRowAction({
@@ -156,7 +161,15 @@ export function SupplierCodesTab({
   // navigating off the plan; the deliberate case (Undo) invalidates on its own success too.
   // Only fires when something was actually decided this visit - nothing to catch up on
   // otherwise, and an unconditional refetch on every tab switch would be wasted work.
-  const hasDecisions = Object.keys(decided).length > 0;
+  //
+  // Counted against `rows`, not `Object.keys(decided).length`: Confirm (S10 fix 2) asks the
+  // queue to refetch without clearing `decided` (clearing it eagerly would flash the picker
+  // back on a row an instant before the refetch removes it). Once the refetch lands, a
+  // decided code is no longer among `rows` at all, so counting `decided` entries THAT ARE
+  // STILL a row here is what makes the count - and the badge, and Confirm's own label - drop
+  // back down on its own rather than staying pinned at the number just confirmed.
+  const decidedCount = rows.filter((r) => decided[r.item_code]).length;
+  const hasDecisions = decidedCount > 0;
   React.useEffect(() => {
     return () => {
       if (!hasDecisions) return;
@@ -474,6 +487,17 @@ export function SupplierCodesTab({
             <CardTitle className="truncate text-sm">Needs a decision ({rows.length})</CardTitle>
           </CardHeading>
           <div className="flex shrink-0 items-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              data-testid="confirm-decisions"
+              disabled={!hasDecisions}
+              onClick={confirmDecisions}
+              title="Move what was decided this visit into Remembered - nothing new is written"
+            >
+              <CheckCircle2 className="size-4" />
+              {`Confirm (${decidedCount})`}
+            </Button>
             <RefreshMatchingButton planId={planId} size="sm" />
           </div>
         </CardHeader>

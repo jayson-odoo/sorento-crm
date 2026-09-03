@@ -67,6 +67,7 @@ const state = {
   dismiss: vi.fn(),
   undo: vi.fn(),
   rematch: vi.fn(),
+  confirm: vi.fn(),
 };
 
 vi.mock('../../hooks/useSupplierCodeAliases', () => ({
@@ -76,6 +77,7 @@ vi.mock('../../hooks/useSupplierCodeAliases', () => ({
   useDismissSupplierCodeInPlace: () => ({ mutateAsync: state.dismiss, isPending: false }),
   useUndoSupplierCodeDecision: () => ({ mutate: state.undo, isPending: false }),
   useRematchSupplierCodes: () => ({ mutate: state.rematch, isPending: false }),
+  useConfirmSupplierCodeDecisions: () => state.confirm,
 }));
 
 vi.mock(
@@ -179,7 +181,12 @@ function renderTab(
 ) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const invalidateSpy = vi.spyOn(qc, 'invalidateQueries');
-  const utils = render(
+  // A FRESH element every call, never a captured constant: reusing the exact same element
+  // object across `rerender` lets React bail out of the whole subtree (old/new props are
+  // `Object.is`-equal at the QueryClientProvider fiber), so a later `rerenderSame` silently
+  // did nothing - the mocked hooks read module-level `state`, which is not itself reactive,
+  // so only a genuine re-render picks up a change like S10 fix 2's Confirm clearing the queue.
+  const buildTree = () => (
     <QueryClientProvider client={qc}>
       <SupplierCodesTab
         planId="plan-1"
@@ -188,9 +195,11 @@ function renderTab(
         documentLabel={documentLabel}
         statementAsOf={statementAsOf}
       />
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
-  return { ...utils, invalidateSpy };
+  const utils = render(buildTree());
+  const rerenderSame = () => utils.rerender(buildTree());
+  return { ...utils, invalidateSpy, rerenderSame };
 }
 
 beforeEach(() => {
@@ -224,6 +233,7 @@ beforeEach(() => {
   });
   state.undo = vi.fn((_id: string, opts?: { onSuccess?: () => void }) => opts?.onSuccess?.());
   state.rematch = vi.fn();
+  state.confirm = vi.fn();
   deferred.inputs.length = 0;
   deferred.run.mockClear();
 });
@@ -387,6 +397,59 @@ describe('SupplierCodesTab - Needs a decision', () => {
     expect(invalidateSpy).toHaveBeenCalledWith(
       expect.objectContaining({ queryKey: ['scm', 'supplier-code-aliases'] }),
     );
+  });
+});
+
+describe('SupplierCodesTab - Confirm (N) (S10 fix 2)', () => {
+  beforeEach(() => {
+    state.rows = [row(), row({ item_code: 'SRTWC8354-SH-250', product_name: 'Cistern' })];
+  });
+
+  it('is disabled at zero and counts a pick and a dismiss made this visit', async () => {
+    renderTab();
+
+    expect(screen.getByRole('button', { name: 'Confirm (0)' })).toBeDisabled();
+
+    const [firstSelect] = screen.getAllByLabelText('Product') as HTMLSelectElement[];
+    await waitFor(() => expect(firstSelect.querySelector('option[value="p-1"]')).toBeInTheDocument());
+    fireEvent.change(firstSelect, { target: { value: 'p-1' } });
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Confirm (1)' })).not.toBeDisabled(),
+    );
+
+    fireEvent.click(screen.getAllByRole('button', { name: /^dismiss$/i })[0]);
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Confirm (2)' })).not.toBeDisabled(),
+    );
+  });
+
+  it('asks the queue and the memory to refetch, and the decided rows leave Needs a decision', async () => {
+    // Nothing is written by Confirm - the aliases already exist - so the test stands in for
+    // the refetch the real hook's invalidate would trigger by having the queue come back
+    // empty, the same shape a plan with both codes now resolved would return.
+    state.confirm = vi.fn(() => {
+      state.rows = [];
+    });
+    const { rerenderSame } = renderTab();
+
+    const [firstSelect] = screen.getAllByLabelText('Product') as HTMLSelectElement[];
+    await waitFor(() => expect(firstSelect.querySelector('option[value="p-1"]')).toBeInTheDocument());
+    fireEvent.change(firstSelect, { target: { value: 'p-1' } });
+    // Wait for the pick to land (its own row's Undo appears) before reading "the" Dismiss
+    // button off the SECOND row - otherwise both rows still show one and the click lands
+    // back on the row already being decided.
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Confirm (1)' })).not.toBeDisabled());
+    fireEvent.click(screen.getAllByRole('button', { name: /^dismiss$/i })[0]);
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Confirm (2)' })).not.toBeDisabled(),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm (2)' }));
+
+    expect(state.confirm).toHaveBeenCalledTimes(1);
+    rerenderSame();
+    expect(screen.getByText('Needs a decision (0)')).toBeInTheDocument();
+    expect(screen.getByText('Every code on file is matched')).toBeInTheDocument();
   });
 });
 

@@ -250,6 +250,15 @@ section K (AC-K1-AC-K3).
   own `RemoveScroll` instance (`@radix-ui/react-popover`), so making the `Popover` `modal`
   makes IT the active lock while open, letting its own list scroll - the same mechanism
   `Select`/`DropdownMenu` already use. No dialog-side change.
+- `app/(protected)/scm/loading-plan/components/SupplierCodesTab.tsx` +
+  `app/(protected)/scm/hooks/useSupplierCodeAliases.ts`: a **Confirm (N)** button, left of
+  Refresh matching, N = rows decided (matched or dismissed) this visit and still present in
+  the queue. `useConfirmSupplierCodeDecisions` is one line - `invalidateQueries` on the
+  existing `['scm', 'supplier-code-aliases']` key - since a pick or a dismiss already wrote
+  its alias at decision time (AC-C1/AC-C2); nothing new is written here. `decidedCount` is
+  computed against the CURRENT `rows` (not `Object.keys(decided).length`) so the count - and
+  the button's own label - falls back to 0 on its own once the refetch removes the confirmed
+  codes, rather than staying pinned at the number just confirmed.
 
 ## 4. What is reused, and what is deliberately not built
 
