@@ -2554,3 +2554,122 @@ def test_a_frozen_proposal_is_stamped_with_the_ladder_that_composed_it(api):
     proposed = decision.line_snapshots[0]["proposed_components"]
     assert proposed, "the engine's own composition is frozen beside the decided one"
     assert {part["ladder"] for part in proposed} == {LADDER_VERSION}
+
+
+# --------------------------------------------------------------------------- R-N (3 Sep)
+
+
+def test_the_pool_chain_composes_two_pools_and_the_confirm_admits_each_ones_floor(api):
+    """AC-N.9 (`PLAN-scm-pool-chain-first.md`): step 0 walks EVERY site pool.
+
+    The board's own SO419417 shape, end to end: the asking bin's pool may spare 4 (half of
+    the 8 it holds, the other half kept for dealers) and a second site pool holds 687, so a
+    line of 8 composes `BRW 4 + WH3 4` rather than stopping at the 4 its own pool could
+    give and reaching for another site's GROUP bin. Confirming it writes TWO Reserve
+    components at two pool warehouses, and the confirm-time recheck admits each against
+    THAT pool's own free floor - `pool_reserve_capacity` spends the one five-pool net down
+    across the chain, so neither pool is judged by the other's pile.
+    """
+    from app.models.project_so import SOLineAllocation, SOSupplyDecision
+
+    client, world = api
+    db = world.db
+    far_own = _warehouse(db, f"ZZT-OWN2-{_suffix()}", segment="project")
+    far_pool = _warehouse(db, f"ZZT-WH3-{_suffix()}", segment="dealer")
+    far_own.pool_warehouse_id = far_pool.id
+    _stock(db, world.product, world.pool_wh, on_hand=8)
+    _stock(db, world.product, far_pool, on_hand=687)
+
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="8")
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    proposal = client.get(f"{BASE}/sales-orders/{order.id}/supply")
+    assert proposal.status_code == 200, proposal.text
+    composed = [
+        (c["kind"], c["qty"], c["source_location"])
+        for c in proposal.json()["lines"][0]["components"]
+    ]
+    assert composed == [
+        ("reserve", "4", world.pool_wh.warehouse_code),
+        ("reserve", "4", far_pool.warehouse_code),
+    ], composed
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(
+                    line.id,
+                    reserve=[
+                        {"warehouse_id": world.pool_wh.id, "qty": "4"},
+                        {"warehouse_id": far_pool.id, "qty": "4"},
+                    ],
+                )
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    decision = (
+        db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == order.id)
+        .one()
+    )
+    allocations = (
+        db.query(SOLineAllocation)
+        .filter(SOLineAllocation.decision_id == decision.id)
+        .all()
+    )
+    reserved = {
+        str(row.warehouse_id): Decimal(str(row.qty)) for row in allocations
+    }
+    assert reserved == {
+        str(world.pool_wh.id): Decimal("4"),
+        str(far_pool.id): Decimal("4"),
+    }, (
+        "both pools are held, each against its own floor",
+        [(a.source_type, str(a.warehouse_id), str(a.qty)) for a in allocations],
+    )
+
+
+def test_a_pool_of_the_chain_is_still_judged_by_its_own_floor_at_confirm(api):
+    """AC-N.9's other half: the chain widened WHAT may be composed, not by how much.
+
+    The second pool holding 687 does not make the asking pool's 4 into 5: each pool of the
+    chain is admitted against its own free floor, and the refusal names that pool.
+    """
+    client, world = api
+    db = world.db
+    far_own = _warehouse(db, f"ZZT-OWN2-{_suffix()}", segment="project")
+    far_pool = _warehouse(db, f"ZZT-WH3-{_suffix()}", segment="dealer")
+    far_own.pool_warehouse_id = far_pool.id
+    _stock(db, world.product, world.pool_wh, on_hand=4)
+    _stock(db, world.product, far_pool, on_hand=687)
+
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="8")
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(
+                    line.id,
+                    reserve=[
+                        {"warehouse_id": world.pool_wh.id, "qty": "5"},
+                        {"warehouse_id": far_pool.id, "qty": "3"},
+                    ],
+                )
+            ]
+        },
+    )
+    assert response.status_code in (409, 422), response.text
+    failing = response.json()["failing_lines"]
+    assert failing[0]["line_no"] == 10
+    assert world.pool_wh.warehouse_code in failing[0]["reason"], failing
