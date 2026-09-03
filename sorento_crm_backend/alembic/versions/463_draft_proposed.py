@@ -18,14 +18,14 @@ database is a prod copy whose `alembic_version` points at another lane's head, s
 applied there by hand and re-running it has to be a no-op rather than a failure.
 
 Revision ID: 463_draft_proposed
-Revises: 461_so_supply_decision_drafts
+Revises: 464_merge_plan_stmt_fulfil
 """
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision = "463_draft_proposed"
-down_revision = "461_so_supply_decision_drafts"
+down_revision = "464_merge_plan_stmt_fulfil"
 branch_labels = None
 depends_on = None
 
