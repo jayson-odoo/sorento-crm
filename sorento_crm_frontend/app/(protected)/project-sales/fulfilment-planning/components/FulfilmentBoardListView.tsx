@@ -48,7 +48,6 @@ export function FulfilmentBoardListView({
   draft,
   onDecide,
   onDecideMany,
-  isLoading,
 }: {
   contributions: BoardContribution[];
   draft: BoardDraft;
@@ -59,7 +58,6 @@ export function FulfilmentBoardListView({
    * to confirm") rather than the N separate "Line N saved" toasts D14 shipped with.
    */
   onDecideMany: (keys: string[]) => Promise<{ saved: number; failed: number }>;
-  isLoading?: boolean;
 }) {
   /**
    * Which row is open, ONE at a time - the same STATE the cell breakdown keeps, and the same
@@ -406,7 +404,6 @@ export function FulfilmentBoardListView({
       rows={contributions}
       getRowId={(row) => row.key}
       listingKey="projects.projects.view::project-fulfilment-board-list-v1"
-      isLoading={isLoading}
       emptyTitle="Nothing is outstanding on this board"
       searchPlaceholder="Search sales order, customer, agent or product"
       searchOf={(row) =>

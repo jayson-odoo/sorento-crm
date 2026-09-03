@@ -1,7 +1,8 @@
 'use client';
 
 import * as React from 'react';
-import { Check, ChevronDown, ChevronRight, Info, Undo2, X } from 'lucide-react';
+import Link from 'next/link';
+import { Check, ChevronDown, ChevronRight, ExternalLink, Info, Undo2, X } from 'lucide-react';
 import { ColumnDef, RowSelectionState } from '@tanstack/react-table';
 import { Button } from '@/components/ui/button';
 import {
@@ -30,6 +31,7 @@ import {
 } from '@/hooks/useDebouncedSearch';
 import { cn } from '@/lib/utils';
 import { formatDateInMalaysia } from '@/lib/helpers';
+import { spoDetailHref, spoNumberFromLabel } from '@/lib/spo-detail';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
 import { OrderInquiryStatePill } from '../../_shared/components/OrderInquiryVerbPill';
 import {
@@ -1053,19 +1055,31 @@ export function BoardCellBreakdownDialog({
                               location: source.location,
                             }
                           : undefined;
+                      // The captain's own complaint (3 Sep 2026, SO418869
+                      // SRTWCX7405-RL-S-PJ): the chip only ever jumped the table below, and
+                      // there was no way OUT of the dialog onto the document itself.
+                      const documentHref = sourceDocument
+                        ? spoDetailHref(
+                            spoNumberFromLabel(source.supply_document as string),
+                          )
+                        : undefined;
                       return (
                         <p
                           key={`${source.kind}-${index}`}
                           className="text-sm text-muted-foreground"
                         >
-                          {annotateReason(source, {
-                            onDonorClick: () =>
-                              stockTableRef.current?.jumpToDonor(sourceDonor),
-                            onDocumentClick: () =>
-                              stockTableRef.current?.jumpToDocument(
-                                sourceDocument,
-                              ),
-                          })}
+                          {annotateReason(
+                            source,
+                            {
+                              onDonorClick: () =>
+                                stockTableRef.current?.jumpToDonor(sourceDonor),
+                              onDocumentClick: () =>
+                                stockTableRef.current?.jumpToDocument(
+                                  sourceDocument,
+                                ),
+                            },
+                            documentHref,
+                          )}
                         </p>
                       );
                     })}
@@ -1530,10 +1544,17 @@ function isJumpableDocument(value: string | null | undefined): boolean {
  * `supply_document`) rather than re-parsing the prose: the two markers are known values, so
  * a plain search-and-wrap is the whole job, and a regex over free text would be guessing at
  * a grammar the server never promised to keep stable.
+ *
+ * `documentHref`, when the source names a document, adds a SECOND, tiny control right after
+ * the chip: an external-link icon that opens the SPO itself. The chip keeps its own job -
+ * jumping the table below to the matching row (AC-3.4) - because the captain's own screenshot
+ * (3 Sep 2026, SO418869 SRTWCX7405-RL-S-PJ) shows that working; there was simply no way OUT
+ * of the dialog onto the document, so this adds one rather than repurposing the other.
  */
 function annotateReason(
   source: BoardSource,
   handlers: { onDonorClick: () => void; onDocumentClick: () => void },
+  documentHref?: string,
 ): React.ReactNode {
   const markers = [
     source.donor_so_number
@@ -1582,6 +1603,20 @@ function annotateReason(
         {marker.value}
       </button>,
     );
+    if (marker.testId === 'suggestion-document-link' && documentHref) {
+      nodes.push(
+        <Link
+          key={`suggestion-document-open-${position}`}
+          href={documentHref}
+          onClick={(event) => event.stopPropagation()}
+          className="ms-1 inline-flex align-middle text-muted-foreground hover:text-primary"
+          aria-label={`Open ${marker.value}`}
+          data-testid="suggestion-document-open-link"
+        >
+          <ExternalLink className="size-3.5" aria-hidden />
+        </Link>,
+      );
+    }
     cursor = marker.index + marker.value.length;
   });
   nodes.push(source.reason.slice(cursor));

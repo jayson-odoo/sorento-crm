@@ -1947,6 +1947,62 @@ THE_CHAIN_ALLOWANCE_NEVER_EXCEEDS_THE_NET_CASE = WalkCase(
 )
 
 
+OWN_BIN_FULL_CHAIN_STILL_FIRST_CASE = WalkCase(
+    ac="AC-N.13",
+    title=(
+        "B1 (captain 3 Sep): the own bin BRW-BB holds all 8 free on its own, and the pool "
+        "chain is still asked first - BRW 4 + WH3 4, the own bin's 8 is not drawn"
+    ),
+    inputs=_v8_inputs(
+        open_qty=Decimal("8"),
+        required_date=IMMEDIATE_DATE,
+        group_take_candidates=[
+            {"location": V8_OWN_LOCATION, "qty": Decimal("8")},
+        ],
+        group_offer=Decimal("8"),
+        pools=[
+            {"location": POOL_LOCATION, "free": Decimal("4"), "available": Decimal("710")},
+            {"location": V8_OTHER_POOL, "free": Decimal("687"), "available": Decimal("686")},
+        ],
+        pools_net=Decimal("1605"),
+    ),
+    components=(
+        Component(
+            kind=RESERVE,
+            qty=Decimal("4"),
+            reason="Pool BRW spares 4 of the 355 it may lend a project",
+            source_location=POOL_LOCATION,
+        ),
+        Component(
+            kind=RESERVE,
+            qty=Decimal("4"),
+            reason="Pool WH3 spares 4 of the 343 it may lend a project",
+            source_location=V8_OTHER_POOL,
+        ),
+    ),
+    options=(
+        OptionRow(
+            step="pool_share",
+            whole=True,
+            gives_qty=Decimal("8"),
+            reason=(
+                "Pool BRW spares 4 of the 355 it may lend a project "
+                "Pool WH3 spares 4 of the 343 it may lend a project"
+            ),
+            chosen=True,
+            label="Use BRW and WH3 stock",
+        ),
+        # The own bin COULD give all 8 on its own (whole) - the row still answers - but
+        # step 0 already covered the line, so it is not chosen. This is the reproduction
+        # B1 rules on: the pool chain outranks the line's OWN bin, not only the group.
+        OptionRow(step="use", whole=True, gives_qty=Decimal("8")),
+        OptionRow(step="order_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="supply_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="buy", whole=True, gives_qty=Decimal("8")),
+    ),
+)
+
+
 V8_WALK_CASES = (
     IMMEDIATE_SHARE_CASE,
     SMALL_LINE_WHOLE_FROM_POOL_CASE,
@@ -1970,4 +2026,5 @@ V8_WALK_CASES = (
     THE_SHARE_LEDGER_IS_PER_POOL_ACROSS_THE_CHAIN_CASE,
     THE_CHAIN_REFUSAL_COUNTS_ONLY_THE_POOLS_IT_WALKED_CASE,
     THE_CHAIN_ALLOWANCE_NEVER_EXCEEDS_THE_NET_CASE,
+    OWN_BIN_FULL_CHAIN_STILL_FIRST_CASE,
 )

@@ -234,6 +234,11 @@ class FulfilmentPriorityWrite(BaseModel):
     # active row - AC-1.2, 0 is a valid value for both.
     immediate_window_days: Optional[int] = None
     pool_share_pct: Optional[int] = None
+    # The overdue grace (R-O, 3 Sep 2026, migration 464) - same "optional, None-means-
+    # unchanged" shape again, and the same reason: an older writer that does not know
+    # either field must not reset it while saving something else.
+    overdue_grace_days: Optional[int] = None
+    overdue_dead_days: Optional[int] = None
 
     @model_validator(mode="after")
     def _check(self) -> "FulfilmentPriorityWrite":
@@ -249,6 +254,14 @@ class FulfilmentPriorityWrite(BaseModel):
             raise ValueError("immediate_window_days must be between 0 and 365")
         if self.pool_share_pct is not None and not (0 <= self.pool_share_pct <= 100):
             raise ValueError("pool_share_pct must be between 0 and 100")
+        if self.overdue_grace_days is not None and not (
+            0 <= self.overdue_grace_days <= 365
+        ):
+            raise ValueError("overdue_grace_days must be between 0 and 365")
+        if self.overdue_dead_days is not None and not (
+            0 <= self.overdue_dead_days <= 365
+        ):
+            raise ValueError("overdue_dead_days must be between 0 and 365")
         # The TBA freshness rule is NOT here. It has to compare the submitted date with
         # the ACTIVE policy's own, which needs the database, so it lives in the route
         # (`policies.put_fulfilment_priority`). See the note on `tba_date_from` above.
@@ -278,6 +291,13 @@ class FulfilmentPriorityPolicy(BaseModel):
     #: reason as `transfer_days` above.
     immediate_window_days: int = 30
     pool_share_pct: int = 50
+    #: NOT NULL on the row (migration 464), SHIPPED default 0 / 0 (captain's ruling, 3 Sep
+    #: 2026 - dead at 0 reproduces R31 exactly, and 14 / 90 is the recommended pair once the
+    #: grace is turned on). Declared explicitly for the same reason as every field above it:
+    #: `response_model` drops what a schema does not name, so an undeclared column never
+    #: reaches the policy form at all.
+    overdue_grace_days: int = 0
+    overdue_dead_days: int = 0
     name: str
     #: False only on a database that has never activated a fulfilment-priority policy at
     #: all - every seeded/migrated database (migration 385) has one.

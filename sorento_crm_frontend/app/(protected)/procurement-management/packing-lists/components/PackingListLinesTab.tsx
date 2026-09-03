@@ -16,6 +16,7 @@ import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { formatDate } from '@/lib/helpers';
 import { formatStatusLabel } from '@/lib/status-badge';
+import { spoDetailHref } from '@/lib/spo-detail';
 import { useConsolidatedPackingList } from '@/app/(protected)/scm/hooks/useFulfilment';
 import { getProducts } from '@/app/(protected)/master-data-management/products/services/productService';
 import { ProductComboboxSearchable } from './ProductComboboxSearchable';
@@ -710,7 +711,7 @@ export function PackingListLinesTab() {
                           return spo.spo_number ? (
                             <Link
                               key={spo.id}
-                              href={`/procurement-management/spo-allocations/${encodeURIComponent(spo.spo_number)}`}
+                              href={spoDetailHref(spo.spo_number)}
                               className="block rounded-md border px-3 py-2 hover:bg-muted/50"
                             >
                               {content}

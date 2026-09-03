@@ -1,16 +1,47 @@
 # PLAN - Pool step walks every site pool before another site's group bin (R-N)
 
-Status: S1 to S3 DONE + AC-N.12 floor ledger + review fix round (PR #607), on
-`feat/scm-pool-chain-first` (R-N, 3 Sep 2026; no sha here because the lane is rebased onto
-#575's final tip before it is pushed). Engine, board proof and docs landed;
+Status: S1 to S3 DONE + AC-N.12 floor ledger + review fix round + B1 ruled + golden (PR #607,
+merged on `origin/main`), and S4 to S6 (R-O, overdue grace, #586) on `feat/scm-pool-chain-ro`,
+stacked on #607, 3 Sep 2026. Engine, board proof and docs landed;
 `walk_line` step 0 walks the whole pool chain, R-L's spill block and `_draw_other_pools` are
 deleted, and the step 0 row is written from the pools that answered. Goldens AC-N.1 to AC-N.8
 are `_v8_inputs` cases in `tests/scm/front_planning_golden.py`, AC-N.9 is two confirm tests in
 `tests/test_so_supply_confirmation.py`, the board's multi-pool proof is
 `tests/test_fulfilment_board.py::test_a_cell_whose_pool_step_answered_from_two_pools_shows_both_taken_figures`
 and AC-N.11 is two vitest cases in `supplyComposition.test.ts`. AC-N.10 (browser evidence on
-SO419417) is still owed. R-O (S4 to S6, overdue grace) NOT started - separate brief, issue #586.
-RULED 3 Sep 2026 (R-N + R-O, Q1 by on hand, grace 14 / dead 90). Supersedes R-L's trigger.
+SO419417) recorded 3 Sep. B1 (own-bin order) ruled by the captain 3 Sep and pinned by AC-N.13,
+a `_v8_inputs` case in `V8_WALK_CASES` - no engine change, the coded behaviour already matched
+the ruling. AC-N.12 (every pool's free floor is one ledger, reported by the R-N coder) is
+`tests/scm/test_project_supply_service_ladder.py::test_another_sites_pool_free_floor_is_spent_once_across_the_whole_walk`.
+
+R-O (S4 to S6, overdue grace, #586) DONE: migration `464_overdue_grace`, the policy pair on
+`scm.priority_policy` with its form fields, `supply_assignment.counted_event` as the one
+place the rule lives, the lateness clause on every incoming rung's sentence
+(`front_planning_engine.late_document_reason`), and the assumed/stated dates on both stock
+ledgers. Tests: `tests/scm/test_overdue_grace_setting.py` (AC-O.5),
+`tests/scm/test_supply_assignment.py`'s R-O block (AC-O.1 to AC-O.4),
+`tests/scm/test_overdue_grace_ladder.py` (the compositions and the sentences),
+`tests/scm/test_stock_debt_routes.py` and `tests/test_fulfilment_board.py` (the ledger
+rows), plus vitest on the policy form and `StockDocumentsPanel`. AC-O.6 (browser evidence on
+SO419417) is still owed. FOUR pre-existing fixtures, written when every past arrival was
+uncounted (R31), were re-dated past `overdue_dead_days` so they keep stating the rule they
+were written for - the landing commit's own body undercounts them as three:
+`test_ac_s2_4b_a_dead_document_counts_as_nothing_and_is_still_listed`,
+`test_a_pin_on_a_dead_document_holds_the_line_without_counting_the_document` and
+`test_a_groups_book_position_counts_the_supply_the_assignment_counted` in
+`tests/scm/test_supply_assignment.py`, plus
+`test_a_dead_promise_is_still_inside_the_groups_net_and_still_draws_nothing` in
+`tests/scm/test_project_supply_service_ladder.py`.
+RULED 3 Sep 2026 (R-N + R-O, Q1 by on hand, grace 14 / dead 90 RECOMMENDED). Supersedes
+R-L's trigger.
+
+Review fix round (3 Sep 2026, PR #618): the SPO the suggestion sentence names is now a
+`Link` to its own detail page beside the jump chip (`BoardCellBreakdownDialog`'s
+`annotateReason`, `StockDocumentsPanel`'s SPO row), reusing a new shared
+`lib/spo-detail.ts`; the sentence's own "SPO SPO-..." doubling is fixed at the source
+(`stock_debt_service._spo_ref`, mirroring `front_planning_engine.spo_reason`'s existing
+guard). Same commit ships R-O's DEFAULT at 0 / 0 instead of 14 / 90 (captain's ruling,
+above) - production keeps R31's behaviour until the two numbers are raised deliberately.
 
 ## Why
 
@@ -48,8 +79,12 @@ decided by whether a group bin happened to have stock.
   `spilled_components` path becomes the only path): "Pool BRW spares 4 of the 355 it may lend
   a project Pool WH3 spares 4 of the 343 it may lend a project". Label stays
   `_pool_share_label` (names the pools that answered).
-- **Own-bin order is NOT changed**: pool share before own free stock is R-A/R-B (2 Sep) and
-  stands.
+- **The pool chain outranks the line's own bin, not only every group bin** (B1, captain 3
+  Sep): step 0 (the whole site-pool chain, own pool first then by on hand) is asked before the
+  asking line's OWN bin's free stock, exactly as it is asked before every group bin. Own free
+  stock is step 1 (`STEP_USE`), unchanged in position, only later in the order than the pool
+  chain. This is R-A/R-B (2 Sep) stated of the own bin as well as the group, not a change to
+  the walk order already coded.
 
 ## What this changes on SO419417
 
@@ -88,9 +123,13 @@ should not ignore a late document.
 
 - An overdue document (arrival date < today, nothing received) counts as supply landing on
   `today + overdue_grace_days`. New column on `priority_policy` beside
-  `immediate_window_days`: `overdue_grace_days` INT NOT NULL DEFAULT 14, and
-  `overdue_dead_days` INT NOT NULL DEFAULT 90 (migration, one head, chained onto main's head
-  at PR time via `scripts/alembic-reparent.sh`).
+  `immediate_window_days`: `overdue_grace_days` INT NOT NULL, `overdue_dead_days` INT NOT
+  NULL (migration, one head, chained onto main's head at PR time via
+  `scripts/alembic-reparent.sh`). **SHIPS at DEFAULT 0 / 0** (captain's ruling, 3 Sep 2026,
+  review fix round): with dead at 0 any lateness at all is past it, so production keeps
+  R31's behaviour - a document one day late still counts as nothing - until someone raises
+  the two numbers through the policy form. 14 / 90 is the RECOMMENDED pair the ruling below
+  is otherwise written against, not the shipped one.
 - A document later than `overdue_dead_days` counts as nothing (R31 stays for the dead).
 - The assumed date is what the walk plans against, on every incoming rung (own bin water,
   group water, pool water, supply borrow): a line due before `today + grace` does not get it.
@@ -110,3 +149,4 @@ Slices for R-O (same lane, after S1 to S3): S4 migration + policy schema/form; S
 ## Rulings taken
 
 - Q1 (captain 3 Sep): other pools by on hand, fullest first, as today.
+- B1 (captain 3 Sep): all pools before own bin.
