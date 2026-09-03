@@ -112,6 +112,8 @@ import {
   ArrowDownToLine,
   ArrowUp,
   ArrowUpToLine,
+  ChevronLeft,
+  ChevronRight,
   ClipboardPaste,
   Copy,
   CornerLeftUp,
@@ -129,6 +131,7 @@ import {
   Unlock,
   X,
 } from 'lucide-react';
+import type { ImperativePanelHandle } from 'react-resizable-panels';
 import { AssetPickerDialog } from './AssetPickerDialog';
 import { FontUploadDialog } from './FontUploadDialog';
 import { ProductPickDialog, type PickMode } from './ProductPickDialog';
@@ -142,6 +145,21 @@ import { InspectorPanel } from './InspectorPanel';
 import { InsertFieldDialog } from './InsertFieldDialog';
 import { useCanvasHistory } from './useCanvasHistory';
 import { useSnapGuides } from './useSnapGuides';
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
+import {
+  DEFAULT_PANEL_LAYOUT,
+  LEFT_MAX_PX,
+  LEFT_MIN_PX,
+  RAIL_MIN_PX,
+  RIGHT_MAX_PX,
+  RIGHT_MIN_PX,
+  clampLeft,
+  clampRailSplit,
+  clampRight,
+  readPanelLayout,
+  writePanelLayout,
+  type PanelLayout,
+} from '@/lib/dealer-kit/canvas-panels';
 
 /** What a previewed block is showing, named the way a person reads it. */
 interface PreviewChoice {
@@ -320,6 +338,12 @@ export function TagCanvasEditor({
   const [tool, setTool] = useState<CanvasTool>('select');
   const [spaceHeld, setSpaceHeld] = useState(false);
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
+  /**
+   * Side-panel widths + collapsed state (S1, D7). Starts at the default so
+   * server and first-paint markup match, then hydrates from localStorage -
+   * the same trick `useDriveViewMode` uses to avoid a hydration mismatch.
+   */
+  const [panelLayout, setPanelLayoutState] = useState<PanelLayout>(DEFAULT_PANEL_LAYOUT);
   const [marquee, setMarquee] = useState<{
     x_mm: number;
     y_mm: number;
@@ -382,6 +406,11 @@ export function TagCanvasEditor({
   const library = useKitLibrary();
 
   const containerRef = useRef<HTMLDivElement>(null);
+  /** The whole [left][canvas][right] row, measured to convert px <-> % (S1). */
+  const panelGroupRef = useRef<HTMLDivElement>(null);
+  const [panelGroupSize, setPanelGroupSize] = useState({ width: 0, height: 0 });
+  const leftPanelRef = useRef<ImperativePanelHandle>(null);
+  const rightPanelRef = useRef<ImperativePanelHandle>(null);
   const stageRef = useRef<Konva.Stage | null>(null);
   const transformerRef = useRef<Konva.Transformer>(null);
   const dragRef = useRef<DragSession | null>(null);
@@ -1564,6 +1593,150 @@ export function TagCanvasEditor({
     handleFit();
   }, [stageWidth, stageHeight, handleFit]);
 
+  // -- Side panels (S1, D7) ---------------------------------------------------
+
+  /**
+   * `onCollapse`/`onExpand` (unlike `onResize`) fire once on MOUNT too, to
+   * announce a collapsible panel's initial state - which happens before the
+   * hydration effect below has replaced `panelLayout` with what is actually
+   * stored, so persisting unconditionally clobbered the stored left/right/
+   * railSplit with plain defaults on every load. Guarded the same way as the
+   * resize handlers below, just against "has hydration run" rather than "is a
+   * handle being dragged", since a collapse/expand can be a button click.
+   */
+  const hasHydratedRef = useRef(false);
+
+  /**
+   * True only between a handle's own `onDragging(true)` and `onDragging(false)`
+   * (react-resizable-panels calls it once per pointer drag). It gates which
+   * `onResize` calls are a genuine user action worth persisting.
+   *
+   * The library ALSO fires `onResize` on its own, outside any drag, whenever
+   * the group's real pixel width first becomes known: `defaultSize` is only
+   * honoured on a Panel's very first mount, and that first mount happens
+   * before the group has been measured (percentages have to come from
+   * SOMETHING, so a generic fallback width stands in) - once the real width
+   * arrives, the panel's minSize/maxSize percentages are recomputed against
+   * it and, if the mount-time percentage now reads as below the real minimum,
+   * the library corrects the panel up to it and reports that as a resize.
+   * Persisting that correction would floor the STORED width to the minimum
+   * on every load, discarding whatever the user actually had it at - which is
+   * exactly the bug this ref exists to avoid.
+   */
+  const draggingHandleRef = useRef(false);
+
+  // Hydrate from localStorage after mount (avoids a hydration mismatch - see
+  // the state's own comment). A stored COLLAPSED flag needs an imperative
+  // `.collapse()` call here, not just the state update: the panel already
+  // mounted expanded (hydration runs after mount, and `defaultSize` is only
+  // ever read at mount, before this state existed), so without this the
+  // collapsed half of AC-S1-5 would silently not apply on reload even though
+  // the value round-trips through storage correctly.
+  useEffect(() => {
+    const stored = readPanelLayout();
+    setPanelLayoutState(stored);
+    hasHydratedRef.current = true;
+    if (stored.leftCollapsed) leftPanelRef.current?.collapse();
+    if (stored.rightCollapsed) rightPanelRef.current?.collapse();
+  }, []);
+
+  useEffect(() => {
+    const element = panelGroupRef.current;
+    if (!element) return;
+    const observer = new ResizeObserver((entries) => {
+      const rect = entries[0].contentRect;
+      setPanelGroupSize({ width: rect.width, height: rect.height });
+    });
+    observer.observe(element);
+    setPanelGroupSize({ width: element.clientWidth, height: element.clientHeight });
+    return () => observer.disconnect();
+  }, []);
+
+  const persistPanelLayout = useCallback((updater: (prev: PanelLayout) => PanelLayout) => {
+    setPanelLayoutState((prev) => {
+      const next = updater(prev);
+      writePanelLayout(next);
+      return next;
+    });
+  }, []);
+
+  // Percentages `react-resizable-panels` wants, converted from the persisted
+  // pixel widths against the group's own measured size. Before that size is
+  // known, a generic fallback keeps the first paint sane; the ResizeObserver
+  // above corrects it a moment later, the same one-frame settle every other
+  // measured layout in this file already accepts (`containerSize` does the
+  // same at 0x0 until its own observer fires). jsdom never fires it at all
+  // (no real layout engine), so this fallback is also what every panel test
+  // renders against - a fixed, environment-independent number rather than 0.
+  const groupWidth = panelGroupSize.width || 1200;
+  const groupHeight = panelGroupSize.height || 600;
+  /**
+   * Below this, the side columns are `hidden` (AC-S1-7) but still mounted -
+   * squeezing the group this narrow can force the library to auto-collapse a
+   * panel just to satisfy its own `minSize`, which is a viewport-width
+   * artefact, not a choice. `onCollapse`/`onExpand` below skip persisting
+   * while the group is this narrow so a phone-width visit does not leave the
+   * desktop layout collapsed the next time it is opened wide.
+   */
+  const isGroupInteractive = groupWidth >= 640;
+  const leftPercent = (panelLayout.left / groupWidth) * 100;
+  const rightPercent = (panelLayout.right / groupWidth) * 100;
+  const leftMinPercent = (LEFT_MIN_PX / groupWidth) * 100;
+  const leftMaxPercent = (LEFT_MAX_PX / groupWidth) * 100;
+  const rightMinPercent = (RIGHT_MIN_PX / groupWidth) * 100;
+  const rightMaxPercent = (RIGHT_MAX_PX / groupWidth) * 100;
+  const railPercent = (panelLayout.railSplit / groupHeight) * 100;
+  const railMinPercent = (RAIL_MIN_PX / groupHeight) * 100;
+  const railMaxPercent = 100 - railMinPercent;
+
+  const handleLeftResize = useCallback(
+    (size: number) => {
+      if (!draggingHandleRef.current) return;
+      // Dragging PAST the minimum is the library's own collapse gesture, which
+      // reports a run of intermediate sizes below `leftMinPercent` on its way
+      // to 0 - `onCollapse` below owns that transition, so anything under the
+      // real minimum is ignored here rather than clamped and persisted (that
+      // would floor the stored width to LEFT_MIN_PX and lose whatever the
+      // panel was actually at before the user dragged it shut).
+      if (size < leftMinPercent - 0.1) return;
+      persistPanelLayout((prev) => ({ ...prev, left: clampLeft((size / 100) * groupWidth) }));
+    },
+    [groupWidth, leftMinPercent, persistPanelLayout],
+  );
+
+  const handleRightResize = useCallback(
+    (size: number) => {
+      if (!draggingHandleRef.current) return;
+      if (size < rightMinPercent - 0.1) return;
+      persistPanelLayout((prev) => ({ ...prev, right: clampRight((size / 100) * groupWidth) }));
+    },
+    [groupWidth, rightMinPercent, persistPanelLayout],
+  );
+
+  const handleRailResize = useCallback(
+    (size: number) => {
+      if (!draggingHandleRef.current) return;
+      if (size < railMinPercent - 0.1 || size > railMaxPercent + 0.1) return;
+      persistPanelLayout((prev) => ({
+        ...prev,
+        railSplit: clampRailSplit((size / 100) * groupHeight),
+      }));
+    },
+    [groupHeight, railMinPercent, railMaxPercent, persistPanelLayout],
+  );
+
+  // A layout change that came from actually dragging a handle is worth
+  // re-centring the artboard for (unlike the collapse toggle, which the
+  // chevron buttons drive directly) - the same "Fit to View" the toolbar and
+  // Ctrl+0 already trigger.
+  const handlePanelDragEnd = useCallback(
+    (isDragging: boolean) => {
+      draggingHandleRef.current = isDragging;
+      if (!isDragging) handleFit();
+    },
+    [handleFit],
+  );
+
   const handleZoomIn = useCallback(() => {
     setView((v) =>
       zoomAt(v, { x: stageWidth / 2, y: stageHeight / 2 }, ZOOM_BUTTON_FACTOR, ZOOM_LIMITS),
@@ -2126,24 +2299,114 @@ export function TagCanvasEditor({
         selectionIsGroup={selectionIsGroup}
       />
 
-      <div className="flex flex-1 overflow-hidden">
-        {/* Left sidebar: the host's rail, then the Layers panel */}
-        <div className="hidden w-52 shrink-0 md:flex md:flex-col md:overflow-hidden">
-          {leftRail}
-          <div className="min-h-0 flex-1">
-            <LayersPanel
-              layers={layers}
-              selectedIds={selectedIds}
-              onSelect={handleSelect}
-              onToggleVisibility={handleToggleVisibility}
-              onToggleLock={handleToggleLock}
-              onMoveLayer={handleMoveLayer}
-            />
-          </div>
-        </div>
+      <div ref={panelGroupRef} className="flex flex-1 overflow-hidden">
+        {/* Left column collapsed strip: rendered OUTSIDE the panel so it stays
+            clickable while the panel itself is at collapsedSize={0}. */}
+        {panelLayout.leftCollapsed && (
+          <button
+            type="button"
+            className="hidden w-6 shrink-0 items-start justify-center border-r bg-muted/30 pt-2 hover:bg-muted md:flex"
+            title="Expand Lines + Layers"
+            aria-label="Expand Lines + Layers"
+            onClick={() => {
+              leftPanelRef.current?.expand(leftPercent);
+              handleFit();
+            }}
+          >
+            <ChevronRight className="size-3.5" />
+          </button>
+        )}
 
-        {/* Centre: canvas workspace. The Stage fills it and the artboard sits at
-            a pan offset inside (D33), so there is nothing to scroll. */}
+        <ResizablePanelGroup direction="horizontal" className="flex-1">
+          {/* Left sidebar: the host's rail, then the Layers panel (AC-S1-1, AC-S1-3). */}
+          <ResizablePanel
+            ref={leftPanelRef}
+            id="canvas-left"
+            order={1}
+            collapsible
+            collapsedSize={0}
+            minSize={leftMinPercent}
+            maxSize={leftMaxPercent}
+            defaultSize={panelLayout.leftCollapsed ? 0 : leftPercent}
+            onResize={handleLeftResize}
+            onCollapse={() => {
+              if (!hasHydratedRef.current || !isGroupInteractive) return;
+              persistPanelLayout((prev) => ({ ...prev, leftCollapsed: true }));
+            }}
+            onExpand={() => {
+              if (!hasHydratedRef.current || !isGroupInteractive) return;
+              persistPanelLayout((prev) => ({ ...prev, leftCollapsed: false }));
+            }}
+            className="relative hidden md:flex md:flex-col md:overflow-hidden"
+          >
+            <button
+              type="button"
+              className="absolute right-1 top-1 z-10 flex size-5 items-center justify-center rounded bg-background/80 text-muted-foreground hover:bg-accent hover:text-foreground"
+              title="Collapse Lines + Layers"
+              aria-label="Collapse Lines + Layers"
+              onClick={() => {
+                leftPanelRef.current?.collapse();
+                handleFit();
+              }}
+            >
+              <ChevronLeft className="size-3.5" />
+            </button>
+            {leftRail ? (
+              <ResizablePanelGroup direction="vertical" className="h-full">
+                <ResizablePanel
+                  id="canvas-left-rail"
+                  order={1}
+                  minSize={railMinPercent}
+                  maxSize={railMaxPercent}
+                  defaultSize={railPercent}
+                  onResize={handleRailResize}
+                  className="flex flex-col"
+                >
+                  {/* The Panel itself clips at its own bounds (overflow:hidden
+                      from the primitive) - this inner div is what actually
+                      scrolls once the divider drags the pane below the rail's
+                      natural content height. */}
+                  <div className="flex h-full flex-col overflow-y-auto">{leftRail}</div>
+                </ResizablePanel>
+                <ResizableHandle
+                  withHandle
+                  onDragging={handlePanelDragEnd}
+                  aria-label="Resize Lines and Layers"
+                />
+                <ResizablePanel id="canvas-left-layers" order={2} minSize={railMinPercent} className="min-h-0">
+                  <LayersPanel
+                    layers={layers}
+                    selectedIds={selectedIds}
+                    onSelect={handleSelect}
+                    onToggleVisibility={handleToggleVisibility}
+                    onToggleLock={handleToggleLock}
+                    onMoveLayer={handleMoveLayer}
+                  />
+                </ResizablePanel>
+              </ResizablePanelGroup>
+            ) : (
+              <div className="min-h-0 flex-1">
+                <LayersPanel
+                  layers={layers}
+                  selectedIds={selectedIds}
+                  onSelect={handleSelect}
+                  onToggleVisibility={handleToggleVisibility}
+                  onToggleLock={handleToggleLock}
+                  onMoveLayer={handleMoveLayer}
+                />
+              </div>
+            )}
+          </ResizablePanel>
+          <ResizableHandle
+            withHandle
+            className="hidden md:flex"
+            onDragging={handlePanelDragEnd}
+            aria-label="Resize Lines and Layers panel"
+          />
+
+          {/* Centre: canvas workspace. The Stage fills it and the artboard sits at
+              a pan offset inside (D33), so there is nothing to scroll. */}
+          <ResizablePanel id="canvas-centre" order={2} className="flex">
         <ContextMenu>
           <ContextMenuTrigger asChild>
             <div
@@ -2549,31 +2812,86 @@ export function TagCanvasEditor({
             )}
           </ContextMenuContent>
         </ContextMenu>
+          </ResizablePanel>
 
-        {/* Right sidebar: Inspector panel */}
-        <div className="hidden w-60 shrink-0 lg:block">
-          <InspectorPanel
-            layer={selectedLayer}
-            onUpdate={updateLayer}
-            onUpdateProps={updateLayerProps}
-            resolvedText={selectedResolvedText}
-            bindingLabel={selectedBindingLabel}
-            fontOptions={library.fontOptions}
-            onUploadFont={() => setFontUploadOpen(true)}
-            onInsertField={() => setInsertFieldOpen(true)}
-            onChooseImage={handleChooseImage}
-            onChooseBadge={handleChooseBadge}
-            onRebind={handleRebind}
-            onRelinkGroup={handleRelinkGroup}
-            onUseTemplate={onUseTemplate}
-            previewBlockId={selectedBlock?.groupId ?? null}
-            previewBlockLabel={
-              selectedBlock ? previewChoices[selectedBlock.groupId]?.label ?? null : null
-            }
-            onPreviewBlock={openBlockPreview}
-            onClearBlockPreview={clearBlockPreview}
+          {/* Right sidebar: Inspector panel (AC-S1-2, AC-S1-3). */}
+          <ResizableHandle
+            withHandle
+            className="hidden lg:flex"
+            onDragging={handlePanelDragEnd}
+            aria-label="Resize Inspector panel"
           />
-        </div>
+          <ResizablePanel
+            ref={rightPanelRef}
+            id="canvas-right"
+            order={3}
+            collapsible
+            collapsedSize={0}
+            minSize={rightMinPercent}
+            maxSize={rightMaxPercent}
+            defaultSize={panelLayout.rightCollapsed ? 0 : rightPercent}
+            onResize={handleRightResize}
+            onCollapse={() => {
+              if (!hasHydratedRef.current || !isGroupInteractive) return;
+              persistPanelLayout((prev) => ({ ...prev, rightCollapsed: true }));
+            }}
+            onExpand={() => {
+              if (!hasHydratedRef.current || !isGroupInteractive) return;
+              persistPanelLayout((prev) => ({ ...prev, rightCollapsed: false }));
+            }}
+            className="relative hidden lg:block"
+          >
+            <button
+              type="button"
+              className="absolute right-1 top-1 z-10 flex size-5 items-center justify-center rounded bg-background/80 text-muted-foreground hover:bg-accent hover:text-foreground"
+              title="Collapse Inspector"
+              aria-label="Collapse Inspector"
+              onClick={() => {
+                rightPanelRef.current?.collapse();
+                handleFit();
+              }}
+            >
+              <ChevronRight className="size-3.5" />
+            </button>
+            <InspectorPanel
+              layer={selectedLayer}
+              onUpdate={updateLayer}
+              onUpdateProps={updateLayerProps}
+              resolvedText={selectedResolvedText}
+              bindingLabel={selectedBindingLabel}
+              fontOptions={library.fontOptions}
+              onUploadFont={() => setFontUploadOpen(true)}
+              onInsertField={() => setInsertFieldOpen(true)}
+              onChooseImage={handleChooseImage}
+              onChooseBadge={handleChooseBadge}
+              onRebind={handleRebind}
+              onRelinkGroup={handleRelinkGroup}
+              onUseTemplate={onUseTemplate}
+              previewBlockId={selectedBlock?.groupId ?? null}
+              previewBlockLabel={
+                selectedBlock ? previewChoices[selectedBlock.groupId]?.label ?? null : null
+              }
+              onPreviewBlock={openBlockPreview}
+              onClearBlockPreview={clearBlockPreview}
+            />
+          </ResizablePanel>
+        </ResizablePanelGroup>
+
+        {/* Right column collapsed strip - see the left column's own comment. */}
+        {panelLayout.rightCollapsed && (
+          <button
+            type="button"
+            className="hidden w-6 shrink-0 items-start justify-center border-l bg-muted/30 pt-2 hover:bg-muted lg:flex"
+            title="Expand Inspector"
+            aria-label="Expand Inspector"
+            onClick={() => {
+              rightPanelRef.current?.expand(rightPercent);
+              handleFit();
+            }}
+          >
+            <ChevronLeft className="size-3.5" />
+          </button>
+        )}
       </div>
 
       {/* Pickers. Rendered here rather than beside their buttons so the
