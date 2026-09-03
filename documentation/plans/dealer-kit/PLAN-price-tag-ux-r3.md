@@ -113,7 +113,7 @@ Replace `ColorPicker.tsx` internals; keep its props so the five call sites in
 Backend:
 - Model `TagSizePreset(Base, CompanyScopedMixin)` in `models/dealer_kit.py`,
   table `dealer_kit.tag_size_preset`, unique `(company_id, name)`.
-- Migration `460_tag_size_preset` (chain onto the lane's head after merging
+- Migration `462_tag_size_preset` (main head was 461 at branch time; re-chain onto the lane's head after merging
   main; run `scripts/alembic-reparent.sh` at the pre-PR gate).
 - Schemas `TagSizePresetCreate/Update/Response` (`schemas/price_tag.py`);
   width/height `ge=10`.
