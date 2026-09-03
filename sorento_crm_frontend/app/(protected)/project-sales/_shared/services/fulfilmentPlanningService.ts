@@ -2,7 +2,9 @@ import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type {
   AdoptSalesOrderResult,
+  BoardDecision,
   BoardGranularity,
+  BoardLineDraft,
   ClassificationEvidence,
   PlanningBoard,
   ConfirmManyBody,
@@ -97,6 +99,30 @@ import type {
  * real call; there is no switch left to turn on and no fixture served from here. The Phase 1
  * fixtures survive only as test support, which is the whole of what "throwaway by design"
  * meant.
+ *
+ * ── S2 LADDER v8 (PLAN-scm-fulfilment-feedback-2sep.md, rulings R-A/R-B/R-E/R-K) ────────
+ *
+ * The v8 engine states all of the following ITSELF; the Phase 1 overlay that computed them
+ * client-side is gone, and the functions below return the payload verbatim again:
+ *
+ *   BoardCellLocation.available_for_project : string | null
+ *     `cell.locations[]`, `contribution.locations[]` - one per `site_pool` row, `0` rather
+ *     than blank on an addressable pool row, absent on `own` / `group` / `other_group`. The
+ *     SAME allowance the walk's step 0 asked the pool for
+ *     (`front_planning_engine.available_for_project`), so the lightbox and the engine can
+ *     never disagree about what BRW can spare.
+ *
+ *   PlanningBoard.pool_share_pct : number
+ *   StockDetail.pool_share_pct / .five_pool_net : number | string | null
+ *     The policy share and the five pools' net, for the two figures the client computes for
+ *     itself and the server has no row for: the Stock tab's pool SUBTOTAL and the expanded
+ *     ledger's running column (`_shared/lib/poolShare.ts`). `stock-detail` sends both on a
+ *     `group=pools` read only - a bin or an ownership group keeps no dealer share.
+ *
+ *   BoardLadderOption.step === 'pool_share', first in walk order, with `gives_qty`/`reason`
+ *     `contribution.options[]` (board), `SupplyLine.options[]` (sheet). The site pool of the
+ *     asking bin is asked FIRST and may cover PART of a line, which is why that row - alone
+ *     among the five - states a quantity and, where the number needs one, a sentence.
  */
 
 const BASE = '/api/v1/project-sales';
@@ -292,15 +318,17 @@ export async function confirmSupply(
  * transaction. A refusal reports per order and the orders that committed stay committed
  * (13.6).
  *
- * ── LADDER v7.1: THE OPTIONS CONTRACT (S3, R36, AC-S3-14) ───────────────────────────────
+ * ── LADDER v8: THE OPTIONS CONTRACT (S3 R36 / AC-S3-14, amended by S2 R-A/R-B) ──────────
  *
  * Additive to the payload above. Every contribution the ladder WALKED (so: not unplannable,
  * not covered by a frozen decision) carries, alongside its `trail`:
  *
  *     options: [{
- *       step:           'use' | 'order_borrow' | 'supply_borrow' | 'pool' | 'buy',
+ *       step:           'pool_share' | 'use' | 'order_borrow' | 'supply_borrow' | 'buy',
  *       label:          string,           // the step in a planner's words, the SERVER's sentence
  *       whole:          boolean,          // does it cover the WHOLE planning unit (R10, R33)
+ *       gives_qty:      string|null,      // what this step can give (R-B)
+ *       reason:         string|null,      // why, where the quantity does not say it (AC-2.4)
  *       fulfil_date:    'YYYY-MM-DD'|null,// when the unit would be fulfilled if it were taken
  *       days_late:      number|null,      // days after the line's required date; 0 = on time
  *       debt_so_number: string|null,      // whose order pays for it, by DOCUMENT NUMBER
@@ -308,10 +336,16 @@ export async function confirmSupply(
  *       chosen:         boolean           // the option the engine proposed
  *     }]
  *
- * FIVE ENTRIES, ALWAYS, IN STEP ORDER - `use`, `order_borrow`, `supply_borrow`, `pool`, `buy` -
- * and every one of them answered, for the same reason the trail sends five rows: a step the
- * server omitted reads as a step nobody walked. The client renders them in the order they
- * arrive and never sorts them.
+ * FIVE ENTRIES, ALWAYS, IN STEP ORDER - `pool_share`, `use`, `order_borrow`, `supply_borrow`,
+ * `buy` - and every one of them answered, for the same reason the trail sends five rows: a
+ * step the server omitted reads as a step nobody walked. The client renders them in the order
+ * they arrive and never sorts them.
+ *
+ * `pool_share` is v8's own step and the only one that may cover PART of a line (R-B): the site
+ * pool of the asking bin keeps `pool_share_pct` of itself back for dealers and lends what is
+ * left, so its row states `gives_qty` and, where that number needs explaining, `reason`. The
+ * v7.1 key `pool` (last, before Buy) is gone from a live walk and survives only inside a
+ * FROZEN trail being re-rendered.
  *
  * `fulfil_date` is today for on hand (plus two days when a transfer between bins is needed),
  * the SPO's arrival, the PO's `issue + lead` (R29: a PO line's `expected_date` is what it was
@@ -509,4 +543,55 @@ export async function confirmMany(body: ConfirmManyBody): Promise<ConfirmManyRes
       await extractApiError(response, 'Failed to confirm the approved decisions'),
     );
   return response.json();
+}
+
+/**
+ * Save decision (S4, R-F): the row survives leaving the page, another device, another
+ * planner.
+ *
+ *   PUT /project-sales/fulfilment-planning/lines/{contribution_key}/draft
+ *       body { decision: BoardDecision } -> BoardLineDraft
+ *
+ * `contributionKey` is `BoardContribution.key` and travels URL-encoded - it embeds `|`,
+ * which is not a legal unencoded path segment character.
+ *
+ * NO `proposed` in the body (S1, code review round 3, captain ruling): a proposal depends
+ * on which orders share the board, its granularity and its window, so a save made on one
+ * view compared against a proposal computed for another flipped `stale` falsely across
+ * views and silently dropped a saved line from Confirm. The server snapshots the LINE's own
+ * facts (outstanding qty, required date) at save time instead - `stale` is judged on those.
+ */
+export async function putLineDraft(
+  contributionKey: string,
+  decision: BoardDecision,
+): Promise<BoardLineDraft> {
+  const response = await apiFetch(
+    `${BASE}/fulfilment-planning/lines/${encodeURIComponent(contributionKey)}/draft`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ decision }),
+    },
+  );
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to save the decision'));
+  return response.json();
+}
+
+/**
+ * Undo (S4, AC-4.3): removes the saved draft; the pill returns to Suggested.
+ *
+ *   DELETE /project-sales/fulfilment-planning/lines/{contribution_key}/draft -> 204
+ */
+export async function deleteLineDraft(contributionKey: string): Promise<void> {
+  const response = await apiFetch(
+    `${BASE}/fulfilment-planning/lines/${encodeURIComponent(contributionKey)}/draft`,
+    { method: 'DELETE' },
+  );
+  // 404 IS the post-condition Undo asked for: there is no saved decision on that line any
+  // more. "Undo all" walks every key in the panel's draft map, and a `?batch=` board
+  // pre-marks lines as approved locally that were never PUT, so refusing those would put an
+  // error toast on a discard that did exactly what it said.
+  if (!response.ok && response.status !== 404)
+    throw new Error(await extractApiError(response, 'Failed to remove the saved decision'));
 }

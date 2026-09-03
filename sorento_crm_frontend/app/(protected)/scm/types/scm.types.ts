@@ -317,6 +317,20 @@ export interface SalesOrderLine {
   supply_decided?: SalesOrderLineSupplyComponent[] | null;
   supply_proposed?: SalesOrderLineSupplyComponent[] | null;
   /**
+   * A SAVED (unconfirmed) decision on this line - the planning board's own draft, not yet
+   * promoted by Confirm (D10, captain 3 Sep). `null` when no draft covers the line, OR the
+   * line already carries `supply_decided`: Confirm deletes the draft it promotes in the
+   * same write, so the two never both answer for one line at once.
+   */
+  supply_saved?: SalesOrderLineSupplyComponent[] | null;
+  /** Who saved it, by name - never an id - and when, ISO. Both `null` exactly when
+   *  `supply_saved` is `null`. */
+  saved_by?: string | null;
+  saved_at?: string | null;
+  /** The engine has re-suggested this line since it was saved, judged on the line's own
+   *  outstanding quantity and required date - never true when `supply_saved` is `null`. */
+  saved_stale?: boolean;
+  /**
    * Where this line's Buy actually sits (AC-I9): every link on the order inquiry row that
    * covers the line, PO or SPO, with the quantity each holds. Read off the SAME child
    * table (`projects.order_inquiry_links`) the worklist's "Linked to" column and the PO

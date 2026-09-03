@@ -43,6 +43,14 @@ vi.mock('../../_shared/services/fulfilmentPlanningService', () => ({
   getSupply: vi.fn(),
   confirmSupply: (...args: unknown[]) => confirmSupply(...args),
   confirmMany: (...args: unknown[]) => confirmMany(...args),
+  // S4 (`useLineDraftMutation`): `decide()` closes over these regardless of whether a test
+  // presses Save deep enough to reach them.
+  putLineDraft: vi.fn().mockResolvedValue({
+    decision: { verdict: 'approved' },
+    saved_by: 'Test Planner',
+    saved_at: '2026-09-03T00:00:00Z',
+  }),
+  deleteLineDraft: vi.fn().mockResolvedValue(undefined),
   ConfirmSupplyError: class ConfirmSupplyError extends Error {
     readonly failingLines: unknown[] = [];
   },
@@ -60,6 +68,14 @@ vi.mock('../../_shared/services/planningChangeService', () => ({
 
 vi.mock('sonner', () => ({
   toast: { success: vi.fn(), warning: vi.fn(), error: vi.fn() },
+}));
+
+// S4: `decide()` names the saver off the session (R-F).
+vi.mock('next-auth/react', () => ({
+  useSession: () => ({
+    data: { user: { id: 'user-1', name: 'Test Planner' } },
+    status: 'authenticated',
+  }),
 }));
 
 /**
@@ -250,12 +266,13 @@ describe('the pre-marked decision, and Confirm', () => {
     fireEvent.mouseDown(linesTab);
     fireEvent.click(linesTab);
 
+    // Saved (S4, R-F), not Approved: the pre-marked verdict is a decision like any other.
     await waitFor(() => {
       expect(
         screen.getByTestId(
           'decision-pill-so-381895|1|SRTWCX7405-RL-S-PJ|2026-08-17',
         ),
-      ).toHaveTextContent('Approved');
+      ).toHaveTextContent('Saved');
     });
   });
 

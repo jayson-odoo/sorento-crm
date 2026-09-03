@@ -22,6 +22,7 @@ import {
   type DraftBorrow,
   type DraftLine,
 } from '../../_shared/lib/supplyComposition';
+import { poolShareLimitsFromLine } from '../../_shared/lib/poolShare';
 import { BoardLadderOptionsTable, debtMonthLabel } from './BoardLadderOptionsTable';
 import { BorrowAddDialog } from './BorrowAddDialog';
 import { ClassificationProofPopover } from './ClassificationProofPopover';
@@ -76,7 +77,10 @@ export function SupplyLineCard({
 
   const frozenComponents = line.frozen?.components ?? [];
   const balance = lineBalance(draft);
-  const blockers = frozen ? [] : lineBlockers(draft);
+  // B2 (fix round 5): the card's OWN blocker text agrees with the sheet's foot-of-page list
+  // (`SupplyCompositionSection`), which reads the same line's `pool_allowances` - without
+  // this the card refused the engine's own "BRW 62 + Buy 73" while the foot said nothing.
+  const blockers = frozen ? [] : lineBlockers(draft, poolShareLimitsFromLine(line));
   const uom = line.uom ? ` ${line.uom}` : '';
   const openQty = frozen ? (line.frozen?.open_qty ?? line.open_qty) : line.open_qty;
 

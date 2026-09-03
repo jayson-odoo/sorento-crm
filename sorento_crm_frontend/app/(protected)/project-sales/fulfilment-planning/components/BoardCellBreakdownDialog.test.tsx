@@ -443,8 +443,18 @@ describe('BoardCellBreakdownDialog: the table', () => {
     // SECTION 2'S word for the rung, off `SHORT_LABELS` - the same word the bar, the
     // legend and the Suggestion card use for this quantity. The strip used to speak
     // ladder v2's own names (Group take) beside a card saying "Own" about the same 40.
-    expect(screen.getByText(/Own 40/)).toBeInTheDocument();
-    expect(screen.getByText(/Buy 60/)).toBeInTheDocument();
+    // Scoped to the VISIBLE pill row (`sources-pills-<key>`), never to the whole document -
+    // `PillOverflow`'s own hidden measuring row repeats the same pill text off-screen so it
+    // can size itself, and a plain `getByText` finds that copy too.
+    const sourceTestId = `sources-pills-${key}`;
+    const sourcePills = within(screen.getByTestId(sourceTestId));
+    expect(sourcePills.getByText(/Own 40/)).toBeInTheDocument();
+    // At this width (jsdom's own zero) only the first pill shows; the rest folds behind
+    // "+1", which opens the SAME popover every pill does and states the whole composition.
+    fireEvent.click(sourcePills.getByText('+1'));
+    expect(screen.getByTestId(`${sourceTestId}-popover`).textContent).toContain(
+      'Buy60',
+    );
     // The rule's own sentence is behind the info icon now, not a plain `title` - so the
     // numbers above stay directly readable and only the prose needs a hover.
     expect(await sourceNoteOf(key)).toContain(
@@ -641,10 +651,11 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
       }),
     );
 
-    // Location, On hand, SO qty, SPO qty, Available, PO qty, Taken - after the chevron cell,
-    // which carries no text. No demand column: the table below says that per line. No
-    // Reserved and no Free either: Free was `On hand - Reserved`, and Reserved itself was read
-    // by nothing on this screen once `Available` turned out not to use it.
+    // Location, On hand, SO qty, SPO qty, Available, Available for Project, PO qty, Taken -
+    // after the chevron cell, which carries no text. No demand column: the table below says
+    // that per line. No Reserved and no Free either: Free was `On hand - Reserved`, and
+    // Reserved itself was read by nothing on this screen once `Available` turned out not to
+    // use it.
     expect(stockRow('BRW-BB').slice(1)).toEqual([
       'BRW-BB',
       'Own location',
@@ -653,6 +664,10 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
       '0',
       // A negative available is the whole point: it is the shortfall, and clamping it to zero
       // would turn the one number that says "this cannot be met" into one that says it can.
+      '-46531',
+      // Available for Project: on an own location it IS Available (D2, captain 3 Sep) -
+      // there is no dealer share to keep back outside a site pool, so everything available
+      // there is available to a project. It used to print "-", which read as missing data.
       '-46531',
       // PO qty and Taken: the server stated neither, and a row that names a location reads 0.
       '0',
@@ -701,7 +716,7 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
 
     const row = stockRow('none');
     expect(row[1]).toBe('No location');
-    expect(row.slice(3)).toEqual(['-', '-', '-', '-', '-', '-']);
+    expect(row.slice(3)).toEqual(['-', '-', '-', '-', '-', '-', '-']);
     expect(row).not.toContain('0');
   });
 
@@ -927,7 +942,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
     );
   });
 
-  it('shows Approved on a row the draft already decided, and reads the pill accordingly', () => {
+  it('shows Saved on a row the draft already decided, and reads the pill accordingly (S4, R-F)', () => {
     renderDialog(
       [demand()],
       {},
@@ -939,7 +954,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
 
     expect(
       screen.getByTestId('decision-pill-so-a|1|WESERP10B|2026-08-31'),
-    ).toHaveTextContent('Approved');
+    ).toHaveTextContent('Saved');
   });
 
   it('a row the draft already decided opens unlocked - no undo step before it can be edited again', () => {
@@ -979,7 +994,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
 
     expect(
       screen.getByTestId('decision-pill-so-a|1|WESERP10B|2026-08-31'),
-    ).toHaveTextContent('Amended');
+    ).toHaveTextContent('Saved');
     expect(
       screen.queryByRole('button', { name: 'Undo' }),
     ).not.toBeInTheDocument();
@@ -1354,7 +1369,7 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
    * It has to read as incoming stock rather than falling through to a bare code.
    */
   it('renders a timely SPO source as Incoming', () => {
-    renderServerCell([
+    const cell = renderServerCell([
       {
         kind: 'timely_spo',
         qty: '15',
@@ -1367,7 +1382,11 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
     ]);
     openLines();
 
-    expect(screen.getByText(/Incoming 15/)).toBeInTheDocument();
+    expect(
+      within(
+        screen.getByTestId(`sources-pills-${cell.contributions[0].key}`),
+      ).getByText(/Incoming 15/),
+    ).toBeInTheDocument();
   });
 
   /**
@@ -1423,8 +1442,11 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
     );
     openLines();
 
+    // LADDER v8 (R-E): the unit is still one cell, but its lines no longer share ONE
+    // composition - they walk one at a time, smallest first, each fed what the previous one
+    // left - so the sentence names the unit and points at the per-line rows.
     expect(await sourceNoteOf(cell.contributions[0].key)).toContain(
-      'Planned with 1 other line of this order for 04/09/2026: 30 in all, covered or bought as one.',
+      "Planned with 1 other line of this order for 04/09/2026: 30 in all. Each line's own composition is shown on its own row.",
     );
   });
 
@@ -1458,7 +1480,7 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
 
   /** Deviation 8: Pool and Borrow never reach the board; they cross locations. */
   it('reads a timely SPO as Incoming in the row strip, not as a Reserve', () => {
-    renderServerCell([
+    const cell = renderServerCell([
       {
         kind: 'timely_spo',
         qty: '10',
@@ -1474,10 +1496,89 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
     ]);
     openLines();
 
-    expect(
-      screen.getByText('Incoming 10 at BRW-BB · Buy 5'),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/Reserve 10/)).not.toBeInTheDocument();
+    const sourceTestId = `sources-pills-${cell.contributions[0].key}`;
+    const sourcePills = within(screen.getByTestId(sourceTestId));
+    expect(sourcePills.getByText('Incoming 10 at BRW-BB')).toBeInTheDocument();
+    expect(sourcePills.queryByText(/Reserve 10/)).not.toBeInTheDocument();
+    // At this width (jsdom's own zero) only the first pill shows; the rest folds behind
+    // "+1", which opens the SAME popover every pill does and states the whole composition.
+    fireEvent.click(sourcePills.getByText('+1'));
+    expect(screen.getByTestId(`${sourceTestId}-popover`).textContent).toContain(
+      'Buy5',
+    );
+  });
+
+  /**
+   * S3b, R-J: "clicking any pill ... opens the composition with each part's location,
+   * quantity, kind and the option row it came from." The two adopting suites above only
+   * ever assert the popover's raw `textContent` for a two-part composition; this pins each
+   * PART'S OWN row (`source-popover-row-<key>-<index>`) so a location, a kind or an option
+   * label going missing from one part cannot hide behind a passing substring match on the
+   * whole popover.
+   */
+  it('lists kind, qty, location and the option row for each part of a two-part composition (AC-3b.2/AC-3b.3)', () => {
+    const base = serverCell([
+      {
+        kind: 'reserve',
+        qty: '10',
+        location: 'BRW-BB',
+        reason: 'Free unclaimed stock at BRW-BB covers this much.',
+        rung: 'group_take',
+      },
+      {
+        kind: 'buy',
+        qty: '5',
+        location: null,
+        reason: 'The residual is bought.',
+      },
+    ]);
+    const cell = {
+      ...base,
+      contributions: [
+        {
+          ...base.contributions[0],
+          options: [
+            { step: 'use' as const, label: 'Use own location', whole: true, chosen: true },
+            { step: 'buy' as const, label: 'Buy', whole: true, chosen: false },
+          ],
+        },
+      ],
+    };
+    render(
+      <QueryClientProvider
+        client={
+          new QueryClient({
+            defaultOptions: { queries: { retry: false, gcTime: 0 } },
+          })
+        }
+      >
+        <BoardCellBreakdownDialog
+          cell={cell}
+          bucketLabel="28 Sep 2026"
+          draft={{}}
+          onDecide={vi.fn()}
+          onClose={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+    openLines();
+
+    const key = cell.contributions[0].key;
+    const sourceTestId = `sources-pills-${key}`;
+    fireEvent.click(within(screen.getByTestId(sourceTestId)).getByText('+1'));
+
+    const popover = screen.getByTestId(`${sourceTestId}-popover`);
+    const reserveRow = within(popover).getByTestId(`source-popover-row-${key}-0`);
+    expect(reserveRow).toHaveTextContent('Own10');
+    expect(reserveRow).toHaveTextContent('at BRW-BB');
+    expect(reserveRow).toHaveTextContent('Use own location');
+
+    // The Buy carries no rung, so `optionForRung` matches nothing for it - the row states
+    // its kind and quantity and no location line, and no option row rather than a wrong one.
+    const buyRow = within(popover).getByTestId(`source-popover-row-${key}-1`);
+    expect(buyRow).toHaveTextContent('Buy5');
+    expect(buyRow).not.toHaveTextContent('at ');
+    expect(buyRow).not.toHaveTextContent('Use own location');
   });
 });
 
@@ -1609,7 +1710,11 @@ describe('BoardCellBreakdownDialog: what was left for this line', () => {
     openLines();
 
     // A bare site code is the shared pool, whatever the line's own location is.
-    expect(screen.getByText(/BRW 9 at BRW/)).toBeInTheDocument();
+    expect(
+      within(
+        screen.getByTestId(`sources-pills-${cell.contributions[0].key}`),
+      ).getByText(/BRW 9 at BRW/),
+    ).toBeInTheDocument();
     const note = await shareNoteOf(cell);
     expect(note).toContain(
       '12 lines ahead wanting 1015 · 0 left for this line at BRW-BB',
@@ -2157,7 +2262,11 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     renderDialog(lines, freeStock);
     openLines();
 
-    expect(screen.getByText(/Own 100/)).toBeInTheDocument();
+    expect(
+      within(
+        screen.getByTestId(`sources-pills-${cell.contributions[0].key}`),
+      ).getByText(/Own 100/),
+    ).toBeInTheDocument();
     // The word is gone from the screen (the captain, 27 Aug); the flag stays on the row.
     expect(screen.queryByText('Contested')).toBeNull();
     // Both rows still carry a share sentence, now behind the icon rather than always visible.
@@ -2212,8 +2321,11 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     expect(
       screen.getByTestId(`trail-flag-${contribution.key}-dealer-hot-selling`),
     ).toHaveAttribute(
+      // LADDER v8 (R-A): the chip names the classification and no longer promises that the
+      // pool is kept for retail - the SHARE is what keeps stock for dealers now, and it
+      // keeps it from every project line whatever the item's class.
       'title',
-      'Dealer hot-selling at BRW, BRW-IB. The shared pool is kept for retail, not offered.',
+      'Dealer hot-selling at BRW, BRW-IB.',
     );
     expect(
       screen.queryByTestId(`trail-flag-${contribution.key}-not-classified`),
@@ -2485,9 +2597,17 @@ describe('BoardCellBreakdownDialog: a line a decision already covers', () => {
     renderDialog([covered()]);
     openLines();
 
+    const testId = 'sources-pills-so-a|1|WESERP10B|2026-08-31';
+    const sourcePills = within(screen.getByTestId(testId));
     expect(
-      screen.getByText('Borrow (other) 10 from MWH-IB · Buy 33'),
+      sourcePills.getByText('Borrow (other) 10 from MWH-IB'),
     ).toBeInTheDocument();
+    // At this width (jsdom's own zero) only the first pill shows; the rest folds behind
+    // "+1", which opens the SAME popover every pill does and states the whole composition.
+    fireEvent.click(sourcePills.getByText('+1'));
+    expect(screen.getByTestId(`${testId}-popover`).textContent).toContain(
+      'Buy33',
+    );
   });
 
   it('says nothing about a queue it is not in', async () => {
@@ -2529,7 +2649,7 @@ describe('BoardCellBreakdownDialog: a line a decision already covers', () => {
     expect(screen.getByLabelText('Buy the whole line')).not.toBeChecked();
   });
 
-  it('behaves like any amended row once it has been amended: the pill reads Amended, and it opens unlocked', () => {
+  it('behaves like any amended row once it has been amended: the pill reads Saved (S4), and it opens unlocked', () => {
     renderDialog(
       [covered()],
       {},
@@ -2549,7 +2669,7 @@ describe('BoardCellBreakdownDialog: a line a decision already covers', () => {
 
     expect(
       screen.getByTestId('decision-pill-so-a|1|WESERP10B|2026-08-31'),
-    ).toHaveTextContent('Amended');
+    ).toHaveTextContent('Saved');
 
     fireEvent.click(screen.getByText('SO403340'));
     expect(screen.getByLabelText('Buy the whole line')).toBeEnabled();

@@ -26,6 +26,8 @@ const getSupply = vi.fn();
 const confirmSupply = vi.fn();
 const getStockDetail = vi.fn();
 const confirmMany = vi.fn();
+const putLineDraft = vi.fn();
+const deleteLineDraft = vi.fn();
 
 vi.mock('../services/fulfilmentPlanningService', () => ({
   listFulfilmentPlanning: (...args: unknown[]) => listFulfilmentPlanning(...args),
@@ -35,6 +37,8 @@ vi.mock('../services/fulfilmentPlanningService', () => ({
   confirmSupply: (...args: unknown[]) => confirmSupply(...args),
   getStockDetail: (...args: unknown[]) => getStockDetail(...args),
   confirmMany: (...args: unknown[]) => confirmMany(...args),
+  putLineDraft: (...args: unknown[]) => putLineDraft(...args),
+  deleteLineDraft: (...args: unknown[]) => deleteLineDraft(...args),
 }));
 
 const toastSuccess = vi.fn();
@@ -57,6 +61,7 @@ import {
   SUPPLY_KEY,
   useConfirmManyMutation,
   useFulfilmentPlanning,
+  useLineDraftMutation,
   useReconciliation,
   useReconciliationMutations,
   useStockDetail,
@@ -577,5 +582,100 @@ describe('useStockDetail', () => {
       product_id: 'prod-1',
       group: 'IB',
     });
+  });
+});
+
+/**
+ * Save decision / Undo (S4, R-F). What the hook owes: the service call with the key and the
+ * suggestion the save was taken against, ONE invalidation (the board, and nothing else - a
+ * draft is never `active`, so no count anywhere else moves), no success toast (the panel's
+ * own `decide()` says "Line N saved - K to confirm" off the draft it just wrote), and the
+ * message on a refusal.
+ */
+describe('useLineDraftMutation', () => {
+  async function drafts() {
+    let mutation: ReturnType<typeof useLineDraftMutation> | null = null;
+    function Harness({ onReady }: { onReady: (api: typeof mutation) => void }) {
+      const api = useLineDraftMutation();
+      React.useEffect(() => {
+        onReady(api);
+      }, [api, onReady]);
+      return null;
+    }
+    render(
+      <QueryClientProvider client={client}>
+        <Harness onReady={(value) => (mutation = value)} />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(mutation).not.toBeNull());
+    return mutation!;
+  }
+
+  const KEY = 'so-a|22|SRTWB7518|2026-06-29';
+
+  it('saves the key and the decision, and carries no proposal (S1, code review round 3)', async () => {
+    putLineDraft.mockResolvedValue({
+      decision: { verdict: 'amended' },
+      saved_by: 'Eling',
+      saved_at: '2026-09-03T01:00:00',
+      stale: false,
+    });
+
+    const api = await drafts();
+    const saved = await api.save(KEY, { verdict: 'amended' });
+
+    // No saver: the server reads that off the caller's own JWT. No proposal either: the
+    // server snapshots the line's own facts at save time, never the proposal.
+    expect(putLineDraft).toHaveBeenCalledWith(KEY, { verdict: 'amended' });
+    expect(saved.saved_by).toBe('Eling');
+  });
+
+  it('invalidates the board and nothing else, and says nothing on success', async () => {
+    putLineDraft.mockResolvedValue({
+      decision: { verdict: 'approved' },
+      saved_by: 'Eling',
+      saved_at: '2026-09-03T01:00:00',
+      stale: false,
+    });
+
+    const api = await drafts();
+    await api.save(KEY, { verdict: 'approved' });
+
+    expect(invalidated.map((key) => JSON.stringify(key))).toEqual([
+      JSON.stringify([PLANNING_BOARD_KEY]),
+    ]);
+    expect(toastSuccess).not.toHaveBeenCalled();
+  });
+
+  it('undoes by key, and invalidates the board so the pill goes back to Suggested', async () => {
+    deleteLineDraft.mockResolvedValue(undefined);
+
+    const api = await drafts();
+    await api.remove(KEY);
+
+    expect(deleteLineDraft).toHaveBeenCalledWith(KEY);
+    expect(invalidated.map((key) => JSON.stringify(key))).toEqual([
+      JSON.stringify([PLANNING_BOARD_KEY]),
+    ]);
+  });
+
+  it('names the refusal, and lets the caller put the row back', async () => {
+    putLineDraft.mockRejectedValue(new Error('Backend said no'));
+
+    const api = await drafts();
+    await expect(api.save(KEY, { verdict: 'approved' })).rejects.toThrow(
+      'Backend said no',
+    );
+
+    expect(toastError).toHaveBeenCalledWith('Backend said no');
+  });
+
+  it('names a refused Undo too', async () => {
+    deleteLineDraft.mockRejectedValue(new Error('Backend said no'));
+
+    const api = await drafts();
+    await expect(api.remove(KEY)).rejects.toThrow('Backend said no');
+
+    expect(toastError).toHaveBeenCalledWith('Backend said no');
   });
 });

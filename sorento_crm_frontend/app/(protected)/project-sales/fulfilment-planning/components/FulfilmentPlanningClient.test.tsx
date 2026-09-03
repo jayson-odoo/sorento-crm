@@ -46,11 +46,28 @@ vi.mock('../../_shared/services/fulfilmentPlanningService', () => ({
   getSupply: (...args: unknown[]) => getSupply(...args),
   getPlanningBoard: (...args: unknown[]) => getPlanningBoard(...args),
   confirmSupply: vi.fn(),
+  confirmMany: vi.fn(),
+  // S4 (`useLineDraftMutation`): `FulfilmentBoardPanel`'s own `decide()` closes over these
+  // the moment the board opens, regardless of whether a test presses Save.
+  putLineDraft: vi.fn().mockResolvedValue({
+    decision: { verdict: 'approved' },
+    saved_by: 'Test Planner',
+    saved_at: '2026-09-03T00:00:00Z',
+  }),
+  deleteLineDraft: vi.fn().mockResolvedValue(undefined),
   ConfirmSupplyError: class extends Error {},
 }));
 
 vi.mock('sonner', () => ({
   toast: { success: vi.fn(), warning: vi.fn(), error: vi.fn() },
+}));
+
+// S4: `decide()` names the saver off the session (R-F).
+vi.mock('next-auth/react', () => ({
+  useSession: () => ({
+    data: { user: { id: 'user-1', name: 'Test Planner' } },
+    status: 'authenticated',
+  }),
 }));
 
 vi.mock('@/components/common/SearchableSelect', () => ({

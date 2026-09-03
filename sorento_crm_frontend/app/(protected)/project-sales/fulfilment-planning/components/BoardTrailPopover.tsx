@@ -278,17 +278,20 @@ export function ItemFlagChips({
     chips.push({
       key: 'dealer-hot-selling',
       label: 'Dealer hot-selling',
+      // LADDER v8 (R-A): hot at retail no longer refuses the pool - what keeps stock for
+      // dealers is the SHARE the pool holds back from every project line, whatever the
+      // item. The chip is still worth showing: the classification is a fact a planner
+      // reads, and it is what the pool's own share is being kept FOR.
       title: where
-        ? `Dealer hot-selling at ${where}. The shared pool is kept for retail, not offered.`
-        : 'Dealer hot-selling. The shared pool is kept for retail, not offered.',
+        ? `Dealer hot-selling at ${where}.`
+        : 'Dealer hot-selling.',
       tone: 'pending',
     });
   } else if (flags.dealer_classified) {
     chips.push({
       key: 'dealer-cold',
       label: 'Cold at retail',
-      title:
-        'Cold at retail: the shared pool is offered as it is for any ordinary item.',
+      title: 'Cold at retail.',
       tone: 'draft',
     });
   }

@@ -120,7 +120,13 @@ def test_no_composition_the_engine_writes_carries_the_retired_incoming_rung():
         components = _components(ProjectSupplyService(db).proposal_for(order))
 
     assert "incoming" not in [c["rung"] for c in components]
-    assert [(c["kind"], c["rung"]) for c in components] == [("timely_spo", "group_take")]
+    # LADDER V8 (R-A/R-C): the site pool is asked FIRST and spares its half of the 5 it
+    # holds, and the 38 left of the line is what question 1 answers with the water. The
+    # rung under test is unchanged - what the SPO reaches this line as is `group_take`.
+    assert [(c["kind"], c["rung"]) for c in components] == [
+        ("reserve", "pool"),
+        ("timely_spo", "group_take"),
+    ]
 
 
 def test_a_line_beyond_the_window_buys_whole_even_when_an_spo_would_cover_it():
@@ -147,14 +153,16 @@ def test_a_line_beyond_the_window_buys_whole_even_when_an_spo_would_cover_it():
 # --------------------------------------------------------------------------- AC-V7
 
 
-def test_another_groups_free_pile_is_used_before_the_pool_under_v7():
-    """AC-V7 REVERSED by ladder v7.1 (R1, R5): the pool is the LAST stock step now, and
-    another PROJECT group's FREE pile is step 1's own second half.
+def test_the_site_pools_share_is_asked_before_another_groups_free_pile_under_v8():
+    """AC-V7, reversed by v7.1 (R1, R5) and reversed BACK by ladder v8 (R-A).
 
-    Same case, same numbers - 24 needed, the site pools free 268, another group holding 100
-    - and the answer moves from the pool to the donor. Free stock is owed to nobody, so it
-    raises no order-back, and taking it before the shared pool is what keeps the pool for
-    the orders that have nowhere else to go.
+    Same case, same numbers - 24 needed, the site pools free 268, another group holding 100.
+    v5 answered from the pool, v7.1 moved the pool last so the donor answered, and v8 asks
+    the asking bin's own pool FIRST again: it may spare 134 of its 268 and 24 fits inside
+    that, so the pool answers and the other group's 100 is never reached.
+
+    What kept the pool for the orders with nowhere else to go under v7.1 is the SHARE now
+    (R-B): the pool never gives a project line more than half of itself, whoever asks.
     """
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)
@@ -172,19 +180,25 @@ def test_another_groups_free_pile_is_used_before_the_pool_under_v7():
         components = _components(ProjectSupplyService(db).proposal_for(order))
 
     assert [(c["kind"], c["rung"], c["qty"]) for c in components] == [
-        ("reserve", "group_take", "24"),
+        ("reserve", "pool", "24"),
     ]
-    assert components[0]["source_location"] == donor.warehouse_code
-    assert pool is not None, "the pool held 268 and was not reached"
+    assert components[0]["source_location"] == pool.warehouse_code
+    assert donor is not None, "the donor held 100 free and was not reached"
 
 
 # --------------------------------------------------------------------------- AC-V6
 
 
-def test_dealer_hot_selling_refuses_the_whole_pile_not_only_this_site_s_pool():
-    """AC-V6. The product is hot-selling at the line's own location; DC1 and MWH pool stock
-    is not offered either, because the five pools are one pile and the gate refuses the
-    pile."""
+def test_another_sites_pool_answers_when_the_asking_sites_pool_is_empty():
+    """AC-V6, RE-BLESSED TWICE. The dealer hot-selling gate it was written for is retired
+    (v8, R-A), and R-L then reverses what was left of it: the asking site's pool holds
+    nothing, so the OTHER site pools are asked for the remainder - after the group and both
+    borrows - each under its own allowance, and 1000 between DC1 and MWH covers a line of
+    10 rather than leaving it to Buy.
+
+    The five pools are still ONE pile bounded by one net; what R-L adds is that an empty
+    pool at the asking site is not the end of the step.
+    """
     from app.models.scm import ItemClassification
 
     with blank_session() as db:
@@ -209,6 +223,6 @@ def test_dealer_hot_selling_refuses_the_whole_pile_not_only_this_site_s_pool():
         )
         components = _components(ProjectSupplyService(db).proposal_for(order))
 
-    assert [c["kind"] for c in components] == ["buy"], (
-        "1000 sits in the pile at DC1 and MWH and none of it is offered"
-    )
+    assert [(c["kind"], c["qty"], c["rung"]) for c in components] == [
+        ("reserve", "10", "pool")
+    ], "1000 sits in the pile at DC1 and MWH, and R-L asks them for the remainder"

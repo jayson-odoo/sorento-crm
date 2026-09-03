@@ -1241,6 +1241,109 @@ class SOSupplyDecision(Base, CompanyScopedMixin):
     )
 
 
+class SOSupplyDecisionDraft(Base, CompanyScopedMixin):
+    """A decision SAVED on the planning board but not yet confirmed (S4, R-F).
+
+    `PLAN-scm-fulfilment-feedback-2sep.md` S4: Save decision used to write React state and
+    nothing else, so leaving the page lost every line the planner had settled. This is the
+    row that survives it - shared, not per user, because there is one planning team and a
+    second planner opening the same board must see the same saved lines.
+
+    ITS OWN TABLE, not a `draft` state on `so_supply_decisions` (the PLAN's "Deviation
+    (3 Sep)"): that table is one row per ORDER REVISION, with `revision_no` and
+    `line_snapshots` NOT NULL and a partial unique index making one active revision per
+    order. A per-line draft on it would either loosen those NOT NULLs or fabricate a
+    revision number for a decision nobody has confirmed, and the confirmed audit trail
+    depends on both.
+
+    ADDRESSED BY THE BOARD'S OWN CONTRIBUTION KEY, which is
+    `${sales_order_id}|${line_no}|${item_code}|${bucket_key}` (`_Row.key` in
+    `project_fulfilment_board_service.py`, rebuilt on the frontend by `standingsFor`). So
+    `sales_order_id` here is the CORE sales order (`sales_orders.id`), never the planning
+    mirror: the board is built from the core book, and a line whose order nobody has
+    adopted yet still has a key and can still be saved.
+
+    IDENTITY IS THE CORE SALES ORDER LINE (C2, code review round 4), and every other part
+    of that key is stored display rather than identity. NONE of the four parts is durable:
+    `line_no` is POSITIONAL whenever the order's lines are not all mirrored
+    (`FulfilmentBoardService._line_numbers`), so a re-upload that moves an earlier line's
+    required date renumbers every line after it and the draft stopped attaching; and on
+    such an order the mirror row numbers the same physical line differently again, so the
+    confirmation - which deletes by the MIRROR's `line_no` - deleted nothing and the draft
+    survived its own promotion. `bucket_key` moves with the board's GRANULARITY
+    (`bucket_key_for`), so the same line is `2026-09-07` at week and `2026-09-09` at day.
+    The core line id moves with none of that: it is the row the board, the mirror and the
+    confirmation all agree names this line.
+
+    `company_id` (from `CompanyScopedMixin`) is nullable ONLY as the mixin's own backfill-
+    window convention (N5, fix round 5) - `uq_so_supply_decision_drafts_line` is
+    `(company_id, core_line_id)`, and Postgres does not treat two NULLs as equal, so that
+    constraint only holds one draft per line while every write actually carries a company
+    id; it assumes company-scoped writes, the same as `do_orm_execute`'s own filter does.
+    """
+
+    __tablename__ = "so_supply_decision_drafts"
+    __audit_entity_type__ = "project_so_supply_decision_drafts"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    sales_order_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("sales_orders.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    #: WHAT THIS DRAFT IS. Resolved from the contribution key at save time
+    #: (`project_line_draft_service._resolve_core_line`) and matched on everywhere after:
+    #: the board stamps a draft onto a row by it, and the confirmation deletes by it.
+    #: CASCADE, because a draft on a line that no longer exists has nothing to be about.
+    core_line_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("sales_order_lines.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    #: What the line was CALLED on the board when it was saved. Recorded and re-stamped on
+    #: every save, never matched on: see the class docstring.
+    line_no = Column(Integer, nullable=False)
+    item_code = Column(String(100), nullable=False)
+    #: Which column of the board the save was made in. Recorded, never matched on: see the
+    #: class docstring.
+    bucket_key = Column(String(32), nullable=False)
+    #: The composition the planner saved, in the frontend's own `BoardDecision` words. The
+    #: server stores and returns it and reads nothing out of it: the confirmation is posted
+    #: from the board's own body, so a shape that grew a field here would still travel.
+    decision = Column(JSONB, nullable=False)
+    #: The LINE's own facts at save time - `{"open_qty": ..., "required_date": ...}` - not
+    #: the engine's proposal (S1, code review round 3, captain ruling: staleness is judged
+    #: on the line's own facts, never on the proposal). A proposal depends on which orders
+    #: share the board, its granularity and its window (`_allocate` draws the shared piles
+    #: in board order), so comparing PROPOSED snapshots flipped stale falsely across views
+    #: and silently dropped a saved line from Confirm the moment a planner opened a
+    #: different filter or granularity. `_attach_drafts` compares this against the row's
+    #: CURRENT `qty` / `required_date` on every board read (AC-4.4). NULL means the save
+    #: recorded no facts, which reads as "not stale": claiming a line changed when nothing
+    #: was written down would put a warning on the row with no evidence behind it.
+    #:
+    #: Renamed from `proposed_snapshot` (hand-altered on the dev DB with `ALTER TABLE
+    #: projects.so_supply_decision_drafts RENAME COLUMN proposed_snapshot TO
+    #: line_snapshot;` - the table was hand-created there too, see migration
+    #: `461_so_supply_decision_drafts`).
+    line_snapshot = Column(JSONB, nullable=True)
+    saved_by = Column(
+        String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    saved_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "company_id",
+            "core_line_id",
+            name="uq_so_supply_decision_drafts_line",
+        ),
+        Index("ix_so_supply_decision_drafts_order", "sales_order_id"),
+        {"schema": "projects"},
+    )
+
+
 class SOLineAllocation(Base, CompanyScopedMixin):
     """Where one sales-order line's stock is coming from, once a person has said so (D17).
 

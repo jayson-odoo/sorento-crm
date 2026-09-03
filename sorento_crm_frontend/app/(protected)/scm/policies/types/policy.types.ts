@@ -163,6 +163,15 @@ export interface FulfilmentPriorityPolicy {
    *  free reads a realistic day rather than the same day as an own-location one (31 Aug
    *  ruling R-B, migration 451). Default 0: no charge until a tenant configures one. */
   transfer_days: number;
+  /** How many days out a line counts as "immediate" for the site pool's share step (R-B,
+   *  2 Sep ruling). A line due within this many days may take up to the pool's share
+   *  allowance now; beyond it, a line takes the whole allowance or nothing. 0-365,
+   *  default 30. */
+  immediate_window_days: number;
+  /** Percent of the site pool's free pile kept back for dealers before a project line may
+   *  take a share (R-B). The remaining `100 - pool_share_pct` is what a line may draw on,
+   *  bounded by the five-pool net. 0-100, default 50. */
+  pool_share_pct: number;
   /** False only on a database that has never activated a fulfilment-priority policy. */
   exists: boolean;
 }

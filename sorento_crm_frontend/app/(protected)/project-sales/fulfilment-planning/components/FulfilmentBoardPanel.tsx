@@ -45,6 +45,7 @@ import { ListSearchInput } from '@/components/common/ListSearchInput';
 import {
   useConfirmManyMutation,
   useFulfilmentPlanningMutations,
+  useLineDraftMutation,
   usePlanningBoard,
 } from '../../_shared/hooks/useFulfilmentPlanning';
 import { usePlanningChangeBatch } from '../../_shared/hooks/usePlanningChanges';
@@ -56,8 +57,8 @@ import {
 import {
   boardAxis,
   bucketLabelText,
+  confirmSummaryFor,
   orderByProductRows,
-  plannedLineCount,
   rowMatchesSearch,
   confirmLinesFor,
   shiftedDayWindow,
@@ -288,16 +289,8 @@ export function FulfilmentBoardPanel({
     [board.data, dayWindow],
   );
 
-  const decide = React.useCallback((key: string, decision: BoardDecision | null) => {
-    setDraft((current) => {
-      const next = { ...current };
-      if (decision) next[key] = decision;
-      else delete next[key];
-      return next;
-    });
-  }, []);
-
   const { adopt } = useFulfilmentPlanningMutations();
+  const { save: saveLineDraft, remove: removeLineDraft } = useLineDraftMutation();
 
   // NO PER-ORDER CONFIRM (R11). The board used to carry one Confirm per sales order in a
   // Commit section under the matrix, each with its own busy flag and its own refusal list.
@@ -349,6 +342,134 @@ export function FulfilmentBoardPanel({
   }, [batchId, changeBatchData, allContributions]);
 
   /**
+   * Keys whose DELETE is on the wire right now (C1, code review round 3 batch 2): added
+   * before `removeLineDraft` fires, cleared once it settles either way. A ref, not state -
+   * nothing here should ever cause its own render.
+   *
+   * The seeding effect below reads this to skip a key mid-delete: a save on a DIFFERENT
+   * line invalidates the board the same way this line's own Undo does, and the refetch that
+   * lands can still carry THIS key's server draft if the DELETE has not committed yet - the
+   * `!next[key]` guard alone only protects a key that is missing from `draft` because a
+   * decision was never taken here, not one that is missing because a click just removed it
+   * and is still waiting on the network to agree.
+   */
+  const pendingDeletes = React.useRef<Set<string>>(new Set());
+
+  /**
+   * A line SAVED elsewhere - another device, another planner, or this one before a reload -
+   * arrives ON THE BOARD ITSELF (S4, R-F): `contribution.draft` is the server's own row, and
+   * this seeds it into the SAME `draft` map a click here would write, so a Saved pill, the
+   * header counter and Confirm all read the one state whichever way the line got there.
+   *
+   * Seeded on EVERY board read, not once like `preMarked` above: AC-4.5 ("a second planner
+   * sees the first planner's saved lines") needs a later fetch to bring in a save nobody
+   * here made. `!next[key]` is what keeps this from clobbering THIS session's own edit - the
+   * same guard `preMarked` uses, and for the same reason: a verdict already given here is
+   * never overwritten by what the server happened to say a moment before. `pendingDeletes`
+   * is the other half of that guard: a key whose Undo is still in flight is ALSO missing
+   * from `draft`, and without the skip a same-tick refetch racing that DELETE puts the pill
+   * straight back to Saved a moment after the click cleared it.
+   */
+  React.useEffect(() => {
+    const serverDrafts = allContributions.filter((contribution) => contribution.draft);
+    if (serverDrafts.length === 0) return;
+    setDraft((current) => {
+      let changed = false;
+      const next = { ...current };
+      for (const contribution of serverDrafts) {
+        if (pendingDeletes.current.has(contribution.key)) continue;
+        if (!next[contribution.key] && contribution.draft) {
+          next[contribution.key] = contribution.draft.decision;
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+  }, [allContributions]);
+
+  /**
+   * The one place a draft is actually deleted (C1): `decide(key, null)` and "Undo all" both
+   * go through this, so `pendingDeletes` is tracked once rather than twice.
+   */
+  const removeDraftKey = React.useCallback(
+    async (key: string): Promise<void> => {
+      pendingDeletes.current.add(key);
+      try {
+        await removeLineDraft(key);
+      } finally {
+        pendingDeletes.current.delete(key);
+      }
+    },
+    [removeLineDraft],
+  );
+
+  /**
+   * Save decision / Undo (S4, R-F): local first, then the server write, so the pill answers
+   * the click before any network round-trip - and reverted, with the mutation's own error
+   * toast, if the write fails.
+   *
+   * THE UPDATER FORM, both ways (B1, code review round 3): a plain `setDraft(next)` computed
+   * `next` off the `draft` CLOSURE, so several `decide()` calls fired together (Undo all used
+   * to loop this) each dropped only THEIR OWN key off the same stale snapshot - the last call
+   * to actually run won, and every earlier call's drop was overwritten straight back in.
+   * `setDraft((current) => ...)` instead applies each call against whatever the PREVIOUS one
+   * left, so N calls in flight together compose rather than race. The revert on a failed write
+   * is the same shape: only THIS key goes back to what it held before this call touched it,
+   * never the whole map (a DELETE failing on line 2 must not resurrect line 1's own successful
+   * discard the same press just made).
+   *
+   * `appliedNext` is captured out of the updater for the toast below: React calls a `useState`
+   * updater synchronously on dispatch (the "eager state" check), and the toast only runs after
+   * `await`ing the network write, well past that point - so it is always the map this decision
+   * actually produced, never a value computed before a concurrent call's own delta landed.
+   */
+  const decide = React.useCallback(
+    async (key: string, decision: BoardDecision | null): Promise<boolean> => {
+      let hadPrevious = false;
+      let previousForKey: BoardDecision | undefined;
+      let appliedNext: BoardDraft = {};
+      setDraft((current) => {
+        hadPrevious = Object.prototype.hasOwnProperty.call(current, key);
+        previousForKey = current[key];
+        const next = { ...current };
+        if (decision) next[key] = decision;
+        else delete next[key];
+        appliedNext = next;
+        return next;
+      });
+      try {
+        if (decision) {
+          // S1 (code review round 3): the PUT body carries no `proposed` any more. Staleness
+          // is judged server-side on the LINE's own facts (outstanding qty, required date),
+          // not on a proposal that depends on which orders share the board.
+          await saveLineDraft(key, decision);
+        } else {
+          await removeDraftKey(key);
+        }
+      } catch {
+        // The mutation's own `onError` already toasted the message; nothing here is left to
+        // say beyond putting THIS key back the way the click found it.
+        setDraft((current) => {
+          const reverted = { ...current };
+          if (hadPrevious && previousForKey) reverted[key] = previousForKey;
+          else delete reverted[key];
+          return reverted;
+        });
+        return false;
+      }
+      if (decision && decision.verdict !== 'rejected') {
+        const contribution = allContributions.find((entry) => entry.key === key);
+        const { toConfirm } = confirmSummaryFor(allContributions, appliedNext);
+        toast.success(
+          `Line ${contribution?.line_no ?? ''} saved · ${toConfirm} to confirm`,
+        );
+      }
+      return true;
+    },
+    [allContributions, saveLineDraft, removeDraftKey],
+  );
+
+  /**
    * The same lines, in the GRID's product order.
    *
    * The two views are two readings of one payload and the reader toggles between them to find
@@ -370,39 +491,15 @@ export function FulfilmentBoardPanel({
    * What one press of Confirm would do: "N to confirm · M rejected" (D1/D3).
    *
    * Counted over exactly the population `confirmLinesFor` posts, so the sentence beside the
-   * button and what the button does can never disagree. NO APPROVE ALL (R11): silence on a
-   * plannable line is agreement, so there is nothing left for it to fill in, and the counter
-   * has no "undecided" to report. A REJECTED line is a decision that commits nothing, which
-   * is why it is counted apart rather than simply subtracted in silence.
-   *
-   * A line an active decision already COVERS and nobody has amended is not counted: the
-   * server carries it into the next revision itself, so this press does not confirm it.
+   * button and what the button does can never disagree. `confirmSummaryFor` is the shared
+   * implementation (`_shared/lib/fulfilmentBoard.ts`) - `decide()`'s own S4 save toast needs
+   * the SAME count read off the draft it just wrote, before this `useMemo` has re-run with
+   * it, so the reduction lives in one place rather than being kept in step by hand in two.
    */
-  const confirmSummary = React.useMemo(() => {
-    let rejected = 0;
-    const orderIds = new Set<string>();
-    for (const contribution of allContributions) {
-      if (contribution.unplannable) continue;
-      const decision = draft[contribution.key];
-      if (decision?.verdict === 'rejected') {
-        rejected += 1;
-        continue;
-      }
-      if (contribution.covered && decision?.verdict !== 'amended') continue;
-      orderIds.add(contribution.sales_order_id);
-    }
-    // `plannedLineCount`, not a manual re-filter of the same rule: it counts a line the
-    // press INTENDS to commit, whether or not adoption has minted its mirror yet, but never
-    // one that cannot be addressed for a reason adoption does not fix (no Reserve warehouse,
-    // a discontinued Buy with no reason) - the same population `confirmLinesFor` posts once
-    // the order IS adopted, so the number beside the button and what the button does can
-    // never disagree, on an adopted order or on one Confirm is about to adopt.
-    const toConfirm = [...orderIds].reduce(
-      (total, salesOrderId) => total + plannedLineCount(allContributions, salesOrderId, draft),
-      0,
-    );
-    return { toConfirm, rejected, orderCount: orderIds.size };
-  }, [allContributions, draft]);
+  const confirmSummary = React.useMemo(
+    () => confirmSummaryFor(allContributions, draft),
+    [allContributions, draft],
+  );
 
   /**
    * Decided lines this confirmation cannot carry, across the WHOLE board, each with why.
@@ -881,6 +978,11 @@ export function FulfilmentBoardPanel({
             className="text-sm text-muted-foreground tabular-nums"
           >
             {`${confirmSummary.toConfirm} to confirm · ${confirmSummary.rejected} rejected`}
+            {/* C4 (code review round 3 batch 2): a saved line the engine has re-suggested
+                is dropped from Confirm with no trace beyond the pill itself - stated here
+                too, and only while it applies, the same rule the two figures beside it
+                follow. */}
+            {confirmSummary.changed > 0 ? ` · ${confirmSummary.changed} changed` : ''}
           </span>
         ) : (
           <span />
@@ -900,8 +1002,9 @@ export function FulfilmentBoardPanel({
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               {/* Every decision taken on this board since it was opened, or since the
-                  last confirm, goes back to the suggestion. Nothing on the server moves -
-                  the draft is the only thing cleared. */}
+                  last confirm, goes back to the suggestion - on the SERVER too (S4): each
+                  key is deleted through `decide(key, null)`, or the next board read would
+                  seed the discarded lines straight back in. Nothing CONFIRMED moves. */}
               <DropdownMenuItem
                 disabled={Object.keys(draft).length === 0}
                 onSelect={
@@ -1164,6 +1267,7 @@ export function FulfilmentBoardPanel({
           cell={liveCell}
           bucketLabel={bucketLabel.get(liveCell.bucket_key) ?? liveCell.bucket_key}
           draft={draft}
+          poolSharePct={board.data?.pool_share_pct}
           onDecide={decide}
           onClose={() => setOpenCell(null)}
         />
@@ -1181,6 +1285,18 @@ export function FulfilmentBoardPanel({
                 confirmSummary.orderCount === 1 ? '' : 's'
               }?`}
             </AlertDialogTitle>
+            {/* C4 (code review round 3 batch 2): named here too, not only on the pill - a
+                planner about to press Confirm is told which of their OWN saved lines this
+                press will silently leave behind. */}
+            {confirmSummary.changed > 0 ? (
+              <AlertDialogDescription>
+                {`${confirmSummary.changed} saved line${
+                  confirmSummary.changed === 1 ? '' : 's'
+                } whose suggestion changed will not be confirmed; re-save ${
+                  confirmSummary.changed === 1 ? 'it' : 'them'
+                } first.`}
+              </AlertDialogDescription>
+            ) : null}
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
@@ -1206,8 +1322,57 @@ export function FulfilmentBoardPanel({
             <AlertDialogCancel>Keep them</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
-                setDraft({});
+                const keys = Object.keys(draft);
                 setUndoAllOpen(false);
+                // S4/AC-4.3: a saved line's draft lives on the server now, so discarding it
+                // has to reach the server too, or it re-seeds right back in off the next
+                // board refetch. STRAIGHT to `removeDraftKey`, not through N `decide(key,
+                // null)` calls (B1, code review round 3): those each read the same stale
+                // `draft` closure before any of them had committed, so the last call to
+                // actually run undid only its own key and put every earlier one back. One
+                // batch, one commit: on full success every key clears in the SAME
+                // `setDraft({})`; on a partial failure only the keys whose DELETE actually
+                // failed are kept, never the whole map. `removeDraftKey` (not the bare
+                // mutation) so `pendingDeletes` tracks these the same way it tracks a
+                // single-line Undo (C1, code review round 3 batch 2).
+                void (async () => {
+                  const outcomes = await Promise.all(
+                    keys.map(async (key) => {
+                      try {
+                        await removeDraftKey(key);
+                        return { key, ok: true as const };
+                      } catch {
+                        return { key, ok: false as const };
+                      }
+                    }),
+                  );
+                  const failedKeys = outcomes
+                    .filter((entry) => !entry.ok)
+                    .map((entry) => entry.key);
+                  if (failedKeys.length === 0) {
+                    setDraft({});
+                    return;
+                  }
+                  setDraft((current) => {
+                    const kept: BoardDraft = {};
+                    for (const key of failedKeys) {
+                      if (current[key]) kept[key] = current[key];
+                    }
+                    return kept;
+                  });
+                  // Named by LINE, never by the contribution key: that key carries the core
+                  // order id, which is a UUID and has no business on screen.
+                  const failedLines = failedKeys
+                    .map(
+                      (key) =>
+                        allContributions.find((entry) => entry.key === key)?.line_no,
+                    )
+                    .filter((lineNo): lineNo is number => lineNo != null);
+                  toast.error(
+                    `${failedKeys.length} line${failedKeys.length === 1 ? '' : 's'} could not be discarded` +
+                      (failedLines.length ? ` (line ${failedLines.join(', ')})` : ''),
+                  );
+                })();
               }}
             >
               Discard

@@ -64,6 +64,9 @@ BORN_AFTER_THE_MOVE = frozenset({
     "order_inquiry_links",
     # PLAN-scm-fulfilment-feedback.md: the planning module's own move-stock artifact.
     "stock_transfers",
+    # PLAN-scm-fulfilment-feedback-2sep.md S4, migration 461: born straight into `projects`
+    # the same way `so_supply_decisions` was.
+    "so_supply_decision_drafts",
 })
 
 
@@ -90,7 +93,11 @@ def test_a_model_born_after_the_move_keeps_the_prefix_convention_it_was_born_wit
     rename contract.
     """
     from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow
-    from app.models.project_so import OrderInquiryLink, SOSupplyDecision
+    from app.models.project_so import (
+        OrderInquiryLink,
+        SOSupplyDecision,
+        SOSupplyDecisionDraft,
+    )
     from app.models.stock_transfer import StockTransfer
 
     assert _audit_entity_type(SOSupplyDecision) == "project_so_supply_decisions"
@@ -98,6 +105,10 @@ def test_a_model_born_after_the_move_keeps_the_prefix_convention_it_was_born_wit
     assert _audit_entity_type(PlanningChangeRow) == "project_planning_change_rows"
     assert _audit_entity_type(OrderInquiryLink) == "project_order_inquiry_links"
     assert _audit_entity_type(StockTransfer) == "project_stock_transfers"
+    assert (
+        _audit_entity_type(SOSupplyDecisionDraft)
+        == "project_so_supply_decision_drafts"
+    )
 
 
 def test_every_renamed_model_pins_its_pre_move_audit_entity_type():

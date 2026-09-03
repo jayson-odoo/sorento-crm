@@ -294,6 +294,8 @@ describe('fulfilment priority carries `tba_date_from` (borrow ladder v7.1 S1)', 
     reorder_coverage_until: '2026-10-31',
     tba_date_from: '2030-06-30',
     transfer_days: 0,
+    immediate_window_days: 30,
+    pool_share_pct: 50,
     exists: true,
   };
 
@@ -312,6 +314,8 @@ describe('fulfilment priority carries `tba_date_from` (borrow ladder v7.1 S1)', 
       reorder_coverage_until: null,
       tba_date_from: '2029-01-01',
       transfer_days: 0,
+      immediate_window_days: 30,
+      pool_share_pct: 50,
     });
     expect(lastInit().method).toBe('PUT');
     expect(JSON.parse(String(lastInit().body))).toEqual({
@@ -320,6 +324,8 @@ describe('fulfilment priority carries `tba_date_from` (borrow ladder v7.1 S1)', 
       reorder_coverage_until: null,
       tba_date_from: '2029-01-01',
       transfer_days: 0,
+      immediate_window_days: 30,
+      pool_share_pct: 50,
     });
     expect(saved.tba_date_from).toBe('2029-01-01');
   });
@@ -327,5 +333,54 @@ describe('fulfilment priority carries `tba_date_from` (borrow ladder v7.1 S1)', 
   it('throws the extracted message on failure', async () => {
     apiFetch.mockResolvedValue(fail('TBA date from must be today or later.', 422));
     await expect(getFulfilmentPriority()).rejects.toThrow('TBA date from must be today or later.');
+  });
+});
+
+describe('fulfilment priority carries `immediate_window_days` / `pool_share_pct` (fulfilment feedback batch, S1)', () => {
+  it('reads both fields the backend sends', async () => {
+    apiFetch.mockResolvedValue(
+      ok({
+        name: 'Fair fulfilment priority',
+        factors: { need_by_date: 3 },
+        demand_class_weights: { project: 1 },
+        reorder_coverage_until: null,
+        tba_date_from: '2029-01-01',
+        transfer_days: 0,
+        immediate_window_days: 45,
+        pool_share_pct: 40,
+        exists: true,
+      }),
+    );
+    const got = await getFulfilmentPriority();
+    expect(got.immediate_window_days).toBe(45);
+    expect(got.pool_share_pct).toBe(40);
+  });
+
+  it('sends both fields on a PUT', async () => {
+    apiFetch.mockResolvedValue(
+      ok({
+        name: 'Fair fulfilment priority',
+        factors: { need_by_date: 3 },
+        demand_class_weights: { project: 1 },
+        reorder_coverage_until: null,
+        tba_date_from: '2029-01-01',
+        transfer_days: 0,
+        immediate_window_days: 45,
+        pool_share_pct: 40,
+        exists: true,
+      }),
+    );
+    await saveFulfilmentPriority({
+      factors: { need_by_date: 3 },
+      demand_class_weights: { project: 1 },
+      reorder_coverage_until: null,
+      tba_date_from: '2029-01-01',
+      transfer_days: 0,
+      immediate_window_days: 45,
+      pool_share_pct: 40,
+    });
+    const body = JSON.parse(String(lastInit().body));
+    expect(body.immediate_window_days).toBe(45);
+    expect(body.pool_share_pct).toBe(40);
   });
 });

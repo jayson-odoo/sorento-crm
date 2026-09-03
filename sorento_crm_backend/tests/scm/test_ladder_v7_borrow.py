@@ -131,15 +131,20 @@ def test_the_own_group_covers_the_unit_from_its_own_bin_first_then_its_siblings(
 def test_another_project_groups_free_pile_covers_the_unit_before_any_borrow_is_tried():
     """AC-S3-1, second half (R5): another PROJECT group's FREE pile is step 1's own second
     half. Free means owed to nobody, so it is a Reserve, it raises no order-back, and it is
-    reached before either borrow step and before the pool."""
+    reached before either borrow step.
+
+    LADDER V8 (R-A) puts the site pool in FRONT of step 1, so the pool holds nothing here -
+    what this case is about is the free pile answering before a BORROW, and a pool that
+    could also cover the unit would now answer first and test nothing.
+    """
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)
         _group, sites = _group_sites(db)
         own, pool = sites["BRW"]
         donor = _warehouse(db, f"ZZTDC1-IR{_uid()[:3]}")
         _stock(db, product, donor, on_hand=100)
-        # The pool could cover it too, and must not be reached: the pool is step 4.
-        _stock(db, product, pool, on_hand=100)
+        # The pool holds nothing (ladder v8, R-A: it is asked FIRST now).
+        _stock(db, product, pool, on_hand=0)
         _lead_time(db, product, LEAD_DAYS)
         _policy(db)
 
@@ -1125,12 +1130,16 @@ def test_a_partial_borrow_is_dropped_and_the_unit_buys_whole():
 
 def test_the_pool_is_the_last_stock_step_and_its_free_pile_raises_nothing():
     """AC-S3-7, first half (R34): the pool's free pile covers the whole unit, so it is a
-    `reserve` at rung `pool` and nobody is owed it back."""
+    `reserve` at rung `pool` and nobody is owed it back.
+
+    LADDER V8: 120 in the pool rather than 60, because a project line may take half of it
+    (R-B) and this case is about what a WHOLE pool draw owes, which is nothing.
+    """
     with blank_session() as db:
         company_id, eling, project, product = _world(db)
         _group, sites = _group_sites(db)
         own, pool = sites["BRW"]
-        _stock(db, product, pool, on_hand=60)
+        _stock(db, product, pool, on_hand=120)
         _lead_time(db, product, LEAD_DAYS)
         _policy(db)
 
@@ -1228,8 +1237,16 @@ def test_a_later_pool_order_lends_its_on_hand_and_is_owed_it_back():
     assert locations == [pool_code]
 
 
-def test_the_dealer_hot_selling_gate_still_empties_the_whole_pool_step():
-    """AC-S3-7's last sentence: hot at retail keeps the pool for retail, both halves of it."""
+def test_the_dealer_hot_selling_gate_is_retired_and_the_share_keeps_the_stock_instead():
+    """AC-S3-7's last sentence, RETIRED BY LADDER V8 (R-A). Hot at retail used to empty the
+    whole pool step; what keeps stock for dealers now is the SHARE (R-B), which keeps a
+    percentage of every pool from every project line rather than the whole of one pool from
+    the hot items alone.
+
+    500 in the pool, half of it on offer, and a line of 10 fits inside that - so the line
+    that used to buy takes the pool. The captain's own AC-2.7 is this case with WESERP10B's
+    own numbers.
+    """
     from app.models.scm import ItemClassification
 
     with blank_session() as db:
@@ -1251,7 +1268,9 @@ def test_the_dealer_hot_selling_gate_still_empties_the_whole_pool_step():
         )
         components = _components(ProjectSupplyService(db).proposal_for(order))
 
-    assert [c["kind"] for c in components] == ["buy"]
+    assert [(c["kind"], c["qty"], c["rung"]) for c in components] == [
+        ("reserve", "10", "pool")
+    ]
 
 
 # --------------------------------------------------------------------------- AC-S3-8
@@ -1397,10 +1416,13 @@ def test_every_walked_unit_carries_five_options_in_step_order_with_one_chosen():
         world = _borrow_world(db)
         options = _options(ProjectSupplyService(db).proposal_for(world["asker"]))
 
+    # LADDER V8 (R-A): the site pool leads the walk and is named after the pool it asks;
+    # `pool` is gone from a live walk and survives only on a frozen trail.
     assert [option["step"] for option in options] == [
-        "use", "order_borrow", "supply_borrow", "pool", "buy",
+        "pool_share", "use", "order_borrow", "supply_borrow", "buy",
     ]
-    assert [option["label"] for option in options][0] == "Use our locations"
+    assert [option["label"] for option in options][1] == "Use our locations"
+    assert options[0]["label"].startswith("Use "), options[0]["label"]
     assert sum(1 for option in options if option["chosen"]) == 1
     chosen = next(option for option in options if option["chosen"])
     assert chosen["step"] == "order_borrow"
