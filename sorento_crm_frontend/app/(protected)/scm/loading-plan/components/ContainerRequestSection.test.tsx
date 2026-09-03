@@ -922,7 +922,8 @@ describe('ContainerRequestSection - the eight figures open the shared lightbox (
     expect(within(dialog).getByText('FSCU8103365')).toBeInTheDocument();
     expect(within(dialog).getByText('Total').closest('tr')).toHaveTextContent('25');
 
-    fireEvent.click(within(dialog).getByRole('button', { name: 'PL-2608-004' }));
+    // S5: the Container cell carries the link the Packing list column used to.
+    fireEvent.click(within(dialog).getByRole('button', { name: 'FSCU8103365' }));
     expect(routerPush).toHaveBeenCalledWith('/procurement-management/packing-lists/ship-7');
   });
 

@@ -79,6 +79,7 @@ import {
   type PlanHistoryPoint,
 } from './PlanRowDialog';
 import { PlanNumberButton } from './PlanNumberButton';
+import { EM_DASH } from '../lib/format';
 
 /** Radix's TabsTrigger switches on mouse down; a bare `click` leaves the old panel up. */
 function switchTab(name: string) {
@@ -569,17 +570,23 @@ describe('IncomingPlTable', () => {
     },
   ];
 
-  it('lists the unreceived packing lists and foots them to the cell', () => {
+  it('lists the unreceived packing lists as Container · Supplier · Qty · ETA · Status, no Packing list column (S5, AC-E1)', () => {
     useContainerRequestDrill.mockReturnValue(drill({ data: { rows, total: 599, history: [] } }));
 
     renderWithClient(<IncomingPlTable supplierId="sup1" productId="p1" />);
 
     expect(useContainerRequestDrill).toHaveBeenCalledWith('sup1', 'p1', 'incoming_pl');
-    expect(screen.getByText('PL-2608-001')).toBeTruthy();
+    expect(screen.getByText('Container')).toBeTruthy();
+    expect(screen.queryByText('Packing list')).toBeNull();
+    expect(screen.getByText('FSCU8103365')).toBeTruthy();
+    // The row with no container number yet still reads a dash, not blank (AC-E2).
+    expect(screen.getAllByText(EM_DASH).length).toBeGreaterThan(0);
+    // The status is a formatted pill, the same family every screen wears (AC-E3).
+    expect(screen.getByText('In Transit')).toBeTruthy();
     expect(screen.getByText('599')).toBeTruthy();
   });
 
-  it('opens the packing list when the caller can navigate to one', () => {
+  it('opens the packing list when the caller can navigate to one, off the Container cell (AC-E2)', () => {
     const onOpenShipment = vi.fn();
     useContainerRequestDrill.mockReturnValue(drill({ data: { rows, total: 599, history: [] } }));
 
@@ -589,6 +596,18 @@ describe('IncomingPlTable', () => {
     fireEvent.click(screen.getByRole('button', { name: 'FSCU8103365' }));
 
     expect(onOpenShipment).toHaveBeenCalledWith('s1');
+  });
+
+  it('the Container cell stays a button even with no container number yet', () => {
+    const onOpenShipment = vi.fn();
+    useContainerRequestDrill.mockReturnValue(drill({ data: { rows, total: 599, history: [] } }));
+
+    renderWithClient(
+      <IncomingPlTable supplierId="sup1" productId="p1" onOpenShipment={onOpenShipment} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: EM_DASH }));
+
+    expect(onOpenShipment).toHaveBeenCalledWith('s2');
   });
 
   it('says so when nothing is on its way', () => {

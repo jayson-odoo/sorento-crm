@@ -896,31 +896,29 @@ export function IncomingPlTable({
   const columns = useMemo<ColumnDef<ContainerRequestDrillIncomingPlRow>[]>(
     () => [
       {
-        id: 'shipment_number',
-        header: 'Packing list',
+        // S5: the Packing list column is gone - the Container cell keeps the same link, and
+        // a row with no container number yet still reads a dash rather than losing the door
+        // onto the packing list.
+        id: 'container_number',
+        header: 'Container',
         cell: ({ row }) => {
           const r = row.original;
+          const label = r.container_number ?? EM_DASH;
           return onOpenShipment ? (
             <button
               type="button"
               className="underline-offset-2 hover:underline"
               onClick={() => onOpenShipment(r.shipment_id)}
             >
-              {r.shipment_number ?? 'Draft'}
+              {label}
             </button>
           ) : (
-            (r.shipment_number ?? 'Draft')
+            label
           );
         },
         footer: () => TOTAL_LABEL,
         size: 150,
         meta: { skeleton: SKELETON_CELL },
-      },
-      {
-        id: 'container_number',
-        header: 'Container',
-        cell: ({ row }) => textCell(row.original.container_number),
-        size: 130,
       },
       {
         id: 'supplier_name',
@@ -930,7 +928,7 @@ export function IncomingPlTable({
             {textCell(row.original.supplier_name)}
           </span>
         ),
-        size: 170,
+        size: 190,
       },
       {
         id: 'qty',
@@ -950,8 +948,12 @@ export function IncomingPlTable({
       {
         id: 'status',
         header: 'Status',
-        cell: ({ row }) => textCell(row.original.status),
-        size: 110,
+        cell: ({ row }) => (
+          <Badge variant={getStatusBadgeVariant(row.original.status)} appearance="light" size="md">
+            {formatStatusLabel(row.original.status)}
+          </Badge>
+        ),
+        size: 120,
       },
     ],
     [onOpenShipment, total],
