@@ -280,7 +280,11 @@ def _confirm(shipment_line, qty, **extra):
     return {"shipment_line_id": str(shipment_line.id), "qty": qty, "include": True, **extra}
 
 
-def test_unticking_a_take_lowers_what_the_spo_can_pull():
+def test_unticking_a_take_lowers_what_the_spo_pulls_not_what_it_asks_for():
+    """Sixth amendment (captain's ruling, 3 Sep): unticking a take no longer shrinks the SPO
+    line itself - the line is still written at `need` (the full 100 requested here). What
+    unticking lowers is how much of that `need` a PO actually backs: with only the second PO
+    ticked, the pull totals 40 and the remaining 60 is written without a pull."""
     with pg_session() as db:
         w = World(db)
         supplier = w.supplier()
@@ -297,30 +301,35 @@ def test_unticking_a_take_lowers_what_the_spo_can_pull():
             [_confirm(lines[0], 100, po_take_ids=[keep])],
         )
 
-        # Only the second PO was ticked, and it covers 40 - so that is the SPO.
-        assert created["created_spos"][0]["qty"] == 40
+        # The SPO is written at the full requested 100, not capped at what the ticked PO
+        # covers (40) - the ticked PO only decides how much of that 100 gets a pull.
+        assert created["created_spos"][0]["qty"] == 100
+        po_id = created["created_spos"][0]["purchase_order_id"]
+        po_line = db.query(PurchaseOrderLine).filter(
+            PurchaseOrderLine.purchase_order_id == po_id
+        ).one()
+        recorded = svc.parse_source_ref(po_line.source_ref)
+        assert recorded["pulls"] == [(keep, 40.0)]
 
 
-def test_an_empty_take_list_is_not_the_same_as_saying_nothing():
-    """`po_take_ids: []` is "draw from none of them", which cannot become an SPO line -
-    distinct from the key being ABSENT, which means "every take you re-derive".
-
-    With nothing else on the shipment, that is a confirm with nothing in it, and the
-    existing refusal stands rather than a second, softer one being invented for this path.
-    """
-    from app.services.error_handler import AppException
-
+def test_an_empty_take_list_still_writes_the_line_with_no_pull():
+    """`po_take_ids: []` is "draw from none of them" - distinct from the key being ABSENT,
+    which means "every take you re-derive". Sixth amendment (captain's ruling, 3 Sep): this is
+    NO LONGER a refusal - the line still becomes an SPO line at `need`, simply with an empty
+    `source_ref.pulls`, same as any other unbacked line."""
     with pg_session() as db:
         w = World(db)
         supplier = w.supplier()
         w.po("A", supplier, [("A", 60, 0)])
         shipment, lines = w.shipment([("A", 60, supplier)])
 
-        with pytest.raises(AppException) as exc:
-            svc.create(db, str(shipment.id), [_confirm(lines[0], 60, po_take_ids=[])])
+        created = svc.create(db, str(shipment.id), [_confirm(lines[0], 60, po_take_ids=[])])
 
-        assert exc.value.status_code == 422
-        assert exc.value.detail["detail"] == "nothing_selected"
+        assert created["created_spos"][0]["qty"] == 60
+        po_line = db.query(PurchaseOrderLine).filter(
+            PurchaseOrderLine.purchase_order_id == created["created_spos"][0]["purchase_order_id"]
+        ).one()
+        assert svc.parse_source_ref(po_line.source_ref)["pulls"] == []
 
 
 # --------------------------------------------------------------------------- #
@@ -932,7 +941,10 @@ def test_a_po_line_fully_pulled_returns_taken_in_po_takes_on_a_second_shipment()
         assert entry["taken_qty"] == 100
         assert entry["taken_by"] == [spo_po.po_number]
         assert line["suggested_qty"] == 0
-        assert line["cannot_convert"] is True
+        # Sixth amendment (captain's ruling, 3 Sep): a supplier is still on the line, so it is
+        # convertible without PO backing - `cannot_convert` is no longer true for this case.
+        assert line["cannot_convert"] is False
+        assert line["no_po_qty"] == 50
 
 
 def test_a_po_line_with_real_open_balance_the_cascade_did_not_reach_stays_a_normal_row():

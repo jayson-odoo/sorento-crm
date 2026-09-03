@@ -211,14 +211,14 @@ def _line(out: dict, shipment_line_id: str) -> dict:
 # --------------------------------------------------------------------------- #
 
 
-def test_suggest_with_no_open_po_at_all_cannot_convert_and_names_why():
-    """DOCTRINE CORRECTION (captain, 21 Aug): "when there is PO, then we only can do SPO...
-    it is when we got PO, then we only can pull from the PO to form SPO." A packed line with
-    NO open PO behind it has nothing to pull from, so it cannot become an SPO line at all -
-    the opposite of the pre-correction behaviour, where an absent PO meant "ask for the full
-    packed qty". `packed_qty` still reports the PACKED figure (`quantity_shipped`, never the
-    PI's invoiced one - the Amendment's own correction, still true), just no PO exists here to
-    seed anything to pull."""
+def test_suggest_with_no_open_po_at_all_is_still_convertible_and_names_why():
+    """CAPTAIN'S RULING (3 Sep, sixth amendment): the PO cap is removed. A packed line with NO
+    open PO behind it is still convertible - `cannot_convert` is now true ONLY for a line with
+    no supplier at all - the reason it has nothing to pull from is kept as INFORMATION
+    (`reason == _REASON_NO_PO`), not a block. `packed_qty` still reports the PACKED figure
+    (`quantity_shipped`, never the PI's invoiced one - the Amendment's own correction, still
+    true). Location options and SO coverage are computed for this line too, since it can
+    still be confirmed (previously both were skipped for a `cannot_convert` line)."""
     with pg_session() as db:
         w = World(db)
         supplier = w.supplier()
@@ -231,8 +231,10 @@ def test_suggest_with_no_open_po_at_all_cannot_convert_and_names_why():
         assert line["po_covered_qty"] == 0
         assert line["suggested_qty"] == 0
         assert line["no_po_qty"] == 120
-        assert line["cannot_convert"] is True
+        assert line["cannot_convert"] is False
         assert line["reason"] == svc._REASON_NO_PO
+        assert line["location_options"], "still convertible, so a destination is offered"
+        assert line["so_coverage"] is not None
 
 
 def test_an_open_po_line_to_the_same_supplier_forms_the_suggested_qty():
@@ -372,8 +374,9 @@ def test_a_pin_to_an_exhausted_po_falls_back_to_the_product_match_without_a_pi_r
 def test_the_inference_path_still_refuses_a_cross_supplier_po_with_no_stated_ref():
     """No po_ref at all - the UN-pinned (product-match) path must still refuse a PO booked
     under a different supplier, or the pin fix above would silently widen inference too. With
-    nothing pullable at all, the line is `cannot_convert` (doctrine correction) rather than
-    offered at the full packed qty."""
+    nothing pullable at all, `po_covered_qty` stays 0 (doctrine correction). Sixth amendment
+    (captain's ruling, 3 Sep): a supplier is still on the line, so it is NOT `cannot_convert` -
+    only a missing supplier blocks conversion now."""
     with pg_session() as db:
         w = World(db)
         book_supplier = w.supplier("KAILU")
@@ -387,7 +390,8 @@ def test_the_inference_path_still_refuses_a_cross_supplier_po_with_no_stated_ref
         assert line["matched_by"] is None
         assert line["po_covered_qty"] == 0
         assert line["suggested_qty"] == 0
-        assert line["cannot_convert"] is True
+        assert line["cannot_convert"] is False
+        assert line["no_po_qty"] == 100
 
 
 def test_on_hand_and_incoming_spo_are_context_only_and_do_not_net_the_suggested_qty():
@@ -565,16 +569,53 @@ def test_create_marks_source_system_crm_spo_and_records_the_pull():
         assert float(source_line.qty_received) == 40, "the source PO line's own accounting must advance"
 
 
-def test_create_writes_shipment_line_spo_link_rows_for_matched_and_skipped_lines():
-    """DOCTRINE CORRECTION: line A now needs a seeded PO to be pullable at all - it is the
-    INCLUDED line here, so without one this create would produce nothing to match."""
+def test_create_writes_the_full_line_qty_when_the_po_only_covers_part_of_it():
+    """AC-I4 (captain's ruling, 3 Sep, sixth amendment): an open PO for 409 to the same
+    supplier, a shipment line packed 500, confirmed at 500. The SPO line is written at 500 (not
+    capped at what the PO covers); `source_ref.pulls` totals only the 409 the PO actually gave
+    up; the source PO line advances by exactly 409, never the full 500; `no_po_qty` on
+    `source_ref` records the uncovered 91."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        source_po = w.po("1", supplier, [("A", 409, 0)])
+        source_line = db.query(PurchaseOrderLine).filter(
+            PurchaseOrderLine.purchase_order_id == source_po.id
+        ).one()
+        shipment, lines = w.shipment([("A", 500, supplier)])
+
+        out = svc.create(db, str(shipment.id), _confirm_all(lines), actor="tester")
+
+        po_id = out["created_spos"][0]["purchase_order_id"]
+        po_line = db.query(PurchaseOrderLine).filter(
+            PurchaseOrderLine.purchase_order_id == po_id
+        ).one()
+        assert float(po_line.qty_ordered) == 500
+
+        recorded = json.loads(po_line.source_ref)
+        assert recorded["pulls"] == [{"po_line_id": str(source_line.id), "qty": 409.0}]
+        assert recorded["no_po_qty"] == 91.0
+        assert svc.parse_source_ref(po_line.source_ref)["pulls"] == [
+            (str(source_line.id), 409.0)
+        ]
+
+        db.refresh(source_line)
+        assert float(source_line.qty_received) == 409, "advances by only what it actually pulled"
+
+
+def test_create_writes_shipment_line_spo_link_rows_for_matched_selected_and_unpo_backed_lines():
+    """CAPTAIN'S RULING (3 Sep, sixth amendment): line C, ticked but backed by no open PO at
+    all, is NO LONGER a skip - it gets its own SPO line, matched (a link row with a
+    `purchase_order_line_id`, not an `unmatched_reason`), same as PO-backed line A. Only B
+    (deliberately left unticked) is skipped, and only for `_REASON_NOT_SELECTED` - the
+    "every line accounted for" contract is exercised on all three outcomes in one create."""
     with pg_session() as db:
         w = World(db)
         supplier = w.supplier()
         w.po("1", supplier, [("A", 40, 0)])
         # A: included, backed by an open PO. B: deliberately left unticked, so the "every
         # line accounted for" contract is exercised on both outcomes in one create. C: ALSO
-        # ticked (doctrine correction, new outcome) but backed by no PO at all - re-checked
+        # ticked, backed by no PO at all - convertible since the sixth amendment, re-checked
         # at write time, never trusted off `suggest`'s earlier read.
         shipment, lines = w.shipment([("A", 40, supplier), ("B", 10, supplier), ("C", 5, supplier)])
         include_ids = {str(lines[0].id), str(lines[2].id)}
@@ -595,25 +636,36 @@ def test_create_writes_shipment_line_spo_link_rows_for_matched_and_skipped_lines
         assert not_selected.purchase_order_line_id is None
         assert not_selected.unmatched_reason == svc._REASON_NOT_SELECTED
         no_po = links[str(lines[2].id)]
-        assert no_po.purchase_order_line_id is None
-        assert no_po.unmatched_reason == svc._REASON_NO_PO
+        assert no_po.purchase_order_line_id is not None
+        assert no_po.unmatched_reason is None
+        no_po_line = db.query(PurchaseOrderLine).filter(
+            PurchaseOrderLine.id == no_po.purchase_order_line_id
+        ).one()
+        assert float(no_po_line.qty_ordered) == 5
+        assert svc.parse_source_ref(no_po_line.source_ref)["pulls"] == []
 
 
-def test_create_refuses_when_nothing_ticked_has_a_po_behind_it():
-    """DOCTRINE CORRECTION, new outcome: a ticked line with no open PO behind it is skipped
-    at write time too (never trusted off `suggest`'s earlier read) - same shape as the
-    no-supplier skip, which already made a shipment with nothing groupable a 422 rather than
-    an empty success (`test_route_create_spo_all_unconvertible_no_supplier_is_422`)."""
+def test_create_succeeds_with_no_po_behind_the_ticked_line():
+    """CAPTAIN'S RULING (3 Sep, sixth amendment, AC-I5): a ticked line with a supplier but no
+    open PO behind it is convertible - `create` writes it at `need` (the full packed qty, here)
+    with no pull. Was a 422 refusal pre-ruling (see the docs); the shape of that guard
+    (`test_route_create_spo_all_unconvertible_no_supplier_is_422`) is still true for the
+    no-supplier case, which this test does not touch."""
     with pg_session() as db:
         w = World(db)
         supplier = w.supplier()
         shipment, lines = w.shipment([("A", 40, supplier)])
 
-        with pytest.raises(AppException) as exc:
-            svc.create(db, str(shipment.id), _confirm_all(lines), actor="tester")
+        out = svc.create(db, str(shipment.id), _confirm_all(lines), actor="tester")
 
-        assert exc.value.status_code == 422
-        assert exc.value.detail["detail"] == "nothing_selected"
+        assert len(out["created_spos"]) == 1
+        assert not out["skipped"]
+        po_id = out["created_spos"][0]["purchase_order_id"]
+        po_line = db.query(PurchaseOrderLine).filter(
+            PurchaseOrderLine.purchase_order_id == po_id
+        ).one()
+        assert float(po_line.qty_ordered) == 40
+        assert svc.parse_source_ref(po_line.source_ref)["pulls"] == []
 
 
 def test_a_second_create_is_refused_409_naming_the_existing_spo():
@@ -765,6 +817,31 @@ def test_unwind_deletes_po_lines_headers_links_and_allocations_then_suggest_reco
         assert again["lines"][0]["suggested_qty"] == 40
 
 
+def test_unwind_on_a_line_with_no_pulls_still_succeeds():
+    """CAPTAIN'S RULING (3 Sep, sixth amendment): a line with no supporting PO at all still
+    creates an SPO line with an EMPTY `source_ref.pulls`. `unwind`'s reversal walk
+    (`_reverse_advances`) must not choke on a line with nothing to reverse - it simply finds
+    zero reversals for that line and moves on; the SPO still deletes cleanly."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        shipment, lines = w.shipment([("A", 40, supplier)])
+
+        created = svc.create(db, str(shipment.id), _confirm_all(lines), actor="tester")
+        po_id = created["created_spos"][0]["purchase_order_id"]
+        po_number = created["created_spos"][0]["po_number"]
+
+        out = svc.unwind(db, str(shipment.id))
+
+        assert out["deleted_spo_count"] == 1
+        assert out["deleted_po_numbers"] == [po_number]
+        assert out["restored_po_line_count"] == 0
+        assert db.query(PurchaseOrder).filter(PurchaseOrder.id == po_id).one_or_none() is None
+
+        again = svc.suggest(db, str(shipment.id))
+        assert again["already_converted"] is False
+
+
 def test_unwind_deletes_the_order_inquiry_link_before_the_allocation_it_points_at():
     """F9 (review round, pre-existing bug): bulk-deleting `spo_allocations` an
     `OrderInquiryLink` points at violates `ck_order_inquiry_links_one_target` - the FK is
@@ -914,8 +991,9 @@ def test_heal_stale_link_cleans_up_a_link_pointing_at_a_deleted_po_and_suggest_a
     NOT reverse the `qty_received` advance `create` made on the source line (only `unwind`
     does that, per its own docstring) - self-heal clears the ORPHANED link so the planner is
     never stuck, but the source PO's balance stays spent, exactly the documented limitation.
-    So the line comes back `cannot_convert` (nothing left to pull), not restored to 40 - the
-    honest answer here, not the pre-correction expectation."""
+    So the line comes back with nothing left to pull (`suggested_qty` 0, `no_po_qty` 40), not
+    restored to 40 - the honest answer here. Sixth amendment (3 Sep): `cannot_convert` is now
+    False, because a supplier is still on the line - only a missing supplier blocks it."""
     with pg_session() as db:
         w = World(db)
         supplier = w.supplier()
@@ -937,8 +1015,9 @@ def test_heal_stale_link_cleans_up_a_link_pointing_at_a_deleted_po_and_suggest_a
 
         assert out["already_converted"] is False
         assert out["self_heal_note"] is not None
-        assert out["lines"][0]["cannot_convert"] is True
+        assert out["lines"][0]["cannot_convert"] is False
         assert out["lines"][0]["suggested_qty"] == 0
+        assert out["lines"][0]["no_po_qty"] == 40
         assert db.query(ShipmentLineSpoLink).filter(
             ShipmentLineSpoLink.inbound_shipment_id == shipment.id
         ).count() == 0

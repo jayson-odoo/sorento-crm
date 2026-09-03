@@ -1029,10 +1029,12 @@ def spo_suggestion(
     _user: dict = Depends(_READ),
     db: Session = Depends(get_db),
 ):
-    """The SPO planner table: per shipment line, what an open PO PULLS this SPO up to - never
-    a deduction (doctrine correction, `spo_conversion_service`'s module docstring, "fifth
-    amendment") - and why a line cannot convert (no supplier, or nothing open to pull from at
-    all). Also carries `po_takes` (the earliest-first per-PO breakdown behind `po_covered_qty`,
+    """The SPO planner table: per shipment line, what an open PO PULLS this SPO up to as the
+    DEFAULT the input starts at, never a cap (doctrine correction, `spo_conversion_service`'s
+    module docstring, "fifth amendment", amended again by the sixth: the PO cap is removed) -
+    and why a line cannot convert (no supplier - a line with no open PO is still convertible,
+    written without a pull, `reason` names the shortfall as information only). Also carries
+    `po_takes` (the earliest-first per-PO breakdown behind `po_covered_qty`,
     each now naming its own PO date and supplier) and `location_options` +
     `suggested_warehouse_id` (candidate destination warehouses, ranked by Fulfilment Priority,
     each carrying `demand_lines` - the open SO demand this SPO would go on to serve there).

@@ -141,10 +141,12 @@ composition, not a deduction from it.
   * **A packed quantity with no PO backing cannot become an SPO line.** `no_po_qty =
     max(packed - po_covered_qty, 0)` names the portion nothing open can back. When
     `po_covered_qty` is zero - nothing at all is pullable - the WHOLE line is `cannot_convert`
-    (same shape as the no-supplier case, unselectable), reason `_REASON_NO_PO`: "No PO to pull
-    from - raise the PO in AutoCount first." A PARTIALLY-backed line stays selectable at
-    `po_covered_qty`; `no_po_qty` and a short note travel on `reason` so the shortfall is
-    visible, never silently dropped.
+    (same shape as the no-supplier case, unselectable), reason `_REASON_NO_PO`. A
+    PARTIALLY-backed line stays selectable at `po_covered_qty`; `no_po_qty` and a short note
+    travel on `reason` so the shortfall is visible, never silently dropped.
+    **SUPERSEDED by the sixth amendment below (captain's ruling, 3 Sep): a no-PO or
+    partially-backed line is no longer `cannot_convert` at all - it converts at the buyer's
+    typed quantity, PO-backed or not.**
   * **`covered` is gone.** It used to mean "nothing left to ask for, because a PO or stock
     already covers it" - a concept that only made sense when a PO was a deduction. There is no
     replacement flag: a line either has something pullable (`cannot_convert: false`,
@@ -189,6 +191,23 @@ module already follows). Two ways to record that pull were on the table:
   a real loss with no SPO left to explain it. A dedicated per-take link table (queryable in SQL
   without parsing JSON) is the natural follow-up if this trail needs to be machine-readable
   from outside this module - noted, not built, here.
+
+**Sixth amendment (captain's ruling, 3 Sep): the PO cap is removed.** The fifth amendment's own
+"a packed quantity with no PO backing cannot become an SPO line" is corrected again - what she
+asked for was never conditional on a PO existing to back it; a PO only ever decided how much of
+the ask this module could ALREADY reconcile against AutoCount's own book. `create`'s `need =
+min(requested, packed)` is now the SPO line's quantity outright, not capped a second time at
+`po_covered_qty`. The PO cascade still runs exactly as the fifth amendment describes and still
+PULLS from - and advances - only the open PO line(s) it actually reaches; whatever `need` is left
+over once the cascade stops (`no_po_qty = need - po_covered_qty`, floored at zero) is written onto
+the SAME new SPO line with no pull behind it - `source_ref.pulls` still names only the covered
+part, `source_ref.no_po_qty` names the rest. `cannot_convert` no longer means "nothing open to
+pull from"; it is true ONLY for a line with no supplier at all (the n8n PDF path, unchanged) - a
+line with a supplier and zero open PO is now a perfectly convertible line, simply one the office
+will have to raise a fresh PO for after the fact. `suggested_qty` keeps reading `po_covered_qty` -
+not `need` - because it is the DEFAULT the screen's input starts at, not a cap; the buyer can type
+past it. `_REASON_NO_PO` stays as informational text on a partially- or un-backed line (never a
+skip reason in `create` anymore), reworded so it no longer implies the line is blocked.
 """
 from __future__ import annotations
 
@@ -251,7 +270,9 @@ _REASON_NO_SUPPLIER = "No supplier recorded on this shipment line, so it cannot 
 _REASON_NOT_SELECTED = "Not selected."
 #: The doctrine correction's own line, verbatim from the captain - a packed quantity nothing
 #: open can back cannot become an SPO line at all, same shape as the no-supplier case.
-_REASON_NO_PO = "No PO to pull from - raise the PO in AutoCount first."
+_REASON_NO_PO = (
+    "No open PO to pull from; the SPO line is written without PO backing."
+)
 
 
 def _uuid() -> str:
@@ -1363,7 +1384,10 @@ def _location_options(db: Session, product_id: str) -> dict:
 def suggest(db: Session, shipment_id: str) -> dict:
     """What "Create SPO" would ask for, per shipment line - the DOCTRINE-CORRECTED arithmetic
     (module docstring, fifth amendment): `suggested_qty` is what an open PO PULLS this SPO up
-    to, not what is left after a PO is subtracted. Almost a pure read - the one exception is
+    to, not what is left after a PO is subtracted. It is a DEFAULT, not a cap (sixth amendment,
+    captain's ruling 3 Sep) - the input the buyer sees starts here, but she can type past it,
+    up to the packed quantity; a line with no PO to pull from at all is still convertible, only
+    a line with no supplier is not (`cannot_convert`). Almost a pure read - the one exception is
     `_heal_stale_links`, which deletes any link row a prior `create` wrote that no longer
     points at a live PO/PO line (see that function's docstring). The caller must `db.commit()`
     after this, same as every other lazily-self-healing GET in this codebase (`explainer.py`'s
@@ -1503,14 +1527,18 @@ def suggest(db: Session, shipment_id: str) -> dict:
             if row["taken_qty"] > 0:
                 po_takes.append(row)
 
-        # The doctrine correction's own arithmetic (module docstring, fifth amendment):
-        # `suggested_qty` IS `po_covered_qty` - what an open PO pulls this SPO up to, never a
-        # remainder after PO/stock is subtracted. `on_hand` / `incoming_spo` stay on the
-        # response as context only.
+        # The doctrine correction's own arithmetic (module docstring, fifth amendment),
+        # amended again (sixth amendment, captain's ruling 3 Sep): `suggested_qty` IS
+        # `po_covered_qty` - what an open PO pulls this SPO up to - but only as the DEFAULT
+        # the input starts at, never a cap; the buyer can type past it up to `packed`.
+        # `on_hand` / `incoming_spo` stay on the response as context only.
         suggested = po_covered
         no_po_qty = max(packed - po_covered, 0.0)
-        cannot_convert = po_covered <= 0
-        if cannot_convert:
+        # Only a missing SUPPLIER blocks conversion (checked earlier, above); this branch
+        # already has one, so a line with no open PO at all is still convertible - `reason`
+        # stays as information about the shortfall, never a block.
+        cannot_convert = False
+        if po_covered <= 0:
             reason = _REASON_NO_PO
         elif no_po_qty > 0:
             reason = (
@@ -1522,14 +1550,10 @@ def suggest(db: Session, shipment_id: str) -> dict:
 
         ctx = stock.get(str(ln.product_id), {"on_hand": 0.0, "incoming_spo": 0.0})
 
-        # No point ranking a destination for a line that cannot become an SPO line at all -
-        # mirrors the no-supplier branch above, which never fetches locations either.
-        location = {"options": [], "suggested_warehouse_id": None}
-        if not cannot_convert:
-            pid = str(ln.product_id)
-            if pid not in location_cache:
-                location_cache[pid] = _location_options(db, pid)
-            location = location_cache[pid]
+        pid = str(ln.product_id)
+        if pid not in location_cache:
+            location_cache[pid] = _location_options(db, pid)
+        location = location_cache[pid]
 
         out_lines.append({
             "shipment_line_id": str(ln.id),
@@ -1554,8 +1578,7 @@ def suggest(db: Session, shipment_id: str) -> dict:
             "location_options": location["options"],
             "suggested_warehouse_id": location["suggested_warehouse_id"],
             # What this SPO could be FOR, with the default ticks already walked (AC-G3).
-            # Empty on a line that cannot convert - there is nothing to point anywhere.
-            "so_coverage": [] if cannot_convert else _so_coverage(db, str(ln.product_id), packed),
+            "so_coverage": _so_coverage(db, str(ln.product_id), packed),
         })
 
     return {
@@ -1595,18 +1618,19 @@ def create(
     actor_user_id: Optional[str] = None,
 ) -> dict:
     """Confirm the screen `suggest` drew. One `purchase_orders` header per supplier, each new
-    line PULLING its confirmed quantity from open PO line(s) - the doctrine correction (module
-    docstring, fifth amendment), re-derived HERE against live data rather than trusted from
-    `suggest`'s earlier read, the same "recompute at write time" rule every write in this
-    module already follows.
+    line carrying `need = min(requested, packed)` as its quantity outright (sixth amendment,
+    captain's ruling 3 Sep) - PULLING what it can from open PO line(s), re-derived HERE against
+    live data rather than trusted from `suggest`'s earlier read (the same "recompute at write
+    time" rule every write in this module already follows), and writing whatever `need` is left
+    over onto the SAME line with no pull behind it.
 
     `lines` is `[{shipment_line_id, qty, include, location_splits}]` - every shipment line, per
     the "same structure on read and write" screen shape: a line the buyer left unticked still
     needs a row here so the whole shipment is accounted for in ONE action, not a part of it
-    silently left for later. A line whose `qty` cannot be backed by ANY open PO (fresh check,
-    not the `suggest` snapshot) is skipped with `_REASON_NO_PO`, same as an untouched line is
-    skipped `_REASON_NOT_SELECTED` - "not selectable" holds at write time too, not only on the
-    read that drew the screen.
+    silently left for later. An untouched or zero-qty line is skipped `_REASON_NOT_SELECTED` -
+    "not selectable" holds at write time too, not only on the read that drew the screen. A line
+    with a supplier but no open PO at all is NO LONGER skipped (sixth amendment) - it converts
+    at `need`, unbacked.
 
     `location_splits` (fourth ask, multi-location) is OPTIONAL and, when present, a list of
     `{warehouse_id, qty}` that must sum to EXACTLY what this line actually pulls (recomputed,
@@ -1672,44 +1696,44 @@ def create(
             skipped.append((line_id, _REASON_NOT_SELECTED))
             continue
 
-        # Re-derive what is ACTUALLY pullable right now - never the qty the client sent, and
-        # never `suggest`'s earlier read: a PO another confirm consumed in between must not be
-        # double-spent. Capped at what shipped, and at what the buyer asked for.
+        # `need` is the SPO line's quantity outright (sixth amendment, captain's ruling 3 Sep) -
+        # never the qty the client sent as-is, capped at what shipped and at what the buyer
+        # asked for. It is NOT capped a second time at what a PO can back.
         need = min(requested, float(ln.quantity_shipped or 0))
         # Only the takes the buyer left ticked (AC-G1), applied to the CANDIDATES so the
-        # cascade runs again over what is left. ABSENT means "every take you re-derive",
-        # which is what every caller before this ask sent; an empty LIST means "draw from
-        # none of them", and a line drawing from nothing cannot become an SPO line.
+        # cascade runs again over what is left - never `suggest`'s earlier read, so a PO
+        # another confirm consumed in between must not be double-spent. ABSENT means "every
+        # take you re-derive", which is what every caller before this ask sent; an empty LIST
+        # means "draw from none of them" - the line still becomes an SPO line at `need`, simply
+        # with no pull behind it.
         take_ids = item.get("po_take_ids")
         only = None if take_ids is None else {str(t) for t in take_ids}
         matched_by, takes = _match_takes_for_line(db, ln, need, only)
         covered_now = sum(t[2] for t in takes)
-        if covered_now <= 0:
-            skipped.append((line_id, _REASON_NO_PO))
-            continue
 
         if splits:
             split_total = sum(s["qty"] for s in splits)
-            if abs(split_total - covered_now) > 1e-6:
+            if abs(split_total - need) > 1e-6:
                 raise AppException(
                     422,
                     "A line's location split has to add up to its SPO qty.",
-                    detail=f"{_g(split_total)} split against {_g(covered_now)} pulled from PO.",
+                    detail=f"{_g(split_total)} split against {_g(need)} on the line.",
                 )
 
         group = groups.setdefault(
             supplier_id,
             {"lines": [], "currency": ln.currency},
         )
-        group["lines"].append((ln, covered_now, takes, splits))
+        group["lines"].append((ln, need, takes, splits))
         # Which demand this line's quantity was ticked against (AC-G3). Held per shipment
         # line so the links can be written AFTER the allocations exist to point at.
         ticked_demand[line_id] = [str(k) for k in (item.get("so_line_ids") or [])]
         # The RETAIL half of the ticks, with what each one is being covered for. Cascaded
-        # in the order the coverage list walks, capped by the quantity this line is
-        # actually placing - the same walk the screen ticked with.
+        # in the order the coverage list walks, capped by the FULL quantity this line is
+        # actually placing (`need`, sixth amendment) - not only its PO-covered part - the
+        # same walk the screen ticked with.
         retail_cover[line_id] = _retail_cover_for(
-            db, str(ln.product_id), ticked_demand[line_id], covered_now
+            db, str(ln.product_id), ticked_demand[line_id], need
         )
 
     if not groups:
@@ -1747,12 +1771,15 @@ def create(
         db.flush()
 
         total_qty = 0.0
-        for ln, covered_now, takes, splits in group["lines"]:
+        for ln, need, takes, splits in group["lines"]:
+            # What the takes above actually pulled - `need` itself is the line's quantity
+            # (sixth amendment); this is only the PO-covered PART of it, for `no_po_qty`.
+            covered_now = sum(qty for _src_line, _src_po, qty in takes)
             po_line = PurchaseOrderLine(
                 id=_uuid(),
                 purchase_order_id=po.id,
                 product_id=ln.product_id,
-                qty_ordered=Decimal(str(covered_now)),
+                qty_ordered=Decimal(str(need)),
                 qty_received=0,
                 unit_cost=ln.unit_cost,
                 currency=ln.currency,
@@ -1770,12 +1797,16 @@ def create(
                 # pieces were promised to SO-A on every container of the month, each one
                 # default-ticked at full quantity. Recorded here, beside the pull, because
                 # this line IS the thing that serves them.
+                # `no_po_qty` - the sixth amendment's own addition: the part of `need` no PO
+                # backs, `parse_source_ref` ignores unknown keys so this never breaks an
+                # older reader.
                 source_ref=json.dumps({
                     "pulls": [
                         {"po_line_id": str(src_line.id), "qty": qty}
                         for src_line, _src_po, qty in takes
                     ],
                     "so_coverage": retail_cover.get(str(ln.id), []),
+                    "no_po_qty": max(need - covered_now, 0.0),
                 }),
             )
             db.add(po_line)
@@ -1799,7 +1830,7 @@ def create(
                     "po_number": po.po_number,
                     "po_line_id": po_line.id,
                 })
-            total_qty += covered_now
+            total_qty += need
 
         created_spos.append({
             "purchase_order_id": str(po.id),
