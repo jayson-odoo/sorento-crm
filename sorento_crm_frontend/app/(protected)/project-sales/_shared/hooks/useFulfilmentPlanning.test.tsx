@@ -630,6 +630,29 @@ describe('useLineDraftMutation', () => {
     expect(saved.saved_by).toBe('Eling');
   });
 
+  /**
+   * D12 (#573): the caller (`FulfilmentBoardPanel.decide()`) may now pass the
+   * contribution's own `sources`, which the service carries as `proposed` so the Sales
+   * Order page's Suggested column reads it back on a saved line. Distinct from the S1
+   * ruling above: staleness is still judged on the line's own facts only.
+   */
+  it('passes a given proposal through to the service (D12)', async () => {
+    putLineDraft.mockResolvedValue({
+      decision: { verdict: 'approved' },
+      saved_by: 'Eling',
+      saved_at: '2026-09-03T01:00:00',
+      stale: false,
+    });
+    const proposed = [
+      { kind: 'reserve', qty: '3', location: 'BRW', reason: 'Reserve from BRW' },
+    ];
+
+    const api = await drafts();
+    await api.save(KEY, { verdict: 'approved' }, proposed);
+
+    expect(putLineDraft).toHaveBeenCalledWith(KEY, { verdict: 'approved' }, proposed);
+  });
+
   it('invalidates the board and nothing else, and says nothing on success', async () => {
     putLineDraft.mockResolvedValue({
       decision: { verdict: 'approved' },

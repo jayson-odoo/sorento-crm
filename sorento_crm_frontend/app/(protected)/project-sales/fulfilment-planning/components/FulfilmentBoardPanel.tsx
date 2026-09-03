@@ -428,6 +428,9 @@ export function FulfilmentBoardPanel({
       let hadPrevious = false;
       let previousForKey: BoardDecision | undefined;
       let appliedNext: BoardDraft = {};
+      // Read once, for both the write below and the toast at the end - the same
+      // contribution either way, and `allContributions` does not move mid-call.
+      const contribution = allContributions.find((entry) => entry.key === key);
       setDraft((current) => {
         hadPrevious = Object.prototype.hasOwnProperty.call(current, key);
         previousForKey = current[key];
@@ -439,10 +442,12 @@ export function FulfilmentBoardPanel({
       });
       try {
         if (decision) {
-          // S1 (code review round 3): the PUT body carries no `proposed` any more. Staleness
-          // is judged server-side on the LINE's own facts (outstanding qty, required date),
-          // not on a proposal that depends on which orders share the board.
-          await saveLineDraft(key, decision);
+          // S1 (code review round 3) still holds: staleness is judged server-side on the
+          // LINE's own facts (outstanding qty, required date), never on a proposal. D12
+          // (#573) adds the contribution's own `sources` as `proposed` for a DIFFERENT
+          // reason: the Sales Order page's Suggested column reads it back on this line
+          // until Confirm freezes a revision.
+          await saveLineDraft(key, decision, contribution?.sources);
         } else {
           await removeDraftKey(key);
         }
@@ -458,7 +463,6 @@ export function FulfilmentBoardPanel({
         return false;
       }
       if (decision && decision.verdict !== 'rejected') {
-        const contribution = allContributions.find((entry) => entry.key === key);
         const { toConfirm } = confirmSummaryFor(allContributions, appliedNext);
         toast.success(
           `Line ${contribution?.line_no ?? ''} saved · ${toConfirm} to confirm`,

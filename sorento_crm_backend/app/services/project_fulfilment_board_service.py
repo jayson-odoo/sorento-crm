@@ -4386,6 +4386,9 @@ class FulfilmentBoardService:
                 "stale": project_line_draft_service.is_stale(
                     entry["line_snapshot"], row.qty, row.required_date
                 ),
+                # D12 (#573): what the caller saved the draft AGAINST, echoed back opaque.
+                # Never read by `is_stale` above - see `SOSupplyDecisionDraft.proposed`.
+                "proposed": entry.get("proposed"),
             }
 
     def _contribution(self, row: _Row) -> Dict[str, Any]:

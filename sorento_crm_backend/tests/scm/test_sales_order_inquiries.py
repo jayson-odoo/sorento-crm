@@ -561,12 +561,14 @@ SAVED_DECISION = {
 }
 
 
-def _save_draft(db, core: SalesOrder, line_no: int, item_code: str, *, decision, saved_by):
+def _save_draft(
+    db, core: SalesOrder, line_no: int, item_code: str, *, decision, saved_by, proposed=None
+):
     from app.services import project_line_draft_service
 
     key = f"{core.id}|{line_no}|{item_code}|{MARKER}-bucket"
     return project_line_draft_service.save_draft(
-        db, key, decision=decision, actor_user_id=saved_by
+        db, key, decision=decision, proposed=proposed, actor_user_id=saved_by
     )
 
 
@@ -666,6 +668,122 @@ def test_an_approved_draft_shows_its_composition_too(scm_app):
         },
     ]
     assert body["saved_stale"] is False
+
+
+def test_a_saved_draft_carries_its_own_suggested_composition_too(scm_app):
+    """D12 (#573, captain 3 Sep): a saved draft keeps the engine's suggestion at save
+    time, so `supply_proposed` reads it here too - the way the board's list view already
+    reads a live composition - until Confirm freezes a revision.
+
+    `proposed` is stored in the board's `BoardSource` wire shape (`location`, not
+    `source_location`) - the fallback `_supply_components` gained for this is what proves
+    it converts correctly here.
+    """
+    app, db, uid = _as(scm_app)
+    core = _core_order(db)
+    core.demand_class = "project"
+    line = _core_line(db, core)
+    db.flush()
+    item_code = line.product.product_code
+
+    proposed = [
+        {
+            "kind": "reserve",
+            "qty": "3",
+            "location": f"{MARKER}-BRW",
+            "reason": "Reserve from BRW",
+            "rung": "pool",
+        }
+    ]
+    _save_draft(
+        db,
+        core,
+        1,
+        item_code,
+        decision={"verdict": "approved"},
+        saved_by=uid,
+        proposed=proposed,
+    )
+
+    with TestClient(app) as c:
+        res = c.get(f"/api/v1/scm/sales-orders/{core.id}")
+
+    assert res.status_code == 200, res.text
+    body = next(l for l in res.json()["lines"] if l["id"] == line.id)
+    assert body["decision_revision"] is None
+    assert body["supply_decided"] is None
+    assert body["supply_proposed"] == [
+        {
+            "kind": "reserve",
+            "qty": "3",
+            "source_location": f"{MARKER}-BRW",
+            "rung": "pool",
+            "donor_so_number": None,
+        },
+    ]
+
+
+def test_a_saved_draft_with_no_proposal_reads_supply_proposed_null(scm_app):
+    """Additive and optional (D12): a draft saved before this field existed, or one saved
+    with nothing offered, reads `supply_proposed` null - never "Not recorded", which is
+    reserved for a CONFIRMED revision frozen before the field existed."""
+    app, db, uid = _as(scm_app)
+    core = _core_order(db)
+    core.demand_class = "project"
+    line = _core_line(db, core)
+    db.flush()
+    item_code = line.product.product_code
+
+    _save_draft(db, core, 1, item_code, decision={"verdict": "approved"}, saved_by=uid)
+
+    with TestClient(app) as c:
+        res = c.get(f"/api/v1/scm/sales-orders/{core.id}")
+
+    body = next(l for l in res.json()["lines"] if l["id"] == line.id)
+    assert body["supply_proposed"] is None
+
+
+def test_a_confirmed_line_still_shows_the_frozen_revisions_own_proposal(scm_app):
+    """D12 does not touch a line an ACTIVE revision covers: `supply_proposed` still comes
+    off `decided`'s own frozen `proposed_components`, never a draft - Confirm deletes the
+    draft it promotes in the same write, so the two never coexist on a real line. This is
+    the same fact `test_a_decided_line_carries_both_compositions_in_the_boards_own_words`
+    proves; asserted again here with `decision_revision` read alongside it, which is what
+    `serialize()`'s branch on D12 actually keys off."""
+    app, db, _uid_ = _as(scm_app)
+    core = _core_order(db)
+    line = _core_line(db, core)
+    pso = _planned(db, core)
+    _decision_with_components(
+        db,
+        pso,
+        core_line_id=line.id,
+        components=[{"kind": "buy", "qty": "20", "reason": "remaining uncovered need"}],
+        proposed=[
+            {
+                "kind": "reserve",
+                "qty": "20",
+                "source_location": "BRW",
+                "rung": "pool",
+                "reason": "free stock at BRW covers the need",
+            }
+        ],
+    )
+
+    with TestClient(app) as c:
+        res = c.get(f"/api/v1/scm/sales-orders/{core.id}")
+
+    body = next(l for l in res.json()["lines"] if l["id"] == line.id)
+    assert body["decision_revision"] == 1
+    assert body["supply_proposed"] == [
+        {
+            "kind": "reserve",
+            "qty": "20",
+            "source_location": "BRW",
+            "rung": "pool",
+            "donor_so_number": None,
+        }
+    ]
 
 
 def test_a_line_with_no_saved_decision_reads_null(scm_app):

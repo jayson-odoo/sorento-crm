@@ -93,11 +93,11 @@ def _contribution(board, so_number: str) -> dict:
     )
 
 
-def _save(client, key: str, decision=None):
-    return client.put(
-        f"{BASE}/fulfilment-planning/lines/{key}/draft",
-        json={"decision": decision or DECISION},
-    )
+def _save(client, key: str, decision=None, proposed=None):
+    body = {"decision": decision or DECISION}
+    if proposed is not None:
+        body["proposed"] = proposed
+    return client.put(f"{BASE}/fulfilment-planning/lines/{key}/draft", json=body)
 
 
 # --------------------------------------------------------------------------- save
@@ -747,3 +747,52 @@ def test_re_saving_the_same_line_under_a_new_line_number_updates_the_one_row(api
     assert len(rows) == 1, "one physical line, one saved decision"
     assert rows[0].line_no == 1, "and it records the number it was last saved under"
     assert rows[0].decision["buy_qty"] == "3"
+
+
+def test_saving_with_a_proposal_round_trips_it_on_the_board(api):
+    """D12 (#573, captain 3 Sep): the draft keeps the engine's suggestion at save time, in
+    the board's own `BoardSource` shape - the caller's own `sources` for this contribution.
+
+    Never read for staleness (S1 still holds, `test_a_saved_line_whose_outstanding_qty_
+    changes_reads_stale` proves it separately) - this exists so the Sales Order page's
+    Suggested column can read a saved-but-unconfirmed line the same way the board's list
+    view already reads a live composition.
+    """
+    client, world, core_so, _core_line, _order, _line = _world(api)
+    board = _board(client, core_so)
+    contribution = _contribution(board, core_so.so_number)
+    proposed = [
+        {
+            "kind": "reserve",
+            "qty": "10",
+            "location": "ZZT-BRW",
+            "reason": "Reserve from BRW",
+            "rung": "pool",
+        }
+    ]
+
+    response = _save(client, contribution["key"], proposed=proposed)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["proposed"][0]["location"] == "ZZT-BRW"
+
+    saved = _contribution(_board(client, core_so), core_so.so_number)["draft"]
+    assert saved["proposed"][0]["kind"] == "reserve"
+    assert saved["proposed"][0]["location"] == "ZZT-BRW"
+    assert saved["proposed"][0]["qty"] == "10"
+
+
+def test_saving_with_no_proposal_still_saves_the_decision(api):
+    """`proposed` is OPTIONAL and additive (D12): an older client that never sends it saves
+    exactly as it always has."""
+    client, world, core_so, _core_line, _order, _line = _world(api)
+    board = _board(client, core_so)
+    contribution = _contribution(board, core_so.so_number)
+
+    response = _save(client, contribution["key"])
+
+    assert response.status_code == 200, response.text
+    assert response.json()["proposed"] is None
+
+    saved = _contribution(_board(client, core_so), core_so.so_number)["draft"]
+    assert saved["proposed"] is None

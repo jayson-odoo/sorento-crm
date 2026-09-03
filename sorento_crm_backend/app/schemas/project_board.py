@@ -516,20 +516,34 @@ class BoardLineDraft(BaseModel):
     #: them. The board excludes a stale line from Confirm and says so on the pill instead of
     #: posting a decision taken against numbers that have moved.
     stale: bool = False
+    #: WHAT THE ENGINE SUGGESTED at save time (D12, #573, captain ruling): the caller's own
+    #: `sources` for this contribution, echoed back opaque. NOT what `stale` above is
+    #: judged against (S1 still holds - that stays the line's own facts) - this exists so
+    #: the Sales Order page's Suggested column can read a saved-but-unconfirmed line's
+    #: composition, the way an active revision's frozen `proposed_components` already
+    #: lets it read a confirmed one. `None` on a draft saved before D12, or on a save
+    #: nothing was offered for.
+    proposed: Optional[List[BoardSource]] = None
 
 
 class BoardLineDraftBody(BaseModel):
     """`PUT .../fulfilment-planning/lines/{contribution_key}/draft`.
 
-    Carries no `proposed` (S1, code review round 3, captain ruling): a proposal depends on
-    which orders share the board, its granularity and its window, so a save made on one
-    view compared against a proposal computed for another flipped `stale` falsely across
-    views and silently dropped a saved line from Confirm. The server snapshots the LINE's
-    own facts (outstanding qty, required date) at save time instead - `is_stale` is judged
-    on those, never on a proposal.
+    `decision` carries no `proposed` inside IT (S1, code review round 3, captain ruling
+    still holds): a proposal depends on which orders share the board, its granularity and
+    its window, so a save made on one view compared against a proposal computed for
+    another flipped `stale` falsely across views and silently dropped a saved line from
+    Confirm. The server snapshots the LINE's own facts (outstanding qty, required date) at
+    save time instead - `is_stale` is judged on those, never on a proposal.
+
+    `proposed` as a SIBLING field is a DIFFERENT thing (D12, #573): the contribution's own
+    `sources` at save time, carried opaque and read back only by the Sales Order page's
+    `supply_proposed` column - never by `is_stale`. Optional and additive: an older client
+    that never sends it saves exactly as it always has.
     """
 
     decision: Dict[str, Any]
+    proposed: Optional[List[BoardSource]] = None
 
 
 class BoardContribution(BaseModel):
