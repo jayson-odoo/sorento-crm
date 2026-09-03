@@ -7,10 +7,10 @@
  * exists.
  *
  * Sheet arrangement is a consequence of the tags rather than a thing the user
- * has to do: every line's tag is laid out in line order, quantity times, on the
- * request's imposition preset. A copy somebody dragged in the Arrange view is
- * PINNED by line and copy index, so re-arranging keeps it and flows the rest
- * around it.
+ * has to do: every line's tag is laid out in line order, quantity times, on a
+ * grid auto-fit off the tag's own size and the page (S6, D8) - nothing to
+ * choose. A copy somebody dragged in the Arrange view is PINNED by line and
+ * copy index, so re-arranging keeps it and flows the rest around it.
  */
 
 import {
@@ -451,53 +451,93 @@ export interface LayoutSlot {
   y_mm: number;
 }
 
+/** How many of a tag this size fit on one sheet, and the grid shape (S6, D8). */
+export interface ImpositionFit {
+  cols: number;
+  rows: number;
+  perSheet: number;
+}
+
 /**
- * Where a tag of this size sits on one sheet of the chosen preset.
+ * How many tags of this size fit one sheet, per axis.
  *
- * The slot count is the sheet's capacity, which is what decides how many sheets
- * a request needs.
+ * `floor((usable + gap) / (tag + gap))` folds the last gap into the division
+ * so N tags separated by N-1 gaps compares correctly against the usable span
+ * (usable = page minus bleed on both sides). Either axis floors to 0 when the
+ * tag does not fit at all, which floors `perSheet` to 0 too (AC-S6-3).
+ */
+export function impositionFit(
+  page_width_mm: number,
+  page_height_mm: number,
+  bleed_mm: number,
+  gap_mm: number,
+  tag_width_mm: number,
+  tag_height_mm: number,
+): ImpositionFit {
+  const usableW = page_width_mm - 2 * bleed_mm;
+  const usableH = page_height_mm - 2 * bleed_mm;
+  const cols = Math.max(0, Math.floor((usableW + gap_mm) / (tag_width_mm + gap_mm)));
+  const rows = Math.max(0, Math.floor((usableH + gap_mm) / (tag_height_mm + gap_mm)));
+  return { cols, rows, perSheet: cols * rows };
+}
+
+/**
+ * Where a tag of this size sits on one sheet, auto-fit off the tag's own
+ * size (S6, D8): a grid of `impositionFit`'s cols x rows, centred in the
+ * bleed box, row-major (left to right, then down).
+ *
+ * `imposition.preset` no longer changes the layout - every value, including
+ * an old doc's `'a4_3up'` / `'a4_2x2'`, produces the same grid (AC-S6-4).
+ *
+ * A single centred slot (which may overflow the bleed box) when the tag does
+ * not fit the page at all, rather than an empty grid: `impositionFit` is what
+ * tells the designer that ("0 per sheet" and the Arrange empty state,
+ * AC-S6-3) - this function still has to seat every unpinned copy SOMEWHERE,
+ * because `tagsFromDoc` reads a line's design off `doc.sheets`. An empty grid
+ * here means `autoArrange` places nothing, which means the next reload finds
+ * no tag for any line and treats every one of them as never designed - a
+ * page-size typo would silently delete every line's work.
  */
 export function impositionSlots(
   imposition: ImpositionConfig,
   tagW: number,
   tagH: number,
 ): LayoutSlot[] {
-  const { page_width_mm, page_height_mm, bleed_mm, gap_mm, preset } = imposition;
+  const { page_width_mm, page_height_mm, bleed_mm, gap_mm } = imposition;
   const usableW = page_width_mm - 2 * bleed_mm;
   const usableH = page_height_mm - 2 * bleed_mm;
-
-  if (preset === 'a4_3up') {
-    // One column, three rows, centred.
-    const startX = bleed_mm + (usableW - tagW) / 2;
-    const totalH = 3 * tagH + 2 * gap_mm;
-    const startY = bleed_mm + (usableH - totalH) / 2;
+  const { cols, rows, perSheet } = impositionFit(
+    page_width_mm,
+    page_height_mm,
+    bleed_mm,
+    gap_mm,
+    tagW,
+    tagH,
+  );
+  if (perSheet === 0) {
     return [
-      { x_mm: startX, y_mm: startY },
-      { x_mm: startX, y_mm: startY + tagH + gap_mm },
-      { x_mm: startX, y_mm: startY + 2 * (tagH + gap_mm) },
+      {
+        x_mm: bleed_mm + (usableW - tagW) / 2,
+        y_mm: bleed_mm + (usableH - tagH) / 2,
+      },
     ];
   }
 
-  if (preset === 'a4_2x2') {
-    const totalW = 2 * tagW + gap_mm;
-    const totalH = 2 * tagH + gap_mm;
-    const startX = bleed_mm + (usableW - totalW) / 2;
-    const startY = bleed_mm + (usableH - totalH) / 2;
-    return [
-      { x_mm: startX, y_mm: startY },
-      { x_mm: startX + tagW + gap_mm, y_mm: startY },
-      { x_mm: startX, y_mm: startY + tagH + gap_mm },
-      { x_mm: startX + tagW + gap_mm, y_mm: startY + tagH + gap_mm },
-    ];
-  }
+  const totalW = cols * tagW + (cols - 1) * gap_mm;
+  const totalH = rows * tagH + (rows - 1) * gap_mm;
+  const startX = bleed_mm + (usableW - totalW) / 2;
+  const startY = bleed_mm + (usableH - totalH) / 2;
 
-  // Custom: a single tag, centred.
-  return [
-    {
-      x_mm: bleed_mm + (usableW - tagW) / 2,
-      y_mm: bleed_mm + (usableH - tagH) / 2,
-    },
-  ];
+  const slots: LayoutSlot[] = [];
+  for (let row = 0; row < rows; row += 1) {
+    for (let col = 0; col < cols; col += 1) {
+      slots.push({
+        x_mm: startX + col * (tagW + gap_mm),
+        y_mm: startY + row * (tagH + gap_mm),
+      });
+    }
+  }
+  return slots;
 }
 
 // ---------------------------------------------------------------------------
@@ -561,7 +601,10 @@ export function copiesOf(items: ArrangeItem[]): Copy[] {
  * The slot grid is sized off the LARGEST tag in the request, so a mixed request
  * still prints without two tags overlapping. A pinned copy keeps the sheet and
  * the position it was dragged to and consumes no slot, which is what makes the
- * rest flow around it rather than leaving a hole where it used to be.
+ * rest flow around it rather than leaving a hole where it used to be (AC-S6-5).
+ * `impositionSlots` always answers at least one slot (even one that overflows
+ * the page, when the tag does not fit it at all), so every unpinned copy has
+ * somewhere to go and no line's design goes missing on the next reload.
  */
 export function autoArrange(
   items: ArrangeItem[],

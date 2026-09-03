@@ -159,7 +159,7 @@ export function RequestTagDesigner({
     pinnedFromDoc(initialDoc),
   );
   const [imposition, setImposition] = useState<ImpositionConfig>(
-    initialDoc?.imposition ?? { preset: 'a4_3up', ...IMPOSITION_PRESETS.a4_3up },
+    initialDoc?.imposition ?? { preset: 'auto', ...IMPOSITION_PRESETS.auto },
   );
   /**
    * The size "Apply to all lines" (D24, S9) last set, persisted in the doc
@@ -539,6 +539,18 @@ export function RequestTagDesigner({
         .filter((item): item is ArrangeItem => Boolean(item.tag)),
     [request.lines, tags],
   );
+
+  // The size Arrange's fit line and empty state are computed off (S6): the
+  // largest tag REQUESTED across every line, not what `autoArrange` managed
+  // to place - a page too small for the tag places nothing, and that is
+  // exactly when the "0 per sheet" message most needs a size to quote.
+  const tagDims = useMemo(() => {
+    if (arrangeItems.length === 0) return null;
+    return {
+      width_mm: Math.max(...arrangeItems.map((item) => item.tag.width_mm)),
+      height_mm: Math.max(...arrangeItems.map((item) => item.tag.height_mm)),
+    };
+  }, [arrangeItems]);
 
   const doc: TagSheetDoc = useMemo(
     () => ({
@@ -933,6 +945,7 @@ export function RequestTagDesigner({
             onMoveTag={handleMoveTag}
             onPrintSheet={handlePrintSheet}
             printing={printing}
+            tagDims={tagDims}
           />
         )}
       </div>
