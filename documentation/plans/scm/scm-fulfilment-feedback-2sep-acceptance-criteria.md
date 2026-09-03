@@ -166,6 +166,12 @@ or a rule: those live once on the Policies page.
   (N)", the dialog's "Approve selected" and "Save all suggested", the cell icon and the
   board-wide button - posts through the same quiet-bulk path and toasts EXACTLY ONCE for the
   whole press, closing the D14 rough edge where a bulk quick save toasted once per line.
+- AC-4.9 (D16, captain 3 Sep) Saving or undoing a draft decision never refetches the board and
+  never shows a skeleton: the pill flips Suggested/Saved in place off a cache patch, every other
+  card on screen keeps its own object identity (no re-render, no flicker), and the rows never
+  drop out from under the reader. Confirm still refetches the board (its write changes what the
+  engine can offer every OTHER order) - its rows dim in place while the fresh read lands, never
+  blank to a skeleton, since the previous board is kept on screen for the round trip.
 
 ## S5 upload
 
