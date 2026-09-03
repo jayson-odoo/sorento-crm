@@ -163,7 +163,7 @@ export type DataGridListToolbarProps<TData extends object> = {
    * whose Filters button is the `listQuery` advanced-filter dialog (so it cannot
    * carry `activeSummary` itself) but still has quick filters that need stating
    * on screen (PLAN-listing-view-memory, AC-C1). Omit when nothing is filtered
-   * (AC-C3). Takes precedence over `filters.activeSummary` if both are supplied.
+   * (AC-C3).
    */
   activeSummary?: { label: string; onClear: () => void };
   /** Export config, or `false` to hide Export. Default: selection-gated client export;

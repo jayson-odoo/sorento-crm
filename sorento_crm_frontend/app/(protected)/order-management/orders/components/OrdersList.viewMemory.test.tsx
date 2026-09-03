@@ -137,6 +137,10 @@ vi.mock('@/components/common/SearchableSelect', () => ({
     options: { value: string; label: string }[];
     placeholder?: string;
   }) => (
+    // Deterministic stand-in for the real Radix popover, same technique used
+    // elsewhere in the suite (e.g. page.defaultUom.test.tsx); a plain
+    // fireEvent.change is reliable in jsdom where driving the real popover is not.
+    // eslint-disable-next-line no-restricted-syntax
     <select
       id={id}
       aria-label={placeholder ?? 'select'}
@@ -395,5 +399,76 @@ describe('OrdersList remembered view', () => {
     expect(key).toBe(LISTING_KEY);
     expect(payload).toMatchObject({ filters: null, filtersVersion: null });
     expect(payload.sorting).toEqual([{ id: 'order_date', desc: true }]);
+  });
+
+  it('a stored advanced filter reaches the fetch, states "Advanced filter" on the chip, and Clear nulls it (AC-B1 / AC-C1 / AC-C2)', async () => {
+    const advancedFilter = {
+      op: 'and',
+      children: [{ field_key: 'debtor_name', op: 'contains', value: 'Acme' }],
+    };
+    storedConfig({
+      version: 1,
+      sorting: [{ id: 'order_date', desc: true }],
+      filters: { advancedFilter },
+      filtersVersion: 1,
+    });
+    mockList([order()]);
+    renderList();
+
+    expect(await screen.findByText('DO-2026-0001')).toBeInTheDocument();
+
+    const fetched = enabledFetches();
+    expect(fetched.length).toBeGreaterThan(0);
+    for (const p of fetched) {
+      expect(p.advancedFilter).toEqual(advancedFilter);
+    }
+
+    const clear = await screen.findByRole('button', {
+      name: /^Clear filter:/,
+    });
+    expect(clear.closest('span')?.textContent).toContain('Advanced filter');
+
+    fireEvent.click(clear);
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole('button', { name: /^Clear filter:/ }),
+      ).not.toBeInTheDocument();
+    });
+    const last = enabledFetches().at(-1)!;
+    expect(last.advancedFilter).toBeUndefined();
+
+    await waitFor(
+      () => {
+        expect(service.upsertUserListColumnConfig).toHaveBeenCalled();
+      },
+      { timeout: 3000 },
+    );
+    const [key, payload] = service.upsertUserListColumnConfig.mock.calls.at(-1)!;
+    expect(key).toBe(LISTING_KEY);
+    expect(payload).toMatchObject({ filters: null, filtersVersion: null });
+  });
+
+  it('sorting by a different column reaches the debounced upsert (AC-B5)', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    storedConfig(null);
+    mockList([order()]);
+    renderList();
+
+    await vi.waitFor(() => {
+      expect(screen.getByText('DO-2026-0001')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Debtor Name/ }));
+
+    await vi.advanceTimersByTimeAsync(900);
+
+    await vi.waitFor(() => {
+      expect(service.upsertUserListColumnConfig).toHaveBeenCalled();
+    });
+    const [key, payload] = service.upsertUserListColumnConfig.mock.calls.at(-1)!;
+    expect(key).toBe(LISTING_KEY);
+    expect(payload.sorting).toEqual([{ id: 'debtor_name', desc: false }]);
+    vi.useRealTimers();
   });
 });

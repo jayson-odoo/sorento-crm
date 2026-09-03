@@ -121,6 +121,11 @@ export default function OrdersList() {
     [viewFilters],
   );
 
+  // Merges `next` over the closure-captured `statusFilter` / `linesFilter` /
+  // `advancedFilter` by design: the three axes are set from three different
+  // controls and are never batched into one commit, so each call only ever
+  // changes the one axis its caller owns and carries the other two forward
+  // unchanged.
   const applyFilters = (next: Partial<OrdersFilters>) => {
     const merged: OrdersFilters = {
       order_status_id: statusFilter === 'all' ? undefined : statusFilter,
@@ -356,7 +361,11 @@ export default function OrdersList() {
     const parts: string[] = [];
     if (statusFilter !== 'all') {
       const status = orderStatuses.find((s) => s.id === statusFilter);
-      parts.push(status?.status_name ?? statusFilter);
+      // Only state this axis once it resolves to a name - `orderStatuses` is
+      // empty on first paint until its query settles (and stays empty on any
+      // error), and the raw value is a UUID (no UUIDs in the UI). The other
+      // axes still render, so the chip is never fully hidden by this gap.
+      if (status) parts.push(status.status_name);
     }
     if (linesFilter !== 'all') {
       parts.push(`Has order lines: ${linesFilter === 'yes' ? 'Yes' : 'No'}`);

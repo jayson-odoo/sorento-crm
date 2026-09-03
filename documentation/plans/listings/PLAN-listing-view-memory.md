@@ -235,10 +235,14 @@ No backend change - `order_date` was already in `order_service.py`'s `sort_map` 
 
 - **Shipped default sort changed as part of this rollout**: `[{ id: 'order_date', desc: true }]`
   (Delivery Order Date, newest first) rather than `created_at`. The list previously opened with a
-  latent bug - an empty query string on first load reset `sorting` to `[]` in the URL-restore
-  effect, so the backend fell back to `created_at asc` (oldest first) regardless of the page's own
-  default. Moving sort into `useListingViewPreferences` removes that effect's ownership of sorting
-  entirely, so the bug cannot recur.
+  latent bug, but not on a bare load - `useListStateFromUrl` only fires when the query string is
+  non-empty, so a fresh sidebar click was never affected. The trigger was a URL that carried SOME
+  params but no `sort` key (a deep link like `?query=DO-123`, or Back from a detail page reached
+  via search rather than a sort column): `parseDetailSearch` reads a missing `sort` as `sorting:
+  []`, and the old effect applied that literally, wiping the page's own default and leaving the
+  backend to fall back to `created_at asc` (oldest first). Moving sort into
+  `useListingViewPreferences` removes that effect's ownership of sorting entirely, so the bug
+  cannot recur.
 - **Blob shape**, `filtersVersion: 1`:
   ```ts
   type OrdersFilters = {
@@ -267,6 +271,13 @@ No backend change - `order_date` was already in `order_service.py`'s `sort_map` 
 - **`isLoading` gate on `<DataGrid>` widened to `isLoading || isViewPrefsLoading`** - without it the
   grid renders the FIRST (`enabled: false`) response's stale/empty data for one frame before the
   remembered view lands, same class of flash the pilot's AC-B3 note describes.
+
+**Risks (Orders rollout), additional to section 6:**
+
+| Risk | Severity | Handling |
+|---|---|---|
+| A row is clicked inside the 800ms debounce window right after a filter change | Low | The write is lost; Back then restores `page=N` from the URL onto the now-unfiltered listing (the URL never carried the filter - only page/search do, per 3.1's decision to keep sort/filter out of it). Accepted: the next filter change re-establishes the debounce fingerprint and persists normally; not worth a beforeunload flush (mirrors the existing "debounced write lost on fast navigation away" risk in section 6). |
+| A stored `advancedFilter` references a field later removed from `list_query_registry` | Low | The chip label ("Advanced filter") and its Clear are rendered from the stored blob alone, independent of the data query, so Clear stays reachable even if the query itself errors on the stale field. Accepted: no server-side validation of a stored filter's field set is added. |
 
 ## 7. Open questions
 
