@@ -101,10 +101,18 @@ export const ordersPagerQuery = {
     fetchOrdersPage(ordersListParamsFromUrl(params)),
 };
 
-export function useOrders(params: OrdersListParams) {
+/**
+ * `enabled` lets the list hold the fetch until the user's remembered sort and
+ * filter have resolved, so the grid is fetched ONCE with the view already
+ * applied instead of fetching the defaults and immediately refetching
+ * (PLAN-listing-view-memory, AC-B3).
+ */
+export function useOrders(params: OrdersListParams & { enabled?: boolean }) {
+  const { enabled = true, ...listParams } = params;
   return useQuery({
-    queryKey: ordersListQueryKey(params),
-    queryFn: () => fetchOrdersPage(params),
+    queryKey: ordersListQueryKey(listParams),
+    queryFn: () => fetchOrdersPage(listParams),
+    enabled,
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
     refetchOnWindowFocus: false,

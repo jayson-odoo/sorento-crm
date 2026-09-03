@@ -1,6 +1,6 @@
 # PLAN - Listing view memory (sticky sort + sticky filter)
 
-**Status:** Implemented on `fm/listing-view-memory` (pilot: Stock Inquiries). Browser evidence run pending - no free stack slot at hand-off; AC-E4 is covered by a listing-level vitest instead of a new Playwright spec (repo standing order).
+**Status:** Implemented on `fm/listing-view-memory` (pilot: Stock Inquiries). Browser evidence run pending - no free stack slot at hand-off; AC-E4 is covered by a listing-level vitest instead of a new Playwright spec (repo standing order). Rolled out to Order Management -> Sales Orders on `feat/orders-list-view-memory`, 2026-09-03 - see "Rollout: Sales Orders" below.
 **Classification:** CORE - `public` schema, no new table, no migration
 **UAC (the contract):** `documentation/plans/listings/listing-view-memory-acceptance-criteria.md`
 **Pilot listing:** Procurement Management -> Stock Inquiries
@@ -227,6 +227,46 @@ Branch: `feat/listing-view-memory`. Never merged to main by an agent.
 | Stale react-query cache serves a pre-save config | **High** - reads as "it forgot my filter", the exact failure this feature prevents | Seed the cache from the `PUT` response, 3.3. Pre-existing bug; fixing it is in scope. |
 | Debounced write lost on fast navigation away | Low | Accepted. The next visit re-reads the last persisted value; worst case one interaction is not remembered. Not worth a beforeunload flush. |
 | Reset-columns also clears sort and filter | Low | Accepted and intended - `DELETE` is "reset this listing for me". Called out so it is not later filed as a bug. |
+
+## 6a. Rollout: Sales Orders (2026-09-03)
+
+Second listing on the pattern, `app/(protected)/order-management/orders/components/OrdersList.tsx`.
+No backend change - `order_date` was already in `order_service.py`'s `sort_map` (nulls-last).
+
+- **Shipped default sort changed as part of this rollout**: `[{ id: 'order_date', desc: true }]`
+  (Delivery Order Date, newest first) rather than `created_at`. The list previously opened with a
+  latent bug - an empty query string on first load reset `sorting` to `[]` in the URL-restore
+  effect, so the backend fell back to `created_at asc` (oldest first) regardless of the page's own
+  default. Moving sort into `useListingViewPreferences` removes that effect's ownership of sorting
+  entirely, so the bug cannot recur.
+- **Blob shape**, `filtersVersion: 1`:
+  ```ts
+  type OrdersFilters = {
+    order_status_id?: string;
+    has_order_lines?: 'yes' | 'no';
+    advancedFilter?: ListQueryFilterGroup;
+  };
+  ```
+  Three filter axes (a quick status select, a quick lines select, and the `listQuery` advanced
+  filter dialog) share ONE blob and one chip, all cleared together - Orders has never had a
+  reason to clear them independently.
+- **Toolbar extension needed, not reused as-is.** The pilot's `activeSummary` lives inside
+  `filters={{kind:'custom', activeSummary}}`, but Orders' Filters button is the `listQuery`
+  advanced-filter dialog, which cannot carry a summary of its own. Added a sibling top-level
+  `activeSummary?: { label; onClear }` prop to `DataGridListToolbarProps` in
+  `components/ui/data-grid-list-toolbar.tsx`, independent of `filters.kind`, so a page can keep an
+  advanced-filter dialog AND state its quick filters as a chip. Backward compatible: the pilot
+  passes nothing new and is unaffected; `activeFilterSummary = activeSummary ?? (filters?.kind
+  === 'custom' && filters.active ? filters.activeSummary : undefined)`. This is the shared
+  primitive extension the next `listQuery`-toolbar rollout should reuse rather than re-deriving.
+- **Folded, not duplicated.** The page's old "Clear quick filters" button (visible only when the
+  status or lines quick filter was active) is retired - the chip's Clear now covers all three axes,
+  so there is exactly one clear affordance instead of two with overlapping scope.
+- **`useOrders` gained `enabled?: boolean`** (default `true`), same shape as the pilot's
+  `useStockInquiries` change, threaded through as `enabled: !isViewPrefsLoading` (AC-B3).
+- **`isLoading` gate on `<DataGrid>` widened to `isLoading || isViewPrefsLoading`** - without it the
+  grid renders the FIRST (`enabled: false`) response's stale/empty data for one frame before the
+  remembered view lands, same class of flash the pilot's AC-B3 note describes.
 
 ## 7. Open questions
 

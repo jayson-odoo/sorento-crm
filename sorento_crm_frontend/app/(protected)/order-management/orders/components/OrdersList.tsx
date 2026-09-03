@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import {
   ColumnDef,
   PaginationState,
@@ -44,23 +44,40 @@ import { OrderTrackingUploadDialog } from './OrderTrackingUploadDialog';
 import { OrderLinesImportDialog } from './OrderLinesImportDialog';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import {
-  buildDetailSearch,
-  decodeAdvancedFilter,
-  encodeAdvancedFilter,
-} from '@/lib/listNavQuery';
+import { buildDetailSearch, encodeAdvancedFilter } from '@/lib/listNavQuery';
 import type { ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
 import { useImportJobDrawer } from '@/components/upload-activity';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { useListingViewPreferences } from '@/lib/listing-column-preferences/useListingViewPreferences';
+
+/**
+ * The listing's shipped default, used until the user has left one behind.
+ * Delivery Order Date, newest first - the date CS actually works off, not the
+ * row's creation timestamp.
+ */
+const DEFAULT_SORTING: SortingState = [{ id: 'order_date', desc: true }];
+
+/**
+ * Shape of what this page stores in the opaque `filters` blob. BUMP THIS
+ * whenever it changes, so blobs written by the old shape are discarded rather
+ * than applied (AC-B4).
+ */
+const FILTERS_VERSION = 1;
+
+type OrdersFilters = {
+  order_status_id?: string;
+  has_order_lines?: 'yes' | 'no';
+  advancedFilter?: ListQueryFilterGroup;
+};
 
 export default function OrdersList() {
   const router = useRouter();
+  const pathname = usePathname();
   const queryClient = useQueryClient();
   const { notifyImportQueued } = useImportJobDrawer();
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
-  const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
   const {
     value: searchInput,
     setValue: setSearchInput,
@@ -71,23 +88,64 @@ export default function OrdersList() {
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [trackingUploadOpen, setTrackingUploadOpen] = useState(false);
   const [orderLinesImportOpen, setOrderLinesImportOpen] = useState(false);
-  const [advancedFilter, setAdvancedFilter] = useState<ListQueryFilterGroup | null>(null);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
-  const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [linesFilter, setLinesFilter] = useState<'all' | 'yes' | 'no'>('all');
 
   const { data: orderStatuses = [] } = useOrderStatusSelectQuery();
 
+  // The sort and the filters are remembered per user. `pathname` is the same
+  // listing key DataGrid derives for the column preferences, so both writers
+  // address one row. Page number and search text are deliberately NOT
+  // remembered.
+  const {
+    sorting,
+    setSorting,
+    filters: viewFilters,
+    setFilters: setViewFilters,
+    isLoading: isViewPrefsLoading,
+  } = useListingViewPreferences<OrdersFilters>({
+    listingKey: pathname,
+    defaultSorting: DEFAULT_SORTING,
+    filtersVersion: FILTERS_VERSION,
+  });
+
+  const statusFilter = useMemo(
+    () => viewFilters?.order_status_id ?? 'all',
+    [viewFilters],
+  );
+  const linesFilter = useMemo(
+    () => viewFilters?.has_order_lines ?? 'all',
+    [viewFilters],
+  );
+  const advancedFilter = useMemo(
+    () => viewFilters?.advancedFilter ?? null,
+    [viewFilters],
+  );
+
+  const applyFilters = (next: Partial<OrdersFilters>) => {
+    const merged: OrdersFilters = {
+      order_status_id: statusFilter === 'all' ? undefined : statusFilter,
+      has_order_lines: linesFilter === 'all' ? undefined : linesFilter,
+      advancedFilter: advancedFilter ?? undefined,
+      ...next,
+    };
+    // Empty on every key is stored as no filter at all, so returning shows the
+    // unfiltered listing (AC-C2).
+    const hasAny =
+      Boolean(merged.order_status_id) ||
+      Boolean(merged.has_order_lines) ||
+      Boolean(merged.advancedFilter);
+    setViewFilters(hasAny ? merged : null);
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
+  };
+
   // Back hands the list its own query string back, and the pager keeps
-  // rewriting it, so the list reads it (S3-01). One hook, every list.
+  // rewriting it, so the list reads it (S3-01). One hook, every list. Sorting
+  // and the filters are remembered per user by `useListingViewPreferences`,
+  // which is the stronger memory, so the URL only restores the page and the
+  // search.
   useListStateFromUrl((state) => {
     setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
-    setSorting(state.sorting);
     resetSearch(state.searchQuery);
-    setStatusFilter(state.filters.order_status_id ?? 'all');
-    const lines = state.filters.has_order_lines;
-    setLinesFilter(lines === 'yes' || lines === 'no' ? lines : 'all');
-    setAdvancedFilter(decodeAdvancedFilter<ListQueryFilterGroup>(state.filters.advFilter));
   });
 
   // A search brings the reader back to page 0 to see the matches; the mounted
@@ -109,6 +167,8 @@ export default function OrdersList() {
     order_status_id: statusFilter === 'all' ? undefined : statusFilter,
     has_order_lines: linesFilter,
     advancedFilter: advancedFilter ?? undefined,
+    // One fetch, with the remembered view already applied (AC-B3).
+    enabled: !isViewPrefsLoading,
   });
 
   const handleUploadTemplate = async (data: unknown[]) => {
@@ -289,7 +349,23 @@ export default function OrdersList() {
     [],
   );
 
-  const quickFilterActive = statusFilter !== 'all' || linesFilter !== 'all';
+  // States every active filter axis in one chip, so a sticky filter the user
+  // did not set this session is not indistinguishable from missing data
+  // (PLAN-listing-view-memory, AC-C1). Its Clear resets all three.
+  const filterSummaryLabel = useMemo(() => {
+    const parts: string[] = [];
+    if (statusFilter !== 'all') {
+      const status = orderStatuses.find((s) => s.id === statusFilter);
+      parts.push(status?.status_name ?? statusFilter);
+    }
+    if (linesFilter !== 'all') {
+      parts.push(`Has order lines: ${linesFilter === 'yes' ? 'Yes' : 'No'}`);
+    }
+    if (advancedFilter) {
+      parts.push('Advanced filter');
+    }
+    return parts.join(', ');
+  }, [statusFilter, linesFilter, advancedFilter, orderStatuses]);
 
   const table = useReactTable({
     columns,
@@ -324,7 +400,7 @@ export default function OrdersList() {
     <DataGrid
       table={table}
       recordCount={data?.pagination.total || 0}
-      isLoading={isLoading}
+      isLoading={isLoading || isViewPrefsLoading}
       rowHref={rowHref}
       rowPending={rowPending}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
@@ -347,10 +423,7 @@ export default function OrdersList() {
               kind: 'listQuery',
               resourceKey: 'orders',
               advancedFilter,
-              onApply: (f) => {
-                setAdvancedFilter(f);
-                setPagination((p) => ({ ...p, pageIndex: 0 }));
-              },
+              onApply: (f) => applyFilters({ advancedFilter: f ?? undefined }),
               getPayload: () => ({
                 filter: advancedFilter ?? undefined,
                 quick_search: searchQuery || undefined,
@@ -358,6 +431,19 @@ export default function OrdersList() {
                 has_order_lines: linesFilter === 'all' ? undefined : linesFilter,
               }),
             }}
+            activeSummary={
+              filterSummaryLabel
+                ? {
+                    label: filterSummaryLabel,
+                    onClear: () =>
+                      applyFilters({
+                        order_status_id: undefined,
+                        has_order_lines: undefined,
+                        advancedFilter: undefined,
+                      }),
+                  }
+                : undefined
+            }
             exportConfig={{
               kind: 'listQuery',
               resourceKey: 'orders',
@@ -411,10 +497,9 @@ export default function OrdersList() {
               </Label>
               <SearchableSelect
                 value={statusFilter}
-                onChange={(v) => {
-                  setStatusFilter(v);
-                  setPagination((p) => ({ ...p, pageIndex: 0 }));
-                }}
+                onChange={(v) =>
+                  applyFilters({ order_status_id: v === 'all' ? undefined : v })
+                }
                 id="orders-quick-status"
                 size="sm"
                 triggerClassName="w-48"
@@ -435,8 +520,10 @@ export default function OrdersList() {
               <SearchableSelect
                 value={linesFilter}
                 onChange={(v) => {
-                  setLinesFilter(v as 'all' | 'yes' | 'no');
-                  setPagination((p) => ({ ...p, pageIndex: 0 }));
+                  const next = v as 'all' | 'yes' | 'no';
+                  applyFilters({
+                    has_order_lines: next === 'all' ? undefined : next,
+                  });
                 }}
                 id="orders-quick-lines"
                 size="sm"
@@ -449,19 +536,6 @@ export default function OrdersList() {
                 placeholder="Delivery order lines"
               />
             </div>
-            {quickFilterActive && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setStatusFilter('all');
-                  setLinesFilter('all');
-                  setPagination((p) => ({ ...p, pageIndex: 0 }));
-                }}
-              >
-                Clear quick filters
-              </Button>
-            )}
           </div>
         </CardHeader>
         {isError ? (

@@ -157,6 +157,15 @@ export type DataGridListToolbarProps<TData extends object> = {
   keepSearchWhileSelected?: boolean;
   /** Omit to hide the Filters button entirely (D3). */
   filters?: ListToolbarFilters;
+  /**
+   * States an active filter above the grid as a chip with a clear affordance, the
+   * same rendering `filters={{kind:'custom', activeSummary}}` uses - for a page
+   * whose Filters button is the `listQuery` advanced-filter dialog (so it cannot
+   * carry `activeSummary` itself) but still has quick filters that need stating
+   * on screen (PLAN-listing-view-memory, AC-C1). Omit when nothing is filtered
+   * (AC-C3). Takes precedence over `filters.activeSummary` if both are supplied.
+   */
+  activeSummary?: { label: string; onClear: () => void };
   /** Export config, or `false` to hide Export. Default: selection-gated client export;
    *  pass a `{kind:'listQuery'}` config for server-side filtered-set export. */
   exportConfig?: ListToolbarExport | ListToolbarListQueryExport | false;
@@ -260,6 +269,7 @@ export function DataGridListToolbar<TData extends object>({
   searchSlot,
   keepSearchWhileSelected = false,
   filters,
+  activeSummary,
   exportConfig,
   showColumns = true,
   showExport = true,
@@ -379,7 +389,8 @@ export function DataGridListToolbar<TData extends object>({
   // Rendered only for a custom filter that is BOTH active and self-describing, so a
   // listing that supplies no summary keeps exactly today's layout (AC-C3).
   const activeFilterSummary =
-    filters?.kind === 'custom' && filters.active ? filters.activeSummary : undefined;
+    activeSummary ??
+    (filters?.kind === 'custom' && filters.active ? filters.activeSummary : undefined);
 
   const exportButtonEl =
     exportConfig === false || !showExport ? null : exportEnabled ? (
