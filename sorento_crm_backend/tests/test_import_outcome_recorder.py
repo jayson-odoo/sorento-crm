@@ -178,6 +178,70 @@ def test_recorder_failure_never_breaks_the_import():
     assert out.skipped == 5
 
 
+def test_flush_never_touches_import_jobs_when_bump_job_progress_is_off():
+    """Review round 2, N3: `bump_job_progress` (S2) is the gate, not merely a caller's own
+    `publish=True` - a recorder built without it must never even QUERY `import_jobs`, so a
+    caller that forgets to opt in cannot accidentally race another importer's own explicit
+    progress reporting."""
+    touched = {"query": False}
+
+    class _FakeSession:
+        def bulk_insert_mappings(self, _model, _rows):
+            pass
+
+        def query(self, *_a, **_kw):
+            touched["query"] = True
+            raise AssertionError("import_jobs must not be queried")
+
+        def commit(self):
+            pass
+
+        def rollback(self):
+            pass
+
+        def close(self):
+            pass
+
+    # bump_job_progress left at its default (off).
+    out = ImportOutcome(uuid.uuid4(), session_factory=lambda: _FakeSession())
+    out.success(row=1)
+    out.flush(publish=True)
+
+    assert touched["query"] is False
+
+
+def test_the_buffer_full_auto_flush_does_not_publish():
+    """Review round 2, N3: the auto-flush inside `_record` (buffer_size reached) must never
+    bump `processed_rows`, even with `bump_job_progress=True` on the recorder - only an
+    explicit `flush(publish=True)` may, and `_record` never passes it. A worker killed right
+    after this auto-flush must not have shown a count ahead of what is actually committed."""
+    touched = {"query": False}
+
+    class _FakeSession:
+        def bulk_insert_mappings(self, _model, _rows):
+            pass
+
+        def query(self, *_a, **_kw):
+            touched["query"] = True
+            raise AssertionError("import_jobs must not be queried by an auto-flush")
+
+        def commit(self):
+            pass
+
+        def rollback(self):
+            pass
+
+        def close(self):
+            pass
+
+    out = ImportOutcome(uuid.uuid4(), buffer_size=3, session_factory=lambda: _FakeSession(),
+                        bump_job_progress=True)
+    for i in range(3):  # exactly buffer_size - triggers the auto-flush inside _record
+        out.success(row=i)
+
+    assert touched["query"] is False
+
+
 def test_identity_is_flattened_and_bounded():
     """Identity is printed in the UI, so it stays flat, short and JSON-safe."""
     from app.services.import_outcome import _json_safe_identity

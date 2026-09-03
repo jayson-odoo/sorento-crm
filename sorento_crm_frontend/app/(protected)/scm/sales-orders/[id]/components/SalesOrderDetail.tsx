@@ -981,30 +981,76 @@ export function SalesOrderDetail({ id }: { id: string }) {
       },
       {
         id: 'supply_decided',
-        accessorFn: (row) => row.supply_decided ?? null,
+        accessorFn: (row) => row.supply_decided ?? row.supply_saved ?? null,
         header: ({ column }) => <DataGridColumnHeader title="Decided" column={column} />,
-        cell: ({ row }) => (
-          <SupplyText
-            parts={row.original.supply_decided}
-            ownLocation={row.original.warehouse_code}
-            absent="-"
-          />
-        ),
-        size: 220,
+        // D10 (captain, 3 Sep): a SAVED (unconfirmed) decision reads here too, until
+        // Confirm replaces it with the frozen one - a save on the board used to read "-"
+        // on this page, which looked like the save had done nothing. `supply_decided` and
+        // `supply_saved` never both answer for one line (Confirm deletes the draft it
+        // promotes), so this is never a choice between two real compositions.
+        cell: ({ row }) => {
+          if (row.original.supply_decided != null) {
+            return (
+              <SupplyText
+                parts={row.original.supply_decided}
+                ownLocation={row.original.warehouse_code}
+                absent="-"
+              />
+            );
+          }
+          if (row.original.supply_saved == null) {
+            return <SupplyText parts={null} ownLocation={row.original.warehouse_code} absent="-" />;
+          }
+          return (
+            <div className="flex min-w-0 items-center gap-1.5">
+              <span className="min-w-0 flex-1">
+                <SupplyText
+                  parts={row.original.supply_saved}
+                  ownLocation={row.original.warehouse_code}
+                  absent="-"
+                />
+              </span>
+              <Badge
+                data-testid={`saved-decision-badge-${row.original.id}`}
+                variant={row.original.saved_stale ? 'warning' : 'success'}
+                appearance="light"
+                size="sm"
+                className="shrink-0"
+              >
+                {row.original.saved_stale ? 'Suggestion changed' : 'Saved'}
+              </Badge>
+            </div>
+          );
+        },
+        size: 240,
         meta: { headerTitle: 'Decided' },
       },
       {
         id: 'decision_revision',
-        accessorFn: (row) => row.decision_revision ?? null,
+        accessorFn: (row) =>
+          row.decision_revision ?? (row.supply_saved != null ? 'saved' : null),
         header: ({ column }) => <DataGridColumnHeader title="Decision" column={column} />,
-        // Which confirmed revision covers this line. A line the active decision left out is
-        // as undecided as a line on an order nobody planned, and both read "-".
-        cell: ({ row }) =>
-          row.original.decision_revision == null ? (
-            <span className="text-muted-foreground">-</span>
-          ) : (
-            <span className="tabular-nums">{`Rev ${row.original.decision_revision}`}</span>
-          ),
+        // Which confirmed revision covers this line, or - before that - who saved it and
+        // when (D10). A line the active decision left out, with no draft either, is as
+        // undecided as a line on an order nobody planned, and both read "-".
+        cell: ({ row }) => {
+          if (row.original.decision_revision != null) {
+            return <span className="tabular-nums">{`Rev ${row.original.decision_revision}`}</span>;
+          }
+          if (row.original.supply_saved != null) {
+            const savedBy = row.original.saved_by;
+            const savedAt = row.original.saved_at;
+            const title = savedBy
+              ? `Saved by ${savedBy}${savedAt ? ` · ${formatDateTimeInMalaysia(savedAt)}` : ''}`
+              : undefined;
+            return (
+              <span className="text-sm" title={title}>
+                Saved
+              </span>
+            );
+          }
+          return <span className="text-muted-foreground">-</span>;
+        },
         size: 110,
         meta: { headerTitle: 'Decision' },
       },

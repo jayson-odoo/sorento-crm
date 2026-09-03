@@ -17,6 +17,7 @@ import {
   bucketLabelText,
   commitPreviewFor,
   confirmLinesFor,
+  confirmSummaryFor,
   DAY_WINDOW_COLUMNS as BOARD_DAY_WINDOW_COLUMNS,
   factorLabel,
   matchesSuggestion,
@@ -1610,6 +1611,61 @@ describe('confirmLinesFor and a line an active decision already covers', () => {
     expect(
       commitPreviewFor(standing, confirmLinesFor(contributions, 'so-a', draft).length),
     ).toEqual({ committing: 2, leaving_undecided: 0, blocked: 0 });
+  });
+
+  /**
+   * N6 (code review round 3): resolution order `confirmed > rejected > stale > saved`, the
+   * same order `BoardDecisionPill` reads by. A covered line's frozen composition is what the
+   * server carries forward regardless of a local click - marking it "rejected" in THIS
+   * session cannot make Confirm refuse a line the database already holds, so it must not be
+   * counted as a rejection either.
+   */
+  it('counts a covered line as carried rather than rejected, even when this session marked it rejected', () => {
+    const summary = confirmSummaryFor(contributions, {
+      [keyOf(1)]: { verdict: 'rejected', reason: 'Changed my mind.' },
+    });
+    expect(summary.rejected).toBe(0);
+    // Line 2 (untouched, uncovered) still counts by R11's silence-is-agreement.
+    expect(summary.toConfirm).toBe(1);
+  });
+});
+
+/**
+ * C4 (code review round 3 batch 2): a stale line is dropped from Confirm with no trace -
+ * `lineFor` posts nothing for it, `confirmSummaryFor` skips it, and until this the planner's
+ * only signal was the pill itself, which is easy to miss on a board of forty lines. `changed`
+ * is the count that says so where Confirm is pressed.
+ */
+describe('confirmSummaryFor: changed (C4)', () => {
+  it('counts a saved-but-stale line under `changed`, and leaves it out of `toConfirm`', () => {
+    const board = buildBoard(
+      [line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 1, qty: '100' })],
+      { today: TODAY },
+    );
+    const base = board.cells[0].contributions[0];
+    const stale = {
+      ...base,
+      draft: {
+        decision: { verdict: 'amended' as const },
+        saved_by: 'Eling',
+        saved_at: '2026-09-03T01:00:00',
+        stale: true,
+      },
+    };
+
+    const summary = confirmSummaryFor([stale], {});
+
+    expect(summary.changed).toBe(1);
+    expect(summary.toConfirm).toBe(0);
+  });
+
+  it('reads 0 when nothing saved is stale', () => {
+    const board = buildBoard(
+      [line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 1, qty: '100' })],
+      { today: TODAY },
+    );
+    const summary = confirmSummaryFor(board.cells.flatMap((cell) => cell.contributions), {});
+    expect(summary.changed).toBe(0);
   });
 });
 

@@ -348,6 +348,10 @@ def test_a_pool_draw_raises_no_order_back():
     It used to raise one whenever the draw pushed the pool's own availability below zero -
     which under v4 cannot happen, because rung 3 draws only while the five pools net
     positive between them.
+
+    LADDER V8: the pool holds 120 rather than 60, because a project line may take half of it
+    (R-B) and the 60 this case confirms has to be a whole pool draw for the order-back rule
+    to be the thing under test.
     """
     from app.models.project_so import IV_BORROW_SHORTFALL, OrderInquiryRow
     from app.schemas.project_supply import ConfirmLine, ConfirmSupplyBody
@@ -356,7 +360,7 @@ def test_a_pool_draw_raises_no_order_back():
         company_id, eling, project, product = _world(db)
         _group, sites = _group_sites(db)
         own, pool = sites["BRW"]
-        _stock(db, product, pool, on_hand=60)
+        _stock(db, product, pool, on_hand=120)
         db.commit()
 
         order, line, _cso, _cline = _seed_line(

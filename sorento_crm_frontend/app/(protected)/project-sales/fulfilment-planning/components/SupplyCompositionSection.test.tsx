@@ -663,6 +663,80 @@ describe('SupplyCompositionSection', () => {
     ).toBeInTheDocument();
   });
 
+  // ------------------------------------- site pool share beside a Buy (B2, fix round 5)
+  it('admits a site pool share beside a Buy, using the line s own pool_allowances', async () => {
+    // SO419208 line 3, the engine's own composition: BRW lends its share (62, within the
+    // pool's own allowance of 62 and the five-pool net of 100) and the rest is bought.
+    // `lineBlockers` used to run with no `limits` at all on this sheet, so it read the split
+    // as the whole-line rule's forbidden mix and blocked Confirm for the whole order.
+    getSupply.mockResolvedValue(
+      proposal({
+        lines: [
+          line({
+            open_qty: '135',
+            components: [
+              {
+                kind: 'reserve',
+                qty: '62',
+                reason: 'The shared pool at BRW covers this much within its cap.',
+                source_location: 'BRW',
+                source_warehouse_id: WH_BRW,
+              },
+              { kind: 'buy', qty: '73', reason: 'Remaining uncovered need.' },
+            ],
+            pool_allowances: { [WH_BRW]: '62' },
+            pools_net: '100',
+          }),
+        ],
+      }),
+    );
+
+    renderSection();
+    await screen.findByText('Line 1 · CB6633');
+
+    expect(
+      screen.queryByText(/a line is either met wholly from stock or wholly bought/),
+    ).not.toBeInTheDocument();
+    expect(confirmButton()).toBeEnabled();
+  });
+
+  it('still refuses an OWN-BIN reserve beside a Buy: only a stated pool allowance carves it out', async () => {
+    // Same 62 + 73 split, but the line states no `pool_allowances` for WH_BRW (an own bin
+    // keeps no dealer share back) - the whole-line rule still refuses the mix.
+    getSupply.mockResolvedValue(
+      proposal({
+        lines: [
+          line({
+            open_qty: '135',
+            components: [
+              {
+                kind: 'reserve',
+                qty: '62',
+                reason: 'Free stock at BRW-BB covers this much.',
+                source_location: 'BRW-BB',
+                source_warehouse_id: WH_BRW,
+              },
+              { kind: 'buy', qty: '73', reason: 'Remaining uncovered need.' },
+            ],
+            pool_allowances: {},
+            pools_net: null,
+          }),
+        ],
+      }),
+    );
+
+    renderSection();
+    await screen.findByText('Line 1 · CB6633');
+
+    expect(
+      await screen.findAllByText(
+        'Line 1, CB6633: a line is either met wholly from stock or wholly bought. ' +
+          'This one mixes 62 from stock with a Buy of 73.',
+      ),
+    ).toHaveLength(2);
+    expect(confirmButton()).toBeDisabled();
+  });
+
   it('renders no UUID-looking id, though every line is addressed by one', async () => {
     getSupply.mockResolvedValue(CONFIRMED);
 

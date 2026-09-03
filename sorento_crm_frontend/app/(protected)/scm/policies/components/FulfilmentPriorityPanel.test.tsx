@@ -119,6 +119,8 @@ describe('FulfilmentPriorityPanel', () => {
       reorder_coverage_until: '2026-12-01',
       tba_date_from: DEFAULT_TBA,
       transfer_days: 0,
+      immediate_window_days: 30,
+      pool_share_pct: 50,
     });
   });
 

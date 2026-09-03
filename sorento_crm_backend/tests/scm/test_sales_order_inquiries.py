@@ -525,3 +525,168 @@ def test_an_undecided_line_carries_neither_composition(scm_app):
     body = next(l for l in res.json()["lines"] if l["id"] == line.id)
     assert body["supply_decided"] is None
     assert body["supply_proposed"] is None
+
+
+# --------------------------------------------------------------------------- #
+# D10 (captain, 3 Sep): the SO page's Lines tab shows a SAVED (unconfirmed) decision too,
+# not only a confirmed one - a save on the planning board used to answer "-"/"-"/"-" here
+# until Confirm, which read as the save having done nothing.
+# --------------------------------------------------------------------------- #
+
+#: A composed decision exercising all three kinds `_saved_components` reads (reserve,
+#: borrow, buy) in one save, in the frontend's own `BoardDecision` words - opaque to the
+#: server, which stores and hands it back (`project_line_draft_service`).
+SAVED_DECISION = {
+    "verdict": "amended",
+    "reserve": [
+        {
+            "warehouse_id": "irrelevant-here",
+            "location": f"{MARKER}-BRW",
+            "qty": "5",
+            "rung": "pool",
+        }
+    ],
+    "borrow": [
+        {
+            "source": "location",
+            "warehouse_id": "irrelevant-here",
+            "warehouse_code": f"{MARKER}-MWH",
+            "qty": "2",
+            "reason": "borrowed",
+            "donor_so_number": f"{MARKER}-DONOR",
+        }
+    ],
+    "buy_qty": "3",
+    "reason": "Composed by hand.",
+}
+
+
+def _save_draft(db, core: SalesOrder, line_no: int, item_code: str, *, decision, saved_by):
+    from app.services import project_line_draft_service
+
+    key = f"{core.id}|{line_no}|{item_code}|{MARKER}-bucket"
+    return project_line_draft_service.save_draft(
+        db, key, decision=decision, actor_user_id=saved_by
+    )
+
+
+def test_a_saved_but_unconfirmed_decision_shows_its_own_composition(scm_app):
+    """D10: Save decision on the board reaches this page before Confirm does."""
+    app, db, uid = _as(scm_app)
+    core = _core_order(db)
+    core.demand_class = "project"
+    line = _core_line(db, core)
+    db.flush()
+    item_code = line.product.product_code
+
+    saved = _save_draft(db, core, 1, item_code, decision=SAVED_DECISION, saved_by=uid)
+    assert saved["saved_by"] == "SCM Test"
+
+    with TestClient(app) as c:
+        res = c.get(f"/api/v1/scm/sales-orders/{core.id}")
+
+    assert res.status_code == 200, res.text
+    body = next(l for l in res.json()["lines"] if l["id"] == line.id)
+    # Every field survives `response_model`, which silently drops anything undeclared.
+    for field in ("supply_saved", "saved_by", "saved_at", "saved_stale"):
+        assert field in body, body.keys()
+    assert body["supply_saved"] == [
+        {
+            "kind": "reserve",
+            "qty": "5",
+            "source_location": f"{MARKER}-BRW",
+            "rung": "pool",
+            "donor_so_number": None,
+        },
+        {
+            "kind": "borrow",
+            "qty": "2",
+            "source_location": f"{MARKER}-MWH",
+            "rung": None,
+            "donor_so_number": f"{MARKER}-DONOR",
+        },
+        {
+            "kind": "buy",
+            "qty": "3",
+            "source_location": None,
+            "rung": None,
+            "donor_so_number": None,
+        },
+    ]
+    assert body["saved_by"] == "SCM Test"
+    assert body["saved_at"]
+    assert body["saved_stale"] is False
+    # Not confirmed: no active revision, so the confirmed columns stay null beside it.
+    assert body["decision_revision"] is None
+    assert body["supply_decided"] is None
+
+
+def test_a_line_with_no_saved_decision_reads_null(scm_app):
+    app, db, _uid_ = _as(scm_app)
+    core = _core_order(db)
+    core.demand_class = "project"
+    line = _core_line(db, core)
+    db.flush()
+
+    with TestClient(app) as c:
+        res = c.get(f"/api/v1/scm/sales-orders/{core.id}")
+
+    body = next(l for l in res.json()["lines"] if l["id"] == line.id)
+    assert body["supply_saved"] is None
+    assert body["saved_by"] is None
+    assert body["saved_at"] is None
+    assert body["saved_stale"] is False
+
+
+def test_a_saved_decision_whose_line_has_since_moved_reads_stale(scm_app):
+    """AC-4.4's own predicate, read on this page too: the line's own outstanding quantity
+    moved since the save (a re-upload, say), never the proposal."""
+    app, db, uid = _as(scm_app)
+    core = _core_order(db)
+    core.demand_class = "project"
+    line = _core_line(db, core, qty=10)
+    db.flush()
+    item_code = line.product.product_code
+    _save_draft(db, core, 1, item_code, decision=SAVED_DECISION, saved_by=uid)
+
+    line.qty_ordered = 25
+    db.flush()
+
+    with TestClient(app) as c:
+        res = c.get(f"/api/v1/scm/sales-orders/{core.id}")
+
+    body = next(l for l in res.json()["lines"] if l["id"] == line.id)
+    assert body["saved_stale"] is True
+
+
+def test_confirming_the_line_replaces_the_saved_decision_with_the_confirmed_one(scm_app):
+    """What Confirm actually does to a saved line (D10): it deletes the draft and writes
+    the active decision, inside the SAME transaction
+    (`ProjectSupplyService._write_decision` calls `project_line_draft_service.
+    delete_drafts_for_lines`). Simulated here at those same two calls rather than by
+    running the whole engine: this page's own job is only to read the aftermath right, and
+    the confirm write itself is covered in `tests/test_so_supply_confirmation.py`."""
+    from app.services import project_line_draft_service
+
+    app, db, uid = _as(scm_app)
+    core = _core_order(db)
+    core.demand_class = "project"
+    line = _core_line(db, core)
+    pso = _planned(db, core)
+    db.flush()
+    item_code = line.product.product_code
+    _save_draft(db, core, 1, item_code, decision=SAVED_DECISION, saved_by=uid)
+
+    deleted = project_line_draft_service.delete_drafts_for_lines(db, [line.id])
+    assert deleted == 1
+    _active_decision(db, pso, revision_no=1, core_line_ids=[line.id])
+
+    with TestClient(app) as c:
+        res = c.get(f"/api/v1/scm/sales-orders/{core.id}")
+
+    assert res.status_code == 200, res.text
+    body = next(l for l in res.json()["lines"] if l["id"] == line.id)
+    assert body["supply_saved"] is None
+    assert body["saved_by"] is None
+    assert body["saved_stale"] is False
+    assert body["decision_revision"] == 1

@@ -775,6 +775,18 @@ class PriorityPolicy(Base):
     # 0. Migration 451. NOT NULL - an unconfigured install charges nothing rather than
     # falling back to a guessed number.
     transfer_days = Column(Integer, nullable=False, default=0, server_default=text("0"))
+    # The site pool's share step (fulfilment feedback batch, S1, 2 Sep ruling R-B,
+    # migration 460). A line due within `immediate_window_days` may take up to
+    # `pool_share_pct`'s complement of the pool's free pile now, bounded by the five-pool
+    # net; beyond the window a line takes the whole allowance or nothing. Two numbers on
+    # this row rather than a sibling table - one policy, activated as a whole, the same
+    # reason `tba_date_from` and `transfer_days` live here.
+    immediate_window_days = Column(
+        Integer, nullable=False, default=30, server_default=text("30")
+    )
+    pool_share_pct = Column(
+        Integer, nullable=False, default=50, server_default=text("50")
+    )
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False

@@ -237,7 +237,8 @@ function DataGrid<TData extends object>({
       base: '',
       header: '',
       headerRow: '',
-      headerSticky: 'sticky top-0 z-10 bg-background/90 backdrop-blur-xs',
+      headerSticky:
+        'sticky top-0 z-(--z-sticky-content) bg-background/90 backdrop-blur-xs',
       body: '',
       bodyRow: '',
       footer: '',

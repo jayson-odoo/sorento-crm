@@ -2125,10 +2125,14 @@ def test_a_line_mixing_stock_with_a_buy_is_refused_the_whole_line_rule_reaches_a
     is exactly the composition purchasing cannot act on: the order inquiry asks for 15 of a
     line the customer owes 20 of, at a location holding the other 5, and nobody can tell from
     the row whether that is a partial buy or a mistake.
+
+    LADDER V8 (R-C) carves ONE case out of the rule - the site pool's own share plus a Buy of
+    the rest, which is a proposal the engine itself now makes - so the mix pinned here is
+    composed at the line's own GROUP location, where the rule is untouched.
     """
     client, world = api
     db = world.db
-    _stock(db, world.product, world.pool_wh, on_hand=100)
+    _stock(db, world.product, world.own_wh, on_hand=100)
     order = _project_so(db, world.project)
     core_so = _core_so(db, world.company_id)
     core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20")
@@ -2142,7 +2146,7 @@ def test_a_line_mixing_stock_with_a_buy_is_refused_the_whole_line_rule_reaches_a
                 {
                     "project_line_id": str(line.id),
                     "timely_spo_qty": "0",
-                    "reserve": [{"warehouse_id": world.pool_wh.id, "qty": "5"}],
+                    "reserve": [{"warehouse_id": world.own_wh.id, "qty": "5"}],
                     "buy_qty": "15",
                 }
             ]
@@ -2333,15 +2337,18 @@ def test_the_frozen_proposal_does_not_depend_on_the_order_the_lines_were_posted_
     therefore the order the planner was actually shown."""
     client, world = api
     db = world.db
-    # 30 in the pool against two lines wanting 20 each: whoever is walked first takes the
-    # bigger share, so the order of the walk is visible in the frozen numbers.
+    # 60 in the pool - 30 of it lendable to a project - against two lines wanting 20 each:
+    # whoever is walked first takes the bigger share, so the order of the walk is visible in
+    # the frozen numbers.
     #
     # TWO DELIVERY DATES, which is what keeps that true under ladder v6: one order's lines
     # for the same item, location and date are ONE planning unit now, and a unit has no
     # internal walk order to be sensitive to - both lines of it would simply buy. A week
     # apart they are two units, the ledger still passes from the first to the second, and
     # this test is still about the order the units are walked in.
-    _stock(db, world.product, world.pool_wh, on_hand=30)
+    # 60, not 30: ladder v8 lends a project HALF the pool (R-B), so 60 is what leaves the
+    # first line 20 to take and the second nothing - the shape this case is about.
+    _stock(db, world.product, world.pool_wh, on_hand=60)
     order = _project_so(db, world.project)
     core_so = _core_so(db, world.company_id)
     first = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20")

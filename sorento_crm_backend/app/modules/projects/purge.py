@@ -69,6 +69,7 @@ from app.models.project_so import (
     SODraftFinding,
     SOLineAllocation,
     SOSupplyDecision,
+    SOSupplyDecisionDraft,
 )
 from app.models.projects import (
     PriceFloorRule,
@@ -121,6 +122,11 @@ PURGE_ORDER: List[Type] = [
     # so_line_allocations.claim_id points at a claim: allocations first, claims after.
     SOLineAllocation,
     AllocationClaim,
+    # so_supply_decision_drafts carries no FK to SOSupplyDecision - it names the CORE sales
+    # order directly (a save claims no stock and a line whose order nobody has adopted can
+    # still be saved) - but a draft is what a decision was BEFORE it was confirmed, so it
+    # purges first, the same order the lifecycle itself runs in.
+    SOSupplyDecisionDraft,
     # order_inquiry_rows.supply_decision_id and so_line_allocations.decision_id both point
     # here, so the decision outlives the components it grouped by one step.
     SOSupplyDecision,

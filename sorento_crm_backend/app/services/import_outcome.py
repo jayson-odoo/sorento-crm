@@ -85,6 +85,7 @@ class ImportOutcome:
         max_rows: int = DEFAULT_MAX_ROWS,
         persist: bool = True,
         session_factory=None,
+        bump_job_progress: bool = False,
     ) -> None:
         self.import_job_id = import_job_id
         self.buffer_size = max(1, buffer_size)
@@ -92,6 +93,15 @@ class ImportOutcome:
         # `persist=False` powers the validation previews: aggregate only, write nothing.
         self.persist = bool(persist and import_job_id is not None)
         self._session_factory = session_factory
+        # Opt-in (S5 review round 1, S2), default OFF: several importers already move
+        # `import_jobs.processed_rows` themselves, mid-run, through their own explicit
+        # `job_service.update_job_progress` calls in `app/tasks/import_tasks.py` - a second,
+        # generic writer bumping the SAME column from inside `flush()` would race those,
+        # not complement them. `_run_scm_upload_job` (the SCM upload machinery this class was
+        # built for) is the only caller that turns it on; every other `ImportOutcome(...)`
+        # construction anywhere else keeps its existing, unrelated progress reporting exactly
+        # as it was.
+        self.bump_job_progress = bump_job_progress
 
         self._buffer: List[Dict[str, Any]] = []
         self._persisted = 0
@@ -233,9 +243,40 @@ class ImportOutcome:
     # ------------------------------------------------------------------
     # Persistence
     # ------------------------------------------------------------------
-    def flush(self) -> None:
-        """Write buffered rows in ONE bulk insert on a session of our own."""
-        if not self._buffer:
+    def flush(self, *, publish: bool = False) -> None:
+        """Write buffered rows in ONE bulk insert on a session of our own.
+
+        `publish`, default False: whether this flush should ALSO bump
+        `import_jobs.processed_rows` to `self.processed`, in the SAME commit as the row
+        insert. Two conditions must BOTH hold before it writes anything - `self.bump_job_progress`
+        (opt-in per recorder, S2) and this call's own `publish=True` (S5 review round 1b, C2):
+        the buffer-full auto-flush inside `_record` never passes it, only an explicit
+        `flush(publish=True)` a caller makes AFTER it knows the rows this flush accounts for
+        are durably committed does. Without that second gate the auto-flush could publish a
+        count for a batch whose own `db.commit()` has not happened yet - a worker killed a
+        moment later would leave the activity card AHEAD of what actually landed, the exact
+        failure mode AC-5.2 exists to rule out. `self.processed` is a plain counter sum
+        (`_counter`), so the number itself is exact even when row detail is capped by
+        `max_rows`.
+
+        The bump runs inside its own SAVEPOINT (`session.begin_nested()`), and is its own
+        inner try/except on top of that: this class's whole point is that observability
+        never breaks the import it is observing, and letting a progress-bump defect (a stub
+        session in a test, a stale `import_job_id`) abort the row insert too would fail AC-A7
+        on a feature this file did not have before. The savepoint means a failed UPDATE
+        rolls back to before it started rather than leaving the session's transaction
+        unusable for the `bulk_insert_mappings` that already happened in the same one.
+
+        C6 (code review round 3 batch 2): an EMPTY buffer with `publish=True` must still
+        publish. `_record` stops appending to `self._buffer` once `max_rows` (200k) is
+        reached (`rows_truncated`), so on a run past that cap every LATER
+        `flush(publish=True)` call arrived here with nothing queued - and the early return
+        used to skip the bump along with the (correctly) skipped insert, freezing
+        `processed_rows` at whatever the cap's own last flush left it. The insert stays
+        conditional on the buffer; the publish does not.
+        """
+        do_publish = publish and self.bump_job_progress
+        if not self._buffer and not do_publish:
             return
         batch, self._buffer = self._buffer, []
         if not self.persist:
@@ -250,7 +291,28 @@ class ImportOutcome:
 
             session = factory()
             _scope_session(session)
-            session.bulk_insert_mappings(ImportJobRow, batch)
+            if batch:
+                session.bulk_insert_mappings(ImportJobRow, batch)
+            if do_publish:
+                try:
+                    from app.models.job import ImportJob
+
+                    with session.begin_nested():
+                        session.query(ImportJob).filter(
+                            ImportJob.id == self.import_job_id
+                        ).update(
+                            {
+                                "processed_rows": self.processed,
+                                "updated_at": datetime.utcnow(),
+                            },
+                            synchronize_session=False,
+                        )
+                except Exception:
+                    logger.debug(
+                        "ImportOutcome could not bump processed_rows for job %s",
+                        self.import_job_id,
+                        exc_info=True,
+                    )
             session.commit()
             self._persisted += len(batch)
         except Exception:

@@ -1,12 +1,13 @@
 'use client';
 
 import * as React from 'react';
-import { Check, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { Check, CheckCircle2, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
+import { cn } from '@/lib/utils';
 import {
   amendNeedsReason,
   matchesSuggestion,
@@ -26,6 +27,7 @@ import {
   type DraftBorrow,
   type DraftLine,
 } from '../../_shared/lib/supplyComposition';
+import { poolShareLimitsOf } from '../../_shared/lib/poolShare';
 import type {
   BoardCellLocation,
   BoardContribution,
@@ -34,6 +36,7 @@ import type {
 } from '../../_shared/types/fulfilmentPlanning.types';
 import { BoardLadderOptionsTable } from './BoardLadderOptionsTable';
 import { BorrowAddDialog } from './BorrowAddDialog';
+import { ReserveAddDialog } from './ReserveAddDialog';
 
 /**
  * The decision on one contributing line, taken IN THE ROW (PLAN section 3.C, ruling R7).
@@ -78,7 +81,14 @@ export function BoardLineDecisionPanel({
    * available beside it. The figure is the SERVER's - the panel never recomputes one.
    */
   locations: BoardCellLocation[];
-  onDecide: (decision: BoardDecision | null) => void;
+  /**
+   * S4/R-F: saves (or, on `null`, undoes) the decision on the SERVER, not only in this
+   * session's draft - `await`ed here so the Save button's own check state (AC-4.1) can wait
+   * for it to settle before showing. Resolves `true` on success (S2, code review round 3):
+   * a rejected write must not show the check either, and `void` stays for callers that have
+   * no result to report (a `?batch=` board pre-marking a row locally, for instance).
+   */
+  onDecide: (decision: BoardDecision | null) => Promise<boolean> | void;
   /**
    * Whether this panel holds an edit nobody has saved. The dialog opens one row at a time,
    * so it has to ask before it closes this one over the planner's work.
@@ -107,8 +117,39 @@ export function BoardLineDecisionPanel({
     () => Boolean(contribution.covered) && !decision,
   );
   const [adding, setAdding] = React.useState(false);
+  const [addingReserve, setAddingReserve] = React.useState(false);
   /** Untouched since it opened. Saving or approving puts it back, because it is saved now. */
   const [dirty, setDirty] = React.useState(false);
+  /**
+   * Whether this line's decision is SAVED as the panel stands (S4, AC-4.1; amended by D4,
+   * captain 3 Sep).
+   *
+   * It used to be a 600 ms flash after `onDecide` resolved, and the captain read the flash
+   * as the save undoing itself: "shows saved then jumps back". So it is the LINE's state
+   * now, not a moment's - the button stays on the check, disabled, for as long as nothing
+   * has been edited since, and any edit puts "Save decision" back (`dirty` below is what
+   * every input already sets). A line that opens on somebody else's saved draft starts
+   * there too: pressing Save on it would write what is already written.
+   */
+  const [savedOnce, setSavedOnce] = React.useState(() => Boolean(contribution.draft));
+
+  /**
+   * N3 (fix round 5): re-seeded whenever the contribution's OWN saved draft changes - a
+   * refetch (another planner saved this line elsewhere) or an Undo fired from the pill
+   * (`BoardDecisionPill`), neither of which goes through this panel's own `save()` /
+   * `reject()`. Seeded at MOUNT only left a panel that stayed open across such a change
+   * reading a state the server had already moved on from: Undo cleared the draft server-side
+   * while this panel's own `savedOnce` (still `true` from mount) kept the button on "Saved".
+   */
+  React.useEffect(() => {
+    setSavedOnce(Boolean(contribution.draft));
+  }, [contribution.draft]);
+
+  /**
+   * Saved AND untouched since (D4). `dirty` is set by every input on this panel, so an edit
+   * of any kind puts "Save decision" back without this having to know which one moved.
+   */
+  const saved = savedOnce && !dirty;
 
   React.useEffect(() => {
     onDirtyChange?.(dirty);
@@ -123,20 +164,64 @@ export function BoardLineDecisionPanel({
     [contribution],
   );
 
+  // Reserve add-location (S3, R-G): any location the cell's own stock rows carry, with free
+  // stock left and not already on the Reserve list. The site pool is not filtered out - R-A
+  // asks it first, so a planner adding it by hand is asking for exactly what the ladder itself
+  // would have asked for.
+  const reserveWarehouseIds = React.useMemo(
+    () =>
+      draft.reserve
+        .map((row) => row.warehouse_id)
+        .filter((id): id is string => Boolean(id)),
+    [draft.reserve],
+  );
+  const reserveCandidates = React.useMemo(
+    () =>
+      locations.filter(
+        (location) =>
+          Boolean(location.warehouse_id) &&
+          !reserveWarehouseIds.includes(location.warehouse_id as string) &&
+          toMinor(location.qty_free_remaining ?? location.qty_free ?? '0') > 0,
+      ),
+    [locations, reserveWarehouseIds],
+  );
+
   const balance = lineBalance(draft);
-  const blockers = lineBlockers(draft);
+  /**
+   * D5: the board CAN check the pool-share carve-out (R-C), because its own cell states each
+   * pool's allowance and the pools' net. Without them this panel refused "BRW 62 + Buy 73" -
+   * the engine's own suggestion on SO419208 line 3, and a composition the server's confirm
+   * has always admitted.
+   */
+  const poolLimits = React.useMemo(() => poolShareLimitsOf(locations), [locations]);
+  const blockers = lineBlockers(draft, poolLimits);
   const needsReason = amendNeedsReason(contribution, draft);
   // Which verdict Save takes, and therefore what it may be pressed for: approving the engine's
   // own composition is never blocked, because there is nothing about it to balance or justify.
   const approving = matchesSuggestion(contribution, draft);
   const canSave =
     blockers.length === 0 && (!needsReason || reason.trim().length > 0);
-  // WHOLLY bought, which is what the switch means. A composition carrying stock AND a Buy is
-  // a revision frozen before the whole-line rule; it renders in full and `lineBlockers` says
-  // it cannot be saved that way.
   const fromStockMinor =
     balance.timelyMinor + balance.reserveMinor + balance.borrowMinor;
-  const buying = toMinor(draft.buy_qty) > 0 && fromStockMinor === 0;
+  /**
+   * WHOLLY bought, which is what the switch means. STATE (B-1, fix round 7), not derived from
+   * the numbers - deriving it used to flip the switch ON the instant `fromStockMinor` hit zero,
+   * which clearing a reserve box (or typing 0 into it) does on its own now that D7's
+   * `editComposition` recomputes `buy_qty` on every keystroke. The switch turning itself on
+   * mid-edit unmounted the Reserve section and the Add-location button under the planner, and
+   * turning it back OFF afterwards took the "nothing was captured" branch below and wrote
+   * zeroes over rows nobody asked to zero.
+   *
+   * Seeded ONCE from the opening draft - a line that opens already wholly bought (its stock
+   * rows already at zero) starts on the switch, the same line `setBuying`'s OFF transition
+   * documents - and changed only by `setBuying` itself. No reactive re-seed: the panel already
+   * remounts fresh (via `draftFor`, the initializer `draft` itself uses) whenever it is closed
+   * and reopened on a different contribution or a different saved draft, which is the only
+   * point this needs to move.
+   */
+  const [buying, setBuyingState] = React.useState(
+    () => toMinor(draft.buy_qty) > 0 && fromStockMinor === 0,
+  );
 
   /**
    * Everything that stops the Save EXCEPT the balance, which the hint beside the summary
@@ -150,7 +235,31 @@ export function BoardLineDecisionPanel({
     setDraft(next);
     setDirty(true);
   };
-  const setBorrow = (borrow: DraftBorrow[]) => edit({ ...draft, borrow });
+
+  /**
+   * D7 (captain, 3 Sep): Buy is never typed on this panel, it FOLLOWS the remainder.
+   *
+   * "BRW 62 · Buy 73" on SO419208 line 3 (open 135) used to leave `buy_qty` frozen at 73 the
+   * instant the BRW reserve was edited down to 60 - the line read short by 2 and Save stayed
+   * blocked, because nothing that touches Reserve or Borrow ever recomputed it. Every input
+   * that changes the STOCK side of the composition writes through here instead of `edit()`
+   * directly: `buy_qty = max(open_qty - reserve - borrow - timely, 0)`, the same arithmetic
+   * `lineBalance` already does, read with Buy zeroed out of the total.
+   *
+   * `setBuying`'s own transitions do NOT call this - they compute their own value for each
+   * direction (see there). Deriving here too would undo the OFF transition on a line that
+   * opened already wholly bought (a frozen decision, or an all-Buy suggestion): its stock
+   * rows are already at zero, and deriving off zero rows hands the whole line straight back
+   * to Buy, so the switch could never actually be turned off.
+   */
+  const editComposition = (next: DraftLine) => {
+    const stockOnly = lineBalance({ ...next, buy_qty: '0' });
+    edit({
+      ...next,
+      buy_qty: fromMinor(Math.max(stockOnly.openMinor - stockOnly.totalMinor, 0)),
+    });
+  };
+  const setBorrow = (borrow: DraftBorrow[]) => editComposition({ ...draft, borrow });
 
   /**
    * The whole line, one way or the other. Never a mix - the confirmation refuses one.
@@ -166,6 +275,7 @@ export function BoardLineDecisionPanel({
     'reserve' | 'borrow' | 'timely_spo_qty'
   > | null>(null);
   const setBuying = (next: boolean) => {
+    setBuyingState(next);
     if (next) {
       stockBefore.current = {
         reserve: draft.reserve,
@@ -184,7 +294,18 @@ export function BoardLineDecisionPanel({
     }
     const held = stockBefore.current;
     stockBefore.current = null;
-    edit({ ...draft, ...(held ?? {}), buy_qty: '0' });
+    if (held) {
+      // D7: the remainder of whatever gets restored, not the flat 0 this used to force - that
+      // used to drop the BRW-62/Buy-73 shape's own Buy to nothing the moment the switch was
+      // tried and put back, when nothing about the stock side had actually changed.
+      editComposition({ ...draft, ...held });
+      return;
+    }
+    // Nothing was captured: the switch was never turned ON in this session, so the line opened
+    // already wholly bought and its stock rows are already at zero. Buy explicitly to 0 - not
+    // derived, or it would hand the whole line straight back - and let the now-empty rows be
+    // typed into.
+    edit({ ...draft, buy_qty: '0' });
   };
 
   /**
@@ -196,21 +317,39 @@ export function BoardLineDecisionPanel({
    * called it the suggestion - SO404352 line 22 stayed at 8 / 16 under a pill reading
    * Approved. The reason goes with it, because an approval overrides nothing.
    */
-  const save = () => {
+  const save = async () => {
+    let ok: boolean | void;
+    if (approving) {
+      ok = await onDecide({ verdict: 'approved', suspected_system_issue: suspected });
+    } else {
+      ok = await onDecide({
+        ...decisionFromAmendDraft(draft, reason),
+        // THE BOOLEAN, never `|| undefined`: `false` is the planner's answer that the numbers
+        // are fine, and dropping the key let the frozen `true` behind it read as current.
+        suspected_system_issue: suspected,
+      });
+    }
+    // S2 (code review round 3): the check state answers the click, but only for a click that
+    // actually landed - `onDecide` returning `false` (a rejected write) must not show a
+    // check the server never earned. `undefined` (a caller with nothing to report) reads as
+    // success, the same as before this fix.
+    //
+    // B1 (fix round 5): every "clean" state change - dirty, locked, and the approving branch's
+    // reseed to the suggestion - waits for that same guard. Setting them before the `await`
+    // meant a REJECTED second save still rendered the button as Saved and disabled: `dirty`
+    // was already false and `savedOnce` was already true from the first, successful save, so
+    // `saved = savedOnce && !dirty` read true over an edit the server never wrote.
+    if (ok === false) return;
     setDirty(false);
     setLocked(false);
     if (approving) {
       setDraft(suggestionDraftFrom(contribution));
       setReason('');
-      onDecide({ verdict: 'approved', suspected_system_issue: suspected });
-      return;
     }
-    onDecide({
-      ...decisionFromAmendDraft(draft, reason),
-      // THE BOOLEAN, never `|| undefined`: `false` is the planner's answer that the numbers
-      // are fine, and dropping the key let the frozen `true` behind it read as current.
-      suspected_system_issue: suspected,
-    });
+    // S4/AC-4.1: the button answers the click itself, within the interaction, before the
+    // pill's own "Saved" and the toast even have to be looked at - and it keeps answering
+    // until the line is edited again (D4).
+    setSavedOnce(true);
   };
 
   const reject = () => {
@@ -292,41 +431,77 @@ export function BoardLineDecisionPanel({
           <Block label="Reserve">
             {buying ? (
               <Muted>The whole line is being bought.</Muted>
-            ) : draft.reserve.length === 0 ? (
-              <Muted>The sales order states no warehouse for this line.</Muted>
             ) : (
               <div className="space-y-2">
-                {draft.reserve.map((row, index) => (
-                  <div
-                    key={row.key}
-                    className="flex flex-wrap items-center gap-2"
+                {draft.reserve.length === 0 ? (
+                  <Muted>The sales order states no warehouse for this line.</Muted>
+                ) : (
+                  draft.reserve.map((row, index) => {
+                    const available = availableAt(
+                      locations,
+                      row.warehouse_id,
+                      row.location,
+                    );
+                    // The SERVER's own guard refuses a reserve above on-hand at that
+                    // location (`_check_reserve_against_on_hand`); this is the same check
+                    // read off the same figure, so a planner sees it before Confirm does
+                    // (AC-3.3). The row is never removed for it - it stays here, editable.
+                    const over =
+                      available !== null && toMinor(row.qty) > toMinor(available);
+                    return (
+                      <div
+                        key={row.key}
+                        className="flex flex-wrap items-center gap-2"
+                      >
+                        <Input
+                          type="number"
+                          min="0"
+                          step="any"
+                          value={row.qty}
+                          disabled={locked}
+                          aria-label={`Reserve at ${row.location ?? 'the fulfilment location'}`}
+                          onChange={(event) => {
+                            const next = [...draft.reserve];
+                            next[index] = { ...row, qty: event.target.value };
+                            editComposition({ ...draft, reserve: next });
+                          }}
+                          className="h-8 w-24 tabular-nums"
+                        />
+                        <span className="text-sm">
+                          {row.location ?? 'Location not set'}
+                        </span>
+                        {/* The SERVER's figure for this location, beside the box it bounds. */}
+                        {available !== null && (
+                          <span
+                            data-testid={`line-reserve-available-${row.key}`}
+                            className={cn(
+                              'text-sm tabular-nums',
+                              over ? 'text-destructive' : 'text-muted-foreground',
+                            )}
+                          >
+                            {over
+                              ? `Only ${available} available here`
+                              : `${available} available`}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+
+                {locked ? null : reserveCandidates.length === 0 ? (
+                  <Muted>No other location holds free stock of this item.</Muted>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setAddingReserve(true)}
                   >
-                    <Input
-                      type="number"
-                      min="0"
-                      step="any"
-                      value={row.qty}
-                      disabled={locked}
-                      aria-label={`Reserve at ${row.location ?? 'the fulfilment location'}`}
-                      onChange={(event) => {
-                        const next = [...draft.reserve];
-                        next[index] = { ...row, qty: event.target.value };
-                        edit({ ...draft, reserve: next });
-                      }}
-                      className="h-8 w-24 tabular-nums"
-                    />
-                    <span className="text-sm">
-                      {row.location ?? 'Location not set'}
-                    </span>
-                    {/* The SERVER's figure for this location, beside the box it bounds. */}
-                    {availableAt(locations, row.warehouse_id, row.location) !==
-                      null && (
-                      <span className="text-sm text-muted-foreground tabular-nums">
-                        {`${availableAt(locations, row.warehouse_id, row.location)} available`}
-                      </span>
-                    )}
-                  </div>
-                ))}
+                    <Plus className="size-4" aria-hidden />
+                    Add location
+                  </Button>
+                )}
               </div>
             )}
           </Block>
@@ -438,6 +613,17 @@ export function BoardLineDecisionPanel({
                     ? `Buy the whole ${draft.open_qty}`
                     : 'Buy the whole line'}
                 </label>
+                {/* D7: what the switch means while it is OFF - the remainder `edit()` derives,
+                    never a figure the planner types. Zero is still an answer ("Buy 0"), not a
+                    blank: it says the reserve, borrow and incoming already cover the line. */}
+                {!buying && (
+                  <span
+                    data-testid={`line-buy-derived-${contribution.key}`}
+                    className="text-sm tabular-nums text-muted-foreground"
+                  >
+                    {`Buy ${draft.buy_qty}`}
+                  </span>
+                )}
               </div>
               {/* An order back is a Buy whose supply is ALREADY on order or already shipped,
                   so the row purchasing gets carries verb ORDER BACK. Offered only while the
@@ -606,11 +792,22 @@ export function BoardLineDecisionPanel({
               <Button
                 type="button"
                 size="sm"
-                disabled={!approving && !canSave}
+                // Disabled ON the saved state too (D4): there is nothing left to save, and a
+                // live button under the word "Saved" invites a second write of the same row.
+                disabled={saved || (!approving && !canSave)}
                 onClick={save}
               >
-                <Check className="size-4" aria-hidden />
-                Save decision
+                {saved ? (
+                  <>
+                    <CheckCircle2 className="size-4" aria-hidden />
+                    Saved
+                  </>
+                ) : (
+                  <>
+                    <Check className="size-4" aria-hidden />
+                    Save decision
+                  </>
+                )}
               </Button>
               <Button
                 type="button"
@@ -658,6 +855,37 @@ export function BoardLineDecisionPanel({
                 same_agent: candidate.same_agent,
               },
             ])
+          }
+        />
+      )}
+
+      {addingReserve && (
+        <ReserveAddDialog
+          lineNo={contribution.line_no}
+          itemCode={contribution.item_code}
+          locations={reserveCandidates}
+          // S-1 (fix round 7): NOT `open - total` - `total` now includes D7's derived Buy, so
+          // on an already-composed line (BRW 62 + Buy 73) it read 0 and the dialog fell back
+          // to the location's WHOLE free stock (`ReserveAddDialog.openingQty`). What is left
+          // to cover from STOCK is the open quantity minus everything except the Buy.
+          openRemainder={fromMinor(
+            Math.max(balance.openMinor - (balance.totalMinor - balance.buyMinor), 0),
+          )}
+          onDone={() => setAddingReserve(false)}
+          onAdd={(location, qty) =>
+            editComposition({
+              ...draft,
+              reserve: [
+                ...draft.reserve,
+                {
+                  key: `reserve-${location.warehouse_id}-${draft.reserve.length}`,
+                  location: location.location,
+                  warehouse_id: location.warehouse_id ?? '',
+                  qty,
+                  reason: '',
+                },
+              ],
+            })
           }
         />
       )}
@@ -748,7 +976,15 @@ function availableAt(
     locations.find(
       (row) => row.warehouse_id && row.warehouse_id === warehouseId,
     ) ?? (code ? locations.find((row) => row.location === code) : undefined);
-  return found?.available_qty ?? null;
+  // NOT `available_qty` (B2, code review round 3): it is AutoCount's own SIGNED whole-book
+  // figure - negative at a location like MWH-IB (-15514) - so it flagged the ENGINE'S OWN
+  // suggestions as oversold. `qty_free_remaining` (falling back to `qty_free` before any
+  // proposal has drawn it down) is the figure `reserveCandidates` and this dialog's own
+  // `ReserveAddDialog.openingQty` already offer on, so the echo agrees with what a planner
+  // was shown when they picked the location. The server's own guard
+  // (`_check_reserve_against_on_hand`, on hand minus confirmed holds) stays the authority at
+  // Confirm; this is only the echo shown while typing.
+  return found?.qty_free_remaining ?? found?.qty_free ?? null;
 }
 
 /** One editable section, labelled the way the sheet labels it, so the two read the same. */

@@ -260,6 +260,85 @@ describe('lineBlockers', () => {
     ]);
   });
 
+  /**
+   * D5 (captain, 3 Sep, SO419208 line 3). The ONE mix the rule allows, and the client used
+   * to refuse the engine's own suggestion because of it: inside the immediate window a site
+   * pool lends its share and the remainder is bought (R-B/R-C), so "BRW 62 + Buy 73" is a
+   * composition the walk MAKES and the server's own confirm admits (`_is_pool_share_split`).
+   *
+   * The bound is the same one the server reads: each pool's own `available_for_project`, and
+   * the five pools' net over all of them together.
+   */
+  it('admits a site pool share beside a Buy, inside that pool s own allowance', () => {
+    expect(
+      lineBlockers(
+        draft({ open_qty: '135', reserve: [reserve('62')], buy_qty: '73' }),
+        { allowanceByWarehouseId: { [WAREHOUSE_BRW]: '62' }, net: '400' },
+      ),
+    ).toEqual([]);
+  });
+
+  it('refuses a pool draw beyond what that pool may spare, and says the allowance', () => {
+    expect(
+      lineBlockers(
+        draft({ open_qty: '135', reserve: [reserve('70')], buy_qty: '65' }),
+        { allowanceByWarehouseId: { [WAREHOUSE_BRW]: '62' }, net: '400' },
+      ),
+    ).toEqual([
+      'Line 1, CB6633: BRW-BB can spare 62 for this line, and 70 was asked for. Take ' +
+        'the whole 135 from stock, or buy the whole 135.',
+    ]);
+  });
+
+  it('refuses pool draws that together pass the five-pool net', () => {
+    expect(
+      lineBlockers(
+        draft({
+          open_qty: '135',
+          reserve: [reserve('40'), reserve('40', 'r2', 'MWH', WAREHOUSE_HQ)],
+          buy_qty: '55',
+        }),
+        {
+          allowanceByWarehouseId: { [WAREHOUSE_BRW]: '62', [WAREHOUSE_HQ]: '62' },
+          net: '60',
+        },
+      ),
+    ).toEqual([
+      'Line 1, CB6633: the site pools net 60 between them, and 80 was asked for. Take ' +
+        'the whole 135 from stock, or buy the whole 135.',
+    ]);
+  });
+
+  it('still refuses an OWN bin beside a Buy: only a site pool keeps a share back', () => {
+    expect(
+      lineBlockers(
+        draft({ open_qty: '135', reserve: [reserve('62')], buy_qty: '73' }),
+        // BRW-BB is this line's own bin here, so it states no allowance at all.
+        { allowanceByWarehouseId: {}, net: '400' },
+      ),
+    ).toEqual([
+      'Line 1, CB6633: a line is either met wholly from stock or wholly bought. ' +
+        'This one mixes 62 from stock with a Buy of 73.',
+    ]);
+  });
+
+  it('still refuses a BORROW beside a Buy, whatever the pool may spare', () => {
+    expect(
+      lineBlockers(
+        draft({
+          open_qty: '135',
+          reserve: [reserve('42')],
+          borrow: [borrow('20', 'SO400001 can wait.')],
+          buy_qty: '73',
+        }),
+        { allowanceByWarehouseId: { [WAREHOUSE_BRW]: '62' }, net: '400' },
+      ),
+    ).toEqual([
+      'Line 1, CB6633: a line is either met wholly from stock or wholly bought. ' +
+        'This one mixes 62 from stock with a Buy of 73.',
+    ]);
+  });
+
   it('lets either pure composition through', () => {
     expect(
       lineBlockers(draft({ open_qty: '100', reserve: [reserve('100')], buy_qty: '0' })),

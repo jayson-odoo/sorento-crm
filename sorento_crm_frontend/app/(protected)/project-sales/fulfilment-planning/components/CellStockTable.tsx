@@ -4,7 +4,19 @@ import * as React from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { PillOverflow, type PillItem } from '@/components/common/PillOverflow';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
+import {
+  availableForProject,
+  availableForProjectOf,
+  DEFAULT_POOL_SHARE_PCT,
+  POOLS_SET,
+} from '../../_shared/lib/poolShare';
+import {
+  PILL_TONE,
+  SHORT_LABELS,
+  type SupplyKind,
+} from '../../_shared/lib/supplyVocabulary';
 import { StockDocumentsPanel } from './StockDocumentsPanel';
 import type {
   BoardCellLocation,
@@ -39,6 +51,9 @@ const NOT_STATED_TITLE =
 
 /** Nothing drawn: every row reads 0. Module-level, so it is not a new object per render. */
 const EMPTY_TAKEN: Map<string, string> = new Map();
+/** Nothing drawn, kept apart by kind: every Taken cell renders the number alone. */
+const EMPTY_TAKEN_KINDS: Map<string, { kind: SupplyKind; qty: string }[]> =
+  new Map();
 
 const WHERE_LABELS: Record<BoardLocationWhere, string> = {
   own: 'Own location',
@@ -96,6 +111,12 @@ export interface CellStockTableProps {
    */
   taken?: Map<string, string>;
   /**
+   * `taken`'s own breakdown by kind (S3b, R-J: `supplyVocabulary.takenKindsByLocation`) - one
+   * pill per part under the Taken figure, when a location was drawn on by more than one kind.
+   * A location with no entry, or one entry, renders the number alone; the number never moves.
+   */
+  takenKinds?: Map<string, { kind: SupplyKind; qty: string }[]>;
+  /**
    * The cell's own contributing lines, passed down to the expanded documents panel so their
    * rows are tagged there. The table itself does not read them.
    */
@@ -130,6 +151,15 @@ export interface CellStockTableProps {
    * dialog wants the auto-land its own default-landing contract promises.
    */
   landOnMount?: boolean;
+  /**
+   * How much of a site pool is kept back for dealers, off the board's own policy
+   * (`PlanningBoard.pool_share_pct`, LADDER v8 R-K). Every site-pool ROW already arrives
+   * with `available_for_project` computed by the server; this is only what the pool
+   * SUBTOTAL applies the same rule with, over the pool's own net - a figure that belongs to
+   * the set rather than to any bin, so no row carries it. Defaulted, so a caller with no
+   * board in hand (this component's own tests) still renders the documented rule.
+   */
+  poolSharePct?: number;
 }
 
 /**
@@ -146,16 +176,19 @@ export const CellStockTable = React.forwardRef<
     locations,
     groupNote,
     taken,
+    takenKinds,
     lineIds,
     forLine,
     donor,
     documentInfo,
     filterText,
     landOnMount,
+    poolSharePct = DEFAULT_POOL_SHARE_PCT,
   },
   ref,
 ) {
   const drawn = taken ?? EMPTY_TAKEN;
+  const drawnKinds = takenKinds ?? EMPTY_TAKEN_KINDS;
   /**
    * Which locations stand open. Several at once on purpose: a cell that draws on its own
    * location and on the shared pool is opened precisely to compare the two, and an accordion
@@ -197,24 +230,35 @@ export const CellStockTable = React.forwardRef<
 
   /**
    * Opens whichever section a jump names - the GROUP subtotal when the set nets one (the
-   * mockup's "Balance after" reading), or the bin's own row when it does not - and raises the
-   * signal every open `StockDocumentsPanel` checks itself against.
+   * mockup's "Balance after" reading), or ONE bin's own row when it does not (N2, fix round
+   * 5) - and raises the signal every open `StockDocumentsPanel` checks itself against.
+   *
+   * N2: this used to open EVERY row of the section, and every open ledger's own section row
+   * is sticky under the table's header (D3) - several open at once stacked their sticky
+   * rows on top of one another. `location`, when the caller has one (a donor / document
+   * jump names the bin it points at), picks that row; without one (`jumpToThisLine`, whose
+   * section is a single own-location row anyway) the section's first addressable row opens,
+   * so a bare jump never opens more than one ledger.
    */
   const openSectionAndJump = React.useCallback(
-    (section: StockSection | undefined, kind: StockJumpTarget['kind']) => {
+    (
+      section: StockSection | undefined,
+      kind: StockJumpTarget['kind'],
+      location?: string | null,
+    ) => {
       if (!section) return;
       if (section.netOf && sectionProductId(section)) {
         setExpandedSets((current) => ({ ...current, [section.key]: true }));
       } else {
-        setExpanded((current) => {
-          const next = { ...current };
-          for (const row of section.rows) {
-            if (row.location && row.product_id && row.warehouse_id) {
-              next[row.location] = true;
-            }
-          }
-          return next;
-        });
+        const addressable = (row: StockSection['rows'][number]) =>
+          Boolean(row.location && row.product_id && row.warehouse_id);
+        const target =
+          section.rows.find((row) => row.location === location && addressable(row)) ??
+          section.rows.find(addressable);
+        if (target?.location) {
+          const key = target.location;
+          setExpanded((current) => ({ ...current, [key]: true }));
+        }
       }
       jumpNonceRef.current += 1;
       setActiveJump({ kind, nonce: jumpNonceRef.current });
@@ -251,11 +295,13 @@ export const CellStockTable = React.forwardRef<
         openSectionAndJump(
           sectionAt((target ?? donor?.[0])?.location) ?? ownSection(),
           'donor',
+          (target ?? donor?.[0])?.location,
         ),
       jumpToDocument: (target) =>
         openSectionAndJump(
           sectionAt((target ?? documentInfo)?.location) ?? ownSection(),
           'document',
+          (target ?? documentInfo)?.location,
         ),
     }),
     [openSectionAndJump, ownSection, sectionAt, donor, documentInfo],
@@ -426,6 +472,14 @@ export const CellStockTable = React.forwardRef<
                         // Signed and never clamped: a negative Available IS the shortfall, and the
                         // colour is what makes it the number the eye lands on.
                         const negative = column.signed && isNegative(value);
+                        // The Taken figure's own breakdown by kind (S3b, R-J): a location
+                        // this cell draws on from more than one kind - a Reserve off the
+                        // floor AND a borrow, say - gets a pill per part under the number.
+                        // One kind or none renders the number alone; the number never moves.
+                        const kinds =
+                          column.key === 'taken' && entry.location
+                            ? (drawnKinds.get(entry.location) ?? [])
+                            : [];
                         return (
                           <td
                             key={column.key}
@@ -442,6 +496,25 @@ export const CellStockTable = React.forwardRef<
                             >
                               {value ?? BLANK}
                             </span>
+                            {kinds.length > 1 && (
+                              <PillOverflow
+                                items={kinds.map((part, index) => ({
+                                  key: `${entry.location}-${part.kind}-${index}`,
+                                  label: `${SHORT_LABELS[part.kind]} ${part.qty}`,
+                                  tone: PILL_TONE[part.kind],
+                                }))}
+                                ariaLabel="Taken from"
+                                testId={`stock-taken-pills-${testKey}`}
+                                className="mt-0.5"
+                                renderPopover={(items: PillItem[]) => (
+                                  <div className="space-y-1">
+                                    {items.map((item) => (
+                                      <p key={item.key}>{item.label}</p>
+                                    ))}
+                                  </div>
+                                )}
+                              />
+                            )}
                           </td>
                         );
                       })}
@@ -530,11 +603,21 @@ export const CellStockTable = React.forwardRef<
                         }
                         const isNet =
                           column.key === 'available' && section.net !== null;
-                        const total = isNet
-                          ? section.net
-                          : sumOf(section.rows, (entry) =>
-                              valueOf(column, entry, drawn),
-                            );
+                        // R-K: the SUBTOTAL's own Available-for-Project is not a sum of the
+                        // rows above it, same reason `isNet` is not for Available - on a SITE
+                        // POOL it is the share of the pool's own net, which every pool row
+                        // already agrees on (`_net_fields`, the same value each row's `net`
+                        // carries). On every other section it IS that section's Available
+                        // (D2, captain 3 Sep): nothing is kept back outside a pool, and the
+                        // "-" it used to print read as missing data.
+                        const total =
+                          column.key === 'available-for-project'
+                            ? projectShareSubtotalOf(section, drawn, poolSharePct)
+                            : isNet
+                              ? section.net
+                              : sumOf(section.rows, (entry) =>
+                                  valueOf(column, entry, drawn),
+                                );
                         return (
                           <td
                             key={column.key}
@@ -620,12 +703,31 @@ export const CellStockTable = React.forwardRef<
                       />
                     );
                   }
-                  const total = sumOf(locations, (entry) =>
-                    valueOf(column, entry, drawn),
-                  );
+                  // Nit (code review round 3 batch 2), amended by D2, and S4 (fix round 5):
+                  // neither Available nor Available for Project is a sum of the ROWS, the
+                  // same reason the site pool SUBTOTAL isn't (R-K) - a plain `sumOf
+                  // (locations, ...)` added every pool row's own figure together, which
+                  // undercounts the SET's true net whenever the cell lists fewer pool rows
+                  // than the five the net covers, and the two Total columns disagreed
+                  // outside a pool (Available for Project already summed subtotals;
+                  // Available did not). Both are the SUBTOTALS added up now, which is how
+                  // each column's own total reads once every section has stated its own.
+                  const total =
+                    column.key === 'available-for-project'
+                      ? sumValues(
+                          sections.map((section) =>
+                            projectShareSubtotalOf(section, drawn, poolSharePct),
+                          ),
+                        )
+                      : column.key === 'available'
+                        ? sumValues(
+                            sections.map((section) => availableSubtotalOf(section, drawn)),
+                          )
+                        : sumOf(locations, (entry) => valueOf(column, entry, drawn));
                   return (
                     <td key={column.key} className={cn(NUMBER_COL, FOOT_CELL)}>
                       <span
+                        data-testid={`stock-total-${column.key}`}
                         className={cn(
                           'block truncate text-end tabular-nums',
                           total === null && 'font-normal text-muted-foreground',
@@ -744,9 +846,6 @@ function labelOf(where: BoardLocationWhere, netOf: string | null): string {
   return `${WHERE_LABELS[where]} subtotal`;
 }
 
-/** What the server calls the five-pool set on `net_of`. */
-const POOLS_SET = 'pools';
-
 const HEAD_CELL =
   'sticky top-0 z-10 border-b border-e border-border bg-muted px-2 py-1.5 text-start align-bottom font-medium';
 const BODY_CELL = 'border-b border-e border-border px-2 py-1.5 align-middle';
@@ -804,6 +903,22 @@ const NUMERIC_COLUMNS: {
     total: true,
     signed: true,
   },
+  // R-K, S2: what the pool may still give a PROJECT line once its own dealer share is kept
+  // back (`min(floor(available x (100 - share) / 100), max(five-pool net, 0))`). Every site
+  // pool row states it, `0` included.
+  //
+  // OUTSIDE A SITE POOL IT IS SIMPLY `Available` (D2, captain 3 Sep): no dealer share is
+  // kept back at an own bin, a group sibling or another group, so everything Available
+  // there is available to a project - the same signed figure, negative included. It used to
+  // print "-", and a dash in a numeric column reads as missing data rather than as a rule
+  // that does not apply.
+  {
+    key: 'available-for-project',
+    label: 'Available for Project',
+    of: (entry) => availableForProjectOf(entry),
+    total: true,
+    signed: true,
+  },
   // Information, deliberately NOT folded into Available: a purchase order reaches a project
   // line through a link, never by sitting at the location. "500 already on order at DC1" is
   // what decides between a Buy and a transfer, and until now the planner had to leave the
@@ -852,11 +967,45 @@ function sumOf(
   locations: BoardCellLocation[],
   pick: (entry: BoardCellLocation) => string | null,
 ): string | null {
-  const stated = locations
-    .map(pick)
-    .filter((value): value is string => value !== null);
+  return sumValues(locations.map(pick));
+}
+
+/** The same rule over figures already picked, for a total summed across SECTIONS (D2). */
+function sumValues(values: (string | null)[]): string | null {
+  const stated = values.filter((value): value is string => value !== null);
   if (stated.length === 0) return null;
   return fromMinor(stated.reduce((total, value) => total + toMinor(value), 0));
+}
+
+/**
+ * What one section's Available subtotal prints: the SET's own net when the server states one
+ * (the figure covers every location of the set, listed here or not), and otherwise the rows
+ * added up.
+ */
+function availableSubtotalOf(
+  section: StockSection,
+  drawn: Map<string, string>,
+): string | null {
+  if (section.net !== null) return section.net;
+  const column = NUMERIC_COLUMNS.find((entry) => entry.key === 'available');
+  return column ? sumOf(section.rows, (entry) => valueOf(column, entry, drawn)) : null;
+}
+
+/**
+ * What one section's "Available for Project" subtotal prints (R-K, amended by D2).
+ *
+ * A SITE POOL keeps a share back for dealers, so its figure is the share of its own net. No
+ * other set keeps anything back, so its figure IS its Available - the same signed number,
+ * read off the same place the Available cell reads it, so the two can never disagree.
+ */
+function projectShareSubtotalOf(
+  section: StockSection,
+  drawn: Map<string, string>,
+  poolSharePct: number,
+): string | null {
+  return section.netOf === POOLS_SET
+    ? availableForProject(section.net, section.net, poolSharePct)
+    : availableSubtotalOf(section, drawn);
 }
 
 function isNegative(value: string | null): boolean {

@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 import {
   adoptSalesOrder,
   confirmMany,
+  deleteLineDraft,
   getClassificationEvidence,
   getPileQueue,
   getPlanningBoard,
@@ -14,12 +15,15 @@ import {
   getStockDetail,
   getSupply,
   listFulfilmentPlanning,
+  putLineDraft,
   rerunReconciliation,
 } from '../services/fulfilmentPlanningService';
 import { listPlans } from '../services/plansService';
 import type {
   AdoptSalesOrderResult,
+  BoardDecision,
   BoardGranularity,
+  BoardLineDraft,
   ConfirmManyBody,
   ConfirmSupplyBody,
   FulfilmentPlanningListParams,
@@ -398,4 +402,51 @@ export function useConfirmManyMutation() {
     },
     onError: (error: Error) => toast.error(error.message),
   });
+}
+
+/**
+ * Save decision / Undo (S4, R-F): a line's decision on the SERVER, surviving a reload,
+ * another device, another planner.
+ *
+ * Invalidates only the board - the two writes this hook makes never change a decision's
+ * COUNT the way Confirm does (a draft is never `active`), so the worklist, the plans list
+ * and the rest of `useConfirmManyMutation`'s long invalidation list have nothing to learn
+ * from either one.
+ *
+ * NO SUCCESS TOAST HERE (D6, matching `useConfirmManyMutation`'s own note): the sentence
+ * "Line 3 saved - 4 to confirm" (AC-4.1) needs the FRESH board-wide confirm count, which
+ * this hook does not have - only `FulfilmentBoardPanel`'s own `decide()`, which already
+ * computed the optimistic local update, can say it without a second, stale-by-one-render
+ * toast. `onError` still speaks here, the same as every other mutation on this screen.
+ */
+export function useLineDraftMutation() {
+  const queryClient = useQueryClient();
+
+  const save = useMutation({
+    mutationFn: ({ key, decision }: { key: string; decision: BoardDecision }) =>
+      putLineDraft(key, decision),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [PLANNING_BOARD_KEY] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  const remove = useMutation({
+    mutationFn: (key: string) => deleteLineDraft(key),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [PLANNING_BOARD_KEY] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  return {
+    /**
+     * NO `proposed` (S1, code review round 3): the server snapshots the LINE's own facts
+     * (outstanding qty, required date) at save time, never the proposal - see
+     * `putLineDraft`'s own note. The SAVER comes off the caller's own JWT and is never sent.
+     */
+    save: (key: string, decision: BoardDecision): Promise<BoardLineDraft> =>
+      save.mutateAsync({ key, decision }),
+    remove: (key: string): Promise<void> => remove.mutateAsync(key),
+  };
 }
