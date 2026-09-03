@@ -11,6 +11,15 @@
  *   GET    /tag-templates/{id}/versions                          -> TagTemplateVersion[] (newest first)
  *   GET    /tag-templates/{id}/versions/{versionId}               -> TagTemplateVersionDetail
  *   POST   /tag-templates/{id}/versions/{versionId}/restore       -> TagTemplate (draft <- version doc)
+ *
+ * S4 (D1, D9, AC-S4-6/7/8/9):
+ *   POST   /tag-templates/from-tag
+ *     { name, family, doc, print_size } -> TagTemplate, 201
+ *     Creates the template AND publishes it as v1 in ONE transaction - the
+ *     designer's "Save as template" never leaves a draft nobody sees, because
+ *     nothing reads a draft template's doc anywhere but its own editor.
+ *     `published_version_no` on the response is always 1. Declared before
+ *     `/{template_id}` on the backend, same reason `/resolve-preview` is.
  */
 
 import { apiFetch } from '@/lib/api';
@@ -177,4 +186,40 @@ export async function restoreTemplateVersion(
     throw new Error(await extractApiError(response, 'Failed to restore version'));
   }
   return response.json();
+}
+
+// ---------------------------------------------------------------------------
+// Save as template (S4)
+// ---------------------------------------------------------------------------
+
+export interface CreateTemplateFromTagInput {
+  name: string;
+  family: TagTemplateFamily;
+  doc: TagTemplateDoc;
+  print_size: { width_mm: number; height_mm: number };
+}
+
+/**
+ * PHASE 1 MOCK - swapped for apiFetch (`POST ${BASE}/from-tag`) in Phase 2.
+ * Creates AND publishes v1 in one call (AC-S4-7); the mock answers exactly
+ * that shape so the toast/"Open" link and the picker refresh work the same
+ * way they will once the route exists.
+ */
+export async function createTemplateFromTag(
+  input: CreateTemplateFromTagInput,
+): Promise<TagTemplate> {
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const id = `mock-template-${Date.now()}`;
+  const now = new Date().toISOString();
+  return {
+    id,
+    name: input.name,
+    family: input.family,
+    doc: input.doc,
+    print_size: input.print_size,
+    created_at: now,
+    updated_at: now,
+    published_version_id: `mock-version-${id}`,
+    published_version_no: 1,
+  };
 }

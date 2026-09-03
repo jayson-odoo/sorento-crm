@@ -31,6 +31,8 @@ import type {
   TagSheet,
   TagSheetDoc,
   TagTemplate,
+  TagTemplateDoc,
+  TagTemplateFamily,
 } from './tag-template-types';
 
 // ---------------------------------------------------------------------------
@@ -229,6 +231,63 @@ export function tagSizePresets(templates: TagTemplate[]): TagSizePreset[] {
   );
 
   return presets;
+}
+
+// ---------------------------------------------------------------------------
+// Save as template (S4, PLAN D1)
+// ---------------------------------------------------------------------------
+
+/** What `templateFromTag` needs beyond the tag's own layers/size. */
+export interface TemplateFromTagInput {
+  name: string;
+  family: TagTemplateFamily;
+  /** Fresh id generator, so a saved template shares none of its layer ids
+   *  with the tag it was cloned from (AC-S4-9) - callers pass their own
+   *  monotonic id source, the same one every other clone in this file uses. */
+  newId: () => string;
+}
+
+/**
+ * Turn a designed tag into a template payload (AC-S4-6/7/9, D1).
+ *
+ * Every layer gets a fresh id (group `children` remapped alongside), so the
+ * saved template shares nothing with the tag it came from - editing one can
+ * never reach into the other. Bound layers (`slot_binding` set) lose their
+ * `text_override`: a slot binding is what makes a template apply to every
+ * product in the family, and a value typed for THIS line is not that. Unbound
+ * text - a hand-typed heading, say - has no binding to fall back to and stays
+ * exactly as typed.
+ */
+export function templateFromTag(
+  tag: PlacedTag,
+  input: TemplateFromTagInput,
+): { name: string; family: TagTemplateFamily; doc: TagTemplateDoc; print_size: { width_mm: number; height_mm: number } } {
+  const idMap = new Map<string, string>();
+  for (const layer of tag.layers) idMap.set(layer.id, input.newId());
+
+  const layers: TagLayer[] = tag.layers.map((layer) => {
+    const clone: TagLayer = {
+      ...structuredClone(layer),
+      id: idMap.get(layer.id) as string,
+      text_override: layer.slot_binding ? null : layer.text_override,
+    };
+    if (clone.props.kind === 'group') {
+      clone.props = {
+        ...clone.props,
+        children: clone.props.children
+          .map((childId) => idMap.get(childId))
+          .filter((childId): childId is string => Boolean(childId)),
+      };
+    }
+    return clone;
+  });
+
+  return {
+    name: input.name,
+    family: input.family,
+    doc: { layers, width_mm: tag.width_mm, height_mm: tag.height_mm },
+    print_size: { width_mm: tag.width_mm, height_mm: tag.height_mm },
+  };
 }
 
 /**

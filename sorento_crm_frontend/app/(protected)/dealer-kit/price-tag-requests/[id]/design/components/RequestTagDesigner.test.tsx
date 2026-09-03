@@ -150,11 +150,22 @@ vi.mock('./ArrangeSheetView', () => ({
 
 vi.mock('../../../../services/tagTemplateService', () => ({
   listPublishedTemplates: vi.fn(),
+  createTemplateFromTag: vi.fn(),
 }));
 vi.mock('../../../../services/priceTagRequestService', () => ({
   resolveRequestLines: vi.fn(),
   transitionPriceTagRequest: vi.fn(),
   exportTagSheet: vi.fn(),
+}));
+// Tag Size control's "Saved sizes" group (S4): a react-query hook this suite
+// has no QueryClientProvider for, and nothing here tests the saved-sizes flow
+// itself - `TagSizeControl.test.tsx` (or its own coverage) owns that. An
+// empty list keeps every existing assertion about the "Custom" dropdown and
+// the resize flow unchanged.
+vi.mock('../../../../tag-sizes/hooks/useTagSizes', () => ({
+  useTagSizesQuery: () => ({ data: [] }),
+  useDeleteTagSize: () => ({ mutate: vi.fn() }),
+  useCreateTagSize: () => ({ mutateAsync: vi.fn(async () => ({})), isPending: false }),
 }));
 
 import { listPublishedTemplates } from '../../../../services/tagTemplateService';
@@ -851,7 +862,7 @@ describe('RequestTagDesigner - manual Save (S4)', () => {
     await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole('button', { name: 'Add layer' }));
-    fireEvent.click(screen.getByRole('button', { name: /^Save/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
     // The pending draft went first, so a late draft write cannot land after
@@ -909,7 +920,7 @@ describe('RequestTagDesigner - manual Save (S4)', () => {
     );
     await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
 
-    fireEvent.click(screen.getByRole('button', { name: /^Save/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
     expect(onAutosave).not.toHaveBeenCalled();

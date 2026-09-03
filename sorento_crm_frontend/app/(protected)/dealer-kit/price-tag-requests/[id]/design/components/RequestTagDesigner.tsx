@@ -46,6 +46,7 @@ import {
   Eye,
   Save,
   RefreshCw,
+  X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -74,6 +75,7 @@ import type {
   TagSheetDoc,
   TagTemplate,
   TagTemplateDoc,
+  TagTemplateFamily,
 } from '@/lib/dealer-kit/tag-template-types';
 import { IMPOSITION_PRESETS, familyLabel } from '@/lib/dealer-kit/tag-template-types';
 import { lineFamily } from '@/lib/dealer-kit/line-family';
@@ -100,6 +102,7 @@ import { useKitLibrary } from '@/app/(protected)/dealer-kit/tag-templates/compon
 import { useAutosave } from '@/hooks/useAutosave';
 import { ArrangeSheetView } from './ArrangeSheetView';
 import { TemplatePickDialog } from './TemplatePickDialog';
+import { SaveAsTemplateDialog } from './SaveAsTemplateDialog';
 import {
   resolveRequestLines,
   transitionPriceTagRequest,
@@ -110,6 +113,8 @@ import {
 import { listPublishedTemplates } from '../../../../services/tagTemplateService';
 import { FocusShell, FocusToggle } from '../../../../components/FocusMode';
 import { AutosaveIndicator } from '../../../../components/AutosaveIndicator';
+import { SaveAsSizeDialog } from './SaveAsSizeDialog';
+import { useDeleteTagSize, useTagSizesQuery } from '../../../../tag-sizes/hooks/useTagSizes';
 
 let idSeq = 0;
 function newTagId(): string {
@@ -182,6 +187,8 @@ export function RequestTagDesigner({
   const [replaceAsk, setReplaceAsk] = useState<{ lineId: string; templateId: string } | null>(
     null,
   );
+  /** "Save as template" (S4, D1): the currently designed tag, published in one go. */
+  const [saveTemplateOpen, setSaveTemplateOpen] = useState(false);
 
   const [saving, setSaving] = useState(false);
   const [transitioning, setTransitioning] = useState(false);
@@ -643,6 +650,31 @@ export function RequestTagDesigner({
     router.push(`/dealer-kit/price-tag-requests/${request.id}`);
   }, [flush, router, request.id]);
 
+  // -- Save as template (S4, D1) -----------------------------------------------
+
+  const selectedLine = selectedLineId
+    ? request.lines.find((l) => l.id === selectedLineId) ?? null
+    : null;
+  const selectedLineCode = selectedLineId ? resolved.get(selectedLineId)?.code ?? '' : '';
+  const saveTemplateDefaultName = selectedLineCode ? `${selectedLineCode} tag` : 'New tag';
+  const saveTemplateDefaultFamily = (
+    selectedLine ? lineFamily(selectedLine, selectedLineCode) : 'ala_carte'
+  ) as TagTemplateFamily;
+
+  const handleTemplateCreated = useCallback((created: TagTemplate) => {
+    // PHASE 1: the mock answers a template the real backend does not have
+    // yet, so the picker's source is appended to directly - `loadTemplates()`
+    // (a genuine refetch) replaces this line in Phase 2, once the backend
+    // really does return it published.
+    setTemplates((prev) => [...prev, created]);
+    toast.success(`Template "${created.name}" published`, {
+      action: {
+        label: 'Open',
+        onClick: () => router.push(`/dealer-kit/tag-templates/${created.id}`),
+      },
+    });
+  }, [router]);
+
   // -- Render ----------------------------------------------------------------
 
   const rail = (
@@ -716,6 +748,19 @@ export function RequestTagDesigner({
           className="h-7 text-xs"
           iconClassName="size-3.5"
         />
+
+        {mode === 'design' && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs"
+            onClick={() => setSaveTemplateOpen(true)}
+            disabled={!selectedTag}
+          >
+            <LayoutTemplate className="mr-1 size-3.5" />
+            Save as template
+          </Button>
+        )}
 
         <Button
           variant="outline"
@@ -853,6 +898,15 @@ export function RequestTagDesigner({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <SaveAsTemplateDialog
+        open={saveTemplateOpen}
+        onOpenChange={setSaveTemplateOpen}
+        tag={selectedTag}
+        defaultName={saveTemplateDefaultName}
+        defaultFamily={saveTemplateDefaultFamily}
+        onCreated={handleTemplateCreated}
+      />
     </div>
     </FocusShell>
   );
@@ -1041,6 +1095,14 @@ function TagSizeControl({
   const [hDraft, setHDraft] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Saved sizes (S4, D2): a second group in the dropdown, deletable - unlike
+  // the "Template sizes" group above, which is derived from published
+  // templates and stays read-only here.
+  const savedSizesQuery = useTagSizesQuery();
+  const savedSizes = savedSizesQuery.data ?? [];
+  const deleteSavedSize = useDeleteTagSize();
+  const [saveSizeOpen, setSaveSizeOpen] = useState(false);
+
   if (!tag) {
     return (
       <div className="shrink-0 border-b border-r p-3">
@@ -1084,13 +1146,39 @@ function TagSizeControl({
     if (e.key === 'Enter') e.currentTarget.blur();
   };
 
-  const options: SearchableSelectOption[] = presets.map((p) => ({
-    value: sizeKey(p.width_mm, p.height_mm),
-    label: p.label,
-  }));
-  const matchingPreset = presets.find(
+  // Every size choice, template-derived AND saved, keyed the same way
+  // (D2/AC-S4-4): "Template sizes" first (not deletable here), then "Saved
+  // sizes" (each with an `x`). `savedByKey` is what lets `renderOption` find
+  // the RECORD behind a saved row - the option itself only carries the size.
+  const savedByKey = new Map(
+    savedSizes.map((s) => [sizeKey(s.width_mm, s.height_mm), s] as const),
+  );
+  const options: SearchableSelectOption[] = [
+    ...presets.map((p) => ({
+      value: sizeKey(p.width_mm, p.height_mm),
+      label: p.label,
+      group: 'Template sizes',
+    })),
+    ...savedSizes.map((s) => ({
+      value: sizeKey(s.width_mm, s.height_mm),
+      label: `${s.name} (${s.width_mm} x ${s.height_mm} mm)`,
+      group: 'Saved sizes',
+    })),
+  ];
+  const allSizes = [...presets, ...savedSizes];
+  const matchingPreset = allSizes.find(
     (p) => p.width_mm === tag.width_mm && p.height_mm === tag.height_mm,
   );
+
+  const applySize = (width_mm: number, height_mm: number) => {
+    const result = resolveTagSize(width_mm, height_mm, bounds);
+    if (!result.ok) {
+      setError(result.reason);
+      return;
+    }
+    setError(null);
+    onResize(result.width_mm, result.height_mm);
+  };
 
   return (
     <div className="flex shrink-0 flex-col gap-2 border-b border-r p-3">
@@ -1100,18 +1188,38 @@ function TagSizeControl({
       <SearchableSelect
         value={matchingPreset ? sizeKey(matchingPreset.width_mm, matchingPreset.height_mm) : CUSTOM_SIZE_VALUE}
         onChange={(value) => {
-          const preset = presets.find((p) => sizeKey(p.width_mm, p.height_mm) === value);
-          if (!preset) return;
-          const result = resolveTagSize(preset.width_mm, preset.height_mm, bounds);
-          if (!result.ok) {
-            setError(result.reason);
-            return;
-          }
-          setError(null);
-          onResize(result.width_mm, result.height_mm);
+          const found = allSizes.find((p) => sizeKey(p.width_mm, p.height_mm) === value);
+          if (!found) return;
+          applySize(found.width_mm, found.height_mm);
         }}
         options={options}
         placeholder="Custom"
+        renderOption={(opt) => {
+          const saved = savedByKey.get(opt.value);
+          return (
+            <div className="flex min-w-0 flex-1 items-center justify-between gap-2">
+              <span className="truncate break-words">{opt.label}</span>
+              {saved && (
+                <button
+                  type="button"
+                  aria-label={`Delete saved size ${saved.name}`}
+                  className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-destructive"
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                  }}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    deleteSavedSize.mutate(saved);
+                  }}
+                >
+                  <X className="size-3.5" />
+                </button>
+              )}
+            </div>
+          );
+        }}
       />
       <div className="grid grid-cols-2 gap-2">
         <div className="flex flex-col gap-1">
@@ -1142,15 +1250,35 @@ function TagSizeControl({
         </div>
       </div>
       {error && <p className="text-2xs text-destructive">{error}</p>}
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className="h-7 text-xs"
-        onClick={() => onResizeAll(tag.width_mm, tag.height_mm)}
-      >
-        Apply to all lines
-      </Button>
+      <div className="flex gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-7 flex-1 text-xs"
+          onClick={() => onResizeAll(tag.width_mm, tag.height_mm)}
+        >
+          Apply to all lines
+        </Button>
+        {!matchingPreset && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 flex-1 text-xs"
+            onClick={() => setSaveSizeOpen(true)}
+          >
+            Save as size
+          </Button>
+        )}
+      </div>
+
+      <SaveAsSizeDialog
+        open={saveSizeOpen}
+        onOpenChange={setSaveSizeOpen}
+        width_mm={tag.width_mm}
+        height_mm={tag.height_mm}
+      />
     </div>
   );
 }
