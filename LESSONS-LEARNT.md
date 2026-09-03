@@ -180,3 +180,21 @@ and my migration is on the trunk", not "my migration is the head".
   `down_revision` from the head). Never assert equality with a specific head id.
 - The single-head fast gate in CI already guards the "one head" half; a per-migration test only
   needs the ancestry half.
+
+## 97. A rule that only fires when a sibling rung FAILS gives two answers to one question (3 Sep 2026)
+
+Ladder v8 asked the asking bin's own site pool at step 0 and left the OTHER site pools to R-L's
+spill, at the far end of the remainder walk - reached only if own locations and both borrows had
+all failed to cover what was left. So on SO419417 the same rule answered two lines of one order
+two different ways: SRTWCY8840 read `BRW 3 + WH3 5` (the spill fired, because the group bin was
+empty) and SRTWC8840-SC read `BRW 4 + WH3-BB 4` (the spill never ran, because a group bin
+happened to hold stock). Nothing about the pools differed between them. The captain read it as
+the engine ignoring 687 units sitting in a pool: "the pool got a lot though".
+
+- State a rung's SCOPE up front and walk all of it there. "The pool step" either means one pool
+  or every pool; a step that means one pool at its own position and every pool somewhere else is
+  two rules wearing one name.
+- A rung placed behind "if nothing else worked" is conditioned on facts that have nothing to do
+  with it. That is the tell: the trigger is about other rungs, so the answer varies with them.
+- The repair (R-N) was to move the whole chain into step 0 and DELETE the spill, not to add a
+  second trigger to it. Two entry points to one rule is how the divergence got in.
