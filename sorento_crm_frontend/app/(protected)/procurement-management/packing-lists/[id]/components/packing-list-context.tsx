@@ -175,6 +175,9 @@ export function PackingListProvider({
       shipper: packingList.shipper ?? '',
       forwarder_order_ref: packingList.forwarder_order_ref ?? '',
       notes: packingList.notes ?? '',
+      // The Container card's own select (S5) - null reads as the tenant default, the same
+      // convention every other clearable id field here uses.
+      container_size_id: packingList.container_size_id ?? '',
     };
     for (const f of CONTAINER_COST_FIELDS) next[f.name] = toInput(record[f.name]);
     for (const cp of checkpoints) next[cp.field] = toDateInput(record[cp.field]);
@@ -292,6 +295,7 @@ export function PackingListProvider({
       shipper: orNull(draft.shipper),
       forwarder_order_ref: orNull(draft.forwarder_order_ref),
       notes: orNull(draft.notes),
+      container_size_id: orNull(draft.container_size_id),
       shipment_lines: draftLines.map((line) => ({
         product_id: line.product_id,
         // Required and non-nullable on the line schema, so garbage text falls back to 0

@@ -368,24 +368,16 @@ def test_removing_a_line_drops_it_from_the_returned_invoice(scm_app):
     assert all(ln["id"] != line_id for ln in body["lines"])
 
 
-def test_the_container_size_is_settable_and_clearable_on_the_route(scm_app):
-    from app.models.scm import ContainerSize
-
+def test_the_patch_route_for_container_size_is_gone(scm_app):
+    """S5, ruling 1: the box is chosen on the convert dialog now, never PATCHed onto the PI.
+    No PATCH handler is registered for this path at all, so FastAPI answers 405 rather than
+    routing into a container-size arm that no longer exists."""
     client, db = _client(scm_app, upload=True, view=True)
     detail, _ = _applied_invoice(client, db)
-    size = ContainerSize(
-        id=_u(), code=unique_code("BOX")[:30], label="test box", cbm=30, is_active=True
-    )
-    db.add(size)
-    db.flush()
 
-    r = client.patch(f"{URL}/{detail['id']}", json={"container_size_id": str(size.id)})
-    assert r.status_code == 200, r.text
-    assert r.json()["container_cbm"] == 30
+    r = client.patch(f"{URL}/{detail['id']}", json={"container_size_id": _u()})
 
-    cleared = client.patch(f"{URL}/{detail['id']}", json={"container_size_id": None})
-    assert cleared.status_code == 200, cleared.text
-    assert cleared.json()["container_size_id"] != str(size.id)
+    assert r.status_code == 405, r.text
 
 
 # --------------------------------------------------------------------------------- #

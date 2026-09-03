@@ -31,23 +31,26 @@
  *       Auth: `scm.proforma_invoice.upload` (same as single delete).
  *  POST /api/v1/scm/proforma-invoices/convert-to-draft-shipment -> 201
  *       ConvertToDraftShipmentResult. Body: { proforma_invoice_ids: string[],
- *       override_capacity?: boolean, override_reason?: string }. One or more PIs (any
- *       suppliers) become ONE draft inbound shipment, pre-filled with their lines - the
- *       packing-list amendment (PLAN-scm-proforma-to-spo.md). 409 when any given PI was
- *       already converted (names the shipment), or when one is OVER its container's capacity
- *       and no override was given (`detail: 'over_capacity'`, AC-E5). Auth: `scm.reorder.run`
- *       (a shipment write, same permission the packing-list apply path uses).
+ *       override_capacity?: boolean, override_reason?: string, container_size_id?: string |
+ *       null }. One or more PIs (any suppliers) become ONE draft inbound shipment, pre-filled
+ *       with their lines - the packing-list amendment (PLAN-scm-proforma-to-spo.md).
+ *       `container_size_id` is the box the convert dialog chose (S5, ruling 1) - null/absent
+ *       means the tenant default - and is written onto the draft. 409 when any given PI was
+ *       already converted (names the shipment), or when the COMBINED volume of every
+ *       selected invoice is OVER that size and no override was given (`detail:
+ *       'over_capacity'`, AC-E5, naming the combined figure). Auth: `scm.reorder.run` (a
+ *       shipment write, same permission the packing-list apply path uses).
  *  POST /api/v1/scm/proforma-invoices/{id}/mark-as-revision-of -> 200 ProformaInvoiceDetail
  *       Body: { previous_id }. Links a PI uploaded as new to its predecessor and supersedes
  *       that one (AC-E11). 422 on itself or another supplier's; 409 when either end is
  *       already superseded or already a revision.
  *  PUT  /api/v1/scm/proforma-invoices/{id}          -> 200 ProformaInvoiceDetail
- *       Body: { pi_number?, container_size_id?, lines? }. The whole document as the edit
- *       screen holds it: rows with an `id` update, rows without create, and a line the array
- *       no longer names is deleted. An ABSENT field is left alone; `container_size_id: null`
- *       means the tenant's default size. 409 `duplicate_pi_number` on a rename onto a number
- *       this supplier already uses, and 409 on a superseded revision or an invoice already
- *       converted to a shipment. Auth: `scm.proforma_invoice.upload`.
+ *       Body: { pi_number?, lines? }. The whole document as the edit screen holds it: rows
+ *       with an `id` update, rows without create, and a line the array no longer names is
+ *       deleted. No `container_size_id` here (S5) - capacity moved to the convert dialog and
+ *       the shipment it creates. An ABSENT field is left alone. 409 `duplicate_pi_number` on
+ *       a rename onto a number this supplier already uses, and 409 on a superseded revision
+ *       or an invoice already converted to a shipment. Auth: `scm.proforma_invoice.upload`.
  *       The per-line `PATCH`/`DELETE` routes still exist on the backend; nothing here calls
  *       them, because a draft that is saved once cannot be sent one line at a time.
  *  GET  /api/v1/scm/proforma-invoices/{id}/export    -> 200 .xlsx bytes, the pre-loading
@@ -167,19 +170,15 @@ export interface ProformaInvoiceListRow {
   uploaded_by: string | null;
   created_at: string | null;
   updated_at: string | null;
-  /** Which box this invoice is measured against - the tenant default when the operator
-   *  never chose one. `container_cbm` is that box's loadable volume (40HQ = 65). */
-  container_size_id: string | null;
-  container_size_code: string | null;
-  container_cbm: number | null;
-  /** Sum of the lines' total cbm. Null when NO line states a volume (Kailu's shape) -
-   *  distinct from 0, which would read as an empty container. */
+  /** Sum of the lines' total cbm - the number Ms Tee adds up across invoices to decide
+   *  which of them share a box. Null when NO line states a volume (Kailu's shape) -
+   *  distinct from 0, which would read as an empty container. No container size, fill
+   *  percentage or "over by" here (S5, ruling 1): capacity is a property of the CONTAINER
+   *  this invoice's goods end up sharing with however many others, which the shipment
+   *  payload states, not this one. */
   total_cbm: number | null;
   /** Lines carrying no volume at all, so a fill figure can say what it is missing. */
   unmeasured_lines: number;
-  fill_pct: number | null;
-  /** Only when it is over: the cbm above capacity, so the copy never says "over by -3". */
-  over_by_cbm: number | null;
   /** `current` or `superseded`. A superseded revision is read-only and never a cost. */
   status: ProformaInvoiceStatus;
   revision_no: number;
@@ -501,6 +500,8 @@ export interface ConvertOptions {
   lineQuantities?: Record<string, number>;
   /** The operator's answer to an over-capacity refusal, with their reason (AC-E5). */
   override?: { reason: string };
+  /** The box the convert dialog chose (S5, ruling 1). Null/omitted = the tenant default. */
+  containerSizeId?: string | null;
 }
 
 /**
@@ -524,6 +525,7 @@ export async function convertProformaInvoicesToDraftShipment(
         ? { line_quantities: options.lineQuantities }
         : {}),
       ...(override ? { override_capacity: true, override_reason: override.reason } : {}),
+      container_size_id: options?.containerSizeId ?? null,
     }),
   });
   if (!res.ok) {
@@ -558,11 +560,10 @@ export interface ProformaInvoiceLineWrite {
   gross_weight?: number | null;
 }
 
-/** The whole document as one Save. An ABSENT field is left alone - `container_size_id: null`
- *  means the tenant default, which is a different instruction from not mentioning it. */
+/** The whole document as one Save. An ABSENT field is left alone. No `container_size_id`
+ *  (S5) - capacity is chosen on the convert dialog, never on the invoice. */
 export interface ProformaInvoiceWrite {
   pi_number?: string;
-  container_size_id?: string | null;
   lines?: ProformaInvoiceLineWrite[];
 }
 

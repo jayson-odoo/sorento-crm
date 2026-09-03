@@ -126,6 +126,12 @@ vi.mock('@/app/(protected)/scm/hooks/useFulfilment', () => ({
     isError: false,
     error: null,
   }),
+  // The Details tab's Container size select (S5) - not this suite's concern, so one
+  // active default is enough to satisfy the render.
+  useContainerSizes: () => ({
+    data: [{ id: 'size-40hq', code: '40HQ', label: '40ft high cube', cbm: 65, is_default: true }],
+    isLoading: false,
+  }),
 }));
 
 // The Lines grid carries a real `listingKey` (S7); a live column-preferences query has
@@ -626,6 +632,10 @@ describe('the edit draft, which now lives above every tab', () => {
     expect(screen.getByLabelText('Clearance cost')).toBeInTheDocument();
     expect(screen.getByLabelText('China freight cost')).toBeInTheDocument();
     expect(screen.getByLabelText('Insurance rate')).toBeInTheDocument();
+    // The fill gauge moved here from the proforma invoice (S5, ruling 1) - a select in
+    // edit mode, the size code in view. Not `getByLabelText`: like `Supplier` above it, the
+    // field is a bespoke block with the label as plain text, not a `<label htmlFor>`.
+    expect(screen.getByText('Container size')).toBeInTheDocument();
     // The ones with no input counterpart stay as values - nothing moves between the two.
     expect(screen.getByText('Total items')).toBeInTheDocument();
     expect(screen.getByText('Source sheet')).toBeInTheDocument();

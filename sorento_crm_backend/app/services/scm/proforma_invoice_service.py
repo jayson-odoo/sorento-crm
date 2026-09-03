@@ -47,6 +47,8 @@ from app.services.numbering_defaults import (
     seed_inbound_shipment_draft_rule,
 )
 from app.services.numbering_service import NumberingService
+from app.services.scm.container_capacity import container_sizes as _container_sizes
+from app.services.scm.container_capacity import fit as _fit
 from app.services.scm.currency_resolution import resolve_currency
 from app.services.scm.proforma_invoice_reader import (
     ProformaDocument,
@@ -1385,37 +1387,38 @@ def source_proforma_invoices(db: Session, shipment_id: str) -> dict:
 
 def _over_capacity(
     db: Session,
-    invoices: list[ProformaInvoice],
     placing: dict[str, float],
-) -> list[str]:
-    """One sentence per invoice that will not fit, naming both figures (AC-E5).
+    container_size_id: Optional[str],
+) -> Optional[str]:
+    """One sentence naming the COMBINED volume this convert is loading, against the ONE
+    container it is going into - never any single invoice alone (captain's ruling, 3 Sep,
+    PLAN-scm-pi-packing-list-feedback-3sep.md ruling 1). Several PIs routinely share a box
+    (FSCU8103365 = 7 factories), so the question the gate answers is whether what they add up
+    to fits, not whether any one of them would on its own.
 
     Judged on what is ACTUALLY being loaded, not on the whole document: `placing` is the
-    volume of the quantities this convert is placing, so half of a 69 cbm invoice is 35 cbm
-    and goes in the box - which is the split Q9 exists for, and was unreachable while the
-    gate read the whole invoice however little of it was moving.
+    volume of the quantities this convert is placing, so half of a 69 cbm invoice is 35 cbm -
+    the split Q9 exists for, and was unreachable while the gate read the whole invoice however
+    little of it was moving.
 
     Judged against an EMPTY box, because every convert opens a new one (Q6): there is
     never anything already in it to load on top of.
 
-    An invoice whose lines state NO volume is not over capacity - it is unmeasured, and
-    refusing it would break the Kailu shape that has converted since G3b (AC-H3). Silence
-    about a number nobody has is the honest answer; a guess is not.
+    Silent when nothing placed states a volume: an unmeasured convert is not over capacity,
+    it is unknown, and refusing it would break the Kailu shape that has converted since G3b
+    (AC-H3).
     """
+    total_placing = sum(placing.values())
+    if not total_placing:
+        return None
     sizes_by_id, default_size = _container_sizes(db)
-    out: list[str] = []
-    for invoice in invoices:
-        placed_cbm = placing.get(str(invoice.id))
-        if placed_cbm is None:
-            continue
-        fit = _fit(invoice, placed_cbm, sizes_by_id, default_size)
-        if fit["over_by_cbm"]:
-            out.append(
-                f"{invoice.pi_number} is {_num(placed_cbm)} cbm and the "
-                f"{fit['container_size_code'] or 'container'} holds "
-                f"{_num(fit['container_cbm'])} - over by {_num(fit['over_by_cbm'])} cbm."
-            )
-    return out
+    result = _fit(container_size_id, total_placing, sizes_by_id, default_size)
+    if not result["over_by_cbm"]:
+        return None
+    return (
+        f"{_num(total_placing)} cbm and the {result['container_size_code'] or 'container'} "
+        f"holds {_num(result['container_cbm'])} - over by {_num(result['over_by_cbm'])} cbm."
+    )
 
 
 def _dec(value: Any) -> Decimal:
@@ -1445,7 +1448,7 @@ def _placing_volume(line: ProformaInvoiceLine, qty: float) -> Optional[float]:
 def _record_over_capacity(
     db: Session,
     shipment_id: str,
-    over: list[str],
+    over: Optional[str],
     override_reason: Optional[str],
     created_by: Optional[str],
 ) -> None:
@@ -1465,7 +1468,7 @@ def _record_over_capacity(
         str(shipment_id),
         "UPDATE",
         user_id=created_by if _is_uuid(created_by) else None,
-        description=f"Converted over capacity: {' '.join(over)} Reason: {reason}",
+        description=f"Converted over capacity: {over} Reason: {reason}",
     )
 
 
@@ -1477,6 +1480,7 @@ def convert_to_draft_shipment(
     override_capacity: bool = False,
     override_reason: Optional[str] = None,
     line_quantities: Optional[dict] = None,
+    container_size_id: Optional[str] = None,
 ) -> dict:
     """One or more proforma invoices become ONE NEW draft inbound shipment (the packing-list
     amendment, `PLAN-scm-proforma-to-spo.md`): "pick one or more PIs -> the system creates a
@@ -1484,6 +1488,11 @@ def convert_to_draft_shipment(
     DIFFERENT suppliers on purpose - a container is routinely one factory's PI joining three
     others' inside the same box (the real KAILU + FSCU8103365 documents this was built
     against) - so every shipment line carries its OWN `supplier_id`, never the header's.
+
+    `container_size_id` is the box the convert DIALOG chose (S5, ruling 1). `None` means the
+    tenant's default, the same convention `_fit` reads on every other capacity screen - it is
+    written onto the draft AS GIVEN (never resolved to a concrete id here), so a later change
+    to which size is the default still applies to a shipment nobody explicitly sized.
 
     Not built here: the real packing list replacing/reconciling this draft (that is the
     EXISTING upload path, `packing_list_service.apply`, unchanged by this function - a draft's
@@ -1507,6 +1516,11 @@ def convert_to_draft_shipment(
         raise AppException(
             422, "Select at least one proforma invoice to convert.", detail="proforma_invoice_ids"
         )
+    if container_size_id:
+        if not _is_uuid(container_size_id):
+            raise AppException(422, "That container size does not exist.", detail="container_size_id")
+        if not db.query(ContainerSize.id).filter(ContainerSize.id == str(container_size_id)).first():
+            raise AppException(404, "That container size does not exist.", detail="container_size_id")
 
     invoices = db.query(ProformaInvoice).filter(ProformaInvoice.id.in_(ids)).all()
     found_by_id = {str(inv.id): inv for inv in invoices}
@@ -1754,12 +1768,13 @@ def convert_to_draft_shipment(
         )
 
     # Checked HERE, after the placed quantities are known and before the first write: the
-    # question is whether what is being loaded fits in the box it is going into (AC-E5).
-    over = _over_capacity(db, invoices, placing)
+    # question is whether the COMBINED volume of what is being loaded fits in the ONE box it
+    # is going into (AC-E5, ruling 1) - never any single invoice's own volume alone.
+    over = _over_capacity(db, placing, container_size_id)
     if over and not override_capacity:
         raise AppException(
             409,
-            " ".join(over) + " Convert anyway to load it regardless.",
+            over + " Convert anyway to load it regardless.",
             code="over_capacity",
         )
     if over and override_capacity and not (override_reason or "").strip():
@@ -1782,6 +1797,7 @@ def convert_to_draft_shipment(
         shipment_date=min(invoice_dates) if invoice_dates else _date.today(),
         shipment_status=_DRAFT_SHIPMENT_STATUS,
         created_by=created_by,
+        container_size_id=str(container_size_id) if container_size_id else None,
     )
     db.add(shipment)
     db.flush()
@@ -2012,16 +2028,9 @@ def to_xlsx(payload: dict) -> bytes:
     for col in range(1, len(_EXPORT_COLUMNS) + 1):
         ws.cell(row=ws.max_row, column=col).font = bold
 
-    capacity = payload.get("container_cbm")
-    if capacity:
-        over = payload.get("over_by_cbm")
-        ws.append(
-            [
-                f"货柜 / Container {payload.get('container_size_code') or ''}".strip(),
-                None, None, None, None, None, _num(capacity), None,
-                f"超出 / Over by {_num(over)} cbm" if over else None, None,
-            ]
-        )
+    # No "货柜 / Container" capacity footer here (S5): capacity is a property of the
+    # CONTAINER this invoice's goods may end up sharing with several others, and this
+    # export is one invoice's own document - the total line above is its complete answer.
 
     for i, width in enumerate(_EXPORT_WIDTHS, start=1):
         ws.column_dimensions[get_column_letter(i)].width = width
@@ -2113,16 +2122,6 @@ def bulk_delete(db: Session, invoice_ids: list[str]) -> dict:
     return {"deleted": deleted, "blocked": blocked}
 
 
-def _container_sizes(db: Session) -> tuple[dict[str, Any], Optional[Any]]:
-    """Every active container size by id, and whichever one is the tenant's default.
-
-    Read once per serialization rather than per invoice: a page of 25 invoices asks the
-    same three-row question 25 times otherwise.
-    """
-    rows = db.query(ContainerSize).filter(ContainerSize.is_active.is_(True)).all()
-    return {str(r.id): r for r in rows}, next((r for r in rows if r.is_default), None)
-
-
 def _volumes(db: Session, invoice_ids: list[str]) -> dict[str, tuple[Optional[float], int]]:
     """Per invoice, `(total cbm, lines with no volume)` in ONE query.
 
@@ -2143,43 +2142,6 @@ def _volumes(db: Session, invoice_ids: list[str]) -> dict[str, tuple[Optional[fl
         .all()
     )
     return {str(inv): (_f(total), int(unmeasured or 0)) for inv, total, unmeasured in rows}
-
-
-def _fit(
-    invoice: ProformaInvoice,
-    total_cbm: Optional[float],
-    sizes_by_id: dict[str, Any],
-    default_size: Optional[Any],
-) -> dict[str, Any]:
-    """How full this invoice's container is, and which container that is.
-
-    The size is RESOLVED at read time from the tenant's default when the invoice names none,
-    rather than copied onto the row at import: a PI uploaded before anybody thought about
-    capacity should follow the default, not freeze whatever it happened to be that day
-    (AC-D4). An invoice that DOES name one keeps it, which is what makes it changeable.
-    """
-    size = sizes_by_id.get(str(invoice.container_size_id)) if invoice.container_size_id else None
-    if size is None:
-        size = default_size
-    capacity = _f(size.cbm) if size is not None else None
-    fill = (
-        (total_cbm / capacity) * 100
-        if total_cbm is not None and capacity
-        else None
-    )
-    over = (
-        round(total_cbm - capacity, 4)
-        if total_cbm is not None and capacity and total_cbm > capacity
-        else None
-    )
-    return {
-        "container_size_id": str(size.id) if size is not None else None,
-        "container_size_code": size.code if size is not None else None,
-        "container_cbm": capacity,
-        "total_cbm": total_cbm,
-        "fill_pct": round(fill, 2) if fill is not None else None,
-        "over_by_cbm": over,
-    }
 
 
 def _placed_invoice_ids(db: Session, invoice_ids: list[str]) -> dict[str, str]:
@@ -2383,37 +2345,9 @@ def remove_line(
     return serialize(db, invoice)
 
 
-def set_container_size(
-    db: Session, invoice_id: str, container_size_id: Optional[str]
-) -> dict:
-    """Which box this invoice is being fitted into. `None` means the tenant's default."""
-    invoice = get_or_404(db, invoice_id)
-    _set_container_size(db, invoice, container_size_id)
-    db.flush()
-    return serialize(db, invoice)
-
-
 #: "The caller did not mention this field", which is a different instruction from "set it to
-#: null" - `container_size_id: null` means the tenant default, and an absent one means leave
-#: the invoice's own choice alone.
+#: null" - an absent field means leave the invoice's own choice alone.
 UNSET: Any = object()
-
-
-def _set_container_size(db: Session, invoice: ProformaInvoice, container_size_id: Optional[str]) -> None:
-    """Resolve and set the box. Shared by the PATCH and the whole-document PUT."""
-    if container_size_id:
-        if not _is_uuid(container_size_id):
-            raise AppException(422, "That container size does not exist.", detail="container_size_id")
-        size = (
-            db.query(ContainerSize)
-            .filter(ContainerSize.id == str(container_size_id))
-            .first()
-        )
-        if size is None:
-            raise AppException(404, "That container size does not exist.", detail="container_size_id")
-        invoice.container_size_id = str(size.id)
-    else:
-        invoice.container_size_id = None
 
 
 def _rename(db: Session, invoice: ProformaInvoice, pi_number: Optional[str]) -> None:
@@ -2529,7 +2463,7 @@ def _write_lines(
     removed line leaves a gap and a new one is appended after the highest number in use.
 
     `product_id` and `product_set_id` follow the same ABSENT-vs-null rule the whole-document
-    write uses for `container_size_id` (`UNSET` above): a key the row does not mention is left
+    write uses for `pi_number` (`UNSET` above): a key the row does not mention is left
     exactly as it was, and an explicit `null` unbinds it. The edit screen's Save omits the key
     on every line the operator did not touch (`toDraft`/`saveEdit` on the FE), so a save that
     only changed a quantity used to silently unbind every matched product on the invoice - the
@@ -2663,25 +2597,24 @@ def update_invoice(
     invoice_id: str,
     *,
     pi_number: Any = UNSET,
-    container_size_id: Any = UNSET,
     lines: Any = UNSET,
     actor: Optional[str] = None,
 ) -> dict:
     """The whole document as the edit screen holds it, written in ONE call. Does not commit.
 
     The detail page edits a local draft and nothing is written until Save, so this is the
-    only write that save makes: rename, container size and the whole line set travel
-    together and either all land or none do. A superseded revision and an invoice whose
-    goods are already on a container are refused here, by the same rules that refuse a
-    single-line adjustment.
+    only write that save makes: rename and the whole line set travel together and either
+    both land or neither does. A superseded revision and an invoice whose goods are already
+    on a container are refused here, by the same rules that refuse a single-line adjustment.
+
+    Container size is NOT one of these fields (S5): capacity is a property of the CONTAINER,
+    not the invoice, and it now lives on `inbound_shipments`, set from the convert dialog.
     """
     invoice = get_or_404(db, invoice_id)
     _editable_or_409(db, invoice)
 
     if pi_number is not UNSET:
         _rename(db, invoice, pi_number)
-    if container_size_id is not UNSET:
-        _set_container_size(db, invoice, container_size_id)
     if lines is not UNSET:
         _write_lines(db, invoice, list(lines or []), actor=actor)
         # Stamped only when the LINES moved: renaming a document or choosing a different box
@@ -2797,7 +2730,6 @@ def list_for_supplier(
 
     labels = _supplier_labels(db, [str(r.supplier_id) for r in rows])
     volumes = _volumes(db, [str(r.id) for r in rows])
-    sizes = _container_sizes(db)
     placements = _quantities(db, [str(r.id) for r in rows])
     return {
         "data": [
@@ -2807,7 +2739,6 @@ def list_for_supplier(
                 with_lines=False,
                 supplier_labels=labels,
                 volumes=volumes,
-                container_sizes=sizes,
                 placements=placements,
             )
             for r in rows
@@ -2853,15 +2784,20 @@ def serialize(
     with_lines: bool = True,
     supplier_labels: Optional[dict[str, tuple[Optional[str], Optional[str]]]] = None,
     volumes: Optional[dict[str, tuple[Optional[float], int]]] = None,
-    container_sizes: Optional[tuple[dict[str, Any], Optional[Any]]] = None,
     placements: Optional[dict[str, dict]] = None,
 ) -> dict:
     """One invoice as the API returns it: codes and names, never a bare identifier.
 
-    `supplier_labels`, `volumes` and `container_sizes` are the page's own lookups, resolved
-    once by a caller listing several invoices; a single serialization resolves its own. All
-    three are per-page rather than per-row because each is one query that would otherwise be
-    asked twenty-five times for the same answer.
+    `supplier_labels`, `volumes` and `placements` are the page's own lookups, resolved once
+    by a caller listing several invoices; a single serialization resolves its own. Each is
+    per-page rather than per-row because each is one query that would otherwise be asked
+    twenty-five times for the same answer.
+
+    NOT here: a container size, a fill percentage, an "over by" (S5, ruling 1). Capacity is a
+    property of the CONTAINER this invoice's goods end up sharing with however many others,
+    not of the invoice - that arithmetic moved to the shipment payload
+    (`InboundShipmentService`). This invoice states its own volume only: the number Ms Tee
+    adds up across invoices to decide which of them share a box.
     """
     if supplier_labels is not None:
         supplier_code, supplier_name = supplier_labels.get(
@@ -2931,13 +2867,10 @@ def serialize(
         }
     )
 
-    sizes_by_id, default_size = (
-        container_sizes if container_sizes is not None else _container_sizes(db)
-    )
     if volumes is None:
         volumes = _volumes(db, [str(invoice.id)])
     total_cbm, unmeasured = volumes.get(str(invoice.id), (None, 0))
-    out.update(_fit(invoice, total_cbm, sizes_by_id, default_size))
+    out["total_cbm"] = total_cbm
     out["unmeasured_lines"] = unmeasured
 
     if not with_lines:

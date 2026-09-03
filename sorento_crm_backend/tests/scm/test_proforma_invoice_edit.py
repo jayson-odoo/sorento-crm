@@ -2,10 +2,10 @@
 
 The detail screen holds a local draft - a line removed is struck through, a line added is a
 blank row, and nothing reaches the server until Save - so the write it makes is
-`update_invoice`: the number, the container size and the WHOLE line array in one call. Rows
-carrying an id update, rows without one are created, and a line the array no longer names is
-deleted. Sending them one at a time is what left a half-applied invoice on screen when the
-third line was refused.
+`update_invoice`: the number and the WHOLE line array in one call. Rows carrying an id
+update, rows without one are created, and a line the array no longer names is deleted.
+Sending them one at a time is what left a half-applied invoice on screen when the third line
+was refused. No container size here (S5): capacity moved to the shipment.
 
 Also covers the two things that had nowhere to go before: the line's stated weights
 (净重 / 毛重, migration 435) and the list screen's search box.
@@ -21,7 +21,7 @@ import uuid
 
 import pytest
 
-from app.models.scm import ContainerSize, ProformaInvoice, SupplierProductCodeAlias
+from app.models.scm import ProformaInvoice, SupplierProductCodeAlias
 from app.services.error_handler import AppException
 from app.services.scm import proforma_invoice_service as svc
 from app.services.scm import supplier_code_alias_service
@@ -508,37 +508,15 @@ def test_a_negative_quantity_is_refused_and_nothing_lands():
         assert exc.value.status_code == 422
 
 
-def test_the_container_size_travels_in_the_same_save():
-    with pg_session() as db:
-        _seed_container_sizes(db)
-        w = World(db)
-        invoice = _apply_preloading(db, w)[0]
-        small = db.query(ContainerSize).filter(ContainerSize.code == "20GP").one()
+def test_update_invoice_no_longer_takes_a_container_size():
+    """S5, ruling 1: capacity moved to the shipment. `update_invoice` keeps `pi_number` and
+    `lines` only - a caller still passing `container_size_id` is a programming error, not a
+    422, so it is asserted at the signature rather than the behaviour."""
+    import inspect
 
-        out = svc.update_invoice(
-            db,
-            str(invoice.id),
-            container_size_id=str(small.id),
-            lines=_draft_from(_lines(db, invoice.id)),
-            actor="Ms Tee",
-        )
-
-        assert out["container_size_code"] == "20GP"
-
-
-def test_a_field_the_caller_never_mentions_is_left_alone():
-    """`container_size_id: null` means the tenant default; saying nothing means keep what
-    this invoice already chose. The two must not collapse into one instruction."""
-    with pg_session() as db:
-        _seed_container_sizes(db)
-        w = World(db)
-        invoice = _apply_preloading(db, w)[0]
-        small = db.query(ContainerSize).filter(ContainerSize.code == "20GP").one()
-        svc.set_container_size(db, str(invoice.id), str(small.id))
-
-        out = svc.update_invoice(db, str(invoice.id), pi_number=invoice.pi_number)
-
-        assert out["container_size_code"] == "20GP"
+    params = inspect.signature(svc.update_invoice).parameters
+    assert "container_size_id" not in params
+    assert not hasattr(svc, "set_container_size")
 
 
 # --------------------------------------------------------------------------------- #

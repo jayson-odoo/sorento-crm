@@ -48,7 +48,6 @@ import { getProducts } from '@/app/(protected)/master-data-management/products/s
 import { useUOMSelectQuery } from '@/app/(protected)/master-data-management/shared/hooks/use-uom-select-query';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useUrlTab } from '@/hooks/useUrlTab';
-import { useContainerSizes } from '../../../hooks/useFulfilment';
 import {
   useConvertProformaInvoicesToDraftShipment,
   useProformaInvoice,
@@ -70,7 +69,6 @@ import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { proformaInvoicesPagerQuery } from '../../../hooks/useProformaInvoices';
 import { MarkAsRevisionDialog } from './MarkAsRevisionDialog';
 import { ProformaRevisionsCard } from './ProformaRevisionsCard';
-import { ProformaVolumeFill } from './ProformaVolumeFill';
 import BackToList, { useBackToListHref } from '@/components/common/BackToList';
 
 const CONVERT_PERMISSION = 'scm.reorder.run';
@@ -198,7 +196,6 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
   const canConvert = useHasPermission(CONVERT_PERMISSION);
   const canAdjust = useHasPermission(ADJUST_PERMISSION);
   const { data, isLoading, isError } = useProformaInvoice(id);
-  const containerSizes = useContainerSizes();
   // AC-B4: the master list, not free text - "unit" and "UNIT" read as one unit here and two
   // strings on the export.
   const uoms = useUOMSelectQuery();
@@ -250,16 +247,16 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
   });
   const [editing, setEditing] = useState(false);
   const [draftNumber, setDraftNumber] = useState('');
-  const [draftSizeId, setDraftSizeId] = useState<string | null>(null);
   const [draftLines, setDraftLines] = useState<DraftLine[]>([]);
   const [overCapacity, setOverCapacity] = useState<string | null>(null);
   const [overrideReason, setOverrideReason] = useState('');
   const [convertOpen, setConvertOpen] = useState(false);
   const [revisionOpen, setRevisionOpen] = useState(false);
   // Held so an over-capacity refusal can be re-submitted with the reason WITHOUT asking
-  // the operator to re-type the split they already chose.
+  // the operator to re-type the split - or the container size - they already chose.
   const [convertArgs, setConvertArgs] = useState<{
     lineQuantities: Record<string, number>;
+    containerSizeId: string | null;
   } | null>(null);
   const [saving, setSaving] = useState(false);
   /** The line whose supplier code is being answered by hand (R16). */
@@ -306,7 +303,6 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
   const beginEdit = () => {
     if (!data) return;
     setDraftNumber(data.pi_number);
-    setDraftSizeId(data.container_size_id ?? null);
     setDraftLines(lines.map(toDraft));
     setEditing(true);
   };
@@ -376,31 +372,6 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
     return { total, unmeasured };
   }, [editing, draftLines, data?.total_cbm, data?.unmeasured_lines]);
 
-  const containerCbm = useMemo(() => {
-    if (!editing) return data?.container_cbm ?? null;
-    const chosen = (containerSizes.data ?? []).find((s) => s.id === draftSizeId);
-    if (chosen) return chosen.cbm;
-    const fallback = (containerSizes.data ?? []).find((s) => s.is_default);
-    return fallback?.cbm ?? data?.container_cbm ?? null;
-  }, [editing, draftSizeId, containerSizes.data, data?.container_cbm]);
-
-  const containerLabel = useMemo(() => {
-    if (!editing) return data?.container_size_code ?? null;
-    const chosen = (containerSizes.data ?? []).find((s) => s.id === draftSizeId);
-    if (chosen) return chosen.code;
-    const fallback = (containerSizes.data ?? []).find((s) => s.is_default);
-    return fallback?.code ?? data?.container_size_code ?? null;
-  }, [editing, draftSizeId, containerSizes.data, data?.container_size_code]);
-
-  const containerOptions = useMemo(
-    () =>
-      (containerSizes.data ?? []).map((s) => ({
-        value: s.id,
-        label: `${s.code} - ${fmtTrimmedDecimal(s.cbm, 2)} cbm${s.is_default ? ' (default)' : ''}`,
-      })),
-    [containerSizes.data],
-  );
-
   const saveEdit = async () => {
     if (!data) return;
     const number = draftNumber.trim();
@@ -451,7 +422,6 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
     try {
       await saveInvoice.mutateAsync({
         pi_number: number,
-        container_size_id: draftSizeId ?? null,
         lines: payload,
       });
       setEditing(false);
@@ -466,7 +436,7 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
   };
 
   const runConvert = async (
-    args: { lineQuantities: Record<string, number> } | null,
+    args: { lineQuantities: Record<string, number>; containerSizeId: string | null } | null,
     reason?: string,
   ) => {
     setConvertArgs(args);
@@ -475,6 +445,7 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
         invoiceIds: [id],
         overrideReason: reason,
         lineQuantities: args?.lineQuantities,
+        containerSizeId: args?.containerSizeId ?? null,
       });
       setOverCapacity(null);
       setOverrideReason('');
@@ -1298,29 +1269,6 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
               <Field label="Container">{invoice.container_no ?? EM_DASH}</Field>
               <Field label="BL">{invoice.bl_no ?? EM_DASH}</Field>
               <Field label="Currency">{invoice.currency ?? EM_DASH}</Field>
-              {/* Same slot in both views: the value becomes a select where the value was. */}
-              <Field label="Container size" htmlFor={editing ? 'pi-container-size' : undefined}>
-                {editing ? (
-                  <SearchableSelect
-                    id="pi-container-size"
-                    size="sm"
-                    value={draftSizeId ?? ''}
-                    onChange={(v: string) => setDraftSizeId(v || null)}
-                    options={containerOptions}
-                    placeholder={containerLabel ? `${containerLabel} (default)` : 'Default size'}
-                    clearable
-                  />
-                ) : (
-                  <>
-                    {invoice.container_size_code ?? EM_DASH}
-                    {invoice.container_cbm != null ? (
-                      <span className="ms-1 font-normal text-muted-foreground">
-                        {fmtTrimmedDecimal(invoice.container_cbm, 2)} cbm
-                      </span>
-                    ) : null}
-                  </>
-                )}
-              </Field>
               <Field label="Total">
                 {fmtSupplierCost(invoice.total_amount, invoice.currency)}
               </Field>
@@ -1340,20 +1288,27 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
             </section>
           </Card>
 
+          {/* No container size, gauge or "over by" here (S5, ruling 1): capacity is a
+              property of the CONTAINER this invoice's goods may end up sharing with
+              several others, chosen on the convert dialog. This is the number Ms Tee adds
+              up across invoices to decide which of them share a box. */}
           <Card>
             <CardHeader>
               <CardHeading>
-                <CardTitle>Volume</CardTitle>
+                <CardTitle>Total volume</CardTitle>
               </CardHeading>
             </CardHeader>
-            <section aria-label="Volume" className="p-4">
-              <ProformaVolumeFill
-                className="max-w-xl"
-                totalCbm={volume.total}
-                containerCbm={containerCbm}
-                containerLabel={containerLabel}
-                unmeasuredLines={volume.unmeasured}
-              />
+            <section aria-label="Total volume" className="p-4">
+              <p className="text-sm font-medium">
+                {volume.total === null
+                  ? 'No volume on this invoice'
+                  : `${fmtTrimmedDecimal(volume.total, 2)} cbm`}
+              </p>
+              {volume.unmeasured > 0 ? (
+                <p className="mt-1 text-2xs text-muted-foreground">
+                  {volume.unmeasured} unmeasured {volume.unmeasured === 1 ? 'line' : 'lines'}
+                </p>
+              ) : null}
             </section>
           </Card>
         </TabsContent>

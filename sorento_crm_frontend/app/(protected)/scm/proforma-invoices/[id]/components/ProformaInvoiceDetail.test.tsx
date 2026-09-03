@@ -188,13 +188,8 @@ function detail(over: Partial<ProformaInvoiceDetailData> = {}): ProformaInvoiceD
     uploaded_by: 'Ms Tee',
     created_at: '2026-08-01T02:00:00',
     updated_at: '2026-08-01T02:00:00',
-    container_size_id: null,
-    container_size_code: '40HQ',
-    container_cbm: 65,
     total_cbm: 69.36,
     unmeasured_lines: 0,
-    fill_pct: 106.71,
-    over_by_cbm: 4.36,
     status: 'current',
     revision_no: 1,
     revision_count: 1,
@@ -316,7 +311,6 @@ function beginEdit() {
 function lastSavePayload() {
   return writes.save.mock.calls[writes.save.mock.calls.length - 1][0] as {
     pi_number?: string;
-    container_size_id?: string | null;
     lines?: Array<Record<string, unknown>>;
   };
 }
@@ -394,6 +388,15 @@ describe('ProformaInvoiceDetail - the record header', () => {
     expect(
       screen.queryByRole('button', { name: /export adjusted pi/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it('the convert dialog asks the container size (S5, ruling 1)', () => {
+    state.data = detail();
+    renderDetail();
+
+    fireEvent.click(screen.getByRole('button', { name: /convert to packing list/i }));
+
+    expect(screen.getByLabelText('Container size')).toBeInTheDocument();
   });
 
   it('lists every secondary action in the gear menu, in one place', () => {
@@ -558,25 +561,21 @@ describe('ProformaInvoiceDetail - the tabs', () => {
 
     expect(screen.getByRole('region', { name: 'Invoice' })).toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Supplier' })).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Volume' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Total volume' })).toBeInTheDocument();
   });
 
-  it('states the volume against the named container and how far over it is (AC-D2)', () => {
+  it('states the total volume as a NUMBER, no capacity, percentage, bar or over-by (S5, ruling 1)', () => {
     state.data = detail();
     renderDetail();
 
     expect(screen.getByText('69.36 cbm')).toBeInTheDocument();
-    expect(screen.getByText(/of 65 \(40HQ\) - 107% full/)).toBeInTheDocument();
-    expect(screen.getByText('over by 4.36 cbm')).toBeInTheDocument();
+    expect(screen.queryByText(/40HQ/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/% full/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/over by/)).not.toBeInTheDocument();
   });
 
   it('counts the unmeasured lines rather than reading them as an empty container', () => {
-    state.data = detail({
-      total_cbm: null,
-      unmeasured_lines: 2,
-      fill_pct: null,
-      over_by_cbm: null,
-    });
+    state.data = detail({ total_cbm: null, unmeasured_lines: 2 });
     renderDetail();
 
     expect(screen.getByText('No volume on this invoice')).toBeInTheDocument();
@@ -689,7 +688,8 @@ describe('ProformaInvoiceDetail - editing is a draft until Save', () => {
     beginEdit();
 
     expect(screen.getByLabelText('PI number')).toHaveValue('PI-2026-001');
-    expect(screen.getByLabelText('Container size')).toBeInTheDocument();
+    // No Container size field (S5): capacity moved to the convert dialog.
+    expect(screen.queryByLabelText('Container size')).not.toBeInTheDocument();
     // Same tabs, same order, mid-edit.
     expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual([
       'General',
@@ -726,7 +726,7 @@ describe('ProformaInvoiceDetail - editing is a draft until Save', () => {
     expect(writes.save).not.toHaveBeenCalled();
   });
 
-  it('moves the fill bar live as the quantity is typed, before any save (AC-E3)', () => {
+  it('moves the total volume live as the quantity is typed, before any save', () => {
     state.data = detail();
     renderDetail();
     beginEdit();
@@ -736,7 +736,6 @@ describe('ProformaInvoiceDetail - editing is a draft until Save', () => {
 
     // 20 x 0.17 cbm, computed from the per-unit figure the supplier stated.
     expect(screen.getByText('3.4 cbm')).toBeInTheDocument();
-    expect(screen.queryByText(/over by/)).not.toBeInTheDocument();
   });
 
   it('sends the WHOLE line array in one call on Save', async () => {

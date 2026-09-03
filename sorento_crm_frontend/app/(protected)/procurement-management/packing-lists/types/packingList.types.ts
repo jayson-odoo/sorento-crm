@@ -97,6 +97,22 @@ export interface PackingList extends ClearanceFields {
   clearance_cost?: number | string | null;
   china_freight_cost?: number | string | null;
   insurance_rate?: number | string | null;
+  /**
+   * Which box this container is being loaded into (S5, ruling 1). Null = the tenant
+   * default. The fill gauge fields below are computed server-side onto the create /
+   * update / detail read - `container_size_code`, `container_cbm`, `total_cbm`,
+   * `fill_pct`, `over_by_cbm` are absent on the LIST row (the list endpoint's response
+   * does not carry them; only `getPackingList` / create / update do).
+   */
+  container_size_id?: string | null;
+  container_size_code?: string | null;
+  container_cbm?: number | null;
+  /** Sum of the shipment lines' cbm. Null when none of them state a volume. */
+  total_cbm?: number | null;
+  unmeasured_lines?: number;
+  fill_pct?: number | null;
+  /** Only when it is over: the cbm above capacity. */
+  over_by_cbm?: number | null;
   created_at: Date;
   created_by?: string | null;
   updated_at: Date;
@@ -205,6 +221,8 @@ export interface PackingListFormData {
   clearance_cost?: number | null;
   china_freight_cost?: number | null;
   insurance_rate?: number | null;
+  /** The Container card's own select (S5). Null clears it back to the tenant default. */
+  container_size_id?: string | null;
   shipment_lines?: Array<{
     product_id: string;
     quantity_shipped: number;

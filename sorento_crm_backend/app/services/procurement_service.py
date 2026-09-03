@@ -32,6 +32,8 @@ from app.models.inventory import Warehouse
 from app.models.scm import SupplierProductCodeAlias
 from app.services.identifier_resolver import resolve_identifier
 from app.services.fuzzy_resolver import resolve_via_embedding_then_ilike
+from app.services.scm.container_capacity import container_sizes as _container_sizes
+from app.services.scm.container_capacity import fit as _fit_capacity
 from app.schemas.procurement import (
     SupplierCreate, SupplierUpdate, ProductSupplierCreate, ProductSupplierUpdate,
     InboundShipmentCreate, InboundShipmentUpdate,
@@ -883,7 +885,7 @@ class InboundShipmentService:
         ).filter(InboundShipment.id.in_(resolved_ids)).first()
         if not shipment:
             raise handle_not_found("Inbound Shipment", shipment_id)
-        return shipment
+        return self._attach_capacity(shipment)
 
     def get_received_quantities_by_product(self, shipment_id: str) -> dict[str, int]:
         """Return received qty per product for a shipment, ignoring warehouse boundaries.
@@ -1021,6 +1023,34 @@ class InboundShipmentService:
         elif (shipment.shipment_status or "").strip().lower() in ("received", "fully_received"):
             shipment.shipment_status = "in_transit"
         self.db.commit()
+
+    def _attach_capacity(self, shipment: InboundShipment) -> InboundShipment:
+        """The fill gauge, computed onto the ORM object rather than stored (S5, ruling 1).
+
+        `_fit` moved here from the proforma-invoice serializer: capacity is a property of
+        the CONTAINER, and this shipment's own lines - not any one PI that fed it - are what
+        the gauge measures. `InboundShipmentLine.cbm` is the SAME figure the convert wrote
+        (per-unit volume times the placed quantity, or a supplier's own stated total on a
+        real packing-list upload) - the one number both the convert's over-capacity refusal
+        and this gauge read, so a percentage cannot drift between the two.
+
+        Set as plain attributes, the same pattern the packing-list route already uses for
+        `spo_allocated_quantity` / `quantity_received` on a line: `InboundShipmentResponse`
+        declares these fields and `from_attributes=True` picks them straight off the object.
+        """
+        lines = shipment.shipment_lines or []
+        measured = [line for line in lines if line.cbm is not None]
+        total_cbm = float(sum(line.cbm for line in measured)) if measured else None
+        unmeasured = len(lines) - len(measured)
+        sizes_by_id, default_size = _container_sizes(self.db)
+        result = _fit_capacity(shipment.container_size_id, total_cbm, sizes_by_id, default_size)
+        setattr(shipment, "container_size_code", result["container_size_code"])
+        setattr(shipment, "container_cbm", result["container_cbm"])
+        setattr(shipment, "total_cbm", result["total_cbm"])
+        setattr(shipment, "fill_pct", result["fill_pct"])
+        setattr(shipment, "over_by_cbm", result["over_by_cbm"])
+        setattr(shipment, "unmeasured_lines", unmeasured)
+        return shipment
 
     def _derive_header_supplier(
         self, shipment: InboundShipment, payload_supplier_id: Optional[str] = None
@@ -1293,7 +1323,7 @@ class InboundShipmentService:
             self.db.refresh(existing)
             self.refresh_shipment_line_statuses(existing.id)
             setattr(existing, "_already_existed", True)
-            return existing
+            return self._attach_capacity(existing)
 
         # Create shipment and lines in transaction
         shipment_dict = shipment_data.model_dump(exclude={"shipment_lines"})
@@ -1333,8 +1363,8 @@ class InboundShipmentService:
         self.db.commit()
         self.db.refresh(shipment)
         self.refresh_shipment_line_statuses(shipment.id)
-        return shipment
-    
+        return self._attach_capacity(shipment)
+
     def update_shipment(self, shipment_id: str, shipment_data: InboundShipmentUpdate, updated_by: str):
         """Update an inbound shipment. If shipment_lines provided, replace existing lines."""
         shipment = self.get_shipment(shipment_id)
@@ -1363,7 +1393,7 @@ class InboundShipmentService:
         self.db.commit()
         self.db.refresh(shipment)
         self.refresh_shipment_line_statuses(shipment_id)
-        return shipment
+        return self._attach_capacity(shipment)
 
     def delete_shipment(self, shipment_id: str) -> None:
         """Delete an inbound shipment. Lines and SPO allocations cascade via DB."""

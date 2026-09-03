@@ -1,17 +1,29 @@
 'use client';
 
 import { Progress } from '@/components/ui/progress';
-import { fmtTrimmedDecimal } from '../../../lib/format';
+
+/** A number to AT MOST `dp` decimals, trailing zeros trimmed - "65" not "65.00". Local
+ *  rather than imported: the gauge is shared across features and a feature-scoped
+ *  formatter would pull this shared component back into that feature's own lib. */
+function fmtTrimmedDecimal(value: number | null | undefined, dp = 2): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return '-';
+  return Number(value.toFixed(dp)).toLocaleString('en-MY', { maximumFractionDigits: dp });
+}
 
 /**
- * How full the container is, against the size this invoice is being fitted into (AC-D2).
+ * How full a container is, against the size it is being loaded into (S5, ruling 1).
  *
- * Over capacity is stated in the same sentence rather than only coloured, because the
- * number Ms Tee acts on is "how much has to come off", not "it is red". Lines carrying no
- * volume are counted out loud for the same reason: a fill of 41 cbm computed from half the
- * lines is not 41 cbm, and silently rounding that away is how a container is planned twice.
+ * Moved here from the proforma-invoice feature (`ProformaVolumeFill`, same props) because
+ * capacity is a property of the CONTAINER, not any one document that fed it: a packing list
+ * routinely consolidates several proforma invoices, so the gauge belongs on the shipment the
+ * convert dialog creates, not on an invoice beneath it.
+ *
+ * Over capacity is stated in the same sentence rather than only coloured, because the number
+ * a person acts on is "how much has to come off", not "it is red". Lines carrying no volume
+ * are counted out loud for the same reason: a fill of 41 cbm computed from half the lines is
+ * not 41 cbm, and silently rounding that away is how a container is planned twice.
  */
-export function ProformaVolumeFill({
+export function ContainerVolumeFill({
   totalCbm,
   containerCbm,
   containerLabel,
@@ -34,7 +46,7 @@ export function ProformaVolumeFill({
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
         <span className="text-sm font-medium">
           {totalCbm === null
-            ? 'No volume on this invoice'
+            ? 'No volume on file'
             : `${fmtTrimmedDecimal(measured, 2)} cbm`}
         </span>
         {capacity ? (
@@ -67,4 +79,4 @@ export function ProformaVolumeFill({
   );
 }
 
-export default ProformaVolumeFill;
+export default ContainerVolumeFill;
