@@ -40,7 +40,7 @@ export default function PromotionProductsList() {
   } = useDebouncedSearch();
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
-  const { data, isLoading, refetch, isFetching } = usePromotionProductsList({
+  const { data, isLoading, isPlaceholderData, refetch, isFetching } = usePromotionProductsList({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -174,6 +174,7 @@ export default function PromotionProductsList() {
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       standardToolbar={false}
       tableLayout={{
         columnsVisibility: true,

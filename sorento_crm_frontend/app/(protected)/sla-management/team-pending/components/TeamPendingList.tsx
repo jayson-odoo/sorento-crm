@@ -55,7 +55,7 @@ export default function TeamPendingList() {
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
   }, [assigneeFilter, teamFilter, search]);
 
-  const { data, isLoading, isFetching, refetch } = useTeamPendingSLA({
+  const { data, isLoading, isPlaceholderData, isFetching, refetch } = useTeamPendingSLA({
     page: pagination.pageIndex + 1,
     limit: pagination.pageSize,
     assignee: assigneeFilter !== ALL ? assigneeFilter : undefined,
@@ -264,6 +264,7 @@ export default function TeamPendingList() {
         tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
         recordCount={total}
         isLoading={isLoading}
+        isPlaceholderData={isPlaceholderData}
         emptyMessage="No open tasks across your teams."
       >
         <Card>
@@ -291,7 +292,6 @@ export default function TeamPendingList() {
                       <SearchableSelect
                         value={assigneeFilter}
                         onChange={setAssigneeFilter}
-                        disabled={isLoading}
                         options={[
                           { value: ALL, label: 'All assignees' },
                           ...visibleUsers.map((u) => ({
@@ -307,7 +307,6 @@ export default function TeamPendingList() {
                       <SearchableSelect
                         value={teamFilter}
                         onChange={setTeamFilter}
-                        disabled={isLoading}
                         options={[
                           { value: ALL, label: 'All teams' },
                           ...teamOptions.map((t) => ({

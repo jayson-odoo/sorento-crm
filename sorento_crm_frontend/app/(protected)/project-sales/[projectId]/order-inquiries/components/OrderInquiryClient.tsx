@@ -465,6 +465,7 @@ export function OrderInquiryClient({ projectId }: { projectId: string }) {
         table={table}
         recordCount={total}
         isLoading={inquiry.isLoading}
+        isPlaceholderData={inquiry.isPlaceholderData}
         // Pinned, never the pathname default: the fallback keys column preferences on
         // the current URL, and this route carries a project id, so it would write one
         // preferences row per project.

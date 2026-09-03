@@ -35,6 +35,7 @@ import type {
   OrderInquiryWorklistParams,
   UnplaceAllRequest,
 } from '../types/orderInquiry.types';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export const ORDER_INQUIRY_ROWS_KEY = 'project-order-inquiry-rows';
 export const ORDER_INQUIRY_SUMMARY_KEY = 'project-order-inquiry-summary';
@@ -57,6 +58,7 @@ export function useOrderInquiryRows(
   params: OrderInquiryListParams = {},
 ) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: orderInquiryRowsKey(projectId ?? '', params),
     queryFn: () => listOrderInquiryRows(projectId as string, params),
     enabled: Boolean(projectId),
@@ -83,12 +85,12 @@ export function useOrderInquiryWorklist(
   options: { enabled?: boolean } = {},
 ) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [ORDER_INQUIRY_WORKLIST_KEY, params],
     queryFn: () => listOrderInquiryWorklist(params),
     enabled: options.enabled,
     // Every filter and every page is a new key, so without this the grid empties itself
     // between the press and the answer and the page jumps under the cursor.
-    placeholderData: (previous) => previous,
   });
 }
 
@@ -104,12 +106,12 @@ export function useOrderInquiryWorklistSummary(
   options: { enabled?: boolean } = {},
 ) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [ORDER_INQUIRY_WORKLIST_SUMMARY_KEY, params],
     queryFn: () => getOrderInquiryWorklistSummary(params),
     enabled: options.enabled,
     // Above all here: the month strip is inside this answer, so without it pressing a
     // month makes the control you just used vanish until the next answer lands.
-    placeholderData: (previous) => previous,
   });
 }
 
@@ -125,10 +127,10 @@ export function useUnplaceAllPreview(
   options: { enabled?: boolean } = {},
 ) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [ORDER_INQUIRY_UNPLACE_ALL_PREVIEW_KEY, filters],
     queryFn: () => getUnplaceAllPreview(filters),
     enabled: options.enabled,
-    placeholderData: (previous) => previous,
   });
 }
 

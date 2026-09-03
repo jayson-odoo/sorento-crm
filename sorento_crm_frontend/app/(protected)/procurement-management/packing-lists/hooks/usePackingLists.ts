@@ -15,6 +15,7 @@ import {
 import { getAuditLogs } from '@/app/(protected)/system-management/audit-logs/services/auditLogService';
 import type { PackingListFormData } from '../types/packingList.types';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 /** `audit_logs.entity_type` for a container - `InboundShipment.__tablename__`. */
 const PACKING_LIST_ENTITY_TYPE = 'inbound_shipments';
@@ -37,7 +38,6 @@ export function usePackingListHistory(packingListId: string | null) {
         pageSize: 50,
       }),
     enabled: !!packingListId,
-    refetchOnWindowFocus: false,
   });
 }
 
@@ -53,7 +53,6 @@ export function usePackingListSourceInvoices(packingListId: string | null) {
     queryKey: ['packing-lists', 'source-proforma-invoices', packingListId],
     queryFn: () => getPackingListSourceInvoices(packingListId as string),
     enabled: !!packingListId,
-    refetchOnWindowFocus: false,
   });
 }
 
@@ -98,11 +97,11 @@ export const packingListsPagerQuery = {
 
 export function usePackingLists(params: PackingListsListParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: packingListsListQueryKey(params),
     queryFn: () => getPackingLists(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

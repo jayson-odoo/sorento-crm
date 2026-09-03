@@ -33,7 +33,6 @@ export function useRecommendationDecisions(runId: string | null, enabled: boolea
     queryKey: decisionsKey(runId),
     queryFn: () => getRecommendationDecisions(runId as string),
     enabled: enabled && !!runId,
-    refetchOnWindowFocus: false,
     staleTime: 5_000,
     retry: 1,
   });

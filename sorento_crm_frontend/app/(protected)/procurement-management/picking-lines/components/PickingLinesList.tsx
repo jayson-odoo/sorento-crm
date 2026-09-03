@@ -26,6 +26,7 @@ import { SpoAllocationCell } from '@/components/common/SpoAllocationCell';
 import { useQuery } from '@tanstack/react-query';
 import { getPickingLines, type PickingLinesListParams } from '../services/pickingLineService';
 import type { PickingLineListItem } from '../types/pickingLine.types';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 type SortField = 'spo_allocation' | 'product' | 'quantity_expected' | 'quantity_picked';
 
@@ -59,7 +60,8 @@ export default function PickingLinesList() {
     [pagination.pageIndex, pagination.pageSize, sortField, sortDir, searchQuery],
   );
 
-  const { data, isLoading, refetch, isFetching } = useQuery({
+  const { data, isLoading, isPlaceholderData, refetch, isFetching } = useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['picking-lines', params],
     queryFn: () => getPickingLines(params),
   });
@@ -161,6 +163,7 @@ export default function PickingLinesList() {
       table={table}
       recordCount={data?.pagination?.total ?? 0}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       standardToolbar={false}
       tableLayout={{ columnsVisibility: true }}
     >

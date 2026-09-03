@@ -33,6 +33,7 @@ import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { listPages } from '../services/dealerKitService';
 import { NewPageDialog } from './NewPageDialog';
 import type { PageSummary } from '@/lib/dealer-kit/types';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export function PagesList() {
   const router = useRouter();
@@ -56,7 +57,8 @@ export function PagesList() {
     pageSize: 10,
   });
 
-  const { data, isLoading, isError, error } = useQuery({
+  const { data, isLoading, isPlaceholderData, isError, error } = useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['dealer-kit', 'pages'],
     queryFn: listPages,
   });
@@ -200,6 +202,7 @@ export function PagesList() {
       table={table}
       recordCount={rows.length}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       onRowClick={(row: PageSummary) => router.push(`/dealer-kit/pages/${row.id}`)}
       rowPending={rowPending}
       standardToolbar={false}

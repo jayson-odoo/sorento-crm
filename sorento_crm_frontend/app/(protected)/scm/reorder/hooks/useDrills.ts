@@ -13,7 +13,6 @@ export function useExplainNet(recId: string | null, enabled: boolean) {
     queryFn: () => getRecommendationNet(recId as string),
     enabled: enabled && !!recId,
     staleTime: 5 * 60_000,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -32,7 +31,6 @@ export function useExplainDemand(
     queryFn: () => getRecommendationDemand(productId as string, warehouseId),
     enabled: enabled && !!productId,
     staleTime: 5 * 60_000,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

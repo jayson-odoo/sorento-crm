@@ -46,6 +46,7 @@ import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { RowActionsMenu } from '@/components/common/RowActionsMenu';
 import { contactActions } from '../actions';
 import { ContactImpersonateDialog } from './ContactImpersonateDialog';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export default function ContactsList() {
   const queryClient = useQueryClient();
@@ -99,12 +100,12 @@ export default function ContactsList() {
     [pagination, sorting, searchQuery],
   );
 
-  const { data, isLoading, refetch, isFetching } = useQuery({
+  const { data, isLoading, isPlaceholderData, refetch, isFetching } = useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: contactsListQueryKey(listParams),
     queryFn: () => fetchContactsPage(listParams),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 
@@ -371,6 +372,7 @@ export default function ContactsList() {
       tableLayout={{ columnsVisibility: true }}
       recordCount={data?.pagination?.total || 0}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       rowHref={rowHref}
       emptyAction={listPrimaryAction}
     >

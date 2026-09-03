@@ -28,6 +28,7 @@ import type { StockInquiryFormData } from '../types/stockInquiry.types';
 import type { FormPdfExportOptions } from '@/lib/revision-export';
 import { isDeferredFormAction } from '@/app/(protected)/sla-management/_shared/formAction';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export type StockInquiriesListParams = DataGridApiFetchParams & {
   statuses?: string[];
@@ -83,12 +84,12 @@ export function useStockInquiries(
 ) {
   const { enabled = true, ...listParams } = params;
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: stockInquiriesListQueryKey(listParams),
     queryFn: () => getStockInquiries(listParams),
     enabled,
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -408,6 +409,7 @@ export function useStockInquiryConversation(
   options?: { limit?: number; cursor?: string; enabled?: boolean },
 ) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['stock-inquiry-conversation', inquiryId, options?.limit, options?.cursor],
     queryFn: () =>
       getStockInquiryConversation(inquiryId!, {

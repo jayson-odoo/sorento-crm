@@ -538,6 +538,7 @@ export function StockTransfersPanel({
           table={table}
           recordCount={total}
           isLoading={list.isLoading}
+          isPlaceholderData={list.isPlaceholderData}
           listingKey={listingKey}
           tableLayout={{ width: 'fixed', columnsResizable: true }}
           rowHref={(row) =>

@@ -14,7 +14,6 @@ export function useCatalogueStatusQuery() {
   return useQuery({
     queryKey: CATALOGUE_STATUS_QUERY_KEY,
     queryFn: () => getCatalogueStatus(),
-    refetchOnWindowFocus: false,
     refetchInterval: (query) => (query.state.data?.status === 'running' ? 3000 : false),
   });
 }

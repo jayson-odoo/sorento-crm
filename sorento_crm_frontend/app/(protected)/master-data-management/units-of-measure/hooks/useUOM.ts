@@ -3,14 +3,15 @@ import { toast } from 'sonner';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import { getUOMs, getUOM, createUOM, updateUOM } from '../services/uomService';
 import type { UOMFormData } from '../types/uom.types';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export function useUOMs(params: DataGridApiFetchParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['uoms', params.pageIndex, params.pageSize, params.sorting, params.searchQuery],
     queryFn: () => getUOMs(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

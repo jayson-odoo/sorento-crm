@@ -25,6 +25,7 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import {
   getKpiSummary,
   getKpiTrend,
@@ -249,6 +250,7 @@ function TasksCard({ scope, filter, onClear, window }: { scope: KpiScope; filter
   }, [filter.view, filter.state, escWindow, isFiltered]);
 
   const tasksQ = useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['kpi-tasks', scope, windowKey(window), filter.view, filter.state, escWindow, pagination.pageIndex, pagination.pageSize, sorting],
     queryFn: () => getKpiTasks(scope, pagination, sorting, filter.view, filter.state, window, escWindow),
     staleTime: KPI_STALE_MS,
@@ -373,6 +375,7 @@ function TasksCard({ scope, filter, onClear, window }: { scope: KpiScope; filter
       table={table}
       recordCount={total}
       isLoading={tasksQ.isLoading}
+      isPlaceholderData={tasksQ.isPlaceholderData}
       standardToolbar={false}
       listingKey="sla.kpi.view::tasks"
       emptyMessage="No tasks in this scope."

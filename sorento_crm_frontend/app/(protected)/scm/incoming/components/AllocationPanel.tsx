@@ -40,7 +40,6 @@ export function AllocationPanel({ shipmentId }: { shipmentId: string }) {
   const suggestion = useQuery({
     queryKey: ['scm', 'fulfilment', 'allocation', shipmentId],
     queryFn: () => getAllocationSuggestion(shipmentId),
-    refetchOnWindowFocus: false,
   });
 
   /** Which option each line is pointed at, keyed by shipment line. */

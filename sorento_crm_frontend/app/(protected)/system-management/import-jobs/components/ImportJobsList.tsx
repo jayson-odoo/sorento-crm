@@ -60,7 +60,7 @@ export default function ImportJobsList() {
   const [refreshingJobId, setRefreshingJobId] = useState<string | null>(null);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
-  const { data, isLoading, refetch, isFetching } = useImportJobs({
+  const { data, isLoading, isPlaceholderData, refetch, isFetching } = useImportJobs({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     job_type: jobType || undefined,
@@ -306,6 +306,7 @@ export default function ImportJobsList() {
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       onRowClick={(row) => handleRowClick(row.job_id)}
       tableLayout={{ columnsVisibility: true,  width: 'fixed', columnsResizable: true }}
     >

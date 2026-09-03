@@ -13,6 +13,7 @@ import {
 } from '../services/salesOrderService';
 import type { SalesOrderFormData } from '../types/scm.types';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export interface UseSalesOrdersParams {
   pageIndex: number;
@@ -90,6 +91,7 @@ export const salesOrdersPagerQuery = {
 
 export function useSalesOrders(params: UseSalesOrdersParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: salesOrdersListQueryKey(params),
     queryFn: () =>
       getSalesOrders({
@@ -109,7 +111,6 @@ export function useSalesOrders(params: UseSalesOrdersParams) {
         demandClass: params.demandClass ?? null,
       }),
     staleTime: 10_000,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -121,7 +122,6 @@ export function useSalesOrder(id: string | null) {
     queryFn: () => getSalesOrder(id as string),
     enabled: !!id,
     staleTime: 5_000,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -132,7 +132,6 @@ export function useSalesOrderAgents() {
     queryKey: ['scm', 'sales-order-agents'],
     queryFn: getSalesOrderAgents,
     staleTime: 5 * 60_000,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

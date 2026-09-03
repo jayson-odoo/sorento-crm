@@ -254,7 +254,7 @@ export default function AttachmentsInFolderPanel({
   const isSearching = searchQuery.trim().length > 0;
   const recursive = (isSearching || hasActiveFilter) && !thisFolderOnly;
 
-  const { data, isLoading, isFetching } = useDriveContents({
+  const { data, isLoading, isPlaceholderData, isFetching } = useDriveContents({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -981,6 +981,7 @@ export default function AttachmentsInFolderPanel({
         table={table}
         recordCount={data?.pagination.total || 0}
         isLoading={isLoading}
+        isPlaceholderData={isPlaceholderData}
         onRowClick={(row) => openItem(row)}
         listingKey="resource-management.files.view::unified-drive"
         tableLayout={{

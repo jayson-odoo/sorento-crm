@@ -36,6 +36,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { SystemLog } from '@/app/models/system';
 import { User } from '@/app/models/user';
 import { LogActionsCell } from './log-actions-cell';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 const ActivityLogList = () => {
   const [pagination, setPagination] = useState<PaginationState>({
@@ -97,7 +98,8 @@ const ActivityLogList = () => {
   };
 
   // Users query
-  const { data, isLoading, isFetching } = useQuery({
+  const { data, isLoading, isPlaceholderData, isFetching } = useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [
       'system-logs',
       pagination,
@@ -115,7 +117,6 @@ const ActivityLogList = () => {
       }),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60, // 60 minutes
-    refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: 1,
   });
@@ -305,6 +306,7 @@ const ActivityLogList = () => {
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       tableLayout={{
         columnsPinnable: true,
         columnsMovable: true,

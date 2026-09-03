@@ -35,7 +35,7 @@ export default function LookupSetsList() {
   const [editingId, setEditingId] = useState<string | undefined>();
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
-  const { data, isLoading, isFetching } = useLookupSets({
+  const { data, isLoading, isPlaceholderData, isFetching } = useLookupSets({
     pageIndex: 0,
     pageSize: 100,
     sorting: [{ id: 'name', desc: false }],
@@ -176,6 +176,7 @@ export default function LookupSetsList() {
         table={table}
         recordCount={rows.length}
         isLoading={isLoading}
+        isPlaceholderData={isPlaceholderData}
         tableLayout={{ width: 'fixed', columnsResizable: true }}
         onRowClick={(row) => handleView(row as LookupSet)}
         emptyAction={listPrimaryAction}

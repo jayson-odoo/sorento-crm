@@ -3,6 +3,7 @@ import type { SortingState } from '@tanstack/react-table';
 import { toast } from 'sonner';
 import { postListQuerySearch } from '@/lib/list-query/listQueryService';
 import type { ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import {
   applyWorkflowTransition,
   createWorkflowDefinition,
@@ -36,6 +37,7 @@ export const wfKeys = {
 
 export function useWorkflowDefinitionsQuery(params: { page?: number; limit?: number; q?: string }) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [...wfKeys.definitions, params],
     queryFn: () => fetchWorkflowDefinitions({ page: params.page ?? 1, limit: params.limit ?? 50, q: params.q }),
   });
@@ -54,6 +56,7 @@ export function useWorkflowDefinitionsGridQuery(
   options?: { enabled?: boolean },
 ) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [
       ...wfKeys.definitions,
       'grid',
@@ -78,7 +81,6 @@ export function useWorkflowDefinitionsGridQuery(
       }),
     enabled: options?.enabled !== false,
     staleTime: 30_000,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -103,6 +105,7 @@ export function useWorkflowSubmissionsGridQuery(
       ? params.scopeDefinitionId
       : undefined);
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [
       ...wfKeys.submissions,
       'grid',
@@ -129,7 +132,6 @@ export function useWorkflowSubmissionsGridQuery(
       }),
     enabled: options?.enabled !== false,
     staleTime: 30_000,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -140,7 +142,6 @@ export function usePublishedWorkflowDefinitionsForSubmissionQuery(options?: { en
     queryFn: () => fetchPublishedWorkflowDefinitionsForSubmission(),
     enabled: options?.enabled !== false,
     staleTime: 60_000,
-    refetchOnWindowFocus: false,
     retry: false,
   });
 }
@@ -211,6 +212,7 @@ export function useWorkflowSubmissionsQuery(params: {
   state_code?: string;
 }) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [...wfKeys.submissions, params],
     queryFn: () =>
       fetchWorkflowSubmissions({
@@ -227,7 +229,6 @@ export function useWorkflowSubmissionQuery(id: string | null) {
     queryKey: wfKeys.submission(id || ''),
     queryFn: () => fetchWorkflowSubmission(id!),
     enabled: !!id,
-    refetchOnWindowFocus: false,
   });
 }
 
@@ -236,7 +237,6 @@ export function useAllowedTransitionsQuery(submissionId: string | null) {
     queryKey: wfKeys.allowedTransitions(submissionId || ''),
     queryFn: () => fetchAllowedTransitions(submissionId!),
     enabled: !!submissionId,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

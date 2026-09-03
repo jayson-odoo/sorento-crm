@@ -27,7 +27,6 @@ export function useSigninBranding(enabled: boolean): SigninBranding {
     enabled,
     retry: false,
     staleTime: 5 * 60 * 1000,
-    refetchOnWindowFocus: false,
   });
   return data ?? NO_SIGNIN_BRANDING;
 }

@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import type { PublicHolidayFormData, WorkCalendarConfig } from '../types/workCalendar.types';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import {
   getWorkCalendarConfig,
   updateWorkCalendarConfig,
@@ -16,7 +17,6 @@ export function useWorkCalendarConfig() {
     queryKey: ['work-calendar-config'],
     queryFn: () => getWorkCalendarConfig(),
     staleTime: 1000 * 60 * 10,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -35,10 +35,10 @@ export function useUpdateWorkCalendarConfig() {
 
 export function usePublicHolidays(params: DataGridApiFetchParams & { year?: number }) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['public-holidays', params.pageIndex, params.pageSize, params.year],
     queryFn: () => getPublicHolidays(params),
     staleTime: 1000 * 60,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

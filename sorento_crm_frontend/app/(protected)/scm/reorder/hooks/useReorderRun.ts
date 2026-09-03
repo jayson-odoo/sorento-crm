@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import {
   createReorderRun,
   getAllDispositionRecommendations,
@@ -96,7 +97,6 @@ export function useReorderRun(): ReorderRunController {
     enabled: !!runId,
     refetchInterval: (query) =>
       !stalled && query.state.data?.status === 'running' ? RUN_POLL_MS : false,
-    refetchOnWindowFocus: false,
     retry: 2,
   });
 
@@ -193,7 +193,6 @@ export function useTodayRun() {
   return useQuery({
     queryKey: todayRunKey,
     queryFn: () => getTodayRun(),
-    refetchOnWindowFocus: false,
     staleTime: 10_000,
     retry: 1,
     // A plan is built by a background worker, so the page that opened while one was
@@ -217,7 +216,6 @@ export function useSetAsideDemand() {
   return useQuery({
     queryKey: setAsideDemandKey,
     queryFn: () => getSetAsideDemand(),
-    refetchOnWindowFocus: false,
     staleTime: 60_000,
     retry: 1,
   });
@@ -231,7 +229,6 @@ export function useUnlocatedDemand() {
   return useQuery({
     queryKey: unlocatedDemandKey,
     queryFn: () => getUnlocatedDemand(),
-    refetchOnWindowFocus: false,
     staleTime: 60_000,
     retry: 1,
   });
@@ -243,6 +240,7 @@ export function useUnlocatedDemand() {
  */
 export function useReorderRuns(query: ReorderRunQuery, enabled = true) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [
       ...runHistoryKey,
       query.pageIndex,
@@ -252,10 +250,8 @@ export function useReorderRuns(query: ReorderRunQuery, enabled = true) {
     ],
     queryFn: () => listReorderRuns(query),
     enabled,
-    refetchOnWindowFocus: false,
     staleTime: 10_000,
     // Keep the previous page visible while the next page loads (no flash to empty).
-    placeholderData: (prev) => prev,
     retry: 1,
   });
 }
@@ -270,7 +266,6 @@ export function useReorderRunDetail(runId: string | null, enabled: boolean) {
     queryKey: runDetailKey(runId),
     queryFn: () => getReorderRun(runId as string),
     enabled: enabled && !!runId,
-    refetchOnWindowFocus: false,
     staleTime: 30_000,
     retry: 1,
     // Start Plan navigates to the plan on the 202, so the first thing this page shows is a
@@ -298,7 +293,6 @@ export function useCoveredRecommendations(runId: string | null, enabled: boolean
     queryFn: () => getCoveredRecommendations(runId as string),
     enabled: enabled && !!runId,
     staleTime: 30_000,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -316,7 +310,6 @@ export function useNeedsLevelRecommendations(runId: string | null, enabled: bool
     queryFn: () => getNeedsLevelRecommendations(runId as string),
     enabled: enabled && !!runId,
     staleTime: 30_000,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -348,7 +341,6 @@ export function useRecommendationDemand(
     queryFn: () => getRecommendationDemand(runId as string, recId as string, channel, scope),
     enabled: enabled && !!runId && !!recId,
     staleTime: 60_000,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -373,7 +365,6 @@ export function useCustomerOrders(
       getCustomerOrders(runId as string, productId as string, segment, customerKey as string),
     enabled: enabled && !!runId && !!productId && !!customerKey,
     staleTime: 60_000,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -399,7 +390,6 @@ export function useProductPhoto(
     queryFn: () => getProductImage(runId as string, productId as string),
     enabled: enabled && !!runId && !!productId,
     staleTime: 600_000,
-    refetchOnWindowFocus: false,
     retry: false,
     meta: { silent: true },
   });
@@ -411,7 +401,6 @@ export function useBuyRecommendationsForCash(runId: string | null, enabled: bool
     queryFn: () => getBuyRecommendationsForCash(runId as string),
     enabled: enabled && !!runId,
     staleTime: 30_000,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -429,7 +418,6 @@ export function useAllDispositionRecommendations(runId: string | null, enabled: 
     queryFn: () => getAllDispositionRecommendations(runId as string),
     enabled: enabled && !!runId,
     staleTime: 30_000,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -449,7 +437,6 @@ export function useLocationStock(productId: string | null, enabled: boolean) {
     queryFn: () => getLocationStock(productId as string),
     enabled: enabled && !!productId,
     staleTime: 15_000,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -461,11 +448,11 @@ export function useReorderRecommendations(
   enabled: boolean,
 ) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['scm', 'reorder', 'recs', runId, query],
     queryFn: () => getRecommendations(runId as string, query),
     enabled: enabled && !!runId,
     staleTime: 30_000,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

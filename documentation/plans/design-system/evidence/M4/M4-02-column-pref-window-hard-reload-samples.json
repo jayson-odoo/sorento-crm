@@ -1,0 +1,13 @@
+{
+  "check": "Column-preference window: hard reload Products (/master-data-management/products)",
+  "method": "init-script patched window.fetch to delay column-config and master-data/products requests by 700ms; polled table [data-slot=skeleton] count every ~25ms for 3.5s after a full page reload",
+  "samples_summary": [
+    { "t_ms": 25, "hasTable": false, "skeletonInGrid": 0 },
+    { "t_ms": 526, "hasTable": false, "skeletonInGrid": 0 },
+    { "t_ms": 941, "hasTable": true, "skeletonInGrid": 700 },
+    { "t_ms": 1952, "hasTable": true, "skeletonInGrid": 700 },
+    { "t_ms": 2100, "hasTable": true, "skeletonInGrid": 0 },
+    { "t_ms": 3501, "hasTable": true, "skeletonInGrid": 0 }
+  ],
+  "result": "PASS - skeleton (700 cells = 14 cols x 50 rows) appears only during the first-paint window (941ms-1952ms, matching the artificial 700ms fetch delay plus render), then permanently 0 through the rest of the 3.5s observation window. No skeleton reappearance observed."
+}

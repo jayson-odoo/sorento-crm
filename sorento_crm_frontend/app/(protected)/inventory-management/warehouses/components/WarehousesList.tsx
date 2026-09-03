@@ -80,7 +80,7 @@ export default function WarehousesList() {
     queryClient.invalidateQueries({ queryKey: ['warehouses'] });
   };
 
-  const { data, isLoading, refetch, isFetching } = useWarehouses({
+  const { data, isLoading, isPlaceholderData, refetch, isFetching } = useWarehouses({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -174,6 +174,7 @@ export default function WarehousesList() {
 
   return (
     <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       rowHref={rowHref}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       standardToolbar={false}

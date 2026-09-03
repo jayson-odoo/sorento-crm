@@ -46,6 +46,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import type { SortingState } from '@tanstack/react-table';
 import { buildDetailSearch, parseDetailSearch } from '@/lib/listNavQuery';
+import { usePrefetchOnce } from '@/hooks/usePrefetchOnce';
 
 /** The list query a detail URL describes. */
 export interface ListPagerParams {
@@ -131,6 +132,7 @@ export function useListPager({
   const router = useRouter();
   const queryClient = useQueryClient();
   const searchParams = useSearchParams();
+  const prefetchOnce = usePrefetchOnce();
   const [stepping, setStepping] = useState(false);
   // The direction whose neighbouring page came back empty. `total` said there was
   // more, the fetch says there is not, and the fetch is the newer answer.
@@ -153,7 +155,6 @@ export function useListPager({
     queryFn: () => fetchPage(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: 1,
   });
@@ -174,6 +175,19 @@ export function useListPager({
     deadEnd !== 'next' &&
     (idx < items.length - 1 ||
       (params.pageIndex + 1) * params.pageSize < total);
+
+  // The pager's own prev/next, prefetched as soon as the record they land on
+  // is known - within this page, that is immediate (M4 list latency). A step
+  // across a page boundary fetches its neighbour first and has no href to
+  // prefetch until then, so it is left to the click that already fetches it.
+  useEffect(() => {
+    if (hasPrevious && idx > 0) {
+      prefetchOnce(stepHref(detailPath, items[idx - 1].id, params, hrefFor));
+    }
+    if (hasNext && idx < items.length - 1) {
+      prefetchOnce(stepHref(detailPath, items[idx + 1].id, params, hrefFor));
+    }
+  }, [hasPrevious, hasNext, idx, items, detailPath, params, hrefFor, prefetchOnce]);
 
   /** Step to a neighbouring page and land on the row at its near edge. */
   const stepPage = useCallback(

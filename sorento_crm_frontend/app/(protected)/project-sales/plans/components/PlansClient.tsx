@@ -330,6 +330,7 @@ export function PlansClient() {
         table={table}
         recordCount={plans.data?.total ?? 0}
         isLoading={plans.isLoading}
+        isPlaceholderData={plans.isPlaceholderData}
         listingKey="projects.projects.view::project-supply-plans-v1"
         tableLayout={{ width: 'fixed', columnsResizable: true }}
       >

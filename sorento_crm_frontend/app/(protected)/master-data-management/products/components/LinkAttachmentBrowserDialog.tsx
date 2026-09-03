@@ -201,7 +201,6 @@ export default function LinkAttachmentBrowserDialog({
     enabled: open,
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
   const attachments = attachmentsData?.data ?? [];

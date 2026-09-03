@@ -24,6 +24,7 @@ import { getProductSuppliers } from '../services/productSupplierService';
 import { useQuery } from '@tanstack/react-query';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export default function ProductSuppliersGrid() {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
@@ -46,7 +47,8 @@ export default function ProductSuppliersGrid() {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
   }, [searchQuery]);
 
-  const { data, isLoading, refetch, isFetching } = useQuery({
+  const { data, isLoading, isPlaceholderData, refetch, isFetching } = useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['product-suppliers', pagination, sorting, searchQuery],
     queryFn: () => getProductSuppliers({
       pageIndex: pagination.pageIndex,
@@ -56,7 +58,6 @@ export default function ProductSuppliersGrid() {
     }),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 
@@ -118,6 +119,7 @@ export default function ProductSuppliersGrid() {
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       standardToolbar={false}
       tableLayout={{ columnsVisibility: true }}
     >

@@ -37,7 +37,7 @@ export default function ProductAttachmentsList() {
   } = useDebouncedSearch();
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
-  const { data, isLoading, refetch, isFetching } = useProductAttachments({
+  const { data, isLoading, isPlaceholderData, refetch, isFetching } = useProductAttachments({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -108,6 +108,7 @@ export default function ProductAttachmentsList() {
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       onRowClick={handleRowClick}
       standardToolbar={false}
       tableLayout={{ columnsVisibility: true }}

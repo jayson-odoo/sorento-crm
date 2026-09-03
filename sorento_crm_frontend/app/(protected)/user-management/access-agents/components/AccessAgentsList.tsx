@@ -63,7 +63,7 @@ export default function AccessAgentsList() {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
   }, [searchQuery]);
 
-  const { data, isLoading, refetch, isFetching } = useAccessAgents({
+  const { data, isLoading, isPlaceholderData, refetch, isFetching } = useAccessAgents({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -175,6 +175,7 @@ export default function AccessAgentsList() {
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       rowHref={rowHref}
       tableLayout={{ columnsVisibility: true }}
       emptyAction={listPrimaryAction}

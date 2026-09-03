@@ -22,7 +22,6 @@ export function useMarketSignals() {
   return useQuery({
     queryKey: SIGNALS_KEY,
     queryFn: listMarketSignals,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -33,7 +32,6 @@ export function useMarketTopics() {
   return useQuery({
     queryKey: TOPICS_KEY,
     queryFn: listMarketTopics,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

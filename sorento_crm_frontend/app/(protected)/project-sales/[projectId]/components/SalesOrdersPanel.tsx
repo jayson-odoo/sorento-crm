@@ -398,6 +398,7 @@ export function SalesOrdersPanel({ project }: { project: Project }) {
         table={table}
         recordCount={total}
         isLoading={salesOrders.isLoading}
+        isPlaceholderData={salesOrders.isPlaceholderData}
         listingKey="projects.projects.view::project-sales-orders"
         tableLayout={{ width: 'fixed', columnsResizable: true }}
         onRowClick={(row) =>

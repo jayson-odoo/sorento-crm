@@ -18,6 +18,5 @@ export function useSearchPolicyQuery() {
     queryFn: () => getSearchPolicy(),
     select: (data) => data.policy,
     staleTime: 60_000,
-    refetchOnWindowFocus: false,
   });
 }

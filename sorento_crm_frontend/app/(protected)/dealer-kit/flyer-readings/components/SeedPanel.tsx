@@ -16,6 +16,7 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { listPages } from '../../services/dealerKitService';
 import type { FlyerSeedResult, UnmatchedCode } from '../../services/flyerReadingService';
 import { useSeedFromFlyerReading } from '../hooks/useFlyerReadings';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 /**
  * Step three: where the draft goes, and what it will not contain.
@@ -75,6 +76,7 @@ export function SeedPanel({
   const [result, setResult] = useState<FlyerSeedResult | null>(null);
 
   const { data: pages, isLoading: pagesLoading } = useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['dealer-kit', 'pages'],
     queryFn: listPages,
   });

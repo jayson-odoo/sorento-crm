@@ -8,6 +8,7 @@ import { getDriveContents, type DriveListParams } from '../services/driveService
 import { apiFetch } from '@/lib/api';
 import type { AttachmentType } from '../../attachment-types/types/attachmentType.types';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 
 /**
@@ -73,11 +74,11 @@ export const attachmentsPagerQuery = {
 
 export function useAttachments(params: AttachmentsListParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: attachmentsListQueryKey(params),
     queryFn: () => getAttachments(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -94,6 +95,7 @@ export function useDriveContents(params: DriveListParams) {
     ? `${params.sorting[0].id}:${params.sorting[0].desc ? 'desc' : 'asc'}`
     : '';
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [
       'drive-contents',
       params.directory_id ?? '__root__',
@@ -118,7 +120,6 @@ export function useDriveContents(params: DriveListParams) {
     queryFn: () => getDriveContents(params),
     staleTime: 30 * 1000,
     gcTime: 1000 * 60 * 10,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

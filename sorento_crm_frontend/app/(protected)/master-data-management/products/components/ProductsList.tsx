@@ -64,6 +64,7 @@ import type { ColumnOption } from '@/lib/excel-utils';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 const PRODUCT_IMPORT_COLUMNS: ColumnOption[] = [
   { key: 'Item Code', label: 'Item Code', selected: true },
@@ -225,12 +226,11 @@ const ProductsList = () => {
     ],
   );
 
-  const { data, isLoading, isFetching, isError, error } = useQuery({
+  const { data, isLoading, isPlaceholderData, isFetching, isError, error } = useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: productsListQueryKey(listParams),
     queryFn: () => fetchProductsPage(listParams),
-    staleTime: Infinity,
     gcTime: 1000 * 60 * 60, // 60 minutes
-    refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: 1,
   });
@@ -730,7 +730,6 @@ const ProductsList = () => {
   // toolbar, and the empty state's next step (S5-06).
   const listPrimaryAction = (
     <Button
-      disabled={isLoading}
       onClick={() => router.push('/master-data-management/products/new')}
     >
       <Plus className="size-4" />
@@ -743,6 +742,7 @@ const ProductsList = () => {
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       rowHref={rowHref}
       rowPending={rowPending}
       tableLayout={{
@@ -786,7 +786,6 @@ const ProductsList = () => {
                   <SearchableSelect
                     value={selectedCategory || 'all'}
                     onChange={handleCategorySelection}
-                    disabled={isLoading}
                     placeholder="Category"
                     options={[
                       { value: 'all', label: 'All categories' },
@@ -799,7 +798,6 @@ const ProductsList = () => {
                   <SearchableSelect
                     value={selectedBrand || 'all'}
                     onChange={handleBrandSelection}
-                    disabled={isLoading}
                     placeholder="Brand"
                     options={[
                       { value: 'all', label: 'All brands' },
@@ -812,7 +810,6 @@ const ProductsList = () => {
                   <SearchableSelect
                     value={selectedStatus || 'all'}
                     onChange={handleStatusSelection}
-                    disabled={isLoading}
                     placeholder="Status"
                     options={[
                       { value: 'all', label: 'All status' },
@@ -823,7 +820,6 @@ const ProductsList = () => {
                   <SearchableSelect
                     value={selectedVariantFilter}
                     onChange={handleVariantFilterSelection}
-                    disabled={isLoading}
                     placeholder="Variant"
                     options={[
                       { value: 'all', label: 'All products' },

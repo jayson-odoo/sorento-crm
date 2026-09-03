@@ -17,7 +17,6 @@ export function useSupplierCodeAliases(supplierId: string | null) {
     queryKey: [...KEY, 'list', supplierId],
     queryFn: () => listSupplierCodeAliases(supplierId as string),
     enabled: !!supplierId,
-    refetchOnWindowFocus: false,
   });
 }
 
@@ -26,7 +25,6 @@ export function useUnmatchedSupplierCodes(supplierId: string | null) {
     queryKey: [...KEY, 'unmatched', supplierId],
     queryFn: () => listUnmatchedSupplierCodes(supplierId as string),
     enabled: !!supplierId,
-    refetchOnWindowFocus: false,
   });
 }
 

@@ -9,6 +9,11 @@ let capturedOnError:
     ) => void)
   | null = null;
 
+// Capture the options QueryProvider constructs its ONE QueryClient with
+// (M4-04): defaultOptions is the shared substitute for 176 per-hook repeats.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let capturedQueryClientOptions: any = null;
+
 vi.mock('@tanstack/react-query', () => {
   const actual = vi.importActual('@tanstack/react-query');
   return {
@@ -19,8 +24,9 @@ vi.mock('@tanstack/react-query', () => {
       }
     },
     QueryClient: class {
-      constructor() {
-        // no-op
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      constructor(opts?: any) {
+        capturedQueryClientOptions = opts;
       }
       invalidateQueries() {}
     },
@@ -53,8 +59,24 @@ vi.mock('@/services/pendingActionService', () => ({
   getCurrentPendingAction: vi.fn(),
 }));
 
+import fs from 'node:fs';
+import path from 'node:path';
 import { QueryProvider } from './query-provider';
 import { pendingEntityStore } from '@/lib/pending-entity-store';
+
+/** Every non-test `.ts`/`.tsx` file under `dir`. */
+function listSourceFiles(dir: string, out: string[] = []): string[] {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name === 'node_modules' || entry.name === '.next') continue;
+      listSourceFiles(full, out);
+    } else if (/\.(ts|tsx)$/.test(entry.name) && !/\.(test|spec)\./.test(entry.name)) {
+      out.push(full);
+    }
+  }
+  return out;
+}
 
 function fireOnError(
   message: string,
@@ -142,5 +164,44 @@ describe('QueryProvider toast deduplication', () => {
     // Everything else still reports normally.
     fireOnError('Internal server error', undefined, ['product', 'p-2']);
     expect(toastCustom).toHaveBeenCalledTimes(1);
+  });
+});
+
+// M4-04: the ONE place freshness is configured, so 176 per-hook repeats do
+// not have to agree with each other by hand.
+describe('QueryProvider default query options (M4-04)', () => {
+  it('sets retry 1, staleTime 30s and no refetch on window focus', () => {
+    render(
+      <QueryProvider>
+        <div />
+      </QueryProvider>,
+    );
+
+    expect(capturedQueryClientOptions.defaultOptions.queries).toEqual({
+      retry: 1,
+      staleTime: 30_000,
+      refetchOnWindowFocus: false,
+    });
+  });
+
+  // The 176 per-hook repeats of this exact value are gone: the default above
+  // is now the ONLY place it is set. A hook opting into `true` (a genuinely
+  // different value) is untouched by this test.
+  it('nothing outside this provider sets refetchOnWindowFocus: false itself', () => {
+    // Every directory a query can be written in, not just `app/` and `hooks/`:
+    // the first pass scanned two of them and left the repeat in
+    // `components/common/LinkAttachmentBrowserDialog.tsx` standing.
+    const root = path.resolve(__dirname, '..');
+    const files = ['app', 'components', 'hooks', 'lib', 'providers', 'services'].flatMap((dir) =>
+      listSourceFiles(path.join(root, dir)),
+    );
+    const self = path.join(root, 'providers', 'query-provider.tsx');
+
+    const offenders = files
+      .filter((file) => file !== self)
+      .filter((file) => fs.readFileSync(file, 'utf8').includes('refetchOnWindowFocus: false'))
+      .map((file) => path.relative(root, file));
+
+    expect(offenders).toEqual([]);
   });
 });

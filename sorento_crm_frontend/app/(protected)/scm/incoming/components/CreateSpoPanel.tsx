@@ -42,7 +42,6 @@ export function CreateSpoPanel({ shipmentId }: { shipmentId: string }) {
   const suggestion = useQuery({
     queryKey: ['scm', 'fulfilment', 'spo-suggestion', shipmentId],
     queryFn: () => getSpoSuggestion(shipmentId),
-    refetchOnWindowFocus: false,
   });
 
   /** Per shipment line: whether it is ticked, and the confirmed quantity. */

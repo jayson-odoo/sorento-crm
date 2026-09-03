@@ -17,6 +17,7 @@ import {
   type ProformaPlacement,
 } from '../services/proformaInvoiceService';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 const KEY = ['scm', 'proforma-invoices'] as const;
 
@@ -75,9 +76,9 @@ export function useProformaInvoices(
 ) {
   const options: ListProformaInvoicesOptions = { supplierId, ...opts };
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: proformaInvoicesListQueryKey(options),
     queryFn: () => listProformaInvoices(options),
-    refetchOnWindowFocus: false,
   });
 }
 
@@ -86,7 +87,6 @@ export function useProformaInvoice(id: string | null) {
     queryKey: [...KEY, 'detail', id],
     queryFn: () => getProformaInvoice(id as string),
     enabled: !!id,
-    refetchOnWindowFocus: false,
   });
 }
 

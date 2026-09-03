@@ -285,6 +285,7 @@ export function AwaitingAcceptanceClient() {
           tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
           recordCount={total}
           isLoading={query.isLoading}
+          isPlaceholderData={query.isPlaceholderData}
           emptyMessage={
             <div className="px-6 py-10 text-center">
               <p className="text-sm font-semibold">

@@ -22,8 +22,9 @@ vi.mock('next/navigation', () => ({
 
 // DataGrid persists column prefs through this hook (which fires network); without the stub
 // the grid renders skeletons forever and no row can be asserted.
+const prefsGate = vi.hoisted(() => ({ isLoading: false }));
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
-  useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
+  useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: prefsGate.isLoading }),
 }));
 
 // The filter bar's controls are the shared searchable selects. Native equivalents here:
@@ -106,7 +107,7 @@ vi.mock('@/services/reportService', async (importOriginal) => {
 });
 
 import { ReportCappedError, type ReportMeta, type ReportResult } from '@/services/reportService';
-import { ReportPage, numericSortingFn, periodIsRunnable } from './ReportPage';
+import { ONE_PAGE, ReportPage, numericSortingFn, periodIsRunnable } from './ReportPage';
 
 const DEFAULT_VIEW = {
   params: {
@@ -241,6 +242,7 @@ function render() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  prefsGate.isLoading = false;
   fetchReportMeta.mockResolvedValue(META);
   runReport.mockResolvedValue(RESULT);
   fetchReportViews.mockResolvedValue({ mine: [], shared: [] });
@@ -302,10 +304,13 @@ describe('ReportPage', () => {
     expect(screen.getAllByRole('row').length).toBeGreaterThanOrEqual(RESULT.row_count);
   });
 
-  it('paints a handful of skeleton rows while it reloads, not one per row (S6 review)', async () => {
-    // The page size IS the row count (AC-G2), and the shared DataGrid draws one skeleton
-    // row per page size - so a year of forms turned every reload into 214 grey rows
-    // scrolling past. The wait is the same wait whatever the answer's size.
+  it('holds the rows it already has while it reloads, rather than 60 grey bars (S6 review, M4-02)', async () => {
+    // The page size IS the row count (AC-G2), and the shared DataGrid used to draw one
+    // skeleton row per page size - so a year of forms turned every reload into 214 grey
+    // rows scrolling past. `ONE_PAGE` capped that at 15; M4-02 then removed the swap
+    // altogether once a first answer has landed. The rows stay, dimmed, and the wait is
+    // the same wait whatever the answer's size. The cap still matters on the one path
+    // that reaches the skeleton with rows in hand - see the case below.
     const rows = Array.from({ length: 60 }, (_, index) => ({
       request_number: `PSSF26-${String(index).padStart(4, '0')}`,
       sales_agent: 'Eric Ng',
@@ -316,7 +321,7 @@ describe('ReportPage', () => {
       row_count: rows.length,
       layouts: { ...RESULT.layouts, detail: { ...RESULT.layouts.detail, rows } },
     });
-    // The reload never answers, so the grid stays on its skeletons to be counted.
+    // The reload never answers, so the grid stays on whatever it decided to show.
     runReport.mockReturnValue(new Promise(() => {}));
     const { container } = render();
     await screen.findByText('PSSF26-0000');
@@ -325,9 +330,37 @@ describe('ReportPage', () => {
     fireEvent.change(screen.getByLabelText('Date basis'), { target: { value: 'request_date' } });
 
     await waitFor(() =>
+      expect(container.querySelector('tbody')!.className).toContain('opacity-60'),
+    );
+    expect(container.querySelectorAll('tbody [data-slot="skeleton"]').length).toBe(0);
+    expect(container.querySelectorAll('tbody tr').length).toBe(rows.length);
+    expect(screen.getByText('PSSF26-0000')).toBeInTheDocument();
+  });
+
+  it('bounds the skeleton at ONE_PAGE while column preferences resolve (S6 review)', async () => {
+    // The path that still reaches the skeleton with an answer in hand: the grid holds
+    // the rows back until the reader's saved columns arrive, because painting them
+    // under the DEFAULT layout and re-laying them out a tick later is a flash. Without
+    // the `ONE_PAGE` cap the grid asks for one skeleton row per PAGE SIZE, and on this
+    // screen the page size is the row count - 60 grey bars for a 60-row answer.
+    prefsGate.isLoading = true;
+    const rows = Array.from({ length: 60 }, (_, index) => ({
+      request_number: `PSSF26-${String(index).padStart(4, '0')}`,
+      sales_agent: 'Eric Ng',
+      project_value: '1.00',
+    }));
+    runReport.mockResolvedValue({
+      ...RESULT,
+      row_count: rows.length,
+      layouts: { ...RESULT.layouts, detail: { ...RESULT.layouts.detail, rows } },
+    });
+    const { container } = render();
+
+    await waitFor(() =>
       expect(container.querySelectorAll('tbody [data-slot="skeleton"]').length).toBeGreaterThan(0),
     );
-    expect(container.querySelectorAll('tbody tr').length).toBeLessThanOrEqual(20);
+    expect(container.querySelectorAll('tbody tr').length).toBe(ONE_PAGE.pageSize);
+    expect(screen.queryByText('PSSF26-0000')).toBeNull();
   });
 
   it('labels the totals row beside the money, as the workbook does (N3/AC-G9)', async () => {

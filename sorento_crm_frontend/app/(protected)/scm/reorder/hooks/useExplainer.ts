@@ -30,7 +30,6 @@ export function useRunOverview(runId: string | null, enabled: boolean) {
     queryKey: runOverviewKey(runId ?? 'none'),
     queryFn: () => getRunOverview(runId as string),
     enabled: enabled && !!runId,
-    refetchOnWindowFocus: false,
     staleTime: Infinity,
     retry: 1,
   });
@@ -47,7 +46,6 @@ export function useRecommendationExplanation(rec: ReorderRecommendation | null, 
     queryKey: explanationKey(rec?.id ?? 'none'),
     queryFn: () => getRecommendationExplanation(rec as ReorderRecommendation),
     enabled: enabled && !!rec,
-    refetchOnWindowFocus: false,
     staleTime: Infinity,
     retry: 1,
   });
@@ -62,7 +60,6 @@ export function useRecommendationAdvisory(rec: ReorderRecommendation | null, ena
     queryKey: advisoryKey(rec?.id ?? 'none'),
     queryFn: () => getRecommendationAdvisory(rec as ReorderRecommendation),
     enabled: enabled && !!rec,
-    refetchOnWindowFocus: false,
     staleTime: Infinity,
     retry: 1,
   });

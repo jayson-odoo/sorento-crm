@@ -26,7 +26,7 @@ const STATUS_VARIANT: Record<string, 'success' | 'destructive' | 'secondary' | '
 
 export default function AutomationRunsTable({ automationId }: { automationId: string }) {
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 25 });
-  const { data, isLoading, isFetching, refetch } = useAutomationRuns(
+  const { data, isLoading, isPlaceholderData, isFetching, refetch } = useAutomationRuns(
     automationId,
     pagination.pageIndex + 1,
     pagination.pageSize,
@@ -110,6 +110,7 @@ export default function AutomationRunsTable({ automationId }: { automationId: st
       table={table}
       recordCount={total}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       tableLayout={{ width: 'fixed', columnsResizable: true }}
       onRefresh={() => void refetch()}
       isRefreshing={isFetching && !isLoading}

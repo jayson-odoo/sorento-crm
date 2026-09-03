@@ -694,6 +694,7 @@ export function FulfilmentPlanningClient() {
         table={table}
         recordCount={planning.data?.total ?? 0}
         isLoading={planning.isLoading}
+        isPlaceholderData={planning.isPlaceholderData}
         // The stable id is bumped because this is not the same listing it was: four columns
         // are new and one is gone, so a config saved against the old set interleaves them
         // into an order nobody chose (verified in the browser: Sales order, Project SO,

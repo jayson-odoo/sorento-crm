@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import {
   getActivityFeed,
   type GetActivityFeedParams,
@@ -10,6 +11,7 @@ import {
  */
 export function useActivityFeed(params: GetActivityFeedParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [
       'activity-feed',
       params.entity_types,
@@ -24,7 +26,6 @@ export function useActivityFeed(params: GetActivityFeedParams) {
     ],
     queryFn: () => getActivityFeed(params),
     staleTime: 1000 * 60 * 2,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

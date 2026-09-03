@@ -289,6 +289,7 @@ export function StockClaimsClient() {
         table={table}
         recordCount={claims.data?.total ?? 0}
         isLoading={claims.isLoading}
+        isPlaceholderData={claims.isPlaceholderData}
         listingKey="projects.projects.view::project-stock-claims"
         tableLayout={{ width: 'fixed', columnsResizable: true }}
       >

@@ -34,6 +34,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { SystemLog } from '@/app/models/system';
 import { useUser } from '../../components/user-context';
 import { LogActionsCell } from './log-actions-cell';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 const LogList = () => {
   const { user } = useUser();
@@ -97,7 +98,8 @@ const LogList = () => {
   };
 
   // Users query
-  const { data, isLoading, isFetching } = useQuery({
+  const { data, isLoading, isPlaceholderData, isFetching } = useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [
       'user-logs',
       pagination,
@@ -259,6 +261,7 @@ const LogList = () => {
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       tableLayout={{
         columnsPinnable: true,
         columnsMovable: true,

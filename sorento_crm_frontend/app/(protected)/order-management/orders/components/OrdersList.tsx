@@ -101,7 +101,7 @@ export default function OrdersList() {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
   }, [searchQuery]);
 
-  const { data, isLoading, isError, error, refetch, isFetching } = useOrders({
+  const { data, isLoading, isPlaceholderData, isError, error, refetch, isFetching } = useOrders({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -325,6 +325,7 @@ export default function OrdersList() {
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       rowHref={rowHref}
       rowPending={rowPending}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}

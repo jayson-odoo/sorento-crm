@@ -1,5 +1,4 @@
 import {
-  keepPreviousData,
   useMutation,
   useQuery,
   useQueryClient,
@@ -20,18 +19,12 @@ import {
   type ScmFilters,
 } from '../services/scmDashboardService';
 import type { HealthState } from '../types/scm.types';
-
-const baseOptions = {
-  staleTime: 30_000,
-  refetchOnWindowFocus: false,
-  retry: 1,
-} as const;
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export function useScmRollups(filters: ScmFilters) {
   return useQuery({
     queryKey: ['scm', 'rollups', filters],
     queryFn: () => getRollups(filters),
-    ...baseOptions,
   });
 }
 
@@ -39,7 +32,6 @@ export function useWarehouseHealth(filters: ScmFilters) {
   return useQuery({
     queryKey: ['scm', 'warehouses', filters],
     queryFn: () => getWarehouseHealth(filters),
-    ...baseOptions,
   });
 }
 
@@ -52,6 +44,7 @@ export function useNetPosition(
   const sortField = sorting?.[0]?.id;
   const sortDir: 'asc' | 'desc' = sorting?.[0]?.desc ? 'desc' : 'asc';
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['scm', 'net-position', filters, pagination, sorting, searchQuery],
     queryFn: () =>
       getNetPosition({
@@ -62,7 +55,6 @@ export function useNetPosition(
         sortDir,
         searchQuery,
       }),
-    ...baseOptions,
   });
 }
 
@@ -70,7 +62,6 @@ export function useSuppliers(filters: ScmFilters) {
   return useQuery({
     queryKey: ['scm', 'suppliers', filters],
     queryFn: () => getSuppliers(filters),
-    ...baseOptions,
   });
 }
 
@@ -86,11 +77,10 @@ export function useScmProducts(
   query: Omit<ProductsQuery, 'status' | 'warehouse'> = {},
 ) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['scm', 'products', filters, target, query],
     queryFn: () => getProducts(filters, { ...target, ...query }),
     enabled: !!target,
-    placeholderData: keepPreviousData,
-    ...baseOptions,
   });
 }
 
@@ -108,7 +98,6 @@ export function useDemandSeries(
     queryKey: ['scm', 'demand-series', sku, warehouse ?? null],
     queryFn: () => getDemandSeries(sku, warehouse),
     enabled: enabled && !!sku,
-    ...baseOptions,
   });
 }
 
@@ -126,7 +115,6 @@ export function useDemandExplain(
     queryKey: ['scm', 'demand-explain', productId ?? null, warehouseId ?? null],
     queryFn: () => getDemandExplain(productId as string, warehouseId),
     enabled: enabled && !!productId,
-    ...baseOptions,
   });
 }
 
@@ -135,7 +123,6 @@ export function useDeadStockDays() {
   return useQuery({
     queryKey: ['scm', 'config', 'dead-stock-days'],
     queryFn: getDeadStockDays,
-    ...baseOptions,
   });
 }
 

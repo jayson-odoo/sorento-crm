@@ -92,7 +92,7 @@ export default function ComplaintsList() {
     resolutionFilter.join(','),
   ]);
 
-  const { data, isLoading, refetch, isFetching } = useComplaints({
+  const { data, isLoading, isPlaceholderData, refetch, isFetching } = useComplaints({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -395,6 +395,7 @@ export default function ComplaintsList() {
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       rowHref={rowHref}
       standardToolbar={false}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}

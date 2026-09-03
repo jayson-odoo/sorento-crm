@@ -1,6 +1,7 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import {
   getQueryDetail,
   getQueryTrace,
@@ -32,6 +33,7 @@ export function useUsageByDay(from?: Date, to?: Date, feature?: string) {
 
 export function useTopUsers(from?: Date, to?: Date, limit = 10, feature?: string) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['ai-usage-top-users', isoOrUndef(from), isoOrUndef(to), limit, feature ?? null],
     queryFn: () => getTopUsers(from, to, limit, feature),
     staleTime: 30 * 1000,
@@ -45,6 +47,7 @@ export function useTopContacts(
   feature: string = 'ai_extract',
 ) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['ai-usage-top-contacts', isoOrUndef(from), isoOrUndef(to), limit, feature],
     queryFn: () => getTopContacts(from, to, limit, feature),
     staleTime: 30 * 1000,
@@ -53,6 +56,7 @@ export function useTopContacts(
 
 export function useRecentQueries(from?: Date, to?: Date, limit = 50, feature?: string) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['ai-usage-recent', isoOrUndef(from), isoOrUndef(to), limit, feature ?? null],
     queryFn: () => getRecentQueries(from, to, limit, feature),
     staleTime: 30 * 1000,
@@ -80,6 +84,7 @@ export function useQueryTrace(messageId: string | null | undefined) {
 
 export function useWishlist(limit = 20) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['ai-wishlist', limit],
     queryFn: () => getWishlist(limit),
     staleTime: 60 * 1000,

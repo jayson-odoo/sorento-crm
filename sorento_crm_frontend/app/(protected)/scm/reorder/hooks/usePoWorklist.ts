@@ -11,6 +11,7 @@ import {
   KEYED_STATUS_LABELS,
   type KeyedStatusInput,
 } from '../types/poWorklist.types';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 /** Query key for one week's worklist. Exported so a keyed-status write can bust it. */
 export function poWorklistKey(q: PoWorklistQuery = {}) {
@@ -27,6 +28,7 @@ export function poWorklistKey(q: PoWorklistQuery = {}) {
  */
 export function usePoWorklist(q: PoWorklistQuery = {}, enabled = true) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: poWorklistKey(q),
     queryFn: () => getPoWorklist(q),
     enabled,

@@ -18,6 +18,7 @@ import { Label } from '@/components/ui/label';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
 import { DataGrid } from '@/components/ui/data-grid';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
@@ -95,7 +96,8 @@ export default function ApiCallLogsPage() {
     [dateFrom, dateTo, source, outcome, correlationId, searchQuery, pagination, sorting],
   );
 
-  const { data, isLoading, isFetching } = useQuery({
+  const { data, isLoading, isFetching, isPlaceholderData } = useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['apiCallLogs', filters],
     queryFn: () => getApiCallLogs(filters),
   });
@@ -262,6 +264,7 @@ export default function ApiCallLogsPage() {
         table={table}
         recordCount={total}
         isLoading={isLoading}
+        isPlaceholderData={isPlaceholderData}
         tableLayout={{ width: 'fixed', columnsResizable: true }}
         onRowClick={(row) => setSelected(row)}
       >

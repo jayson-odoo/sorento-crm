@@ -177,7 +177,7 @@ export function AmendmentAutocountChangeList({
               type="button"
               size="sm"
               variant="outline"
-              disabled={isLoading || rows.length === 0 || exporting}
+              disabled={rows.length === 0 || exporting}
               onClick={onExport}
             >
               <Download className="size-4" aria-hidden />

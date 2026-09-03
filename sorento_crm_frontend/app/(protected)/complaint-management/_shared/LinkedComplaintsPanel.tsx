@@ -51,7 +51,7 @@ export function LinkedComplaintsPanel({
   resolutionId,
   maxHeightClassName,
 }: LinkedComplaintsPanelProps) {
-  const { data, isLoading } = useComplaints({
+  const { data, isLoading, isPlaceholderData } = useComplaints({
     pageIndex: 0,
     pageSize: MAX_ROWS,
     sorting: [{ id: 'complaint_date', desc: true }],
@@ -202,6 +202,7 @@ export function LinkedComplaintsPanel({
       table={table}
       recordCount={rows.length}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       loadingMode="skeleton"
       tableLayout={{ width: 'fixed', columnsResizable: true }}
     >

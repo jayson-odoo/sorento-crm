@@ -1,8 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
 import { getAuditLogs, type AuditLogListParams } from '../services/auditLogService';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export function useAuditLogs(params: AuditLogListParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [
       'audit-logs',
       params.pageIndex,
@@ -16,7 +18,6 @@ export function useAuditLogs(params: AuditLogListParams) {
     ],
     queryFn: () => getAuditLogs(params),
     staleTime: 1000 * 60 * 5,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

@@ -12,6 +12,7 @@ import type {
   MirrorAnnotationPayload,
   SalesAgentBulkAnnotatePayload,
 } from '../types/salesAgent.types';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 /**
  * The list's React Query key. The detail page's pager rebuilds the SAME key from
@@ -49,11 +50,11 @@ export const salesAgentsPagerQuery = {
 
 export function useSalesAgents(params: DataGridApiFetchParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: salesAgentsListQueryKey(params),
     queryFn: () => getSalesAgents(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

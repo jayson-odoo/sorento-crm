@@ -12,6 +12,7 @@ import {
 } from '../services/stockTransferService';
 import type { StockTransferListParams } from '../types/stockTransfer.types';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export const STOCK_TRANSFERS_KEY = 'stock-transfers';
 export const STOCK_TRANSFER_KEY = 'stock-transfer';
@@ -57,9 +58,9 @@ export const stockTransfersPagerQuery = {
 
 export function useStockTransfers(params: StockTransferListParams = {}) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: stockTransfersListQueryKey(params),
     queryFn: () => listStockTransfers(params),
-    placeholderData: (previous) => previous,
   });
 }
 

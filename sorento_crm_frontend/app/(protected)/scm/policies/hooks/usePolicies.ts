@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import {
   createReorderPolicy,
   deleteReorderPolicy,
@@ -39,15 +40,15 @@ const PLANNING_MODE_KEY = ['scm', 'policies', 'planning-mode'] as const;
 const COVER_SCOPE_KEY = ['scm', 'policies', 'cover-scope'] as const;
 const FULFILMENT_PRIORITY_KEY = ['scm', 'policies', 'fulfilment-priority'] as const;
 
-const optionOpts = { staleTime: 5 * 60_000, refetchOnWindowFocus: false, retry: 1 } as const;
+const optionOpts = { staleTime: 5 * 60_000, retry: 1 } as const;
 
 // ── Reorder policies ────────────────────────────────────────────────────────
 
 export function useReorderPolicies(query: PolicyListQuery) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [...REORDER_KEY, query],
     queryFn: () => listReorderPolicies(query),
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -94,7 +95,6 @@ export function useClassification() {
   return useQuery({
     queryKey: CLASSIFICATION_KEY,
     queryFn: getClassification,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -117,7 +117,6 @@ export function useSupplierScoring() {
   return useQuery({
     queryKey: SUPPLIER_KEY,
     queryFn: getSupplierScoring,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -140,7 +139,6 @@ export function usePlanningMode() {
   return useQuery({
     queryKey: PLANNING_MODE_KEY,
     queryFn: getPlanningMode,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -163,7 +161,6 @@ export function useCoverScope() {
   return useQuery({
     queryKey: COVER_SCOPE_KEY,
     queryFn: getCoverScope,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -186,7 +183,6 @@ export function useFulfilmentPriority() {
   return useQuery({
     queryKey: FULFILMENT_PRIORITY_KEY,
     queryFn: getFulfilmentPriority,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

@@ -38,7 +38,6 @@ export function useCoverageTimeline(q: Partial<CoverageQuery>, enabled: boolean)
       }),
     enabled: enabled && ready,
     staleTime: 30_000,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
