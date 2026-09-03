@@ -138,13 +138,18 @@ def test_an_overdue_promise_that_still_lands_in_time_is_drawn_as_water_and_dated
     of the 725 open SPO lines on the live book was dated August 2026 or earlier, and
     promising against a passed date was promising against paperwork nobody believed. R-O
     keeps that distrust but gives it a number: a document whose arrival has passed with
-    nothing received still counts, landing on `as_of + overdue_grace_days` (14 by policy)
-    rather than the date it stated. Relative to this fixture's `as_of` (`TODAY`,
-    18 Aug 2026) the document is 24 days late (not the 40 the wall clock would read against
-    real `today`) and its ASSUMED arrival - 1 Sep - lands before the line's own 3 Sep, so
-    question 1 draws it whole, dated at the assumed day, and the sentence states the
-    lateness. A document past `overdue_dead_days` (90) is still not supply (R31 stands for
+    nothing received still counts, landing on `as_of + overdue_grace_days` rather than the
+    date it stated. Relative to this fixture's `as_of` (`TODAY`, 18 Aug 2026) the document
+    is 24 days late (not the 40 the wall clock would read against real `today`) and its
+    ASSUMED arrival - 1 Sep, off the RECOMMENDED 14-day grace this test activates
+    explicitly - lands before the line's own 3 Sep, so question 1 draws it whole, dated at
+    the assumed day, and the sentence states the lateness. A document past
+    `overdue_dead_days` (90, also activated explicitly) is still not supply (R31 stands for
     the dead).
+
+    R-O SHIPS at 0 / 0 (captain's ruling, 3 Sep 2026), so this fixture activates the
+    RECOMMENDED 14 / 90 itself rather than relying on the shipped default - it is proving
+    the grace RULE, not the number production starts at.
 
     The DRILL-DOWN table (`stock_detail`, behind the frontend's `StockDocumentsPanel`) keeps
     carrying `overdue_days` off the WALL CLOCK, which is where "go and chase this one"
@@ -153,6 +158,7 @@ def test_an_overdue_promise_that_still_lands_in_time_is_drawn_as_water_and_dated
     with blank_session() as db:
         product = _product(db, f"ZZT-{_uid()[:6]}")
         own = _warehouse(db, f"ZZTP{_uid()[:5]}-BB"[:20])
+        _policy(db, overdue_grace_days=14, overdue_dead_days=90)
         # `overdue_days` (the drill-down's) is measured against the WALL CLOCK
         # (`spo_supply.overdue_days`'s own default), not against the board's `as_of` dial -
         # so the arrival is dated off `date.today()`, never off the fixture's own `TODAY`

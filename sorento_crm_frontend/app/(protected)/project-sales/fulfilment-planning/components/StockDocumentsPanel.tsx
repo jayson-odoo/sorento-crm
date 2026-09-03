@@ -8,6 +8,7 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { formatDateInMalaysia } from '@/lib/helpers';
+import { spoDetailHref } from '@/lib/spo-detail';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
 import { useStockDetail } from '../../_shared/hooks/useFulfilmentPlanning';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
@@ -420,6 +421,22 @@ export function StockDocumentsPanel({
             {row.original.sales_order_id ? (
               <Link
                 href={`/scm/sales-orders/${row.original.sales_order_id}`}
+                className={cn(
+                  'truncate text-sm font-medium text-primary hover:underline',
+                  emphasis(row.original),
+                )}
+                title={row.original.doc_no}
+              >
+                {row.original.doc_no}
+              </Link>
+            ) : row.original.doc_type === 'SPO' && row.original.doc_no !== '-' ? (
+              // The captain's own complaint (3 Sep 2026, SO418869 SRTWCX7405-RL-S-PJ): the
+              // sentence above the table jumps TO this row, but there was no way OUT of the
+              // dialog onto the document itself. `stopPropagation` because a row here may
+              // one day carry its own click handler, the way the group reading's rows do.
+              <Link
+                href={spoDetailHref(row.original.doc_no)}
+                onClick={(event) => event.stopPropagation()}
                 className={cn(
                   'truncate text-sm font-medium text-primary hover:underline',
                   emphasis(row.original),

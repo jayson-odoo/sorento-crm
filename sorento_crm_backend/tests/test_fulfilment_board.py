@@ -192,14 +192,27 @@ def _line(
     return row
 
 
-def _policy(db, factors: dict, class_weights: dict | None = None, *, name: str | None = None,
-            active: bool = True) -> PriorityPolicy:
+def _policy(
+    db, factors: dict, class_weights: dict | None = None, *, name: str | None = None,
+    active: bool = True, overdue_grace_days: int | None = None,
+    overdue_dead_days: int | None = None,
+) -> PriorityPolicy:
     row = PriorityPolicy(
         id=_uid(),
         name=name or f"{MARKER}-policy-{_uid()[:6]}",
         is_active=active,
         factors=factors,
         demand_class_weights=class_weights or {"project": 1.0},
+        # None leaves the column's own SHIPPED default (0 / 0, captain's ruling 3 Sep
+        # 2026) - a caller proving R-O's grace RULE passes both explicitly.
+        **(
+            {"overdue_grace_days": overdue_grace_days}
+            if overdue_grace_days is not None else {}
+        ),
+        **(
+            {"overdue_dead_days": overdue_dead_days}
+            if overdue_dead_days is not None else {}
+        ),
     )
     db.add(row)
     db.flush()
@@ -2880,6 +2893,10 @@ def test_the_drill_down_states_the_assumed_arrival_of_a_late_document():
     "assumed 17 Sep 2026, stated 24 Jul". A document past `overdue_dead_days` is counted as
     nothing (R31) and its row says so instead of naming a date nobody can plan on.
 
+    R-O SHIPS at 0 / 0 (captain's ruling, 3 Sep 2026), so this fixture activates the
+    RECOMMENDED 14 / 90 itself - it is proving the grace RULE, not the number production
+    starts at.
+
     Both fields are asserted BY NAME: `response_model` drops what a schema does not
     declare, and this is the second time a field on this very row went out silently.
     """
@@ -2889,6 +2906,7 @@ def test_the_drill_down_states_the_assumed_arrival_of_a_late_document():
     with blank_session() as db:
         product = _product(db, f"ZZT-{_uid()[:6]}")
         warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        _policy(db, {}, overdue_grace_days=14, overdue_dead_days=90)
         _stock(db, product, warehouse, on_hand=0)
         _incoming(
             db, product, warehouse, spo_number="ZZT-SPO-LATE", allocated=100,
@@ -2919,13 +2937,22 @@ def test_the_drill_down_states_the_assumed_arrival_of_a_late_document():
 
 def test_an_empty_settings_read_still_uses_the_walks_own_grace_and_dead_defaults():
     """Review fix round, S4: `_fulfilment_settings()` returns `{}` on its own defensive
-    except (no policy row, or a mid-migration branch), and the ledger used to read that as
-    grace=0/dead=0 - a document 41 days late then failed `days_late > dead` (41 > 0) and
-    the row printed "Not counted" while the walk itself (which falls back to 14/90 the same
-    way `compute_overdue_event` does) still counted it as supply. The two disagreeing about
-    the same book is exactly what R-O exists to prevent.
+    except (no policy row, or a mid-migration branch). The ledger used to read that with a
+    bare `or 0` rather than `supply_assignment.DEFAULT_OVERDUE_GRACE_DAYS` /
+    `DEFAULT_OVERDUE_DEAD_DAYS` - the same constants the walk itself falls back to
+    (`compute_overdue_event`) - so a document could be "Not counted" on the ledger while the
+    walk itself still counted it as supply. The two disagreeing about the same book is
+    exactly what R-O exists to prevent.
+
+    Read off the SAME constants here rather than a hardcoded pair, so this keeps proving
+    the invariant (ledger and walk fall back to identical numbers) whatever the SHIPPED
+    default happens to be - 0 / 0 as of the captain's 3 Sep 2026 ruling, which makes ANY
+    lateness dead (R31), so the 41-day-late document below reads "not counted" on BOTH
+    sides rather than the 14/90-days "still counts" this test asserted before that ruling.
     """
     from datetime import timedelta
+
+    from app.services.scm import supply_assignment
 
     today = date.today()
     with blank_session() as db:
@@ -2945,8 +2972,15 @@ def test_an_empty_settings_read_still_uses_the_walks_own_grace_and_dead_defaults
         }
 
     late = rows["ZZT-SPO-LATE"]
-    assert late["counted"] is True, "the walk's own default grace/dead (14/90) still apply"
-    assert late["assumed_date"] == today + timedelta(days=14)
+    grace = supply_assignment.DEFAULT_OVERDUE_GRACE_DAYS
+    dead = supply_assignment.DEFAULT_OVERDUE_DEAD_DAYS
+    is_dead = 41 > dead
+    assert late["counted"] is (not is_dead), (
+        "the ledger's fallback is the SAME constant the walk itself falls back to"
+    )
+    assert late["assumed_date"] == (
+        None if is_dead else today + timedelta(days=grace)
+    )
 
 
 def test_the_drill_down_total_is_the_same_number_the_cell_printed():

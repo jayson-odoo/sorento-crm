@@ -21,6 +21,7 @@ from decimal import Decimal
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
+from app.services.scm import priority
 from app.services.scm.supply_assignment import month_key
 from tests.scm.conftest import (
     SORENTO_COMPANY_ID,
@@ -759,11 +760,19 @@ def test_a_late_but_alive_document_is_listed_at_its_assumed_date(scm_app):
     is filed under the ASSUMED arrival, prints the date the paperwork states beside it, and
     is not marked overdue - it is supply, and the line it covers is not short.
 
+    R-O SHIPS at 0 / 0 (captain's ruling, 3 Sep 2026), so this test activates the
+    RECOMMENDED 14 / 90 itself rather than relying on the shipped default - it is proving
+    the grace RULE, not the number production starts at.
+
     `stated_date` / `days_late` are asserted BY NAME: `response_model` drops what a schema
     does not declare, and a field the walk computes and the wire never carries is a field
     the Stock tab cannot print.
     """
     app, db = _client(scm_app)
+    priority.create_revision(
+        db, name=f"ZZT-grace-{_u()[:6]}", factors={}, demand_class_weights={},
+        reorder_coverage_until=None, overdue_grace_days=14, overdue_dead_days=90,
+    )
     marker = f"ZZTSD{_u()[:6]}".upper()
     warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
     product = _product(db, f"{marker}-A")

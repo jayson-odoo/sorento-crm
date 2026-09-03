@@ -291,11 +291,13 @@ class FulfilmentPriorityPolicy(BaseModel):
     #: reason as `transfer_days` above.
     immediate_window_days: int = 30
     pool_share_pct: int = 50
-    #: NOT NULL on the row (migration 464), defaults 14 / 90. Declared explicitly for the
-    #: same reason as every field above it: `response_model` drops what a schema does not
-    #: name, so an undeclared column never reaches the policy form at all.
-    overdue_grace_days: int = 14
-    overdue_dead_days: int = 90
+    #: NOT NULL on the row (migration 464), SHIPPED default 0 / 0 (captain's ruling, 3 Sep
+    #: 2026 - dead at 0 reproduces R31 exactly, and 14 / 90 is the recommended pair once the
+    #: grace is turned on). Declared explicitly for the same reason as every field above it:
+    #: `response_model` drops what a schema does not name, so an undeclared column never
+    #: reaches the policy form at all.
+    overdue_grace_days: int = 0
+    overdue_dead_days: int = 0
     name: str
     #: False only on a database that has never activated a fulfilment-priority policy at
     #: all - every seeded/migrated database (migration 385) has one.

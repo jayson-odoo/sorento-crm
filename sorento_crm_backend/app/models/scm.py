@@ -794,11 +794,16 @@ class PriorityPolicy(Base):
     # `today + overdue_grace_days`, and one later than `overdue_dead_days` counts as
     # nothing, which is R31 kept for the dead. Two numbers on this row for the same reason
     # `immediate_window_days` is here: one policy, activated as a whole.
+    #
+    # SHIPPED at 0 / 0 (captain's ruling, 3 Sep 2026): with dead at 0 any lateness at all is
+    # past it, so a document one day late counts as nothing exactly as R31 always had it -
+    # production keeps today's behaviour until someone raises these. 14 / 90 is the
+    # RECOMMENDED pair once the captain is ready to turn the grace on.
     overdue_grace_days = Column(
-        Integer, nullable=False, default=14, server_default=text("14")
+        Integer, nullable=False, default=0, server_default=text("0")
     )
     overdue_dead_days = Column(
-        Integer, nullable=False, default=90, server_default=text("90")
+        Integer, nullable=False, default=0, server_default=text("0")
     )
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(

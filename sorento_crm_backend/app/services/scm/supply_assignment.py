@@ -59,15 +59,21 @@ reads the same answer so the board and the view can never disagree about what is
    balance - the captain, on SO419417: "Available for Project" at BRW read 355 off 725 SPO
    units dated 24 July and 6 August while the ladder lent 4 off the 11 on the floor, and
    the display was the honest one. So a late document counts as supply landing on
-   `as_of + overdue_grace_days` (policy, `scm.priority_policy`, default 14): a line due
-   before that day gets nothing from it, and a line due after it is planned against the
+   `as_of + overdue_grace_days` (policy, `scm.priority_policy`, SHIPPED default 0): a line
+   due before that day gets nothing from it, and a line due after it is planned against the
    ASSUMED date, which is the date the event carries from here on. The date the document
    itself states is kept beside it (`SupplyEvent.stated_at`) so a screen can print both.
-   **R31 stays for the DEAD**: past `overdue_dead_days` of lateness (default 90) the
+   **R31 stays for the DEAD**: past `overdue_dead_days` of lateness (SHIPPED default 0) the
    document counts as nothing and is RETURNED (`uncounted`) rather than dropped, because a
    document nobody mentions reads as a document that is not there, and chasing it is the
    action the screen exists to prompt. Undated incoming is uncounted for the same reason
    from the other side - there is no date to place it on.
+
+   **Both ship at 0 / 0** (captain's ruling, 3 Sep 2026): with dead at 0 any lateness at all
+   is past it, so a document one day late counts as nothing exactly as R31 always had it -
+   production keeps today's behaviour until someone raises the two numbers through the
+   settings route. 14 / 90 is the RECOMMENDED pair once the captain is ready to turn the
+   grace on.
 
 **Status.** `short` when anything is left uncovered, `pinned` when a decision holds it,
 `late` when what covers it arrives after its date, `covered` otherwise. Short outranks late
@@ -113,8 +119,12 @@ BUCKET_UNLOCATED = "unlocated"
 #: 464) and every real caller reads the active row; these are the same two numbers
 #: `app.services.scm.priority.FULFILMENT_SETTINGS_DEFAULTS` states, restated so a direct
 #: caller of this module walks the documented rule rather than no rule at all.
-DEFAULT_OVERDUE_GRACE_DAYS = 14
-DEFAULT_OVERDUE_DEAD_DAYS = 90
+#:
+#: SHIPPED at 0 / 0 (captain's ruling, 3 Sep 2026): dead at 0 makes any lateness at all
+#: dead, which is exactly R31 - production keeps today's behaviour until someone raises
+#: these. 14 / 90 is the RECOMMENDED pair, not the shipped one.
+DEFAULT_OVERDUE_GRACE_DAYS = 0
+DEFAULT_OVERDUE_DEAD_DAYS = 0
 
 #: The ownership group the site pools share. A pool carries no group suffix of its own
 #: (`BRW`, `MWH`), and reading one as a group would let a `-BB` line eat the pool silently.

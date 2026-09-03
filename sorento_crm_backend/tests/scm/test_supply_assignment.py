@@ -887,6 +887,32 @@ def test_the_grace_and_the_dead_line_are_read_off_the_arguments():
     assert [event.key for event in dead_sooner.uncounted] == ["spo:late"]
 
 
+def test_defaults_unset_reproduce_r31_a_day_late_is_dead_today_still_counts():
+    """SHIPPED default (captain's ruling, 3 Sep 2026): with NEITHER argument passed, the
+    module falls back to `DEFAULT_OVERDUE_GRACE_DAYS` / `DEFAULT_OVERDUE_DEAD_DAYS`, both 0
+    at ship. Dead at 0 makes ANY lateness dead - which is R31 exactly - so production keeps
+    today's behaviour until someone raises the two numbers through the settings route.
+    """
+    one_day_late = assign(
+        "p", as_of=R_O_AS_OF, tba_from=TBA, lead_days=90,
+        supply=[_late_spo(date(2026, 9, 2))],
+        demand=[_line("waiting", "BRW-BB", date(2026, 9, 20), 50)],
+    )
+    assert [event.key for event in one_day_late.uncounted] == ["spo:late"], (
+        "a document one day late counts as nothing at all, exactly as R31 always had it"
+    )
+
+    arrives_today = assign(
+        "p", as_of=R_O_AS_OF, tba_from=TBA, lead_days=90,
+        supply=[_late_spo(R_O_AS_OF)],
+        demand=[_line("waiting", "BRW-BB", date(2026, 9, 20), 50)],
+    )
+    assert [event.key for event in arrives_today.uncounted] == [], (
+        "arriving TODAY is not late at all, and it still counts"
+    )
+    assert {e.key: e.at for e in arrives_today.supply}["spo:late"] == R_O_AS_OF
+
+
 def test_the_dead_line_itself_is_still_counted_not_uncounted():
     """Review fix round nit: the boundary `days_late == overdue_dead_days` is pinned
     explicitly beside the two arguments above. `counted_event` refuses only what is

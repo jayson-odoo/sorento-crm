@@ -6,12 +6,17 @@ SO419417 that left the ladder lending 4 units off the 11 standing at BRW while 7
 units dated 24 July and 6 August sat unreceived. The display was right and the engine was
 ignoring a late document.
 
-`overdue_grace_days` (integer, not null, default 14) - a document whose arrival has passed
+`overdue_grace_days` (integer, not null, default 0) - a document whose arrival has passed
 counts as supply on its outstanding balance, landing on `today + this`, so a line due before
 that day still gets nothing from it.
 
-`overdue_dead_days` (integer, not null, default 90) - past this much lateness the document
+`overdue_dead_days` (integer, not null, default 0) - past this much lateness the document
 counts as nothing at all, which is R31 kept for the dead.
+
+SHIPPED at 0 / 0 (captain's ruling, 3 Sep 2026): with dead at 0 any lateness at all is past
+it, so this default reproduces R31 exactly and production keeps today's behaviour until
+someone raises the two numbers. 14 / 90 is the RECOMMENDED pair, set through the settings
+route once the captain is ready to turn the grace on.
 
 Both join `scm.priority_policy` beside `immediate_window_days` / `pool_share_pct` rather
 than a new table, for the reason 460 states: one policy, activated as a whole, so a planner
@@ -51,7 +56,7 @@ def upgrade() -> None:
                 "overdue_grace_days",
                 sa.Integer(),
                 nullable=False,
-                server_default=sa.text("14"),
+                server_default=sa.text("0"),
             ),
             schema="scm",
         )
@@ -62,7 +67,7 @@ def upgrade() -> None:
                 "overdue_dead_days",
                 sa.Integer(),
                 nullable=False,
-                server_default=sa.text("90"),
+                server_default=sa.text("0"),
             ),
             schema="scm",
         )

@@ -58,9 +58,12 @@ All goldens are `_v8_inputs` fixtures in `tests/scm/front_planning_golden.py`, f
   dead > 90): not supply, exactly as R31, and its row on the Stock tab reads "not counted".
 - AC-O.4 [DONE] (group book, R-M). `group_book_positions` counts a late-alive document as supply and
   a dead one as nothing; two goldens.
-- AC-O.5 [DONE] (policy). `priority_policy.overdue_grace_days` and `overdue_dead_days` exist with
-  defaults 14 / 90; the policy form edits and persists them; the engine reads the active row.
-  Response schema declares both (response_model trap).
+- AC-O.5 [DONE, ship default revised 3 Sep 2026] (policy). `priority_policy.overdue_grace_days`
+  and `overdue_dead_days` exist, SHIP at 0 / 0 (captain's ruling: production keeps R31's
+  behaviour - dead at 0 makes any lateness dead - until someone raises the two numbers). 14 / 90
+  is the RECOMMENDED pair, set through the policy form once the grace is turned on. The policy
+  form edits and persists them; the engine reads the active row. Response schema declares both
+  (response_model trap).
 - AC-O.6 [OPEN - browser evidence owed] (board on SO419417). BRW-BB 8840-SC cell: the own-bin incoming (412 dated Jul/Aug)
   now offers up to the line's need at step 1 water with the assumed date; the Stock tab row
   shows assumed 17 Sep beside the stated 24 Jul. Browser evidence recorded.

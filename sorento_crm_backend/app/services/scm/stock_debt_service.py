@@ -80,6 +80,19 @@ def _float(value: Any) -> float:
     return float(value)
 
 
+def _spo_ref(spo_number: Optional[str]) -> str:
+    """`SPO-2026/08-0085` -> itself; `202607-S0105` -> `SPO 202607-S0105`.
+
+    Every shipping order in the live book is already written `SPO-...`, and prefixing the
+    word onto one of those reads "SPO SPO-2026/08-0085" - the exact sentence the captain
+    flagged on SO418869 SRTWCX7405-RL-S-PJ (3 Sep 2026). `front_planning_engine.spo_reason`
+    carries the same guard, for a document named in a WATER sentence rather than a hold.
+    """
+    if not spo_number:
+        return "SPO"
+    return spo_number if spo_number.upper().startswith("SPO") else f"SPO {spo_number}"
+
+
 class StockDebtService:
     def __init__(self, db: Session):
         self.db = db
@@ -541,7 +554,7 @@ class StockDebtService:
                         warehouse=codes.get(warehouse_id),
                         at=ref.arrival_date,
                         qty=_float(ref.qty),
-                        ref=f"SPO {ref.spo_number}" if ref.spo_number else "SPO",
+                        ref=_spo_ref(ref.spo_number),
                         is_pool=warehouse_id in pools,
                     )
                 )
@@ -714,9 +727,7 @@ class StockDebtService:
                 continue
             if row.spo_allocation_id:
                 supply_key = f"spo:{row.spo_allocation_id}"
-                kind, ref = KIND_SPO, (
-                    f"SPO {row.spo_number}" if row.spo_number else "SPO"
-                )
+                kind, ref = KIND_SPO, _spo_ref(row.spo_number)
             else:
                 supply_key = f"po:{row.po_line_id}"
                 kind, ref = KIND_PO, (

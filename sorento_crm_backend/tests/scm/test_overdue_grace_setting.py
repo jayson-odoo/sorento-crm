@@ -8,10 +8,14 @@ The two numbers join `scm.priority_policy` beside `immediate_window_days` (migra
 the SAME row `app.services.scm.priority` already reads for `tba_date_from` /
 `reorder_coverage_until` / `transfer_days`, no new table:
 
-* `overdue_grace_days` (int, 0-365, default 14) - a document whose arrival has passed with
-  nothing received counts as supply landing `today + this`.
-* `overdue_dead_days` (int, 0-365, default 90) - past this much lateness it counts as
-  nothing at all, which is R31 kept for the dead.
+* `overdue_grace_days` (int, 0-365, SHIPPED default 0) - a document whose arrival has
+  passed with nothing received counts as supply landing `today + this`.
+* `overdue_dead_days` (int, 0-365, SHIPPED default 0) - past this much lateness it counts
+  as nothing at all, which is R31 kept for the dead.
+
+Both ship at 0 / 0 (captain's ruling, 3 Sep 2026): dead at 0 makes any lateness dead, which
+IS R31, so production keeps today's behaviour until someone raises the two numbers through
+this same route. 14 / 90 is the RECOMMENDED pair, not the shipped one.
 
 The same shape and the same real-Postgres savepoint fixture
 `test_fulfilment_immediate_share_setting.py` uses, because it is the same contract one
@@ -36,16 +40,16 @@ pytestmark = requires_pg
 
 
 def test_fulfilment_settings_defaults_with_no_policy_row():
-    """A database that has never activated a policy reads the documented defaults - 14 /
-    90 - never a guessed number."""
+    """A database that has never activated a policy reads the documented SHIPPED default -
+    0 / 0 (captain's ruling, 3 Sep 2026) - never a guessed number."""
     settings = priority.fulfilment_settings(None)
-    assert settings["overdue_grace_days"] == 14
-    assert settings["overdue_dead_days"] == 90
+    assert settings["overdue_grace_days"] == 0
+    assert settings["overdue_dead_days"] == 0
 
 
 def test_fulfilment_settings_defaults_on_a_policy_created_with_neither_argument():
     """A policy row created the way a pre-R-O caller of `create_revision` would create it
-    takes the column's own default - 14 / 90, never None."""
+    takes the column's own SHIPPED default - 0 / 0, never None."""
     with blank_session() as db:
         row = priority.create_revision(
             db, name=f"zzt-grace-{_uid()[:6]}", factors={},
@@ -53,8 +57,8 @@ def test_fulfilment_settings_defaults_on_a_policy_created_with_neither_argument(
         )
         db.commit()
         settings = priority.fulfilment_settings(row)
-    assert settings["overdue_grace_days"] == 14
-    assert settings["overdue_dead_days"] == 90
+    assert settings["overdue_grace_days"] == 0
+    assert settings["overdue_dead_days"] == 0
 
 
 def test_fulfilment_settings_reads_a_configured_policy_row():

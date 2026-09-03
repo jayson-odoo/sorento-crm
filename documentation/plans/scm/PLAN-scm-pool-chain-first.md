@@ -32,7 +32,16 @@ were written for - the landing commit's own body undercounts them as three:
 `tests/scm/test_supply_assignment.py`, plus
 `test_a_dead_promise_is_still_inside_the_groups_net_and_still_draws_nothing` in
 `tests/scm/test_project_supply_service_ladder.py`.
-RULED 3 Sep 2026 (R-N + R-O, Q1 by on hand, grace 14 / dead 90). Supersedes R-L's trigger.
+RULED 3 Sep 2026 (R-N + R-O, Q1 by on hand, grace 14 / dead 90 RECOMMENDED). Supersedes
+R-L's trigger.
+
+Review fix round (3 Sep 2026, PR #618): the SPO the suggestion sentence names is now a
+`Link` to its own detail page beside the jump chip (`BoardCellBreakdownDialog`'s
+`annotateReason`, `StockDocumentsPanel`'s SPO row), reusing a new shared
+`lib/spo-detail.ts`; the sentence's own "SPO SPO-..." doubling is fixed at the source
+(`stock_debt_service._spo_ref`, mirroring `front_planning_engine.spo_reason`'s existing
+guard). Same commit ships R-O's DEFAULT at 0 / 0 instead of 14 / 90 (captain's ruling,
+above) - production keeps R31's behaviour until the two numbers are raised deliberately.
 
 ## Why
 
@@ -114,9 +123,13 @@ should not ignore a late document.
 
 - An overdue document (arrival date < today, nothing received) counts as supply landing on
   `today + overdue_grace_days`. New column on `priority_policy` beside
-  `immediate_window_days`: `overdue_grace_days` INT NOT NULL DEFAULT 14, and
-  `overdue_dead_days` INT NOT NULL DEFAULT 90 (migration, one head, chained onto main's head
-  at PR time via `scripts/alembic-reparent.sh`).
+  `immediate_window_days`: `overdue_grace_days` INT NOT NULL, `overdue_dead_days` INT NOT
+  NULL (migration, one head, chained onto main's head at PR time via
+  `scripts/alembic-reparent.sh`). **SHIPS at DEFAULT 0 / 0** (captain's ruling, 3 Sep 2026,
+  review fix round): with dead at 0 any lateness at all is past it, so production keeps
+  R31's behaviour - a document one day late still counts as nothing - until someone raises
+  the two numbers through the policy form. 14 / 90 is the RECOMMENDED pair the ruling below
+  is otherwise written against, not the shipped one.
 - A document later than `overdue_dead_days` counts as nothing (R31 stays for the dead).
 - The assumed date is what the walk plans against, on every incoming rung (own bin water,
   group water, pool water, supply borrow): a line due before `today + grace` does not get it.

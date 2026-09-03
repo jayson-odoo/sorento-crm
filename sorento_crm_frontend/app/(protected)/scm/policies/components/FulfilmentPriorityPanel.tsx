@@ -77,8 +77,8 @@ export function FulfilmentPriorityPanel() {
   const [transferDays, setTransferDays] = useState('0');
   const [immediateWindowDays, setImmediateWindowDays] = useState('30');
   const [poolSharePct, setPoolSharePct] = useState('50');
-  const [overdueGraceDays, setOverdueGraceDays] = useState('14');
-  const [overdueDeadDays, setOverdueDeadDays] = useState('90');
+  const [overdueGraceDays, setOverdueGraceDays] = useState('0');
+  const [overdueDeadDays, setOverdueDeadDays] = useState('0');
   const [formError, setFormError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -114,9 +114,10 @@ export function FulfilmentPriorityPanel() {
     setImmediateWindowDays(String(data.immediate_window_days ?? 30));
     setPoolSharePct(String(data.pool_share_pct ?? 50));
     // R-O's pair, same contract: a GET from a database that predates migration 464 omits
-    // both keys, so the panel seeds the column defaults itself.
-    setOverdueGraceDays(String(data.overdue_grace_days ?? 14));
-    setOverdueDeadDays(String(data.overdue_dead_days ?? 90));
+    // both keys, so the panel seeds the column's own SHIPPED default (0 / 0 - captain's
+    // ruling, 3 Sep 2026) itself.
+    setOverdueGraceDays(String(data.overdue_grace_days ?? 0));
+    setOverdueDeadDays(String(data.overdue_dead_days ?? 0));
   }, [data]);
 
   const onSave = async () => {

@@ -311,6 +311,35 @@ describe('StockDocumentsPanel', () => {
   });
 
   /**
+   * The captain's own complaint (3 Sep 2026, SO418869 SRTWCX7405-RL-S-PJ): the SPO number
+   * in this table was plain text, with no way to reach the document it names - only the
+   * suggestion sentence's own chip could jump BACK to this row, never out to the document.
+   */
+  it('links an SPO the same way an SO links, to its own document page', async () => {
+    getStockDetail.mockResolvedValue(
+      captainsPosition({
+        incoming: [
+          {
+            spo_number: 'SPO-2026/08-0061',
+            supplier_name: 'FOSHAN WORKS',
+            expected_date: '2026-09-12',
+            spo_qty: '500',
+          },
+        ],
+      }),
+    );
+
+    renderPanel();
+
+    expect(
+      await screen.findByRole('link', { name: 'SPO-2026/08-0061' }),
+    ).toHaveAttribute(
+      'href',
+      '/procurement-management/spo-allocations/SPO-2026%2F08-0061',
+    );
+  });
+
+  /**
    * R5, 27 August 2026: no `#` rank and no queue state in this list. The rank is the queue
    * screen's question; here it competed with the one this list answers, which is what else is
    * claiming the stock and when. What stays is the tag on the line the drawer was opened for.

@@ -10,11 +10,17 @@ the 11 standing on the floor. The display was the honest one - R31 counted a lat
 as nothing at all, so the walk ignored goods the whole business is still expecting.
 
 Under R-O a document whose arrival has passed with nothing received counts as supply landing
-on `today + overdue_grace_days` (14 by policy), and one later than `overdue_dead_days` (90)
-counts as nothing, which is R31 kept for the dead. The ASSUMED date is what the walk plans
-against, so it is the component's `arrival_date` and the fulfil date follows it; the
-sentence names the lateness, because a promise dated three weeks out that rests on paperwork
-two months overdue is a promise the reader has to be able to see through.
+on `today + overdue_grace_days`, and one later than `overdue_dead_days` counts as nothing,
+which is R31 kept for the dead. The ASSUMED date is what the walk plans against, so it is
+the component's `arrival_date` and the fulfil date follows it; the sentence names the
+lateness, because a promise dated three weeks out that rests on paperwork two months
+overdue is a promise the reader has to be able to see through.
+
+SHIPPED policy is 0 / 0 (captain's ruling, 3 Sep 2026) - dead at 0 reproduces R31 exactly,
+so production keeps today's behaviour until someone raises the two numbers. This suite
+proves the RULE, so every fixture below activates a policy with the RECOMMENDED 14 / 90
+explicitly (`GRACE_DAYS` / `DEAD_DAYS`) rather than relying on the shipped default -
+`test_overdue_grace_setting.py` covers the 0 / 0 default itself.
 
 The world is `_group_sites` + `_seed_line` - one fixture carrying two rungs (the own bin's
 own water and a group sibling's), rather than four worlds for four rungs.
@@ -59,7 +65,10 @@ ASSUMED = TODAY + timedelta(days=GRACE_DAYS)
 
 
 def _late_sentence(spo_number: str) -> str:
-    return f"SPO {spo_number} is {LATE_DAYS} days late, assumed by {date_text(ASSUMED)}"
+    # `spo_number` (`_spo_line`'s own fixture) already carries the book's own "SPO-"
+    # prefix, and the sentence must not double it (captain, 3 Sep 2026, SO418869
+    # SRTWCX7405-RL-S-PJ) - `stock_debt_service._spo_ref` carries the same guard.
+    return f"{spo_number} is {LATE_DAYS} days late, assumed by {date_text(ASSUMED)}"
 
 
 # --------------------------------------------------------------------------- AC-O.1
@@ -79,7 +88,7 @@ def test_an_alive_late_document_covers_the_line_at_its_assumed_date():
         company_id, _eling, project, product = _world(db)
         _group, sites = _group_sites(db)
         own, _pool = sites["BRW"]
-        _policy(db)
+        _policy(db, overdue_grace_days=GRACE_DAYS, overdue_dead_days=DEAD_DAYS)
         spo_number = _spo_line(db, product, own, qty=100, arrives=STATED).spo_number
         db.commit()
 
@@ -108,7 +117,7 @@ def test_the_same_document_at_a_group_sibling_reads_the_same_sentence():
         _group, sites = _group_sites(db)
         own, _pool = sites["BRW"]
         sibling, _sibling_pool = sites["MWH"]
-        _policy(db)
+        _policy(db, overdue_grace_days=GRACE_DAYS, overdue_dead_days=DEAD_DAYS)
         spo_number = _spo_line(db, product, sibling, qty=100, arrives=STATED).spo_number
         db.commit()
 
@@ -139,7 +148,7 @@ def test_a_bucket_of_two_late_documents_still_states_the_lateness():
         company_id, _eling, project, product = _world(db)
         _group, sites = _group_sites(db)
         own, _pool = sites["BRW"]
-        _policy(db)
+        _policy(db, overdue_grace_days=GRACE_DAYS, overdue_dead_days=DEAD_DAYS)
         # Neither document alone covers the line, so the walk draws from BOTH and the
         # bucket resolves to two documents rather than `single`.
         _spo_line(db, product, own, qty=30, arrives=STATED)
@@ -181,7 +190,7 @@ def test_a_line_due_inside_the_grace_is_offered_nothing_by_the_late_document():
         company_id, _eling, project, product = _world(db)
         _group, sites = _group_sites(db)
         own, _pool = sites["BRW"]
-        _policy(db)
+        _policy(db, overdue_grace_days=GRACE_DAYS, overdue_dead_days=DEAD_DAYS)
         spo_number = _spo_line(db, product, own, qty=100, arrives=STATED).spo_number
         db.commit()
 
@@ -212,7 +221,7 @@ def test_a_dead_document_is_not_supply_at_all():
         company_id, _eling, project, product = _world(db)
         _group, sites = _group_sites(db)
         own, _pool = sites["BRW"]
-        _policy(db)
+        _policy(db, overdue_grace_days=GRACE_DAYS, overdue_dead_days=DEAD_DAYS)
         _spo_line(
             db, product, own, qty=100,
             arrives=TODAY - timedelta(days=DEAD_LATE_DAYS),

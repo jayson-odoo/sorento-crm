@@ -121,8 +121,8 @@ describe('FulfilmentPriorityPanel', () => {
       transfer_days: 0,
       immediate_window_days: 30,
       pool_share_pct: 50,
-      overdue_grace_days: 14,
-      overdue_dead_days: 90,
+      overdue_grace_days: 0,
+      overdue_dead_days: 0,
     });
   });
 
@@ -148,12 +148,12 @@ describe('FulfilmentPriorityPanel', () => {
     expect(mutateAsync.mock.calls[0][0].overdue_dead_days).toBe(60);
   });
 
-  it('seeds the overdue defaults when the GET predates migration 464', () => {
+  it('seeds the overdue defaults (SHIPPED 0 / 0, captain\'s ruling 3 Sep 2026) when the GET predates migration 464', () => {
     hooks.useFulfilmentPriority.mockReturnValue({ data: DATA, isLoading: false, isError: false });
     render(<FulfilmentPriorityPanel />);
 
-    expect(screen.getByLabelText(/Overdue grace \(days\)/i)).toHaveValue(14);
-    expect(screen.getByLabelText(/Overdue dead after \(days\)/i)).toHaveValue(90);
+    expect(screen.getByLabelText(/Overdue grace \(days\)/i)).toHaveValue(0);
+    expect(screen.getByLabelText(/Overdue dead after \(days\)/i)).toHaveValue(0);
   });
 
   it('blocks a save with an out-of-range overdue grace', () => {

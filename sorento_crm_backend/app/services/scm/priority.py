@@ -190,16 +190,19 @@ DEFAULT_TBA_DATE_FROM = date(2029, 1, 1)
 #: migration 460): a database that never set them charges 50% kept for dealers with a
 #: 30-day immediate window, the values the plan documents.
 #: The overdue grace defaults (R-O, 3 Sep 2026, migration 464): a late document counts as
-#: supply landing 14 days out, and one more than 90 days late counts as nothing (R31 kept
-#: for the dead).
+#: supply landing `overdue_grace_days` out, and one more than `overdue_dead_days` late
+#: counts as nothing (R31 kept for the dead). SHIPPED at 0 / 0 (captain's ruling, 3 Sep
+#: 2026): dead at 0 makes any lateness dead, which is exactly R31, so production keeps
+#: today's behaviour until someone raises these; 14 / 90 is the RECOMMENDED pair, set
+#: through the settings route once the captain is ready to turn the grace on.
 FULFILMENT_SETTINGS_DEFAULTS = {
     "reorder_coverage_until": None,
     "tba_date_from": DEFAULT_TBA_DATE_FROM,
     "transfer_days": 0,
     "immediate_window_days": 30,
     "pool_share_pct": 50,
-    "overdue_grace_days": 14,
-    "overdue_dead_days": 90,
+    "overdue_grace_days": 0,
+    "overdue_dead_days": 0,
 }
 
 #: What the admin screen shows when NO policy has ever been activated (a database that

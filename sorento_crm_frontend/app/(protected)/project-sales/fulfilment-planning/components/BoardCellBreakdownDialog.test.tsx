@@ -3673,6 +3673,61 @@ describe('BoardCellBreakdownDialog: S3 suggestion sentence, sticky toolbar, line
     expect(screen.getByTestId('stock-jump-document').textContent).toBe('SPO 202609-0041');
   });
 
+  /**
+   * The captain's own complaint (3 Sep 2026, SO418869 SRTWCX7405-RL-S-PJ): "SPO
+   * SPO-2026/08-0085 is 28 days late" jumped the table on click and nowhere opened the
+   * document. The chip beside it keeps doing exactly what it always did (a BUTTON, never a
+   * link, so it never navigates); a second, tiny control opens the document itself.
+   */
+  it('AC-3.4 fix: an open-SPO link sits beside the jump chip, and the chip stays a button', () => {
+    render(
+      dialogFor(
+        cellWithSource({
+          reason:
+            'Borrow 30 arriving 20 Oct 2026 (SPO 202609-0041) from SO397460 line 2; its debt lands in Jul 2027.',
+          donor_so_number: 'SO397460',
+          supply_document: 'SPO 202609-0041',
+        }),
+      ),
+    );
+
+    // Unchanged: the chip is still what jumps the table below, and it is still a button
+    // rather than a second link that would navigate instead of jumping.
+    const chip = screen.getByTestId('suggestion-document-link');
+    expect(chip.tagName).toBe('BUTTON');
+    expect(() => fireEvent.click(chip)).not.toThrow();
+
+    const openLink = screen.getByTestId('suggestion-document-open-link');
+    expect(openLink.tagName).toBe('A');
+    expect(openLink).toHaveAttribute(
+      'href',
+      '/procurement-management/spo-allocations/202609-0041',
+    );
+    expect(openLink).toHaveAttribute('aria-label', 'Open SPO 202609-0041');
+  });
+
+  it('AC-3.4 fix: a number the book already writes with its own "SPO-" opens on itself, never doubled', () => {
+    // Post the backend fix, a number that already carries the word arrives in the reason
+    // AS ITSELF (`SPO-2026/08-0085`), never "SPO SPO-2026/08-0085" - the open link has to
+    // resolve to the SAME raw number the SPO detail route expects.
+    render(
+      dialogFor(
+        cellWithSource({
+          reason: 'SPO-2026/08-0085 is 28 days late, assumed by 17 Sep 2026',
+          supply_document: 'SPO-2026/08-0085',
+        }),
+      ),
+    );
+
+    expect(screen.getByTestId('suggestion-document-link').textContent).toBe(
+      'SPO-2026/08-0085',
+    );
+    expect(screen.getByTestId('suggestion-document-open-link')).toHaveAttribute(
+      'href',
+      '/procurement-management/spo-allocations/SPO-2026%2F08-0085',
+    );
+  });
+
   it('AC-4.5: a use-incoming (step 1 water, no donor) source links and jumps its SPO the same way a borrow-incoming one does', () => {
     // S4 task 3: step 1's own/other-group water now carries `supply_document` too (it used
     // to be step 3 only), and it names nobody - a FREE document is taken, not borrowed, so
