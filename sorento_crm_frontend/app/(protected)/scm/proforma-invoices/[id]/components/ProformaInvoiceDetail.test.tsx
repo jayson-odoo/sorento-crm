@@ -29,7 +29,7 @@ vi.mock('@/services/pendingActionService', () => ({
   getCurrentPendingAction: vi.fn().mockResolvedValue({ pending: null, last_outcome: null }),
 }));
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ProformaInvoiceDetail as ProformaInvoiceDetailData } from '../../../services/proformaInvoiceService';
 
@@ -88,8 +88,25 @@ vi.mock('sonner', () => ({
 }));
 
 // The line grid's product picker is server-searched; this suite is not testing the catalogue.
+// A `vi.fn()` (not a bare async function) so the AC-B3/AC-B5 tests can hand back a real
+// page for the ONE product being picked, without the rest of the suite caring.
+const { getProductsMock } = vi.hoisted(() => ({
+  getProductsMock: vi.fn().mockResolvedValue({ data: [], pagination: { total: 0 } }),
+}));
 vi.mock('@/app/(protected)/master-data-management/products/services/productService', () => ({
-  getProducts: async () => ({ data: [], pagination: { total: 0 } }),
+  getProducts: getProductsMock,
+}));
+
+// The master list (AC-B4), not free text - fed to every UoM cell's SearchableSelect.
+vi.mock('@/app/(protected)/master-data-management/shared/hooks/use-uom-select-query', () => ({
+  useUOMSelectQuery: () => ({
+    data: [
+      { id: 'u-pcs', uom_code: 'PCS', uom_name: 'Pieces' },
+      { id: 'u-box', uom_code: 'BOX', uom_name: 'Box' },
+      { id: 'u-set', uom_code: 'SET', uom_name: 'Set' },
+    ],
+    isLoading: false,
+  }),
 }));
 
 const state = {
@@ -306,7 +323,33 @@ beforeEach(() => {
   writes.save.mockReset().mockResolvedValue(undefined);
   writes.forgetMatch.mockReset().mockResolvedValue(undefined);
   writes.markAsRevision.mockReset().mockResolvedValue(undefined);
+  getProductsMock.mockReset().mockResolvedValue({ data: [], pagination: { total: 0 } });
 });
+
+/** The Product select is the first combobox in a line's row, the UoM select the second -
+ *  column order (`item_code, product, description, qty, uom, ...`) puts Product ahead of
+ *  UoM, and only the UoM select carries its own accessible name. */
+function lineRow(itemCodeAriaLabel: string): HTMLElement {
+  return screen.getByLabelText(itemCodeAriaLabel).closest('tr') as HTMLElement;
+}
+
+/**
+ * Flushes the microtask the record's own background watch queries settle on (the delete
+ * pending-action check `useDeferredAction` mounts unconditionally, `watchFromMount: true`).
+ *
+ * The Lines grid's `columns` memo is keyed in part on `useDeferredRowAction`'s returned
+ * object, a fresh reference every render - so if that settle lands WHILE a product picker's
+ * own async fetch is in flight, the row's cells recompute mid-flight and the popover that
+ * was opening is torn down with it (reproduced in isolation: an unmemoized `columns` plus
+ * an unrelated parent re-render loses an in-flight `SearchableSelect` popover every time).
+ * Called once, right after a line's row is on screen and before its picker opens, so that
+ * settle has already happened and cannot race the pick.
+ */
+async function settleBackgroundQueries(): Promise<void> {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+}
 
 describe('ProformaInvoiceDetail - loading / error / data states', () => {
   it('shows a loading skeleton while the detail is fetched', () => {
@@ -1039,4 +1082,161 @@ describe('F11 - answering a supplier code by hand', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
+});
+
+describe('S2 - the Product select carries a matched line through edit, and UoM comes off the master list', () => {
+  it('AC-B2: a line matched to a PRODUCT shows the product code as the select value', () => {
+    state.data = detail();
+    renderDetail();
+    beginEdit();
+    openTab('Lines');
+
+    const productCombo = within(lineRow('Item code for line 1')).getAllByRole('combobox')[0];
+    expect(productCombo).toHaveTextContent('ITEM-1');
+  });
+
+  it('AC-B2: a line matched to a SET shows the set code as the select value', () => {
+    state.data = detail({
+      lines: [
+        {
+          ...detail().lines[0],
+          product_id: null,
+          product_set_id: 'set-1',
+          product_code: 'SET-1',
+          set_code: 'SET-1',
+        },
+      ],
+    });
+    renderDetail();
+    beginEdit();
+    openTab('Lines');
+
+    const productCombo = within(lineRow('Item code for line 1')).getAllByRole('combobox')[0];
+    expect(productCombo).toHaveTextContent('SET-1');
+  });
+
+  it('AC-B3: editing only the qty and saving sends a line with NO product_id / product_set_id key', async () => {
+    state.data = detail();
+    renderDetail();
+    beginEdit();
+    openTab('Lines');
+
+    fireEvent.change(screen.getByLabelText('Quantity for ITEM-1'), { target: { value: '8' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Save proforma invoice$/i }));
+
+    await waitFor(() => expect(writes.save).toHaveBeenCalledTimes(1));
+    const line = lastSavePayload().lines?.[0] ?? {};
+    // An untouched Product select leaves the key OUT of the payload entirely - this is
+    // the S2 regression (#579): sending it back as `null` unconditionally is what
+    // silently unbound every matched product on a plain quantity save.
+    expect(line).not.toHaveProperty('product_id');
+    expect(line).not.toHaveProperty('product_set_id');
+  });
+
+  it('AC-B3: clearing the product select and saving sends product_id: null', async () => {
+    state.data = detail();
+    renderDetail();
+    beginEdit();
+    openTab('Lines');
+
+    const productCombo = within(lineRow('Item code for line 1')).getAllByRole('combobox')[0];
+    fireEvent.pointerDown(within(productCombo).getByRole('button', { name: 'Clear selection' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save proforma invoice$/i }));
+
+    await waitFor(() => expect(writes.save).toHaveBeenCalledTimes(1));
+    const line = lastSavePayload().lines?.[0] ?? {};
+    expect(line.product_id).toBeNull();
+    // The set binding was never touched (it was already null) - no key for it either.
+    expect(line).not.toHaveProperty('product_set_id');
+  });
+
+  it('AC-B3: picking a different product sends the new id, and product_set_id: null for a line that was set-bound', async () => {
+    getProductsMock.mockResolvedValueOnce({
+      data: [{ id: 'prod-99', product_code: 'NEWCODE', product_name: 'New product' }],
+      pagination: { total: 1 },
+    });
+    state.data = detail({
+      lines: [
+        {
+          ...detail().lines[0],
+          product_id: null,
+          product_set_id: 'set-1',
+          product_code: 'SET-1',
+          set_code: 'SET-1',
+        },
+      ],
+    });
+    renderDetail();
+    beginEdit();
+    openTab('Lines');
+    await settleBackgroundQueries();
+
+    const productCombo = within(lineRow('Item code for line 1')).getAllByRole('combobox')[0];
+    fireEvent.click(productCombo);
+    fireEvent.click(await screen.findByRole('option', { name: 'NEWCODE - New product' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save proforma invoice$/i }));
+
+    await waitFor(() => expect(writes.save).toHaveBeenCalledTimes(1));
+    const line = lastSavePayload().lines?.[0] ?? {};
+    expect(line.product_id).toBe('prod-99');
+    expect(line.product_set_id).toBeNull();
+  });
+
+  it('AC-B4: the UoM cell in edit mode renders the master UoM options', async () => {
+    state.data = detail();
+    renderDetail();
+    beginEdit();
+    openTab('Lines');
+
+    fireEvent.click(screen.getByRole('combobox', { name: 'UOM for ITEM-1' }));
+
+    expect(await screen.findByRole('option', { name: 'BOX' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'SET' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'PCS' })).toBeInTheDocument();
+  });
+
+  it('AC-B4: picking a UoM writes the chosen code into the payload', async () => {
+    state.data = detail();
+    renderDetail();
+    beginEdit();
+    openTab('Lines');
+
+    fireEvent.click(screen.getByRole('combobox', { name: 'UOM for ITEM-1' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'BOX' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save proforma invoice$/i }));
+
+    await waitFor(() => expect(writes.save).toHaveBeenCalledTimes(1));
+    expect(lastSavePayload().lines?.[0]).toMatchObject({ uom: 'BOX' });
+  });
+
+  it('AC-B5: adding a line and picking a product with a base UoM defaults UoM when the cell is blank', async () => {
+    getProductsMock.mockResolvedValueOnce({
+      data: [
+        {
+          id: 'prod-hand',
+          product_code: 'HAND-1',
+          product_name: 'Hand basin',
+          base_uom: { id: 'u-box', uom_code: 'BOX', uom_name: 'Box' },
+        },
+      ],
+      pagination: { total: 1 },
+    });
+    state.data = detail();
+    renderDetail();
+    beginEdit();
+    openTab('Lines');
+    await settleBackgroundQueries();
+
+    fireEvent.click(screen.getByRole('button', { name: /add line/i }));
+    await settleBackgroundQueries();
+    const productCombo = within(lineRow('Item code for line 2')).getAllByRole('combobox')[0];
+    fireEvent.click(productCombo);
+    fireEvent.click(await screen.findByRole('option', { name: 'HAND-1 - Hand basin' }));
+
+    // Re-queried after the pick (not a reference captured before it), the same caution
+    // "SalesOrderDetail.test.tsx" states for its own async-resolved UoM select - a row
+    // re-render on patch can swap the node out from under a stale handle.
+    const uomCombo = within(lineRow('Item code for line 2')).getAllByRole('combobox')[1];
+    expect(uomCombo).toHaveTextContent('BOX');
+  });
 });
