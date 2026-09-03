@@ -17,11 +17,14 @@ the shared `ZZPIV` marker; nothing is borrowed.
 """
 from __future__ import annotations
 
+import uuid
+
 import pytest
 
-from app.models.scm import ContainerSize, ProformaInvoice
+from app.models.scm import ContainerSize, ProformaInvoice, SupplierProductCodeAlias
 from app.services.error_handler import AppException
 from app.services.scm import proforma_invoice_service as svc
+from app.services.scm import supplier_code_alias_service
 from tests._pg_fixture import pg_session
 from tests.scm.fixtures.proforma_shapes import kailu_proforma_workbook
 from tests.scm.test_proforma_invoice_adjust import _apply_preloading, _seed_container_sizes
@@ -189,6 +192,162 @@ def test_a_line_given_a_new_product_id_rebinds_it():
         after = next(ln for ln in out["lines"] if ln["id"] == str(matched_line.id))
         assert after["product_id"] == str(other.id)
         assert after["product_code"] == other.product_code
+
+
+# --------------------------------------------------------------------------------- #
+# AC-C1 / AC-C2 - a product picked (or cleared) in edit mode is remembered as the
+# supplier's own code alias, the same memory the in-row Match/Change/Forget writes (S3,
+# issue #582, ruling 2 of PLAN-scm-pi-packing-list-feedback-3sep.md)
+# --------------------------------------------------------------------------------- #
+
+
+def _alias(db, supplier_id: str, code: str) -> SupplierProductCodeAlias | None:
+    return (
+        db.query(SupplierProductCodeAlias)
+        .filter(
+            SupplierProductCodeAlias.supplier_id == str(supplier_id),
+            SupplierProductCodeAlias.supplier_code.ilike(code),
+        )
+        .first()
+    )
+
+
+def _upload_kailu(db, w: World, item_code_map: dict | None = None):
+    """The Kailu file. `item_code_map` substitutes a real Sorento code (Kailu writes OUR
+    codes directly, unlike Jinbaichuan's own spelling) with a `w`-scoped one, so the line
+    lands genuinely unmatched rather than exact-matching whatever the shared dev database
+    already holds under that code."""
+    svc.apply(
+        db,
+        kailu_proforma_workbook(item_code_map),
+        supplier_id=str(w.supplier.id),
+        actor="Ms Tee",
+    )
+    return _invoices(db, w)[0]
+
+
+def test_a_changed_product_upserts_a_manual_alias_and_rebinds_every_sibling_line():
+    """AC-C1: the picked product is remembered as a `manual` alias for the supplier's own
+    code, and every OTHER current line of that supplier carrying the same code re-binds -
+    the sibling on the SAME invoice (Kailu states its `SRTWT7443` line twice) and one on a
+    second, unrelated invoice of the same supplier."""
+    with pg_session() as db:
+        w = World(db)
+        code = f"ZZPI-DUP-{w.tag}"
+        invoice_one = _upload_kailu(db, w, {"SRTWT7443": code})
+        # Free the derived number so a second Kailu upload lands as a NEW invoice rather
+        # than a revision of this one - two current invoices of the same supplier, both
+        # carrying a line under `code`.
+        svc.update_invoice(db, str(invoice_one.id), pi_number="ZZPI-ONE")
+        invoice_two = _upload_kailu(db, w, {"SRTWT7443": code})
+        assert str(invoice_two.id) != str(invoice_one.id)
+
+        lines_one = [ln for ln in _lines(db, invoice_one.id) if ln.item_code == code]
+        lines_two = [ln for ln in _lines(db, invoice_two.id) if ln.item_code == code]
+        assert len(lines_one) == 2  # the sibling on the SAME invoice
+        assert len(lines_two) >= 1  # the sibling on the OTHER invoice
+        assert all(ln.product_id is None for ln in lines_one + lines_two)
+        picked_line, sibling_line = lines_one
+        product_a = w.product("A")
+
+        # The real edit screen sends `product_id` ONLY for the line the operator actually
+        # touched (S2, `saveEdit`) - every other row's key is ABSENT, "leave alone", not a
+        # redundant echo of what it already held.
+        draft = _draft_from(_lines(db, invoice_one.id))
+        for row in draft:
+            if row["id"] == str(picked_line.id):
+                row["product_id"] = str(product_a.id)
+            else:
+                row.pop("product_id", None)
+
+        out = svc.update_invoice(db, str(invoice_one.id), lines=draft, actor="Ms Tee")
+
+        after = next(ln for ln in out["lines"] if ln["id"] == str(picked_line.id))
+        assert after["product_id"] == str(product_a.id)
+        assert after["matched"] is True
+
+        alias = _alias(db, w.supplier.id, code)
+        assert alias is not None
+        assert alias.source == "manual"
+        assert str(alias.product_id) == str(product_a.id)
+
+        db.refresh(sibling_line)
+        assert str(sibling_line.product_id) == str(product_a.id)
+        for ln in lines_two:
+            db.refresh(ln)
+            assert str(ln.product_id) == str(product_a.id)
+
+
+def test_clearing_a_line_deletes_its_manual_alias():
+    """AC-C2(a): a `null` sent on purpose unbinds the line, and the manual alias behind it
+    is deleted - the inverse of picking a product in edit mode."""
+    with pg_session() as db:
+        w = World(db)
+        code = f"ZZPI-DUP-{w.tag}"
+        invoice = _upload_kailu(db, w, {"SRTWT7443": code})
+        product_a = w.product("A")
+        supplier_code_alias_service.create(
+            db,
+            supplier_id=str(w.supplier.id),
+            supplier_code=code,
+            product_id=str(product_a.id),
+            actor="setup",
+        )
+        line = next(ln for ln in _lines(db, invoice.id) if ln.item_code == code)
+        assert str(line.product_id) == str(product_a.id)
+
+        draft = _draft_from(_lines(db, invoice.id))
+        for row in draft:
+            if row["id"] == str(line.id):
+                row["product_id"] = None
+            else:
+                row.pop("product_id", None)
+
+        out = svc.update_invoice(db, str(invoice.id), lines=draft, actor="Ms Tee")
+
+        after = next(ln for ln in out["lines"] if ln["id"] == str(line.id))
+        assert after["product_id"] is None
+        assert after["matched"] is False
+        assert _alias(db, w.supplier.id, code) is None
+
+
+def test_clearing_a_line_leaves_an_auto_alias_on_file():
+    """AC-C2(b): a bind the LADDER worked out (source `auto`) is not what the operator's
+    clear is undoing - only a `manual` alias is that operator's own decision to take back."""
+    with pg_session() as db:
+        w = World(db)
+        code = f"ZZPI-DUP2-{w.tag}"
+        invoice = _upload_kailu(db, w, {"SRTWT8203": code})
+        product_b = w.product("B")
+        auto_alias = SupplierProductCodeAlias(
+            id=str(uuid.uuid4()),
+            supplier_id=str(w.supplier.id),
+            supplier_code=code,
+            product_id=str(product_b.id),
+            source="auto",
+            matched_by="separator",
+        )
+        db.add(auto_alias)
+        line = next(ln for ln in _lines(db, invoice.id) if ln.item_code == code)
+        line.product_id = str(product_b.id)
+        db.flush()
+
+        draft = _draft_from(_lines(db, invoice.id))
+        for row in draft:
+            if row["id"] == str(line.id):
+                row["product_id"] = None
+            else:
+                row.pop("product_id", None)
+
+        out = svc.update_invoice(db, str(invoice.id), lines=draft, actor="Ms Tee")
+
+        after = next(ln for ln in out["lines"] if ln["id"] == str(line.id))
+        assert after["product_id"] is None
+
+        still_there = _alias(db, w.supplier.id, code)
+        assert still_there is not None
+        assert still_there.source == "auto"
+        assert str(still_there.product_id) == str(product_b.id)
 
 
 # --------------------------------------------------------------------------------- #

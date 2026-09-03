@@ -2450,7 +2450,74 @@ def _rename(db: Session, invoice: ProformaInvoice, pi_number: Optional[str]) -> 
     invoice.pi_number = number
 
 
-def _write_lines(db: Session, invoice: ProformaInvoice, rows: list[dict]) -> None:
+def _remember_line_match(
+    db: Session, invoice: ProformaInvoice, line: ProformaInvoiceLine, *, actor: Optional[str]
+) -> None:
+    """AC-C1: a product (or set) picked for THIS line in edit mode is written down as the
+    supplier's own `manual` alias for the code, exactly the memory the Match column's own
+    Match/Change dialog writes (`supplier_code_alias_service.create`) - so a match made by
+    editing a line and one made through the dialog are the same decision, not two mechanisms
+    that can disagree (ruling 2, PLAN-scm-pi-packing-list-feedback-3sep.md). `create` also
+    re-binds every OTHER current line and stock row of this supplier under the same code, so
+    the sibling line the operator did not touch catches up in the same Save.
+
+    Imported locally: `supplier_code_alias_service` reaches `entity_resolver`, which reaches
+    BACK into this module for `_DRAFT_SHIPMENT_STATUS` - a module-level import here would be
+    a genuine cycle, not just an ordering nuisance.
+    """
+    from app.services.scm import supplier_code_alias_service
+
+    if line.product_id:
+        supplier_code_alias_service.create(
+            db,
+            supplier_id=str(invoice.supplier_id),
+            supplier_code=line.item_code,
+            product_id=str(line.product_id),
+            actor=actor,
+        )
+    elif line.product_set_id:
+        supplier_code_alias_service.create(
+            db,
+            supplier_id=str(invoice.supplier_id),
+            supplier_code=line.item_code,
+            product_set_id=str(line.product_set_id),
+            actor=actor,
+        )
+
+
+def _forget_line_match(
+    db: Session, invoice: ProformaInvoice, line: ProformaInvoiceLine, *, actor: Optional[str]
+) -> None:
+    """AC-C2: clearing the Product select is the inverse of picking one - but only when the
+    memory behind the bind was the operator's OWN prior decision. A `manual` alias is deleted
+    (`supplier_code_alias_service.delete`, which also re-derives every row under the code from
+    the ladder, same as the Match column's Forget). An `auto` alias is the ladder's own
+    derivation, not a decision this clear is undoing, so it is left on file untouched - only
+    THIS line's own binding, already cleared above, changes.
+    """
+    from app.services.scm import supplier_code_alias_service
+
+    if not line.item_code:
+        return
+    alias = (
+        db.query(SupplierProductCodeAlias)
+        .filter(
+            SupplierProductCodeAlias.supplier_id == str(invoice.supplier_id),
+            SupplierProductCodeAlias.supplier_code.ilike(line.item_code),
+        )
+        .first()
+    )
+    if alias is not None and alias.source == "manual":
+        supplier_code_alias_service.delete(db, str(alias.id), actor=actor)
+
+
+def _write_lines(
+    db: Session,
+    invoice: ProformaInvoice,
+    rows: list[dict],
+    *,
+    actor: Optional[str] = None,
+) -> None:
     """The whole line set in one write: rows with an id update, rows without create, and a
     line the payload no longer names is deleted.
 
@@ -2468,6 +2535,10 @@ def _write_lines(db: Session, invoice: ProformaInvoice, rows: list[dict]) -> Non
     only changed a quantity used to silently unbind every matched product on the invoice - the
     route always sent `product_id` because `model_dump()` fills in Pydantic's own `None`
     default for a field the caller never mentioned. AC-B3.
+
+    When the key IS sent and the value it resolves to differs from what the line already
+    held, the change is remembered (AC-C1) or forgotten (AC-C2) via `_remember_line_match` /
+    `_forget_line_match` - a save that leaves a line's match untouched writes nothing new.
     """
     existing = {
         str(ln.id): ln
@@ -2523,12 +2594,18 @@ def _write_lines(db: Session, invoice: ProformaInvoice, rows: list[dict]) -> Non
                     404, "That line is not on this proforma invoice.", detail="line_id"
                 )
             kept.add(str(line_id))
+            # What the line already held, so the assignment below can be told a REAL change
+            # (AC-C1/AC-C2) from a save that just echoed the same match back.
+            was_product_id = str(line.product_id) if line.product_id else None
+            was_product_set_id = str(line.product_set_id) if line.product_set_id else None
         else:
             line = ProformaInvoiceLine(
                 id=_uuid(), invoice_id=invoice.id, line_no=next_line_no, item_code=code, qty=qty
             )
             next_line_no += 1
             db.add(line)
+            was_product_id = None
+            was_product_set_id = None
 
         unit_price = row.get("unit_price")
         cbm_per_unit = row.get("cbm_per_unit")
@@ -2563,6 +2640,18 @@ def _write_lines(db: Session, invoice: ProformaInvoice, rows: list[dict]) -> Non
             if product_set_id:
                 line.product_id = None
 
+        # AC-C1/AC-C2: only a REAL change to the bind is remembered or forgotten - a save
+        # that sent the key but echoed back what the line already held (every untouched
+        # line, since `toDraft` always sends the current match) writes nothing new.
+        if product_id_sent or product_set_id_sent:
+            now_product_id = str(line.product_id) if line.product_id else None
+            now_product_set_id = str(line.product_set_id) if line.product_set_id else None
+            if (now_product_id, now_product_set_id) != (was_product_id, was_product_set_id):
+                if now_product_id or now_product_set_id:
+                    _remember_line_match(db, invoice, line, actor=actor)
+                else:
+                    _forget_line_match(db, invoice, line, actor=actor)
+
     for line_id, line in existing.items():
         if line_id not in kept:
             db.delete(line)
@@ -2594,7 +2683,7 @@ def update_invoice(
     if container_size_id is not UNSET:
         _set_container_size(db, invoice, container_size_id)
     if lines is not UNSET:
-        _write_lines(db, invoice, list(lines or []))
+        _write_lines(db, invoice, list(lines or []), actor=actor)
         # Stamped only when the LINES moved: renaming a document or choosing a different box
         # is not trimming it to fit, and "adjusted by" is what tells the screen the
         # supplier's figures are no longer what we are shipping.
