@@ -249,7 +249,34 @@ section K (AC-K1-AC-K3).
   stack is last-mounted-wins, and Radix `Popover`'s `modal` mode wraps its OWN content in its
   own `RemoveScroll` instance (`@radix-ui/react-popover`), so making the `Popover` `modal`
   makes IT the active lock while open, letting its own list scroll - the same mechanism
-  `Select`/`DropdownMenu` already use. No dialog-side change.
+  `Select`/`DropdownMenu` already use. No dialog-side change. `SearchableMultiSelect` got
+  the identical `modal` Popover fix (its `CommandItem` `value` was already `opt.value`, so
+  only the dialog-scroll half applied there).
+
+  **Amended, CI-red follow-up batch:** `modal` shipped unconditional on both components,
+  then broke `InlineLineTable`'s freshly-added-row guard - `modal` also pulls in Radix's
+  `hideOthers`, which marks EVERYTHING outside the popover `aria-hidden` the instant it
+  opens, including the rest of the same table row its own trigger sits in (traced with
+  `getByRole` + a raw DOM dump against `InlineLineTable.test.tsx`'s "keeps a freshly added
+  row alive" case: the row was never discarded, its cells were provably still in the DOM
+  with the right values - `data-aria-hidden="true"` on an ancestor was the entire cause,
+  not the row-commit guard). A table row is not a Dialog; hiding its other fields the
+  moment one cell's dropdown opens is wrong there, and `Select`/`DropdownMenu` parity was
+  never the actual bug being fixed (the Dialog wheel-scroll swallow was). `modal` is now
+  computed once per mount from the trigger's own DOM position -
+  `isInsideOpenDialog(triggerEl)` in the new `components/common/floatingAncestry.ts` -
+  `true` only when the default trigger is physically inside an open Dialog's content,
+  `false` otherwise. `renderTrigger` callers (a custom trigger element) keep the
+  unconditional `true` this shipped with rather than composing a ref through arbitrary
+  consumer markup: no evidenced Dialog-nested case uses `renderTrigger`, and both verified
+  Dialog consumers (`PlanContainerDialog`'s Supplier, `role-edit-dialog.tsx`'s Add
+  Permissions) use the default trigger, which the detection covers. `dialog.tsx`'s
+  outside-click guard and `InlineLineTable`'s row-commit guard shared a near-identical
+  "is this a floating surface" selector that had started to drift; both now call the same
+  `focusIsInsideFloating` from `floatingAncestry.ts`, which also recognises
+  `[data-radix-focus-guard]` (Radix's tab-trap sentinel, a `<body>`-level sibling of every
+  portal root) and `[cmdk-root]` - grepped for every other `relatedTarget` guard in the
+  app; `InlineLineTable.tsx` is the only one.
 - `app/(protected)/scm/loading-plan/components/SupplierCodesTab.tsx` +
   `app/(protected)/scm/hooks/useSupplierCodeAliases.ts`: a **Confirm (N)** button, left of
   Refresh matching, N = rows decided (matched or dismissed) this visit and still present in

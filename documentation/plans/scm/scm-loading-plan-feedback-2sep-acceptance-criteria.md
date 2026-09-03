@@ -258,14 +258,29 @@ the match.
   contract - `shouldFilter={false}` means neither `value` nor `keywords` drives filtering
   here, `visibleOptions` does). A `SearchableSelect` popover opened from inside an open
   `Dialog` also scrolls on a real wheel gesture, the same as a popover outside any dialog: the
-  `Popover` `SearchableSelect` renders is `modal`, so it owns its own `react-remove-scroll`
-  lock (last-mounted wins on the shared lock stack) instead of sitting outside the Dialog's
-  own lock target and having every wheel event over it silently swallowed. Verified in "Plan a
+  `Popover` `SearchableSelect` renders goes `modal` WHEN its trigger sits inside an open
+  Dialog (detected once from the trigger's own DOM position via `isInsideOpenDialog`,
+  `components/common/floatingAncestry.ts`), so it owns its own `react-remove-scroll` lock
+  (last-mounted wins on the shared lock stack) instead of sitting outside the Dialog's own
+  lock target and having every wheel event over it silently swallowed. Verified in "Plan a
   container" (Supplier) and in one non-dialog consumer (a listing filter) at 375px and 1280px;
   no change to focus-trap / outside-pointer behaviour beyond what `Select`/`DropdownMenu`
-  already do while open. `SearchableMultiSelect` gets the same `modal` Popover fix (its
-  `CommandItem` `value` was already `opt.value`, so only the dialog-scroll half applied);
-  verified in `role-edit-dialog.tsx` (Dialog) and `ScmFilterBar.tsx` (non-dialog).
+  already do while open. `SearchableMultiSelect` gets the same conditional-`modal` Popover
+  fix (its `CommandItem` `value` was already `opt.value`, so only the dialog-scroll half
+  applied); verified in `role-edit-dialog.tsx` (Dialog) and `ScmFilterBar.tsx` (non-dialog).
+  **Amended (S10 follow-up, item 1 of the CI-red batch):** `modal` shipped unconditional
+  first, then turned out to break `InlineLineTable`'s freshly-added-row guard - Radix's
+  `hideOthers` (which `modal` also pulls in, to trap focus / block outside pointer events)
+  marks EVERYTHING outside the popover `aria-hidden`, including the rest of the same table
+  row the popover's own trigger sits in, the instant it opens; a row is not a Dialog, so
+  hiding the fields beside the one just opened is wrong there. `modal` is now conditional -
+  `true` only when the trigger is physically inside an open Dialog (`renderTrigger` callers
+  keep the unconditional `true` this shipped with, since composing a ref through an
+  arbitrary custom trigger has no evidenced Dialog-nested case yet, and both verified
+  Dialog consumers use the default trigger). `dialog.tsx`'s outside-click guard and
+  `InlineLineTable`'s row-commit guard now share one selector,
+  `focusIsInsideFloating` (`components/common/floatingAncestry.ts`), which also recognises
+  `[data-radix-focus-guard]` and `[cmdk-root]`.
 - **AC-K2** `[FE][T]` The Supplier codes tab's "Needs a decision" header carries a **Confirm
   (N)** button, left of Refresh matching, where N = codes decided (matched or dismissed) THIS
   VISIT and still present in the unmatched queue - disabled at N = 0. Clicking it writes

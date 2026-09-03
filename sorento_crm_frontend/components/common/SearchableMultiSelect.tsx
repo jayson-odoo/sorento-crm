@@ -17,6 +17,7 @@ import {
   selectTriggerVariants,
   type SelectTriggerSize,
 } from '@/components/common/select-trigger-variants';
+import { isInsideOpenDialog } from '@/components/common/floatingAncestry';
 
 export type SearchableMultiSelectOption = {
   value: string;
@@ -102,6 +103,20 @@ export function SearchableMultiSelect({
 }: SearchableMultiSelectProps) {
   const isAsync = typeof fetchOptions === 'function';
   const [open, setOpen] = React.useState(false);
+
+  // See the identical comment in SearchableSelect.tsx: `modal` fixes the Dialog-scroll bug
+  // but also `aria-hide`s and focus-traps everything else while open - fine for a real
+  // modal, wrong for a small inline picker. Scoped to Dialog-nested triggers only, detected
+  // once from the trigger's own DOM position rather than declared per call site.
+  const triggerElRef = React.useRef<HTMLElement | null>(null);
+  const [triggerInsideDialog, setTriggerInsideDialog] = React.useState(false);
+  const setTriggerRef = React.useCallback((node: HTMLElement | null) => {
+    triggerElRef.current = node;
+  }, []);
+  React.useEffect(() => {
+    setTriggerInsideDialog(isInsideOpenDialog(triggerElRef.current));
+  }, []);
+  const modalPopover = renderTrigger ? true : triggerInsideDialog;
 
   const [asyncOptions, setAsyncOptions] = React.useState<SearchableMultiSelectOption[]>([]);
   const [loading, setLoading] = React.useState(false);
@@ -232,19 +247,15 @@ export function SearchableMultiSelect({
   };
 
   return (
-    // `modal` makes this popover its own react-remove-scroll lock: mounted inside an open
-    // Dialog, it becomes the active lock (the stack is last-one-wins) so a wheel over ITS
-    // list scrolls, where a plain (non-modal) popover portalled to <body> sits outside the
-    // Dialog's own lock target and every wheel over it is swallowed. `disableOutsidePointerEvents`
-    // and the focus trap that come with `modal` match how `Select`/`DropdownMenu` already
-    // behave while open, so nothing about this component's contract changes. Same fix as
-    // SearchableSelect - the two halves of this standard are kept identical on purpose.
-    <Popover modal open={open} onOpenChange={(o) => !isDisabled && setOpen(o)}>
+    // See `modalPopover` above - the two halves of this standard are kept identical
+    // on purpose.
+    <Popover modal={modalPopover} open={open} onOpenChange={(o) => !isDisabled && setOpen(o)}>
       <PopoverTrigger asChild>
         {renderTrigger ? (
           renderTrigger({ selected: chosen, open, disabled: isDisabled })
         ) : (
         <button
+          ref={setTriggerRef}
           type="button"
           disabled={isDisabled}
           id={id}
