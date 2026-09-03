@@ -25,8 +25,8 @@ const ROW_COL = 'w-[220px] min-w-[220px] max-w-[220px]';
  *  selection fills the bordered container and a wide one overflows into its own scroll,
  *  mirroring `OrderInquiryScheduleMatrix`'s own reasoning for the same shape of table. */
 const BUCKET_COL = 'min-w-[110px]';
-const Z_PINNED = 'z-20';
-const Z_CORNER = 'z-30';
+const Z_PINNED = 'z-(--z-sticky-content)';
+const Z_CORNER = 'z-(--z-sticky-content-corner)';
 
 /**
  * Ms Tee's schedule view of the request (6b.2): the product/SO axis and day/week/month

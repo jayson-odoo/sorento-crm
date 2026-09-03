@@ -175,6 +175,7 @@ multi-team member can be RR-eligible in one team, excluded in another).
   RR cursor advanced; conversation row pushes to Respond (mock) + logs integration_log on success &
   failure; form row skips push; taker without respond_user_id skips push + warns.
 - Reassign: assignee→target, team/tier/clock unchanged, log written; scope-B picker enforced.
+  Superseded 2026-09-03: reassign target = any team member (cross-team allowed); coverage + Team Tasks stay scope-B.
 - Notifications: new assignee always; old assignee only when actor≠them; self-reassign no self-notify.
 - Subscription fan-out: target's assignment/escalation copies to active subscribers, gated by
   subscriber's own channel toggles; expired/inactive skipped; no double-send when subscriber==assignee;

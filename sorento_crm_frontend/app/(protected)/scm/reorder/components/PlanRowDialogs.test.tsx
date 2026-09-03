@@ -244,6 +244,21 @@ describe('PlanRowDialog - project / retail demand (F2, F3)', () => {
     renderDialog('project', line());
     expect(screen.getByText('Nothing open on this channel for this product.')).toBeInTheDocument();
   });
+
+  it('foots both the open tab and the history tab to their own qty (AC-J3, S9)', () => {
+    useRecommendationDemand.mockImplementation((_r, _id, _en, _ch, scope) =>
+      scope === 'product' ? { data: historyData, isLoading: false } : { data: openData, isLoading: false },
+    );
+    renderDialog('project', line());
+
+    const openFooter = screen.getByText('Total').closest('tr') as HTMLElement;
+    expect(within(openFooter).getByText('10')).toBeInTheDocument();
+
+    fireEvent.mouseDown(screen.getByText('SO history (1)'));
+
+    const historyFooter = screen.getByText('Total').closest('tr') as HTMLElement;
+    expect(within(historyFooter).getByText('5')).toBeInTheDocument();
+  });
 });
 
 describe('PlanRowDialog - On hand (F4)', () => {
@@ -267,6 +282,17 @@ describe('PlanRowDialog - On hand (F4)', () => {
 
     expect(screen.getByText('BRW')).toBeInTheDocument();
     expect(screen.queryByText('BRW-BB')).not.toBeInTheDocument();
+  });
+
+  it('foots the site pools to their own on-hand total (AC-J3, S9)', () => {
+    useLocationStock.mockReturnValue({
+      data: { product_id: 'p1', as_of: '2026-08-20T10:00:00', locations },
+      isLoading: false,
+    });
+    renderDialog('on_hand', line());
+
+    const footer = screen.getByText('Site pools').closest('tr') as HTMLElement;
+    expect(within(footer).getByText('100')).toBeInTheDocument();
   });
 
   it('lists EVERY site pool, zeros included (R16)', () => {
@@ -355,6 +381,10 @@ describe('PlanRowDialog - SPO (F5)', () => {
     expect(await screen.findByText('Open to BRW (1)')).toBeInTheDocument();
     expect(screen.getByText('History to BRW (0)')).toBeInTheDocument();
     expect(getSpoHistory).toHaveBeenCalledWith('run-1', 'p1');
+
+    // AC-J3: the open tab foots its own qty too.
+    const footer = screen.getByText('Total').closest('tr') as HTMLElement;
+    expect(within(footer).getByText('10')).toBeInTheDocument();
   });
 
   it('drops the location wording entirely when the pool cannot be named', async () => {
@@ -380,6 +410,10 @@ describe('PlanRowDialog - PO (F6)', () => {
     expect(within(openTable).getByText('Still to come')).toBeInTheDocument();
     expect(within(openTable).queryByText('Supplier')).not.toBeInTheDocument();
     expect(within(openTable).queryByText('Unit price')).not.toBeInTheDocument();
+
+    // AC-J3: foots the still-to-come quantity too (there is no per-PO supplier column here).
+    const footer = screen.getByText('Total').closest('tr') as HTMLElement;
+    expect(within(footer).getByText('50')).toBeInTheDocument();
   });
 
   it('the History tab carries Supplier and Unit price (BRW pool key, R15/F6)', async () => {
@@ -401,6 +435,10 @@ describe('PlanRowDialog - PO (F6)', () => {
     expect(within(historyTable).getByText('Supplier')).toBeInTheDocument();
     expect(within(historyTable).getByText('Unit price')).toBeInTheDocument();
     expect(within(historyTable).getByText('Acme')).toBeInTheDocument();
+
+    // AC-J3: the history tab foots its own qty too (there is no still-to-come here).
+    const footer = screen.getByText('Total').closest('tr') as HTMLElement;
+    expect(within(footer).getByText('30')).toBeInTheDocument();
   });
 
   it('names no destination-less or wrong-pool line - an empty history says so, naming the pool', async () => {

@@ -299,21 +299,27 @@ def test_an_alias_wins_over_every_other_rung():
 
 
 def test_an_alias_belonging_to_another_supplier_is_not_consulted():
+    """AC-C6: a code remembered under one supplier resolves through rung 0 for THAT
+    supplier, and is not applied to another supplier who happens to see the same spelling."""
     with pg_session() as db:
         w = World(db)
         other = World(db)
         ours = w.product("SRTWC8357-RL")
+        theirs = other.product("SOMETHING-ELSE")
         code = w.supplier_code("SRTWC8357-RL")
         db.add(SupplierProductCodeAlias(
             id=_u(), supplier_id=other.supplier.id, supplier_code=code,
-            product_id=other.product("SOMETHING-ELSE").id, source="manual",
+            product_id=theirs.id, source="manual",
             matched_by="manual",
         ))
         db.flush()
 
-        out = _resolve(db, w, code)
+        out_w = _resolve(db, w, code)
+        out_other = _resolve(db, other, code)
 
-        assert out[code].product_id == str(ours.id)
+        assert out_w[code].product_id == str(ours.id)
+        assert out_other[code].product_id == str(theirs.id)
+        assert out_other[code].rung == "alias"
 
 
 # --------------------------------------------------------------------------------- #

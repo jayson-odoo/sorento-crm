@@ -149,6 +149,11 @@ class ProductSupplierUpdate(ProductSupplierSourcingTerms):
 class ProductSupplierResponse(ProductSupplierBase):
     id: str
     created_at: datetime
+    # Read off `scm.supplier_product_code_alias` (product + supplier, non-dismissed), not a
+    # column on this table (S4, AC-D2): the alias is the single writer, so a manual match and
+    # this field can never drift apart. Declared on the RESPONSE only - a create or update
+    # payload naming it would be dropped in silence, since nothing here writes it back.
+    supplier_item_code: Optional[str] = None
     product: Optional[ProductSimple] = None
     supplier: Optional[SupplierSimple] = None
 

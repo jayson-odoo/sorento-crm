@@ -8,6 +8,7 @@ import { Dialog as DialogPrimitive } from 'radix-ui';
 import { AnimatePresence, motion } from 'motion/react';
 import { OVERLAY_CLASS, OVERLAY_CLASS_STATIC } from '@/components/ui/primitive-classes';
 import { surfaceTransition, surfaceVariants, useOpenState, useReducedMotion } from '@/lib/motion';
+import { focusIsInsideFloating } from '@/components/common/floatingAncestry';
 
 const dialogContentVariants = cva(
   // `overflow-y-auto` + a bounded `max-h` make EVERY modal scrollable - without
@@ -208,13 +209,7 @@ function DialogContent({
     // stacked dialog must be explicit, never a side effect of the one beneath
     // it. Kept until the attachment-type flow is browser-verified under the
     // modal default (PLAN-apple-alignment 7, risk 1).
-    if (
-      target &&
-      target.closest &&
-      target.closest(
-        '[data-radix-popper-content-wrapper], [data-radix-menu-content], [data-radix-popover-content], [data-radix-select-content], [data-radix-context-menu-content], [data-slot="dropdown-menu-content"], [data-slot="popover-content"], [data-slot="select-content"], [data-slot="dialog-content"], [data-slot="alert-dialog-content"], [role="menu"], [role="menuitem"], [role="listbox"], [role="option"], [role="dialog"], [role="alertdialog"]',
-      )
-    ) {
+    if (focusIsInsideFloating(target)) {
       event.preventDefault();
       return;
     }

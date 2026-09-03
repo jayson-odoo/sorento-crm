@@ -7,8 +7,11 @@
  *
  * ── BACKEND CONTRACT (app/api/v1/scm/fulfilment.py) ────────────────────────
  *  GET    /api/v1/scm/supplier-code-aliases?supplier_id      -> 200 { data: SupplierCodeAlias[] }
- *  GET    /api/v1/scm/supplier-code-aliases/unmatched?supplier_id
+ *  GET    /api/v1/scm/supplier-code-aliases/unmatched?plan_id
  *                                                            -> 200 { data: UnmatchedSupplierCode[] }
+ *         Scoped to ONE loading plan (S6, AC-C7): the unknown codes on the stock rows and
+ *         invoice lines stamped with that plan, never the supplier's other snapshots. A
+ *         "No file" plan answers with an empty list.
  *  POST   /api/v1/scm/supplier-code-aliases                  -> 201 SupplierCodeAliasWritten
  *         Body: { supplier_id, supplier_code, product_id | product_set_id } - exactly one of
  *         the two (R19). Replaces any earlier ruling and RE-BINDS the rows already uploaded
@@ -19,7 +22,7 @@
  *         product, UNBINDS the rows already uploaded under that code, and takes it out of
  *         the unmatched queue.
  *  POST   /api/v1/scm/supplier-code-aliases/rematch          -> 200 SupplierCodeRematched
- *         Body: { supplier_id }. Runs the ladder again over the rows still unbound, so a
+ *         Body: { plan_id }. Runs the ladder again over THIS plan's rows still unbound, so a
  *         product added after the upload binds without the file being uploaded again.
  *  DELETE /api/v1/scm/supplier-code-aliases/{id}             -> 200 { deleted, rebound_* }
  *         Forgets the ruling - a match or a dismissal - and puts those rows back to
@@ -113,11 +116,22 @@ export async function listSupplierCodeAliases(
   return body.data ?? [];
 }
 
+/**
+ * The unknown codes on ONE plan's statement.
+ *
+ * ── CONTRACT CHANGED BY S6 ─────────────────────────────────────────────────
+ * `plan_id` replaces `supplier_id`. The queue used to be supplier-wide, which is how a
+ * "No file" plan for ROYAL MIRROR showed 79 unknown codes off a stock list somebody had
+ * uploaded from a different plan. It now reads only the `supplier_inventory` rows and
+ * `proforma_invoice_line` rows stamped with this plan, so a plan with no file has nothing
+ * to answer. The memory (`listSupplierCodeAliases`) stays per SUPPLIER: a ruling is the
+ * supplier's, not the plan's.
+ */
 export async function listUnmatchedSupplierCodes(
-  supplierId: string,
+  planId: string,
 ): Promise<UnmatchedSupplierCode[]> {
   const res = await apiFetch(
-    `/api/v1/scm/supplier-code-aliases/unmatched?supplier_id=${encodeURIComponent(supplierId)}`,
+    `/api/v1/scm/supplier-code-aliases/unmatched?plan_id=${encodeURIComponent(planId)}`,
   );
   const body = await readJson<{ data: UnmatchedSupplierCode[] }>(
     res,
@@ -177,8 +191,10 @@ export interface SupplierCodeRematched {
   still_unmatched: number;
 }
 
+/** Re-run the ladder over THIS plan's still-unbound rows (S6: `plan_id`, not
+ *  `supplier_id`) - the same scope the queue above reads. */
 export async function rematchSupplierCodes(body: {
-  supplier_id: string;
+  plan_id: string;
 }): Promise<SupplierCodeRematched> {
   const res = await apiFetch('/api/v1/scm/supplier-code-aliases/rematch', {
     method: 'POST',

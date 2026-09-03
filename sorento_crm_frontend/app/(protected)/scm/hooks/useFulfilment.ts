@@ -3,9 +3,7 @@
 import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import {
-  approveLoadingPlan,
   buildContainerRequest,
-  cancelLoadingPlan,
   createLoadingPlanRecord,
   createSpo,
   deleteSpo,
@@ -16,7 +14,6 @@ import {
   getContainerSizes,
   getFulfilmentSuppliers,
   getLoadingPlanList,
-  getPlanNotices,
   getSpoSuggestion,
   getSupplierChatContacts,
   getSupplierNotices,
@@ -29,7 +26,6 @@ import {
   type ContainerRequestSendOptions,
   type LoadingPlanCreate,
   type LoadingPlanListParams,
-  type LoadingPlanRecord,
   type SpoConfirmLine,
 } from '../services/fulfilmentService';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
@@ -139,23 +135,6 @@ export function useCreateLoadingPlan() {
   });
 }
 
-/** Cancel: the plan stops being worked on AND the supplier's live link stops answering (Q4). */
-export function useCancelLoadingPlan() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => cancelLoadingPlan(id),
-    onSuccess: (plan: LoadingPlanRecord) => {
-      qc.setQueryData([...KEY, 'container-request', plan.id], (prev: unknown) =>
-        prev && typeof prev === 'object' ? { ...(prev as object), plan } : prev,
-      );
-      void qc.invalidateQueries({ queryKey: [...KEY, 'plan-list'] });
-      void qc.invalidateQueries({ queryKey: [...KEY, 'container-request', plan.id] });
-      toast.success('Plan cancelled. The supplier link no longer works.');
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
-}
-
 /**
  * Save the typed quantities (R6). The whole map goes in one PUT, and the build is invalidated
  * rather than patched: `suggested_qty` comes back with the edits already applied, so the grid
@@ -188,31 +167,6 @@ export function useSaveLoadingPlanEdits(planId: string | null) {
   });
 }
 
-/** S8 - the notices produced by approving a plan, and the one action that produces them. */
-export function usePlanNotices(planId: string | null) {
-  return useQuery({
-    queryKey: [...KEY, 'notices', planId],
-    queryFn: () => getPlanNotices(planId as string),
-    enabled: !!planId,
-    refetchOnWindowFocus: false,
-  });
-}
-
-export function useApproveLoadingPlan() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (planId: string) => approveLoadingPlan(planId),
-    onSuccess: (out, planId) => {
-      qc.invalidateQueries({ queryKey: [...KEY, 'notices', planId] });
-      // Say what actually happened per channel. "Notice sent" when the supplier has no address
-      // on file would be the screen telling the user something untrue.
-      const sent = out.notices.filter((n) => n.status === 'sent').length;
-      if (sent) toast.success(`Notice sent on ${sent === 1 ? '1 channel' : `${sent} channels`}.`);
-      else toast.warning('Notice created. No channel could send it, so send the document by hand.');
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
-}
 
 /**
  * Stage 1 - the container request (PLAN-scm-loading-plan-demand-first.md). A pure read, so a

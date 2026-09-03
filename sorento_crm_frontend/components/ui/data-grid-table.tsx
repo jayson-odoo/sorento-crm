@@ -81,7 +81,11 @@ function getPinningStyles<TData>(column: Column<TData>): CSSProperties {
     right: isPinned === 'right' ? `${column.getAfter('right')}px` : undefined,
     position: isPinned ? 'sticky' : 'relative',
     width: column.getSize(),
-    zIndex: isPinned ? 1 : 0,
+    // `--z-sticky-content` (css/config.reui.css), not a bare number: a pinned
+    // column has to beat the columns scrolling under it, but stay below the
+    // app shell's fixed header/sidebar, or the collapsed sidebar's hover
+    // flyout renders under a frozen column instead of over it.
+    zIndex: isPinned ? 'var(--z-sticky-content)' : 0,
   };
 }
 

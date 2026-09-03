@@ -24,8 +24,8 @@ const ROW_COL = 'w-[220px] min-w-[220px] max-w-[220px]';
  * `DATE_COL`: `table-layout` is never `table-fixed`, so a narrow selection fills the
  * bordered container and a wide one overflows into the container's own horizontal scroll. */
 const BUCKET_COL = 'min-w-[130px]';
-const Z_PINNED = 'z-20';
-const Z_CORNER = 'z-30';
+const Z_PINNED = 'z-(--z-sticky-content)';
+const Z_CORNER = 'z-(--z-sticky-content-corner)';
 
 /**
  * Purchasing's own 2D schedule: by product, sales order, customer or agent down the side,

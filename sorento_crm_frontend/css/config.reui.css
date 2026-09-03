@@ -67,11 +67,21 @@
    * Named z-scale. Every fixed layer of the shell names its step here instead of
    * inventing a `z-[N]`, so "what covers what" is answered in one place. Steps
    * without a consumer (an overlay step, a toast step) go in when one arrives.
+   *
+   * `--z-sticky-content` / `-corner` are for sticky/pinned cells INSIDE page
+   * content - a frozen DataGrid column, a sticky table header, a matrix board's
+   * frozen corner cell. They stay below `--z-header` and `--z-sidebar` on
+   * purpose: the collapsed sidebar's hover flyout is a fixed shell layer that
+   * has to win over any sticky cell scrolling underneath it, never the other
+   * way round. `-corner` is for a cell pinned on BOTH axes (sticky top AND
+   * left), which still has to beat a cell pinned on only one.
    */
   --z-header: 10;
   --z-sidebar: 20;
   --z-banner: 30;
   --z-modal: 50;
+  --z-sticky-content: 5;
+  --z-sticky-content-corner: 6;
 
   /** Motion. One curve, three steps; every components/ui transition uses them. */
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);

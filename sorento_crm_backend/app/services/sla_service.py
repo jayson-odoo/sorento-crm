@@ -1512,20 +1512,18 @@ class ConversationSLATrackingService:
         return out
 
     def list_visible_users(self, user_id: str) -> list[dict]:
-        """Scope-B picker source: users I can see (members of my visible teams),
-        excluding myself. Admins see every user, so the picker matches what their
-        bypass actually allows them to save. Human-readable name, no UUIDs."""
-        if self._is_admin(user_id):
-            # Every user who belongs to at least one team, i.e. everyone who can
-            # actually own an SLA task (22 people here, vs ~2.5k user rows). An
-            # unfiltered user list would make the picker unusable.
-            from app.models.access import TeamMember
+        """Reassign picker source: every user who belongs to at least one team,
+        excluding myself. Not scoped to the actor's teams (hand-off may cross
+        teams, decision 2026-09-03); users with no team have no SLA routing so
+        they are excluded."""
+        # Every user who belongs to at least one team, i.e. everyone who can
+        # actually own an SLA task (22 people here, vs ~2.5k user rows). An
+        # unfiltered user list would make the picker unusable.
+        from app.models.access import TeamMember
 
-            member_ids = {
-                str(uid) for (uid,) in self.db.query(TeamMember.user_id).distinct().all()
-            }
-        else:
-            member_ids = self._members_of_teams(self._visible_team_ids(user_id))
+        member_ids = {
+            str(uid) for (uid,) in self.db.query(TeamMember.user_id).distinct().all()
+        }
         member_ids.discard(str(user_id))
         return self._picker_rows(member_ids)
 
@@ -1983,8 +1981,10 @@ class ConversationSLATrackingService:
         the target holds within ``team_set_code`` wins, and only when they hold none
         there does it fall back across sets by seniority (tier desc, then code asc).
         When the target isn't in that agent's chain, the
-        existing team/tier are kept. Target must be in the actor's visible scope
-        (scope-B). Writes a 'reassignment' event log, pushes Respond + notifies.
+        existing team/tier are kept. Target must belong to at least one team
+        (hand-off may cross teams, decision 2026-09-03); the actor must still
+        own the task or be in scope of its current assignee (checked above).
+        Writes a 'reassignment' event log, pushes Respond + notifies.
         """
         from app.models.user import User
 
@@ -2001,14 +2001,21 @@ class ConversationSLATrackingService:
                 "Ask an admin or a member of the owning team."
             )
 
-        # scope-B: target must be a member of the actor's visible teams (admins
-        # may hand off to anyone, matching their bypass above).
-        if not self._is_admin(user_id):
-            visible_members = self._members_of_teams(self._visible_team_ids(user_id))
-            if str(target_user_id) not in visible_members:
-                raise handle_validation_error(
-                    "You can only reassign to users in your teams or their child teams."
-                )
+        # Target must be a member of at least one team, i.e. someone who can
+        # actually own an SLA task. Cross-team hand-off is allowed; only a
+        # target with no team routing at all is rejected.
+        from app.models.access import TeamMember
+
+        _has_team = (
+            self.db.query(TeamMember.user_id)
+            .filter(TeamMember.user_id == str(target_user_id))
+            .first()
+            is not None
+        )
+        if not _has_team:
+            raise handle_validation_error(
+                "This user is not in any team, so they cannot own an SLA task."
+            )
         target = self.db.query(User).filter(User.id == str(target_user_id)).first()
         if not target:
             raise handle_not_found("User", target_user_id)

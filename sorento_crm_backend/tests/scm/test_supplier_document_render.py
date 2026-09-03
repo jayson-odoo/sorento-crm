@@ -44,7 +44,7 @@ def _no_pdf_no_storage(monkeypatch):
 
 
 def _sheet(db, monkeypatch, lines: list[dict] | None = None):
-    monkeypatch.setattr(model, "_retained_stock_list", lambda _db, _sid: FIXTURE.read_bytes())
+    monkeypatch.setattr(model, "_retained_stock_list", lambda _db, _sid, **_kw: FIXTURE.read_bytes())
     return model.build(
         db,
         supplier_id=str(uuid.uuid4()),

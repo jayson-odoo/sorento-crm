@@ -17,6 +17,8 @@ import {
   selectTriggerVariants,
   type SelectTriggerSize,
 } from '@/components/common/select-trigger-variants';
+import { isInsideOpenDialog } from '@/components/common/floatingAncestry';
+import { PopoverScrollLock } from '@/components/common/PopoverScrollLock';
 
 export type SearchableMultiSelectOption = {
   value: string;
@@ -102,6 +104,22 @@ export function SearchableMultiSelect({
 }: SearchableMultiSelectProps) {
   const isAsync = typeof fetchOptions === 'function';
   const [open, setOpen] = React.useState(false);
+
+  // See the identical, longer comment in SearchableSelect.tsx: this never asks Radix
+  // `Popover` for `modal` (its `hideOthers` broke a DIFFERENT dialog's own Update button
+  // here specifically, since this component's list stays open across multiple picks -
+  // ContactAccessTypesAdmin.portalForms.test.tsx). `PopoverScrollLock` applies just the
+  // scroll-lock half, scoped to Dialog-nested triggers, detected once from the trigger's
+  // own DOM position rather than declared per call site.
+  const triggerElRef = React.useRef<HTMLElement | null>(null);
+  const [triggerInsideDialog, setTriggerInsideDialog] = React.useState(false);
+  const setTriggerRef = React.useCallback((node: HTMLElement | null) => {
+    triggerElRef.current = node;
+  }, []);
+  React.useEffect(() => {
+    setTriggerInsideDialog(isInsideOpenDialog(triggerElRef.current));
+  }, []);
+  const needsDialogScrollLock = renderTrigger ? true : triggerInsideDialog;
 
   const [asyncOptions, setAsyncOptions] = React.useState<SearchableMultiSelectOption[]>([]);
   const [loading, setLoading] = React.useState(false);
@@ -232,12 +250,15 @@ export function SearchableMultiSelect({
   };
 
   return (
+    // See `needsDialogScrollLock` above - the two halves of this standard are kept
+    // identical on purpose.
     <Popover open={open} onOpenChange={(o) => !isDisabled && setOpen(o)}>
       <PopoverTrigger asChild>
         {renderTrigger ? (
           renderTrigger({ selected: chosen, open, disabled: isDisabled })
         ) : (
         <button
+          ref={setTriggerRef}
           type="button"
           disabled={isDisabled}
           id={id}
@@ -297,6 +318,7 @@ export function SearchableMultiSelect({
       </PopoverTrigger>
       {/* Portalled so a dialog's overflow can't clip the menu when it flips upward. */}
       <PopoverPortal>
+      <PopoverScrollLock active={needsDialogScrollLock}>
       <PopoverContent className={cn(
             // Cap to the space Radix measured, or a long list makes the menu taller than
             // the viewport and the search box gets pushed off-screen on short windows.
@@ -408,6 +430,7 @@ export function SearchableMultiSelect({
           </CommandList>
         </Command>
       </PopoverContent>
+      </PopoverScrollLock>
       </PopoverPortal>
     </Popover>
   );
