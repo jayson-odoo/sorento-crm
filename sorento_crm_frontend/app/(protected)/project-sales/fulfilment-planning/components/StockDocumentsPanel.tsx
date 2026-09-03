@@ -606,14 +606,25 @@ export function StockDocumentsPanel({
           {row.original.qty}
         </span>
       ),
-      // Per TYPE, because an S/O subtracts where an SPO adds: one blended total would be a
-      // number that matches nothing in the header above it.
+      // Per TYPE on a PER-BIN reading, because an S/O subtracts where an SPO adds and the
+      // point of this footer is the one figure that already sits above the table (AC-A4):
+      // this bin's own outstanding demand, the row's own "SO qty".
+      //
+      // D9 (captain, 3 Sep): on the GROUP reading it is the opposite mistake - the ledger
+      // HAS a running balance (`balance`, below), and the S/O-only sum disagreed with it on
+      // a site pool subtotal ("On hand 49 + 586 + 20, S/O 1, SPO 113 + 4" read Quantity "1"
+      // beside a closing Available for Project of 385). The Total is the SIGNED NET of every
+      // row listed instead - on hand and SPO add, S/O and Hold subtract, `row.delta` already
+      // carries the sign - which is the same arithmetic the running column's own last value
+      // is built from, so the two figures cannot disagree.
       footer: () => (
         <span className="tabular-nums">
           {fromMinor(
-            rows
-              .filter((row) => row.doc_type === 'S/O')
-              .reduce((total, row) => total + toMinor(row.qty), 0),
+            isGroup
+              ? rows.reduce((total, row) => total + row.delta, 0)
+              : rows
+                  .filter((row) => row.doc_type === 'S/O')
+                  .reduce((total, row) => total + toMinor(row.qty), 0),
           )}
         </span>
       ),
