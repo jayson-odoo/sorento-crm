@@ -843,7 +843,11 @@ IMMEDIATE_SHARE_CASE = WalkCase(
             step="pool_share",
             whole=False,
             gives_qty=Decimal("450"),
-            reason="BRW can spare 450 of the 650 needed",
+            # RE-BLESSED under R-N: a step 0 that ANSWERED writes its row from the pools
+            # that answered, in their own sentences, because the chain may now be several
+            # of them and one option-row sentence about the asking pool could not state a
+            # split. One pool, one sentence, and it is the component's own.
+            reason="Pool BRW spares 450 of the 450 it may lend a project",
         ),
         OptionRow(step="use", whole=False, gives_qty=Decimal("0")),
         OptionRow(step="order_borrow", whole=False, gives_qty=Decimal("0")),
@@ -884,7 +888,8 @@ SMALL_LINE_WHOLE_FROM_POOL_CASE = WalkCase(
             step="pool_share",
             whole=True,
             gives_qty=Decimal("3"),
-            reason="BRW can spare 3",
+            # RE-BLESSED under R-N (the answered row speaks in its components' sentences).
+            reason="Pool BRW spares 3 of the 23 it may lend a project",
             chosen=True,
         ),
         OptionRow(step="use", whole=True, gives_qty=Decimal("3")),
@@ -922,7 +927,8 @@ BEYOND_WINDOW_FITS_THE_ALLOWANCE_CASE = WalkCase(
             step="pool_share",
             whole=True,
             gives_qty=Decimal("100"),
-            reason="BRW can spare 100",
+            # RE-BLESSED under R-N (the answered row speaks in its components' sentences).
+            reason="Pool BRW spares 100 of the 450 it may lend a project",
             chosen=True,
         ),
         OptionRow(step="use", whole=False, gives_qty=Decimal("0")),
@@ -1010,7 +1016,8 @@ NET_BOUNDS_THE_SHARE_CASE = WalkCase(
             step="pool_share",
             whole=False,
             gives_qty=Decimal("1"),
-            reason="BRW can spare 1 of the 30 needed",
+            # RE-BLESSED under R-N (the answered row speaks in its components' sentences).
+            reason="Pool BRW spares 1 of the 1 it may lend a project",
         ),
         OptionRow(step="use", whole=False, gives_qty=Decimal("0")),
         OptionRow(step="order_borrow", whole=False, gives_qty=Decimal("0")),
@@ -1052,7 +1059,8 @@ DEALER_HOT_SELLING_TAKES_THE_POOL_CASE = WalkCase(
             step="pool_share",
             whole=True,
             gives_qty=Decimal("40"),
-            reason="BRW can spare 40",
+            # RE-BLESSED under R-N (the answered row speaks in its components' sentences).
+            reason="Pool BRW spares 40 of the 3250 it may lend a project",
             chosen=True,
         ),
         OptionRow(step="use", whole=False, gives_qty=Decimal("0")),
@@ -1084,10 +1092,11 @@ AVAILABLE_FOR_PROJECT_CASES = (
 
 
 OTHER_POOL_COVERS_THE_REMAINDER_CASE = WalkCase(
-    ac="R-L",
+    ac="AC-N.8",
     title=(
-        "the OTHER site pools still supply the remainder: DC1's own pool is empty, the "
-        "group holds 110 of a 300 line, and BRW spares 400 - so BRW covers it whole"
+        "R-L's own worked case, unchanged in every number and reached at STEP 0 under R-N: "
+        "DC1's own pool is empty, the group holds 110 of a 300 line, and BRW spares 400 - "
+        "so BRW covers it whole"
     ),
     inputs=_v8_inputs(
         open_qty=Decimal("300"),
@@ -1117,6 +1126,10 @@ OTHER_POOL_COVERS_THE_REMAINDER_CASE = WalkCase(
         # read `Use DC1 stock` / "DC1 has nothing to spare for projects" beside a chosen
         # Reserve of 300 at BRW, which is the row telling the reader the opposite of what
         # the composition beside it says.
+        #
+        # R-N changes WHEN this answer is composed and not WHAT it is: the `use` row below
+        # still reports the 110 the group could have given, and the pool chain is asked
+        # before it rather than after both borrows have failed.
         OptionRow(
             step="pool_share",
             whole=True,
@@ -1180,7 +1193,8 @@ NET_BOUNDS_THE_WHOLE_POOL_CHAIN_CASE = WalkCase(
             step="pool_share",
             whole=False,
             gives_qty=Decimal("100"),
-            reason="DC1 can spare 100 of the 200 needed",
+            # RE-BLESSED under R-N (the answered row speaks in its components' sentences).
+            reason="Pool DC1 spares 100 of the 100 it may lend a project",
             label="Use DC1 stock",
         ),
         OptionRow(step="use", whole=False, gives_qty=Decimal("0")),
@@ -1421,6 +1435,432 @@ OTHER_GROUP_WHOLE_BOOK_CASE = WalkCase(
 )
 
 
+# --------------------------------------------------------------------------- R-N (3 Sep)
+#
+# THE POOL STEP WALKS EVERY SITE POOL BEFORE ANOTHER SITE'S GROUP BIN.
+#
+# `PLAN-scm-pool-chain-first.md`, from SO419417 on 3 September 2026: the board proposed
+# `BRW pool 4 + WH3-BB 4` for SRTWC8840-SC while WH3's SITE POOL held 687 on hand (343
+# Available for Project) and the five pools netted 1,605. The captain: "the pool got a lot
+# though". Step 0 asked the asking bin's OWN pool alone (`pools[:1]`) and the other site
+# pools were reached only by R-L's spill, which fired only when own locations and both
+# borrows had all failed to cover the remainder whole - so a group bin that happened to
+# hold stock decided whether the pool chain was asked at all, and the SAME rule gave two
+# different answers on two lines of one order.
+#
+# Under R-N step 0 walks the WHOLE chain in `_pool_chain`'s own draw order (the asking
+# bin's pool first, then the rest by on hand), each pool lending under its own allowance
+# and the one five-pool net bounding the total - which is exactly what
+# `pool_share_capacity` already computed for the board's proof.
+#
+# The four cases below are the four SO419417 rows, with the production numbers on them.
+
+#: The other site pool of the SO419417 cases: fuller than BRW, and never asked before R-N.
+V8_OTHER_POOL = "WH3"
+
+
+TWO_POOLS_COVER_ONE_LINE_CASE = WalkCase(
+    ac="AC-N.1",
+    title=(
+        "SRTWC8840-SC: 8 due inside the window at BRW-BB with BRW sparing 4 and WH3's own "
+        "pool 343 reads BRW 4 + WH3 4 at step 0, never the WH3-BB group bin"
+    ),
+    inputs=_v8_inputs(
+        open_qty=Decimal("8"),
+        required_date=IMMEDIATE_DATE,
+        group_take_candidates=[
+            {"location": "WH3-BB", "qty": Decimal("94")},
+        ],
+        group_offer=Decimal("94"),
+        pools=[
+            {"location": POOL_LOCATION, "free": Decimal("4"), "available": Decimal("710")},
+            {"location": V8_OTHER_POOL, "free": Decimal("687"), "available": Decimal("686")},
+        ],
+        pools_net=Decimal("1605"),
+    ),
+    components=(
+        Component(
+            kind=RESERVE,
+            qty=Decimal("4"),
+            reason="Pool BRW spares 4 of the 355 it may lend a project",
+            source_location=POOL_LOCATION,
+        ),
+        Component(
+            kind=RESERVE,
+            qty=Decimal("4"),
+            reason="Pool WH3 spares 4 of the 343 it may lend a project",
+            source_location=V8_OTHER_POOL,
+        ),
+    ),
+    options=(
+        OptionRow(
+            step="pool_share",
+            whole=True,
+            gives_qty=Decimal("8"),
+            # Both pools' own sentences, in the order they were drawn: the row states what
+            # each of them spared and out of what allowance, which is the arithmetic a
+            # planner checks the split against.
+            reason=(
+                "Pool BRW spares 4 of the 355 it may lend a project. "
+                "Pool WH3 spares 4 of the 343 it may lend a project"
+            ),
+            chosen=True,
+            label="Use BRW and WH3 stock",
+        ),
+        # The group bin still ANSWERS - it could have covered the line whole - and is
+        # simply not chosen: the pool chain was asked first and covered it (R-N).
+        OptionRow(step="use", whole=True, gives_qty=Decimal("8")),
+        OptionRow(step="order_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="supply_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="buy", whole=True, gives_qty=Decimal("8")),
+    ),
+)
+
+
+THE_OWN_POOL_GIVES_WHAT_IT_HAS_AND_THE_CHAIN_FINISHES_CASE = WalkCase(
+    ac="AC-N.2",
+    title=(
+        "SRTWCX8840-S-RL: the own pool has 1 on the floor, so the chain finishes the line "
+        "at WH3 - BRW 1 + WH3 7, and the 140 in the WH3-BB group bin is left alone"
+    ),
+    inputs=_v8_inputs(
+        open_qty=Decimal("8"),
+        required_date=IMMEDIATE_DATE,
+        group_take_candidates=[
+            {"location": "WH3-BB", "qty": Decimal("140")},
+        ],
+        group_offer=Decimal("140"),
+        pools=[
+            {"location": POOL_LOCATION, "free": Decimal("1"), "available": Decimal("710")},
+            {"location": V8_OTHER_POOL, "free": Decimal("682"), "available": Decimal("686")},
+        ],
+        pools_net=Decimal("1605"),
+    ),
+    components=(
+        Component(
+            kind=RESERVE,
+            qty=Decimal("1"),
+            reason="Pool BRW spares 1 of the 355 it may lend a project",
+            source_location=POOL_LOCATION,
+        ),
+        Component(
+            kind=RESERVE,
+            qty=Decimal("7"),
+            reason="Pool WH3 spares 7 of the 343 it may lend a project",
+            source_location=V8_OTHER_POOL,
+        ),
+    ),
+    options=(
+        OptionRow(
+            step="pool_share",
+            whole=True,
+            gives_qty=Decimal("8"),
+            reason=(
+                "Pool BRW spares 1 of the 355 it may lend a project. "
+                "Pool WH3 spares 7 of the 343 it may lend a project"
+            ),
+            chosen=True,
+            label="Use BRW and WH3 stock",
+        ),
+        OptionRow(step="use", whole=True, gives_qty=Decimal("8")),
+        OptionRow(step="order_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="supply_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="buy", whole=True, gives_qty=Decimal("8")),
+    ),
+)
+
+
+THE_OLD_SPILL_ANSWER_ARRIVES_AT_STEP_0_CASE = WalkCase(
+    ac="AC-N.3",
+    title=(
+        "SRTWCY8840, the line R-L's spill already answered: BRW 3 + WH3 5, the SAME "
+        "quantities - and now composed at step 0 rather than after both borrows failed"
+    ),
+    inputs=_v8_inputs(
+        open_qty=Decimal("8"),
+        required_date=IMMEDIATE_DATE,
+        group_take_candidates=[
+            {"location": V8_OWN_LOCATION, "qty": Decimal("1")},
+        ],
+        group_offer=Decimal("1"),
+        pools=[
+            {"location": POOL_LOCATION, "free": Decimal("3"), "available": Decimal("710")},
+            {"location": V8_OTHER_POOL, "free": Decimal("684"), "available": Decimal("686")},
+        ],
+        pools_net=Decimal("1605"),
+    ),
+    components=(
+        Component(
+            kind=RESERVE,
+            qty=Decimal("3"),
+            reason="Pool BRW spares 3 of the 355 it may lend a project",
+            source_location=POOL_LOCATION,
+        ),
+        Component(
+            kind=RESERVE,
+            qty=Decimal("5"),
+            reason="Pool WH3 spares 5 of the 343 it may lend a project",
+            source_location=V8_OTHER_POOL,
+        ),
+    ),
+    options=(
+        OptionRow(
+            step="pool_share",
+            whole=True,
+            gives_qty=Decimal("8"),
+            reason=(
+                "Pool BRW spares 3 of the 355 it may lend a project. "
+                "Pool WH3 spares 5 of the 343 it may lend a project"
+            ),
+            chosen=True,
+            label="Use BRW and WH3 stock",
+        ),
+        OptionRow(step="use", whole=False, gives_qty=Decimal("1")),
+        OptionRow(step="order_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="supply_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="buy", whole=True, gives_qty=Decimal("8")),
+    ),
+)
+
+
+THE_OWN_POOL_COVERS_AND_THE_CHAIN_STOPS_CASE = WalkCase(
+    ac="AC-N.4",
+    title=(
+        "SRTWT5880-CR: the own pool covers the line on its own, so no other pool is drawn "
+        "at all - the chain is a draw ORDER, not a spread"
+    ),
+    inputs=_v8_inputs(
+        open_qty=Decimal("10"),
+        required_date=IMMEDIATE_DATE,
+        pools=[
+            {"location": POOL_LOCATION, "free": Decimal("240"), "available": Decimal("240")},
+            {"location": V8_OTHER_POOL, "free": Decimal("687"), "available": Decimal("686")},
+        ],
+        pools_net=Decimal("1605"),
+    ),
+    components=(
+        Component(
+            kind=RESERVE,
+            qty=Decimal("10"),
+            reason="Pool BRW spares 10 of the 120 it may lend a project",
+            source_location=POOL_LOCATION,
+        ),
+    ),
+    options=(
+        OptionRow(
+            step="pool_share",
+            whole=True,
+            gives_qty=Decimal("10"),
+            reason="Pool BRW spares 10 of the 120 it may lend a project",
+            chosen=True,
+            label="Use BRW stock",
+        ),
+        OptionRow(step="use", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="order_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="supply_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="buy", whole=True, gives_qty=Decimal("10")),
+    ),
+)
+
+
+BEYOND_THE_WINDOW_THE_CHAIN_IS_WHOLE_CASE = WalkCase(
+    ac="AC-N.5a",
+    title=(
+        "beyond the window the whole-or-nothing rule is about the CHAIN (R-B restated by "
+        "R-N): 300 due in 60 days against 100 + 250 of allowance is taken whole, 100 + 200"
+    ),
+    inputs=_v8_inputs(
+        open_qty=Decimal("300"),
+        required_date=FAR_DATE,
+        pools=[
+            {"location": POOL_LOCATION, "free": Decimal("500"), "available": Decimal("200")},
+            {"location": V8_OTHER_POOL, "free": Decimal("700"), "available": Decimal("500")},
+        ],
+        pools_net=Decimal("1000"),
+    ),
+    components=(
+        Component(
+            kind=RESERVE,
+            qty=Decimal("100"),
+            reason="Pool BRW spares 100 of the 100 it may lend a project",
+            source_location=POOL_LOCATION,
+        ),
+        Component(
+            kind=RESERVE,
+            qty=Decimal("200"),
+            reason="Pool WH3 spares 200 of the 250 it may lend a project",
+            source_location=V8_OTHER_POOL,
+        ),
+    ),
+    options=(
+        OptionRow(
+            step="pool_share",
+            whole=True,
+            gives_qty=Decimal("300"),
+            reason=(
+                "Pool BRW spares 100 of the 100 it may lend a project. "
+                "Pool WH3 spares 200 of the 250 it may lend a project"
+            ),
+            chosen=True,
+            label="Use BRW and WH3 stock",
+        ),
+        OptionRow(step="use", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="order_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="supply_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="buy", whole=True, gives_qty=Decimal("300")),
+    ),
+)
+
+
+BEYOND_THE_WINDOW_THE_CHAIN_IS_SHORT_CASE = WalkCase(
+    ac="AC-N.5b",
+    title=(
+        "the same line with WH3 sparing 150: the chain's 250 cannot cover 300 whole, so "
+        "beyond the window step 0 gives NOTHING and the walk falls to the group"
+    ),
+    inputs=_v8_inputs(
+        open_qty=Decimal("300"),
+        required_date=FAR_DATE,
+        group_take_candidates=[
+            {"location": V8_OWN_LOCATION, "qty": Decimal("300")},
+        ],
+        group_offer=Decimal("300"),
+        pools=[
+            {"location": POOL_LOCATION, "free": Decimal("500"), "available": Decimal("200")},
+            {"location": V8_OTHER_POOL, "free": Decimal("700"), "available": Decimal("300")},
+        ],
+        pools_net=Decimal("1000"),
+    ),
+    components=(
+        Component(
+            kind=RESERVE,
+            qty=Decimal("300"),
+            reason="BRW-BB gives 300 of the 300 the BB group can cover this line with",
+            source_location=V8_OWN_LOCATION,
+        ),
+    ),
+    options=(
+        OptionRow(
+            step="pool_share",
+            whole=False,
+            gives_qty=Decimal("0"),
+            # THE REFUSAL IS THE CHAIN'S TOO (R-N): the sentence used to name the asking
+            # pool's own allowance alone, which read "300 is more than the 100 BRW can
+            # spare" over a chain that had 250 on the table and still could not cover the
+            # line whole. Both pools are named, and the figure is what they net together.
+            reason="300 is more than the 250 BRW and WH3 can spare",
+            label="Use BRW and WH3 stock",
+        ),
+        OptionRow(step="use", whole=True, gives_qty=Decimal("300"), chosen=True),
+        OptionRow(step="order_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="supply_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="buy", whole=True, gives_qty=Decimal("300")),
+    ),
+)
+
+
+THE_NET_BOUNDS_THE_WHOLE_STEP_0_CHAIN_CASE = WalkCase(
+    ac="AC-N.6",
+    title=(
+        "the five-pool net bounds step 0 across the chain: two pools sparing 100 each with "
+        "the pools netting 120 give 100 + 20, and the remaining 30 walks on"
+    ),
+    inputs=_v8_inputs(
+        open_qty=Decimal("150"),
+        required_date=IMMEDIATE_DATE,
+        pools=[
+            {"location": POOL_LOCATION, "free": Decimal("500"), "available": Decimal("200")},
+            {"location": V8_OTHER_POOL, "free": Decimal("500"), "available": Decimal("200")},
+        ],
+        pools_net=Decimal("120"),
+    ),
+    components=(
+        Component(
+            kind=RESERVE,
+            qty=Decimal("100"),
+            reason="Pool BRW spares 100 of the 100 it may lend a project",
+            source_location=POOL_LOCATION,
+        ),
+        Component(
+            kind=RESERVE,
+            qty=Decimal("20"),
+            # WH3's allowance is what is LEFT of the one net after BRW's draw, not its own
+            # half again: the five pools are one book (v4 section 1d).
+            reason="Pool WH3 spares 20 of the 20 it may lend a project",
+            source_location=V8_OTHER_POOL,
+        ),
+        Component(
+            kind=BUY,
+            qty=Decimal("30"),
+            reason="Only 0 of the remaining 30 can be covered from stock - buy the rest",
+        ),
+    ),
+    options=(
+        OptionRow(
+            step="pool_share",
+            whole=False,
+            gives_qty=Decimal("120"),
+            reason=(
+                "Pool BRW spares 100 of the 100 it may lend a project. "
+                "Pool WH3 spares 20 of the 20 it may lend a project"
+            ),
+            label="Use BRW and WH3 stock",
+        ),
+        OptionRow(step="use", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="order_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="supply_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="buy", whole=True, gives_qty=Decimal("30"), chosen=True),
+    ),
+)
+
+
+THE_SHARE_LEDGER_IS_PER_POOL_ACROSS_THE_CHAIN_CASE = WalkCase(
+    ac="AC-N.7",
+    title=(
+        "the share ledger is kept per POOL across the chain: a second line of one walk "
+        "finds BRW's share spent and WH3's down to 40, and may take only that 40"
+    ),
+    inputs=_v8_inputs(
+        open_qty=Decimal("100"),
+        required_date=IMMEDIATE_DATE,
+        pools=[
+            {"location": POOL_LOCATION, "free": Decimal("500"), "available": Decimal("200")},
+            {"location": V8_OTHER_POOL, "free": Decimal("500"), "available": Decimal("200")},
+        ],
+        pools_net=Decimal("1000"),
+        # What the FIRST line of this walk left: BRW's whole 100 taken, and 60 of WH3's.
+        # `compose_lines` keeps this ledger keyed by (product, pool).
+        pool_share_left={POOL_LOCATION: Decimal("0"), V8_OTHER_POOL: Decimal("40")},
+    ),
+    components=(
+        Component(
+            kind=RESERVE,
+            qty=Decimal("40"),
+            reason="Pool WH3 spares 40 of the 40 it may lend a project",
+            source_location=V8_OTHER_POOL,
+        ),
+        Component(
+            kind=BUY,
+            qty=Decimal("60"),
+            reason="Only 0 of the remaining 60 can be covered from stock - buy the rest",
+        ),
+    ),
+    options=(
+        OptionRow(
+            step="pool_share",
+            whole=False,
+            gives_qty=Decimal("40"),
+            reason="Pool WH3 spares 40 of the 40 it may lend a project",
+            label="Use WH3 stock",
+        ),
+        OptionRow(step="use", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="order_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="supply_borrow", whole=False, gives_qty=Decimal("0")),
+        OptionRow(step="buy", whole=True, gives_qty=Decimal("60"), chosen=True),
+    ),
+)
+
+
 V8_WALK_CASES = (
     IMMEDIATE_SHARE_CASE,
     SMALL_LINE_WHOLE_FROM_POOL_CASE,
@@ -1434,4 +1874,12 @@ V8_WALK_CASES = (
     BORROW_HALF_ANSWERS_THE_POOL_SHARE_ROW_CASE,
     OTHER_GROUP_SHORT_BOOK_CASE,
     OTHER_GROUP_WHOLE_BOOK_CASE,
+    TWO_POOLS_COVER_ONE_LINE_CASE,
+    THE_OWN_POOL_GIVES_WHAT_IT_HAS_AND_THE_CHAIN_FINISHES_CASE,
+    THE_OLD_SPILL_ANSWER_ARRIVES_AT_STEP_0_CASE,
+    THE_OWN_POOL_COVERS_AND_THE_CHAIN_STOPS_CASE,
+    BEYOND_THE_WINDOW_THE_CHAIN_IS_WHOLE_CASE,
+    BEYOND_THE_WINDOW_THE_CHAIN_IS_SHORT_CASE,
+    THE_NET_BOUNDS_THE_WHOLE_STEP_0_CHAIN_CASE,
+    THE_SHARE_LEDGER_IS_PER_POOL_ACROSS_THE_CHAIN_CASE,
 )
