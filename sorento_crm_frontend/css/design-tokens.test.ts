@@ -616,17 +616,12 @@ describe('M1 motion perimeter hygiene', () => {
   describe('M1-03 no literal duration-<N>, no ease-in on an entering element', () => {
     /**
      * Every entry here is a documented exception, not a miss: the OTP caret's
-     * blink PERIOD (not a transition), and the three countdown/panel bars M3
-     * converts to a `scaleX` transform on the tokens.
+     * blink PERIOD, not a transition duration. The three countdown/panel bars
+     * this allowlist used to carry are gone - M3 converted them to a `scaleX`
+     * transform on the tokens, so they no longer name a literal duration.
      */
     const DURATION_ALLOWLIST: Record<string, string> = {
       'components/ui/input-otp.tsx:54': 'OTP caret blink PERIOD, not a transition duration',
-      'app/(protected)/sla-management/conversation-sla-tracking/components/TakeoverCountdown.tsx:85':
-        'M3 converts this bar to a scaleX transform on the tokens',
-      'components/common/DeferredActionButton.tsx:99':
-        'M3 converts this bar to a scaleX transform on the tokens',
-      'components/common/ActivitiesNotesPanel/EntityActivitiesLayout.tsx:144':
-        'M3 stops animating margin here; the literal duration is untouched by M1',
     };
 
     it('leaves zero literal duration-<N> classes outside the allowlist (audit baseline: 10)', () => {
@@ -720,19 +715,15 @@ describe('M1 motion perimeter hygiene', () => {
   /**
    * One more widening, after every fix above: no `transition-[...]` naming a
    * layout-affecting property (`width`, `height`, `margin*`, `padding*`,
-   * `inset*`) outside a narrow allowlist. Every entry is M3 work - the
-   * countdown/budget bars there become `scaleX` transforms instead. The three
-   * accordion/collapsible content sites never reach this list: their
-   * transition was DROPPED outright in M1-02 (their height comes from the
-   * animate-accordion and animate-collapsible keyframes, not a transition).
+   * `inset*`) outside a narrow allowlist. This allowlist used to carry the
+   * countdown/budget bars, but M3 converted every one of them to a `scaleX`
+   * transform instead, so it is empty. The three accordion/collapsible
+   * content sites never reach this list: their transition was DROPPED
+   * outright in M1-02 (their height comes from the animate-accordion and
+   * animate-collapsible keyframes, not a transition).
    */
   describe('M1 no transition-[width|height|margin|padding|inset] outside M3', () => {
-    const PROPERTY_ALLOWLIST: Record<string, string> = {
-      'app/(protected)/sla-management/conversation-sla-tracking/components/TakeoverCountdown.tsx:85': 'M3',
-      'app/(protected)/scm/reorder/components/CashBudgetPanel.tsx:120': 'M3',
-      'components/common/ActivitiesNotesPanel/EntityActivitiesLayout.tsx:144': 'M3',
-      'components/common/DeferredActionButton.tsx:99': 'M3',
-    };
+    const PROPERTY_ALLOWLIST: Record<string, string> = {};
     const LAYOUT_PROPERTY =
       /transition-\[[^\]]*\b(width|height|margin(?:-[a-z]+)?|padding(?:-[a-z]+)?|inset(?:-[a-z]+)?)\b[^\]]*\]/;
 

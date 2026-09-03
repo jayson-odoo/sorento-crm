@@ -2,8 +2,41 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, act } from '@testing-library/react';
 import { TakeoverCountdown } from './TakeoverCountdown';
 
+/**
+ * `vitest.setup.ts` makes `prefers-reduced-motion` MATCH by default, and the
+ * shared fill is branched on that preference (M3-01/M3-02 fix round), so the
+ * branch is named per test rather than inherited.
+ */
+const motionPreference = vi.hoisted(() => ({ reduced: false }));
+vi.mock('@/lib/motion', () => ({
+  useReducedMotion: () => motionPreference.reduced,
+}));
+
+/** Two frames, not a millisecond guess - the double rAF arms the fill's transition. */
+function armFrames() {
+  act(() => {
+    vi.advanceTimersToNextFrame();
+  });
+  act(() => {
+    vi.advanceTimersToNextFrame();
+  });
+}
+
+/** `'scaleX(0.4)'` -> `0.4`. jsdom stores the inline style as a plain string;
+ *  there is no CSS engine to interpolate it over time, so a test can only read
+ *  the value the component SET, not a value a real browser's compositor would
+ *  be mid-tween on - the interpolation itself is a browser/DevTools check. */
+function scaleXOf(el: HTMLElement): number {
+  const match = /scaleX\(([-\d.]+)\)/.exec(el.style.transform);
+  if (!match) throw new Error(`not a scaleX transform: ${el.style.transform}`);
+  return Number(match[1]);
+}
+
 describe('TakeoverCountdown', () => {
-  beforeEach(() => vi.useFakeTimers());
+  beforeEach(() => {
+    motionPreference.reduced = false;
+    vi.useFakeTimers();
+  });
   afterEach(() => vi.useRealTimers());
 
   it('renders remaining time from commit_at (server time), depleting', () => {
@@ -12,13 +45,18 @@ describe('TakeoverCountdown', () => {
     // ~1:00 remaining at mount
     expect(screen.getByTestId('takeover-remaining').textContent).toMatch(/0?1:0\d/);
     const bar = screen.getByTestId('takeover-bar') as HTMLElement;
-    expect(parseFloat(bar.style.width)).toBeGreaterThan(80);
+    // Starts near full (M3-02): the fill's initial scaleX IS the remaining
+    // fraction, painted before any transition runs.
+    expect(scaleXOf(bar)).toBeGreaterThan(0.8);
 
-    // advance 30s → bar depletes toward half
-    act(() => {
-      vi.advanceTimersByTime(30_000);
-    });
-    expect(parseFloat(bar.style.width)).toBeLessThan(60);
+    // Arms the fill's own CSS transition: drains to 0 over the remaining
+    // window (a browser interpolates this; jsdom cannot, so the assertion is
+    // on the transition's OWN parameters, not a mid-window snapshot).
+    armFrames();
+    expect(scaleXOf(bar)).toBe(0);
+    expect(bar.style.transitionProperty).toBe('transform');
+    expect(Number(bar.style.transitionDuration.replace('ms', ''))).toBeGreaterThan(58_000);
+    expect(bar.style.transitionTimingFunction).toBe('linear');
   });
 
   it('treats a timezone-less (naive UTC) commit_at as UTC, not local', () => {
@@ -27,7 +65,7 @@ describe('TakeoverCountdown', () => {
     render(<TakeoverCountdown commitAt={naive} />);
     // Must NOT be instantly "Finalizing…" (the UTC+8 local-parse bug).
     expect(screen.getByTestId('takeover-remaining').textContent).not.toBe('Finalizing…');
-    expect(parseFloat((screen.getByTestId('takeover-bar') as HTMLElement).style.width)).toBeGreaterThan(50);
+    expect(scaleXOf(screen.getByTestId('takeover-bar') as HTMLElement)).toBeGreaterThan(0.5);
   });
 
   it('uses windowSeconds as a fixed denominator (remount-safe): late mount shows a short bar', () => {
@@ -35,8 +73,9 @@ describe('TakeoverCountdown', () => {
     const commitAt = new Date(Date.now() + 6_000).toISOString();
     render(<TakeoverCountdown commitAt={commitAt} windowSeconds={60} />);
     const bar = screen.getByTestId('takeover-bar') as HTMLElement;
-    // ~6/60 ≈ 10% - NOT full (the bug showed 100%).
-    expect(parseFloat(bar.style.width)).toBeLessThan(20);
+    // ~6/60 ≈ 0.1 - NOT full (the bug showed 100%). This is the fill's
+    // INITIAL scaleX, set before the arming transition even runs.
+    expect(scaleXOf(bar)).toBeCloseTo(0.1, 1);
     expect(screen.getByTestId('takeover-remaining').textContent).toMatch(/0:0[56]/);
   });
 
@@ -50,11 +89,44 @@ describe('TakeoverCountdown', () => {
     });
     expect(screen.getByTestId('takeover-remaining').textContent).toBe('Finalizing…');
     expect(onExpire).toHaveBeenCalledTimes(1);
+    // Finalizing flatlines the bar full grey rather than the transition's own
+    // end value (scaleX(0), empty) - "the window is over" reads as a full
+    // bar, not a vanished one.
+    expect(scaleXOf(screen.getByTestId('takeover-bar') as HTMLElement)).toBe(1);
 
     // does not fire again on further ticks
     act(() => {
       vi.advanceTimersByTime(3_000);
     });
     expect(onExpire).toHaveBeenCalledTimes(1);
+  });
+
+  it('steps the bar with its own tick under reduced motion, with no transition (M3-02)', () => {
+    // No transition is armed at all, so the 250ms tick's own recomputed
+    // fraction is what moves the bar - an inline transition would otherwise
+    // beat the `motion-reduce:transition-none` class on the element.
+    motionPreference.reduced = true;
+    const commitAt = new Date(Date.now() + 60_000).toISOString().replace('Z', '');
+    render(<TakeoverCountdown commitAt={commitAt} windowSeconds={60} />);
+    const bar = screen.getByTestId('takeover-bar') as HTMLElement;
+
+    armFrames();
+    expect(bar.style.transitionDuration).toBe('');
+    expect(bar.style.transitionProperty).toBe('');
+    expect(scaleXOf(bar)).toBeGreaterThan(0.9);
+
+    act(() => {
+      vi.advanceTimersByTime(30_000);
+    });
+    expect(scaleXOf(bar)).toBeCloseTo(0.5, 1);
+    expect(bar.style.transitionDuration).toBe('');
+  });
+
+  it('animates transform only, keeps motion-reduce:transition-none (M3-02)', () => {
+    const commitAt = new Date(Date.now() + 10_000).toISOString();
+    render(<TakeoverCountdown commitAt={commitAt} />);
+    const bar = screen.getByTestId('takeover-bar') as HTMLElement;
+    expect(bar.className).toContain('motion-reduce:transition-none');
+    expect(bar.style.width).toBe('');
   });
 });

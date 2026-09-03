@@ -117,8 +117,8 @@ export function CashBudgetPanel({
             aria-label="Funded cash against budget"
           >
             <div
-              className="h-full rounded-full bg-scm-incoming transition-[width]"
-              style={{ width: `${fillPct}%` }}
+              className="h-full origin-left rounded-full bg-scm-incoming transition-transform duration-(--duration-base) ease-linear motion-reduce:transition-none"
+              style={{ transform: `scaleX(${fillPct / 100})` }}
             />
           </div>
           <div className="mt-1 flex items-center justify-between text-2xs text-muted-foreground">

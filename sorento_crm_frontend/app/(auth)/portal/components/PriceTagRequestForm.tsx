@@ -954,7 +954,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                     setPreviewIndex(idx);
                     setPreviewOpen(true);
                   }}
-                  className="flex w-full items-center text-sm px-2 py-1.5 bg-muted rounded hover:bg-muted/70 transition text-left"
+                  className="flex w-full items-center text-sm px-2 py-1.5 bg-muted rounded hover:bg-muted/70 transition-colors text-left"
                 >
                   <FileText className="size-3.5 mr-2 text-muted-foreground shrink-0" />
                   <span className="truncate" title={att.filename ?? undefined}>
