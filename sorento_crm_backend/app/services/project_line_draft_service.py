@@ -27,7 +27,11 @@ from sqlalchemy.orm import Session
 
 from app.models.order import SalesOrder, SalesOrderLine
 from app.models.product import Product
-from app.models.project_so import ProjectSalesOrderLine, SOSupplyDecisionDraft
+from app.models.project_so import (
+    ProjectSalesOrder,
+    ProjectSalesOrderLine,
+    SOSupplyDecisionDraft,
+)
 from app.models.user import User
 from app.services.error_handler import AppException
 from app.services.project_supply_service import _open_of
@@ -148,12 +152,25 @@ def _resolve_core_line(db: Session, sales_order_id: str, line_no: int, item_code
         raise _bad_line(f"{sales_order_id}|{line_no}|{item_code}")
 
     line_ids = [str(line.id) for line, _code in lines]
+    # S3 (fix round 5): scoped to the record that HOLDS the core order
+    # (`ProjectSalesOrder.so_id.isnot(None)`), the SAME scope `FulfilmentBoardService.
+    # _mirror_addressing` numbers the board's own contribution keys against. Unscoped, a
+    # core line an AUTHORED PSO also happens to reference (a different subject entirely -
+    # see `_mirror_addressing`'s own docstring) could win this dict and number the line
+    # differently than the key the board just handed out.
     mirrored: Dict[str, int] = dict(
         db.query(
             ProjectSalesOrderLine.core_sales_order_line_id,
             ProjectSalesOrderLine.line_no,
         )
-        .filter(ProjectSalesOrderLine.core_sales_order_line_id.in_(line_ids))
+        .join(
+            ProjectSalesOrder,
+            ProjectSalesOrder.id == ProjectSalesOrderLine.project_sales_order_id,
+        )
+        .filter(
+            ProjectSalesOrderLine.core_sales_order_line_id.in_(line_ids),
+            ProjectSalesOrder.so_id.isnot(None),
+        )
         .all()
     )
     ordered = sorted(

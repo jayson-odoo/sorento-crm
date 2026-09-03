@@ -22,7 +22,7 @@ core sales order, mirror and stock on top.
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
@@ -215,6 +215,59 @@ def test_saving_against_an_order_outside_the_caller_s_company_scope_is_refused(a
     response = _save(client, f"{unknown_order}|1|ZZT-ITEM|2026-09-07")
 
     assert response.status_code == 422, response.text
+
+
+# ------------------------------------------- S3 (fix round 5): an authored PSO on the wire
+
+def test_an_authored_pso_reconciled_line_does_not_change_a_sibling_line_s_number(api):
+    """S3 (fix round 5): `_resolve_core_line`'s own numbering read every
+    `ProjectSalesOrderLine`, an AUTHORED PSO's included - `FulfilmentBoardService.
+    _mirror_addressing` (which numbers the board's own contribution keys) is scoped to the
+    record that HOLDS the core order (`ProjectSalesOrder.so_id.isnot(None)`), so an order
+    with a sibling line reconciled to an unrelated AUTHORED PSO numbered its OWN lines
+    differently on the two sides of the same save.
+
+    `uq_projects_so_line_core_line` allows exactly one holder per core line, so the
+    collision cannot be on the SAME line (`_resolve_core_line`'s own docstring already
+    covers that: the identity is the core line id, not this numbering dict) - it is between
+    TWO SIBLING lines of the SAME core order, one reconciled to the true mirror and one
+    reconciled to an unrelated authored PSO.
+    """
+    client, world, core_so, core_line_a, _order, _mirror_line = _world(api)
+    db = world.db
+    # A second, LATER-due line on the same core order, reconciled to an unrelated AUTHORED
+    # PSO (so_id is None: it does not hold THIS core order) under an arbitrary line_no.
+    product_b = _product(db)
+    core_line_b = _core_line(
+        db, core_so, product_b, world.own_wh, qty_ordered="5",
+        required_date=core_line_a.required_date + timedelta(days=5),
+    )
+    authored = _project_so(db, world.project, so_id=None)
+    _project_line(db, authored, line_no=1, product=product_b, core_line=core_line_b)
+    db.commit()
+
+    board = _board(client, core_so)
+    contribution_a = next(
+        row
+        for row in board["contributions"]
+        if row["so_number"] == core_so.so_number and row["item_code"] == world.product.product_code
+    )
+    key = contribution_a["key"]
+
+    response = _save(client, key)
+
+    assert response.status_code == 200, response.text
+
+    from app.models.project_so import SOSupplyDecisionDraft
+
+    draft = (
+        db.query(SOSupplyDecisionDraft)
+        .filter(SOSupplyDecisionDraft.sales_order_id == core_so.id)
+        .one()
+    )
+    # The SAME core line the board's own key named, whatever number the unrelated authored
+    # line happens to carry.
+    assert draft.core_line_id == core_line_a.id
 
 
 def test_saving_against_another_company_s_real_order_is_refused_not_saved(api):
