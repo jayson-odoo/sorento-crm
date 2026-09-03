@@ -160,6 +160,8 @@ import {
   writePanelLayout,
   type PanelLayout,
 } from '@/lib/dealer-kit/canvas-panels';
+import { toggleBold, toggleTextFlag, type TextFormatFlag } from '@/lib/dealer-kit/text-format';
+import { InlineTextEditor } from './InlineTextEditor';
 
 /** What a previewed block is showing, named the way a person reads it. */
 interface PreviewChoice {
@@ -334,6 +336,8 @@ export function TagCanvasEditor({
 }: TagCanvasEditorProps) {
   const [layers, setLayers] = useState<TagLayer[]>(doc.layers);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  /** The text layer the inline editor (S2, D5) is currently open on, if any. */
+  const [editingLayerId, setEditingLayerId] = useState<string | null>(null);
   const [view, setView] = useState<CanvasView>({ zoom: 1, panX: 0, panY: 0 });
   const [tool, setTool] = useState<CanvasTool>('select');
   const [spaceHeld, setSpaceHeld] = useState(false);
@@ -512,6 +516,41 @@ export function TagCanvasEditor({
       });
     },
     [history],
+  );
+
+  /**
+   * B/I/U/Shift+X (S2, D4): applied to every selected TEXT layer at once, one
+   * history entry, all landing on the same target state (AC-S2-4) - a mixed
+   * selection turns the flag ON, an all-set selection turns it OFF. Bold is
+   * `fontWeight`, not a boolean, so it gets its own branch using the same
+   * "already bold" reading (>= 600) `toggleBold` itself uses per layer.
+   */
+  const applyTextFormat = useCallback(
+    (flag: 'bold' | TextFormatFlag) => {
+      const targetIds = Array.from(selectedIds).filter(
+        (id) => layers.find((l) => l.id === id)?.props.kind === 'text',
+      );
+      if (targetIds.length === 0) return;
+
+      if (flag === 'bold') {
+        const targeted = layers.filter((l) => targetIds.includes(l.id));
+        const allBold = targeted.every(
+          (l) => (l.props as Extract<TagLayerProps, { kind: 'text' }>).fontWeight >= 600,
+        );
+        const nextWeight = toggleBold(allBold ? 600 : 400);
+        commit(
+          layers.map((l) =>
+            targetIds.includes(l.id) && l.props.kind === 'text'
+              ? { ...l, props: { ...l.props, fontWeight: nextWeight } }
+              : l,
+          ),
+        );
+        return;
+      }
+
+      commit(toggleTextFlag(layers, targetIds, flag));
+    },
+    [layers, selectedIds, commit],
   );
 
   const addLayer = useCallback(
@@ -1118,7 +1157,15 @@ export function TagCanvasEditor({
     (rawId: string) => {
       const targetId = resolveTarget(rawId);
       const target = layers.find((layer) => layer.id === targetId);
-      if (!target || target.props.kind !== 'group') return;
+      if (!target) return;
+      // A text layer opens the inline editor in place (S2, D5); a group still
+      // steps a level in, exactly as before.
+      if (target.props.kind === 'text') {
+        setSelectedIds(new Set([target.id]));
+        setEditingLayerId(target.id);
+        return;
+      }
+      if (target.props.kind !== 'group') return;
       const point = pointerMm();
       const childId = point
         ? topmostChildAt(layers, targetId, point.x_mm, point.y_mm)
@@ -1986,9 +2033,40 @@ export function TagCanvasEditor({
         e.target instanceof HTMLInputElement ||
         e.target instanceof HTMLTextAreaElement ||
         e.target instanceof HTMLSelectElement;
-      if (isInput) return;
-
       const modifier = e.ctrlKey || e.metaKey;
+
+      // B/I/U/Shift+X format the selected text layer(s) whether the inline
+      // editor has focus or not (AC-S2-4, D4) - checked ahead of the
+      // `editingLayerId`/`isInput` guards below, because the inline editor
+      // IS a textarea and would otherwise never let these through.
+      if (modifier && !e.shiftKey && (e.key === 'b' || e.key === 'B')) {
+        e.preventDefault();
+        applyTextFormat('bold');
+        return;
+      }
+      if (modifier && !e.shiftKey && (e.key === 'i' || e.key === 'I')) {
+        e.preventDefault();
+        applyTextFormat('italic');
+        return;
+      }
+      if (modifier && !e.shiftKey && (e.key === 'u' || e.key === 'U')) {
+        e.preventDefault();
+        applyTextFormat('underline');
+        return;
+      }
+      if (modifier && e.shiftKey && (e.key === 'x' || e.key === 'X')) {
+        e.preventDefault();
+        applyTextFormat('strikethrough');
+        return;
+      }
+
+      // The inline editor is its own textarea layered over the canvas; while
+      // it is open nothing else here may fire (AC-S2-8). Redundant with the
+      // `isInput` check right below - which already covers it, since the
+      // editor IS a textarea - kept explicit for safety per the plan.
+      if (editingLayerId) return;
+
+      if (isInput) return;
 
       if (e.key === ' ' && !modifier) {
         e.preventDefault();
@@ -2104,6 +2182,8 @@ export function TagCanvasEditor({
   }, [
     selectedIds,
     selectedGuideId,
+    editingLayerId,
+    applyTextFormat,
     deleteSelectedLayers,
     duplicateSelectedLayers,
     groupSelectedLayers,
@@ -2189,6 +2269,32 @@ export function TagCanvasEditor({
     },
     [selectedLayer, updateLayer, updateLayerProps],
   );
+
+  /**
+   * The inline editor's commit (S2, D5): the exact same rule
+   * `writeSelectedContent` follows, plus closing the editor. `editingLayerId`
+   * is always the sole selected id while the editor is open (set together in
+   * `handleLayerDoubleClick`), so `writeSelectedContent` targets the right
+   * layer.
+   */
+  const commitInlineEdit = useCallback(
+    (content: string) => {
+      writeSelectedContent(content);
+      setEditingLayerId(null);
+    },
+    [writeSelectedContent],
+  );
+
+  // Belt-and-braces: if the layer being edited stops being the sole
+  // selection (or the selection stops being that text layer) through some
+  // path other than the editor's own commit, close it rather than leaving it
+  // open on a stale layer.
+  useEffect(() => {
+    if (!editingLayerId) return;
+    if (!selectedLayer || selectedLayer.id !== editingLayerId || selectedLayer.props.kind !== 'text') {
+      setEditingLayerId(null);
+    }
+  }, [editingLayerId, selectedLayer]);
 
   /** The bound thing, named the way a person recognises it. Never a UUID. */
   const selectedBindingLabel = describeBindingData(selectedData);
@@ -2689,6 +2795,23 @@ export function TagCanvasEditor({
                   )}
                 </>
               )}
+
+              {/* Inline text edit (S2, D5): a plain textarea laid over the
+                  node, same maths `KonvaTagLayer` uses for the node itself. */}
+              {editingLayerId &&
+                selectedLayer &&
+                selectedLayer.id === editingLayerId &&
+                selectedLayer.props.kind === 'text' && (
+                  <InlineTextEditor
+                    key={selectedLayer.id}
+                    layer={selectedLayer}
+                    value={selectedContent}
+                    scale={scale}
+                    originX={RULER_THICKNESS + view.panX}
+                    originY={RULER_THICKNESS + view.panY}
+                    onCommit={commitInlineEdit}
+                  />
+                )}
             </div>
           </ContextMenuTrigger>
 

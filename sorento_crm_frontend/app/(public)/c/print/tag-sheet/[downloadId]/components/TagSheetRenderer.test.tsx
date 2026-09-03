@@ -187,6 +187,67 @@ describe('bound text and pictures on the print page', () => {
     expect(screen.getByText('SHOWROOM')).toBeInTheDocument();
   });
 
+  it('renders italic, underline and strikethrough on the printed text (AC-S2-7)', () => {
+    render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            id: 'text-styled',
+            type: 'text',
+            props: {
+              kind: 'text',
+              text: 'Sale',
+              fontFamily: 'DM Sans',
+              fontSize: 10,
+              fontWeight: 400,
+              color: '#000',
+              align: 'left',
+              lineHeight: 1.2,
+              letterSpacing: 0,
+              italic: true,
+              underline: true,
+              strikethrough: true,
+            },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+      />,
+    );
+
+    const el = screen.getByText('Sale');
+    expect(el).toHaveStyle({ fontStyle: 'italic' });
+    expect(el).toHaveStyle({ textDecoration: 'underline line-through' });
+  });
+
+  it('renders normal style and no decoration when the flags are absent (old doc, AC-S2-9)', () => {
+    render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            id: 'text-plain',
+            type: 'text',
+            props: {
+              kind: 'text',
+              text: 'Plain',
+              fontFamily: 'DM Sans',
+              fontSize: 10,
+              fontWeight: 400,
+              color: '#000',
+              align: 'left',
+              lineHeight: 1.2,
+              letterSpacing: 0,
+            },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+      />,
+    );
+
+    const el = screen.getByText('Plain');
+    expect(el).toHaveStyle({ fontStyle: 'normal' });
+    expect(el).toHaveStyle({ textDecoration: 'none' });
+  });
+
   it('draws an asset image from the payload map', () => {
     const { container } = render(
       <TagSheetRenderer

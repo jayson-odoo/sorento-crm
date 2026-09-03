@@ -8,12 +8,24 @@
  */
 
 import { useCallback } from 'react';
-import { Braces, Eye, LayoutTemplate, Link2, Link2Off, X } from 'lucide-react';
+import {
+  Bold,
+  Braces,
+  Eye,
+  Italic,
+  LayoutTemplate,
+  Link2,
+  Link2Off,
+  Strikethrough,
+  Underline,
+  X,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
 import type {
@@ -508,22 +520,66 @@ function TextInspector({
             options={fontOptions}
           />
         </div>
-        <div className="grid grid-cols-2 gap-2">
-          <NumberInput
-            label="Font Size"
-            value={props.fontSize}
-            onChange={(v) => onChange({ ...props, fontSize: v })}
-            step={0.5}
-            min={4}
-          />
-          <div className="flex flex-col gap-1">
-            <Label className="text-xs text-muted-foreground">Font Weight</Label>
-            <SearchableSelect
-              value={String(props.fontWeight)}
-              onChange={(v: string) => onChange({ ...props, fontWeight: parseInt(v, 10) })}
-              options={FONT_WEIGHT_OPTIONS}
+        <div className="flex items-end gap-2">
+          <div className="flex-1">
+            <NumberInput
+              label="Font Size"
+              value={props.fontSize}
+              onChange={(v) => onChange({ ...props, fontSize: v })}
+              step={0.5}
+              min={4}
             />
           </div>
+          <ToggleGroup
+            type="multiple"
+            variant="outline"
+            size="sm"
+            value={[
+              props.fontWeight >= 600 && 'bold',
+              props.italic && 'italic',
+              props.underline && 'underline',
+              props.strikethrough && 'strikethrough',
+            ].filter((v): v is string => Boolean(v))}
+            onValueChange={(next: string[]) => {
+              const on = new Set(next);
+              // Only rewrite fontWeight when Bold's OWN pressed state actually
+              // changed - a `type="multiple"` group reports every currently
+              // pressed item on every click, so toggling Italic while a 600+
+              // weight reads Bold as pressed must not collapse that weight to
+              // the canonical 700 as a side effect of a click nowhere near it.
+              const wasBold = props.fontWeight >= 600;
+              const willBeBold = on.has('bold');
+              onChange({
+                ...props,
+                fontWeight:
+                  willBeBold === wasBold ? props.fontWeight : willBeBold ? 700 : 400,
+                italic: on.has('italic'),
+                underline: on.has('underline'),
+                strikethrough: on.has('strikethrough'),
+              });
+            }}
+          >
+            <ToggleGroupItem value="bold" aria-label="Bold" title="Bold">
+              <Bold className="size-3.5" />
+            </ToggleGroupItem>
+            <ToggleGroupItem value="italic" aria-label="Italic" title="Italic">
+              <Italic className="size-3.5" />
+            </ToggleGroupItem>
+            <ToggleGroupItem value="underline" aria-label="Underline" title="Underline">
+              <Underline className="size-3.5" />
+            </ToggleGroupItem>
+            <ToggleGroupItem value="strikethrough" aria-label="Strikethrough" title="Strikethrough">
+              <Strikethrough className="size-3.5" />
+            </ToggleGroupItem>
+          </ToggleGroup>
+        </div>
+        <div className="flex flex-col gap-1">
+          <Label className="text-xs text-muted-foreground">Font Weight</Label>
+          <SearchableSelect
+            value={String(props.fontWeight)}
+            onChange={(v: string) => onChange({ ...props, fontWeight: parseInt(v, 10) })}
+            options={FONT_WEIGHT_OPTIONS}
+          />
         </div>
         <ColorPicker
           label="Colour"

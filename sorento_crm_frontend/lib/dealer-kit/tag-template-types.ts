@@ -108,6 +108,14 @@ export interface TextLayerProps {
   align: 'left' | 'center' | 'right';
   lineHeight: number;
   letterSpacing: number;
+  /**
+   * Whole-layer B/I/U/S flags (S2, D4). Absent on a document saved before
+   * S2 - `text-format.ts` and the renderers treat a missing flag as false,
+   * so an old tag still opens and prints unchanged.
+   */
+  italic?: boolean;
+  underline?: boolean;
+  strikethrough?: boolean;
 }
 
 export interface ShapeLayerProps {

@@ -142,6 +142,11 @@ function renderTextLayer(layer: TagLayer, resolved: ResolvedLineData | null) {
         fontFamily: props.fontFamily || 'DM Sans, sans-serif',
         fontSize: `${props.fontSize}pt`,
         fontWeight: props.fontWeight,
+        fontStyle: props.italic ? 'italic' : 'normal',
+        textDecoration:
+          [props.underline && 'underline', props.strikethrough && 'line-through']
+            .filter(Boolean)
+            .join(' ') || 'none',
         color: props.color,
         textAlign: props.align,
         lineHeight: props.lineHeight,
