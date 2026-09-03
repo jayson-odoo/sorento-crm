@@ -389,6 +389,9 @@ class PurchaseOrderService:
             out.setdefault(source_id, []).append({
                 "kind": "spo",
                 "spo_number": spo.po_number,
+                # L2 (review round): the SPO's own header id, so the FE can link `spo_number`
+                # to its detail page instead of printing it as inert text.
+                "purchase_order_id": str(spo.id),
                 "qty": qty,
                 "packing_list": place.get("packing_list"),
                 "warehouses": place.get("warehouses") or [],

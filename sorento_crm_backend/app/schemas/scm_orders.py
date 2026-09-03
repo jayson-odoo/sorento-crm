@@ -66,6 +66,11 @@ class SalesOrderLineLink(BaseModel):
     kind: str
     document: Optional[str] = None
     line_label: Optional[str] = None
+    #: The PO/SPO header this link points at (L2/L4, review round). Never rendered as text -
+    #: the FE uses it to make `document` a link to `/scm/purchase-orders/{id}` - `None` when
+    #: the caller building this row does not have the id at hand, in which case `document`
+    #: reads as plain text same as before this field existed.
+    purchase_order_id: Optional[str] = None
     qty: str
     location: Optional[str] = None
     expected_date: Optional[str] = None
@@ -447,6 +452,10 @@ class PurchaseOrderPlacement(BaseModel):
     kind: str = "inquiry"
     #: The SPO that took this quantity. `spo` rows only.
     spo_number: Optional[str] = None
+    #: The SPO's own `purchase_orders.id` (L2, review round). Never rendered as text - the FE
+    #: uses it to make `spo_number` a link to `/scm/purchase-orders/{id}`. `spo` rows only;
+    #: `None` on an `inquiry` row, which has no purchase order of its own to point at.
+    purchase_order_id: Optional[str] = None
     #: The container it is on, by container number or shipment number. `spo` rows only.
     packing_list: Optional[str] = None
     #: Where it lands, and how much at each. `spo` rows only.

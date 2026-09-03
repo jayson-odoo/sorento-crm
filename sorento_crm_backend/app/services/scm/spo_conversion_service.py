@@ -219,7 +219,7 @@ from decimal import Decimal
 from io import BytesIO
 from typing import Any, Optional, Sequence
 
-from sqlalchemy import func, text
+from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session
 
 from app.models.order import Customer, SalesOrder, SalesOrderLine
@@ -268,8 +268,9 @@ _NUMBER_PREFIX = "CRM-SPO"
 
 _REASON_NO_SUPPLIER = "No supplier recorded on this shipment line, so it cannot be added to an SPO."
 _REASON_NOT_SELECTED = "Not selected."
-#: The doctrine correction's own line, verbatim from the captain - a packed quantity nothing
-#: open can back cannot become an SPO line at all, same shape as the no-supplier case.
+#: SIXTH AMENDMENT (captain's ruling, 3 Sep): information, not a block. A line with no open
+#: PO to pull from is still convertible - this reads on the line only to say the SPO it
+#: becomes will carry no PO backing, never to stop `create` from writing it.
 _REASON_NO_PO = (
     "No open PO to pull from; the SPO line is written without PO backing."
 )
@@ -304,10 +305,21 @@ def _qty_str(value: Any) -> str:
     return format(dec.normalize(), "f")
 
 
-def _shipment_or_404(db: Session, shipment_id: str) -> InboundShipment:
+def _shipment_or_404(
+    db: Session, shipment_id: str, *, for_update: bool = False
+) -> InboundShipment:
+    """`for_update=True` (F3, review round) takes a row lock on the shipment before the
+    caller reads its remainder: without it, two concurrent `create` calls on the SAME
+    shipment can both read the same `_already_spo_qty_by_line` snapshot and both cascade
+    against the same open PO balance, double-spending it. Only `create` locks - `suggest` is
+    a read (plus its own self-heal) and taking a lock there would serialise every screen
+    load behind whichever `create` happens to be mid-flight."""
     if not _is_uuid(shipment_id):
         raise AppException(404, "Inbound shipment not found")
-    row = db.query(InboundShipment).filter(InboundShipment.id == shipment_id).one_or_none()
+    q = db.query(InboundShipment).filter(InboundShipment.id == shipment_id)
+    if for_update:
+        q = q.with_for_update()
+    row = q.one_or_none()
     if row is None:
         raise AppException(404, "Inbound shipment not found")
     return row
@@ -332,7 +344,11 @@ def _existing_spos(db: Session, shipment_id: str) -> list[dict]:
         .join(ShipmentLineSpoLink, ShipmentLineSpoLink.purchase_order_id == PurchaseOrder.id)
         .filter(ShipmentLineSpoLink.inbound_shipment_id == shipment_id)
         .distinct()
-        .order_by(PurchaseOrder.created_at.asc())
+        # F12 (review round): `po_number` is the tiebreak, not the primary key - two SPOs
+        # minted in the same instant (a multi-supplier `create` run mints one header per
+        # supplier together) still need a STABLE order, and `created_at` alone does not
+        # guarantee one.
+        .order_by(PurchaseOrder.created_at.asc(), PurchaseOrder.po_number.asc())
         .all()
     )
     return [
@@ -378,6 +394,12 @@ def _already_spo_qty_by_line(
             ShipmentLineSpoLink.inbound_shipment_line_id.in_(ids),
             ShipmentLineSpoLink.purchase_order_line_id.isnot(None),
         )
+        # F11 (review round): oldest SPO first means oldest by when it was MADE
+        # (`created_at`), not alphabetically by number - the docstring's own "oldest
+        # first" promise, which an alphabetical sort breaks the moment a numbering
+        # rollover or a manual number puts a later SPO ahead of an earlier one lexically.
+        # `po_number` only breaks a tie between two SPOs minted in the same instant.
+        .order_by(PurchaseOrder.created_at.asc(), PurchaseOrder.po_number.asc())
         .all()
     )
     out: dict[str, dict[str, Any]] = {}
@@ -386,8 +408,6 @@ def _already_spo_qty_by_line(
         entry["qty"] += float(qty_ordered or 0)
         if po_number and po_number not in entry["spo_numbers"]:
             entry["spo_numbers"].append(po_number)
-    for entry in out.values():
-        entry["spo_numbers"].sort()
     return out
 
 
@@ -540,6 +560,20 @@ def _open_line_rows(q) -> list[tuple[PurchaseOrderLine, PurchaseOrder, float]]:
     return out
 
 
+#: F1 (review round, BLOCKER, live evidence): a CRM SPO's own line was never excluded from
+#: either candidate query below, so a second `create` run on a remainder pulled from the
+#: FIRST SPO's own open line instead of the real underlying PO - SPO-2 pulled 34 from SPO-1
+#: and advanced SPO-1's own `qty_received`, and crossed shipments to offer "PO covers 10" out
+#: of an SPO another container had already minted. A CRM SPO line is the SHIPMENT LEG of an
+#: existing PO (module docstring, fifth amendment) - it is never itself a PO to pull FROM.
+#: NULL-safe (`source_system` is unset on every AutoCount/legacy line) so a plain PO line is
+#: never excluded by accident.
+_NOT_CRM_SPO_LINE = or_(
+    PurchaseOrderLine.source_system.is_(None),
+    PurchaseOrderLine.source_system != SOURCE_SYSTEM,
+)
+
+
 def _po_cascade_lines(
     db: Session, supplier_id: str, product_id: str
 ) -> list[tuple[PurchaseOrderLine, PurchaseOrder, float]]:
@@ -557,6 +591,7 @@ def _po_cascade_lines(
             PurchaseOrder.status.notin_(("draft", "draft_recommendation")),
             PurchaseOrderLine.product_id == product_id,
             PurchaseOrderLine.line_status == "open",
+            _NOT_CRM_SPO_LINE,
         )
     )
     return _open_line_rows(q)
@@ -594,6 +629,7 @@ def _pinned_po_candidates(
             PurchaseOrder.status.notin_(("draft", "draft_recommendation")),
             PurchaseOrderLine.product_id == product_id,
             PurchaseOrderLine.line_status == "open",
+            _NOT_CRM_SPO_LINE,
         )
     )
     return _open_line_rows(q)
@@ -729,18 +765,25 @@ def _spo_pulls_by_po_line(
 
 def _spo_so_coverage_rows(
     db: Session, *, product_id: Optional[str] = None
-) -> list[tuple[str, str, float, str]]:
-    """Every `(so_line_id, spo_number, qty, po_line_id)` a CRM SPO line's own
-    `source_ref.so_coverage` names, oldest SPO number first - the shared row scan behind
+) -> list[tuple[str, str, float, str, str]]:
+    """Every `(so_line_id, spo_number, qty, po_line_id, purchase_order_id)` a CRM SPO line's
+    own `source_ref.so_coverage` names, oldest SPO number first - the shared row scan behind
     `_spo_cover_by_so_line` (per-PRODUCT, S5's planner `taken_by`) and `coverage_for_so_lines`
     (per-SO-LINE-ID set, S7's retail sales-order `linked_to`), so the planner's `taken_by`
     and the sales order's "Linked to" column can never name a different SPO for the same
     line. `po_line_id` is the SPO's OWN `purchase_order_lines.id` - the same id
     `spo_allocations.po_line_id` carries - so a caller can join to the allocation for a
-    location / arrival date (`coverage_for_so_lines`).
+    location / arrival date (`coverage_for_so_lines`). `purchase_order_id` is that line's
+    OWN header id (L4, review round) - the same header `spo_number` names, so a caller can
+    link to it.
     """
     q = (
-        db.query(PurchaseOrderLine.id, PurchaseOrderLine.source_ref, PurchaseOrder.po_number)
+        db.query(
+            PurchaseOrderLine.id,
+            PurchaseOrderLine.source_ref,
+            PurchaseOrder.po_number,
+            PurchaseOrder.id,
+        )
         .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
         .filter(
             PurchaseOrderLine.source_system == SOURCE_SYSTEM,
@@ -749,10 +792,10 @@ def _spo_so_coverage_rows(
     )
     if product_id is not None:
         q = q.filter(PurchaseOrderLine.product_id == product_id)
-    out: list[tuple[str, str, float, str]] = []
-    for po_line_id, source_ref, po_number in q.all():
+    out: list[tuple[str, str, float, str, str]] = []
+    for po_line_id, source_ref, po_number, purchase_order_id in q.all():
         for so_line_id, qty in parse_source_ref(source_ref)["so_coverage"]:
-            out.append((so_line_id, po_number, qty, str(po_line_id)))
+            out.append((so_line_id, po_number, qty, str(po_line_id), str(purchase_order_id)))
     out.sort(key=lambda row: row[1] or "")
     return out
 
@@ -772,7 +815,7 @@ def _spo_cover_by_so_line(db: Session, product_id: str) -> dict[str, list[dict]]
     was undone.
     """
     out: dict[str, list[dict]] = {}
-    for so_line_id, spo_number, qty, _po_line_id in _spo_so_coverage_rows(
+    for so_line_id, spo_number, qty, _po_line_id, _purchase_order_id in _spo_so_coverage_rows(
         db, product_id=product_id
     ):
         out.setdefault(so_line_id, []).append({"spo_number": spo_number, "qty": qty})
@@ -808,7 +851,7 @@ def coverage_for_so_lines(db: Session, so_line_ids: Sequence[str]) -> dict[str, 
     if not rows:
         return {}
 
-    po_line_ids = {po_line_id for _so, _spo, _qty, po_line_id in rows}
+    po_line_ids = {po_line_id for _so, _spo, _qty, po_line_id, _po_id in rows}
     alloc_by_line: dict[str, tuple[Optional[str], Optional[_date]]] = {}
     for po_line_id, warehouse_code, eta in (
         db.query(
@@ -826,12 +869,15 @@ def coverage_for_so_lines(db: Session, so_line_ids: Sequence[str]) -> dict[str, 
         alloc_by_line.setdefault(str(po_line_id), (warehouse_code, eta))
 
     out: dict[str, list[dict]] = {}
-    for so_line_id, spo_number, qty, po_line_id in rows:
+    for so_line_id, spo_number, qty, po_line_id, purchase_order_id in rows:
         warehouse_code, eta = alloc_by_line.get(po_line_id, (None, None))
         out.setdefault(so_line_id, []).append({
             "kind": "spo",
             "document": spo_number,
             "line_label": None,
+            # L4 (review round): the SPO's own header id, so the FE can make `document` a
+            # link rather than plain text.
+            "purchase_order_id": purchase_order_id,
             "qty": _qty_str(qty),
             "location": warehouse_code,
             "expected_date": eta.isoformat() if eta else None,
@@ -1751,8 +1797,12 @@ def create(
     Refused (422, `nothing_left`) only when NO line with a supplier has anything left to
     convert at all - the "everything is already on an SPO" state; `nothing_selected` stays
     the answer for "something is left, but nothing was ticked".
+
+    **F3 (review round):** locks the shipment row (`SELECT ... FOR UPDATE`) before reading
+    its remainder, so two concurrent `create` calls on the SAME shipment serialise rather
+    than both cascading against the same open PO balance from the same stale snapshot.
     """
-    shipment = _shipment_or_404(db, shipment_id)
+    shipment = _shipment_or_404(db, shipment_id, for_update=True)
 
     shipment_lines = {
         str(ln.id): ln
@@ -1771,6 +1821,19 @@ def create(
             "Every line on this shipment must be accounted for.",
             detail=f"{len(missing)} line(s) missing from the request",
         )
+
+    # F7 (review round): a skip-reason link (`purchase_order_id IS NULL`) is written fresh by
+    # EVERY run, on EVERY line still accounted for by this shipment - re-ticking a line that
+    # was skipped last time, or re-running the whole confirm, otherwise left the OLD skip row
+    # behind alongside the new one, so `ShipmentLineSpoLink` rows for the same line accumulated
+    # one per run forever. A skip row carries no PO to scope by (unlike a matched row, which a
+    # scoped `unwind` leaves alone on purpose), so there is nothing it is safe to keep - this
+    # shipment's own skip rows are cleared before any new ones are written, same disposal a
+    # scoped `unwind` already gives them on a full (unscoped) run.
+    db.query(ShipmentLineSpoLink).filter(
+        ShipmentLineSpoLink.inbound_shipment_id == shipment.id,
+        ShipmentLineSpoLink.purchase_order_id.is_(None),
+    ).delete(synchronize_session=False)
 
     groups: dict[str, dict[str, Any]] = {}
     skipped: list[tuple[str, str]] = []
@@ -1826,7 +1889,6 @@ def create(
         take_ids = item.get("po_take_ids")
         only = None if take_ids is None else {str(t) for t in take_ids}
         matched_by, takes = _match_takes_for_line(db, ln, need, only)
-        covered_now = sum(t[2] for t in takes)
 
         if splits:
             split_total = sum(s["qty"] for s in splits)

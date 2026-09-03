@@ -46,7 +46,7 @@ from decimal import Decimal
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from sqlalchemy import event, func, or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 from app.models.inventory import Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
@@ -1981,11 +1981,18 @@ class ProjectOrderInquiryService:
         never an id: `document` is denormalised on the link precisely so a purchase order
         line that has since been re-imported cannot make the answer disappear. `po_id`
         addresses the PO popover and is null on an SPO link, because there is no purchase
-        order to open.
+        order to open THAT way; `purchase_order_id` (L4, review round) is the header id
+        either kind's document is written against - a plain PO link's own `po_id`, or an
+        SPO link's allocation traced back to its SPO's header (`SpoPOLine`/`SpoPO`, a
+        SECOND alias of the same tables above: the first pair's join is keyed off
+        `OrderInquiryLink.po_line_id`, which an SPO link never sets, so it cannot also
+        answer for `SPOAllocation.po_line_id`).
         """
         wanted = [row_id for row_id in row_ids if row_id]
         if not wanted:
             return {}
+        SpoPOLine = aliased(PurchaseOrderLine)
+        SpoPO = aliased(PurchaseOrder)
         rows = (
             self.db.query(
                 OrderInquiryLink,
@@ -2002,6 +2009,7 @@ class ProjectOrderInquiryService:
                 SPOAllocation.issue_date,
                 SPOAllocation.expected_date,
                 SPOAllocation.location_code,
+                SpoPO.id,
             )
             .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
             .outerjoin(PurchaseOrderLine, PurchaseOrderLine.id == OrderInquiryLink.po_line_id)
@@ -2011,6 +2019,8 @@ class ProjectOrderInquiryService:
             .outerjoin(
                 SPOAllocation, SPOAllocation.id == OrderInquiryLink.spo_allocation_id
             )
+            .outerjoin(SpoPOLine, SpoPOLine.id == SPOAllocation.po_line_id)
+            .outerjoin(SpoPO, SpoPO.id == SpoPOLine.purchase_order_id)
             .outerjoin(
                 Warehouse,
                 Warehouse.id
@@ -2051,6 +2061,7 @@ class ProjectOrderInquiryService:
             spo_issue_date,
             spo_expected_date,
             spo_location_code,
+            spo_purchase_order_id,
         ) in rows:
             is_spo = link.spo_allocation_id is not None
             location = warehouse_code or (spo_location_code if is_spo else None)
@@ -2086,6 +2097,14 @@ class ProjectOrderInquiryService:
                     # WHO linked it, by name. Null on a cascade link, which nobody did.
                     "linked_by_name": names.get(link.linked_by),
                     "po_id": None if is_spo else po_id,
+                    # L4 (review round): the header id EITHER kind's document lives on -
+                    # a plain PO link's own `po_id`, or an SPO link's allocation traced
+                    # back to its SPO's own header.
+                    "purchase_order_id": (
+                        str(spo_purchase_order_id)
+                        if is_spo and spo_purchase_order_id
+                        else (str(po_id) if po_id else None)
+                    ),
                 }
             )
         return out

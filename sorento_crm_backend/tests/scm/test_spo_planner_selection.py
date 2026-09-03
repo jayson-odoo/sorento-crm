@@ -754,6 +754,10 @@ def test_the_purchase_order_route_still_carries_the_spo_placement(scm_app):
     assert spo_rows, f"no SPO placement survived the response model: {placements}"
     row = spo_rows[0]
     assert row["spo_number"] == created["created_spos"][0]["po_number"]
+    # L2 (review round): the SPO's own header id, so the FE can link `spo_number` - declared
+    # on `PurchaseOrderPlacement` or `response_model` drops it the same way it dropped
+    # `spo_number` itself before this test existed.
+    assert row["purchase_order_id"] == created["created_spos"][0]["purchase_order_id"]
     assert row["packing_list"] == shipment.shipment_number
     assert row["qty"] == 60
     assert [x["warehouse_code"] for x in row["warehouses"]] == [wh.warehouse_code]
@@ -896,14 +900,12 @@ def test_a_po_line_fully_pulled_returns_taken_in_po_takes_on_a_second_shipment()
     """AC-E4: a line with nothing open, whose only reason is a prior SPO pull, is still
     RETURNED (never silently dropped) - `suggested_qty` for the line does not count it.
 
-    SPO-1 is written directly here - the exact state `create` leaves behind on the source
-    line and on its own new line's `source_ref` (`test_the_purchase_order_says_which_spo_
-    took_its_quantity` covers `create` itself writing it) - rather than through `svc.create`,
-    so its own line, marked CLOSED (its whole quantity already pulled, nothing left to
-    receive against it), cannot ALSO show up as a second, unrelated OPEN candidate for the
-    second shipment's cascade: a live CRM SPO otherwise counts as genuine "ordered" supply to
-    the same supplier and product the instant it exists (`po_ordered_v`'s own rule), which
-    would otherwise defeat this test's own "the only PO" premise.
+    SPO-1 is minted through `svc.create` (F1, review round: neither candidate query
+    excluded a CRM SPO's own line, so a real SPO-1 - WHOLE and OPEN, `line_status='open'`,
+    exactly what `create` leaves behind, unlike the CLOSED line this test used to hand-write
+    to dodge the very bug it should have caught - must never itself surface as a second,
+    unrelated candidate for the second shipment's cascade; only the source PO-A's own
+    now-exhausted line may.
     """
     with pg_session() as db:
         w = World(db)
@@ -913,23 +915,13 @@ def test_a_po_line_fully_pulled_returns_taken_in_po_takes_on_a_second_shipment()
             PurchaseOrderLine.purchase_order_id == po_a.id
         ).one()
 
-        spo_po = PurchaseOrder(
-            id=_u(), po_number=f"{MARKER}-SPO1-{uuid.uuid4().hex[:6]}",
-            supplier_id=supplier.id, issue_date=date(2026, 8, 1), status="active",
-            source_system=svc.SOURCE_SYSTEM,
+        first, first_lines = w.shipment([("A", 100, supplier)])
+        created = svc.create(
+            db, str(first.id),
+            [{"shipment_line_id": str(first_lines[0].id), "qty": 100, "include": True}],
+            actor="tester",
         )
-        db.add(spo_po)
-        db.flush()
-        db.add(PurchaseOrderLine(
-            id=_u(), purchase_order_id=spo_po.id, product_id=w.product("A").id,
-            qty_ordered=100, qty_received=100, line_status="closed",
-            source_system=svc.SOURCE_SYSTEM,
-            source_ref=json.dumps(
-                {"pulls": [{"po_line_id": str(source_line.id), "qty": 100}], "so_coverage": []}
-            ),
-        ))
-        source_line.qty_received = 100
-        db.flush()
+        spo_po_number = created["created_spos"][0]["po_number"]
 
         second, second_lines = w.shipment([("A", 50, supplier)])
         line = _line(svc.suggest(db, str(second.id)), str(second_lines[0].id))
@@ -939,7 +931,7 @@ def test_a_po_line_fully_pulled_returns_taken_in_po_takes_on_a_second_shipment()
         assert entry["qty"] == 0
         assert entry["open_qty"] == 0
         assert entry["taken_qty"] == 100
-        assert entry["taken_by"] == [spo_po.po_number]
+        assert entry["taken_by"] == [spo_po_number]
         assert line["suggested_qty"] == 0
         # Sixth amendment (captain's ruling, 3 Sep): a supplier is still on the line, so it is
         # convertible without PO backing - `cannot_convert` is no longer true for this case.

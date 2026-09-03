@@ -638,6 +638,9 @@ class SalesOrderService:
                         "kind": link["kind"],
                         "document": link["document"],
                         "line_label": link["line_label"],
+                        # L4 (review round): the header id `links_for_rows` already resolves
+                        # for both kinds, so `document` can be a link rather than plain text.
+                        "purchase_order_id": link.get("purchase_order_id"),
                         "qty": link["qty"],
                         "location": link["location"],
                         # AC-P3-7: "arrives late" wherever the link is shown. Derived once,

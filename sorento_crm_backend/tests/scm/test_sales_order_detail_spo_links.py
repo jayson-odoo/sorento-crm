@@ -117,12 +117,15 @@ def test_a_retail_line_covered_by_one_spo_reads_one_spo_link():
             )],
         )
         spo_number = created["created_spos"][0]["po_number"]
+        spo_po_id = created["created_spos"][0]["purchase_order_id"]
 
         linked = _linked_to(db, str(so.id), str(retail.id))
         assert linked == [{
             "kind": "spo",
             "document": spo_number,
             "line_label": None,
+            # L4 (review round): the SPO's own header id, so `document` can be a link.
+            "purchase_order_id": spo_po_id,
             "qty": "30",
             "location": wh.warehouse_code,
             "expected_date": None,
@@ -245,6 +248,7 @@ def test_the_route_carries_the_spo_link(scm_app):
         )],
     )
     spo_number = created["created_spos"][0]["po_number"]
+    spo_po_id = created["created_spos"][0]["purchase_order_id"]
 
     client = TestClient(app)
     r = client.get(f"/api/v1/scm/sales-orders/{so.id}")
@@ -255,6 +259,8 @@ def test_the_route_carries_the_spo_link(scm_app):
         "kind": "spo",
         "document": spo_number,
         "line_label": None,
+        # L4 (review round): declared on `SalesOrderLineLink` or `response_model` drops it.
+        "purchase_order_id": spo_po_id,
         "qty": "30",
         "location": wh.warehouse_code,
         "expected_date": None,
