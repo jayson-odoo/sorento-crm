@@ -272,6 +272,16 @@ describe('SupplierCodesTab - Remembered reads the clock the record reads', () =>
 
     expect(screen.getByText('27/08/2026, 10:00 am')).toBeInTheDocument();
   });
+
+  it('renders the empty-value dash instead of throwing when created_at is null', () => {
+    // A row can carry no `created_at` at all - the prod build's own type check caught this
+    // (`string | null` reaching a formatter typed for `string | number | Date`).
+    state.aliases = [alias({ created_at: null })];
+    renderTab();
+
+    expect(screen.getByText('SRTWC8357-RL-300')).toBeInTheDocument();
+    expect(screen.getByText('-')).toBeInTheDocument();
+  });
 });
 
 describe('SupplierCodesTab - Needs a decision', () => {
