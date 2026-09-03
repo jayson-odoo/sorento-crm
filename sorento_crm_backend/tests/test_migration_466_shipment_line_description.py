@@ -177,13 +177,22 @@ def _shipment(db) -> str:
 
 
 def _shipment_line(db, *, shipment_id: str, product_id: str, description: str | None) -> str:
+    """Raw INSERT rather than the ORM: the ORM's `default=` values (as opposed to
+    `server_default=`) only apply when SQLAlchemy builds the INSERT itself, so a fresh
+    `create_all` schema (CI) has no DB-level default for `spo_allocated_quantity`,
+    `quantity_received` or `line_status` and a raw INSERT that omits them hits
+    `NotNullViolation`. The shared local DB happens to carry real server-side defaults
+    for these columns already (added out of band, never mirrored onto the model), which
+    is why omitting them only broke CI. State them explicitly so the row seeds the same
+    way on both substrates."""
     line_id = str(uuid.uuid4())
     db.execute(
         text(
             """
             INSERT INTO inbound_shipment_lines
-                (id, shipment_id, product_id, quantity_shipped, cartons_count, description)
-            VALUES (:id, :shipment_id, :product_id, 1, 1, :description)
+                (id, shipment_id, product_id, quantity_shipped, cartons_count, description,
+                 spo_allocated_quantity, quantity_received, line_status)
+            VALUES (:id, :shipment_id, :product_id, 1, 1, :description, 0, 0, 'in_transit')
             """
         ),
         {
