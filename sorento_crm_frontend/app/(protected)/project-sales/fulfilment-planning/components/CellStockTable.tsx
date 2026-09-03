@@ -8,6 +8,7 @@ import { PillOverflow, type PillItem } from '@/components/common/PillOverflow';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
 import {
   availableForProject,
+  availableForProjectOf,
   DEFAULT_POOL_SHARE_PCT,
   POOLS_SET,
 } from '../../_shared/lib/poolShare';
@@ -255,24 +256,35 @@ export const CellStockTable = React.forwardRef<
 
   /**
    * Opens whichever section a jump names - the GROUP subtotal when the set nets one (the
-   * mockup's "Balance after" reading), or the bin's own row when it does not - and raises the
-   * signal every open `StockDocumentsPanel` checks itself against.
+   * mockup's "Balance after" reading), or ONE bin's own row when it does not (N2, fix round
+   * 5) - and raises the signal every open `StockDocumentsPanel` checks itself against.
+   *
+   * N2: this used to open EVERY row of the section, and every open ledger's own section row
+   * is sticky under the table's header (D3) - several open at once stacked their sticky
+   * rows on top of one another. `location`, when the caller has one (a donor / document
+   * jump names the bin it points at), picks that row; without one (`jumpToThisLine`, whose
+   * section is a single own-location row anyway) the section's first addressable row opens,
+   * so a bare jump never opens more than one ledger.
    */
   const openSectionAndJump = React.useCallback(
-    (section: StockSection | undefined, kind: StockJumpTarget['kind']) => {
+    (
+      section: StockSection | undefined,
+      kind: StockJumpTarget['kind'],
+      location?: string | null,
+    ) => {
       if (!section) return;
       if (section.netOf && sectionProductId(section)) {
         setExpandedSets((current) => ({ ...current, [section.key]: true }));
       } else {
-        setExpanded((current) => {
-          const next = { ...current };
-          for (const row of section.rows) {
-            if (row.location && row.product_id && row.warehouse_id) {
-              next[row.location] = true;
-            }
-          }
-          return next;
-        });
+        const addressable = (row: StockSection['rows'][number]) =>
+          Boolean(row.location && row.product_id && row.warehouse_id);
+        const target =
+          section.rows.find((row) => row.location === location && addressable(row)) ??
+          section.rows.find(addressable);
+        if (target?.location) {
+          const key = target.location;
+          setExpanded((current) => ({ ...current, [key]: true }));
+        }
       }
       jumpNonceRef.current += 1;
       setActiveJump({ kind, nonce: jumpNonceRef.current });
@@ -309,11 +321,13 @@ export const CellStockTable = React.forwardRef<
         openSectionAndJump(
           sectionAt((target ?? donor?.[0])?.location) ?? ownSection(),
           'donor',
+          (target ?? donor?.[0])?.location,
         ),
       jumpToDocument: (target) =>
         openSectionAndJump(
           sectionAt((target ?? documentInfo)?.location) ?? ownSection(),
           'document',
+          (target ?? documentInfo)?.location,
         ),
     }),
     [openSectionAndJump, ownSection, sectionAt, donor, documentInfo],
@@ -729,12 +743,15 @@ export const CellStockTable = React.forwardRef<
                       />
                     );
                   }
-                  // Nit (code review round 3 batch 2), amended by D2: "Available for
-                  // Project" is NOT a sum of the ROWS, the same reason the site pool
-                  // SUBTOTAL isn't (R-K) - a plain `sumOf(locations, ...)` added every pool
-                  // row's own figure together and read "Total 400" above a subtotal reading
-                  // "Subtotal 200". It is the SUBTOTALS added up, which is how the Available
-                  // column's own total reads once each section has stated its own.
+                  // Nit (code review round 3 batch 2), amended by D2, and S4 (fix round 5):
+                  // neither Available nor Available for Project is a sum of the ROWS, the
+                  // same reason the site pool SUBTOTAL isn't (R-K) - a plain `sumOf
+                  // (locations, ...)` added every pool row's own figure together, which
+                  // undercounts the SET's true net whenever the cell lists fewer pool rows
+                  // than the five the net covers, and the two Total columns disagreed
+                  // outside a pool (Available for Project already summed subtotals;
+                  // Available did not). Both are the SUBTOTALS added up now, which is how
+                  // each column's own total reads once every section has stated its own.
                   const total =
                     column.key === 'available-for-project'
                       ? sumValues(
@@ -742,7 +759,11 @@ export const CellStockTable = React.forwardRef<
                             projectShareSubtotalOf(section, drawn, poolSharePct),
                           ),
                         )
-                      : sumOf(locations, (entry) => valueOf(column, entry, drawn));
+                      : column.key === 'available'
+                        ? sumValues(
+                            sections.map((section) => availableSubtotalOf(section, drawn)),
+                          )
+                        : sumOf(locations, (entry) => valueOf(column, entry, drawn));
                   return (
                     <td key={column.key} className={cn(NUMBER_COL, FOOT_CELL)}>
                       <span
@@ -934,10 +955,7 @@ const NUMERIC_COLUMNS: {
   {
     key: 'available-for-project',
     label: 'Available for Project',
-    of: (entry) =>
-      (entry.where ?? 'own') === 'site_pool'
-        ? (entry.available_for_project ?? '0')
-        : (entry.available_qty ?? null),
+    of: (entry) => availableForProjectOf(entry),
     total: true,
     signed: true,
   },

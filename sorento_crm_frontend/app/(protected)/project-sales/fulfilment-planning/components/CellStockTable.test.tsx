@@ -658,6 +658,51 @@ describe('CellStockTable: the whole ladder, in sections', () => {
     expect(screen.getByTestId('stock-total-available-for-project').textContent).toBe(
       '240',
     );
+    // S4 (fix round 5): Available reads the SAME way now - own's 40 plus the pool
+    // SUBTOTAL's own net-based 400, never the pool ROWS' own 300 + 100 = 400 (which, on
+    // THIS fixture, happens to equal the net anyway - the discriminating case is the pool
+    // subtotal test right below, where the net and the row sum genuinely differ).
+    expect(screen.getByTestId('stock-total-available').textContent).toBe('440');
+  });
+
+  /**
+   * S4 (captain ruling, fix round 5): the case that actually catches Available summing its
+   * ROWS instead of its SECTION SUBTOTALS - a pool whose net (400) does not equal what its
+   * own two rows add up to (300 + 200 = 500, a location this cell drew from was left off
+   * the rows the server listed here). Available for Project already summed subtotals; this
+   * pins Available doing the same, so the two Total columns cannot disagree outside a pool.
+   */
+  it('does not sum the pool rows for the Available total either: rows summing to 500 still total 440', () => {
+    renderTable([
+      position({ where: 'own', qty_on_hand: '40', available_qty: '40' }),
+      position({
+        location: 'BRW',
+        warehouse_id: 'wh-p0',
+        where: 'site_pool',
+        qty_on_hand: '300',
+        so_qty: '0',
+        spo_qty: '0',
+        available_qty: '300',
+        available_for_project: '150',
+        net: '400',
+        net_of: 'pools',
+      }),
+      position({
+        location: 'MWH',
+        warehouse_id: 'wh-p1',
+        where: 'site_pool',
+        qty_on_hand: '200',
+        so_qty: '0',
+        spo_qty: '0',
+        available_qty: '200',
+        available_for_project: '250',
+        net: '400',
+        net_of: 'pools',
+      }),
+    ]);
+
+    expect(screen.getByTestId('stock-subtotal-available-pools').textContent).toBe('400');
+    expect(screen.getByTestId('stock-total-available').textContent).toBe('440');
   });
 
   /**
@@ -1203,6 +1248,29 @@ describe('CellStockTable: the S3 jump handles', () => {
     act(() => ref.current?.jumpToDocument());
 
     expect(await screen.findByTestId('stock-set-expansion-pools')).toBeInTheDocument();
+  });
+
+  /**
+   * N2 (fix round 5). This section carries NO net (`falls back to the sum` above is the
+   * same shape), so a jump used to open EVERY row of it - and every open ledger's own
+   * section row is sticky under the table's header (D3), so several open at once stacked.
+   * Only the row the donor actually names may open.
+   */
+  it('opens only the ROW a donor jump names, not every row of its (net-less) section', async () => {
+    const ref = renderWithRef(
+      [
+        position({ location: 'MWH-BB', warehouse_id: 'wh-1', where: 'group' }),
+        position({ location: 'DC1-BB', warehouse_id: 'wh-2', where: 'group' }),
+        position({ location: 'WH3-BB', warehouse_id: 'wh-3', where: 'group' }),
+      ],
+      { donor: [{ soNumber: 'SO401624', location: 'DC1-BB' }] },
+    );
+
+    act(() => ref.current?.jumpToDonor());
+
+    expect(await screen.findByTestId('stock-expansion-DC1-BB')).toBeInTheDocument();
+    expect(screen.queryByTestId('stock-expansion-MWH-BB')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('stock-expansion-WH3-BB')).not.toBeInTheDocument();
   });
 
   it('falls back to the own section, never a crash, when the named location matches no row', () => {
