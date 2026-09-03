@@ -443,10 +443,25 @@ class SalesOrderService:
                 "linked_to": links.get(str(ln.id)),
                 "decision_revision": (decided.get(str(ln.id)) or {}).get("revision_no"),
                 # The two compositions in the planning board's vocabulary. Both null on a
-                # line no active revision covers; `supply_proposed` also null on a revision
-                # frozen before the proposal was recorded (AC-D1).
+                # line no active revision covers; `supply_decided` STAYS null there even
+                # with a saved draft (a draft is not a decision - `supply_saved` states
+                # that). `supply_proposed`, though, falls back to the DRAFT's own
+                # `proposed` when no active revision covers the line (D12, #573, captain
+                # ruling): a saved draft keeps the engine's suggestion at save time, so
+                # this page reads it the same way the board's own list view already does,
+                # until Confirm freezes a revision and the snapshot's `proposed_components`
+                # takes over. Also null on a revision frozen before the proposal was
+                # recorded (AC-D1), or a draft saved before this field existed.
                 "supply_decided": (decided.get(str(ln.id)) or {}).get("decided"),
-                "supply_proposed": (decided.get(str(ln.id)) or {}).get("proposed"),
+                "supply_proposed": (
+                    (decided.get(str(ln.id)) or {}).get("proposed")
+                    if str(ln.id) in decided
+                    else (
+                        self._supply_components(saved_entry.get("proposed"))
+                        if saved_entry and saved_entry.get("proposed")
+                        else None
+                    )
+                ),
                 # A SAVED (unconfirmed) decision on this line (D10). `None` on a line no
                 # draft covers, including one already confirmed into `decided` above - the
                 # promotion deletes the draft in the same write, so the two never overlap.
@@ -639,12 +654,23 @@ class SalesOrderService:
         The components, never a sentence: the words are written once, on the screen
         (`supplyVocabulary.ts`), and composing them here would be a second implementation of
         the same vocabulary free to drift against the board's.
+
+        `source_location` falls back to `location` (D12, #573): a confirmed snapshot's
+        `proposed_components` (`_decided_lines`) and a saved decision's own raw components
+        (`_saved_components`) both already carry `source_location`, but a DRAFT's
+        `proposed` is stored exactly as the board's `BoardSource` wire shape names it -
+        `location`, never `source_location` - since it is the contribution's own `sources`
+        echoed back opaque. The fallback lets this one converter read either without a
+        second copy of it.
         """
         return [
             {
                 "kind": (component or {}).get("kind"),
                 "qty": str((component or {}).get("qty") or "0"),
-                "source_location": (component or {}).get("source_location"),
+                "source_location": (
+                    (component or {}).get("source_location")
+                    or (component or {}).get("location")
+                ),
                 "rung": (component or {}).get("rung"),
                 "donor_so_number": (component or {}).get("donor_so_number"),
             }
@@ -730,6 +756,9 @@ class SalesOrderService:
         return {
             str(row.core_line_id): {
                 "decision": row.decision or {},
+                # D12 (#573): what the engine suggested when this was saved, in the
+                # board's `BoardSource` shape - see `SOSupplyDecisionDraft.proposed`.
+                "proposed": row.proposed,
                 "saved_by": name or "",
                 "saved_at": row.saved_at,
                 "line_snapshot": row.line_snapshot,

@@ -29,6 +29,7 @@ from app.models.product import Product
 from app.models.resources import Attachment
 from app.models.user import User
 from app.models.inventory import Warehouse
+from app.models.scm import SupplierProductCodeAlias
 from app.services.identifier_resolver import resolve_identifier
 from app.services.fuzzy_resolver import resolve_via_embedding_then_ilike
 from app.schemas.procurement import (
@@ -5648,7 +5649,38 @@ class ProductSupplierService:
         if not product_supplier:
             raise handle_not_found("Product Supplier", product_supplier_id)
         return product_supplier
-    
+
+    def list_suppliers_for_product(self, product_id: str) -> list:
+        """Every current sourcing link for a product, with "their code" alongside each one
+        (S4, AC-D2) - the supplier's own spelling, read off `scm.supplier_product_code_alias`
+        for that (product, supplier) pair, never a column on `product_suppliers` itself: the
+        alias table is the single writer, so a manual match and this field cannot drift.
+
+        A supplier who has been matched on more than one code for this product (a correction,
+        or two spellings that both landed here) shows the NEWEST alias; a dismissal names no
+        product, so it never joins here at all.
+        """
+        rows = self.list_product_suppliers(page=1, limit=1000, product_id=product_id).get(
+            "data", []
+        )
+        supplier_ids = {str(r.supplier_id) for r in rows}
+        code_by_supplier: Dict[str, str] = {}
+        if supplier_ids:
+            alias_rows = (
+                self.db.query(SupplierProductCodeAlias)
+                .filter(
+                    SupplierProductCodeAlias.product_id == product_id,
+                    SupplierProductCodeAlias.supplier_id.in_(supplier_ids),
+                )
+                .order_by(SupplierProductCodeAlias.created_at.desc())
+                .all()
+            )
+            for alias in alias_rows:
+                code_by_supplier.setdefault(str(alias.supplier_id), alias.supplier_code)
+        for row in rows:
+            row.supplier_item_code = code_by_supplier.get(str(row.supplier_id))
+        return rows
+
     @staticmethod
     def _assert_priced_in_a_currency(unit_cost, currency) -> None:
         """A price with no currency is read as ringgit everywhere downstream.

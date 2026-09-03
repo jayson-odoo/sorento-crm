@@ -5,6 +5,7 @@ import type {
   BoardDecision,
   BoardGranularity,
   BoardLineDraft,
+  BoardSource,
   ClassificationEvidence,
   PlanningBoard,
   ConfirmManyBody,
@@ -555,22 +556,26 @@ export async function confirmMany(body: ConfirmManyBody): Promise<ConfirmManyRes
  * `contributionKey` is `BoardContribution.key` and travels URL-encoded - it embeds `|`,
  * which is not a legal unencoded path segment character.
  *
- * NO `proposed` in the body (S1, code review round 3, captain ruling): a proposal depends
- * on which orders share the board, its granularity and its window, so a save made on one
- * view compared against a proposal computed for another flipped `stale` falsely across
- * views and silently dropped a saved line from Confirm. The server snapshots the LINE's own
- * facts (outstanding qty, required date) at save time instead - `stale` is judged on those.
+ * `proposed` is NEVER what `stale` is judged against (S1, code review round 3, captain
+ * ruling still holds): a proposal depends on which orders share the board, its
+ * granularity and its window, so comparing it flipped `stale` falsely across views and
+ * silently dropped a saved line from Confirm - the server snapshots the LINE's own facts
+ * (outstanding qty, required date) at save time for that instead. `proposed` exists for a
+ * DIFFERENT reason (D12, #573): the caller's own `sources` at save time, carried so the
+ * Sales Order page's Suggested column can read a saved-but-unconfirmed line's composition.
+ * Omitted keeps the request body exactly as before.
  */
 export async function putLineDraft(
   contributionKey: string,
   decision: BoardDecision,
+  proposed?: BoardSource[],
 ): Promise<BoardLineDraft> {
   const response = await apiFetch(
     `${BASE}/fulfilment-planning/lines/${encodeURIComponent(contributionKey)}/draft`,
     {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ decision }),
+      body: JSON.stringify(proposed ? { decision, proposed } : { decision }),
     },
   );
   if (!response.ok)

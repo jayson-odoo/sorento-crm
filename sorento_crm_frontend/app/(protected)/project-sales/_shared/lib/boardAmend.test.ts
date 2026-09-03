@@ -16,12 +16,14 @@ import {
   amendDraftFrom,
   amendSummary,
   borrowCandidatesOf,
+  canQuickSave,
   confirmLineFrom,
   decisionFromAmendDraft,
+  suggestedDecisionFor,
   suggestionDraftFrom,
 } from './boardAmend';
 import { buildBoard, type BoardDemandLine } from './__testsupport__/boardFixture';
-import type { BoardContribution } from '../types/fulfilmentPlanning.types';
+import type { BoardContribution, BoardDraft } from '../types/fulfilmentPlanning.types';
 
 const TODAY = '2026-08-18';
 
@@ -594,6 +596,129 @@ describe('decisionFromAmendDraft: what the draft carries away', () => {
         .buy_reason,
     ).toBe('Last batch for the site.');
     expect(decisionFromAmendDraft({ ...draft, buy_reason: '   ' }, '').buy_reason).toBeUndefined();
+  });
+});
+
+/**
+ * D14: a quick save has to be BYTE-IDENTICAL to opening the line and pressing Save with
+ * nothing changed - `BoardLineDecisionPanel`'s own untouched-save path
+ * (`{ ...decisionFromAmendDraft(suggestionDraftFrom(contribution), ''), verdict: 'approved' }`).
+ */
+describe('suggestedDecisionFor: the quick-save decision', () => {
+  it('equals what an untouched Save on the row would post', () => {
+    const contribution = contributionOf({ 'WESERP10B|BRW-BB': '40' });
+
+    expect(suggestedDecisionFor(contribution)).toEqual({
+      ...decisionFromAmendDraft(suggestionDraftFrom(contribution), ''),
+      verdict: 'approved',
+    });
+  });
+
+  it('carries the engine composition, not a bare verdict', () => {
+    const contribution = contributionOf({ 'WESERP10B|BRW-BB': '40' });
+
+    const decision = suggestedDecisionFor(contribution);
+
+    expect(decision.verdict).toBe('approved');
+    expect(decision.reserve).toEqual([
+      { warehouse_id: 'wh-BRW-BB', location: 'BRW-BB', qty: '40' },
+    ]);
+    expect(decision.buy_qty).toBe('60');
+    expect(decision.reason).toBeUndefined();
+  });
+
+  it('reads the SUGGESTION on a covered line, not the frozen decision it is leaving', () => {
+    // The same fixture `suggestionDraftFrom on a covered line` exercises: a decision already
+    // covers the line, and this reads what the engine would propose instead - the reason
+    // D11's approval carries the composition rather than a bare `{verdict: 'approved'}`.
+    const base = contributionOf(
+      {},
+      {
+        qty: '100',
+        fulfilment_location: 'BRW-BB',
+        decision: {
+          revision_no: 1,
+          timely_spo_qty: '0',
+          reserve: [{ warehouse_id: 'wh-BRW-BB', location: 'BRW-BB', qty: '100' }],
+          borrow: [],
+          buy_qty: '0',
+        },
+      },
+    );
+    const contribution: BoardContribution = {
+      ...base,
+      proposed: {
+        components: [
+          {
+            kind: 'reserve',
+            qty: '40',
+            location: 'BRW-BB',
+            warehouse_id: 'wh-BRW-BB',
+            reason: 'Free unclaimed stock at BRW-BB covers this much by the delivery date.',
+          },
+          { kind: 'buy', qty: '60', reason: 'Nothing else free at BRW-BB.' },
+        ],
+      },
+    };
+
+    const decision = suggestedDecisionFor(contribution);
+
+    expect(decision.buy_qty).toBe('60');
+    expect(decision.reserve).toEqual([
+      { warehouse_id: 'wh-BRW-BB', location: 'BRW-BB', qty: '40' },
+    ]);
+  });
+});
+
+/**
+ * D15: the one predicate the list view, the dialog's select column, "Save all suggested" and
+ * this round's own row/cell/board-wide icons all wrote out by hand as the same three clauses.
+ * A truth table over the three, and the empty draft that every other test already assumes.
+ */
+describe('canQuickSave', () => {
+  const EMPTY_DRAFT: BoardDraft = {};
+
+  it('is eligible when covered, unplannable and drafted are all false', () => {
+    const contribution = contributionOf({ 'WESERP10B|BRW-BB': '40' });
+    expect(contribution.covered).toBe(false);
+    expect(contribution.unplannable).toBeFalsy();
+
+    expect(canQuickSave(contribution, EMPTY_DRAFT)).toBe(true);
+  });
+
+  it('is not eligible once covered - there is nothing to approve on a confirmed line', () => {
+    const contribution: BoardContribution = {
+      ...contributionOf({ 'WESERP10B|BRW-BB': '40' }),
+      covered: true,
+    };
+
+    expect(canQuickSave(contribution, EMPTY_DRAFT)).toBe(false);
+  });
+
+  it('is not eligible once unplannable - no fulfilment location, nothing to suggest', () => {
+    const contribution: BoardContribution = {
+      ...contributionOf({ 'WESERP10B|BRW-BB': '40' }),
+      unplannable: true,
+    };
+
+    expect(canQuickSave(contribution, EMPTY_DRAFT)).toBe(false);
+  });
+
+  it('is not eligible once a draft already exists for the key - a second save would overwrite it', () => {
+    const contribution = contributionOf({ 'WESERP10B|BRW-BB': '40' });
+    const draft: BoardDraft = { [contribution.key]: { verdict: 'approved' } };
+
+    expect(canQuickSave(contribution, draft)).toBe(false);
+  });
+
+  it('a covered line already carrying an amended draft is still not eligible', () => {
+    const contribution: BoardContribution = {
+      ...contributionOf({ 'WESERP10B|BRW-BB': '40' }),
+      covered: true,
+    };
+    const draft: BoardDraft = { [contribution.key]: { verdict: 'amended' } };
+
+    expect(canQuickSave(contribution, draft)).toBe(false);
   });
 });
 

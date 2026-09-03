@@ -145,6 +145,19 @@ _MONTHS = (
 _PROJECT_NOTE_PREFIX = "Order Inquiry project:"
 
 
+def _own_pool_floor(fact: Any, pool_open: Optional[Mapping[str, Decimal]]) -> Decimal:
+    """The ASKING bin's own site pool floor, off the walk's free-floor ledger (AC-N.12).
+
+    `compose_lines` hands the proof one entry per pool since the R-N leftover was fixed -
+    every pool's floor is a running balance now, not just the asking bin's - and the two
+    sentences below still speak about the asking bin's own pool, so they read their own
+    entry out of it rather than a second live figure.
+    """
+    if not pool_open:
+        return _ZERO
+    return max(_dec((pool_open or {}).get(getattr(fact, "pool_code", None) or "")), _ZERO)
+
+
 def week_start(when: date) -> date:
     """The Monday of the ISO week containing `when`."""
     return when - timedelta(days=when.weekday())
@@ -2425,7 +2438,7 @@ class FulfilmentBoardService:
         row: _Row,
         fact: Any,
         components: Sequence[Any],
-        pool_open: Optional[Decimal],
+        pool_open: Optional[Mapping[str, Decimal]],
         borrow_open: Optional[Mapping[str, Decimal]] = None,
         net_open: Optional[Decimal] = None,
         as_of: Optional[date] = None,
@@ -2606,7 +2619,7 @@ class FulfilmentBoardService:
         pools_net_open = fact.pools_net if net_open is None else net_open
         pool_taken = took_at("pool")
         pool_pile = (
-            self._pool_pile(row, fact, max(_dec(pool_open), _ZERO))
+            self._pool_pile(row, fact, _own_pool_floor(fact, pool_open))
             if pool_code and pool_chain
             else None
         )
@@ -2625,8 +2638,9 @@ class FulfilmentBoardService:
                 fact, as_of=as_of, borrow_left=borrow_open, pool=True
             )
         )
-        # LADDER V8 (R-B, R-L): what the CHAIN can offer this line is each pool's own share,
-        # walked the way `_draw_other_pools` walks it and bounded by the one five-pool net.
+        # LADDER V8 (R-B, R-L, R-N): what the CHAIN can offer this line is each pool's own
+        # share, walked the way step 0 itself walks it (`_draw_pool_share` draws exactly
+        # this list since R-N) and bounded by the one five-pool net.
         # Capping the whole chain by the FIRST pool's allowance printed `offered=0` beside
         # `taken=300` the moment another site's pool answered the remainder (review round 2,
         # S5); before that cap existed at all the proof advertised 31 beside a step that
@@ -2690,8 +2704,12 @@ class FulfilmentBoardService:
         # (R24), and then the OTHER project groups' free piles (R5), which is the free stock
         # the retired `cross_group_borrow` rung used to call a Borrow. Both are one question,
         # because free stock is owed to nobody wherever it sits.
-        group_take_candidates, other_group_candidates, own_offer = (
-            ([], [], _ZERO)
+        # R-M's shorts map is DELIBERATELY discarded here: the trail states what this line
+        # was offered, and the refusal it explains is already printed on the `use` OPTION
+        # row, which the walk composes from the same map (`walk_line(other_group_short=)`).
+        # Printing it twice would say the same thing in two voices.
+        group_take_candidates, other_group_candidates, own_offer, _other_short = (
+            ([], [], _ZERO, {})
             if outside_window
             # `other_group_open` is step 1b's own ledger as this unit found it, passed for
             # exactly the reason `borrow_open` is: the proof has to be the answer the engine
@@ -3092,7 +3110,11 @@ class FulfilmentBoardService:
         opened = ", ".join(
             str(entry.get("location")) for entry in pool_chain if entry.get("location")
         )
-        return f"checked {opened}" if opened else None
+        # AC-N.10: this note sits under the pool question's own `why` sentence, which ends
+        # in a period - a lowercase, unpunctuated "checked ..." read as that sentence
+        # running on rather than a note of its own, so it is capitalized and terminated
+        # here to stand as its own sentence.
+        return f"Checked {opened}." if opened else None
 
     def _pool_answer_why(
         self,
@@ -3100,7 +3122,7 @@ class FulfilmentBoardService:
         pool_chain: Sequence[Dict[str, Any]],
         taken: Decimal,
         pile: Optional[Dict[str, Any]],
-        pool_open: Optional[Decimal],
+        pool_open: Optional[Mapping[str, Decimal]],
         outcome: str,
         pools_net: Optional[Decimal] = None,
         borrow_donors: Sequence[Dict[str, Any]] = (),
@@ -3134,6 +3156,20 @@ class FulfilmentBoardService:
         ]
         if drawn:
             return " ".join(component.reason for component in drawn)
+        # R-N (3 Sep 2026): step 0 walks the WHOLE chain, so the ordinary answer is several
+        # pools at once - and the sentences below describe the ASKING pool's pile, which
+        # would report the whole step's take ("this line takes 8") against one of the two
+        # piles it actually came from. Where more than one pool answered, the pools' own
+        # sentences ARE the answer, which is what the walk's own option row states too, so
+        # the trail and the decision panel cannot spell one composition two ways.
+        share = [
+            component
+            for component in components
+            if getattr(component, "rung", None) == RUNG_POOL
+            and getattr(component, "source_location", None)
+        ]
+        if len({component.source_location for component in share}) > 1:
+            return " ".join(component.reason for component in share)
         if not pool_chain:
             if borrow_donors:
                 named = ", ".join(
@@ -3154,9 +3190,9 @@ class FulfilmentBoardService:
             pools=list(pool_chain),
             pools_net=net,
         )
-        # LADDER V8 (R-B, R-L): what the pile may give THIS line is EACH pool's own share,
-        # walked the way the engine walks it, so the sentence never offers a figure the walk
-        # could not have taken and never prints 0 beside a draw another site's pool made.
+        # LADDER V8 (R-B, R-L, R-N): what the pile may give THIS line is EACH pool's own
+        # share, walked the way the engine walks it, so the sentence never offers a figure
+        # the walk could not have taken and never prints 0 beside a draw another pool made.
         # One allowance spread over every location was the round-1 shape, and it read
         # `offered=0` under `taken=300` (review round 2, S5).
         capacity_by_location: Dict[str, Decimal] = {
@@ -3176,7 +3212,7 @@ class FulfilmentBoardService:
                 fact,
                 outcome,
                 pile,
-                max(_dec(pool_open), _ZERO),
+                _own_pool_floor(fact, pool_open),
                 capacity_by_location.get(fact.pool_code, _ZERO),
                 taken,
                 pools_net_refused,
@@ -4386,6 +4422,9 @@ class FulfilmentBoardService:
                 "stale": project_line_draft_service.is_stale(
                     entry["line_snapshot"], row.qty, row.required_date
                 ),
+                # D12 (#573): what the caller saved the draft AGAINST, echoed back opaque.
+                # Never read by `is_stale` above - see `SOSupplyDecisionDraft.proposed`.
+                "proposed": entry.get("proposed"),
             }
 
     def _contribution(self, row: _Row) -> Dict[str, Any]:

@@ -59,7 +59,7 @@ def _sheet_model(
     db, lines: list[dict], *, monkeypatch, retained: bytes | None = ..., supplier_id=None
 ):
     data = FIXTURE.read_bytes() if retained is ... else retained
-    monkeypatch.setattr(model, "_retained_stock_list", lambda _db, _sid: data)
+    monkeypatch.setattr(model, "_retained_stock_list", lambda _db, _sid, **_kw: data)
     return model.build(
         db,
         supplier_id=str(supplier_id or uuid.uuid4()),
@@ -332,7 +332,7 @@ def test_build_goes_from_the_database_straight_to_bytes(monkeypatch):
     # test drives. They must not be able to disagree.
     with pg_session() as db:
         w = _world(db)
-        monkeypatch.setattr(model, "_retained_stock_list", lambda _db, _sid: None)
+        monkeypatch.setattr(model, "_retained_stock_list", lambda _db, _sid, **_kw: None)
 
         data = svc.build(
             db,

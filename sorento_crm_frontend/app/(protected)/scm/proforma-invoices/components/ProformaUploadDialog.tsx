@@ -19,6 +19,8 @@ import { SearchableSelect, type SearchableSelectOption } from '@/components/comm
 import { MAX_SIZE_MB, useTwoStepUpload } from '../../reorder/hooks/useTwoStepUpload';
 import { UploadReadingIndicator } from '../../reorder/components/UploadReadingIndicator';
 import {
+  proformaCountsNote,
+  supplierMismatchWarning,
   UploadTestVerdict,
   type UploadTestResult,
 } from '../../reorder/components/UploadTestVerdict';
@@ -128,6 +130,11 @@ export function verdictFromPreview(preview: ProformaInvoicePreview): UploadTestR
       : []),
     ...preview.problems,
     ...preview.unmapped_headers.map((header) => `Column not recognised: ${header}`),
+    // The file's own letterhead names somebody else (S7, AC-G3) - a warning, never a
+    // refusal: the operator may still know better than the sheet's own title block.
+    ...(supplierMismatchWarning(preview.supplier_check)
+      ? [supplierMismatchWarning(preview.supplier_check) as string]
+      : []),
   ];
 
   return {
@@ -142,6 +149,9 @@ export function verdictFromPreview(preview: ProformaInvoicePreview): UploadTestR
       would_apply: preview.ok ? preview.line_count : 0,
       error_count: errors.length,
     },
+    // "N invoice blocks · L lines · U codes unknown" (AC-G4) - the same counts as the
+    // `summary` above, said in the words the verdict card names them.
+    notes: preview.ok ? [proformaCountsNote(preview)] : [],
   };
 }
 

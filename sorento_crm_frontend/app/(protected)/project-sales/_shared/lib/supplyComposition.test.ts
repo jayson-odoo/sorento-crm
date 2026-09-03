@@ -19,6 +19,7 @@ import {
   toMinor,
   type DraftLine,
 } from './supplyComposition';
+import { poolShareLimitsFromLine } from './poolShare';
 
 const WAREHOUSE_BRW = 'a1000000-0000-4000-8000-000000000001';
 const WAREHOUSE_HQ = 'a1000000-0000-4000-8000-000000000002';
@@ -306,6 +307,56 @@ describe('lineBlockers', () => {
     ).toEqual([
       'Line 1, CB6633: the site pools net 60 between them, and 80 was asked for. Take ' +
         'the whole 135 from stock, or buy the whole 135.',
+    ]);
+  });
+
+  /**
+   * AC-N.11 (`PLAN-scm-pool-chain-first.md`, ruling R-N, 3 Sep 2026). Step 0 walks the
+   * WHOLE pool chain now, so the engine's own suggestion may hold a Reserve at TWO site
+   * pools beside a Buy - AC-N.6's shape exactly: BRW spares 100, WH3 spares what is left
+   * of the one five-pool net, and the remaining 30 is bought.
+   *
+   * Read through `poolShareLimitsFromLine`, because the per-order SHEET is the surface
+   * that has no cell to read allowances off: its own line carries them (`pool_allowances`
+   * / `pools_net`, the server's own figures), and a sheet refusing what the board accepts
+   * would be the two screens disagreeing about one composition.
+   */
+  it('admits a TWO-pool step 0 composition beside a Buy, on the sheet s own limits', () => {
+    expect(
+      lineBlockers(
+        draft({
+          open_qty: '150',
+          reserve: [reserve('100'), reserve('20', 'r2', 'WH3', WAREHOUSE_HQ)],
+          buy_qty: '30',
+        }),
+        poolShareLimitsFromLine(
+          line({
+            pool_allowances: { [WAREHOUSE_BRW]: '100', [WAREHOUSE_HQ]: '20' },
+            pools_net: '120',
+          }),
+        ),
+      ),
+    ).toEqual([]);
+  });
+
+  it('still holds each pool of the chain to its OWN allowance', () => {
+    expect(
+      lineBlockers(
+        draft({
+          open_qty: '150',
+          reserve: [reserve('100'), reserve('30', 'r2', 'WH3', WAREHOUSE_HQ)],
+          buy_qty: '20',
+        }),
+        poolShareLimitsFromLine(
+          line({
+            pool_allowances: { [WAREHOUSE_BRW]: '100', [WAREHOUSE_HQ]: '20' },
+            pools_net: '120',
+          }),
+        ),
+      ),
+    ).toEqual([
+      'Line 1, CB6633: WH3 can spare 20 for this line, and 30 was asked for. Take the ' +
+        'whole 150 from stock, or buy the whole 150.',
     ]);
   });
 

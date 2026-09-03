@@ -22,8 +22,6 @@ vi.mock('sonner', () => ({
 }));
 
 vi.mock('../services/fulfilmentService', () => ({
-  approveLoadingPlan: vi.fn(),
-  cancelLoadingPlan: vi.fn(),
   createLoadingPlanRecord: vi.fn(),
   updateLoadingPlanCutOff: vi.fn(),
   saveLoadingPlanEdits: vi.fn(),
@@ -34,7 +32,6 @@ vi.mock('../services/fulfilmentService', () => ({
   getUnfinishedStock: vi.fn(),
   getSupplierStockListFile: vi.fn(),
   getFulfilmentSuppliers: vi.fn(),
-  getPlanNotices: vi.fn(),
   getContainerRequestHistory: vi.fn(),
   getConsolidatedPackingList: vi.fn(),
   getSpoSuggestion: vi.fn(),

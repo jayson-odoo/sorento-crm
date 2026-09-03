@@ -180,6 +180,9 @@ def container_request_document(
         supplier_id=str(plan.supplier_id),
         lines=[ln.model_dump() for ln in body.lines],
         fmt=format,
+        # The plan the download belongs to: the sheet states what THIS plan's statement says
+        # the supplier holds, so the downloaded copy and the sent one agree (BL-1).
+        loading_plan_id=str(plan.id),
     )
     return Response(
         content=content,

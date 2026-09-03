@@ -153,10 +153,21 @@ describe('BoardLineDecisionPanel: the two verbs (C9)', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
 
-    expect(onDecide).toHaveBeenCalledWith({
-      verdict: 'approved',
-      suspected_system_issue: false,
-    });
+    // D11: an approved decision carries the suggested COMPOSITION too, not only the verdict -
+    // `so_supply_decision_drafts.decision` is read verbatim by the SO page's own "Decided"
+    // column, and a bare `{verdict:'approved'}` read there as no components at all.
+    expect(onDecide).toHaveBeenCalledWith(
+      expect.objectContaining({
+        verdict: 'approved',
+        suspected_system_issue: false,
+        reserve: expect.arrayContaining([
+          expect.objectContaining({ warehouse_id: 'wh-BRW-AM', qty: '9' }),
+          expect.objectContaining({ warehouse_id: 'wh-BRW', qty: '15' }),
+        ]),
+        borrow: [],
+        buy_qty: '0',
+      }),
+    );
   });
 
   it('Save on a changed composition amends it, once it balances and carries a reason', () => {
@@ -203,6 +214,124 @@ describe('BoardLineDecisionPanel: the two verbs (C9)', () => {
       reason: 'The customer cancelled this line.',
       suspected_system_issue: false,
     });
+  });
+});
+
+/**
+ * D11 (gap found in D10's report). `_saved_components` (`sales_order_service.py`) reads the
+ * SAVED decision JSON verbatim for the SO page's own "Decided" column, and an approval that
+ * posted only `{verdict: 'approved'}` read as no components at all - the SO page showed "-"
+ * beside a pill that already read Saved. An approved decision now carries the suggested
+ * COMPOSITION too, the same way `confirmLinesFor` already derives one for Confirm
+ * (`decisionFromAmendDraft(suggestionDraftFrom(contribution), '')`), so the two never disagree
+ * about what an approval actually composed.
+ */
+describe('BoardLineDecisionPanel: an approved draft carries the suggested composition (D11)', () => {
+  it('approving a Reserve-only suggestion carries the reserve row and a zero Buy', () => {
+    const onDecide = vi.fn();
+    render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf({
+          key: 'so-a|7|BRW3|2026-06-29',
+          line_no: 7,
+          item_code: 'BRW3',
+          qty: '3',
+          qty_ordered: '3',
+          qty_outstanding: '3',
+          sources: [
+            {
+              kind: 'reserve',
+              qty: '3',
+              location: 'BRW',
+              warehouse_id: 'wh-BRW',
+              reason: 'The shared pool at BRW covers this line.',
+            },
+          ],
+          qty_proposed_reserve: '3',
+          qty_proposed_incoming: '0',
+          qty_proposed_buy: '0',
+        })}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
+
+    expect(onDecide).toHaveBeenCalledWith(
+      expect.objectContaining({
+        verdict: 'approved',
+        reserve: [expect.objectContaining({ location: 'BRW', qty: '3' })],
+        buy_qty: '0',
+      }),
+    );
+  });
+
+  it('approving a Buy-only suggestion carries the Buy quantity and no reserve', () => {
+    const onDecide = vi.fn();
+    render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf({
+          key: 'so-a|8|BUY3|2026-06-29',
+          line_no: 8,
+          item_code: 'BUY3',
+          qty: '3',
+          qty_ordered: '3',
+          qty_outstanding: '3',
+          sources: [
+            {
+              kind: 'buy',
+              qty: '3',
+              location: null,
+              warehouse_id: null,
+              reason: 'Nothing on hand covers this line.',
+            },
+          ],
+          qty_proposed_reserve: '0',
+          qty_proposed_incoming: '0',
+          qty_proposed_buy: '3',
+        })}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
+
+    expect(onDecide).toHaveBeenCalledWith(
+      expect.objectContaining({
+        verdict: 'approved',
+        reserve: [],
+        buy_qty: '3',
+      }),
+    );
+  });
+
+  it('leaves an amended save unchanged - it already composes everything it posts', () => {
+    const { onDecide } = renderPanel();
+
+    fireEvent.change(screen.getByLabelText('Reserve at BRW-AM'), {
+      target: { value: '5' },
+    });
+    fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
+      target: { value: '19' },
+    });
+    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+      target: { value: 'The site asked for less from BRW-AM.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
+
+    expect(onDecide).toHaveBeenCalledWith(
+      expect.objectContaining({
+        verdict: 'amended',
+        reserve: expect.arrayContaining([
+          expect.objectContaining({ warehouse_id: 'wh-BRW-AM', qty: '5' }),
+          expect.objectContaining({ warehouse_id: 'wh-BRW', qty: '19' }),
+        ]),
+      }),
+    );
   });
 });
 
@@ -374,10 +503,18 @@ describe('BoardLineDecisionPanel: the suspected-system-issue flag (C10)', () => 
 
     // The BOOLEAN, not an absent key: `lineFor` posts `false`, so the pill must read `false`
     // rather than falling through to the frozen `true` and contradicting the body.
-    expect(onDecide).toHaveBeenCalledWith({
-      verdict: 'approved',
-      suspected_system_issue: false,
-    });
+    // D11: the composition rides along too, even though only the flag changed.
+    expect(onDecide).toHaveBeenCalledWith(
+      expect.objectContaining({
+        verdict: 'approved',
+        suspected_system_issue: false,
+        reserve: expect.arrayContaining([
+          expect.objectContaining({ warehouse_id: 'wh-BRW-AM', qty: '9' }),
+          expect.objectContaining({ warehouse_id: 'wh-BRW', qty: '15' }),
+        ]),
+        buy_qty: '0',
+      }),
+    );
   });
 
   it('shows the checkbox already ticked when the frozen decision carried the flag (persisted after reload)', () => {
@@ -596,10 +733,18 @@ describe('BoardLineDecisionPanel: a covered row opens locked with Amend (C11)', 
     });
     fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
 
-    expect(onDecide).toHaveBeenCalledWith({
-      verdict: 'approved',
-      suspected_system_issue: false,
-    });
+    // D11: the composition rides along with the approval too.
+    expect(onDecide).toHaveBeenCalledWith(
+      expect.objectContaining({
+        verdict: 'approved',
+        suspected_system_issue: false,
+        reserve: expect.arrayContaining([
+          expect.objectContaining({ warehouse_id: 'wh-BRW-AM', qty: '9' }),
+          expect.objectContaining({ warehouse_id: 'wh-BRW', qty: '15' }),
+        ]),
+        buy_qty: '0',
+      }),
+    );
     // The row the planner is looking at afterwards: Saved (S4, R-F), not the Confirmed the
     // covered flag alone would print, because the draft's verdict outranks what is in the
     // database.

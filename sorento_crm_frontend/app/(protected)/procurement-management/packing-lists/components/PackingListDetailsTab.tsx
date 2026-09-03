@@ -11,8 +11,24 @@ import {
   usePackingListRecord,
 } from '../[id]/components/packing-list-context';
 
-/** The header field this checkpoint is already edited in, so it is not asked for twice. */
-const CHECKPOINTS_RENDERED_ELSEWHERE = new Set(['estimated_arrival_date']);
+/** The header field this checkpoint is already edited elsewhere, so it is not asked for
+ *  twice. `loading_date` and `etd_date` are explicit fields in the Container card (AC-F5),
+ *  same reason `estimated_arrival_date` already was: it is also this record's own ETA. */
+const CHECKPOINTS_RENDERED_ELSEWHERE = new Set([
+  'loading_date',
+  'etd_date',
+  'estimated_arrival_date',
+]);
+
+/** The three attributes that print on the workbook's own header block (AC-F5 card 1)
+ *  rather than the generic clearance-attributes grid below - moved out of the loop so
+ *  they are not asked for twice. */
+const CARD1_ATTRIBUTE_NAMES = new Set([
+  'consignee',
+  'china_forwarder',
+  'delivery_warehouse',
+  'free_days_available',
+]);
 
 /**
  * Everything about the container itself: what it is, when it moves, what it costs to land.
@@ -21,6 +37,10 @@ const CHECKPOINTS_RENDERED_ELSEWHERE = new Set(['estimated_arrival_date']);
  * input where the value was. Every card and every row is rendered whether it has a value or
  * not: per the CRUD standard a section is never hidden on missing data, and "-" is the
  * honest answer for a container that has not cleared yet.
+ *
+ * Card order and field order mirror the RMB workbook top to bottom (AC-F5, ruling 3): the
+ * header block she reads first (Container), what the footer apportions (Costs), the
+ * clearance trail, then the document-level fields the workbook does not print at all.
  */
 export function PackingListDetailsTab() {
   const {
@@ -51,16 +71,222 @@ export function PackingListDetailsTab() {
   const text = (value: unknown) =>
     value === null || value === undefined || value === '' ? '-' : String(value);
 
+  /** A checkpoint's admin-configured label (Status Graphs), falling back to the sheet's own
+   *  wording while the config has not loaded yet. */
+  const checkpointLabel = (field: string, fallback: string) =>
+    checkpoints.find((cp) => cp.field === field)?.label ?? fallback;
+
+  const card1Attributes = CLEARANCE_ATTRIBUTE_FIELDS.filter((f) =>
+    CARD1_ATTRIBUTE_NAMES.has(f.name),
+  );
+  const card1AttributeByName = new Map(card1Attributes.map((f) => [f.name, f]));
+
   return (
     <div className="space-y-6">
+      {/* The workbook's own header block, in its own printed order: Loading, ETD, ETA,
+          Container, Seal, SO, Consignee, Shipper, China agent, Factory, Free days,
+          Delivery warehouse. */}
       <Card>
         <CardHeader>
-          <CardTitle>Shipment Information</CardTitle>
+          <CardTitle>Container</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <PackingListField
+              label={checkpointLabel('loading_date', 'Loading date')}
+              name="loading_date"
+              type="date"
+              editing={editing}
+              draft={draft}
+              onChange={setField}
+              view={
+                record.loading_date
+                  ? formatDate(new Date(String(record.loading_date)))
+                  : '-'
+              }
+            />
+            <PackingListField
+              label={checkpointLabel('etd_date', 'ETD')}
+              name="etd_date"
+              type="date"
+              editing={editing}
+              draft={draft}
+              onChange={setField}
+              view={record.etd_date ? formatDate(new Date(String(record.etd_date))) : '-'}
+            />
+            <PackingListField
+              label={checkpointLabel('estimated_arrival_date', 'ETA')}
+              name="estimated_arrival_date"
+              type="date"
+              editing={editing}
+              draft={draft}
+              onChange={setField}
+              view={
+                packingList.estimated_arrival_date
+                  ? formatDate(new Date(packingList.estimated_arrival_date))
+                  : '-'
+              }
+            />
+            <PackingListField
+              label="Container no"
+              name="shipping_container_number"
+              editing={editing}
+              draft={draft}
+              onChange={setField}
+              view={packingList.shipping_container_number || '-'}
+            />
+            <PackingListField
+              label="Seal no"
+              name="seal_number"
+              editing={editing}
+              draft={draft}
+              onChange={setField}
+              view={packingList.seal_number || '-'}
+            />
+            <PackingListField
+              label="SO"
+              name="forwarder_order_ref"
+              editing={editing}
+              draft={draft}
+              onChange={setField}
+              view={packingList.forwarder_order_ref || '-'}
+            />
+            <PackingListField
+              label={card1AttributeByName.get('consignee')?.label ?? 'Consignee'}
+              name="consignee"
+              editing={editing}
+              draft={draft}
+              onChange={setField}
+              view={text(record.consignee)}
+            />
+            <PackingListField
+              label="Shipper"
+              name="shipper"
+              editing={editing}
+              draft={draft}
+              onChange={setField}
+              view={packingList.shipper || '-'}
+            />
+            <PackingListField
+              label="China agent"
+              name="china_forwarder"
+              editing={editing}
+              draft={draft}
+              onChange={setField}
+              view={text(record.china_forwarder)}
+            />
+            <div className="min-w-0">
+              {/* Derived from the lines' own suppliers - who loaded a mixed container is a
+                  fact of what shipped, not something typed on the header. */}
+              <p className="text-sm text-muted-foreground">Factory</p>
+              <p className="font-medium break-words">{lineSupplierNames || '-'}</p>
+            </div>
+            <PackingListField
+              label={card1AttributeByName.get('free_days_available')?.label ?? 'Free days'}
+              name="free_days_available"
+              type="number"
+              editing={editing}
+              draft={draft}
+              onChange={setField}
+              view={text(record.free_days_available)}
+            />
+            <PackingListField
+              label={card1AttributeByName.get('delivery_warehouse')?.label ?? 'Delivery warehouse'}
+              name="delivery_warehouse"
+              editing={editing}
+              draft={draft}
+              onChange={setField}
+              view={text(record.delivery_warehouse)}
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* What it costs to land this container. Typed per container, never per line: the
+          workbook apportions each figure between SORENTO and MOCHA by that company's share
+          of the volume (clearance, freight) or of the amount (insurance). */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Costs</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {CONTAINER_COST_FIELDS.map((f) => (
+              <PackingListField
+                key={f.name}
+                label={f.label}
+                name={f.name}
+                type="number"
+                step="0.0001"
+                editing={editing}
+                draft={draft}
+                onChange={setField}
+                view={text(record[f.name])}
+              />
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* The rest of the clearance trail. The workbook import normally fills these; before
+          the first import - or when a liner revises an ETA between imports - somebody types
+          one, and the ADR asks for the record to be edited where it is read. */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Clearance</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {checkpoints
+              .filter((cp) => !CHECKPOINTS_RENDERED_ELSEWHERE.has(cp.field))
+              .map((cp) => {
+                const value = record[cp.field];
+                return (
+                  <PackingListField
+                    key={cp.field}
+                    label={cp.label}
+                    name={cp.field}
+                    type="date"
+                    editing={editing}
+                    draft={draft}
+                    onChange={setField}
+                    view={value ? formatDate(new Date(String(value))) : '-'}
+                  />
+                );
+              })}
+            {CLEARANCE_ATTRIBUTE_FIELDS.filter((f) => !CARD1_ATTRIBUTE_NAMES.has(f.name)).map(
+              (f) => (
+                <PackingListField
+                  key={f.name}
+                  label={f.label}
+                  name={f.name}
+                  editing={editing}
+                  draft={draft}
+                  onChange={setField}
+                  view={text(record[f.name])}
+                />
+              ),
+            )}
+            <div className="min-w-0">
+              {/* Provenance, not an editable attribute - it says which workbook tab the
+                  row came from, so it is shown but never typed. */}
+              <p className="text-sm text-muted-foreground">Source sheet</p>
+              <p className="font-medium break-words">{packingList.source_sheet || '-'}</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Document-level fields the workbook itself does not print - our own record of the
+          shipment, never asked twice against the header block above. */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Document</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <PackingListField
-              label="Shipment Number"
+              label="Shipment number"
               name="shipment_number"
               editing={editing}
               draft={draft}
@@ -85,7 +311,7 @@ export function PackingListDetailsTab() {
               )}
             </div>
             <PackingListField
-              label="Shipment Date"
+              label="Shipment date"
               name="shipment_date"
               type="date"
               editing={editing}
@@ -98,20 +324,7 @@ export function PackingListDetailsTab() {
               }
             />
             <PackingListField
-              label="Estimated Arrival Date"
-              name="estimated_arrival_date"
-              type="date"
-              editing={editing}
-              draft={draft}
-              onChange={setField}
-              view={
-                packingList.estimated_arrival_date
-                  ? formatDate(new Date(packingList.estimated_arrival_date))
-                  : '-'
-              }
-            />
-            <PackingListField
-              label="Actual Arrival Date"
+              label="Actual arrival"
               name="actual_arrival_date"
               type="date"
               editing={editing}
@@ -124,7 +337,7 @@ export function PackingListDetailsTab() {
               }
             />
             <PackingListField
-              label="Bill of Lading Number"
+              label="Bill of lading"
               name="bill_of_lading_number"
               editing={editing}
               draft={draft}
@@ -132,41 +345,7 @@ export function PackingListDetailsTab() {
               view={packingList.bill_of_lading_number || '-'}
             />
             <PackingListField
-              label="Shipping Container Number"
-              name="shipping_container_number"
-              editing={editing}
-              draft={draft}
-              onChange={setField}
-              view={packingList.shipping_container_number || '-'}
-            />
-            {/* The three the container workbook prints in its header block and nothing
-                else on this page ever asked for. */}
-            <PackingListField
-              label="Seal No"
-              name="seal_number"
-              editing={editing}
-              draft={draft}
-              onChange={setField}
-              view={packingList.seal_number || '-'}
-            />
-            <PackingListField
-              label="Shipper"
-              name="shipper"
-              editing={editing}
-              draft={draft}
-              onChange={setField}
-              view={packingList.shipper || '-'}
-            />
-            <PackingListField
-              label="Forwarder order ref"
-              name="forwarder_order_ref"
-              editing={editing}
-              draft={draft}
-              onChange={setField}
-              view={packingList.forwarder_order_ref || '-'}
-            />
-            <PackingListField
-              label="Invoice Number"
+              label="Invoice number"
               name="invoice_number"
               editing={editing}
               draft={draft}
@@ -176,7 +355,7 @@ export function PackingListDetailsTab() {
             <div>
               {/* Derived from the lines by the backend, so it has no input counterpart -
                   typing our own here would let the two disagree. */}
-              <p className="text-sm text-muted-foreground">Total Items</p>
+              <p className="text-sm text-muted-foreground">Total items</p>
               <p className="font-medium">{displayTotalItems}</p>
             </div>
           </div>
@@ -195,79 +374,6 @@ export function PackingListDetailsTab() {
             ) : (
               <p className="font-medium">{packingList.notes || '-'}</p>
             )}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* What it costs to land this container. Typed per container, never per line: the
-          workbook apportions each figure between SORENTO and MOCHA by that company's share
-          of the volume (clearance, freight) or of the amount (insurance). */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Container costs</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {CONTAINER_COST_FIELDS.map((f) => (
-              <PackingListField
-                key={f.name}
-                label={f.label}
-                name={f.name}
-                type="number"
-                step="0.0001"
-                editing={editing}
-                draft={draft}
-                onChange={setField}
-                view={text(record[f.name])}
-              />
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* The clearance record. The workbook import normally fills these; before the first
-          import - or when a liner revises an ETA between imports - somebody types one, and
-          the ADR asks for the record to be edited where it is read. */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Clearance Details</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {checkpoints
-              .filter((cp) => !CHECKPOINTS_RENDERED_ELSEWHERE.has(cp.field))
-              .map((cp) => {
-                const value = record[cp.field];
-                return (
-                  <PackingListField
-                    key={cp.field}
-                    label={cp.label}
-                    name={cp.field}
-                    type="date"
-                    editing={editing}
-                    draft={draft}
-                    onChange={setField}
-                    view={value ? formatDate(new Date(String(value))) : '-'}
-                  />
-                );
-              })}
-            {CLEARANCE_ATTRIBUTE_FIELDS.map((f) => (
-              <PackingListField
-                key={f.name}
-                label={f.label}
-                name={f.name}
-                editing={editing}
-                draft={draft}
-                onChange={setField}
-                view={text(record[f.name])}
-              />
-            ))}
-            <div className="min-w-0">
-              {/* Provenance, not an editable attribute - it says which workbook tab the
-                  row came from, so it is shown but never typed. */}
-              <p className="text-sm text-muted-foreground">Source sheet</p>
-              <p className="font-medium break-words">{packingList.source_sheet || '-'}</p>
-            </div>
           </div>
         </CardContent>
       </Card>

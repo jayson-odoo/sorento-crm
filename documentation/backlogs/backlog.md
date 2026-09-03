@@ -102,3 +102,15 @@ removed copy, for whoever restores a UI for them:
   - Preference-outranks-class warning: "{weight} is more than a matching product
     class is worth ({class match worth, 5}), so this preference outranks what the
     customer asked for. Below {5} it breaks ties instead."
+
+- **BL-045** (2026-09-03, PI + packing list feedback batch): shipment lines carry no supplier
+  description - the container workbook's DESCRIPTION column prints the product master name, while
+  the factory's own wording (Chinese on JINBAICHUAN / AFANNI lines) lives only on
+  `scm.proforma_invoice_line.description`. If the export must read like the hand-built sheet
+  line for line, add `inbound_shipment_lines.description` and copy it at convert time.
+- **BL-046** (2026-09-03, same batch): per-factory subtotal rows on the Shipment lines screen.
+  The export writes them; the screen shows one totals footer (ruling 4 of
+  `PLAN-scm-pi-packing-list-feedback-3sep.md`). Build only if asked for on screen.
+- **BL-047** (2026-09-03, same batch): the lane dev DB carries real duplicate `suppliers` rows
+  (Hello x2, Testing Company x3, Test Creditor Ltd2 x2) from earlier coder runs; they surface in
+  every supplier picker. Test data, not code - clean with a scoped delete.

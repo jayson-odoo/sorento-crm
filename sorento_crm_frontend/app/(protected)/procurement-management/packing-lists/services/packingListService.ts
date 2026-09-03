@@ -59,10 +59,7 @@ export async function createPackingList(
     body: JSON.stringify(data),
   });
   if (!response.ok) {
-    const error = await response
-      .json()
-      .catch(() => ({ message: 'Failed to create packing list' }));
-    throw new Error(error.detail ?? error.message ?? 'Failed to create packing list');
+    throw new Error(await extractApiError(response, 'Failed to create packing list'));
   }
   return response.json();
 }
@@ -77,10 +74,7 @@ export async function updatePackingList(
     body: JSON.stringify(data),
   });
   if (!response.ok) {
-    const error = await response
-      .json()
-      .catch(() => ({ message: 'Failed to update packing list' }));
-    throw new Error(error.detail ?? error.message ?? 'Failed to update packing list');
+    throw new Error(await extractApiError(response, 'Failed to update packing list'));
   }
   return response.json();
 }
@@ -90,10 +84,7 @@ export async function deletePackingList(id: string): Promise<void> {
     method: 'DELETE',
   });
   if (!response.ok) {
-    const error = await response
-      .json()
-      .catch(() => ({ message: 'Failed to delete packing list' }));
-    throw new Error(error.message);
+    throw new Error(await extractApiError(response, 'Failed to delete packing list'));
   }
 }
 
@@ -106,10 +97,7 @@ export async function bulkDeletePackingLists(
     body: JSON.stringify({ ids }),
   });
   if (!response.ok) {
-    const error = await response
-      .json()
-      .catch(() => ({ message: 'Failed to bulk delete packing lists' }));
-    throw new Error(error.detail ?? error.message ?? 'Failed to bulk delete packing lists');
+    throw new Error(await extractApiError(response, 'Failed to bulk delete packing lists'));
   }
   return response.json();
 }

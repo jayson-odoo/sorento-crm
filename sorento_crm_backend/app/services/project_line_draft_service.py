@@ -213,6 +213,7 @@ def save_draft(
     key: str,
     *,
     decision: Dict[str, Any],
+    proposed: Optional[list] = None,
     actor_user_id: str,
 ) -> Dict[str, Any]:
     """Upsert the decision saved on one line, and re-stamp who saved it (AC-4.5).
@@ -224,6 +225,11 @@ def save_draft(
     S3 (captain ruling): refused with a 422 unless the key names a real line under the
     caller's own company - `_resolve_core_line` is what makes that true, and its own return
     doubles as the LINE this save's `line_snapshot` is taken off (S1).
+
+    `proposed` (D12, #573): the caller's own board contribution `sources` at this moment,
+    stored opaque and NEVER read here - see `SOSupplyDecisionDraft.proposed`'s own
+    docstring for why it exists and why it is not `line_snapshot`. OMITTING it leaves the
+    stored one alone; only a caller that has one replaces it.
     """
     sales_order_id, line_no, item_code, bucket_key = parse_contribution_key(key)
     core_line = _resolve_core_line(db, sales_order_id, line_no, item_code)
@@ -243,12 +249,19 @@ def save_draft(
     row.item_code = item_code
     row.bucket_key = bucket_key
     row.decision = decision
+    if proposed is not None:
+        # ABSENT is "I am not telling you", never "there is none": a caller with no board
+        # contribution to hand (an older client, or a surface that saves the verdict alone)
+        # would otherwise erase the suggestion the first save stored, and the Sales Order
+        # page's Suggested column would fall back to Decided "-" on a line that had one.
+        row.proposed = proposed
     row.line_snapshot = _line_snapshot(core_line)
     row.saved_by = actor_user_id
     row.saved_at = datetime.utcnow()
     db.flush()
     return {
         "decision": row.decision,
+        "proposed": row.proposed,
         "saved_by": _saver_name(db, row.saved_by),
         "saved_at": row.saved_at,
         # Just saved against the line's own facts as they stand right now, so nothing about
@@ -306,6 +319,7 @@ def drafts_for_orders(
     return {
         str(row.core_line_id): {
             "decision": row.decision,
+            "proposed": row.proposed,
             "saved_by": name or "",
             "saved_at": row.saved_at,
             "line_snapshot": row.line_snapshot,

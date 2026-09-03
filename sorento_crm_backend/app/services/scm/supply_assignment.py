@@ -636,6 +636,53 @@ def free_piles_at(
     return out
 
 
+def group_book_positions(assignment: Assignment) -> Dict[str, float]:
+    """Each ownership group's WHOLE OPEN BOOK, in one signed number (R-M, 3 Sep 2026).
+
+    `free_piles_at` above states a pile AS IT STOOD on a date, which is the right question
+    of the group that OWNS it - its own earlier lines have queued, its later ones have not.
+    It is the wrong question of a group being asked to lend, and the captain's production
+    cell is what that costs: `BRW-IB` held 2,237 on hand against 2,684 of open IB demand,
+    1,708 due on or before 5 October and 976 after, and the pile read 785 free on 5 October
+    because the 976 was never subtracted. The ladder then proposed a BB line "4 from
+    BRW-IB ... free stock is owed to nobody", off a group 447 short on its own book.
+
+    So a lending group's offer is bounded by this: what it holds and what the assignment
+    counts as coming (an overdue document is not supply, R31 - it is in `uncounted` and
+    never in `supply`), less ALL of its open demand, less any CONFIRMED hold another group
+    has already taken out of it. A same-group hold is not subtracted - the line holding it
+    is in this group's own demand already, and taking it twice would make every pinned
+    group read short.
+
+    `group -> position`, negative when the group is short. `POOL_GROUP` carries the site
+    pools' own book; a location with no ownership group carries the empty key, and neither
+    is a group the ladder may name. The CALLER decides what to do with a negative: this
+    states the book and bounds nothing on its own.
+    """
+    counted = {event.key for event in assignment.supply}
+    out: Dict[str, float] = {}
+    for event in assignment.supply:
+        group = _group_of(event.warehouse, event.is_pool)
+        out[group] = out.get(group, 0.0) + float(event.qty)
+    for row in assignment.lines:
+        line = row.line
+        if not line.warehouse and not line.is_pool:
+            # Unlocated demand is in no group's pile at all (BUCKET_UNLOCATED), so netting
+            # it against one would charge a group for an obligation it cannot be asked to
+            # meet.
+            continue
+        group = _group_of(line.warehouse, line.is_pool)
+        out[group] = out.get(group, 0.0) - float(line.open_qty)
+        for item in row.assigned:
+            if not item.pinned or item.event.key not in counted:
+                continue
+            lender = _group_of(item.event.warehouse, item.event.is_pool)
+            if lender == group:
+                continue
+            out[lender] = out.get(lender, 0.0) - float(item.qty)
+    return {group: _round(value) for group, value in out.items()}
+
+
 def _identity(item) -> tuple:
     """A stable tie-break for a step: the document, then the line, then the key."""
     if isinstance(item, _Open):
@@ -730,6 +777,7 @@ __all__ = [
     "assign",
     "effective_date",
     "free_piles_at",
+    "group_book_positions",
     "month_axis",
     "month_key",
     "parse_supply_key",
