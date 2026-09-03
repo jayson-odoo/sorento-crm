@@ -124,20 +124,24 @@ agent-browser evidence on :3160 via the sidebar.
 - **AC-I1** `[FE]` Typing 500 in a line whose POs cover 409 keeps 500 in the input; no red banner; Create SPO stays enabled.
 - **AC-I2** `[FE]` Create SPO opens "Review before creating" listing that line as "Asked 500, POs cover 409, SPO will be 409"; over-ticked SOs listed as part-covered; lines with no location listed.
 - **AC-I3** `[FE]` Confirm sends the same payload as today; Cancel returns to the planner unchanged.
-- **AC-I4** `[BE]` unchanged: `create` caps at PO cover (existing tests).
+- **AC-I4** `[BE]` `create` with qty 500 on a line packed 500 whose POs cover 409 writes an SPO line of 500, `source_ref.pulls` totalling 409, and the source PO lines advance by 409 only.
+- **AC-I5** `[BE]` A line with no open PO and a supplier is convertible; `create` writes its SPO line with no pulls.
+- **AC-I6** `[FE]` The review dialog states "Asked 500, POs cover 409, 91 without PO backing" for that line.
 
 ## J. Class (R3)
 
 - **AC-J1** `[BE]` A book line whose sales order has `demand_class = project` returns `demand_class: 'project'`; an inquiry row returns `demand_class: 'project'` and `kind: 'project'`.
-- **AC-J2** `[BE]` Cascade order: inquiry rows, then project-class book lines, then the rest, by delivery date.
+- **AC-J2** `[BE]` Cascade order: Project demand (inquiry rows and Project-type SO lines merged by delivery date), then the rest by delivery date; a project SO line that has an inquiry row appears once, as the inquiry row.
 - **AC-J3** `[FE]` Class column shows the SO list's Project / Retail / Unclassified pill; inquiry rows read "Project · inquiry".
 
 ## K. SO detail (R4)
 
 - **AC-K1** `[FE]` `Linked to` sits immediately after `Outstanding qty` in the lines grid and is visible at 1280 without horizontal scroll.
 
-## L. PO Allocated to (R5, after the captain picks A or B)
+## L. Placements lightbox on PO and SO lines (R5)
 
-- **AC-L1** `[FE]` One table for the PO (A) with Line / Placed on / Document / Customer / Qty / Lands at / ETA and a group row per PO line stating Outstanding · Placed · Free.
-- **AC-L2** `[FE]` An SPO row shows the SPO number as a link, the packing list, and `Lands at` as the warehouse split; no "Needed at".
-- **AC-L3** `[FE]` Dedicated sales orders appear as rows of kind Dedicated with their qty; no chips.
+- **AC-L1** `[FE]` PO detail lines grid has a **Placed** column; its figure is a button; clicking opens `Placed on · <code>` with a DataGrid of Placed on / Document / Customer / Qty / Lands at / ETA and a footer `Outstanding N · Placed M · Free F`.
+- **AC-L2** `[FE]` An SPO row shows the SPO number as a link and the packing list; a dedication shows a Dedicated pill and the SO; no "Needed at" anywhere.
+- **AC-L3** `[FE]` The "Allocated to" card no longer renders on the PO detail.
+- **AC-L4** `[FE]` SO detail lines grid shows **Linked** as a figure button; clicking opens `Linked to · <code>` with Kind / Document / Qty / Lands at / ETA / Late rows; a line with no links shows a dash and no button.
+- **AC-L5** `[E2E]` After Create SPO on :3160, the source PO line's Placed figure opens the dialog naming the SPO and packing list; the covered SO line's Linked figure opens the dialog naming the SPO.

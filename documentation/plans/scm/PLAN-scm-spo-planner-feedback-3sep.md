@@ -238,7 +238,7 @@ S1 → S2 → S3 → S4 → S5 (BE test-first, then FE) → S7 (BE test-first) �
 
 ## 5. Round 2 (captain, 3 Sep late, on :3160 after S1-S7)
 
-**Status:** PROPOSAL, awaiting Lavish markup. Measured facts first, then slices R1-R5.
+**Status:** APPROVED by the captain 3 Sep late ("ok good to go" on Lavish, after rulings: cap removed, lightbox not card, one Project group). Measured facts first, then slices R1-R5.
 
 | Saw | Measured cause |
 | --- | --- |
@@ -259,22 +259,52 @@ S1 → S2 → S3 → S4 → S5 (BE test-first, then FE) → S7 (BE test-first) �
 
 - Input accepts any whole number; no live clamp, no live red banner, Create SPO enabled whenever any line has qty > 0 (split mismatch still blocks, it is arithmetic).
 - Create SPO opens **Review before creating**: per line, "Asked N, POs cover M, SPO will be M" when N > M; "Ticked SOs ask X, this SPO covers Y" when over-ticked; "No location" when no split. Confirm sends today's payload. The server caps at PO cover exactly as it does now (doctrine: an SPO only pulls from a PO; unchanged).
-- OPEN for the captain: keep the server cap (SPO qty can never exceed what open POs cover) - yes/no. The plan assumes yes.
+- **Captain's ruling (Lavish, 3 Sep late): remove the cap too.** `create` takes `need = min(requested,
+  packed)`; the PO cascade pulls what open POs cover and the rest of the line is written WITHOUT a
+  PO pull (`source_ref.pulls` names only the covered part; `no_po_qty` = the rest). A line with no
+  open PO at all is convertible (its `reason` stays as information, `cannot_convert` is only true
+  for a line with no supplier). `suggested_qty` stays the PO-covered figure as the DEFAULT. The
+  review dialog says "Asked 500, POs cover 409, 91 without PO backing". Tests
+  `test_create_refuses_when_nothing_ticked_has_a_po_behind_it` and `test_suggest_with_no_open_po_at_all_cannot_convert_and_names_why`
+  flip to the new rule (kept as tests of the new behaviour, not deleted).
 
 ### R3. Class = the sales order's own class
 
 - Coverage rows carry `demand_class` (`sales_orders.demand_class`); the Class column prints it (Project / Retail / Unclassified) with the SO list's own `demandClassBadge`. An order-inquiry row prints "Project · inquiry".
 - Internal `kind` (inquiry vs book line) is unchanged; it decides where the link is written.
-- Cascade order becomes: inquiry rows, then book lines with `demand_class = project`, then the rest, each by delivery date. OPEN: confirm this order.
+- **Captain's ruling (3 Sep late):** two groups. Project demand = inquiry rows AND Project-type SO lines
+  merged by delivery date (an inquiry row is a project SO line that went through the inquiry flow, so
+  they are one group, not two); then Retail by delivery date. A project SO line that already has an
+  inquiry row appears once, as the inquiry row (that is where the link is written).
 
 ### R4. SO detail: Linked to beside Outstanding
 
 - `SalesOrderDetail` lines: `linked_to` column moves to sit after `outstanding_qty`; default visible.
 
-### R5. PO "Allocated to": one flat table
+### R5. Placements as a lightbox off the lines grid, PO and SO alike
+
+**Captain's ruling (Lavish, 3 Sep late):** not a card under the grid - "click the line in the lines table
+and open the lightbox popup that shows this allocation", and "apply this for SO also".
+
+- **PO detail** `PurchaseOrderDetail` lines grid: new column **Placed** = sum of placements on the
+  line (SPO pulls + inquiry links + dedications), a `PlanNumberButton`; click opens
+  `PlanRowDialog kind='placements'` titled `Placed on · <code>`; body = one DataGrid: Placed on
+  (SPO pill + number link / inquiry number / Dedicated pill), Document (packing list or sales order,
+  link), Customer, Qty, Lands at, ETA; footer `Outstanding N · Placed M · Free F`. Data =
+  `PurchaseOrderService._allocations_for` as today (already on the PO payload). The
+  `PurchaseOrderAllocations` card is removed.
+- **SO detail** `SalesOrderDetail` lines grid: the `Linked to` column becomes **Linked** = sum of
+  link qty as a `PlanNumberButton` (dash when none); click opens `PlanRowDialog kind='links'`
+  titled `Linked to · <code>`; body = DataGrid: Kind pill (SPO / PO), Document (link), Qty, Lands at,
+  ETA, Late; data = the line's existing `linked_to` array. Inline multi-link text is gone.
+- Both dialogs are the shared `PlanRowDialog` shell (S2 description rule, no context string).
+
+Superseded proposal A/B text kept below for the record.
+
+#### (superseded) PO "Allocated to": one flat table
 
 Proposal A (recommended): one DataGrid for the whole PO. Columns: **Line** (product code · location · delivery date), **Placed on** (SPO pill + number as a link, or inquiry number), **Document** (packing list or sales order, link), **Customer**, **Qty**, **Lands at** (warehouse split, `BRW-BB 135`), **ETA**. Group header row per PO line: `Outstanding 209 · Placed 135 · Free 74`. "Dedicated to" becomes rows of kind **Dedicated** (SO number, qty) in the same table. "Needed at" column is gone (it was the split).
 Proposal B: keep the blocks, drop the three-figure line to the group row, drop "Dedicated to" chips into rows, fix the SPO row to `Lands at`.
 Both keep `PurchaseOrderService._allocations_for` as the source; FE only.
 
-Order: R3, R4 (clear) → R2 → R1 → R5 (after the captain picks A or B).
+Order: R3, R4 → R2 → R5 → R1. R3 order ruled (one Project group).
