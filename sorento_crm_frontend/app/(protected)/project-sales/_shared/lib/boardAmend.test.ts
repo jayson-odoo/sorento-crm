@@ -16,13 +16,14 @@ import {
   amendDraftFrom,
   amendSummary,
   borrowCandidatesOf,
+  canQuickSave,
   confirmLineFrom,
   decisionFromAmendDraft,
   suggestedDecisionFor,
   suggestionDraftFrom,
 } from './boardAmend';
 import { buildBoard, type BoardDemandLine } from './__testsupport__/boardFixture';
-import type { BoardContribution } from '../types/fulfilmentPlanning.types';
+import type { BoardContribution, BoardDraft } from '../types/fulfilmentPlanning.types';
 
 const TODAY = '2026-08-18';
 
@@ -666,6 +667,58 @@ describe('suggestedDecisionFor: the quick-save decision', () => {
     expect(decision.reserve).toEqual([
       { warehouse_id: 'wh-BRW-BB', location: 'BRW-BB', qty: '40' },
     ]);
+  });
+});
+
+/**
+ * D15: the one predicate the list view, the dialog's select column, "Save all suggested" and
+ * this round's own row/cell/board-wide icons all wrote out by hand as the same three clauses.
+ * A truth table over the three, and the empty draft that every other test already assumes.
+ */
+describe('canQuickSave', () => {
+  const EMPTY_DRAFT: BoardDraft = {};
+
+  it('is eligible when covered, unplannable and drafted are all false', () => {
+    const contribution = contributionOf({ 'WESERP10B|BRW-BB': '40' });
+    expect(contribution.covered).toBe(false);
+    expect(contribution.unplannable).toBeFalsy();
+
+    expect(canQuickSave(contribution, EMPTY_DRAFT)).toBe(true);
+  });
+
+  it('is not eligible once covered - there is nothing to approve on a confirmed line', () => {
+    const contribution: BoardContribution = {
+      ...contributionOf({ 'WESERP10B|BRW-BB': '40' }),
+      covered: true,
+    };
+
+    expect(canQuickSave(contribution, EMPTY_DRAFT)).toBe(false);
+  });
+
+  it('is not eligible once unplannable - no fulfilment location, nothing to suggest', () => {
+    const contribution: BoardContribution = {
+      ...contributionOf({ 'WESERP10B|BRW-BB': '40' }),
+      unplannable: true,
+    };
+
+    expect(canQuickSave(contribution, EMPTY_DRAFT)).toBe(false);
+  });
+
+  it('is not eligible once a draft already exists for the key - a second save would overwrite it', () => {
+    const contribution = contributionOf({ 'WESERP10B|BRW-BB': '40' });
+    const draft: BoardDraft = { [contribution.key]: { verdict: 'approved' } };
+
+    expect(canQuickSave(contribution, draft)).toBe(false);
+  });
+
+  it('a covered line already carrying an amended draft is still not eligible', () => {
+    const contribution: BoardContribution = {
+      ...contributionOf({ 'WESERP10B|BRW-BB': '40' }),
+      covered: true,
+    };
+    const draft: BoardDraft = { [contribution.key]: { verdict: 'amended' } };
+
+    expect(canQuickSave(contribution, draft)).toBe(false);
   });
 });
 

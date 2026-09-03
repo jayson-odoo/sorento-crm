@@ -27,6 +27,7 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 }));
 
 import { FulfilmentBoardListView } from './FulfilmentBoardListView';
+import { suggestedDecisionFor } from '../../_shared/lib/boardAmend';
 
 function contribution(overrides: Partial<BoardContribution> = {}): BoardContribution {
   return {
@@ -62,19 +63,37 @@ function renderView(
     contributions?: BoardContribution[];
     draft?: BoardDraft;
     onDecide?: (key: string, decision: BoardDecision | null) => void;
+    onDecideMany?: (keys: string[]) => Promise<{ saved: number; failed: number }>;
     isLoading?: boolean;
   } = {},
 ) {
+  const rows = overrides.contributions ?? [contribution()];
   const onDecide = overrides.onDecide ?? vi.fn();
+  // D15: the same quiet-bulk path the panel wires up for real, standing in here for it - each
+  // key's own suggestion, posted through the same `onDecide` a test already reads, so the
+  // existing "bulk quick save" assertions on `onDecide`'s own calls still hold.
+  const onDecideMany =
+    overrides.onDecideMany ??
+    vi.fn(async (keys: string[]) => {
+      let saved = 0;
+      for (const key of keys) {
+        const target = rows.find((entry) => entry.key === key);
+        if (!target) continue;
+        onDecide(key, suggestedDecisionFor(target));
+        saved += 1;
+      }
+      return { saved, failed: keys.length - saved };
+    });
   const utils = render(
     <FulfilmentBoardListView
-      contributions={overrides.contributions ?? [contribution()]}
+      contributions={rows}
       draft={overrides.draft ?? {}}
       onDecide={onDecide}
+      onDecideMany={onDecideMany}
       isLoading={overrides.isLoading}
     />,
   );
-  return { ...utils, onDecide };
+  return { ...utils, onDecide, onDecideMany };
 }
 
 beforeEach(() => {
@@ -157,7 +176,12 @@ describe('FulfilmentBoardListView', () => {
   it('updates the pill when the draft prop carries a decision for the row', async () => {
     const row = contribution();
     const { rerender } = render(
-      <FulfilmentBoardListView contributions={[row]} draft={{}} onDecide={vi.fn()} />,
+      <FulfilmentBoardListView
+        contributions={[row]}
+        draft={{}}
+        onDecide={vi.fn()}
+        onDecideMany={vi.fn()}
+      />,
     );
 
     expect(
@@ -169,6 +193,7 @@ describe('FulfilmentBoardListView', () => {
         contributions={[row]}
         draft={{ [row.key]: { verdict: 'approved' } }}
         onDecide={vi.fn()}
+        onDecideMany={vi.fn()}
       />,
     );
 
@@ -458,7 +483,7 @@ describe('FulfilmentBoardListView: quick save as suggested and per-line undo', (
   });
 
   it('saves every ticked row with the engine composition and clears the selection', async () => {
-    const { onDecide } = renderView({ contributions: threeRows() });
+    const { onDecide, onDecideMany } = renderView({ contributions: threeRows() });
 
     await screen.findByText('SO397450');
     selectAll();
@@ -468,6 +493,15 @@ describe('FulfilmentBoardListView: quick save as suggested and per-line undo', (
 
     fireEvent.click(screen.getByRole('button', { name: 'Save as suggested (3)' }));
 
+    // D15: posts through `onDecideMany` (the panel's own quiet-bulk path), never a loop of
+    // `onDecide` calls made here - the mock still forwards each key's suggestion to `onDecide`
+    // for the assertions below to read, but the PROP actually reached has to be this one.
+    expect(onDecideMany).toHaveBeenCalledTimes(1);
+    expect(onDecideMany).toHaveBeenCalledWith([
+      'so-1:line-10',
+      'so-2:line-20',
+      'so-3:line-30',
+    ]);
     expect(onDecide).toHaveBeenCalledTimes(3);
     for (const call of vi.mocked(onDecide).mock.calls) {
       expect(call[1]).toEqual(
@@ -534,5 +568,78 @@ describe('FulfilmentBoardListView: quick save as suggested and per-line undo', (
     fireEvent.click(screen.getByRole('button', { name: 'Undo SO397450 line 10' }));
 
     expect(onDecide).toHaveBeenCalledWith('so-1:line-10', null);
+  });
+});
+
+/**
+ * D15: a one-click save on the row itself, beside the pill - a planner who agrees with the
+ * engine no longer has to open the row and press Save inside it. Exactly one of the two icons
+ * (this one, or D14's Undo) ever shows for a given row, since `canQuickSave` already excludes
+ * a drafted line.
+ */
+describe('FulfilmentBoardListView: one-click save on the row (D15)', () => {
+  it('offers the save icon on an eligible row', async () => {
+    renderView();
+
+    expect(
+      await screen.findByRole('button', {
+        name: 'Save SO397450 line 10 as suggested',
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it('posts the engine composition through onDecide, as a single line', async () => {
+    const row = contribution();
+    const { onDecide } = renderView({ contributions: [row] });
+
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Save SO397450 line 10 as suggested',
+      }),
+    );
+
+    expect(onDecide).toHaveBeenCalledTimes(1);
+    expect(onDecide).toHaveBeenCalledWith(
+      row.key,
+      expect.objectContaining({ verdict: 'approved', buy_qty: '43' }),
+    );
+  });
+
+  it('offers no save icon on a covered row', async () => {
+    renderView({
+      contributions: [
+        contribution({
+          covered: true,
+          decision: {
+            revision_no: 1,
+            timely_spo_qty: '0',
+            reserve: [],
+            borrow: [],
+            buy_qty: '43',
+          },
+        }),
+      ],
+    });
+
+    await screen.findByText('SO397450');
+    expect(
+      screen.queryByRole('button', { name: /as suggested$/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('shows Undo, never the save icon, once the row carries a draft', async () => {
+    const row = contribution();
+    renderView({
+      contributions: [row],
+      draft: { [row.key]: { verdict: 'approved' } },
+    });
+
+    await screen.findByText('SO397450');
+    expect(
+      screen.getByRole('button', { name: 'Undo SO397450 line 10' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /as suggested$/ }),
+    ).not.toBeInTheDocument();
   });
 });

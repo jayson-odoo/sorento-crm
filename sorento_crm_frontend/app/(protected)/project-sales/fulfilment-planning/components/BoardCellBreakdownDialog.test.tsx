@@ -47,6 +47,7 @@ vi.mock('../../_shared/services/fulfilmentPlanningService', () => ({
 }));
 
 import { BoardCellBreakdownDialog, sourceAt } from './BoardCellBreakdownDialog';
+import { suggestedDecisionFor } from '../../_shared/lib/boardAmend';
 import { LADDER_VERSION } from '../../_shared/lib/supplyVocabulary';
 import {
   buildBoard,
@@ -110,7 +111,22 @@ function renderDialog(
   freeStock: Record<string, string> = {},
   draft: BoardDraft = {},
 ) {
+  const cell = cellOf(lines, freeStock);
   const onDecide = vi.fn();
+  // D15: the same quiet-bulk path the panel wires up for real, standing in here for it - each
+  // key's own suggestion, composed off THIS cell's contributions, posted through the same
+  // `onDecide` every test already reads. A mock that merely forwarded keys without a
+  // composition would break every existing "Approve selected" assertion on `call[1]`.
+  const onDecideMany = vi.fn(async (keys: string[]) => {
+    let saved = 0;
+    for (const key of keys) {
+      const contribution = cell.contributions.find((entry) => entry.key === key);
+      if (!contribution) continue;
+      onDecide(key, suggestedDecisionFor(contribution));
+      saved += 1;
+    }
+    return { saved, failed: keys.length - saved };
+  });
   const onClose = vi.fn();
   // A client is needed even here (nothing in this describe block opens a query itself): every
   // item-flag chip now carries a Proof button (`ClassificationProofPopover`), and `useQuery`
@@ -121,15 +137,16 @@ function renderDialog(
   render(
     <QueryClientProvider client={client}>
       <BoardCellBreakdownDialog
-        cell={cellOf(lines, freeStock)}
+        cell={cell}
         bucketLabel="31 Aug 2026"
         draft={draft}
         onDecide={onDecide}
+        onDecideMany={onDecideMany}
         onClose={onClose}
       />
     </QueryClientProvider>,
   );
-  return { onDecide, onClose };
+  return { onDecide, onDecideMany, onClose };
 }
 
 /**
@@ -259,6 +276,7 @@ describe('BoardCellBreakdownDialog: the cell summary, at the top', () => {
           bucketLabel="31 Aug 2026"
           draft={{}}
           onDecide={vi.fn()}
+          onDecideMany={vi.fn()}
           onClose={vi.fn()}
         />
       </QueryClientProvider>,
@@ -538,6 +556,7 @@ describe('BoardCellBreakdownDialog: the table', () => {
           bucketLabel="31 Aug 2026"
           draft={{}}
           onDecide={vi.fn()}
+          onDecideMany={vi.fn()}
           onClose={vi.fn()}
         />
       </QueryClientProvider>,
@@ -621,6 +640,7 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
           bucketLabel="31 Aug 2026"
           draft={{}}
           onDecide={vi.fn()}
+          onDecideMany={vi.fn()}
           onClose={vi.fn()}
         />
       </QueryClientProvider>,
@@ -1136,6 +1156,7 @@ describe('BoardCellBreakdownDialog: the actions can never be covered', () => {
           bucketLabel="31 Aug 2026"
           draft={{}}
           onDecide={vi.fn()}
+          onDecideMany={vi.fn()}
           onClose={onClose}
         />
       </QueryClientProvider>,
@@ -1208,6 +1229,7 @@ describe('BoardCellBreakdownDialog: the family lightbox, and its two tabs', () =
           bucketLabel="31 Aug 2026"
           draft={{}}
           onDecide={vi.fn()}
+          onDecideMany={vi.fn()}
           onClose={vi.fn()}
         />
       </QueryClientProvider>,
@@ -1367,6 +1389,7 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
           bucketLabel="28 Sep 2026"
           draft={{}}
           onDecide={vi.fn()}
+          onDecideMany={vi.fn()}
           onClose={vi.fn()}
         />
       </QueryClientProvider>,
@@ -1446,6 +1469,7 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
           bucketLabel="31 Aug 2026"
           draft={{}}
           onDecide={vi.fn()}
+          onDecideMany={vi.fn()}
           onClose={vi.fn()}
         />
       </QueryClientProvider>,
@@ -1477,6 +1501,7 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
           bucketLabel="31 Aug 2026"
           draft={{}}
           onDecide={vi.fn()}
+          onDecideMany={vi.fn()}
           onClose={vi.fn()}
         />
       </QueryClientProvider>,
@@ -1567,6 +1592,7 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
           bucketLabel="28 Sep 2026"
           draft={{}}
           onDecide={vi.fn()}
+          onDecideMany={vi.fn()}
           onClose={vi.fn()}
         />
       </QueryClientProvider>,
@@ -1643,6 +1669,7 @@ describe('BoardCellBreakdownDialog: what was left for this line', () => {
           bucketLabel="31 Aug 2026"
           draft={{}}
           onDecide={vi.fn()}
+          onDecideMany={vi.fn()}
           onClose={vi.fn()}
         />
       </QueryClientProvider>,
@@ -2065,14 +2092,39 @@ describe('BoardCellBreakdownDialog: quick save as suggested and per-line undo', 
     );
   });
 
+  /**
+   * D15: both bulk verbs post through `onDecideMany` now, not a loop of `onDecide` calls -
+   * the panel's own quiet-bulk path, one toast for the whole press instead of D14's one per
+   * line. `renderDialog`'s own `onDecideMany` mock still composes each key's suggestion and
+   * forwards it to `onDecide` (the assertions above and below read that), but the PROP
+   * actually reached has to be `onDecideMany` for that one-toast behaviour to exist at all.
+   */
+  it('Approve selected posts through onDecideMany, not a loop of onDecide', () => {
+    const { onDecideMany } = renderDialog(threeLines());
+    openLines();
+
+    selectAll();
+    fireEvent.click(screen.getByRole('button', { name: 'Approve selected' }));
+
+    expect(onDecideMany).toHaveBeenCalledTimes(1);
+    expect(onDecideMany.mock.calls[0][0].sort()).toEqual(
+      [
+        'so-a|1|WESERP10B|2026-08-31',
+        'so-b|2|WESERP10B|2026-08-31',
+        'so-c|3|WESERP10B|2026-08-31',
+      ].sort(),
+    );
+  });
+
   it('Save all suggested reaches every selectable line with no selection needed', () => {
-    const { onDecide } = renderDialog(threeLines());
+    const { onDecide, onDecideMany } = renderDialog(threeLines());
     openLines();
 
     fireEvent.click(
       screen.getByRole('button', { name: 'Save all suggested' }),
     );
 
+    expect(onDecideMany).toHaveBeenCalledTimes(1);
     expect(onDecide).toHaveBeenCalledTimes(3);
     const keys = onDecide.mock.calls.map((call) => call[0]).sort();
     expect(keys).toEqual(
@@ -2308,6 +2360,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
           bucketLabel="31 Aug 2026"
           draft={{}}
           onDecide={vi.fn()}
+          onDecideMany={vi.fn()}
           onClose={vi.fn()}
         />
       </QueryClientProvider>,
@@ -2687,6 +2740,7 @@ describe('BoardCellBreakdownDialog: the stock expansions belong to the cell', ()
           bucketLabel="31 Aug 2026"
           draft={{}}
           onDecide={vi.fn()}
+          onDecideMany={vi.fn()}
           onClose={vi.fn()}
         />
       </QueryClientProvider>
@@ -2955,6 +3009,7 @@ describe('BoardCellBreakdownDialog: how the Suggestion card names its sources', 
           bucketLabel="31 Aug 2026"
           draft={{}}
           onDecide={vi.fn()}
+          onDecideMany={vi.fn()}
           onClose={vi.fn()}
         />
       </QueryClientProvider>,
@@ -3041,6 +3096,7 @@ describe('BoardCellBreakdownDialog: how the Suggestion card names its sources', 
           bucketLabel="31 Aug 2026"
           draft={{}}
           onDecide={vi.fn()}
+          onDecideMany={vi.fn()}
           onClose={vi.fn()}
         />
       </QueryClientProvider>,
@@ -3105,6 +3161,7 @@ describe('BoardCellBreakdownDialog: how the Suggestion card names its sources', 
           bucketLabel="31 Aug 2026"
           draft={{}}
           onDecide={vi.fn()}
+          onDecideMany={vi.fn()}
           onClose={vi.fn()}
         />
       </QueryClientProvider>,
@@ -3167,6 +3224,7 @@ describe('BoardCellBreakdownDialog: the Decision card', () => {
           bucketLabel="31 Aug 2026"
           draft={draft}
           onDecide={vi.fn()}
+          onDecideMany={vi.fn()}
           onClose={vi.fn()}
         />
       </QueryClientProvider>,
@@ -3551,6 +3609,7 @@ describe('BoardCellBreakdownDialog: S3 suggestion sentence, sticky toolbar, line
           bucketLabel="31 Aug 2026"
           draft={{}}
           onDecide={vi.fn()}
+          onDecideMany={vi.fn()}
           onClose={vi.fn()}
         />
       </QueryClientProvider>

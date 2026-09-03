@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { ChevronDown, ChevronRight, Undo2 } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Undo2 } from 'lucide-react';
 import { ColumnDef, RowSelectionState } from '@tanstack/react-table';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { Badge } from '@/components/ui/badge';
@@ -14,7 +14,7 @@ import { BoardDecisionPill } from './BoardDecisionPill';
 import { BoardLineDecisionPanel } from './BoardLineDecisionPanel';
 import { UnsavedDecisionPrompt, useDecisionRowExpansion } from './decisionRowExpansion';
 import { SupplyBar } from '../../_shared/components/SupplyBar';
-import { suggestedDecisionFor } from '../../_shared/lib/boardAmend';
+import { canQuickSave, suggestedDecisionFor } from '../../_shared/lib/boardAmend';
 import {
   COLOURS,
   LABELS,
@@ -47,11 +47,18 @@ export function FulfilmentBoardListView({
   contributions,
   draft,
   onDecide,
+  onDecideMany,
   isLoading,
 }: {
   contributions: BoardContribution[];
   draft: BoardDraft;
   onDecide: (key: string, decision: BoardDecision | null) => Promise<boolean> | void;
+  /**
+   * D15: the quiet-bulk path the board-wide "Save all suggested" and this view's own header
+   * button both post through, so several rows saved together toast once ("N lines saved · M
+   * to confirm") rather than the N separate "Line N saved" toasts D14 shipped with.
+   */
+  onDecideMany: (keys: string[]) => Promise<{ saved: number; failed: number }>;
   isLoading?: boolean;
 }) {
   /**
@@ -77,23 +84,16 @@ export function FulfilmentBoardListView({
     [rowSelection],
   );
   const saveSelectedAsSuggested = React.useCallback(() => {
-    for (const key of selectedKeys) {
-      const contribution = contributions.find((entry) => entry.key === key);
-      if (!contribution) continue;
-      onDecide(key, suggestedDecisionFor(contribution));
-    }
+    void onDecideMany(selectedKeys);
     setRowSelection({});
-  }, [selectedKeys, contributions, onDecide]);
+  }, [selectedKeys, onDecideMany]);
 
   const columns = React.useMemo<ColumnDef<BoardContribution>[]>(
     () => [
       // The repo's own select column (the users list uses the same one), so a quick save is
       // a bulk action like any other rather than a second selection mechanism.
       buildSelectColumn<BoardContribution>({
-        enableRow: (row) =>
-          !row.original.unplannable &&
-          !row.original.covered &&
-          !draft[row.original.key],
+        enableRow: (row) => canQuickSave(row.original, draft),
         disabledReason: (row) =>
           row.original.covered
             ? 'This line is already confirmed. Amend it to change what was decided.'
@@ -346,23 +346,39 @@ export function FulfilmentBoardListView({
         header: 'Verdict',
         // A PILL, and (D14) an Undo beside it once there is something a saved line can be
         // undone FROM - the only other way to shed one saved line today is the board-wide
-        // "Undo all", which is not this line's answer to a quick save taken by mistake.
+        // "Undo all", which is not this line's answer to a quick save taken by mistake. D15
+        // adds the OTHER icon, for the line that has not been saved at all: exactly one of
+        // the two ever shows, since `canQuickSave` already requires no draft.
         cell: ({ row }) => {
-          const key = row.original.key;
+          const contribution = row.original;
+          const key = contribution.key;
           const drafted = Boolean(draft[key]);
           return (
             <div className="flex min-w-0 items-center gap-1">
-              <BoardDecisionPill
-                contribution={row.original}
-                decision={draft[key] ?? null}
-              />
+              <BoardDecisionPill contribution={contribution} decision={draft[key] ?? null} />
+              {canQuickSave(contribution, draft) ? (
+                <Button
+                  type="button"
+                  mode="icon"
+                  variant="ghost"
+                  size="sm"
+                  title="Save as suggested"
+                  aria-label={`Save ${contribution.so_number} line ${contribution.line_no} as suggested`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onDecide(key, suggestedDecisionFor(contribution));
+                  }}
+                >
+                  <Check className="size-3.5" aria-hidden />
+                </Button>
+              ) : null}
               {drafted ? (
                 <Button
                   type="button"
                   mode="icon"
                   variant="ghost"
                   size="sm"
-                  aria-label={`Undo ${row.original.so_number} line ${row.original.line_no}`}
+                  aria-label={`Undo ${contribution.so_number} line ${contribution.line_no}`}
                   onClick={(event) => {
                     event.stopPropagation();
                     onDecide(key, null);
@@ -400,11 +416,7 @@ export function FulfilmentBoardListView({
       }
       rowSelection={rowSelection}
       onRowSelectionChange={setRowSelection}
-      enableRowSelection={(row) =>
-        !row.original.unplannable &&
-        !row.original.covered &&
-        !draft[row.original.key]
-      }
+      enableRowSelection={(row) => canQuickSave(row.original, draft)}
       toolbar={
         selectedKeys.length > 0 ? (
           <div className="flex flex-wrap items-center gap-2">

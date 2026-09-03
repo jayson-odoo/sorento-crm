@@ -148,6 +148,24 @@ or a rule: those live once on the Policies page.
   on one saved row (list or dialog) returns that row alone to Suggested and deletes its
   server draft, with no confirmation dialog - it is reversible with another quick save - and
   every other row's own state is untouched.
+- AC-4.8 (D15, captain 3 Sep) One-click save without opening a row, on every surface, and a
+  board-wide button: (a) the list's Verdict column carries a save icon beside the pill on
+  every row a quick save could touch (not covered, not unplannable, not already drafted) -
+  pressing it saves that ONE line with the engine's own composition and toasts "Line N saved
+  · K to confirm", the same as today's Save-inside-the-row; the icon and the per-line Undo
+  never both show, since a drafted row is never quick-save-eligible; (b) a grid cell carries
+  its own small icon in its own corner, a save (posts every eligible line in the cell in one
+  press) when the cell holds at least one eligible line, or an Undo (posts every drafted line
+  in the cell) when it holds only drafted ones and nothing left to save - neither icon opens
+  the cell underneath it; (c) the board's action bar carries a "Save all suggested (N)"
+  button, left of the gear, where N is every quick-save-eligible line the board is CURRENTLY
+  SHOWING (product search and the decision-strip filter narrow it, a day-window scroll does
+  not hide a line from the count on the other views) - pressing it saves all N with one toast
+  ("N lines saved · M to confirm"), disabled at zero, no confirmation dialog since Undo all
+  reverses it; (d) every bulk quick save on this screen - the list's own "Save as suggested
+  (N)", the dialog's "Approve selected" and "Save all suggested", the cell icon and the
+  board-wide button - posts through the same quiet-bulk path and toasts EXACTLY ONCE for the
+  whole press, closing the D14 rough edge where a bulk quick save toasted once per line.
 
 ## S5 upload
 

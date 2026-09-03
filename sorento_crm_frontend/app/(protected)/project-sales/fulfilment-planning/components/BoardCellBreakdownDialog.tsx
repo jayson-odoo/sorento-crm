@@ -48,7 +48,7 @@ import {
 import type { SuggestionRow } from '../../_shared/lib/supplyVocabulary';
 import { LADDER_VERSION } from '../../_shared/lib/supplyVocabulary';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
-import { suggestedDecisionFor } from '../../_shared/lib/boardAmend';
+import { canQuickSave } from '../../_shared/lib/boardAmend';
 import { BoardDecisionPill } from './BoardDecisionPill';
 import { BoardLineDecisionPanel } from './BoardLineDecisionPanel';
 import { BoardTrailPopover, ItemFlagChips } from './BoardTrailPopover';
@@ -106,6 +106,7 @@ export function BoardCellBreakdownDialog({
   draft,
   poolSharePct,
   onDecide,
+  onDecideMany,
   onClose,
 }: {
   cell: BoardCell;
@@ -118,6 +119,12 @@ export function BoardCellBreakdownDialog({
    */
   poolSharePct?: number;
   onDecide: (key: string, decision: BoardDecision | null) => Promise<boolean> | void;
+  /**
+   * D15: the quiet-bulk path "Approve selected" and "Save all suggested" both post through -
+   * each key's own suggestion, one toast for the whole press, rather than D14's N separate
+   * "Line N saved" toasts.
+   */
+  onDecideMany: (keys: string[]) => Promise<{ saved: number; failed: number }>;
   onClose: () => void;
 }) {
   // NO RANK, ANYWHERE ON THIS TABLE (R8, the captain 27 Aug: "rank goes"). Under ladder v4
@@ -404,15 +411,15 @@ export function BoardCellBreakdownDialog({
    * page reads it as Decided "-". An approval IS the suggested composition, which is exactly
    * what `BoardLineDecisionPanel`'s own untouched Save posts - so approving in bulk and
    * "saving as suggested" were one verb with two buttons, and this is the one.
+   *
+   * D15: posts through `onDecideMany` now, not a loop of `onDecide` calls - the composition is
+   * still each key's own suggestion, computed the same way, but the board posts them quietly
+   * and toasts once for the whole press instead of once per line.
    */
   const approveSelected = React.useCallback(() => {
-    for (const key of selectedKeys) {
-      const contribution = cell.contributions.find((entry) => entry.key === key);
-      if (!contribution) continue;
-      onDecide(key, suggestedDecisionFor(contribution));
-    }
+    void onDecideMany(selectedKeys);
     setRowSelection({});
-  }, [selectedKeys, cell.contributions, onDecide]);
+  }, [selectedKeys, onDecideMany]);
 
   /**
    * D14: every line in the cell a quick save could still touch - not covered (there is
@@ -421,17 +428,12 @@ export function BoardCellBreakdownDialog({
    * second look" button.
    */
   const suggestibleContributions = React.useMemo(
-    () =>
-      cell.contributions.filter(
-        (entry) => !entry.unplannable && !entry.covered && !draft[entry.key],
-      ),
+    () => cell.contributions.filter((entry) => canQuickSave(entry, draft)),
     [cell.contributions, draft],
   );
   const saveAllSuggested = React.useCallback(() => {
-    for (const contribution of suggestibleContributions) {
-      onDecide(contribution.key, suggestedDecisionFor(contribution));
-    }
-  }, [suggestibleContributions, onDecide]);
+    void onDecideMany(suggestibleContributions.map((entry) => entry.key));
+  }, [suggestibleContributions, onDecideMany]);
 
   /**
    * The muted line under the title, in the shape the family's shell wants it (`PlanRowDialog`,
@@ -459,10 +461,7 @@ export function BoardCellBreakdownDialog({
         // of "Save all suggested": a quick save would overwrite an amended draft with the
         // engine's own composition, which is the one thing a planner who amended it does
         // not want. Undo is how a saved row comes back into play.
-        enableRow: (row) =>
-          !row.original.unplannable &&
-          !row.original.covered &&
-          !draft[row.original.key],
+        enableRow: (row) => canQuickSave(row.original, draft),
         disabledReason: (row) =>
           row.original.covered
             ? 'This line is already confirmed. Amend it to change what was decided.'
@@ -1171,11 +1170,7 @@ export function BoardCellBreakdownDialog({
                 // which is the very defect the covered state exists to stop. Nor is a row that
                 // already carries a draft - a bulk verb would overwrite an amended composition
                 // with the engine's own, which is the list view's rule too.
-                enableRowSelection={(row) =>
-                  !row.original.unplannable &&
-                  !row.original.covered &&
-                  !draft[row.original.key]
-                }
+                enableRowSelection={(row) => canQuickSave(row.original, draft)}
                 toolbar={
                   <div className="flex flex-wrap items-center gap-2">
                     <ListSearchInput

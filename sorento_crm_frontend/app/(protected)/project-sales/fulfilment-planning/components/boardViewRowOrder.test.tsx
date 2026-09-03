@@ -141,13 +141,20 @@ describe('the grid and the list agree about the product order', () => {
         cells={[]}
         draft={{}}
         onOpenCell={() => {}}
+        onDecideMany={vi.fn()}
+        onUndoMany={vi.fn()}
       />,
     );
     const gridSequence = matrixProducts();
     grid.unmount();
 
     render(
-      <FulfilmentBoardListView contributions={ordered} draft={{}} onDecide={vi.fn()} />,
+      <FulfilmentBoardListView
+        contributions={ordered}
+        draft={{}}
+        onDecide={vi.fn()}
+        onDecideMany={vi.fn()}
+      />,
     );
     const listSequence = listProducts();
 
