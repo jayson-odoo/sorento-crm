@@ -342,7 +342,9 @@ export function CoveredByStockView({
       tableLayout={{ width: 'fixed', columnsResizable: true, headerSticky: true }}
       // Keeps the column names on screen while the body scrolls: 193 rows is far enough to
       // forget what a number column was.
-      tableClassNames={{ headerSticky: 'sticky top-0 z-10 bg-background shadow-sm' }}
+      tableClassNames={{
+        headerSticky: 'sticky top-0 z-(--z-sticky-content) bg-background shadow-sm',
+      }}
       emptyMessage="No covered line matches this search."
     >
       <Card>

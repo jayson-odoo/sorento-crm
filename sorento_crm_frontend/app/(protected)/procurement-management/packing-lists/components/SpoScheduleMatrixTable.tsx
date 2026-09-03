@@ -7,8 +7,8 @@ import type { SpoMatrixBucket, SpoMatrixCell, SpoMatrixRow } from './spoSchedule
 
 const ROW_COL = 'w-[220px] min-w-[220px] max-w-[220px]';
 const BUCKET_COL = 'min-w-[110px]';
-const Z_PINNED = 'z-20';
-const Z_CORNER = 'z-30';
+const Z_PINNED = 'z-(--z-sticky-content)';
+const Z_CORNER = 'z-(--z-sticky-content-corner)';
 const EM_DASH = '-';
 const intFmt = new Intl.NumberFormat('en-MY', { maximumFractionDigits: 0 });
 function fmtInt(value: number | null | undefined): string {
