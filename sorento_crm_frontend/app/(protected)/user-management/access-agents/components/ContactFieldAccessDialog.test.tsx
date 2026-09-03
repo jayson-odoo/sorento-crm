@@ -57,7 +57,11 @@ describe('ContactFieldAccessDialog', () => {
     // An inherited value must say so, or an admin cannot tell an explicit deny
     // from an untouched default - and those behave differently later.
     expect(await screen.findByRole('button', { name: 'ETA: Follows agent (allowed)' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Gatepass: Allowed for this contact' })).toBeInTheDocument();
+    // The dialog's draft mirrors the server state through a `useEffect`, one
+    // render tick after the fetch resolves. `findByRole` above only proves
+    // the fetch settled, not that the effect has run, so assert with a
+    // retrying query rather than a one-shot `getByRole`.
+    expect(await screen.findByRole('button', { name: 'Gatepass: Allowed for this contact' })).toBeInTheDocument();
   });
 
   it('cycles a field through follow, allow and deny', async () => {
@@ -105,7 +109,13 @@ describe('ContactFieldAccessDialog', () => {
   it('cannot save with nothing changed', async () => {
     setup();
     await screen.findByRole('button', { name: 'ETA: Follows agent (allowed)' });
-    expect(screen.getByRole('button', { name: /save/i })).toBeDisabled();
+    // Save's disabled state comes from `dirty`, which compares against a
+    // draft the dialog copies from the fetched data via a `useEffect` - one
+    // render tick after the fetch resolves. Asserting immediately after the
+    // findByRole above can catch that tick between fetch and effect, where
+    // the draft is still empty and "dirty" reads non-empty. Wait for it to
+    // settle instead of asserting once.
+    await waitFor(() => expect(screen.getByRole('button', { name: /save/i })).toBeDisabled());
   });
 
   it('counts the exceptions so an admin sees this contact is not standard', async () => {
