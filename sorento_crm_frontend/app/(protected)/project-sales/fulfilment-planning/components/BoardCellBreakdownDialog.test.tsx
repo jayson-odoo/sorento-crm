@@ -839,7 +839,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
    * went in silence, which is the loss the prompt exists to prevent - so the close path routes
    * through the same prompt, and the dialog stays open until it is answered.
    */
-  it('asks before the dialog itself closes over an unsaved edit (C5)', () => {
+  it('asks before the dialog itself closes over an unsaved edit (C5)', async () => {
     const { onClose } = renderDialog([demand()]);
     openLines();
     const key = 'so-a|1|WESERP10B|2026-08-31';
@@ -859,6 +859,9 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
     // Keep editing leaves everything where it was: the dialog open and the row still typed in.
     fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }));
     expect(onClose).not.toHaveBeenCalled();
+    // The confirm AlertDialog's exit (M2-05) inerts the page behind it for
+    // one extra tick beyond the click - wait it out before the next query.
+    await waitFor(() => expect(screen.queryByText('Leave this decision unsaved?')).not.toBeInTheDocument());
     expect(screen.getByTestId(`line-decision-${key}`)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));

@@ -9,12 +9,15 @@ function TooltipProvider({ delayDuration = 0, ...props }: React.ComponentProps<t
   return <TooltipPrimitive.Provider data-slot="tooltip-provider" delayDuration={delayDuration} {...props} />;
 }
 
+/**
+ * A bare Root (M2-07) - no per-instance TooltipProvider. Exactly one
+ * TooltipProvider mounts app-wide, in ClientProviders.tsx: nesting a second
+ * one here would shadow it for every Tooltip underneath, which is what
+ * fragmented the delay into a per-toolbar (or even per-button) 0ms instead of
+ * one shared 700ms-first/300ms-sibling rhythm.
+ */
 function Tooltip({ ...props }: React.ComponentProps<typeof TooltipPrimitive.Root>) {
-  return (
-    <TooltipProvider>
-      <TooltipPrimitive.Root data-slot="tooltip" {...props} />
-    </TooltipProvider>
-  );
+  return <TooltipPrimitive.Root data-slot="tooltip" {...props} />;
 }
 
 function TooltipTrigger({ ...props }: React.ComponentProps<typeof TooltipPrimitive.Trigger>) {
@@ -24,10 +27,18 @@ function TooltipTrigger({ ...props }: React.ComponentProps<typeof TooltipPrimiti
 const tooltipVariants = cva(
   // z-[70] keeps tooltips above cards AND dialog overlays/content (both z-50);
   // rendered through a Portal (below) so a card's stacking context can't clip them.
-  // `origin-(--radix-popper-content-transform-origin)` scales it from the
-  // trigger (S8-02) instead of its own center - Radix sets that variable to
-  // whichever side it actually rendered on.
-  'z-[70] overflow-hidden rounded-md px-3 py-1.5 text-xs origin-(--radix-popper-content-transform-origin) animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95',
+  //
+  // No entry and no exit (M2-07). A tooltip is too small and too transient for
+  // a spring, and the frequency gate puts hover at "none or a fast opacity" -
+  // so this is the one surface with no motion at all. The transparent-to-opaque
+  // CSS transition keyed on `data-state` that used to sit here could not run in
+  // either direction and is gone rather than left as decoration: Radix mounts
+  // the content already carrying `delayed-open`/`instant-open` (its
+  // `stateAttribute` is only `closed` while the content is unmounted), so the
+  // entry has no starting value to travel from, and Radix's Presence waits on
+  // `animationend` alone, so a transition-only style unmounts on the closing
+  // frame.
+  'z-[70] overflow-hidden rounded-md px-3 py-1.5 text-xs',
   {
     variants: {
       variant: {

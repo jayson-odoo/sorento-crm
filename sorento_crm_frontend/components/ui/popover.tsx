@@ -4,11 +4,24 @@ import * as React from 'react';
 import { cn } from '@/lib/utils';
 import { Popover as PopoverPrimitive } from 'radix-ui';
 import { AnimatePresence, motion } from 'motion/react';
-import { surfaceTransition, surfaceVariants, useOpenState, useReducedMotion } from '@/lib/motion';
+import {
+  surfaceExitTransition,
+  surfaceTransition,
+  surfaceVariants,
+  useOpenState,
+  useReducedMotion,
+} from '@/lib/motion';
 
 // Mirrors the Root's open state so PopoverContent can gate its own
 // <AnimatePresence> (S8-01) - see the identical DialogOpenContext in dialog.tsx.
 const PopoverOpenContext = React.createContext(true);
+
+// Set by PopoverPortal (below) so PopoverContent can render the portal ITSELF,
+// from inside its own AnimatePresence gate (M2-04).
+type PopoverPortalOptions = {
+  container: React.ComponentProps<typeof PopoverPrimitive.Portal>['container'];
+};
+const PopoverPortalContext = React.createContext<PopoverPortalOptions | null>(null);
 
 function Popover({
   open: openProp,
@@ -36,7 +49,11 @@ function PopoverContent({
   ...props
 }: React.ComponentProps<typeof PopoverPrimitive.Content>) {
   const open = React.useContext(PopoverOpenContext);
+  const portal = React.useContext(PopoverPortalContext);
   const prefersReducedMotion = useReducedMotion();
+  const variants = surfaceVariants(prefersReducedMotion);
+  const transition = surfaceTransition(prefersReducedMotion, 'menu');
+  const exitTransition = surfaceExitTransition(prefersReducedMotion);
 
   // `PopoverPrimitive.Content` positions itself with an inline `transform`
   // (Radix Popper/floating-ui) that a motion.div rendered `asChild` would
@@ -49,29 +66,49 @@ function PopoverContent({
   // inline style on `Content` itself; the inner motion.div reads it via CSS
   // custom-property inheritance, which is also where the actual `scale`
   // animation runs, so the origin has to live there too (S8-02).
+  const content = (
+    <PopoverPrimitive.Content
+      forceMount
+      data-slot="popover-content"
+      align={align}
+      sideOffset={sideOffset}
+      className="z-50 outline-hidden"
+      {...props}
+    >
+      <motion.div
+        className={cn(
+          'w-72 rounded-md border border-border bg-popover p-4 text-popover-foreground shadow-md shadow-black/5 origin-(--radix-popover-content-transform-origin)',
+          className,
+        )}
+        initial={variants.initial}
+        animate={variants.animate}
+        exit={{ ...variants.exit, transition: exitTransition }}
+        transition={transition}
+      >
+        {/* The portal signal is context, so it would otherwise reach a
+            PopoverContent nested in this one's body and portal that one out to
+            the document root too, away from the surface it belongs to. */}
+        <PopoverPortalContext.Provider value={null}>{children}</PopoverPortalContext.Provider>
+      </motion.div>
+    </PopoverPrimitive.Content>
+  );
+
+  // Portalled callers (PopoverPortal, below) get the portal from HERE, inside
+  // the gate, with `forceMount` - the same shape DropdownMenuContent uses. A
+  // Radix Portal wrapped around this component from the outside drops its whole
+  // subtree the instant the root's `open` flips false, which took the exit
+  // spring with it: every SearchableSelect dropdown closed in ~21ms with no
+  // fade, against ~300ms for the same pair used unportalled (M2-04).
   return (
     <AnimatePresence>
-      {open && (
-        <PopoverPrimitive.Content
-          forceMount
-          data-slot="popover-content"
-          align={align}
-          sideOffset={sideOffset}
-          className="z-50 outline-hidden"
-          {...props}
-        >
-          <motion.div
-            className={cn(
-              'w-72 rounded-md border border-border bg-popover p-4 text-popover-foreground shadow-md shadow-black/5 origin-(--radix-popover-content-transform-origin)',
-              className,
-            )}
-            {...surfaceVariants(prefersReducedMotion)}
-            transition={surfaceTransition(prefersReducedMotion)}
-          >
-            {children}
-          </motion.div>
-        </PopoverPrimitive.Content>
-      )}
+      {open &&
+        (portal ? (
+          <PopoverPrimitive.Portal forceMount container={portal.container}>
+            {content}
+          </PopoverPrimitive.Portal>
+        ) : (
+          content
+        ))}
     </AnimatePresence>
   );
 }
@@ -84,9 +121,22 @@ function PopoverContent({
  * by that container's overflow the moment it flips to `side="top"` - the content is laid out at
  * the right coordinates yet never painted. Dialogs (`overflow-y-auto`) hit this constantly.
  * Wrap in this when the popover must escape its parent's overflow.
+ *
+ * This does not render Radix's Portal itself: it only tells PopoverContent to render one from
+ * inside its own AnimatePresence (M2-04). Wrapping from the outside is what killed the exit
+ * spring, and adding `forceMount` here instead would keep an empty portal div - plus a mounted
+ * PopoverContent - alive for every closed popover on the page, which the packing-list schedule
+ * matrix has one of per cell.
+ *
+ * The props are narrowed to what the signal can actually carry: anything else Radix's Portal
+ * takes (`forceMount`, `asChild`) would be silently dropped here, so it is a type error instead.
  */
-function PopoverPortal({ ...props }: React.ComponentProps<typeof PopoverPrimitive.Portal>) {
-  return <PopoverPrimitive.Portal {...props} />;
+function PopoverPortal({
+  children,
+  container,
+}: Pick<React.ComponentProps<typeof PopoverPrimitive.Portal>, 'children' | 'container'>) {
+  const value = React.useMemo(() => ({ container }), [container]);
+  return <PopoverPortalContext.Provider value={value}>{children}</PopoverPortalContext.Provider>;
 }
 
 export { Popover, PopoverContent, PopoverPortal, PopoverTrigger };

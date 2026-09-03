@@ -77,17 +77,31 @@ function Carousel({
     api?.scrollNext();
   }, [api]);
 
+  // Arrow keys go straight to the slide: Embla's `jump` argument skips its own
+  // scroll animation, and a keyboard-initiated action never animates
+  // (DESIGN-LANGUAGE section 3, frequency gate - M2-02). The next/previous
+  // buttons and drag keep the animated `scrollPrev()`/`scrollNext()` above, so
+  // this calls the api directly rather than widening those.
+  //
+  // `stopPropagation` beside each `preventDefault`, because a carousel inside a
+  // surface that ALSO handles arrows (AttachmentPreviewModal, a bubble-phase
+  // onKeyDown on the dialog panel) would otherwise run both handlers on one
+  // press and move two slides - and the next/previous buttons render inside
+  // this region, so a click on them leaves focus exactly where that happens.
+  // Only the two arrows are stopped; every other key still bubbles out.
   const handleKeyDown = React.useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
       if (event.key === 'ArrowLeft') {
         event.preventDefault();
-        scrollPrev();
+        event.stopPropagation();
+        api?.scrollPrev(true);
       } else if (event.key === 'ArrowRight') {
         event.preventDefault();
-        scrollNext();
+        event.stopPropagation();
+        api?.scrollNext(true);
       }
     },
-    [scrollPrev, scrollNext],
+    [api],
   );
 
   React.useEffect(() => {

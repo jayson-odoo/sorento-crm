@@ -102,7 +102,9 @@ export function SearchDialog({ trigger }: { trigger: ReactNode }) {
       <span className="contents" onClick={() => setOpen(true)}>
         {trigger}
       </span>
-      <CommandDialog open={open} onOpenChange={setOpen} className="sm:max-w-[680px]">
+      {/* Keyboard-triggered (Cmd/Ctrl+Shift+K): no scale, no spring
+          (DESIGN-LANGUAGE section 3, M2-01). */}
+      <CommandDialog open={open} onOpenChange={setOpen} motion={false} className="sm:max-w-[680px]">
         <CommandInput
           value={query}
           onValueChange={setQuery}

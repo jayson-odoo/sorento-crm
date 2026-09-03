@@ -26,6 +26,32 @@ export const SURFACE_SPRING: Transition = {
 };
 
 /**
+ * The menu/popper family (Popover, DropdownMenu and the rest of the menu
+ * primitives - M2-03) opens on a shorter response than a lightbox: a menu is
+ * a quick lookup next to the trigger, not a surface that takes over the
+ * screen, so `visualDuration` matches `--duration-base` (200ms) instead of
+ * `--duration-slow`.
+ */
+export const MENU_SPRING: Transition = {
+  type: 'spring',
+  bounce: 0,
+  visualDuration: 0.2,
+};
+
+/**
+ * The exit half of a lightbox close (M2-03/M2-04). Every surface in this
+ * file opens on its own response (0.3s for a lightbox, 0.2s for a menu) but
+ * closes on the same 0.2s - a close only has to get out of the way, not
+ * announce itself, so there is no reason to hold the lightbox's slower
+ * in-transition on the way out.
+ */
+export const SURFACE_SPRING_EXIT: Transition = {
+  type: 'spring',
+  bounce: 0,
+  visualDuration: 0.2,
+};
+
+/**
  * Under `prefers-reduced-motion: reduce` the spring collapses to a same-frame
  * opacity change - no scale, no travel, no overshoot (apple-design skill,
  * "Reduced motion & accessibility": a cross-fade, not a slide/spring).
@@ -34,9 +60,28 @@ export const REDUCED_MOTION_TRANSITION: Transition = {
   duration: 0.01,
 };
 
-/** The transition a surface should animate with, given the user's motion preference. */
-export function surfaceTransition(prefersReducedMotion: boolean | null): Transition {
-  return prefersReducedMotion ? REDUCED_MOTION_TRANSITION : SURFACE_SPRING;
+/**
+ * The transition a surface should ENTER with, given the user's motion
+ * preference and what kind of surface it is. `'lightbox'` (Dialog, Sheet,
+ * AlertDialog) is the default so every existing call site keeps its 0.3s
+ * response unchanged; `'menu'` (Popover, DropdownMenu and the rest of the
+ * menu family, M2-03) is 0.2s.
+ */
+export function surfaceTransition(
+  prefersReducedMotion: boolean | null,
+  kind: 'lightbox' | 'menu' = 'lightbox',
+): Transition {
+  if (prefersReducedMotion) return REDUCED_MOTION_TRANSITION;
+  return kind === 'menu' ? MENU_SPRING : SURFACE_SPRING;
+}
+
+/**
+ * The transition a surface should EXIT with (M2-03/M2-04) - always the
+ * shorter 0.2s response regardless of what it entered on, so a lightbox
+ * opens slower than it closes and a menu's open and close read the same.
+ */
+export function surfaceExitTransition(prefersReducedMotion: boolean | null): Transition {
+  return prefersReducedMotion ? REDUCED_MOTION_TRANSITION : SURFACE_SPRING_EXIT;
 }
 
 /**

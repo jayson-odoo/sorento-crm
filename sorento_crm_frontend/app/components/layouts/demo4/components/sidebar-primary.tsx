@@ -27,12 +27,7 @@ import { toAbsoluteUrl } from '@/lib/helpers';
 import { cn } from '@/lib/utils';
 import { useViewport } from '@/hooks/use-viewport';
 import { Button } from '@/components/ui/button';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 interface MenuItem {
   icon: React.ComponentType<{ className?: string }>;
@@ -134,8 +129,7 @@ export function SidebarPrimary() {
   }, [pathname]);
 
   return (
-    <TooltipProvider>
-      <div className="flex flex-col items-stretch shrink-0 gap-5 py-5 w-[70px] border-e border-input">
+    <div className="flex flex-col items-stretch shrink-0 gap-5 py-5 w-[70px] border-e border-input">
         <div
           ref={headerRef}
           className="hidden lg:flex items-center justify-center shrink-0"
@@ -219,6 +213,5 @@ export function SidebarPrimary() {
           />
         </div>
       </div>
-    </TooltipProvider>
   );
 }
