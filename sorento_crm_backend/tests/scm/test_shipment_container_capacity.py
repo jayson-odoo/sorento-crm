@@ -16,9 +16,12 @@ neighbours in this directory - `_seed_container_sizes` seeds the three real size
 from __future__ import annotations
 
 import uuid
+from datetime import date
 
 import pytest
 
+from app.models.procurement import InboundShipment, InboundShipmentLine, Supplier
+from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.scm import ContainerSize
 from app.services.error_handler import AppException
 from app.services.procurement_service import InboundShipmentService
@@ -203,3 +206,80 @@ def test_the_pi_payload_carries_no_fill_gauge_after_convert():
                     "container_size_id"):
             assert key not in out, key
         assert out["total_cbm"] == pytest.approx(27.1)
+
+
+# --------------------------------------------------------------------------------- #
+# S12 - the fill gauge reads a dims-only line's OWN carton volume, not zero
+# --------------------------------------------------------------------------------- #
+
+
+def test_a_dims_only_line_raises_total_cbm_on_the_fill_gauge():
+    """`_attach_capacity` used to sum `InboundShipmentLine.cbm` alone, so a line typed
+    with a pack size and its own carton L/W/H and no STORED cbm counted as zero here even
+    though `consolidated_packing_list.to_xlsx` derives a real figure for it live from those
+    same dimensions. `line_cbm` (S12) is the one rule both readers use now.
+
+    Seeded directly rather than through a proforma-invoice convert: the gauge is a property
+    of the SHIPMENT's own lines, and a dims-only line is exactly what a raw packing-list
+    upload (never touched a PI) looks like.
+    """
+    with pg_session() as db:
+        tag = uuid.uuid4().hex[:8].upper()
+        category = ProductCategory(
+            id=str(uuid.uuid4()),
+            category_code=f"ZZTCAP-CAT-{tag}",
+            category_name=f"ZZTCAP category {tag}",
+        )
+        uom = UnitOfMeasure(
+            id=str(uuid.uuid4()), uom_code=f"ZZTCAP{tag}"[:20], uom_name="pcs"
+        )
+        db.add_all([category, uom])
+        db.flush()
+        supplier = Supplier(
+            id=str(uuid.uuid4()),
+            supplier_code=f"ZZTCAP-{tag}"[:50],
+            supplier_name=f"ZZTCAP factory {tag}",
+            is_active=True,
+        )
+        product = Product(
+            id=str(uuid.uuid4()),
+            product_code=f"ZZTCAP-{tag}-DIMS",
+            product_name="dims-only product",
+            category_id=category.id,
+            base_uom_id=uom.id,
+            list_price=0,
+            is_active=True,
+        )
+        db.add_all([supplier, product])
+        db.flush()
+
+        shipment = InboundShipment(
+            id=str(uuid.uuid4()),
+            shipment_number=f"ZZTCAP-SH-{tag}",
+            shipment_date=date(2026, 8, 1),
+            shipping_container_number=f"ZZTCAP-U{tag}",
+            shipment_status="in_transit",
+        )
+        db.add(shipment)
+        db.flush()
+
+        line = InboundShipmentLine(
+            id=str(uuid.uuid4()),
+            shipment_id=shipment.id,
+            supplier_id=supplier.id,
+            product_id=product.id,
+            quantity_shipped=200,
+            pcs_per_carton=20,
+            carton_length_cm=60,
+            carton_width_cm=50,
+            carton_height_cm=40,
+            currency="CNY",
+        )
+        db.add(line)
+        db.flush()
+
+        out = InboundShipmentService(db).get_shipment(str(shipment.id))
+
+        # ctn = 200 / 20 = 10; cbm = 10 * (60 * 50 * 40 / 1e6) = 1.2 - never zero.
+        assert out.total_cbm == pytest.approx(1.2, abs=0.001)
+        assert out.unmeasured_lines == 0

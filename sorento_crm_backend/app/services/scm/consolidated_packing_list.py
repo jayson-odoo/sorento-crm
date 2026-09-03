@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 from app.models.procurement import InboundShipment, InboundShipmentLine, Supplier
 from app.models.product import Brand, Product
 from app.services.error_handler import AppException
+from app.services.scm.container_capacity import line_cbm
 from app.services.scm.supplier_scope import is_uuid
 
 #: The captain's own file counts SANDEL / CABANA / blank under SORENTO, so this is a single
@@ -39,10 +40,6 @@ COMPANIES = (SORENTO, MOCHA)
 
 #: What a factory with no name is called on the sheet. It sorts last.
 UNASSIGNED = "Unassigned"
-
-#: Catalogue dimensions are millimetres; volume is cubic metres.
-_MM3_PER_M3 = 1_000_000_000.0
-
 
 def _f(v) -> Optional[float]:
     return None if v is None else float(v)
@@ -55,20 +52,6 @@ def _qty(v: float):
 
 def _num(v: float) -> str:
     return str(_qty(v))
-
-
-def _catalogue_cbm(product: Product, qty: float) -> Optional[float]:
-    """Volume from the catalogue when the packing list did not state one.
-
-    The formula is COPIED from `loading_plan_service._catalogue_cbm` rather than imported:
-    that module is being changed by another lane, and two lines of arithmetic are a smaller
-    cost than a merge conflict across the two features. Same mm^3 basis, times the quantity
-    on the line (the loading plan wants a per-unit figure; a packing list wants the line's).
-    """
-    l, w, h = product.dimensions_length, product.dimensions_width, product.dimensions_height
-    if l is None or w is None or h is None:
-        return None
-    return round(float(l) * float(w) * float(h) / _MM3_PER_M3 * float(qty), 6)
 
 
 def _totals(lines: list[dict]) -> dict:
@@ -138,9 +121,11 @@ def build(db: Session, shipment_id: str) -> dict:
     for line, product, brand in rows:
         brand_code = (brand.brand_code or "").strip() if brand else None
         qty = int(line.quantity_shipped or 0)
-        cbm = _f(line.cbm)
-        if cbm is None:
-            cbm = _catalogue_cbm(product, qty)
+        # Stored cbm, else the line's OWN carton dimensions, else the catalogue's - the
+        # SAME rule `_attach_capacity` (S5's fill gauge) reads by, so a line's volume cannot
+        # be zero on the Split card and the fill gauge while `to_xlsx` derives a real figure
+        # for it live from those same dimensions (S12).
+        cbm = line_cbm(line, product)
         grouped.setdefault(str(line.supplier_id) if line.supplier_id else None, []).append(
             {
                 "line_id": str(line.id),

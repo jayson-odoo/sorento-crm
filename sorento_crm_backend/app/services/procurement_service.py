@@ -34,6 +34,7 @@ from app.services.identifier_resolver import resolve_identifier
 from app.services.fuzzy_resolver import resolve_via_embedding_then_ilike
 from app.services.scm.container_capacity import container_sizes as _container_sizes
 from app.services.scm.container_capacity import fit as _fit_capacity
+from app.services.scm.container_capacity import line_cbm as _line_cbm
 from app.schemas.procurement import (
     SupplierCreate, SupplierUpdate, ProductSupplierCreate, ProductSupplierUpdate,
     InboundShipmentCreate, InboundShipmentUpdate,
@@ -1053,19 +1054,23 @@ class InboundShipmentService:
 
         `_fit` moved here from the proforma-invoice serializer: capacity is a property of
         the CONTAINER, and this shipment's own lines - not any one PI that fed it - are what
-        the gauge measures. `InboundShipmentLine.cbm` is the SAME figure the convert wrote
-        (per-unit volume times the placed quantity, or a supplier's own stated total on a
-        real packing-list upload) - the one number both the convert's over-capacity refusal
-        and this gauge read, so a percentage cannot drift between the two.
+        the gauge measures. `line_cbm` (S12) is the SAME figure `consolidated_packing_list
+        .build()` reads per line - stored `cbm`, else the line's own carton dimensions, else
+        the catalogue's - so a line typed with only its own dimensions counts here too, not
+        only on the Split card. It is also the same figure a convert wrote in the first
+        place (per-unit volume times the placed quantity, or a supplier's own stated total
+        on a real packing-list upload), so a percentage cannot drift between the convert's
+        over-capacity refusal and this gauge.
 
         Set as plain attributes, the same pattern the packing-list route already uses for
         `spo_allocated_quantity` / `quantity_received` on a line: `InboundShipmentResponse`
         declares these fields and `from_attributes=True` picks them straight off the object.
         """
         lines = shipment.shipment_lines or []
-        measured = [line for line in lines if line.cbm is not None]
-        total_cbm = float(sum(line.cbm for line in measured)) if measured else None
-        unmeasured = len(lines) - len(measured)
+        cbms = [_line_cbm(line) for line in lines]
+        known = [c for c in cbms if c is not None]
+        total_cbm = float(sum(known)) if known else None
+        unmeasured = len(lines) - len(known)
         sizes_by_id, default_size = _container_sizes(self.db)
         result = _fit_capacity(shipment.container_size_id, total_cbm, sizes_by_id, default_size)
         setattr(shipment, "container_size_code", result["container_size_code"])
