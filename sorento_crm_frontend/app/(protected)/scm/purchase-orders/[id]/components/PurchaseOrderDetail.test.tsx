@@ -617,3 +617,74 @@ describe('PurchaseOrderDetail - correcting the order in place', () => {
     expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
   });
 });
+
+describe('PurchaseOrderDetail - the Placed lightbox (R5, AC-L1/AC-L3)', () => {
+  const withAllocation = () =>
+    po({
+      allocations: [
+        {
+          line_id: 'l-1',
+          sku: 'CW-BASIN-450',
+          warehouse_code: 'WH-KL',
+          outstanding: 320,
+          allocated: 60,
+          free: 260,
+          dedicated_to: [],
+          placements: [
+            {
+              kind: 'spo',
+              spo_number: 'CRM-SPO-2026/08-0007',
+              packing_list: 'FSCU8103365',
+              qty: 60,
+              warehouses: [{ warehouse_code: 'BRW', qty: 60 }],
+              arrival_date: '2026-09-14',
+              inquiry_no: null,
+              so_number: null,
+              customer: null,
+              agent: null,
+              needed_at: null,
+              location_differs: false,
+            },
+          ],
+        },
+      ],
+    });
+
+  it('has a Placed column right after Outstanding qty', () => {
+    usePurchaseOrder.mockReturnValue({ data: po(), isLoading: false, isError: false });
+    renderDetail();
+    openTab('Lines');
+
+    const headers = screen.getAllByRole('columnheader').map((h) => h.textContent);
+    const outstandingIndex = headers.findIndex((h) => h === 'Outstanding qty');
+    expect(headers[outstandingIndex + 1]).toBe('Placed');
+  });
+
+  it('opens Placed on · <code> when the figure is pressed', () => {
+    usePurchaseOrder.mockReturnValue({ data: withAllocation(), isLoading: false, isError: false });
+    renderDetail();
+    openTab('Lines');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Placed on CW-BASIN-450' }));
+    expect(screen.getByText('Placed on · CW-BASIN-450')).toBeInTheDocument();
+    expect(screen.getByText('CRM-SPO-2026/08-0007')).toBeInTheDocument();
+  });
+
+  it('shows the figure as plain text, not a button, when nothing is placed', () => {
+    usePurchaseOrder.mockReturnValue({ data: po(), isLoading: false, isError: false });
+    renderDetail();
+    openTab('Lines');
+
+    expect(
+      screen.queryByRole('button', { name: 'Placed on CW-BASIN-450' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('no longer renders the Allocated to card', () => {
+    usePurchaseOrder.mockReturnValue({ data: withAllocation(), isLoading: false, isError: false });
+    renderDetail();
+    openTab('Lines');
+
+    expect(screen.queryByText('Allocated to')).toBeNull();
+  });
+});

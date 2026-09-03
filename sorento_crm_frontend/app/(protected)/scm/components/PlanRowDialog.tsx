@@ -90,7 +90,12 @@ export type PlanRowDialogKind =
   // The invoice blocks a loading plan's "They hold" figure is the SUM of (S6): one uploaded
   // file holds five stacked invoices, and a figure that is five numbers added up has to be
   // openable or it cannot be checked against the paper.
-  | 'blocks';
+  | 'blocks'
+  // R5: the PO detail's "Placed" column and the SO detail's "Linked" column, each a figure
+  // that is the SUM of several documents on one line - the "Allocated to" card these replace
+  // is gone (AC-L3).
+  | 'placements'
+  | 'links';
 
 /** The word in front of the product code. Kept here so the titles cannot drift. */
 export const PLAN_ROW_DIALOG_TITLES: Record<PlanRowDialogKind, string> = {
@@ -104,6 +109,8 @@ export const PLAN_ROW_DIALOG_TITLES: Record<PlanRowDialogKind, string> = {
   po_takes: 'PO covers',
   so_coverage: 'SO covered',
   blocks: 'Packed',
+  placements: 'Placed on',
+  links: 'Linked to',
 };
 
 // ---------------------------------------------------------------------------
