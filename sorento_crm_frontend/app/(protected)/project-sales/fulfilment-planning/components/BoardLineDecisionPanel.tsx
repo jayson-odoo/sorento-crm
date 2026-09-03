@@ -220,7 +220,31 @@ export function BoardLineDecisionPanel({
     setDraft(next);
     setDirty(true);
   };
-  const setBorrow = (borrow: DraftBorrow[]) => edit({ ...draft, borrow });
+
+  /**
+   * D7 (captain, 3 Sep): Buy is never typed on this panel, it FOLLOWS the remainder.
+   *
+   * "BRW 62 · Buy 73" on SO419208 line 3 (open 135) used to leave `buy_qty` frozen at 73 the
+   * instant the BRW reserve was edited down to 60 - the line read short by 2 and Save stayed
+   * blocked, because nothing that touches Reserve or Borrow ever recomputed it. Every input
+   * that changes the STOCK side of the composition writes through here instead of `edit()`
+   * directly: `buy_qty = max(open_qty - reserve - borrow - timely, 0)`, the same arithmetic
+   * `lineBalance` already does, read with Buy zeroed out of the total.
+   *
+   * `setBuying`'s own transitions do NOT call this - they compute their own value for each
+   * direction (see there). Deriving here too would undo the OFF transition on a line that
+   * opened already wholly bought (a frozen decision, or an all-Buy suggestion): its stock
+   * rows are already at zero, and deriving off zero rows hands the whole line straight back
+   * to Buy, so the switch could never actually be turned off.
+   */
+  const editComposition = (next: DraftLine) => {
+    const stockOnly = lineBalance({ ...next, buy_qty: '0' });
+    edit({
+      ...next,
+      buy_qty: fromMinor(Math.max(stockOnly.openMinor - stockOnly.totalMinor, 0)),
+    });
+  };
+  const setBorrow = (borrow: DraftBorrow[]) => editComposition({ ...draft, borrow });
 
   /**
    * The whole line, one way or the other. Never a mix - the confirmation refuses one.
@@ -254,7 +278,18 @@ export function BoardLineDecisionPanel({
     }
     const held = stockBefore.current;
     stockBefore.current = null;
-    edit({ ...draft, ...(held ?? {}), buy_qty: '0' });
+    if (held) {
+      // D7: the remainder of whatever gets restored, not the flat 0 this used to force - that
+      // used to drop the BRW-62/Buy-73 shape's own Buy to nothing the moment the switch was
+      // tried and put back, when nothing about the stock side had actually changed.
+      editComposition({ ...draft, ...held });
+      return;
+    }
+    // Nothing was captured: the switch was never turned ON in this session, so the line opened
+    // already wholly bought and its stock rows are already at zero. Buy explicitly to 0 - not
+    // derived, or it would hand the whole line straight back - and let the now-empty rows be
+    // typed into.
+    edit({ ...draft, buy_qty: '0' });
   };
 
   /**
@@ -412,7 +447,7 @@ export function BoardLineDecisionPanel({
                           onChange={(event) => {
                             const next = [...draft.reserve];
                             next[index] = { ...row, qty: event.target.value };
-                            edit({ ...draft, reserve: next });
+                            editComposition({ ...draft, reserve: next });
                           }}
                           className="h-8 w-24 tabular-nums"
                         />
@@ -562,6 +597,17 @@ export function BoardLineDecisionPanel({
                     ? `Buy the whole ${draft.open_qty}`
                     : 'Buy the whole line'}
                 </label>
+                {/* D7: what the switch means while it is OFF - the remainder `edit()` derives,
+                    never a figure the planner types. Zero is still an answer ("Buy 0"), not a
+                    blank: it says the reserve, borrow and incoming already cover the line. */}
+                {!buying && (
+                  <span
+                    data-testid={`line-buy-derived-${contribution.key}`}
+                    className="text-sm tabular-nums text-muted-foreground"
+                  >
+                    {`Buy ${draft.buy_qty}`}
+                  </span>
+                )}
               </div>
               {/* An order back is a Buy whose supply is ALREADY on order or already shipped,
                   so the row purchasing gets carries verb ORDER BACK. Offered only while the
@@ -805,7 +851,7 @@ export function BoardLineDecisionPanel({
           openRemainder={fromMinor(Math.max(balance.openMinor - balance.totalMinor, 0))}
           onDone={() => setAddingReserve(false)}
           onAdd={(location, qty) =>
-            edit({
+            editComposition({
               ...draft,
               reserve: [
                 ...draft.reserve,

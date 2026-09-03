@@ -69,6 +69,8 @@ or a rule: those live once on the Policies page.
   BRW; the Stock tab shows it under Taken at BRW.
 - AC-3.3 Server refuses a reserve above on hand at that location (existing guard), the
   panel shows the field message and keeps the row.
+- AC-3.4 (D7, captain 3 Sep) Editing a reserve quantity moves the Buy remainder; Buy is
+  derived, never typed, unless the line is bought whole.
 
 ## S3b sourced-from pills
 

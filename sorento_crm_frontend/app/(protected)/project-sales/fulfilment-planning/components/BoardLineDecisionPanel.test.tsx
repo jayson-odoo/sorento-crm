@@ -210,18 +210,31 @@ describe('BoardLineDecisionPanel: the two verbs (C9)', () => {
  * C7, in the UAC's own words: "Editing Reserve BRW-AM from 9 to 5 shows the hint 4 short and
  * Save is disabled; setting BRW to 19 clears the hint, and Save enables once the reason is
  * typed (a composition that differs from the suggestion always needs the reason)."
+ *
+ * D7 (captain, 3 Sep) supersedes the FIRST half of that: Buy now follows the remainder, so
+ * dropping BRW-AM to 5 no longer leaves the line "short" - the 4 it gave up moves into a
+ * derived Buy of 4 (`edit()`), which balances the line again. What still refuses Save is the
+ * whole-line rule itself: neither location here states a pool allowance (`LOCATIONS` carries
+ * no `where: 'site_pool'` row), so 20 from stock beside a Buy of 4 is the mix R-C exists to
+ * refuse, and it is refused for that reason rather than for falling short.
  */
-describe('BoardLineDecisionPanel: the balance hint and Save gating (C7)', () => {
-  it('shows "N short" once a composition falls under the outstanding quantity', () => {
+describe('BoardLineDecisionPanel: the balance hint and Save gating (C7, D7)', () => {
+  it('moves the gap into a derived Buy instead of reading short, and still refuses to save the mix', () => {
     renderPanel();
 
     fireEvent.change(screen.getByLabelText('Reserve at BRW-AM'), {
       target: { value: '5' },
     });
 
-    expect(screen.getByTestId(`line-decision-hint-${KEY}`)).toHaveTextContent(
-      '4 short',
+    expect(
+      screen.queryByTestId(`line-decision-hint-${KEY}`),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId(`line-buy-derived-${KEY}`)).toHaveTextContent(
+      'Buy 4',
     );
+    expect(
+      screen.getByText(/either met wholly from stock or wholly bought/),
+    ).toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: 'Save decision' }),
     ).toBeDisabled();
@@ -1238,5 +1251,152 @@ describe('BoardLineDecisionPanel: a pool share beside a Buy is saveable (D5)', (
     });
 
     expect(screen.getByRole('button', { name: 'Save decision' })).toBeDisabled();
+  });
+});
+
+/**
+ * D7 (captain, 3 Sep, SO419208 line 3, CSK14A-NL). "BRW 62 · Buy 73", open 135: editing the
+ * BRW reserve down to 60 used to leave `draft.buy_qty` frozen at 73 - short by 2, and blocked
+ * - because Buy was never anything but the all-or-nothing switch. Buy is now the remainder,
+ * derived inside `edit()` on every change and shown read-only beside the switch, so the line
+ * stays composable while the reserve is being adjusted rather than needing the switch at all.
+ */
+describe('BoardLineDecisionPanel: Buy follows the remainder of the line (D7)', () => {
+  const POOL_LOCATIONS: BoardCellLocation[] = [
+    {
+      location: 'BRW-AM',
+      warehouse_id: 'wh-BRW-AM',
+      qty: '0',
+      available_qty: '0',
+      qty_free: '0',
+      qty_free_remaining: '0',
+      where: 'own',
+    },
+    {
+      location: 'BRW',
+      warehouse_id: 'wh-BRW',
+      qty: '0',
+      available_qty: '124',
+      qty_free: '124',
+      qty_free_remaining: '124',
+      where: 'site_pool',
+      available_for_project: '62',
+      net: '400',
+      // `poolShareLimitsOf` bounds a split by `net_raw`, never the display-only `net` (N1,
+      // fix round 5) - without it the five-pool net reads 0 and an edited, otherwise legal,
+      // split is refused for a reason that has nothing to do with what D7 is testing.
+      net_raw: '400',
+      net_of: 'pools',
+    },
+  ];
+
+  function renderRemainder() {
+    const onDecide = vi.fn();
+    render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf({
+          line_no: 3,
+          item_code: 'CSK14A-NL',
+          qty: '135',
+          qty_ordered: '135',
+          qty_outstanding: '135',
+          qty_proposed_reserve: '62',
+          qty_proposed_buy: '73',
+          sources: [
+            {
+              kind: 'reserve',
+              qty: '62',
+              location: 'BRW',
+              warehouse_id: 'wh-BRW',
+              reason: 'BRW may spare 62 of its pile to a project line.',
+              rung: 'pool',
+            },
+            {
+              kind: 'buy',
+              qty: '73',
+              location: null,
+              warehouse_id: null,
+              reason: 'The remainder has to be bought.',
+              rung: 'buy',
+            },
+          ],
+        })}
+        decision={null}
+        locations={POOL_LOCATIONS}
+        onDecide={onDecide}
+      />,
+    );
+    return { onDecide };
+  }
+
+  it('reads "Buy 75" and drops the short blocker once the reserve is edited down to 60', () => {
+    renderRemainder();
+
+    expect(screen.getByTestId(`line-buy-derived-${KEY}`)).toHaveTextContent(
+      'Buy 73',
+    );
+
+    fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
+      target: { value: '60' },
+    });
+
+    expect(screen.getByTestId(`line-buy-derived-${KEY}`)).toHaveTextContent(
+      'Buy 75',
+    );
+    expect(
+      screen.queryByText(/short of the open quantity/),
+    ).not.toBeInTheDocument();
+
+    // The composition now differs from the engine's own suggestion (62 became 60), so Save
+    // still needs the reason C7 already requires of any amendment - once it has one, the
+    // 60/75 split is a legal pool-share carve-out (D5) and nothing else blocks it.
+    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+      target: { value: 'The site can only spare 60 today.' },
+    });
+    expect(
+      screen.getByRole('button', { name: 'Save decision' }),
+    ).toBeEnabled();
+  });
+
+  it('carries the derived buy_qty of 75 on Save', async () => {
+    const { onDecide } = renderRemainder();
+
+    fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
+      target: { value: '60' },
+    });
+    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+      target: { value: 'The site can only spare 60 today.' },
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
+    });
+
+    expect(onDecide).toHaveBeenCalledWith(
+      expect.objectContaining({
+        verdict: 'amended',
+        buy_qty: '75',
+        reserve: expect.arrayContaining([
+          expect.objectContaining({ warehouse_id: 'wh-BRW', qty: '60' }),
+        ]),
+      }),
+    );
+  });
+
+  it('reads "Buy 0" and drops the Buy component once the reserve covers the whole line', () => {
+    renderRemainder();
+
+    fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
+      target: { value: '135' },
+    });
+
+    expect(screen.getByTestId(`line-buy-derived-${KEY}`)).toHaveTextContent(
+      'Buy 0',
+    );
+    // `amendSummary` only prints a Buy segment for a positive quantity (`boardAmend.ts`), so
+    // the Decision text on the right names no Buy component either.
+    expect(
+      screen.getByTestId(`line-decision-summary-${KEY}`),
+    ).not.toHaveTextContent('Buy');
   });
 });
