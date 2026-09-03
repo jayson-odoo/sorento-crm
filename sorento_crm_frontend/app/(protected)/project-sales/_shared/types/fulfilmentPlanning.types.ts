@@ -1934,6 +1934,17 @@ export interface StockDetailIncoming {
    * supplier to chase instead of wondering why the cover never lands.
    */
   overdue_days?: number | null;
+  /**
+   * The day the WALK plans this late document against - `today + overdue_grace_days`
+   * (R-O, 3 September 2026). Null when the document is not late, or when it is so late
+   * that nothing is assumed about it at all.
+   */
+  assumed_date?: string | null;
+  /**
+   * False when the document is later than `overdue_dead_days` and therefore counts as
+   * nothing (R31, as R-O leaves it). The row reads "not counted".
+   */
+  counted?: boolean;
 }
 
 /**

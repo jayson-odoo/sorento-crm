@@ -86,6 +86,7 @@ from app.services.project_supply_service import (
 )
 from app.services.scm import priority
 from app.services.scm import sales_agent_service
+from app.services.scm import supply_assignment
 from app.services.scm.history_sources import SPO_HISTORY_SOURCE
 from app.services.scm.planning_predicate import (
     OUTSIDE_FULFILMENT_PLANNING,
@@ -887,6 +888,43 @@ class FulfilmentBoardService:
             for bin_id in target_ids
             for ref in by_location.get((str(product_id), bin_id), [])
         ]
+        # R-O (3 Sep 2026): what the WALK assumes about a late document, off the same
+        # policy row the walk itself reads, so the ledger and the ladder can never disagree
+        # about which documents are still being counted on.
+        settings = self.supply.fulfilment_settings()
+        # Same defaults `supply_assignment.compute_overdue_event` falls back to when the
+        # walk itself finds no policy row: `_fulfilment_settings()` returns `{}` on its own
+        # defensive except, and `or 0` here used to read that as grace=0/dead=0, which
+        # labelled every late-but-alive document "Not counted" while the walk (14/90) still
+        # counted it as supply - the ledger and the ladder disagreeing about the same book.
+        grace = max(
+            int(
+                settings.get("overdue_grace_days")
+                if settings.get("overdue_grace_days") is not None
+                else supply_assignment.DEFAULT_OVERDUE_GRACE_DAYS
+            ),
+            0,
+        )
+        dead = max(
+            int(
+                settings.get("overdue_dead_days")
+                if settings.get("overdue_dead_days") is not None
+                else supply_assignment.DEFAULT_OVERDUE_DEAD_DAYS
+            ),
+            0,
+        )
+        today = date.today()
+        assumed_arrival = today + timedelta(days=grace)
+
+        def _assumed(late: Optional[int]) -> Dict[str, Any]:
+            days = int(late or 0)
+            if days <= 0:
+                return {"assumed_date": None, "counted": True}
+            if days > dead:
+                # Nothing is assumed about a document the walk counts as nothing (R31).
+                return {"assumed_date": None, "counted": False}
+            return {"assumed_date": assumed_arrival, "counted": True}
+
         incoming = [
             {
                 "spo_number": ref.spo_number,
@@ -899,6 +937,7 @@ class FulfilmentBoardService:
                 # can see which one to chase, rather than silently dropped or silently
                 # read as fresh. Same number the engine's trail names.
                 "overdue_days": ref.overdue_days,
+                **_assumed(ref.overdue_days),
             }
             for bin_id, ref in sorted(
                 incoming_rows,

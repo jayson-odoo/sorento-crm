@@ -31,27 +31,39 @@ All goldens are `_v8_inputs` fixtures in `tests/scm/front_planning_golden.py`, f
   pool rows 4 and 4, group rows untouched. Browser evidence recorded.
 - AC-N.11 (sheet). The planning sheet's `lineBlockers` accepts a two-pool step 0 composition
   without a blocker (vitest).
-- AC-N.12 (every pool's free floor is one ledger). Two lines of ONE walk at BRW-BB, with
+- AC-N.12 [DONE] (every pool's free floor is one ledger). Two lines of ONE walk at BRW-BB, with
   MWH's site pool holding 5 on the floor and 600 on the water (allowance 302, floor 5). The
   first line composes Reserve 5 at MWH; the second is offered nothing by the pool chain and
   buys. `compose_lines` carried a running balance for the asking bin's OWN pool only, and
   R-N made the other pools' path the common one.
 
+- AC-N.13 (B1, own bin outranked too). Own bin BRW-BB holds all 8 free
+  (`group_take_candidates=[{"location": "BRW-BB", "qty": 8}]`, `group_offer=8`). Pools: BRW
+  free 4 available 710, WH3 free 687 available 686, net 1605. Line 8 inside the window.
+  Composition = reserve BRW 4 + reserve WH3 4, chosen at step 0. The step 1 `use` row still
+  reports the own bin could give 8 whole, but is not chosen - the pool chain outranks the
+  line's own bin, the same as it outranks a group bin.
+
 ## R-O overdue grace (supersedes R31)
 
-- AC-O.1 (alive late document counts at the assumed date). Today 3 Sep 2026, grace 14. SPO of
+- AC-O.1 [DONE] (alive late document counts at the assumed date). Today 3 Sep 2026, grace 14. SPO of
   100 into BRW-BB dated 24 Jul, nothing received. A line of 50 due 20 Sep at BRW-BB with 0 on
   hand composes incoming 50, arrival 17 Sep, sentence "SPO <no> is 41 days late, assumed by
   17 Sep 2026".
-- AC-O.2 (line due inside the grace gets nothing from it). Same document, line due 10 Sep:
-  the document is not offered; the walk continues (borrow / buy).
-- AC-O.3 (dead document counts as nothing). Same document dated 1 May 2026 (125 days late,
+- AC-O.2 [DONE] (line due inside the grace gets nothing from question 1, but step 3 still takes it
+  whole). Same document, line due 10 Sep: question 1 offers none of it (the assumed date is after
+  the line's own), and the walk continues to step 3, which takes the same document whole under
+  R32 - it still beats buying - dated by the assumed arrival.
+- AC-O.3 [DONE] (dead document counts as nothing). Same document dated 1 May 2026 (125 days late,
   dead > 90): not supply, exactly as R31, and its row on the Stock tab reads "not counted".
-- AC-O.4 (group book, R-M). `group_book_positions` counts a late-alive document as supply and
+- AC-O.4 [DONE] (group book, R-M). `group_book_positions` counts a late-alive document as supply and
   a dead one as nothing; two goldens.
-- AC-O.5 (policy). `priority_policy.overdue_grace_days` and `overdue_dead_days` exist with
-  defaults 14 / 90; the policy form edits and persists them; the engine reads the active row.
-  Response schema declares both (response_model trap).
-- AC-O.6 (board on SO419417). BRW-BB 8840-SC cell: the own-bin incoming (412 dated Jul/Aug)
+- AC-O.5 [DONE, ship default revised 3 Sep 2026] (policy). `priority_policy.overdue_grace_days`
+  and `overdue_dead_days` exist, SHIP at 0 / 0 (captain's ruling: production keeps R31's
+  behaviour - dead at 0 makes any lateness dead - until someone raises the two numbers). 14 / 90
+  is the RECOMMENDED pair, set through the policy form once the grace is turned on. The policy
+  form edits and persists them; the engine reads the active row. Response schema declares both
+  (response_model trap).
+- AC-O.6 [OPEN - browser evidence owed] (board on SO419417). BRW-BB 8840-SC cell: the own-bin incoming (412 dated Jul/Aug)
   now offers up to the line's need at step 1 water with the assumed date; the Stock tab row
   shows assumed 17 Sep beside the stated 24 Jul. Browser evidence recorded.

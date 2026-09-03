@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
+import { spoDetailHref } from '@/lib/spo-detail';
 
 export type SpoAllocationCellProps = {
   /** The allocation the line was matched to, when the matcher found one. */
@@ -48,7 +49,7 @@ export function SpoAllocationCell({
     }
     return (
       <Link
-        href={`/procurement-management/spo-allocations/${encodeURIComponent(spoNumber)}`}
+        href={spoDetailHref(spoNumber)}
         className={cn('text-primary hover:underline font-medium truncate', className)}
         title={label}
       >

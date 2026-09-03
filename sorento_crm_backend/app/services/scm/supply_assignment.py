@@ -54,11 +54,26 @@ reads the same answer so the board and the view can never disagree about what is
    and a line with no date states nothing, so none of them may take stock a dated, located
    line will need. Their whole quantity is debt, in their own bucket. Unlocated is tested
    FIRST: no location is a fact about what can be done, and it holds whatever the date says.
-5. **Overdue incoming counts as nothing** (R31). A document whose arrival has passed with
-   nothing received is not supply until somebody re-dates it. It is RETURNED (`uncounted`)
-   rather than dropped: a document nobody mentions reads as a document that is not there,
-   and chasing it is the action the screen exists to prompt. Undated incoming is uncounted
-   for the same reason from the other side - there is no date to place it on.
+5. **An overdue document counts as supply after a GRACE PERIOD** (R-O, 3 Sep 2026,
+   superseding R31). A document whose arrival has passed is still owed on its outstanding
+   balance - the captain, on SO419417: "Available for Project" at BRW read 355 off 725 SPO
+   units dated 24 July and 6 August while the ladder lent 4 off the 11 on the floor, and
+   the display was the honest one. So a late document counts as supply landing on
+   `as_of + overdue_grace_days` (policy, `scm.priority_policy`, SHIPPED default 0): a line
+   due before that day gets nothing from it, and a line due after it is planned against the
+   ASSUMED date, which is the date the event carries from here on. The date the document
+   itself states is kept beside it (`SupplyEvent.stated_at`) so a screen can print both.
+   **R31 stays for the DEAD**: past `overdue_dead_days` of lateness (SHIPPED default 0) the
+   document counts as nothing and is RETURNED (`uncounted`) rather than dropped, because a
+   document nobody mentions reads as a document that is not there, and chasing it is the
+   action the screen exists to prompt. Undated incoming is uncounted for the same reason
+   from the other side - there is no date to place it on.
+
+   **Both ship at 0 / 0** (captain's ruling, 3 Sep 2026): with dead at 0 any lateness at all
+   is past it, so a document one day late counts as nothing exactly as R31 always had it -
+   production keeps today's behaviour until someone raises the two numbers through the
+   settings route. 14 / 90 is the RECOMMENDED pair once the captain is ready to turn the
+   grace on.
 
 **Status.** `short` when anything is left uncovered, `pinned` when a decision holds it,
 `late` when what covers it arrives after its date, `covered` otherwise. Short outranks late
@@ -67,7 +82,8 @@ because a line half covered late is still a line that goes without.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
+from dataclasses import replace as dataclass_replace
+from datetime import date, timedelta
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from app.services.scm.coverage_timeline import QTY_PRECISION
@@ -97,6 +113,18 @@ BUCKET_UNDATED = "undated"
 #: is owed and quietly omits a tenth of it is worse than one that says "somebody has to give
 #: these a location".
 BUCKET_UNLOCATED = "unlocated"
+
+#: What the OVERDUE GRACE answers for a caller that names neither (R-O, 3 Sep 2026). Both
+#: are POLICY (`scm.priority_policy.overdue_grace_days` / `overdue_dead_days`, migration
+#: 464) and every real caller reads the active row; these are the same two numbers
+#: `app.services.scm.priority.FULFILMENT_SETTINGS_DEFAULTS` states, restated so a direct
+#: caller of this module walks the documented rule rather than no rule at all.
+#:
+#: SHIPPED at 0 / 0 (captain's ruling, 3 Sep 2026): dead at 0 makes any lateness at all
+#: dead, which is exactly R31 - production keeps today's behaviour until someone raises
+#: these. 14 / 90 is the RECOMMENDED pair, not the shipped one.
+DEFAULT_OVERDUE_GRACE_DAYS = 0
+DEFAULT_OVERDUE_DEAD_DAYS = 0
 
 #: The ownership group the site pools share. A pool carries no group suffix of its own
 #: (`BRW`, `MWH`), and reading one as a group would let a `-BB` line eat the pool silently.
@@ -137,6 +165,17 @@ class SupplyEvent:
     ref: Optional[str] = None
     bought_for: Optional[date] = None
     is_pool: bool = False
+    #: The date the DOCUMENT states, when `at` is an ASSUMED one (R-O). Set only on a late
+    #: document the grace period admitted: `at` is then `as_of + overdue_grace_days`, which
+    #: is what every reader plans against, and this is what the paperwork says, so a ledger
+    #: row can print "assumed 17 Sep 2026, stated 24 Jul". `None` means the two are the
+    #: same and there is nothing extra to say.
+    stated_at: Optional[date] = None
+    #: HOW late, in days, on the day the walk was taken - `as_of - stated_at`, which is the
+    #: number the component sentence reads out ("SPO 2026/07-0031 is 41 days late, assumed
+    #: by 17 Sep 2026"). Carried rather than derived from `at - stated_at`, which would be
+    #: the lateness PLUS the grace and so a different number from the one a person counts.
+    days_late: int = 0
 
 
 @dataclass(frozen=True)
@@ -326,6 +365,61 @@ def effective_date(at: Optional[date], as_of: date) -> date:
     return as_of if at is None or at < as_of else at
 
 
+def counted_event(
+    event: SupplyEvent,
+    *,
+    as_of: date,
+    overdue_grace_days: Optional[int] = None,
+    overdue_dead_days: Optional[int] = None,
+) -> Optional[SupplyEvent]:
+    """One supply event as the walk counts it, or `None` when it counts as nothing (R-O).
+
+    THE ONE PLACE the overdue rule lives, so `assign` and `group_book_positions` (which
+    reads `assign`'s own answer) can never come to two views of the same document.
+
+    * on hand is held NOW, whatever date the caller stamped it with;
+    * an UNDATED document cannot be placed on the axis at all, so it counts as nothing;
+    * a document dated on or after `as_of` counts as itself;
+    * a document whose arrival has passed counts as supply on its outstanding balance,
+      landing on `as_of + overdue_grace_days` - the ASSUMED date, which is what it carries from
+      here on, with the date the paperwork states kept beside it (`stated_at`) and the
+      lateness counted for the sentence (`days_late`);
+    * unless it is later than `overdue_dead_days`, when it counts as nothing (R31 kept for
+      the dead) and the caller returns it as `uncounted` so somebody chases it.
+    """
+    if float(event.qty) <= EPSILON:
+        return None
+    if event.kind == KIND_ON_HAND:
+        return event
+    if event.at is None:
+        return None
+    if event.at >= as_of:
+        return event
+    grace = max(
+        int(
+            DEFAULT_OVERDUE_GRACE_DAYS
+            if overdue_grace_days is None
+            else overdue_grace_days
+        ),
+        0,
+    )
+    dead = max(
+        int(
+            DEFAULT_OVERDUE_DEAD_DAYS if overdue_dead_days is None else overdue_dead_days
+        ),
+        0,
+    )
+    days_late = (as_of - event.at).days
+    if days_late > dead:
+        return None
+    return dataclass_replace(
+        event,
+        at=as_of + timedelta(days=grace),
+        stated_at=event.at,
+        days_late=days_late,
+    )
+
+
 def assign(
     product: str,
     *,
@@ -335,25 +429,32 @@ def assign(
     supply: Sequence[SupplyEvent],
     demand: Sequence[DemandLine],
     pinned: Sequence[Hold] = (),
+    overdue_grace_days: Optional[int] = None,
+    overdue_dead_days: Optional[int] = None,
 ) -> Assignment:
     """Assign `supply` to `demand` for one product, and state the balance it leaves.
 
     `product` is carried for the caller's own error messages and logging only - one call is
     one product, and mixing two would net a shortage away against another item's surplus.
+
+    `overdue_grace_days` / `overdue_dead_days` are the policy numbers R-O added; `None`
+    walks the documented default, so a direct caller still walks the rule.
     """
     counted: List[SupplyEvent] = []
     uncounted: List[SupplyEvent] = []
     for event in supply:
         if float(event.qty) <= EPSILON:
             continue
-        # On hand is held NOW, whatever date the caller stamped it with; only a document
-        # can be overdue, and an undated document cannot be placed on the axis at all.
-        if event.kind == KIND_ON_HAND:
-            counted.append(event)
-        elif event.at is None or event.at < as_of:
+        admitted = counted_event(
+            event,
+            as_of=as_of,
+            overdue_grace_days=overdue_grace_days,
+            overdue_dead_days=overdue_dead_days,
+        )
+        if admitted is None:
             uncounted.append(event)
         else:
-            counted.append(event)
+            counted.append(admitted)
 
     dated: List[DemandLine] = []
     totals = {BUCKET_UNLOCATED: 0.0, BUCKET_TBA: 0.0, BUCKET_UNDATED: 0.0}
@@ -408,10 +509,12 @@ def assign(
             left[hold.supply_key] -= take
             event = events[hold.supply_key]
         elif hold.supply_key in uncounted_by_key:
-            # An OVERDUE document somebody has already been promised. The promise stands
+            # A DEAD document (R-O) somebody has already been promised - `uncounted_by_key`
+            # holds only what `counted_event` refused outright, past `overdue_dead_days`, a
+            # late-but-alive document having already been counted above. The promise stands
             # (the line reads `pinned`) and the drill names the order the document is
-            # placed against - but the document is still not supply (R31), so it adds
-            # nothing to the month. Chasing it is the action the red cell is asking for.
+            # placed against - but the document is still not supply, so it adds nothing to
+            # the month. Chasing it is the action the red cell is asking for.
             take = min(float(hold.qty), state.remaining)
             if take <= EPSILON:
                 continue
@@ -648,9 +751,10 @@ def group_book_positions(assignment: Assignment) -> Dict[str, float]:
     BRW-IB ... free stock is owed to nobody", off a group 447 short on its own book.
 
     So a lending group's offer is bounded by this: what it holds and what the assignment
-    counts as coming (an overdue document is not supply, R31 - it is in `uncounted` and
-    never in `supply`), less ALL of its open demand, less any CONFIRMED hold another group
-    has already taken out of it. A same-group hold is not subtracted - the line holding it
+    counts as coming - which is the walk's own reading of a late document and not a second
+    one (R-O): a late-but-alive document is in `supply` at its assumed date and counts here
+    too, and a DEAD one is in `uncounted` and counts as nothing (R31). Less ALL of its open
+    demand, less any CONFIRMED hold another group has already taken out of it. A same-group hold is not subtracted - the line holding it
     is in this group's own demand already, and taking it twice would make every pinned
     group read short.
 
@@ -769,12 +873,15 @@ __all__ = [
     "TONE_RED",
     "Assigned",
     "Assignment",
+    "DEFAULT_OVERDUE_DEAD_DAYS",
+    "DEFAULT_OVERDUE_GRACE_DAYS",
     "DemandLine",
     "Hold",
     "LineResult",
     "MonthBalance",
     "SupplyEvent",
     "assign",
+    "counted_event",
     "effective_date",
     "free_piles_at",
     "group_book_positions",

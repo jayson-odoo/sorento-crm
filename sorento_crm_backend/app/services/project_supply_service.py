@@ -957,6 +957,9 @@ class ProjectSupplyService:
         # is the same answer for every one of them.
         self._assignment_cache: Dict[date, Dict[str, Any]] = {}
         self._assignment_index: Dict[Tuple[str, date], Dict[str, Any]] = {}
+        #: (product, as_of) -> event key -> how late that COUNTED document is (R-O). Only
+        #: the late ones are in it, so a bucket with no entry costs nothing to ask about.
+        self._late_days_memo: Dict[Tuple[str, date], Dict[str, int]] = {}
         # The day the CURRENT walk is pinned to (`compose_lines`). A donor list asked for
         # outside the walk - the manual dialog's, say - has to read the same assignment the
         # walk did, or a board pinned to a simulated date pays for a second one against the
@@ -2195,6 +2198,36 @@ class ProjectSupplyService:
             self._assignment_index[(str(fact.product_id), as_of)] = index
         return index.get(str(line_id))
 
+    def _late_days(
+        self, fact: _LineFacts, *, as_of: Optional[date] = None
+    ) -> Dict[str, int]:
+        """How late each COUNTED document of this product's assignment is (R-O, #586).
+
+        `assign()` admits a document whose arrival has passed at an ASSUMED date and keeps
+        the lateness on the event; the walk's candidate lists carry only the event's KEY,
+        so this is the lookup that lets a water bucket naming exactly one document say
+        "SPO 2026/07-0031 is 41 days late, assumed by 17 Sep 2026" beside the promise.
+
+        Read off the ONE assignment this request already paid for (R21) and memoised, so
+        a board of 300 lines asks the question once per product.
+        """
+        if not fact.product_id:
+            return {}
+        as_of = as_of or self._walk_as_of or date.today()
+        key = (str(fact.product_id), as_of)
+        memo = self._late_days_memo.get(key)
+        if memo is None:
+            result = self.planning_assignments([fact.product_id], as_of=as_of).get(
+                str(fact.product_id)
+            )
+            memo = {
+                str(event.key): int(getattr(event, "days_late", 0) or 0)
+                for event in (result.supply if result is not None else ())
+                if int(getattr(event, "days_late", 0) or 0) > 0
+            }
+            self._late_days_memo[key] = memo
+        return memo
+
     def _unit_line_ids(self, fact: _LineFacts) -> List[str]:
         """The CORE line ids of the planning unit being walked.
 
@@ -2535,6 +2568,8 @@ class ProjectSupplyService:
                 event_key=event_key, event_ref=event_ref,
             )
 
+        late_days = self._late_days(fact, as_of=as_of)
+
         def rows(
             entries: Dict[Tuple[str, bool], Dict[str, Any]],
             *,
@@ -2579,6 +2614,16 @@ class ProjectSupplyService:
                 # aggregate sentence still says the quantity and the arrival either way.
                 documents = entry.get("documents") or {}
                 single = next(iter(documents.items())) if len(documents) == 1 else None
+                # R-O: the BUCKET's lateness, not just a single document's - two late
+                # documents sharing one bucket (BRW-BB on SO419417, 24 Jul + 6 Aug) are
+                # each late on their own, so the sentence must still carry the clause even
+                # though `single` is None here. `late_document_reason(None, days, arrival)`
+                # already reads a None document as "the document".
+                bucket_late_days = (
+                    max((late_days.get(str(key), 0) for key in documents), default=0)
+                    if documents
+                    else 0
+                )
                 out.append(
                     {
                         "location": code,
@@ -2592,6 +2637,11 @@ class ProjectSupplyService:
                         **(
                             {"supply_key": single[0], "supply_document": single[1]}
                             if single
+                            else {}
+                        ),
+                        **(
+                            {"late_days": bucket_late_days}
+                            if bucket_late_days > 0
                             else {}
                         ),
                     }
@@ -2926,6 +2976,10 @@ class ProjectSupplyService:
                 "supply_kind": event.kind,
                 "supply_document": event.ref,
                 "arrival_date": arrival,
+                # R-O: how late the paperwork is, when `arrival` is the ASSUMED date the
+                # grace period gave it rather than the one the document states. 0 says
+                # there is nothing extra for the sentence to mention.
+                "late_days": int(getattr(event, "days_late", 0) or 0),
             }
             if unclaimed > _ZERO:
                 # Unclaimed first: it owes nobody - it is free, or it was already this

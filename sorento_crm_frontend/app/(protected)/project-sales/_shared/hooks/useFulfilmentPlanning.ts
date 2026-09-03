@@ -21,6 +21,8 @@ import {
 import { listPlans } from '../services/plansService';
 import type {
   AdoptSalesOrderResult,
+  BoardCell,
+  BoardContribution,
   BoardDecision,
   BoardGranularity,
   BoardLineDraft,
@@ -29,6 +31,7 @@ import type {
   ConfirmSupplyBody,
   FulfilmentPlanningListParams,
   PlanListParams,
+  PlanningBoard,
 } from '../types/fulfilmentPlanning.types';
 import {
   ORDER_INQUIRY_ROWS_KEY,
@@ -246,7 +249,18 @@ export function useReconciliationMutations() {
  *
  * No `placeholderData`: changing the selection or the granularity changes what the grid MEANS,
  * and holding the previous board on screen under a new header would state the old answer as
- * though it were the new one.
+ * though it were the new one - measured, not theoretical (D16): turning it on made a cell
+ * opened moments after a granularity switch close itself, because the click landed on the
+ * OLD granularity's cell (same accessible name, same qty, different `bucket_key`) before the
+ * new read replaced it, and `liveCell` then found no match for it in the fresh board.
+ *
+ * A Confirm's own refetch (D16) needs none of this: it is the SAME key, and react-query already
+ * keeps the last successful `data` on screen through a same-key refetch with no help from
+ * `placeholderData` - only `isFetching` flips, which `FulfilmentBoardPanel` reads to DIM the
+ * board rather than blank it (see `boardRefreshing`). A draft save/undo does not even reach
+ * this any more: `useLineDraftMutation` patches the cache in place and asks for no refetch at
+ * all, which is the actual fix for the flicker the captain called "very choppy" 3 September
+ * 2026 - the granularity/window transition above was never the complaint.
  */
 export function usePlanningBoard(
   soNumbers: string[],
@@ -406,13 +420,49 @@ export function useConfirmManyMutation() {
 }
 
 /**
+ * Patches ONE line's `draft` inside a cached board - the top-level `contributions` AND every
+ * `cells[].contributions` entry that carries the same key, because Confirm-all, the List view
+ * and the grid each read a different one of those two (D16).
+ *
+ * A save/undo never changes the engine's suggestion, so re-running the whole board query for
+ * it was waste - and worse than waste: it was the cause of the flicker (the captain, 3
+ * September 2026, "very choppy"). This patches the ONE row instead of asking the server for
+ * the whole board again.
+ *
+ * Every UNTOUCHED contribution keeps its EXACT reference (the early `return contribution`
+ * below): `useLineDraftMutation`'s two writers are the only callers, and the seeding effect in
+ * `FulfilmentBoardPanel` (which reads `contribution.draft` off every one of them on every
+ * render) must not see a new object for a row this write did not touch, or an unrelated
+ * card re-renders for no reason.
+ *
+ * Exported and unit-tested on its own (`useFulfilmentPlanning.test.tsx`) rather than folded
+ * inline into the mutation - the reference-identity guarantee above is exactly the kind of
+ * thing that quietly breaks under a later edit if nothing pins it down.
+ */
+export function patchContributionDraft<
+  T extends { cells: BoardCell[]; contributions: BoardContribution[] },
+>(board: T, key: string, draft: BoardLineDraft | null): T {
+  const patch = (contribution: BoardContribution): BoardContribution =>
+    contribution.key === key ? { ...contribution, draft } : contribution;
+  return {
+    ...board,
+    cells: board.cells.map((cell) => ({ ...cell, contributions: cell.contributions.map(patch) })),
+    contributions: board.contributions.map(patch),
+  };
+}
+
+/**
  * Save decision / Undo (S4, R-F): a line's decision on the SERVER, surviving a reload,
  * another device, another planner.
  *
- * Invalidates only the board - the two writes this hook makes never change a decision's
- * COUNT the way Confirm does (a draft is never `active`), so the worklist, the plans list
- * and the rest of `useConfirmManyMutation`'s long invalidation list have nothing to learn
- * from either one.
+ * PATCHES the cached board in place (D16) rather than invalidating it - `patchContributionDraft`
+ * above, run against every cached `PlanningBoard` this key might be sitting in
+ * (`setQueriesData` over the whole `PLANNING_BOARD_KEY` family, since the board is keyed by
+ * selection/granularity/window and a line can be showing on more than one open board). Neither
+ * write changes a decision's COUNT the way Confirm does (a draft is never `active`), so the
+ * worklist, the plans list and the rest of `useConfirmManyMutation`'s long invalidation list
+ * have nothing to learn from either one - and now neither does the board query itself, since
+ * nothing about the ENGINE's suggestion moved.
  *
  * NO SUCCESS TOAST HERE (D6, matching `useConfirmManyMutation`'s own note): the sentence
  * "Line 3 saved - 4 to confirm" (AC-4.1) needs the FRESH board-wide confirm count, which
@@ -433,16 +483,20 @@ export function useLineDraftMutation() {
       decision: BoardDecision;
       proposed?: BoardSource[];
     }) => (proposed ? putLineDraft(key, decision, proposed) : putLineDraft(key, decision)),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [PLANNING_BOARD_KEY] });
+    onSuccess: (saved, { key }) => {
+      queryClient.setQueriesData<PlanningBoard>({ queryKey: [PLANNING_BOARD_KEY] }, (current) =>
+        current ? patchContributionDraft(current, key, saved) : current,
+      );
     },
     onError: (error: Error) => toast.error(error.message),
   });
 
   const remove = useMutation({
     mutationFn: (key: string) => deleteLineDraft(key),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [PLANNING_BOARD_KEY] });
+    onSuccess: (_result, key) => {
+      queryClient.setQueriesData<PlanningBoard>({ queryKey: [PLANNING_BOARD_KEY] }, (current) =>
+        current ? patchContributionDraft(current, key, null) : current,
+      );
     },
     onError: (error: Error) => toast.error(error.message),
   });

@@ -49,15 +49,21 @@ WHEN = date(2026, 9, 3)
 BUCKET = "2026-08-31"
 
 
-def _policy(db):
+def _policy(db, *, overdue_grace_days=None, overdue_dead_days=None):
     """An active fulfilment-priority policy, so the ladder ranks against a real row.
 
     Was `_cap`: the cross-group borrow limit it used to set is gone with v7.1 (R5), and any
     ownership group may donate now.
+
+    `overdue_grace_days` / `overdue_dead_days` default to None, which is `create_revision`'s
+    own "unset" - the column's SHIPPED default (0 / 0, captain's ruling 3 Sep 2026) - so a
+    caller proving R-O's grace RULE (rather than its shipped default) passes both explicitly.
     """
     priority.create_revision(
         db, name=f"{MARKER}-v5-{_uid()[:6]}", factors={}, demand_class_weights={},
         reorder_coverage_until=None,
+        overdue_grace_days=overdue_grace_days,
+        overdue_dead_days=overdue_dead_days,
     )
     db.commit()
 
