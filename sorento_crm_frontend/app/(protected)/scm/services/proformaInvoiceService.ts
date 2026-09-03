@@ -252,6 +252,12 @@ export interface ProformaInvoiceLine {
    *  adjust; these two are theirs and are never written again (AC-E2). */
   supplier_qty: number | null;
   supplier_unit_price: number | null;
+  /** The catalogue ids the line is bound to, when it names one - so the edit screen's
+   *  Product select has an id to pre-select rather than reading empty on every open
+   *  (AC-B1/AC-B2). `product_code` below is the human label; these are what Save sends
+   *  back. Mutually exclusive: a line binds to a product OR a set, never both (R19). */
+  product_id: string | null;
+  product_set_id: string | null;
   /** What we hold, by CODE - the product's, or the SET's when the line names one of our
    *  product sets (R19). Null when the line matched nothing (AC-P1.3). */
   product_code: string | null;
@@ -531,10 +537,15 @@ export async function convertProformaInvoicesToDraftShipment(
  *
  * `id` present = update that line; absent = a line the operator added. A line already on the
  * invoice and missing from the array is DELETED - the array is the document.
+ *
+ * `product_id` / `product_set_id` follow the whole-document rule: a key OMITTED from a line
+ * leaves the stored value alone, and an explicit `null` unbinds it (AC-B3). `saveEdit` sends
+ * one of these only for a line the operator actually touched.
  */
 export interface ProformaInvoiceLineWrite {
   id?: string;
   product_id?: string | null;
+  product_set_id?: string | null;
   item_code: string;
   description?: string | null;
   qty: number;

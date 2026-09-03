@@ -93,6 +93,105 @@ def test_the_serialized_line_carries_its_weights():
 
 
 # --------------------------------------------------------------------------------- #
+# AC-B1 / AC-B3 - the edit screen's Product select has an id to show, and Save cannot
+# silently unbind a match it never touched (S2, issue #579)
+# --------------------------------------------------------------------------------- #
+
+
+def test_the_serialized_line_carries_product_id_and_product_set_id():
+    """AC-B1: alongside `product_code` / `set_code`, so the edit screen's Product select has
+    an id to pre-select rather than reading empty on every open."""
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        invoice = _apply_preloading(db, w)[0]
+
+        out = svc.serialize(db, invoice)
+
+        matched = next(ln for ln in out["lines"] if ln["item_code"] == w.code("A"))
+        assert matched["product_id"] == str(w.product("A").id)
+        assert matched["product_set_id"] is None
+
+
+def test_a_line_omitting_the_product_id_key_keeps_its_match():
+    """AC-B3(a) - RED without the fix: the edit screen's Save omits `product_id` on every
+    line the operator did not touch, which is exactly the shape a bare `model_dump()` cannot
+    tell apart from "unbind this". A quantity change on an unrelated line must not sweep
+    every other line's match away with it."""
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        invoice = _apply_preloading(db, w)[0]
+        matched_line = next(
+            ln for ln in _lines(db, invoice.id) if ln.item_code == w.code("A")
+        )
+        assert matched_line.product_id is not None
+
+        draft = _draft_from(_lines(db, invoice.id))
+        for row in draft:
+            row.pop("product_id", None)
+            if row["id"] != str(matched_line.id):
+                row["qty"] = float(row["qty"]) + 1
+
+        out = svc.update_invoice(db, str(invoice.id), lines=draft, actor="Ms Tee")
+
+        after = next(ln for ln in out["lines"] if ln["id"] == str(matched_line.id))
+        assert after["product_id"] == str(matched_line.product_id)
+        assert after["matched"] is True
+
+
+def test_a_line_with_an_explicit_null_product_id_unbinds_it():
+    """AC-B3(b): `product_id: null` sent ON PURPOSE is the operator clearing the select, and
+    that has to actually unbind - the fix for (a) must not swing the other way and ignore a
+    real clear."""
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        invoice = _apply_preloading(db, w)[0]
+        matched_line = next(
+            ln for ln in _lines(db, invoice.id) if ln.item_code == w.code("A")
+        )
+
+        draft = _draft_from(_lines(db, invoice.id))
+        for row in draft:
+            if row["id"] == str(matched_line.id):
+                row["product_id"] = None
+
+        out = svc.update_invoice(db, str(invoice.id), lines=draft, actor="Ms Tee")
+
+        after = next(ln for ln in out["lines"] if ln["id"] == str(matched_line.id))
+        assert after["product_id"] is None
+        assert after["matched"] is False
+        db.refresh(matched_line)
+        assert matched_line.product_id is None
+
+
+def test_a_line_given_a_new_product_id_rebinds_it():
+    """AC-B3(c): picking a different product in edit mode is a real rebind, not just a
+    survive-the-save no-op."""
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        invoice = _apply_preloading(db, w)[0]
+        matched_line = next(
+            ln for ln in _lines(db, invoice.id) if ln.item_code == w.code("A")
+        )
+        other = w.product("ZZ-OTHER")
+        assert str(matched_line.product_id) != str(other.id)
+
+        draft = _draft_from(_lines(db, invoice.id))
+        for row in draft:
+            if row["id"] == str(matched_line.id):
+                row["product_id"] = str(other.id)
+
+        out = svc.update_invoice(db, str(invoice.id), lines=draft, actor="Ms Tee")
+
+        after = next(ln for ln in out["lines"] if ln["id"] == str(matched_line.id))
+        assert after["product_id"] == str(other.id)
+        assert after["product_code"] == other.product_code
+
+
+# --------------------------------------------------------------------------------- #
 # One PUT: create, update and delete in the same call
 # --------------------------------------------------------------------------------- #
 

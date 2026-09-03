@@ -2460,6 +2460,14 @@ def _write_lines(db: Session, invoice: ProformaInvoice, rows: list[dict]) -> Non
 
     `line_no` is NOT re-flowed. It is where the line sat on the paper the supplier sent, so a
     removed line leaves a gap and a new one is appended after the highest number in use.
+
+    `product_id` and `product_set_id` follow the same ABSENT-vs-null rule the whole-document
+    write uses for `container_size_id` (`UNSET` above): a key the row does not mention is left
+    exactly as it was, and an explicit `null` unbinds it. The edit screen's Save omits the key
+    on every line the operator did not touch (`toDraft`/`saveEdit` on the FE), so a save that
+    only changed a quantity used to silently unbind every matched product on the invoice - the
+    route always sent `product_id` because `model_dump()` fills in Pydantic's own `None`
+    default for a field the caller never mentioned. AC-B3.
     """
     existing = {
         str(ln.id): ln
@@ -2481,6 +2489,9 @@ def _write_lines(db: Session, invoice: ProformaInvoice, rows: list[dict]) -> Non
         if qty < 0:
             raise AppException(422, "Enter a quantity of zero or more.", detail="qty")
 
+        # ABSENT means "leave alone"; a key present with `None` means "unbind" - the two are
+        # different instructions and must not collapse into one (AC-B3).
+        product_id_sent = "product_id" in row
         product_id = row.get("product_id") or None
         if product_id:
             if not _is_uuid(str(product_id)):
@@ -2488,6 +2499,21 @@ def _write_lines(db: Session, invoice: ProformaInvoice, rows: list[dict]) -> Non
             found = db.query(Product.id).filter(Product.id == str(product_id)).first()
             if found is None:
                 raise AppException(404, "That product does not exist.", detail="product_id")
+
+        product_set_id_sent = "product_set_id" in row
+        product_set_id = row.get("product_set_id") or None
+        if product_set_id:
+            if not _is_uuid(str(product_set_id)):
+                raise AppException(
+                    422, "That product set does not exist.", detail="product_set_id"
+                )
+            found_set = (
+                db.query(ProductSet.id).filter(ProductSet.id == str(product_set_id)).first()
+            )
+            if found_set is None:
+                raise AppException(
+                    404, "That product set does not exist.", detail="product_set_id"
+                )
 
         line_id = row.get("id")
         if line_id:
@@ -2525,7 +2551,17 @@ def _write_lines(db: Session, invoice: ProformaInvoice, rows: list[dict]) -> Non
         line.gross_weight = (
             None if row.get("gross_weight") is None else Decimal(str(row["gross_weight"]))
         )
-        line.product_id = str(product_id) if product_id else None
+        # A line binds to a product OR a set, never both (R19) - picking one clears whichever
+        # the line held before, so a Save that rebinds cannot leave a stale second binding
+        # underneath the one just chosen.
+        if product_id_sent:
+            line.product_id = str(product_id) if product_id else None
+            if product_id:
+                line.product_set_id = None
+        if product_set_id_sent:
+            line.product_set_id = str(product_set_id) if product_set_id else None
+            if product_set_id:
+                line.product_id = None
 
     for line_id, line in existing.items():
         if line_id not in kept:
@@ -2904,6 +2940,12 @@ def serialize(
             # What the SUPPLIER stated, frozen at import - the "was" beside our "now".
             "supplier_qty": _f(ln.supplier_qty),
             "supplier_unit_price": _f(ln.supplier_unit_price),
+            # The catalogue ids the line is bound to, when it names one, so the edit screen's
+            # Product select can show the match rather than reading empty on every open
+            # (AC-B1/AC-B2) - `product_code` below is the human label, these are what Save
+            # sends back.
+            "product_id": str(ln.product_id) if ln.product_id else None,
+            "product_set_id": str(ln.product_set_id) if ln.product_set_id else None,
             # The product we hold, by CODE. A line that matched nothing says so rather than
             # carrying an id nobody can read.
             "product_code": (

@@ -45,6 +45,7 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { getProducts } from '@/app/(protected)/master-data-management/products/services/productService';
+import { useUOMSelectQuery } from '@/app/(protected)/master-data-management/shared/hooks/use-uom-select-query';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useUrlTab } from '@/hooks/useUrlTab';
 import { useContainerSizes } from '../../../hooks/useFulfilment';
@@ -121,6 +122,9 @@ interface DraftLine {
   key: string;
   id?: string;
   productId: string | null;
+  /** The line's other possible binding (R19) - carried through so an untouched line does not
+   *  lose it on Save, though this slice's select only picks PRODUCTS (S3 brings set memory). */
+  productSetId: string | null;
   productCode: string | null;
   itemCode: string;
   description: string;
@@ -153,7 +157,10 @@ function toDraft(line: ProformaInvoiceLine): DraftLine {
   return {
     key: line.id,
     id: line.id,
-    productId: null,
+    // AC-B2: the matched product travels into the draft, so the edit-mode select shows it
+    // rather than reading empty on every open.
+    productId: line.product_id,
+    productSetId: line.product_set_id,
     productCode: line.product_code,
     itemCode: line.item_code,
     description: line.description ?? '',
@@ -192,6 +199,13 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
   const canAdjust = useHasPermission(ADJUST_PERMISSION);
   const { data, isLoading, isError } = useProformaInvoice(id);
   const containerSizes = useContainerSizes();
+  // AC-B4: the master list, not free text - "unit" and "UNIT" read as one unit here and two
+  // strings on the export.
+  const uoms = useUOMSelectQuery();
+  const uomSelectOptions = useMemo(
+    () => (uoms.data ?? []).map((u) => ({ value: u.uom_code, label: u.uom_code })),
+    [uoms.data],
+  );
   const convertToDraftShipment = useConvertProformaInvoicesToDraftShipment();
   const saveInvoice = useSaveProformaInvoice(id);
   // Delete asks nothing (D7): the countdown takes the primary button's place and
@@ -317,6 +331,7 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
       {
         key: `new-${Date.now()}-${prev.length}`,
         productId: null,
+        productSetId: null,
         productCode: null,
         itemCode: '',
         description: '',
@@ -399,19 +414,31 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
     }
     // ONE call. Rows with an id update, rows without create, and a line the array no longer
     // names is deleted - so the whole draft either lands or none of it does.
-    const payload: ProformaInvoiceLineWrite[] = kept.map((row) => ({
-      ...(row.id ? { id: row.id } : {}),
-      ...(row.productId ? { product_id: row.productId } : {}),
-      item_code: row.itemCode.trim(),
-      description: row.description.trim() || null,
-      qty: num(row.qty) ?? 0,
-      uom: row.uom.trim() || null,
-      cartons: num(row.cartons),
-      cbm_per_unit: num(row.cbmPerUnit),
-      unit_price: num(row.unitPrice),
-      net_weight: num(row.netWeight),
-      gross_weight: num(row.grossWeight),
-    }));
+    //
+    // `product_id` / `product_set_id`: the key is sent ONLY when the operator actually
+    // touched the Product select on this row - untouched, it is left out of the payload
+    // entirely, and the server keeps whatever the line already had (AC-B3). Sending the
+    // CURRENT value unconditionally (what this used to do, always omitting it because
+    // `toDraft` hard-coded `productId: null`) is what silently unbound every matched product
+    // on every save.
+    const payload: ProformaInvoiceLineWrite[] = kept.map((row) => {
+      const productIdChanged = row.productId !== (row.source?.product_id ?? null);
+      const productSetIdChanged = row.productSetId !== (row.source?.product_set_id ?? null);
+      return {
+        ...(row.id ? { id: row.id } : {}),
+        ...(productIdChanged ? { product_id: row.productId } : {}),
+        ...(productSetIdChanged ? { product_set_id: row.productSetId } : {}),
+        item_code: row.itemCode.trim(),
+        description: row.description.trim() || null,
+        qty: num(row.qty) ?? 0,
+        uom: row.uom.trim() || null,
+        cartons: num(row.cartons),
+        cbm_per_unit: num(row.cbmPerUnit),
+        unit_price: num(row.unitPrice),
+        net_weight: num(row.netWeight),
+        gross_weight: num(row.grossWeight),
+      };
+    });
     setSaving(true);
     try {
       await saveInvoice.mutateAsync({
@@ -518,16 +545,23 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
         cell: ({ row }) => {
           const line = row.original;
           if (editing) {
+            // A line matched to a SET (R19) has no `productId` - the select still shows
+            // the match, keyed by the set's id, so a bound line never reads empty in edit
+            // mode (AC-B2). This select only SEARCHES products; the only new value it can
+            // ever produce for `productSetId` is `null` - picking (or clearing) always
+            // resolves the line to one binding, never two at once.
+            const selectValue = line.productId ?? line.productSetId ?? '';
             return (
               // SERVER-SEARCHED and paginated: the catalogue is tens of thousands of rows,
               // and a picker holding one cached page silently hides the item being looked for.
               <SearchableSelect
-                value={line.productId ?? ''}
+                value={selectValue}
                 onChange={(v: string) => {
                   const known = v ? productCodes.current.get(v) : undefined;
                   patchLine(line.key, {
                     productId: v || null,
-                    productCode: known?.code ?? line.productCode,
+                    productSetId: null,
+                    productCode: known?.code ?? (v ? line.productCode : null),
                     // Only where the operator has not written one themselves: the supplier's
                     // own spelling is the document of record, and overwriting it would make
                     // our copy disagree with their paper.
@@ -539,8 +573,8 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
                 paginated
                 pageSize={PRODUCT_PAGE_SIZE}
                 selectedOption={
-                  line.productId && line.productCode
-                    ? { value: line.productId, label: line.productCode }
+                  selectValue && line.productCode
+                    ? { value: selectValue, label: line.productCode }
                     : undefined
                 }
                 placeholder="Search a product"
@@ -631,21 +665,36 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
         header: ({ column }) => <DataGridColumnHeader title="UOM" column={column} />,
         cell: ({ row }) => {
           const line = row.original;
-          return editing ? (
-            <Input
-              value={line.uom}
-              onChange={(e) => patchLine(line.key, { uom: e.target.value })}
-              className="h-8 w-20"
-              aria-label={`UOM for ${line.itemCode || `line ${row.index + 1}`}`}
-              disabled={line.removed}
-            />
-          ) : (
+          if (editing) {
+            const selectId = `pi-edit-line-${line.key}-uom`;
+            return (
+              <>
+                {/* SearchableSelect forwards `id`, not arbitrary aria props - same pattern
+                    as the Product select above and the UoM cell on the sales order. */}
+                <label className="sr-only" htmlFor={selectId}>
+                  UOM for {line.itemCode || `line ${row.index + 1}`}
+                </label>
+                <SearchableSelect
+                  id={selectId}
+                  value={line.uom}
+                  onChange={(v: string) => patchLine(line.key, { uom: v })}
+                  options={uomSelectOptions}
+                  placeholder="Search a UoM"
+                  emptyMessage="No UoM found."
+                  size="sm"
+                  clearable
+                  disabled={line.removed}
+                />
+              </>
+            );
+          }
+          return (
             <span className="truncate" title={line.uom || undefined}>
               {line.uom || EM_DASH}
             </span>
           );
         },
-        size: 90,
+        size: 140,
         enableSorting: false,
         meta: { headerTitle: 'UOM' },
       },
@@ -983,7 +1032,7 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
         enableSorting: false,
       },
     ],
-    [data?.currency, editing, canAdjust, fetchProducts, matchForgetting],
+    [data?.currency, editing, canAdjust, fetchProducts, matchForgetting, uomSelectOptions],
   );
 
   const table = useReactTable({

@@ -77,10 +77,19 @@ class ProformaLineWrite(BaseModel):
 
     `id` present = update that line; absent = a line the operator added. A line already on
     the invoice and missing from the array is deleted - the array IS the document.
+
+    `product_id` and `product_set_id` follow the whole-document rule below: a key this line
+    does not mention is left alone, and an explicit `null` unbinds it (AC-B3). The route reads
+    `model_fields_set` PER LINE to tell "not sent" from "sent as null" - a naive
+    `model_dump()` fills in Pydantic's own default and would make every untouched line look
+    like an explicit unbind.
     """
 
     id: Optional[str] = Field(None, description="The line to update. Absent = a new line.")
     product_id: Optional[str] = Field(None, description="The catalogue product, when known.")
+    product_set_id: Optional[str] = Field(
+        None, description="The catalogue product SET, when the line names one instead (R19)."
+    )
     item_code: str = Field(..., max_length=100, description="The supplier's own code.")
     description: Optional[str] = None
     qty: float = Field(..., ge=0)
@@ -365,6 +374,24 @@ def update_proforma_invoice(
     return out
 
 
+def _line_write_dict(line: ProformaLineWrite) -> dict:
+    """One `ProformaLineWrite` as the service's `_write_lines` reads it - `product_id` and
+    `product_set_id` are OMITTED from the dict when the caller never sent the key, so
+    `_write_lines`'s own `"product_id" in row` check reads "leave it alone" for exactly the
+    lines the operator did not touch. A plain `model_dump()` cannot make this distinction: it
+    fills BOTH fields with Pydantic's own `None` default whether the line named the key or
+    not, so every untouched line would read as an explicit "unbind" (AC-B3, the silent
+    data-loss bug this route used to ship).
+    """
+    line_fields = line.model_fields_set
+    data = line.model_dump(exclude={"product_id", "product_set_id"})
+    if "product_id" in line_fields:
+        data["product_id"] = line.product_id
+    if "product_set_id" in line_fields:
+        data["product_set_id"] = line.product_set_id
+    return data
+
+
 @router.put("/proforma-invoices/{invoice_id}")
 def replace_proforma_invoice(
     invoice_id: str,
@@ -394,7 +421,7 @@ def replace_proforma_invoice(
             else proforma_invoice_service.UNSET
         ),
         lines=(
-            [line.model_dump() for line in (payload.lines or [])]
+            [_line_write_dict(line) for line in (payload.lines or [])]
             if "lines" in sent
             else proforma_invoice_service.UNSET
         ),
