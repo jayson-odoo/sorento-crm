@@ -365,8 +365,8 @@ describe('F7 - the SPO planner chooses its POs and its SOs', () => {
   it('ticks every PO take by default and says how many (AC-G1)', async () => {
     renderTable();
 
-    await screen.findByText('2 of 2 POs');
-    expect(screen.getByText('2 of 2 POs')).toBeInTheDocument();
+    await screen.findByTitle(/which po covers this/i);
+    expect(screen.getByTitle(/which po covers this/i)).toHaveTextContent('100');
     await openPoDrill();
     expect(screen.getByRole('checkbox', { name: 'Draw from 202605-S0060' })).toBeChecked();
     expect(screen.getByRole('checkbox', { name: 'Draw from 202606-S0099' })).toBeChecked();
@@ -378,8 +378,6 @@ describe('F7 - the SPO planner chooses its POs and its SOs', () => {
 
     fireEvent.click(screen.getByRole('checkbox', { name: 'Draw from 202605-S0060' }));
 
-    await screen.findByText('1 of 2 POs');
-    expect(screen.getByText('1 of 2 POs')).toBeInTheDocument();
     // The remaining PO has 150 open, so it covers the whole 100 packed - not the 40 the
     // cascade happened to take from it while the other one was ticked.
     expect(screen.getByTitle(/what the TICKED POs pull this SPO up to/i)).toHaveValue(100);
@@ -461,18 +459,17 @@ describe('F7 - the SPO planner chooses its POs and its SOs', () => {
     expect(lines[0].so_line_ids).toEqual(['project:row-1']);
   });
 
-  it('states the shortfall when the ticks ask for more than the container holds (AC-G5)', async () => {
+  it('says nothing about a part-covered order, and Create SPO stays enabled (AC-A2)', async () => {
     renderTable();
     await openSoDrill();
 
     fireEvent.click(screen.getByRole('checkbox', { name: 'Cover SO-2202' }));
+    await closeDrill();
 
     // 160 ticked against a container of 100: the third order is served in part, which is
-    // what the default walk does on its last entry every time. Said out loud, not blocked.
-    expect(
-      await screen.findByText(/160 ticked, 100 on this container - SO-2202 partly covered/),
-    ).toBeInTheDocument();
-    await closeDrill();
+    // what the default walk does on its last entry every time. The grey "partly covered"
+    // sentence no longer renders for it - only the red conditions gate Create SPO.
+    expect(screen.queryByText(/partly covered/)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /create spo/i })).toBeEnabled();
   });
 });
@@ -659,7 +656,7 @@ describe('F7 - unticking then re-ticking a take returns every figure', () => {
 
     expect(qtyInput()).toHaveValue(100);
     await tick('Draw from 202605-S0060');
-    expect(screen.getByText('2 of 2 POs')).toBeInTheDocument();
+    expect(screen.getByTitle(/which po covers this/i)).toHaveTextContent('100');
     expect(qtyInput()).toHaveValue(100);
   });
 
@@ -1065,7 +1062,6 @@ describe('R21 - the four figures open the shared lightbox', () => {
     fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Draw from 202606-S0099' }));
 
     expect(screen.getByTitle(PO)).toHaveTextContent('60');
-    expect(screen.getByText('1 of 2 POs')).toBeInTheDocument();
     expect(screen.getByTitle(/what the TICKED POs pull this SPO up to/i)).toHaveValue(60);
     // The dialog stays open across the tick - it is a lightbox, not a hover surface.
     expect(screen.getByRole('dialog')).toBeInTheDocument();
@@ -1191,5 +1187,78 @@ describe('R21 - the four figures open the shared lightbox', () => {
 
     await screen.findByTitle(PO);
     expect(screen.queryByTitle(INCOMING)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * S1 (feedback, 3 Sep) - fewer words, controls that stay put.
+ */
+describe('S1 - planner chrome (AC-A1-AC-A7)', () => {
+  beforeEach(() => {
+    state.suggestion = suggestion({ lines: [plannerLine()] });
+  });
+
+  it('renders no text under the SPO planner title, on a real shipment (AC-A1)', async () => {
+    renderTable();
+
+    const title = await screen.findByText('SPO planner');
+    expect(title.parentElement?.querySelector('p')).toBeNull();
+  });
+
+  it('renders no text under the SPO planner title, on a draft shipment (AC-A1)', async () => {
+    state.suggestion = suggestion({ shipment_status: 'draft', lines: [plannerLine()] });
+    renderTable();
+
+    const title = await screen.findByText('SPO planner');
+    expect(title.parentElement?.querySelector('p')).toBeNull();
+    expect(screen.queryByText(/draft shipment/i)).not.toBeInTheDocument();
+  });
+
+  it('the Product cell renders the item code and the reason icon, nothing else (AC-A3)', async () => {
+    renderTable();
+
+    await screen.findByText('SRTWT7443');
+    expect(screen.getByText('SRTWT7443')).toBeInTheDocument();
+    expect(screen.queryByText(/Basin Mixer/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Kailu/)).not.toBeInTheDocument();
+  });
+
+  it('the PO covers cell renders the figure and no "of N POs" text (AC-A4)', async () => {
+    renderTable();
+
+    await screen.findByTitle(/which po covers this/i);
+    expect(screen.getByTitle(/which po covers this/i)).toHaveTextContent('100');
+    expect(screen.queryByText(/of \d+ POs/)).not.toBeInTheDocument();
+  });
+
+  it('Expand all sits in the same group as the Table/Schedule toggle (AC-A5)', async () => {
+    renderTable();
+
+    const toggleGroup = await screen.findByRole('group', { name: /planner view/i });
+    const leftGroup = toggleGroup.parentElement as HTMLElement;
+    expect(within(leftGroup).getByRole('button', { name: /expand all/i })).toBeInTheDocument();
+    expect(within(leftGroup).getByRole('button', { name: /collapse all/i })).toBeInTheDocument();
+  });
+
+  it('labels the schedule control View, with Purchase order / Sales order options, one line (AC-A6)', async () => {
+    renderTable();
+    await screen.findByRole('button', { name: /schedule/i });
+    fireEvent.click(screen.getByRole('button', { name: /schedule/i }));
+
+    const control = await screen.findByRole('combobox', { name: 'View' });
+    expect(control).toHaveTextContent('Purchase order');
+    expect(screen.queryByText(/Bucketed by/i)).not.toBeInTheDocument();
+
+    fireEvent.click(control);
+    expect(await screen.findByText('Sales order')).toBeInTheDocument();
+  });
+
+  it('the schedule row header renders the item code only, once (AC-A7)', async () => {
+    renderTable();
+    await screen.findByRole('button', { name: /schedule/i });
+    fireEvent.click(screen.getByRole('button', { name: /schedule/i }));
+
+    await screen.findByText('SRTWT7443');
+    expect(screen.getAllByText('SRTWT7443')).toHaveLength(1);
   });
 });

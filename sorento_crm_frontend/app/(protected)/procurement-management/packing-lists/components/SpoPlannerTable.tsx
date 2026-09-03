@@ -410,34 +410,6 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lines, state]);
 
-  /**
-   * Ticked demand this SPO can only PART-cover - stated, never blocking (AC-G5's figures).
-   *
-   * The default walk does this on its last entry every time a container is smaller than the
-   * demand behind it, which is most of them, so disabling Create for it would disable Create
-   * for the normal case. What it is not allowed to do is stay quiet: the order is going to
-   * be short, and the person sending it should read that here rather than discover it when
-   * the container lands.
-   */
-  const partlyCovered = useMemo(() => {
-    const out = new Map<string, { asked: number; covered: number; short: string[] }>();
-    for (const ln of lines) {
-      if (ln.cannot_convert) continue;
-      const takes = coverageTakes(ln, soKeysFor(ln), qtyFor(ln));
-      const short = takes
-        .filter((t) => t.take > 0 && t.take < t.entry.qty)
-        .map((t) => t.entry.document ?? t.entry.key);
-      if (!short.length) continue;
-      out.set(ln.shipment_line_id, {
-        asked: takes.reduce((sum, t) => sum + t.entry.qty, 0),
-        covered: takes.reduce((sum, t) => sum + t.take, 0),
-        short,
-      });
-    }
-    return out;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lines, state]);
-
   const renderQtyCell = (ln: SpoSuggestionLine) => (
     <Input
       type="number"
@@ -577,25 +549,19 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
         cell: ({ row }) => {
           const ln = row.original;
           return (
-            <div className={ln.cannot_convert ? 'flex min-w-0 flex-col opacity-60' : 'flex min-w-0 flex-col'}>
-              <span className="flex items-center gap-1 font-medium">
-                <span className="truncate" title={ln.item_code ?? ''}>
-                  {ln.item_code ?? EM_DASH}
+            <div className={ln.cannot_convert ? 'flex min-w-0 items-center gap-1 opacity-60' : 'flex min-w-0 items-center gap-1'}>
+              <span className="truncate font-medium" title={ln.item_code ?? ''}>
+                {ln.item_code ?? EM_DASH}
+              </span>
+              {ln.reason ? (
+                <span className="shrink-0" title={ln.reason} aria-label={ln.reason}>
+                  <Info className="size-3.5 text-muted-foreground" aria-hidden />
                 </span>
-                {ln.reason ? (
-                  <span className="shrink-0" title={ln.reason} aria-label={ln.reason}>
-                    <Info className="size-3.5 text-muted-foreground" aria-hidden />
-                  </span>
-                ) : null}
-              </span>
-              <span className="truncate text-2xs text-muted-foreground" title={ln.product_name ?? ''}>
-                {ln.product_name ?? EM_DASH}
-                {ln.supplier_name ? ` · ${ln.supplier_name}` : ''}
-              </span>
+              ) : null}
             </div>
           );
         },
-        size: 230,
+        size: 160,
         enableSorting: false,
         meta: { headerTitle: 'Product' },
       },
@@ -617,16 +583,11 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
           }
           const ticked = takeIdsFor(ln);
           return (
-            <div className="flex min-w-0 flex-col gap-0.5">
-              <PlanNumberButton
-                value={fmtInt(poCoveredFor(ln, ticked))}
-                label="Which PO covers this, oldest purchase order first"
-                onClick={() => setDialog({ kind: 'po_takes', line: ln })}
-              />
-              <span className="text-2xs text-muted-foreground">
-                {ticked.length} of {ln.po_takes.length} POs
-              </span>
-            </div>
+            <PlanNumberButton
+              value={fmtInt(poCoveredFor(ln, ticked))}
+              label="Which PO covers this, oldest purchase order first"
+              onClick={() => setDialog({ kind: 'po_takes', line: ln })}
+            />
           );
         },
         size: 130,
@@ -755,7 +716,7 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
         entries.push({
           row_key: ln.item_code ? `item:${ln.item_code}` : `line:${ln.shipment_line_id}`,
           row_label: ln.item_code ?? ln.product_name ?? 'Unresolved',
-          row_description: ln.product_name,
+          row_description: null,
           date: t.expected_date,
           qty: t.takenQty,
           detail: { ...t, item_code: ln.item_code },
@@ -784,7 +745,7 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
         entries.push({
           row_key: ln.item_code ? `item:${ln.item_code}` : `line:${ln.shipment_line_id}`,
           row_label: ln.item_code ?? ln.product_name ?? 'Unresolved',
-          row_description: ln.product_name,
+          row_description: null,
           date: entry.required_date,
           qty: take,
           detail: {
@@ -927,11 +888,6 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
       <CardHeader className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <h3 className="text-sm font-semibold">SPO planner</h3>
-          <p className="text-2xs text-muted-foreground">
-            {suggestion.data?.shipment_status === 'draft'
-              ? "Draft shipment - based on this draft's own packed quantities, not a real packing list yet."
-              : 'What an open PO pulls this SPO up to, and where it should land.'}
-          </p>
         </div>
         <Button
           size="sm"
@@ -950,108 +906,102 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
       </CardHeader>
 
       <div className="flex flex-col gap-3 border-t border-border px-4 py-2.5 sm:flex-row sm:items-center sm:justify-between">
-        <div className="inline-flex rounded-md border border-input" role="group" aria-label="Planner view">
-          <Button
-            type="button"
-            size="sm"
-            variant={view === 'table' ? 'primary' : 'ghost'}
-            className="rounded-e-none"
-            aria-pressed={view === 'table'}
-            onClick={() => setView('table')}
-          >
-            <Table2 className="size-4" aria-hidden />
-            Table
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant={view === 'schedule' ? 'primary' : 'ghost'}
-            className="rounded-s-none border-s border-input"
-            aria-pressed={view === 'schedule'}
-            onClick={() => setView('schedule')}
-          >
-            <LayoutGrid className="size-4" aria-hidden />
-            Schedule
-          </Button>
-        </div>
-        {view === 'table' ? (
-          <div className="flex items-center gap-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="inline-flex rounded-md border border-input" role="group" aria-label="Planner view">
             <Button
               type="button"
               size="sm"
-              variant="ghost"
-              disabled={nothingToExpand}
-              title={nothingToExpand ? 'No line can be split yet' : undefined}
-              // Only the lines that CAN be split. `toggleAllRowsExpanded(true)` ignores
-              // `getRowCanExpand`, so it opened a split panel under every covered line too -
-              // a panel with a disabled editor and nothing to do in it.
-              onClick={() =>
-                table.setExpanded(
-                  Object.fromEntries(
-                    table
-                      .getRowModel()
-                      .rows.filter((r) => r.getCanExpand())
-                      .map((r) => [r.id, true]),
-                  ),
-                )
-              }
+              variant={view === 'table' ? 'primary' : 'ghost'}
+              className="rounded-e-none"
+              aria-pressed={view === 'table'}
+              onClick={() => setView('table')}
             >
-              <ChevronsUpDown className="size-4" aria-hidden />
-              Expand all
+              <Table2 className="size-4" aria-hidden />
+              Table
             </Button>
             <Button
               type="button"
               size="sm"
-              variant="ghost"
-              disabled={nothingToExpand}
-              title={nothingToExpand ? 'No line can be split yet' : undefined}
-              onClick={() => table.setExpanded({})}
+              variant={view === 'schedule' ? 'primary' : 'ghost'}
+              className="rounded-s-none border-s border-input"
+              aria-pressed={view === 'schedule'}
+              onClick={() => setView('schedule')}
             >
-              <ChevronsDownUp className="size-4" aria-hidden />
-              Collapse all
+              <LayoutGrid className="size-4" aria-hidden />
+              Schedule
             </Button>
           </div>
-        ) : null}
-        {view === 'schedule' ? (
-          <div className="flex items-center gap-2">
-            <Label htmlFor="spo-schedule-mode" className="text-xs text-muted-foreground">
-              Bucketed by
-            </Label>
-            <div className="w-52">
-              <SearchableSelect
-                id="spo-schedule-mode"
-                value={scheduleView}
-                onChange={(v) => setScheduleView(v as ScheduleView)}
-                options={[
-                  { value: 'po', label: "PO coverage (PO's expected date)" },
-                  { value: 'so', label: "SO coverage (SO's needed date)" },
-                ]}
-              />
+          {view === 'table' ? (
+            <div className="flex items-center gap-1">
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                disabled={nothingToExpand}
+                title={nothingToExpand ? 'No line can be split yet' : undefined}
+                // Only the lines that CAN be split. `toggleAllRowsExpanded(true)` ignores
+                // `getRowCanExpand`, so it opened a split panel under every covered line too -
+                // a panel with a disabled editor and nothing to do in it.
+                onClick={() =>
+                  table.setExpanded(
+                    Object.fromEntries(
+                      table
+                        .getRowModel()
+                        .rows.filter((r) => r.getCanExpand())
+                        .map((r) => [r.id, true]),
+                    ),
+                  )
+                }
+              >
+                <ChevronsUpDown className="size-4" aria-hidden />
+                Expand all
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                disabled={nothingToExpand}
+                title={nothingToExpand ? 'No line can be split yet' : undefined}
+                onClick={() => table.setExpanded({})}
+              >
+                <ChevronsDownUp className="size-4" aria-hidden />
+                Collapse all
+              </Button>
             </div>
-          </div>
-        ) : null}
-        {splitMismatch.size > 0 ? (
-          <span className="text-2xs font-medium text-destructive">
-            {splitMismatch.size} line{splitMismatch.size === 1 ? '' : 's'} - location split does not add up
-            to the SPO qty
-          </span>
-        ) : null}
-        {overTicked.size > 0 ? (
-          <span className="text-2xs font-medium text-destructive">
-            {[...overTicked.values()].flat().join(', ')} - this container has nothing left
-            for it. Untick it, or send more.
-          </span>
-        ) : null}
-        {overTicked.size === 0 && partlyCovered.size > 0 ? (
-          <span className="text-2xs text-muted-foreground">
-            {[...partlyCovered.values()]
-              .map(
-                (p) =>
-                  `${fmtInt(p.asked)} ticked, ${fmtInt(p.covered)} on this container - ${p.short.join(', ')} partly covered`,
-              )
-              .join('; ')}
-          </span>
-        ) : null}
+          ) : null}
+        </div>
+        <div className="flex min-w-0 items-center justify-end gap-2 sm:ms-auto">
+          {view === 'schedule' ? (
+            <div className="flex items-center gap-2">
+              <Label htmlFor="spo-schedule-mode" className="text-xs text-muted-foreground">
+                View
+              </Label>
+              <div className="w-44">
+                <SearchableSelect
+                  id="spo-schedule-mode"
+                  value={scheduleView}
+                  onChange={(v) => setScheduleView(v as ScheduleView)}
+                  options={[
+                    { value: 'po', label: 'Purchase order' },
+                    { value: 'so', label: 'Sales order' },
+                  ]}
+                />
+              </div>
+            </div>
+          ) : null}
+          {view === 'table' && splitMismatch.size > 0 ? (
+            <span className="text-2xs text-end font-medium text-destructive">
+              {splitMismatch.size} line{splitMismatch.size === 1 ? '' : 's'} - location split does not add up
+              to the SPO qty
+            </span>
+          ) : null}
+          {view === 'table' && overTicked.size > 0 ? (
+            <span className="text-2xs text-end font-medium text-destructive">
+              {[...overTicked.values()].flat().join(', ')} - this container has nothing left
+              for it. Untick it, or send more.
+            </span>
+          ) : null}
+        </div>
       </div>
 
       {view === 'table' ? (
