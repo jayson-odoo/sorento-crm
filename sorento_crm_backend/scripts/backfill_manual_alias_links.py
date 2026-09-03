@@ -44,7 +44,11 @@ from sqlalchemy.orm import Session
 from app.models.procurement import ProductSupplier, Supplier
 from app.models.product import Product
 from app.models.scm import SupplierProductCodeAlias
-from app.services.scm.supplier_code_alias_service import _MANUAL, _ensure_product_supplier_link
+from app.services.scm.supplier_code_alias_service import (
+    _MANUAL,
+    _ensure_product_supplier_link,
+    lead_time_for_link,
+)
 
 
 def find_candidates(db: Session) -> List[SupplierProductCodeAlias]:
@@ -72,9 +76,14 @@ def find_candidates(db: Session) -> List[SupplierProductCodeAlias]:
 
 
 def run(db: Session, *, apply: bool) -> Dict[str, Any]:
-    """Report (and optionally write) every missing link. The caller commits."""
+    """Report (and optionally write) every missing link. The caller commits.
+
+    `rows` carries what was printed for each candidate (including `lead_time`) so a test can
+    assert on the report without scraping stdout.
+    """
     candidates = find_candidates(db)
     written = 0
+    rows: List[Dict[str, Any]] = []
 
     for row in candidates:
         supplier = db.query(Supplier).filter(Supplier.id == row.supplier_id).first()
@@ -82,26 +91,28 @@ def run(db: Session, *, apply: bool) -> Dict[str, Any]:
         supplier_label = supplier.supplier_name if supplier else row.supplier_id
         product_label = product.product_code if product else row.product_id
 
-        if apply:
-            _ensure_product_supplier_link(db, str(row.supplier_id), str(row.product_id))
-            db.flush()
-        link = (
-            db.query(ProductSupplier)
-            .filter(
-                ProductSupplier.product_id == row.product_id,
-                ProductSupplier.supplier_id == row.supplier_id,
-            )
-            .first()
-        )
-        lead_time = link.standard_lead_time_days if link is not None else None
+        # The same ladder `_ensure_product_supplier_link` writes, computed directly so
+        # dry-run and apply always print the same number - a dry-run has no link row yet to
+        # read it back off.
+        lead_time = lead_time_for_link(db, str(row.supplier_id), str(row.product_id))
         print(
             f"  supplier={supplier_label!r} code={row.supplier_code!r} "
             f"product={product_label!r} lead_time={lead_time}"
         )
-        if apply and link is not None:
+        rows.append(
+            {
+                "supplier_id": str(row.supplier_id),
+                "product_id": str(row.product_id),
+                "lead_time": lead_time,
+            }
+        )
+
+        if apply:
+            _ensure_product_supplier_link(db, str(row.supplier_id), str(row.product_id))
+            db.flush()
             written += 1
 
-    return {"examined": len(candidates), "written": written}
+    return {"examined": len(candidates), "written": written, "rows": rows}
 
 
 def main() -> int:
@@ -123,8 +134,9 @@ def main() -> int:
     db = SessionLocal()
     # A script has no request and no principal, so the session scope would be UNSET, which
     # is fail-closed and would return no rows at all. `None` is the sanctioned system /
-    # all-companies scope; the alias and the product/supplier it names always share one
-    # company (the alias's own FK chain), so there is nothing further to check here.
+    # all-companies scope, safe here the same way it is in the rest of `scripts/`:
+    # `_stamp_company_id` resolves a None scope to `DEFAULT_COMPANY_ID`, and every alias and
+    # `product_suppliers` row today lives in that one company.
     set_company_scope(db, None)
 
     try:

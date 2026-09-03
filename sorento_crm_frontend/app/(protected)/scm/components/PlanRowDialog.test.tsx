@@ -674,6 +674,31 @@ describe('PoTabs', () => {
     ).toBeTruthy();
   });
 
+  it('a line that closed short still reads Completed on History even though still_to_come is nonzero (fix round, Opus review)', () => {
+    const closedShortRow = {
+      ...open[0],
+      po_number: 'PO-SHORT',
+      still_to_come: 5,
+      status: 'active',
+    };
+    useContainerRequestDrill.mockReturnValue(
+      drill({ data: { rows: [closedShortRow], total: 5, history: [closedShortRow] } }),
+    );
+
+    renderWithClient(<PoTabs supplierId="sup1" productId="p1" />);
+
+    // Same row, Open tab: still owed, so Outstanding.
+    expect(
+      within(screen.getByText('PO-SHORT').closest('tr') as HTMLElement).getByText('Outstanding'),
+    ).toBeTruthy();
+
+    // Same row, History tab: closed short, so Completed - not Outstanding.
+    switchTab('History (200)');
+    expect(
+      within(screen.getByText('PO-SHORT').closest('tr') as HTMLElement).getByText('Completed'),
+    ).toBeTruthy();
+  });
+
   it('switches to what was ordered before, naming the quantity that WAS ordered (S3, AC-C3)', () => {
     useContainerRequestDrill.mockReturnValue(
       drill({
@@ -691,9 +716,11 @@ describe('PoTabs', () => {
 
     expect(screen.getByText('PO-24090')).toBeTruthy();
 
-    // AC-J3: the history tab foots its own outstanding too (here, a closed PO: 0).
-    const footer = screen.getByText('Total outstanding').closest('tr') as HTMLElement;
-    expect(within(footer).getByText('0')).toBeTruthy();
+    // Fix round (Opus review): the History footer names the SAME figure as the tab label -
+    // "Total ordered", not "Total outstanding" (a closed line's still_to_come is always 0,
+    // which would disagree with a tab label that already says 200).
+    const footer = screen.getByText('Total ordered').closest('tr') as HTMLElement;
+    expect(within(footer).getByText('200')).toBeTruthy();
   });
 
   it('says so when nothing is on order', () => {
