@@ -235,8 +235,13 @@ from app.models.inventory import Warehouse
 from app.models.projects import Project
 from app.models.sales_agent import SalesAgent
 from app.models.scm import ProformaInvoiceLine, ProformaInvoiceShipmentLink, ShipmentLineSpoLink
+from app.services.company_scope import get_company_scope, resolve_write_company_id
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
+from app.services.numbering_defaults import (
+    CRM_SPO_DOC_TYPE,
+    seed_crm_spo_rule,
+)
 from app.services.numbering_service import NumberingService
 from app.services.scm.demand_class import PROJECT as _DEMAND_CLASS_PROJECT
 from app.services.scm.pool_predicate import ACTIVE_SITE_POOL_SQL
@@ -258,12 +263,14 @@ SOURCE_SYSTEM = "crm_spo"
 _STATUS = "active"
 _LINE_STATUS = "open"
 
-#: `NumberingService` doc_type for the CRM SPO's own series, kept distinct from every
-#: AutoCount pattern (`######-S####`, `SPO-####/##-####`) and from the CRM's own canonical
-#: PO series (`PO-{year}/{month}-####`, `decision_service`) so an AutoCount import can never
-#: collide with a number this module minted. Falls back to a random suffix when no numbering
-#: rule is configured, same shape as `proforma_invoice_service._draft_shipment_number`.
-_NUMBER_DOC_TYPE = "purchase_order_crm_spo"
+#: `NumberingService` doc_type for the CRM SPO's own series (`purchase_order_crm_spo`,
+#: `numbering_defaults.CRM_SPO_DOC_TYPE`), kept distinct from every AutoCount pattern
+#: (`######-S####`, `SPO-####/##-####`) and from the CRM's own canonical PO series
+#: (`PO-{year}/{month}-####`, `decision_service`) so an AutoCount import can never collide
+#: with a number this module minted. `S-SPO-{year}/{month:02d}-{NNNN}`, seeded on the spot
+#: for a company that holds no rule yet, same shape as
+#: `proforma_invoice_service._draft_shipment_number` (captain, 4 Sep - the earlier
+#: `CRM-SPO-<hex8>` fallback fired on EVERY create because no rule had ever been seeded).
 _NUMBER_PREFIX = "CRM-SPO"
 
 _REASON_NO_SUPPLIER = "No supplier recorded on this shipment line, so it cannot be added to an SPO."
@@ -1749,7 +1756,25 @@ def _product_id_in(ids: list[str]):
 
 
 def _spo_number(db: Session) -> str:
-    number = NumberingService(db).get_next_number(_NUMBER_DOC_TYPE, _date.today(), commit_rule=False)
+    """The next `S-SPO-yyyy/mm-nnnn` from the numbering rule, seeded on the spot when missing.
+
+    Same shape as `proforma_invoice_service._draft_shipment_number`: a company created after
+    the rule was migration-seeded has none of its own, so the first miss seeds it, in the
+    caller's own transaction, then asks again. The `CRM-SPO-<hex8>` fallback stays as the very
+    last resort - a rule that EXISTS and still cannot number (disabled in Setup) is a decision
+    somebody made, not an absence this function should paper over with a fresh series.
+    """
+    company_id = resolve_write_company_id(get_company_scope(db), ambiguous=None)
+
+    def _next() -> Optional[str]:
+        return NumberingService(db).get_next_number(
+            CRM_SPO_DOC_TYPE, _date.today(), company_id=company_id, commit_rule=False
+        )
+
+    number = _next()
+    if not number:
+        seed_crm_spo_rule(db, company_id=company_id)
+        number = _next()
     return number or f"{_NUMBER_PREFIX}-{uuid.uuid4().hex[:8]}"
 
 
