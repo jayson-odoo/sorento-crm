@@ -10,12 +10,15 @@ These tests pin the default so the next queue added cannot quietly drop it again
 
 #569 split draining across two compose services by latency class (`worker` for slow
 batch jobs, `worker_fast` for the short customer-facing ones) so a 39-minute import
-never again sits in front of a chatbot media turn or a WhatsApp send. The class below
-guards that split the same way: a queue added to one WORKER_QUEUES list but not the
-other, or added to neither, falls in the gap this file exists to catch.
+never again sits in front of a chatbot media turn or a WhatsApp send. Compose names
+only a ROLE on each service (`WORKER_ROLE: batch` / `WORKER_ROLE: fast`), never a
+queue - `worker.QUEUES` is the single ordered registry mapping each queue to its
+role, so adding a queue is a one-line edit there and these tests fail until it is
+classified. See the PRODUCTION note above worker.QUEUES.
 """
 import importlib
 import re
+from itertools import chain
 from pathlib import Path
 
 import pytest
@@ -25,38 +28,17 @@ worker = importlib.import_module("worker")
 # The real compose file (repo root, three levels up from this test) is gitignored
 # everywhere - dev machines and the server both hand-edit their own copy, and it
 # embeds live production secrets as env-var fallback defaults, so it must never be
-# committed to git. That means it does not exist in a CI checkout: these tests skip
-# there rather than fail, and are only load-bearing on a machine that actually has
-# the file - typically whoever last edited it locally, and the server after a manual
-# sync. See the PRODUCTION note above worker.DEFAULT_QUEUES.
+# committed to git. That means it does not exist in a CI checkout: the compose test
+# below skips there rather than fails, and is only load-bearing on a machine that
+# actually has the file - typically whoever last edited it locally, and the server
+# after a manual sync.
 _COMPOSE_PATH = Path(__file__).resolve().parents[2] / "docker-compose.yml"
 
 # PyYAML is not a dependency of this backend (checked at #569 time) and the compose
 # file's `${VAR:-default}` interpolation and YAML anchors are more machinery than a
-# two-line assertion needs, so this reads the two `WORKER_QUEUES:` lines directly.
-_WORKER_QUEUES_LINE = re.compile(r'^\s*WORKER_QUEUES:\s*"?([^"#\n]+?)"?\s*(?:#.*)?$', re.MULTILINE)
-
-
-def _compose_worker_queue_lists():
-    """The WORKER_QUEUES lists compose defines, in file order (worker, worker_fast).
-
-    Skips (not fails) when the compose file is absent - see _COMPOSE_PATH docstring.
-    Fails loudly if the file exists but does not carry exactly two such lines, since
-    that is itself a sign the split moved and this test's assumptions no longer hold.
-    """
-    if not _COMPOSE_PATH.exists():
-        pytest.skip(
-            f"{_COMPOSE_PATH} is gitignored and not present in this checkout - "
-            "these tests only run where the real compose file does (a dev machine "
-            "or the server), never in CI"
-        )
-    text = _COMPOSE_PATH.read_text()
-    matches = _WORKER_QUEUES_LINE.findall(text)
-    assert len(matches) == 2, (
-        f"expected exactly 2 'WORKER_QUEUES:' lines in {_COMPOSE_PATH.name} "
-        f"(one on `worker`, one on `worker_fast`), found {len(matches)}: {matches!r}"
-    )
-    return [[q.strip() for q in raw.split(",") if q.strip()] for raw in matches]
+# one-line assertion needs, so this reads `WORKER_ROLE:` lines directly.
+_WORKER_ROLE_LINE = re.compile(r'^\s*WORKER_ROLE:\s*"?([^"#\n]+?)"?\s*(?:#.*)?$', re.MULTILINE)
+_WORKER_QUEUES_LINE = re.compile(r'^\s*WORKER_QUEUES:\s*"?([^"#\n]*)"?\s*(?:#.*)?$', re.MULTILINE)
 
 
 def test_notifications_is_drained_by_default():
@@ -83,42 +65,109 @@ def test_worker_queues_env_still_overrides(monkeypatch):
 def test_blank_override_falls_back_to_the_default(monkeypatch):
     """An empty WORKER_QUEUES must not silently produce a worker draining nothing."""
     monkeypatch.setenv("WORKER_QUEUES", "   ")
+    monkeypatch.delenv("WORKER_ROLE", raising=False)
     assert "notifications" in worker.resolve_queue_names()
 
 
-def test_compose_worker_and_worker_fast_queues_are_disjoint():
-    """A queue must never be claimed by both drain loops.
-
-    Nothing prevents two RQ workers from draining the same queue - it would just
-    mean two work-horses can race a compare-and-set job (media, notifications) or
-    double-send (respond_io). Disjoint compose lists is how #569 keeps that from
-    happening by construction rather than by convention.
-    """
-    lists = _compose_worker_queue_lists()
-    worker_queues, worker_fast_queues = (set(names) for names in lists)
-    overlap = worker_queues & worker_fast_queues
-    assert not overlap, (
-        f"worker and worker_fast both drain {sorted(overlap)} - a queue is a "
-        "latency class and belongs to exactly one service (see #569)"
+def test_roles_are_pairwise_disjoint():
+    """No queue is classified under two roles - QUEUES pairs each name with exactly one."""
+    names = [name for name, _role in worker.QUEUES]
+    assert len(names) == len(set(names)), (
+        f"a queue name appears more than once in worker.QUEUES: {names!r}"
     )
 
 
-def test_compose_worker_queues_union_matches_worker_default_queues():
-    """Every queue in worker.DEFAULT_QUEUES must be drained by exactly one compose service.
+def test_role_union_is_default_queues():
+    """Every queue in DEFAULT_QUEUES is covered by the known roles, with no double-count."""
+    by_role = {role: worker.queues_for_role(role) for role in worker.ROLES}
+    union = set(chain(*by_role.values()))
+    assert union == set(worker.DEFAULT_QUEUES)
+    assert sum(len(v) for v in by_role.values()) == len(worker.DEFAULT_QUEUES)
 
-    This is the #569 regression this file exists to catch, generalised: the
-    'notifications' incident was one queue missing from the only worker there was.
-    Post-split, a queue can now ALSO go missing by being added to worker.py but
-    never landing in either compose WORKER_QUEUES line - same silent-drop failure,
-    new place for it to happen.
+
+def test_default_queues_starts_with_imports_and_ends_with_notifications():
+    assert worker.DEFAULT_QUEUES[0] == "imports"
+    assert worker.DEFAULT_QUEUES[-1] == "notifications"
+
+
+def test_default_queues_is_byte_identical_to_pre_split_order():
+    """The #569 split must not reorder the no-env fallback drain list."""
+    assert worker.DEFAULT_QUEUES == (
+        "imports",
+        "respond_io",
+        "catalogue_render",
+        "media",
+        "project_docs",
+        "flyer_read",
+        "notifications",
+    )
+
+
+def test_queues_for_role_fast(monkeypatch):
+    assert worker.queues_for_role("fast") == ["respond_io", "media", "notifications"]
+
+
+def test_queues_for_role_batch(monkeypatch):
+    assert worker.queues_for_role("batch") == [
+        "imports",
+        "catalogue_render",
+        "project_docs",
+        "flyer_read",
+    ]
+
+
+def test_worker_role_fast_resolves_to_exactly_the_fast_queues(monkeypatch):
+    monkeypatch.delenv("WORKER_QUEUES", raising=False)
+    monkeypatch.setenv("WORKER_ROLE", "fast")
+    assert worker.resolve_queue_names() == worker.queues_for_role("fast")
+
+
+def test_worker_role_batch_resolves_to_exactly_the_batch_queues(monkeypatch):
+    monkeypatch.delenv("WORKER_QUEUES", raising=False)
+    monkeypatch.setenv("WORKER_ROLE", "batch")
+    assert worker.resolve_queue_names() == worker.queues_for_role("batch")
+
+
+def test_unknown_worker_role_exits(monkeypatch):
+    monkeypatch.delenv("WORKER_QUEUES", raising=False)
+    monkeypatch.setenv("WORKER_ROLE", "bogus")
+    with pytest.raises(SystemExit):
+        worker.resolve_queue_names()
+
+
+def test_worker_queues_beats_worker_role(monkeypatch):
+    """The explicit override wins even when a role is also set."""
+    monkeypatch.setenv("WORKER_QUEUES", "media")
+    monkeypatch.setenv("WORKER_ROLE", "batch")
+    assert worker.resolve_queue_names() == ["media"]
+
+
+def test_compose_names_only_known_roles_and_no_queue_lists():
+    """Compose (where present) names a ROLE per service, never a queue list.
+
+    Skips (not fails) when the compose file is absent - see _COMPOSE_PATH docstring
+    above. Fails loudly if the file exists but carries either an unrecognized role
+    value or a `WORKER_QUEUES:` line at all - a compose-level queue list is exactly
+    the hard-coding the role design replaced.
     """
-    lists = _compose_worker_queue_lists()
-    union = set(lists[0]) | set(lists[1])
-    default = set(worker.DEFAULT_QUEUES)
-    assert union == default, (
-        f"compose WORKER_QUEUES union {sorted(union)} != worker.DEFAULT_QUEUES "
-        f"{sorted(default)} - missing from compose: {sorted(default - union)}, "
-        f"extra in compose: {sorted(union - default)}. Adding/removing a queue is "
-        "a three-place change: worker.DEFAULT_QUEUES, the two compose "
-        "WORKER_QUEUES lines, and the server's hand-edited copy of compose."
+    if not _COMPOSE_PATH.exists():
+        pytest.skip(
+            f"{_COMPOSE_PATH} is gitignored and not present in this checkout - "
+            "this test only runs where the real compose file does (a dev machine "
+            "or the server), never in CI"
+        )
+    text = _COMPOSE_PATH.read_text()
+
+    role_values = [m.strip() for m in _WORKER_ROLE_LINE.findall(text)]
+    assert role_values, f"expected at least one 'WORKER_ROLE:' line in {_COMPOSE_PATH.name}"
+    unknown = [v for v in role_values if v not in worker.ROLES]
+    assert not unknown, (
+        f"{_COMPOSE_PATH.name} sets WORKER_ROLE to unrecognized value(s) {unknown!r}; "
+        f"known roles: {worker.ROLES}"
+    )
+
+    queue_lines = _WORKER_QUEUES_LINE.findall(text)
+    assert not queue_lines, (
+        f"{_COMPOSE_PATH.name} still sets 'WORKER_QUEUES:' on a service ({queue_lines!r}) - "
+        "compose should name only a WORKER_ROLE; worker.QUEUES in worker.py owns the list"
     )

@@ -130,12 +130,15 @@ if [ -z "$worker_ok" ]; then
   exit 1
 fi
 
-# 6c. Verify worker_fast came up on the queues it owns. It runs no scheduler
+# 6c. Verify worker_fast came up on the role it owns. It runs no scheduler
 #     (ENABLE_SCHEDULER=false, unlike worker) so there is no scheduler line to
-#     wait for — just the RQ startup line naming its queue list. A wrong or
-#     missing WORKER_QUEUES here silently drops media/respond_io/notifications
-#     jobs behind whatever `worker` is doing (see #569).
-echo "==> Verifying worker_fast queue startup"
+#     wait for - just the RQ startup line naming its role. This greps the ROLE
+#     label (`role=fast`), never a queue list: worker.py's QUEUES registry owns
+#     which queues that role drains, so adding a queue never touches this
+#     script. A wrong or missing WORKER_ROLE fails worker.py at startup
+#     (exit 1 on an unknown role, see resolve_queue_names), which the
+#     restart-count / status check in the loop below catches.
+echo "==> Verifying worker_fast role startup"
 worker_fast_cid=$(docker compose ps -q worker_fast)
 if [ -z "$worker_fast_cid" ]; then
   echo "ERROR: worker_fast container not found after recreate"; exit 1
@@ -143,9 +146,9 @@ fi
 i=0
 worker_fast_ok=""
 while [ $i -lt "$WORKER_WAIT_TICKS" ]; do
-  if docker logs "$worker_fast_cid" 2>&1 | grep -q "Starting RQ worker for queues: media, respond_io, notifications"; then
+  if docker logs "$worker_fast_cid" 2>&1 | grep -q "Starting RQ worker role=fast"; then
     worker_fast_ok=1
-    echo "    worker_fast queues started after $((i * TICK_SECONDS))s"
+    echo "    worker_fast role started after $((i * TICK_SECONDS))s"
     break
   fi
   restarts=$(docker inspect --format='{{.RestartCount}}' "$worker_fast_cid" 2>/dev/null || echo 0)
@@ -159,7 +162,7 @@ while [ $i -lt "$WORKER_WAIT_TICKS" ]; do
   i=$((i + 1))
 done
 if [ -z "$worker_fast_ok" ]; then
-  echo "ERROR: worker_fast did not log its queue startup line within $((WORKER_WAIT_TICKS * TICK_SECONDS))s"
+  echo "ERROR: worker_fast did not log its role startup line within $((WORKER_WAIT_TICKS * TICK_SECONDS))s"
   docker logs --tail=100 "$worker_fast_cid" || true
   exit 1
 fi
