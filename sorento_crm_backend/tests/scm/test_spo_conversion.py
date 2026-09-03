@@ -6,9 +6,10 @@ Traces to the module docstring's own contract:
     PINNED by a po_ref carried through the PI provenance link), then by on-hand + incoming
     SPO, floored at 0. Covered and no-supplier lines stay visible with a reason.
   * `create` - one CRM `purchase_orders` header per supplier represented on the shipment,
-    `source_system='crm_spo'`, its own `CRM-SPO-` number series, `shipment_line_spo_link`
-    rows for both the matched and the skipped lines. A second attempt is refused (409),
-    naming the SPOs already made.
+    `source_system='crm_spo'`, its own `S-SPO-yyyy/mm-nnnn` number series
+    (`numbering_defaults.CRM_SPO_DOC_TYPE`), `shipment_line_spo_link` rows for both the
+    matched and the skipped lines. A second attempt is refused (409), naming the SPOs
+    already made.
   * Visibility - the new lines count as ORDERED (`scm.po_ordered_v`, no source predicate)
     immediately, and are deliberately absent from `scm.on_order_v` (spo_allocations only)
     until someone allocates them - same split pinned by `test_reorder_nets_po_ordered.py`.
@@ -18,6 +19,7 @@ Postgres only, marker-prefixed, every test seeds its own chain (CI's database is
 from __future__ import annotations
 
 import json
+import re
 import threading
 import uuid
 from datetime import date, datetime
@@ -558,7 +560,7 @@ def test_create_marks_source_system_crm_spo_and_records_the_pull():
         po = db.query(PurchaseOrder).filter(PurchaseOrder.id == po_id).one()
         assert po.source_system == svc.SOURCE_SYSTEM == "crm_spo"
         assert po.status == "active"
-        assert po.po_number.startswith("CRM-SPO-"), po.po_number
+        assert re.match(r"^S-SPO-\d{4}/\d{2}-\d{4}$", po.po_number), po.po_number
         po_line = db.query(PurchaseOrderLine).filter(
             PurchaseOrderLine.purchase_order_id == po.id
         ).one()
@@ -895,7 +897,7 @@ def test_f1_a_second_create_on_the_remainder_never_pulls_from_the_first_spos_own
         line = _line(out, str(third_lines[0].id))
         assert line["po_covered_qty"] == 0
         assert not any(
-            (t.get("po_number") or "").startswith("CRM-SPO-") for t in line["po_takes"]
+            (t.get("po_number") or "").startswith("S-SPO-") for t in line["po_takes"]
         )
 
 
@@ -1552,7 +1554,7 @@ def test_route_create_spo_happy_path(scm_app):
     assert r.status_code == 201, r.text
     body = r.json()
     assert len(body["created_spos"]) == 1
-    assert body["created_spos"][0]["po_number"].startswith("CRM-SPO-")
+    assert re.match(r"^S-SPO-\d{4}/\d{2}-\d{4}$", body["created_spos"][0]["po_number"])
 
 
 def test_route_create_spo_requires_the_operator_permission(scm_app):

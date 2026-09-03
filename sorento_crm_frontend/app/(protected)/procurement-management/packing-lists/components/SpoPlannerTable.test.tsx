@@ -385,18 +385,12 @@ async function closeDrill() {
 }
 
 /**
- * R2 (captain's ruling, 3 Sep) - Create SPO opens "Review before creating" first; the actual
- * send happens on the dialog's OWN "Create SPO" button, which shares the trigger's accessible
- * name, so every read/click on it after opening is scoped with `within(dialog)`.
+ * Create SPO creates on the click (captain's ruling, 4 Sep) - the review dialog it used to
+ * open first is gone, so this just presses the button.
  */
-async function openReviewDialog() {
+async function createSpo() {
   await screen.findByRole('button', { name: /^create spo$/i });
   fireEvent.click(screen.getByRole('button', { name: /^create spo$/i }));
-  return screen.findByRole('alertdialog');
-}
-async function confirmReview() {
-  const dialog = await openReviewDialog();
-  fireEvent.click(within(dialog).getByRole('button', { name: /^create spo$/i }));
 }
 
 describe('F7 - the SPO planner chooses its POs and its SOs', () => {
@@ -460,7 +454,7 @@ describe('F7 - the SPO planner chooses its POs and its SOs', () => {
     await openPoDrill();
     fireEvent.click(screen.getByRole('checkbox', { name: 'Draw from 202605-S0060' }));
     await closeDrill();
-    await confirmReview();
+    await createSpo();
 
     await waitFor(() => expect(state.create).toHaveBeenCalledTimes(1));
     const [, lines] = state.create.mock.calls[0];
@@ -490,7 +484,7 @@ describe('F7 - the SPO planner chooses its POs and its SOs', () => {
 
   it('the ticks drive the location split (AC-G4)', async () => {
     renderTable();
-    await confirmReview();
+    await createSpo();
 
     await waitFor(() => expect(state.create).toHaveBeenCalledTimes(1));
     const [, lines] = state.create.mock.calls[0];
@@ -508,7 +502,7 @@ describe('F7 - the SPO planner chooses its POs and its SOs', () => {
     await openSoDrill();
     fireEvent.click(screen.getByRole('checkbox', { name: 'Cover SO-2201' }));
     await closeDrill();
-    await confirmReview();
+    await createSpo();
 
     await waitFor(() => expect(state.create).toHaveBeenCalledTimes(1));
     const [, lines] = state.create.mock.calls[0];
@@ -601,7 +595,7 @@ function shortCoveredLine(over: Record<string, unknown> = {}) {
   });
 }
 
-describe('F7 - the SO-covered cell and the review dialog read one arithmetic', () => {
+describe('F7 - the SO-covered cell reads the same arithmetic Create SPO sends', () => {
   beforeEach(() => {
     state.suggestion = suggestion({ lines: [shortCoveredLine()] });
     state.create = vi.fn().mockResolvedValue({
@@ -643,7 +637,7 @@ describe('F7 - the SO-covered cell and the review dialog read one arithmetic', (
     expect(screen.getByRole('checkbox', { name: 'Cover SO-2202' })).not.toBeChecked();
   });
 
-  it('names the over-ticked order in the review dialog, and Create SPO stays enabled (R2)', async () => {
+  it('does not block Create SPO on an over-tick (R2)', async () => {
     renderTable();
     await screen.findByTitle(/which demand this spo is for/i);
     fireEvent.click(screen.getByTitle(/which demand this spo is for/i));
@@ -652,15 +646,14 @@ describe('F7 - the SO-covered cell and the review dialog read one arithmetic', (
     await closeDrill();
 
     // R2 (captain's ruling, 3 Sep): an over-tick no longer blocks Create SPO or shows a live
-    // banner - it is named once, in the review dialog, alongside every other note.
+    // banner. There is no review dialog to name it in either (4 Sep) - Create SPO stays
+    // enabled and creates on the click.
     expect(screen.getByRole('button', { name: /create spo/i })).toBeEnabled();
-    const dialog = await openReviewDialog();
-    expect(within(dialog).getByText(/SO-2202/)).toBeInTheDocument();
   });
 
   it('splits only what it can serve, and calls the rest unassigned', async () => {
     renderTable();
-    await confirmReview();
+    await createSpo();
 
     await waitFor(() => expect(state.create).toHaveBeenCalledTimes(1));
     const [, lines] = state.create.mock.calls[0];
@@ -725,7 +718,7 @@ describe('F7 - unticking then re-ticking a take returns every figure', () => {
     await tick('Draw from 202606-S0099');
 
     await closeDrill();
-    await confirmReview();
+    await createSpo();
 
     await waitFor(() => expect(state.create).toHaveBeenCalledTimes(1));
     const [, lines] = state.create.mock.calls[0];
@@ -859,11 +852,13 @@ describe('F7 - the quantity the operator typed is theirs, never clamped to what 
 });
 
 /**
- * Section I - free quantity, one review dialog (R2, captain's ruling 3 Sep, UAC AC-I1-AC-I6).
+ * Section I - free quantity, creates on the click (R2, captain's ruling 3 Sep; dialog
+ * withdrawn 4 Sep, UAC AC-I1, AC-I4, AC-I5 - AC-I2/I3/I6 named a "Review before creating"
+ * dialog that no longer exists).
  *
- * A single line packed 500, one open PO covering 409 of it. Typing past what the PO covers no
- * longer clamps or bans the send; every note about the shortfall reads once, in "Review before
- * creating", which Create SPO now opens instead of sending straight away.
+ * A single line packed 500, one open PO covering 409 of it. Typing past what the PO covers
+ * neither clamps nor bans the send, and Create SPO writes it straight away - the server caps
+ * the line at its own remainder and writes the uncovered part without a PO pull.
  */
 function unbackedLine(over: Record<string, unknown> = {}) {
   return plannerLine({
@@ -890,7 +885,7 @@ function unbackedLine(over: Record<string, unknown> = {}) {
   });
 }
 
-describe('Section I - free quantity, one review dialog', () => {
+describe('Section I - free quantity, creates on the click', () => {
   beforeEach(() => {
     state.suggestion = suggestion({ lines: [unbackedLine()] });
     state.create = vi.fn().mockResolvedValue({
@@ -916,26 +911,14 @@ describe('Section I - free quantity, one review dialog', () => {
     expect(screen.getByRole('button', { name: /create spo/i })).toBeEnabled();
   });
 
-  it('Create SPO opens the review dialog naming what is asked, what POs cover, and the rest (AC-I2, AC-I6)', async () => {
+  it('Create SPO sends the typed figure on the single click, no dialog in between', async () => {
     renderTable();
     await screen.findByTestId('spo-qty-input');
     fireEvent.change(qtyInput(), { target: { value: '500' } });
 
-    const dialog = await openReviewDialog();
+    await createSpo();
 
-    expect(within(dialog).getByText('Review before creating')).toBeInTheDocument();
-    expect(
-      within(dialog).getByText('Asked 500, POs cover 409, 91 without PO backing'),
-    ).toBeInTheDocument();
-  });
-
-  it('Confirm sends the same payload Create SPO always sent (AC-I3)', async () => {
-    renderTable();
-    await screen.findByTestId('spo-qty-input');
-    fireEvent.change(qtyInput(), { target: { value: '500' } });
-
-    await confirmReview();
-
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
     await waitFor(() => expect(state.create).toHaveBeenCalledTimes(1));
     const [shipmentId, lines] = state.create.mock.calls[0];
     expect(shipmentId).toBe('sh-1');
@@ -947,20 +930,7 @@ describe('Section I - free quantity, one review dialog', () => {
     });
   });
 
-  it('Cancel closes the dialog and changes nothing (AC-I3)', async () => {
-    renderTable();
-    await screen.findByTestId('spo-qty-input');
-    fireEvent.change(qtyInput(), { target: { value: '500' } });
-
-    const dialog = await openReviewDialog();
-    fireEvent.click(within(dialog).getByRole('button', { name: /cancel/i }));
-
-    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
-    expect(state.create).not.toHaveBeenCalled();
-    expect(qtyInput()).toHaveValue(500);
-  });
-
-  it('a line with a supplier but no open PO at all is convertible, and names the shortfall in the review dialog', async () => {
+  it('a line with a supplier but no open PO at all is convertible, and creates without PO backing on the click', async () => {
     state.suggestion = suggestion({
       lines: [
         unbackedLine({
@@ -983,12 +953,16 @@ describe('Section I - free quantity, one review dialog', () => {
     // typed to be included - the same "qty > 0 to include" rule every other line follows.
     fireEvent.change(qtyInput(), { target: { value: '40' } });
 
-    const dialog = await openReviewDialog();
+    await createSpo();
 
-    expect(within(dialog).getByText('NOPO-ITEM')).toBeInTheDocument();
-    expect(
-      within(dialog).getByText('Asked 40, POs cover 0, 40 without PO backing'),
-    ).toBeInTheDocument();
+    await waitFor(() => expect(state.create).toHaveBeenCalledTimes(1));
+    const [, lines] = state.create.mock.calls[0];
+    expect(lines[0]).toMatchObject({
+      shipment_line_id: 'sl-nopo',
+      qty: 40,
+      include: true,
+      po_take_ids: [],
+    });
   });
 });
 
@@ -1115,7 +1089,7 @@ describe('R22 - the destinations expand under the row', () => {
     // The remaining 30 lands on the row that was just added, at the warehouse not already
     // used - so the split adds up again and Create SPO is allowed.
     expect(qtyRow(2)).toHaveValue(30);
-    await confirmReview();
+    await createSpo();
     await waitFor(() => expect(state.create).toHaveBeenCalledTimes(1));
     const [, lines] = state.create.mock.calls[0];
     expect(lines[0].location_splits).toEqual([
@@ -1725,5 +1699,58 @@ describe('S5 - occupied by another SPO (AC-E7, AC-E8)', () => {
     expect(cell.className).toContain('bg-primary/10');
     expect(within(cell).getByText('40')).toBeTruthy();
     expect(within(cell).getByText('+15 on CRM-SPO-2026/08-0005')).toBeTruthy();
+  });
+});
+
+/**
+ * Live bug (captain, 4 Sep): the SPO qty input lost focus after EVERY keystroke, so the
+ * operator had to click back into it for each digit.
+ *
+ * `flexRender` renders a column's `cell` FUNCTION as a React component type
+ * (`createElement(columnDef.cell, ctx)`), so a `columns` array rebuilt on each keystroke
+ * hands React a new element TYPE for every cell - which unmounts the old input and mounts
+ * a fresh one, taking the caret with it. The assertion is node IDENTITY: the element that
+ * had focus before the change is still `document.activeElement` after it.
+ */
+describe('editable cells keep focus while typing (live bug, 4 Sep)', () => {
+  beforeEach(() => {
+    state.suggestion = suggestion({ lines: [plannerLine()] });
+  });
+
+  it('the SPO qty input is still the focused node after each keystroke', async () => {
+    renderTable();
+    await screen.findByTestId('spo-qty-input');
+
+    const input = screen.getByTestId('spo-qty-input');
+    input.focus();
+    expect(document.activeElement).toBe(input);
+
+    fireEvent.change(input, { target: { value: '4' } });
+    expect(document.activeElement).toBe(input);
+    expect(screen.getByTestId('spo-qty-input')).toBe(input);
+    expect(input).toHaveValue(4);
+
+    fireEvent.change(input, { target: { value: '40' } });
+    expect(document.activeElement).toBe(input);
+    expect(screen.getByTestId('spo-qty-input')).toBe(input);
+    expect(input).toHaveValue(40);
+  });
+
+  it('the destination quantity input in the expanded row keeps focus too', async () => {
+    renderTable();
+    await screen.findByTitle('Where this SPO lands');
+    fireEvent.click(screen.getByTitle('Where this SPO lands'));
+
+    const input = await screen.findByLabelText('Quantity for destination 1');
+    input.focus();
+    expect(document.activeElement).toBe(input);
+
+    fireEvent.change(input, { target: { value: '7' } });
+    expect(document.activeElement).toBe(input);
+    expect(input).toHaveValue(7);
+
+    fireEvent.change(input, { target: { value: '70' } });
+    expect(document.activeElement).toBe(input);
+    expect(input).toHaveValue(70);
   });
 });

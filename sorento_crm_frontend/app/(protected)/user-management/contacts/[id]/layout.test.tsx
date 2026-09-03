@@ -47,12 +47,15 @@ const CONTACT: RespondContact = {
 const h = vi.hoisted(() => ({
   push: vi.fn(),
   pathname: '',
+  // The list position (page/sort/search) the record pager reads back off the URL - a
+  // tab click must not drop it.
+  search: '',
 }));
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: h.push, back: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
   usePathname: () => h.pathname,
-  useSearchParams: () => new URLSearchParams(''),
+  useSearchParams: () => new URLSearchParams(h.search),
 }));
 
 // Container pulls SettingsProvider context this unit test does not need.
@@ -102,6 +105,7 @@ const tabNames = () => screen.getAllByRole('tab').map((t) => (t.textContent ?? '
 
 beforeEach(() => {
   h.push.mockClear();
+  h.search = '';
 });
 
 afterEach(() => cleanup());
@@ -128,6 +132,17 @@ describe('Contact detail shell - tabs', () => {
       fireEvent.click(screen.getByRole('tab', { name }));
       expect(h.push, `${name} tab should route to ${path}`).toHaveBeenCalledWith(path);
     }
+  });
+
+  it('keeps the list position in the URL when a tab is clicked, so the record pager does not reset', async () => {
+    h.search = 'page=1&limit=50&sort=name&dir=asc';
+    await renderLayout(`/user-management/contacts/${CURRENT_ID}`);
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Chat' }));
+
+    expect(h.push).toHaveBeenCalledWith(
+      `/user-management/contacts/${CURRENT_ID}/chat?page=1&limit=50&sort=name&dir=asc`,
+    );
   });
 
   it('opens on Profile for the base route', async () => {

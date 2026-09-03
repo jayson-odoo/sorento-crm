@@ -27,6 +27,7 @@ export const DOC_TYPE_LABELS: Record<string, string> = {
   stock_inquiry: 'Stock Inquiry',
   complaint: 'Complaint',
   external_promotion: 'External Promotion',
+  purchase_order_crm_spo: 'Supplier purchase order (SPO, from packing list)',
 };
 
 export const RESET_POLICY_OPTIONS = [

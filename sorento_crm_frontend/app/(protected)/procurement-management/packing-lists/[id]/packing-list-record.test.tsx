@@ -33,12 +33,15 @@ const routerState = {
   // Watched as well as `push` (R19): an edit that moved the operator off the tab they
   // pressed Edit on would do it with either.
   replace: vi.fn(),
+  // The list position (page/sort/search) the record pager reads back off the URL - a
+  // tab click must not drop it (see "the toolbar over the tabs" below).
+  search: '',
 };
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: routerState.push, replace: routerState.replace, back: vi.fn() }),
   usePathname: () => routerState.pathname,
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => new URLSearchParams(routerState.search),
 }));
 
 // `ConfirmDeleteDialog` reports through `toast.custom`; a mock without it throws inside
@@ -290,6 +293,7 @@ beforeEach(async () => {
   routerState.pathname = '/procurement-management/packing-lists/pl-1';
   routerState.push = vi.fn();
   routerState.replace = vi.fn();
+  routerState.search = '';
   state.packingList = mixedContainer();
   state.sourceInvoices = undefined;
   state.history = undefined;
@@ -375,6 +379,18 @@ describe('the toolbar over the tabs', () => {
 
     expect(routerState.push).toHaveBeenCalledWith(
       '/procurement-management/packing-lists/pl-1/lines',
+    );
+  });
+
+  it('keeps the list position in the URL when a tab is clicked, so the record pager does not reset', async () => {
+    // The list the operator came from - page 1 (0-indexed), sorted, with a search term.
+    routerState.search = 'page=1&limit=20&sort=shipment_date&dir=desc&query=FSCU';
+    await renderTab(<DetailsPage />);
+
+    fireEvent.click(screen.getByRole('tab', { name: /shipment lines/i }));
+
+    expect(routerState.push).toHaveBeenCalledWith(
+      '/procurement-management/packing-lists/pl-1/lines?page=1&limit=20&sort=shipment_date&dir=desc&query=FSCU',
     );
   });
 });
