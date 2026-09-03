@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   ColumnDef,
@@ -342,6 +342,20 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
   const [scheduleView, setScheduleView] = useState<ScheduleView>('po');
 
   const [state, setState] = useState<Record<string, LineState>>({});
+  /**
+   * The live per-line state, as the grid CELLS read it.
+   *
+   * `columns` below has to keep a STABLE identity: `flexRender` renders a column's `cell`
+   * function as a React component TYPE (`createElement(columnDef.cell, ctx)`), so a columns
+   * array rebuilt on every keystroke hands React a new type for every cell - which unmounts
+   * the SPO qty input mid-word and takes the caret with it (captain, live, 4 Sep: the
+   * operator had to click back into the field for each digit). The cells therefore close
+   * over this ref rather than over `state`, and every helper they call bottoms out at
+   * `stateFor`, which reads it - so the closure the columns memo captured on its FIRST
+   * render still gives the current answer on every later one.
+   */
+  const stateRef = useRef(state);
+  stateRef.current = state;
   /** Which lines have their destinations open (R22). Closed to start with: the table is a
    *  ranked reading first, and every row open turns it into a form. */
   const [expanded, setExpanded] = useState<ExpandedState>({});
@@ -380,7 +394,7 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
   const existingSpos = useMemo(() => suggestion.data?.existing_spos ?? [], [suggestion.data]);
 
   const stateFor = (ln: SpoSuggestionLine): LineState => {
-    const held = state[ln.shipment_line_id];
+    const held = stateRef.current[ln.shipment_line_id];
     if (held) return held;
     const soKeys = defaultSoKeys(ln, ln.suggested_qty);
     return {
@@ -499,6 +513,10 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
     }
     return bad;
   }, [lines, confirmLines]);
+  /** Read by the Location cell and its expanded panel, which live inside the identity-stable
+   *  `columns` memo - see `stateRef`. */
+  const splitMismatchRef = useRef(splitMismatch);
+  splitMismatchRef.current = splitMismatch;
 
   /**
    * Lines where the ticked demand asks for more than the container holds (AC-G5).
@@ -646,7 +664,7 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
           ? ln.location_options.find((o) => o.warehouse_id === splits[0].warehouseId)?.warehouse_code ??
             'Choose'
           : `${splits.length} locations`;
-    const mismatch = splitMismatch.has(ln.shipment_line_id);
+    const mismatch = splitMismatchRef.current.has(ln.shipment_line_id);
     const expanded = row.getIsExpanded();
     return (
       <div className="flex min-w-0 flex-col gap-0.5">
@@ -922,15 +940,20 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
               splits={splitsFor(ln)}
               qty={qtyFor(ln)}
               disabled={cannotSplit(ln)}
-              mismatch={splitMismatch.has(ln.shipment_line_id)}
+              mismatch={splitMismatchRef.current.has(ln.shipment_line_id)}
               onChange={(next) => setSplits(ln, next)}
             />
           ),
         },
       },
     ],
+    // The deps are EMPTY on purpose and must stay that way: a rebuilt columns array
+    // remounts every cell (see `stateRef`), which is what made the SPO qty input lose focus
+    // after each keystroke. The cells read live state through `stateRef` / `splitMismatchRef`
+    // instead, and re-run on every render of this component because `DataGridTable` builds a
+    // fresh element for each cell.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [state],
+    [],
   );
 
   const table = useReactTable({
