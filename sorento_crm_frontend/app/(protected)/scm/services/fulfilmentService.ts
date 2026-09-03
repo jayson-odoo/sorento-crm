@@ -453,27 +453,57 @@ export async function deleteLoadingPlan(id: string): Promise<void> {
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to delete the loading plan'));
 }
 
+/** One `/procurement/suppliers/select` row, as far as this feed cares. */
+interface SupplierSelectRow {
+  id: string;
+  supplier_code: string;
+  supplier_name: string;
+}
+
+const SUPPLIER_PAGE_SIZE = 50;
+
 /**
- * Suppliers, from the existing procurement select. Value is the id the API needs.
+ * Suppliers, from the existing procurement select. Value is the id the API needs; label is
+ * the supplier NAME only (captain, 3 Sep) - `SearchableSelect` already keys each option on
+ * its id, so two suppliers sharing a name (a real duplicate-data case, "Testing Company" x3
+ * in the lane DB) are distinct OPTIONS even though their labels read the same; a `<code> -
+ * <name>` label was tried and reverted, since the code is not something a person reads a
+ * supplier by.
  *
- * The endpoint caps at 100 rows (`app/api/v1/procurement/suppliers.py`), so a bare no-query
- * call is only ever a first page - fine for a short client-filtered pool, silently wrong for
- * a book of hundreds of suppliers where the one somebody wants is past row 100 and simply
- * never reachable by typing its name. `query` ilikes code + name server-side and is the fix:
- * pass it (typically from `SearchableSelect`'s own `fetchOptions`, which already debounces
- * and re-queries as the user types) rather than fetching the unfiltered page once and
- * filtering it client-side.
+ * `pageIndex` is optional and 0-based (`SearchableSelect`'s `fetchOptions` contract): passed,
+ * this pages the backend (`page = pageIndex + 1`, `limit = 50`) so a `paginated` select (the
+ * PI upload dialog, the loading plan container dialog) can offer Load more past the first
+ * page - a book of hundreds of suppliers used to have no way past row 100. Omitted, it asks
+ * for the endpoint's legacy bare array (still capped at 100), for callers that want the whole
+ * list at once rather than a picker (the PI list filter, the incoming-containers filter).
+ * `query` ilikes code + name server-side in either mode, typically fed from
+ * `SearchableSelect`'s own debounced search text.
  */
 export async function getFulfilmentSuppliers(
   query?: string,
+  pageIndex?: number,
 ): Promise<{ value: string; label: string }[]> {
-  const qs = query?.trim() ? `?query=${encodeURIComponent(query.trim())}` : '';
+  const params = new URLSearchParams();
+  if (query?.trim()) params.set('query', query.trim());
+  if (pageIndex !== undefined) {
+    params.set('page', String(pageIndex + 1));
+    params.set('limit', String(SUPPLIER_PAGE_SIZE));
+  }
+  const qs = params.toString() ? `?${params.toString()}` : '';
   const res = await apiFetch(`/api/v1/procurement/suppliers/select${qs}`);
-  const rows = await readJson<{ id: string; supplier_name: string }[]>(
-    res,
-    'Failed to load suppliers',
-  );
-  return rows.map((s) => ({ value: s.id, label: s.supplier_name }));
+  const toOption = (s: SupplierSelectRow) => ({
+    value: s.id,
+    label: s.supplier_name,
+  });
+  if (pageIndex !== undefined) {
+    const body = await readJson<{ items: SupplierSelectRow[]; has_more: boolean }>(
+      res,
+      'Failed to load suppliers',
+    );
+    return body.items.map(toOption);
+  }
+  const rows = await readJson<SupplierSelectRow[]>(res, 'Failed to load suppliers');
+  return rows.map(toOption);
 }
 
 /**
@@ -1181,6 +1211,10 @@ export interface PackingListLine {
   product_id: string;
   product_code: string;
   product_name: string | null;
+  /** The supplier's own wording for the item (S9). The product's name when the line has
+   *  none - `build()` already resolves the fallback server-side. Optional (absent on a
+   *  payload built before this field existed), same convention `unit_cost` below uses. */
+  description?: string | null;
   brand: string | null;
   company: PackingListCompany;
   qty: number;

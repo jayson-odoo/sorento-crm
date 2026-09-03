@@ -1609,14 +1609,6 @@ class ProformaInvoice(Base, CompanyScopedMixin):
     block_index = Column(Integer, nullable=True)
     uploaded_by = Column(String, nullable=True)
 
-    #: Which box this invoice is being fitted into. NULL means the tenant's default size,
-    #: resolved on read rather than copied in - a PI uploaded before anybody thought about
-    #: capacity should follow the default, not freeze whatever it happened to be that day.
-    container_size_id = Column(
-        UUID(as_uuid=False), ForeignKey("scm.container_size.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-
     #: Who trimmed this document to fit, and when. NULL on an invoice nobody has touched,
     #: which is what tells the screen to show the supplier's figures unqualified.
     adjusted_by = Column(String(200), nullable=True)

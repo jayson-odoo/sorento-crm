@@ -29,7 +29,7 @@ vi.mock('@/services/pendingActionService', () => ({
   getCurrentPendingAction: vi.fn().mockResolvedValue({ pending: null, last_outcome: null }),
 }));
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { ProformaInvoiceDetail as ProformaInvoiceDetailData } from '../../../services/proformaInvoiceService';
 
@@ -63,10 +63,14 @@ vi.mock('@/hooks/usePermissions', () => ({
 }));
 
 const push = vi.fn();
+const replace = vi.fn();
+// The tab lives in the URL (S1) - a real `URLSearchParams` so `.get('tab')` and `.toString()`
+// both behave, swappable per test to prove a reload lands back on the tab named in it.
+let currentSearchParams = new URLSearchParams();
 vi.mock('next/navigation', () => ({
   usePathname: () => '/scm/proforma-invoices/pi-1',
-  useRouter: () => ({ push }),
-  useSearchParams: () => new URLSearchParams(),
+  useRouter: () => ({ push, replace }),
+  useSearchParams: () => currentSearchParams,
 }));
 
 // The WHOLE surface the components under test call. `ConfirmDeleteDialog` reports through
@@ -84,8 +88,34 @@ vi.mock('sonner', () => ({
 }));
 
 // The line grid's product picker is server-searched; this suite is not testing the catalogue.
+// A `vi.fn()` (not a bare async function) so the AC-B3/AC-B5 tests can hand back a real
+// page for the ONE product being picked, without the rest of the suite caring.
+const { getProductsMock } = vi.hoisted(() => ({
+  getProductsMock: vi.fn().mockResolvedValue({ data: [], pagination: { total: 0 } }),
+}));
 vi.mock('@/app/(protected)/master-data-management/products/services/productService', () => ({
-  getProducts: async () => ({ data: [], pagination: { total: 0 } }),
+  getProducts: getProductsMock,
+}));
+
+// The master list (AC-B4), not free text - fed to every UoM cell's SearchableSelect.
+// `vi.hoisted` because the array has to exist before `vi.mock`'s own hoisting runs it: the
+// real `useUOMSelectQuery` is a `useQuery` with `staleTime: Infinity`, so `data` is the SAME
+// reference across renders once loaded - a fresh literal returned from the mock on every
+// call would fabricate an instability the real hook does not have, and cascade into the
+// Lines grid's `columns` memo recomputing (and remounting every row's `SearchableSelect`)
+// on every unrelated render.
+const { UOM_OPTIONS } = vi.hoisted(() => ({
+  UOM_OPTIONS: [
+    { id: 'u-pcs', uom_code: 'PCS', uom_name: 'Pieces' },
+    { id: 'u-box', uom_code: 'BOX', uom_name: 'Box' },
+    { id: 'u-set', uom_code: 'SET', uom_name: 'Set' },
+  ],
+}));
+vi.mock('@/app/(protected)/master-data-management/shared/hooks/use-uom-select-query', () => ({
+  useUOMSelectQuery: () => ({
+    data: UOM_OPTIONS,
+    isLoading: false,
+  }),
 }));
 
 const state = {
@@ -158,13 +188,8 @@ function detail(over: Partial<ProformaInvoiceDetailData> = {}): ProformaInvoiceD
     uploaded_by: 'Ms Tee',
     created_at: '2026-08-01T02:00:00',
     updated_at: '2026-08-01T02:00:00',
-    container_size_id: null,
-    container_size_code: '40HQ',
-    container_cbm: 65,
     total_cbm: 69.36,
     unmeasured_lines: 0,
-    fill_pct: 106.71,
-    over_by_cbm: 4.36,
     status: 'current',
     revision_no: 1,
     revision_count: 1,
@@ -202,6 +227,8 @@ function detail(over: Partial<ProformaInvoiceDetailData> = {}): ProformaInvoiceD
         matched_by: null,
         match_source: null,
         match_id: null,
+        product_id: 'prod-item-1',
+        product_set_id: null,
         product_code: 'ITEM-1',
         set_code: null,
         matched: true,
@@ -228,6 +255,10 @@ function detail(over: Partial<ProformaInvoiceDetailData> = {}): ProformaInvoiceD
   };
 }
 
+/** The last render's `rerender`, so `openTab` can force a re-read of the mocked URL - same
+ *  trick `renderDetail`'s own `refresh` uses. */
+let currentRerender: (() => void) | null = null;
+
 function renderDetail() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const tree = () => (
@@ -236,6 +267,7 @@ function renderDetail() {
     </QueryClientProvider>
   );
   const view = render(tree());
+  currentRerender = () => view.rerender(tree());
   // The detail hook is mocked, so a write's invalidation cannot be observed the usual way.
   // `refresh` replays what the refetch would do.
   return { ...view, refresh: () => view.rerender(tree()) };
@@ -250,13 +282,24 @@ function openActions() {
   });
 }
 
+const TAB_PARAM: Record<'General' | 'Lines' | 'Revisions' | 'Packing lists', string | null> = {
+  General: null,
+  Lines: 'lines',
+  Revisions: 'revisions',
+  'Packing lists': 'packing-lists',
+};
+
 /**
- * `mouseDown`, not `click`: Radix's tab trigger selects on mouse-down, and a plain `click`
- * event is a silent no-op. Exact names, because `/lines/i` matches BOTH "Lines" and
- * "Packing lists".
+ * The tab now lives in the URL (S1), not local state, so a click's own re-render depends on
+ * the mocked router actually navigating - it doesn't. This sets `?tab=` the way the click's
+ * `router.replace` would have written it and re-renders, exactly as `LoadingPlanView.test.tsx`
+ * does for the same reason. The writing half of the click itself is pinned separately, in
+ * "ProformaInvoiceDetail - the tab lives in the URL (S1)" below.
  */
 function openTab(name: 'General' | 'Lines' | 'Revisions' | 'Packing lists') {
-  fireEvent.mouseDown(screen.getByRole('tab', { name }), { button: 0, ctrlKey: false });
+  const value = TAB_PARAM[name];
+  currentSearchParams = new URLSearchParams(value ? `tab=${value}` : '');
+  currentRerender?.();
 }
 
 /** Open the gear menu and press Edit, which is where editing starts from now. */
@@ -268,7 +311,6 @@ function beginEdit() {
 function lastSavePayload() {
   return writes.save.mock.calls[writes.save.mock.calls.length - 1][0] as {
     pi_number?: string;
-    container_size_id?: string | null;
     lines?: Array<Record<string, unknown>>;
   };
 }
@@ -278,10 +320,21 @@ beforeEach(() => {
   state.isLoading = false;
   state.isError = false;
   push.mockReset();
+  replace.mockReset();
+  currentSearchParams = new URLSearchParams();
+  currentRerender = null;
   writes.save.mockReset().mockResolvedValue(undefined);
   writes.forgetMatch.mockReset().mockResolvedValue(undefined);
   writes.markAsRevision.mockReset().mockResolvedValue(undefined);
+  getProductsMock.mockReset().mockResolvedValue({ data: [], pagination: { total: 0 } });
 });
+
+/** The Product select is the first combobox in a line's row, the UoM select the second -
+ *  column order (`item_code, product, description, qty, uom, ...`) puts Product ahead of
+ *  UoM, and only the UoM select carries its own accessible name. */
+function lineRow(itemCodeAriaLabel: string): HTMLElement {
+  return screen.getByLabelText(itemCodeAriaLabel).closest('tr') as HTMLElement;
+}
 
 describe('ProformaInvoiceDetail - loading / error / data states', () => {
   it('shows a loading skeleton while the detail is fetched', () => {
@@ -335,6 +388,15 @@ describe('ProformaInvoiceDetail - the record header', () => {
     expect(
       screen.queryByRole('button', { name: /export adjusted pi/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it('the convert dialog asks the container size (S5, ruling 1)', () => {
+    state.data = detail();
+    renderDetail();
+
+    fireEvent.click(screen.getByRole('button', { name: /convert to packing list/i }));
+
+    expect(screen.getByLabelText('Container size')).toBeInTheDocument();
   });
 
   it('lists every secondary action in the gear menu, in one place', () => {
@@ -424,6 +486,66 @@ describe('ProformaInvoiceDetail - deleting the invoice', () => {
   });
 });
 
+describe('ProformaInvoiceDetail - the tab lives in the URL (S1)', () => {
+  it('clicking Lines writes ?tab=lines (AC-A1)', () => {
+    state.data = detail();
+    renderDetail();
+
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'Lines' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    expect(replace).toHaveBeenCalledWith('/scm/proforma-invoices/pi-1?tab=lines', {
+      scroll: false,
+    });
+  });
+
+  it('clicking General from another tab clears ?tab= rather than writing ?tab=general (AC-A1)', () => {
+    state.data = detail();
+    currentSearchParams = new URLSearchParams('tab=lines');
+    renderDetail();
+
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'General' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    expect(replace).toHaveBeenCalledWith('/scm/proforma-invoices/pi-1', { scroll: false });
+  });
+
+  it('a reload on ?tab=revisions lands on Revisions, not General (AC-A3)', () => {
+    state.data = detail();
+    currentSearchParams = new URLSearchParams('tab=revisions');
+    renderDetail();
+
+    expect(screen.getByRole('tab', { name: 'Revisions' })).toHaveAttribute(
+      'data-state',
+      'active',
+    );
+    expect(
+      screen.getByText('This is the only version the supplier has sent.'),
+    ).toBeInTheDocument();
+  });
+
+  it('an unrecognised ?tab= falls back to General', () => {
+    state.data = detail();
+    currentSearchParams = new URLSearchParams('tab=nonsense');
+    renderDetail();
+
+    expect(screen.getByRole('tab', { name: 'General' })).toHaveAttribute('data-state', 'active');
+  });
+
+  it('pressing Edit while on Lines stays on Lines (AC-A4)', () => {
+    state.data = detail();
+    currentSearchParams = new URLSearchParams('tab=lines');
+    renderDetail();
+
+    beginEdit();
+
+    expect(screen.getByRole('tab', { name: 'Lines' })).toHaveAttribute('data-state', 'active');
+    expect(screen.getByLabelText('Item code for line 1')).toBeInTheDocument();
+  });
+});
+
 describe('ProformaInvoiceDetail - the tabs', () => {
   it('renders four tabs, in a fixed order', () => {
     state.data = detail();
@@ -439,25 +561,21 @@ describe('ProformaInvoiceDetail - the tabs', () => {
 
     expect(screen.getByRole('region', { name: 'Invoice' })).toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Supplier' })).toBeInTheDocument();
-    expect(screen.getByRole('region', { name: 'Volume' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Total volume' })).toBeInTheDocument();
   });
 
-  it('states the volume against the named container and how far over it is (AC-D2)', () => {
+  it('states the total volume as a NUMBER, no capacity, percentage, bar or over-by (S5, ruling 1)', () => {
     state.data = detail();
     renderDetail();
 
     expect(screen.getByText('69.36 cbm')).toBeInTheDocument();
-    expect(screen.getByText(/of 65 \(40HQ\) - 107% full/)).toBeInTheDocument();
-    expect(screen.getByText('over by 4.36 cbm')).toBeInTheDocument();
+    expect(screen.queryByText(/40HQ/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/% full/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/over by/)).not.toBeInTheDocument();
   });
 
   it('counts the unmeasured lines rather than reading them as an empty container', () => {
-    state.data = detail({
-      total_cbm: null,
-      unmeasured_lines: 2,
-      fill_pct: null,
-      over_by_cbm: null,
-    });
+    state.data = detail({ total_cbm: null, unmeasured_lines: 2 });
     renderDetail();
 
     expect(screen.getByText('No volume on this invoice')).toBeInTheDocument();
@@ -570,7 +688,8 @@ describe('ProformaInvoiceDetail - editing is a draft until Save', () => {
     beginEdit();
 
     expect(screen.getByLabelText('PI number')).toHaveValue('PI-2026-001');
-    expect(screen.getByLabelText('Container size')).toBeInTheDocument();
+    // No Container size field (S5): capacity moved to the convert dialog.
+    expect(screen.queryByLabelText('Container size')).not.toBeInTheDocument();
     // Same tabs, same order, mid-edit.
     expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual([
       'General',
@@ -607,7 +726,7 @@ describe('ProformaInvoiceDetail - editing is a draft until Save', () => {
     expect(writes.save).not.toHaveBeenCalled();
   });
 
-  it('moves the fill bar live as the quantity is typed, before any save (AC-E3)', () => {
+  it('moves the total volume live as the quantity is typed, before any save', () => {
     state.data = detail();
     renderDetail();
     beginEdit();
@@ -617,7 +736,6 @@ describe('ProformaInvoiceDetail - editing is a draft until Save', () => {
 
     // 20 x 0.17 cbm, computed from the per-unit figure the supplier stated.
     expect(screen.getByText('3.4 cbm')).toBeInTheDocument();
-    expect(screen.queryByText(/over by/)).not.toBeInTheDocument();
   });
 
   it('sends the WHOLE line array in one call on Save', async () => {
@@ -954,4 +1072,158 @@ describe('F11 - answering a supplier code by hand', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
+});
+
+describe('S2 - the Product select carries a matched line through edit, and UoM comes off the master list', () => {
+  it('AC-B2: a line matched to a PRODUCT shows the product code as the select value', () => {
+    state.data = detail();
+    renderDetail();
+    beginEdit();
+    openTab('Lines');
+
+    const productCombo = within(lineRow('Item code for line 1')).getAllByRole('combobox')[0];
+    expect(productCombo).toHaveTextContent('ITEM-1');
+  });
+
+  it('AC-B2: a line matched to a SET shows the set code as the select value', () => {
+    state.data = detail({
+      lines: [
+        {
+          ...detail().lines[0],
+          product_id: null,
+          product_set_id: 'set-1',
+          product_code: 'SET-1',
+          set_code: 'SET-1',
+        },
+      ],
+    });
+    renderDetail();
+    beginEdit();
+    openTab('Lines');
+
+    const productCombo = within(lineRow('Item code for line 1')).getAllByRole('combobox')[0];
+    expect(productCombo).toHaveTextContent('SET-1');
+  });
+
+  it('AC-B3: editing only the qty and saving sends a line with NO product_id / product_set_id key', async () => {
+    state.data = detail();
+    renderDetail();
+    beginEdit();
+    openTab('Lines');
+
+    fireEvent.change(screen.getByLabelText('Quantity for ITEM-1'), { target: { value: '8' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Save proforma invoice$/i }));
+
+    await waitFor(() => expect(writes.save).toHaveBeenCalledTimes(1));
+    const line = lastSavePayload().lines?.[0] ?? {};
+    // An untouched Product select leaves the key OUT of the payload entirely - this is
+    // the S2 regression (#579): sending it back as `null` unconditionally is what
+    // silently unbound every matched product on a plain quantity save.
+    expect(line).not.toHaveProperty('product_id');
+    expect(line).not.toHaveProperty('product_set_id');
+  });
+
+  it('AC-B3: clearing the product select and saving sends product_id: null', async () => {
+    state.data = detail();
+    renderDetail();
+    beginEdit();
+    openTab('Lines');
+
+    const productCombo = within(lineRow('Item code for line 1')).getAllByRole('combobox')[0];
+    fireEvent.pointerDown(within(productCombo).getByRole('button', { name: 'Clear selection' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save proforma invoice$/i }));
+
+    await waitFor(() => expect(writes.save).toHaveBeenCalledTimes(1));
+    const line = lastSavePayload().lines?.[0] ?? {};
+    expect(line.product_id).toBeNull();
+    // The set binding was never touched (it was already null) - no key for it either.
+    expect(line).not.toHaveProperty('product_set_id');
+  });
+
+  it('AC-B3: picking a different product sends the new id, and product_set_id: null for a line that was set-bound', async () => {
+    getProductsMock.mockResolvedValueOnce({
+      data: [{ id: 'prod-99', product_code: 'NEWCODE', product_name: 'New product' }],
+      pagination: { total: 1 },
+    });
+    state.data = detail({
+      lines: [
+        {
+          ...detail().lines[0],
+          product_id: null,
+          product_set_id: 'set-1',
+          product_code: 'SET-1',
+          set_code: 'SET-1',
+        },
+      ],
+    });
+    renderDetail();
+    beginEdit();
+    openTab('Lines');
+
+    const productCombo = within(lineRow('Item code for line 1')).getAllByRole('combobox')[0];
+    fireEvent.click(productCombo);
+    fireEvent.click(await screen.findByRole('option', { name: 'NEWCODE - New product' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save proforma invoice$/i }));
+
+    await waitFor(() => expect(writes.save).toHaveBeenCalledTimes(1));
+    const line = lastSavePayload().lines?.[0] ?? {};
+    expect(line.product_id).toBe('prod-99');
+    expect(line.product_set_id).toBeNull();
+  });
+
+  it('AC-B4: the UoM cell in edit mode renders the master UoM options', async () => {
+    state.data = detail();
+    renderDetail();
+    beginEdit();
+    openTab('Lines');
+
+    fireEvent.click(screen.getByRole('combobox', { name: 'UOM for ITEM-1' }));
+
+    expect(await screen.findByRole('option', { name: 'BOX' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'SET' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'PCS' })).toBeInTheDocument();
+  });
+
+  it('AC-B4: picking a UoM writes the chosen code into the payload', async () => {
+    state.data = detail();
+    renderDetail();
+    beginEdit();
+    openTab('Lines');
+
+    fireEvent.click(screen.getByRole('combobox', { name: 'UOM for ITEM-1' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'BOX' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Save proforma invoice$/i }));
+
+    await waitFor(() => expect(writes.save).toHaveBeenCalledTimes(1));
+    expect(lastSavePayload().lines?.[0]).toMatchObject({ uom: 'BOX' });
+  });
+
+  it('AC-B5: adding a line and picking a product with a base UoM defaults UoM when the cell is blank', async () => {
+    getProductsMock.mockResolvedValueOnce({
+      data: [
+        {
+          id: 'prod-hand',
+          product_code: 'HAND-1',
+          product_name: 'Hand basin',
+          base_uom: { id: 'u-box', uom_code: 'BOX', uom_name: 'Box' },
+        },
+      ],
+      pagination: { total: 1 },
+    });
+    state.data = detail();
+    renderDetail();
+    beginEdit();
+    openTab('Lines');
+
+    fireEvent.click(screen.getByRole('button', { name: /add line/i }));
+    const productCombo = within(lineRow('Item code for line 2')).getAllByRole('combobox')[0];
+    fireEvent.click(productCombo);
+    fireEvent.click(await screen.findByRole('option', { name: 'HAND-1 - Hand basin' }));
+
+    // Re-queried after the pick (not a reference captured before it), the same caution
+    // "SalesOrderDetail.test.tsx" states for its own async-resolved UoM select - a row
+    // re-render on patch can swap the node out from under a stale handle.
+    const uomCombo = within(lineRow('Item code for line 2')).getAllByRole('combobox')[1];
+    expect(uomCombo).toHaveTextContent('BOX');
+  });
 });

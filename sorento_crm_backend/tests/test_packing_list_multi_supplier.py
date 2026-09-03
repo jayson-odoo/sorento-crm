@@ -545,6 +545,34 @@ def test_the_same_edit_naming_the_supplier_per_line_updates_the_right_one(db):
     }
 
 
+def test_editing_a_lines_product_into_a_collision_is_refused(db):
+    """The grid (S10) lets any row's product be repicked freely; picking one that lands on
+    the same (product, supplier) another row already holds would otherwise be silently
+    summed into that row by `_merge_shipment_lines` - the behaviour that helper exists FOR
+    when one upload states the same item twice at two prices
+    (`test_one_product_on_two_lines_at_two_prices_merges_to_the_weighted_average`, the import
+    channel). Here it is one operator editing one row on screen, not a packing list saying
+    the same thing twice, so the save is refused instead - naming the product the row now
+    collides with - rather than quietly losing the other row's identity.
+    """
+    w, shipment = _mixed_container(db)
+
+    with pytest.raises(AppException) as excinfo:
+        # Kailu's tap line repicked to Caizhou's sink - the same (product, supplier) pair
+        # Caizhou's own sink line already holds.
+        w.update(
+            shipment.id,
+            lines=[(w.sink, 10, str(w.caizhou.id)), (w.sink, 5, str(w.caizhou.id))],
+        )
+
+    assert excinfo.value.status_code == 409
+    assert w.sink.product_code in excinfo.value.detail["message"]
+    db.rollback()
+    # Nothing was written: both rows are exactly as they were.
+    lines = _by_product(w.lines(shipment.id))
+    assert set(lines.keys()) == {str(w.tap.id), str(w.sink.id)}
+
+
 def test_the_update_schema_carries_the_per_line_supplier_and_its_volume(db):
     """`InboundShipmentUpdate.shipment_lines` is the same line schema the upload uses.
 
@@ -641,6 +669,107 @@ def test_the_update_schema_carries_the_container_workbook_fields(db):
     assert float(line.gross_weight_per_carton) == pytest.approx(8.3)
 
 
+def test_the_lines_grid_can_edit_the_description(db):
+    """S9, AC-I3 - the grid's Description column is editable in edit mode, and Save persists
+    it the same way every other line field on this PUT does."""
+    w = World(db)
+    payload = InboundShipmentUpdate(
+        shipment_lines=[
+            InboundShipmentLineCreate(
+                product_id=str(w.tap.id),
+                quantity_shipped=490,
+                supplier_id=str(w.kailu.id),
+                description="304 STAINLESS STEEL BASIN TAP - CHROME",
+            )
+        ],
+    )
+
+    shipment = w.upload(supplier_id=None, lines=[(w.tap, 1, None)])
+    db.commit()
+    InboundShipmentService(db).update_shipment(str(shipment.id), payload, updated_by=None)
+    db.commit()
+
+    db.refresh(shipment)
+    line = w.lines(shipment.id)[0]
+    assert line.description == "304 STAINLESS STEEL BASIN TAP - CHROME"
+
+
+def test_clearing_the_description_or_remarks_on_save_writes_null(db):
+    """The edit form sends `description: null` / `remarks: null` for a cleared field
+    (`orNull` on the FE, not `undefined`) - review finding on PR #594. A key PRESENT on the
+    line with an explicit None is a stated instruction to clear it, exactly like the header
+    fields already do via `exclude_unset` - the old blanket `if value is not None` skip in
+    `_upsert_shipment_lines` treated that the same as "never mentioned" and kept the stale
+    text forever.
+    """
+    w = World(db)
+    shipment = w.upload(supplier_id=None, lines=[(w.tap, 1, None)])
+    db.commit()
+    InboundShipmentService(db).update_shipment(
+        str(shipment.id),
+        InboundShipmentUpdate(
+            shipment_lines=[
+                InboundShipmentLineCreate(
+                    product_id=str(w.tap.id),
+                    quantity_shipped=1,
+                    description="304 STAINLESS STEEL BASIN TAP - CHROME",
+                    remarks="one pallet",
+                )
+            ],
+        ),
+        updated_by=None,
+    )
+    db.commit()
+    line = w.lines(shipment.id)[0]
+    assert line.description == "304 STAINLESS STEEL BASIN TAP - CHROME"
+    assert line.remarks == "one pallet"
+
+    InboundShipmentService(db).update_shipment(
+        str(shipment.id),
+        InboundShipmentUpdate(
+            shipment_lines=[
+                InboundShipmentLineCreate(
+                    product_id=str(w.tap.id),
+                    quantity_shipped=1,
+                    description=None,
+                    remarks=None,
+                )
+            ],
+        ),
+        updated_by=None,
+    )
+    db.commit()
+    db.refresh(line)
+    assert line.description is None
+    assert line.remarks is None
+
+
+def test_a_line_that_omits_description_or_remarks_keeps_the_existing_value(db):
+    """Absent key = leave alone: the procurement edit form's minimal payload (product and
+    quantity only) must not blank out a description or remark a previous save wrote."""
+    w = World(db)
+    shipment = w.upload(supplier_id=None, lines=[(w.tap, 1, None)])
+    db.commit()
+    line = w.lines(shipment.id)[0]
+    line.description = "existing wording"
+    line.remarks = "existing remark"
+    db.commit()
+
+    InboundShipmentService(db).update_shipment(
+        str(shipment.id),
+        InboundShipmentUpdate(
+            shipment_lines=[
+                InboundShipmentLineCreate(product_id=str(w.tap.id), quantity_shipped=1)
+            ],
+        ),
+        updated_by=None,
+    )
+    db.commit()
+    db.refresh(line)
+    assert line.description == "existing wording"
+    assert line.remarks == "existing remark"
+
+
 def test_the_container_workbook_fields_travel_back_out_on_the_read():
     """`response_model` silently DROPS a field it does not declare.
 
@@ -674,6 +803,8 @@ def test_the_container_workbook_fields_travel_back_out_on_the_read():
         "carton_height_cm",
         "net_weight_per_carton",
         "gross_weight_per_carton",
+        # S9 - the supplier's own wording for the item (migration 466).
+        "description",
     }
     assert line <= set(InboundShipmentLineResponse.model_fields)
 

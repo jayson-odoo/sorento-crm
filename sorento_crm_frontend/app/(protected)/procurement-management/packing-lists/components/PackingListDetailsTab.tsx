@@ -2,7 +2,10 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { ContainerVolumeFill } from '@/components/common/ContainerVolumeFill';
 import { formatDate } from '@/lib/helpers';
+import { useContainerSizes } from '@/app/(protected)/scm/hooks/useFulfilment';
 import { CLEARANCE_ATTRIBUTE_FIELDS } from '../forms/packing-list-schema';
 import { PackingListField } from './PackingListField';
 import { SupplierCombobox } from './SupplierCombobox';
@@ -53,8 +56,16 @@ export function PackingListDetailsTab() {
     checkpoints,
   } = usePackingListRecord();
 
+  const containerSizes = useContainerSizes();
+
   if (!packingList) return null;
   const record = packingList as unknown as Record<string, unknown>;
+
+  const containerSizeOptions = (containerSizes.data ?? []).map((s) => ({
+    value: s.id,
+    label: `${s.code} - ${s.cbm} cbm${s.is_default ? ' (default)' : ''}`,
+  }));
+  const defaultContainerSize = (containerSizes.data ?? []).find((s) => s.is_default) ?? null;
 
   // Total items from the lines when there are any (the source of truth), else the header's
   // own figure. Derived by the backend, so it has no input counterpart.
@@ -198,7 +209,40 @@ export function PackingListDetailsTab() {
               onChange={setField}
               view={text(record.delivery_warehouse)}
             />
+            <div className="min-w-0">
+              <p className="text-sm text-muted-foreground">Container size</p>
+              {editing ? (
+                <SearchableSelect
+                  triggerClassName="mt-1"
+                  size="sm"
+                  value={draft.container_size_id ?? ''}
+                  onChange={(v: string) => setField('container_size_id', v)}
+                  options={containerSizeOptions}
+                  placeholder={
+                    defaultContainerSize
+                      ? `${defaultContainerSize.code} (default)`
+                      : 'Default size'
+                  }
+                  clearable
+                />
+              ) : (
+                <p className="font-medium break-words">
+                  {packingList.container_size_code ?? '-'}
+                </p>
+              )}
+            </div>
           </div>
+          {/* The fill gauge (S5, ruling 1): the shipment's own lines against the size
+              above, moved here from the proforma invoice - a packing list routinely
+              consolidates several PIs, so capacity is a fact about the container, not any
+              one of them. */}
+          <ContainerVolumeFill
+            className="mt-4 max-w-xl"
+            totalCbm={packingList.total_cbm ?? null}
+            containerCbm={packingList.container_cbm ?? null}
+            containerLabel={packingList.container_size_code ?? null}
+            unmeasuredLines={packingList.unmeasured_lines ?? 0}
+          />
         </CardContent>
       </Card>
 

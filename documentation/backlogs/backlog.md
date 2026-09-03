@@ -114,3 +114,13 @@ removed copy, for whoever restores a UI for them:
 - **BL-047** (2026-09-03, same batch): the lane dev DB carries real duplicate `suppliers` rows
   (Hello x2, Testing Company x3, Test Creditor Ltd2 x2) from earlier coder runs; they surface in
   every supplier picker. Test data, not code - clean with a scoped delete.
+- **BL-048** (2026-09-03, PR #594 CI): `app/(auth)/portal/components/SubmissionForm.duplicateCreate.test.tsx`
+  "Submit: a retry after the flush fails updates the created row instead of creating a second one"
+  failed on CI (`expected vi.fn() to be called 1 times, but got 0 times`, 5.1s) on a branch that never
+  touched the portal; 3/3 green locally, last touched by #549 (2 Sep). BL-032 family (assertion before
+  the retry settles under xdist load). Fix: `waitFor` the update mock before asserting.
+- **BL-049** (2026-09-03, PR #594 review nit): `InboundShipmentService.update_shipment` and
+  `delete_shipment` call `get_shipment` first, which now runs `_attach_capacity` (container sizes
+  query + `line_cbm` over every line) whose result is discarded; the update recomputes it at the
+  end and the delete never needs it. Wasted queries only. Split the read into a bare loader and a
+  `with_capacity` wrapper.

@@ -24,6 +24,7 @@ import {
   waitFor,
   within,
 } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const routerState = {
@@ -97,13 +98,20 @@ vi.mock('@/app/(protected)/master-data-management/products/services/productServi
   getProducts: vi.fn(async () => ({ data: [] })),
 }));
 
+// `vi.hoisted` because the array has to exist before `vi.mock`'s own hoisting runs it: the
+// real `useSupplierSelectQuery` is a `useQuery`, so `data` is the SAME reference across
+// renders once loaded - a fresh literal returned from the mock on every call would fabricate
+// an instability the real hook does not have, and cascade into the Lines grid's `columns`
+// memo recomputing (and remounting every row's inputs) on every unrelated render (same class
+// of defect as 9118d123b's `useUOMSelectQuery` mock).
+const { SUPPLIER_OPTIONS } = vi.hoisted(() => ({
+  SUPPLIER_OPTIONS: [
+    { id: 'sup-a', supplier_code: '400-K029', supplier_name: 'KAILU HARDWARE FACTORY' },
+    { id: 'sup-b', supplier_code: '400-C011', supplier_name: 'CAIZHOU SANITARY' },
+  ],
+}));
 vi.mock('../../suppliers/hooks/useSupplierSelectQuery', () => ({
-  useSupplierSelectQuery: () => ({
-    data: [
-      { id: 'sup-a', supplier_code: '400-K029', supplier_name: 'KAILU HARDWARE FACTORY' },
-      { id: 'sup-b', supplier_code: '400-C011', supplier_name: 'CAIZHOU SANITARY' },
-    ],
-  }),
+  useSupplierSelectQuery: () => ({ data: SUPPLIER_OPTIONS }),
 }));
 
 vi.mock('@/app/(protected)/resource-management/attachments/hooks/useAttachments', () => ({
@@ -126,6 +134,12 @@ vi.mock('@/app/(protected)/scm/hooks/useFulfilment', () => ({
     isError: false,
     error: null,
   }),
+  // The Details tab's Container size select (S5) - not this suite's concern, so one
+  // active default is enough to satisfy the render.
+  useContainerSizes: () => ({
+    data: [{ id: 'size-40hq', code: '40HQ', label: '40ft high cube', cbm: 65, is_default: true }],
+    isLoading: false,
+  }),
 }));
 
 // The Lines grid carries a real `listingKey` (S7); a live column-preferences query has
@@ -145,6 +159,7 @@ vi.mock('@/components/common/container', () => ({
   Container: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
 
+import { getProducts } from '@/app/(protected)/master-data-management/products/services/productService';
 import PackingListLayout from './layout';
 import DetailsPage from './page';
 import ProformaInvoicesPage from './proforma-invoices/page';
@@ -184,6 +199,9 @@ function mixedContainer(over: Record<string, unknown> = {}) {
         gross_weight_per_carton: '8.300',
         currency: 'CNY',
         unit_cost: '65.50',
+        // The supplier's own wording (S9) - deliberately different from the product name,
+        // so a test reading it can tell the two apart.
+        description: '连体马桶',
         product: { id: 'p-1', product_code: 'SRTWT7443', product_name: 'Basin Mixer Tall' },
       },
       {
@@ -545,6 +563,19 @@ describe('the Shipment lines tab', () => {
     expect(within(kailu).getByText('SORENTO')).toBeInTheDocument();
   });
 
+  it("shows the supplier's own description, the product name when the line has none (S9)", async () => {
+    await renderTab(<LinesPage />);
+
+    // l-1 carries its own description, and it prints INSTEAD of the product name.
+    const kailu = screen.getByText('SRTWT7443').closest('tr') as HTMLElement;
+    expect(within(kailu).getByText('连体马桶')).toBeInTheDocument();
+    expect(within(kailu).queryByText('Basin Mixer Tall')).not.toBeInTheDocument();
+
+    // l-2 has no description of its own, so the column falls back to the product's name.
+    const caizhou = screen.getByText('MCHWT1200').closest('tr') as HTMLElement;
+    expect(within(caizhou).getByText('Shower Set')).toBeInTheDocument();
+  });
+
   it('names the invoice per line', async () => {
     state.sourceInvoices = sourceInvoices();
     await renderTab(<LinesPage />);
@@ -626,6 +657,10 @@ describe('the edit draft, which now lives above every tab', () => {
     expect(screen.getByLabelText('Clearance cost')).toBeInTheDocument();
     expect(screen.getByLabelText('China freight cost')).toBeInTheDocument();
     expect(screen.getByLabelText('Insurance rate')).toBeInTheDocument();
+    // The fill gauge moved here from the proforma invoice (S5, ruling 1) - a select in
+    // edit mode, the size code in view. Not `getByLabelText`: like `Supplier` above it, the
+    // field is a bespoke block with the label as plain text, not a `<label htmlFor>`.
+    expect(screen.getByText('Container size')).toBeInTheDocument();
     // The ones with no input counterpart stay as values - nothing moves between the two.
     expect(screen.getByText('Total items')).toBeInTheDocument();
     expect(screen.getByText('Source sheet')).toBeInTheDocument();
@@ -694,6 +729,43 @@ describe('the edit draft, which now lives above every tab', () => {
     expect(line.currency).toBe('CNY');
   });
 
+  it('edits the description and sends it (S9, AC-I3)', async () => {
+    routerState.pathname = '/procurement-management/packing-lists/pl-1/lines';
+    await renderTab(<LinesPage />);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+
+    // l-1 already carries its own description - the input opens on it, not on the
+    // product's name.
+    expect(screen.getByLabelText('Description for SRTWT7443')).toHaveValue('连体马桶');
+    fireEvent.change(screen.getByLabelText('Description for SRTWT7443'), {
+      target: { value: '304 STAINLESS STEEL BASIN TAP' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^Save packing list$/i }));
+
+    await waitFor(() => expect(updatePackingList).toHaveBeenCalledTimes(1));
+    const line = updatePackingList.mock.calls[0][0].data.shipment_lines[0];
+    expect(line.description).toBe('304 STAINLESS STEEL BASIN TAP');
+  });
+
+  it('sends null for a cleared description, never dropping the key', async () => {
+    routerState.pathname = '/procurement-management/packing-lists/pl-1/lines';
+    await renderTab(<LinesPage />);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+
+    // l-1 already carries its own description; clearing it back to blank must be a Save
+    // that says "null", not one that says nothing at all - an omitted key on this PUT means
+    // "unchanged", so the old wording would otherwise survive the save.
+    fireEvent.change(screen.getByLabelText('Description for SRTWT7443'), {
+      target: { value: '' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^Save packing list$/i }));
+
+    await waitFor(() => expect(updatePackingList).toHaveBeenCalledTimes(1));
+    const line = updatePackingList.mock.calls[0][0].data.shipment_lines[0];
+    expect(line.description).toBeNull();
+    expect(Object.keys(line)).toContain('description');
+  });
+
   it('totals follow the draft while somebody is typing', async () => {
     routerState.pathname = '/procurement-management/packing-lists/pl-1/lines';
     await renderTab(<LinesPage />);
@@ -744,6 +816,137 @@ describe('the edit draft, which now lives above every tab', () => {
 
     expect(updatePackingList).not.toHaveBeenCalled();
     expect(screen.queryByLabelText('Invoice number')).not.toBeInTheDocument();
+  });
+});
+
+describe('the lines grid stays usable while editing (Round 2, S10)', () => {
+  it('keeps the SAME input, still focused, after three keystrokes into Qty (AC-J1)', async () => {
+    routerState.pathname = '/procurement-management/packing-lists/pl-1/lines';
+    await renderTab(<LinesPage />);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+
+    const qty = screen.getByLabelText('Quantity for SRTWT7443');
+    await userEvent.clear(qty);
+    await userEvent.type(qty, '123');
+
+    // The SAME DOM node, still focused: a remount partway through typing (the columns
+    // memo rebuilding on every keystroke, S7's own S3-class defect) would have swapped
+    // this element out from under the keystrokes and dropped the rest of them.
+    expect(screen.getByLabelText('Quantity for SRTWT7443')).toBe(qty);
+    expect(document.activeElement).toBe(qty);
+    expect(qty).toHaveValue(123);
+  });
+
+  it('keeps focus while typing a measurement cell too (AC-J1)', async () => {
+    routerState.pathname = '/procurement-management/packing-lists/pl-1/lines';
+    await renderTab(<LinesPage />);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+
+    const length = screen.getByLabelText('Carton length for SRTWT7443');
+    await userEvent.clear(length);
+    await userEvent.type(length, '99');
+
+    expect(screen.getByLabelText('Carton length for SRTWT7443')).toBe(length);
+    expect(document.activeElement).toBe(length);
+    expect(length).toHaveValue(99);
+  });
+
+  it('shows a freshly added lines product as soon as it is picked (AC-J2)', async () => {
+    routerState.pathname = '/procurement-management/packing-lists/pl-1/lines';
+    vi.mocked(getProducts).mockResolvedValue({
+      data: [{ id: 'p-9', product_code: 'SRTNEW099', product_name: 'New Basin' }],
+      pagination: { total: 1, page: 1, limit: 50 },
+    } as never);
+    await renderTab(<LinesPage />);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add line' }));
+    const row = screen.getByLabelText('Quantity for the new line').closest('tr') as HTMLElement;
+    // Neither combobox in this row carries an aria-label of its own (no `<Label htmlFor>`
+    // pairing, same as the old `PackingListForm`'s own line pickers) - found by POSITION,
+    // Factory then Model, the column order.
+    const productCombo = within(row).getAllByRole('combobox')[1];
+    fireEvent.click(productCombo);
+    fireEvent.click(await screen.findByRole('option', { name: /SRTNEW099/ }));
+
+    await waitFor(() => expect(productCombo).toHaveTextContent('SRTNEW099'));
+  });
+
+  it("lets an existing line's product be changed (AC-J3, FE)", async () => {
+    routerState.pathname = '/procurement-management/packing-lists/pl-1/lines';
+    vi.mocked(getProducts).mockResolvedValue({
+      data: [{ id: 'p-9', product_code: 'SRTNEW099', product_name: 'New Basin' }],
+      pagination: { total: 1, page: 1, limit: 50 },
+    } as never);
+    await renderTab(<LinesPage />);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+
+    const row = screen.getByLabelText('Quantity for SRTWT7443').closest('tr') as HTMLElement;
+    const productCombo = within(row).getAllByRole('combobox')[1];
+    expect(productCombo).toHaveTextContent('SRTWT7443');
+    fireEvent.click(productCombo);
+    fireEvent.click(await screen.findByRole('option', { name: /SRTNEW099/ }));
+
+    await waitFor(() => expect(within(row).getAllByRole('combobox')[1]).toHaveTextContent('SRTNEW099'));
+    expect(within(row).getAllByRole('combobox')[1]).not.toHaveTextContent('SRTWT7443');
+  });
+
+  it('Ctn qty is an input when Pcs/ctn is blank, derived and read-only when it is stated (AC-J4)', async () => {
+    routerState.pathname = '/procurement-management/packing-lists/pl-1/lines';
+    await renderTab(<LinesPage />);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+
+    // l-2 (MCHWT1200) states no Pcs/ctn - the workbook's own `H` formula has nothing to
+    // derive Ctn qty FROM, so the stated carton count (55) is editable directly.
+    const ctnQty = screen.getByLabelText('Ctn qty for MCHWT1200');
+    await userEvent.clear(ctnQty);
+    await userEvent.type(ctnQty, '77');
+    expect(ctnQty).toHaveValue(77);
+
+    // l-1 (SRTWT7443) states Pcs/ctn = 10, so Ctn qty is DERIVED (490 / 10 = 49) - typing
+    // into it would disagree with the number it derives, so there is no input at all.
+    expect(screen.queryByLabelText('Ctn qty for SRTWT7443')).not.toBeInTheDocument();
+    const row = screen.getByLabelText('Quantity for SRTWT7443').closest('tr') as HTMLElement;
+    expect(within(row).getByText('49')).toBeInTheDocument();
+  });
+
+  it('sends the stated Ctn qty on save when Pcs/ctn is blank (AC-J4)', async () => {
+    routerState.pathname = '/procurement-management/packing-lists/pl-1/lines';
+    await renderTab(<LinesPage />);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+
+    const ctnQty = screen.getByLabelText('Ctn qty for MCHWT1200');
+    await userEvent.clear(ctnQty);
+    await userEvent.type(ctnQty, '77');
+    fireEvent.click(screen.getByRole('button', { name: /^Save packing list$/i }));
+
+    await waitFor(() => expect(updatePackingList).toHaveBeenCalledTimes(1));
+    const lines = updatePackingList.mock.calls[0][0].data.shipment_lines;
+    const mocha = lines.find((l: { product_id: string }) => l.product_id === 'p-2');
+    expect(mocha.cartons_count).toBe(77);
+  });
+
+  it('every measurement is an input on every row, not only the first (AC-J5)', async () => {
+    routerState.pathname = '/procurement-management/packing-lists/pl-1/lines';
+    await renderTab(<LinesPage />);
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+
+    for (const code of ['MCHWT1200', 'SRTBT2200']) {
+      for (const field of [
+        'Material',
+        'Pcs per carton',
+        'Carton length',
+        'Carton width',
+        'Carton height',
+        'Net weight',
+        'Gross weight',
+        'Remarks',
+        'Price',
+        'Description',
+      ]) {
+        expect(screen.getByLabelText(`${field} for ${code}`)).toBeInTheDocument();
+      }
+    }
   });
 });
 

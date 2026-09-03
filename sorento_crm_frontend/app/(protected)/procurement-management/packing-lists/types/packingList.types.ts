@@ -13,6 +13,13 @@ export interface InboundShipmentLine {
   cbm?: number | string | null;
   /** The supplier's own note on the line. */
   remarks?: string | null;
+  /**
+   * The supplier's own wording for the item (S9), copied off the proforma invoice line at
+   * convert. Editable on the Shipment lines tab. Null on a line drafted before this field
+   * existed or uploaded with no description column of its own - the grid and the export
+   * both fall back to the product's name then.
+   */
+  description?: string | null;
   uom_id?: string | null;
   batch_number?: string | null;
   serial_number_range_from?: string | null;
@@ -97,6 +104,22 @@ export interface PackingList extends ClearanceFields {
   clearance_cost?: number | string | null;
   china_freight_cost?: number | string | null;
   insurance_rate?: number | string | null;
+  /**
+   * Which box this container is being loaded into (S5, ruling 1). Null = the tenant
+   * default. The fill gauge fields below are computed server-side onto the create /
+   * update / detail read - `container_size_code`, `container_cbm`, `total_cbm`,
+   * `fill_pct`, `over_by_cbm` are absent on the LIST row (the list endpoint's response
+   * does not carry them; only `getPackingList` / create / update do).
+   */
+  container_size_id?: string | null;
+  container_size_code?: string | null;
+  container_cbm?: number | null;
+  /** Sum of the shipment lines' cbm. Null when none of them state a volume. */
+  total_cbm?: number | null;
+  unmeasured_lines?: number;
+  fill_pct?: number | null;
+  /** Only when it is over: the cbm above capacity. */
+  over_by_cbm?: number | null;
   created_at: Date;
   created_by?: string | null;
   updated_at: Date;
@@ -205,6 +228,8 @@ export interface PackingListFormData {
   clearance_cost?: number | null;
   china_freight_cost?: number | null;
   insurance_rate?: number | null;
+  /** The Container card's own select (S5). Null clears it back to the tenant default. */
+  container_size_id?: string | null;
   shipment_lines?: Array<{
     product_id: string;
     quantity_shipped: number;
@@ -231,6 +256,10 @@ export interface PackingListFormData {
     /** Volume, editable in place on the Lines tab since F9 - the column has existed on the
      *  line since S3b and only the importer could ever fill it. */
     cbm?: number;
-    remarks?: string;
+    /** Absent = unchanged, `null` = clear it - the same absent-vs-null rule the header
+     *  fields above use, so a blanked Remarks/Description on save actually clears. */
+    remarks?: string | null;
+    /** The supplier's own wording for the item (S9), editable in the lines grid. */
+    description?: string | null;
   }>;
 }

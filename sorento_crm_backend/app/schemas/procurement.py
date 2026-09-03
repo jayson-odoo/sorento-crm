@@ -186,6 +186,10 @@ class InboundShipmentLineBase(BaseModel):
     # Volume as the packing list stated it, and the supplier's own note on the line.
     cbm: Optional[Decimal] = None
     remarks: Optional[str] = None
+    # The supplier's own wording for the item (migration 466, S9). Copied off the proforma
+    # invoice line at convert; editable in the lines grid afterwards. Product name is the
+    # reader's fallback when this is unset, never a value written here.
+    description: Optional[str] = None
     # What the container workbook measures the line by (AC-F3.5). Editable on the packing
     # list, because the supplier's file is where they come from and it is not always right.
     # Lengths in centimetres, weights per CARTON - the sheet multiplies them by the carton
@@ -299,6 +303,11 @@ class InboundShipmentBase(ClearanceFields, ContainerWorkbookFields):
     total_cartons: Optional[int] = None
     notes: Optional[str] = None
     attachment_id: Optional[str] = None
+    #: Which box this container is being loaded into (S5, migration 465). Capacity is a
+    #: property of the CONTAINER, not any one proforma invoice that fed it - this used to
+    #: live on `scm.proforma_invoice`, one level too low for a packing list that routinely
+    #: consolidates several PIs. Null means the tenant's default size.
+    container_size_id: Optional[str] = None
 
 
 class InboundShipmentCreate(InboundShipmentBase):
@@ -336,6 +345,9 @@ class InboundShipmentUpdate(ClearanceFields, ContainerWorkbookFields):
     total_cartons: Optional[int] = None
     notes: Optional[str] = None
     attachment_id: Optional[str] = None
+    #: The Container card's own select (S5). Null means the tenant's default size, the same
+    #: convention the field carries on `InboundShipmentBase`.
+    container_size_id: Optional[str] = None
     shipment_lines: Optional[List[InboundShipmentLineCreate]] = None
 
 
@@ -367,7 +379,16 @@ class InboundShipmentResponse(InboundShipmentBase):
     spo_allocations_count: Optional[int] = 0
     display_total_items: Optional[int] = None
     display_total_cartons: Optional[int] = None
-    
+    # The fill gauge (S5, ruling 1) - computed onto the shipment ORM object by
+    # `InboundShipmentService._attach_capacity`, never stored. `container_size_id` above is
+    # the operator's choice (or null = the tenant default); these are what it resolves to.
+    container_size_code: Optional[str] = None
+    container_cbm: Optional[float] = None
+    total_cbm: Optional[float] = None
+    unmeasured_lines: int = 0
+    fill_pct: Optional[float] = None
+    over_by_cbm: Optional[float] = None
+
     @field_validator('created_by', mode='before')
     @classmethod
     def convert_created_by_uuid(cls, v):
