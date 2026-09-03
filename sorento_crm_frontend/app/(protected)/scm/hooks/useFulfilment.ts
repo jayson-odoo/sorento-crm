@@ -328,6 +328,8 @@ export function useCreateSpo(shipmentId: string | null) {
     mutationFn: (lines: SpoConfirmLine[]) => createSpo(shipmentId as string, lines),
     onSuccess: (out) => {
       void qc.invalidateQueries({ queryKey: [...KEY, 'spo-suggestion', shipmentId] });
+      // A new purchase order exists now - the PO list/detail must see it too.
+      void qc.invalidateQueries({ queryKey: ['scm', 'purchase-orders'] });
       const names = out.created_spos.map((s) => s.po_number).filter(Boolean).join(', ');
       const allocated = out.allocations.length;
       const allocatedMsg = allocated
@@ -343,16 +345,17 @@ export function useCreateSpo(shipmentId: string | null) {
   });
 }
 
-/** Delete action on the already-converted planner row (third amendment) - unwinds the whole
- *  conversion for this shipment. On success, the planner's own suggestion query is
- *  invalidated so it falls back to a normal (non-converted) `suggest` and re-renders the
- *  confirm table. */
+/** Delete action on a row of the Created SPOs grid (R1) - unwinds ONE SPO
+ *  (`purchaseOrderId`) or, absent, every SPO the shipment ever made. On success, the
+ *  planner's own suggestion query is invalidated so it re-reads the remainder, and the PO
+ *  list/detail queries are invalidated since a purchase order just disappeared. */
 export function useDeleteSpo(shipmentId: string | null) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => deleteSpo(shipmentId as string),
+    mutationFn: (purchaseOrderId?: string) => deleteSpo(shipmentId as string, purchaseOrderId),
     onSuccess: (out) => {
       void qc.invalidateQueries({ queryKey: [...KEY, 'spo-suggestion', shipmentId] });
+      void qc.invalidateQueries({ queryKey: ['scm', 'purchase-orders'] });
       const names = out.deleted_po_numbers.join(', ');
       toast.success(
         out.deleted_spo_count === 1

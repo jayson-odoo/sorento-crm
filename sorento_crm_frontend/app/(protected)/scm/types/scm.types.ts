@@ -679,6 +679,31 @@ export interface PurchaseOrderDedication {
   source: string;
 }
 
+/** One SOURCE purchase-order line a CRM SPO line pulled from (R1, AC-H5). */
+export interface SpoPlanPull {
+  /** Null on an older payload that predated this field - the FE renders the number as plain
+   *  text rather than a link when it is absent. */
+  purchase_order_id: string | null;
+  po_number: string | null;
+  po_line_label: string | null;
+  qty: number;
+}
+
+/** One retail sales-order line a CRM SPO line covers (R1, AC-H5). */
+export interface SpoPlanCover {
+  so_number: string | null;
+  customer: string | null;
+  qty: number;
+  warehouse: string | null;
+}
+
+/** The PO detail's Plan card (R1) - a `crm_spo` order's own pulls/covers, read off its
+ *  lines' `source_ref`. `null`/absent on every other order. */
+export interface SpoPlan {
+  pulls: SpoPlanPull[];
+  covers: SpoPlanCover[];
+}
+
 export interface PurchaseOrder {
   id: string;
   /** Human-readable PO number - shown in the UI (never a UUID). */
@@ -729,6 +754,8 @@ export interface PurchaseOrder {
   total_amount?: string | null;
   /** The currency the order is written in. Blank means ringgit. */
   currency?: string | null;
+  /** A `crm_spo` order's own pulls/covers (R1, AC-H7). `null`/absent on every other order. */
+  spo_plan?: SpoPlan | null;
 }
 
 /**

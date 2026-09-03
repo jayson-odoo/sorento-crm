@@ -688,3 +688,59 @@ describe('PurchaseOrderDetail - the Placed lightbox (R5, AC-L1/AC-L3)', () => {
     expect(screen.queryByText('Allocated to')).toBeNull();
   });
 });
+
+describe('PurchaseOrderDetail - the Plan card (R1, AC-H7)', () => {
+  const spoPlan = {
+    pulls: [
+      {
+        purchase_order_id: 'po-source-1',
+        po_number: '202605-S0060',
+        po_line_label: 'CW-BASIN-450',
+        qty: 409,
+      },
+    ],
+    covers: [
+      { so_number: 'SO-2201', customer: 'Dealer A', qty: 30, warehouse: 'MWH' },
+    ],
+  };
+
+  it('renders for a crm_spo order, with its own pulls and covers', () => {
+    usePurchaseOrder.mockReturnValue({
+      data: po({ source: 'crm', spo_plan: spoPlan }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+
+    expect(screen.getByRole('heading', { name: 'Plan' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /202605-S0060/ })).toHaveAttribute(
+      'href',
+      '/scm/purchase-orders/po-source-1',
+    );
+    expect(screen.getByText('SO-2201')).toBeInTheDocument();
+    expect(screen.getByText('Dealer A')).toBeInTheDocument();
+  });
+
+  it('does not render for an import (non-crm) order', () => {
+    usePurchaseOrder.mockReturnValue({
+      data: po({ source: 'import' }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+
+    expect(screen.queryByRole('heading', { name: 'Plan' })).not.toBeInTheDocument();
+  });
+
+  it('empty pulls/covers state their own message rather than an empty table', () => {
+    usePurchaseOrder.mockReturnValue({
+      data: po({ source: 'crm', spo_plan: { pulls: [], covers: [] } }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+
+    expect(screen.getByText('No PO pull recorded.')).toBeInTheDocument();
+    expect(screen.getByText('No sales order covered.')).toBeInTheDocument();
+  });
+});

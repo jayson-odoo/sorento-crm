@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import {
   ColumnDef,
   ExpandedState,
@@ -16,7 +17,6 @@ import {
   ChevronsDownUp,
   ChevronsUpDown,
   Download,
-  FileText,
   Info,
   LayoutGrid,
   LoaderCircle,
@@ -48,9 +48,11 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
+  DrillTable,
   OnHandTable,
   PlanRowDialog,
   PoTakesPicker,
+  RIGHT,
   SoCoveragePicker,
   SpoTabs,
   type PlanRowDialogKind,
@@ -62,6 +64,8 @@ import {
   useDownloadSpoWorksheet,
   useSpoSuggestion,
 } from '@/app/(protected)/scm/hooks/useFulfilment';
+import { fmtDate } from '@/app/(protected)/scm/lib/format';
+import { purchaseOrderStatusPill } from '@/app/(protected)/scm/lib/purchaseOrderStatus';
 import type {
   SpoConfirmLine,
   SpoCoverageLine,
@@ -69,6 +73,7 @@ import type {
   SpoLocationOption,
   SpoLocationSplit,
   SpoPoTake,
+  SpoRef,
   SpoSuggestionLine,
 } from '@/app/(protected)/scm/services/fulfilmentService';
 import {
@@ -174,7 +179,9 @@ function poCoveredFor(ln: SpoSuggestionLine, takeIds: string[]): number {
   const available = ln.po_takes
     .filter((t) => takeIds.includes(t.po_line_id))
     .reduce((sum, t) => sum + (t.open_qty ?? t.qty), 0);
-  return Math.min(available, ln.packed_qty);
+  // Capped at what is actually LEFT to convert on this line (R1), not the raw packed
+  // figure - a prior `create` run already claimed the rest.
+  return Math.min(available, ln.remaining_qty);
 }
 
 /**
@@ -287,12 +294,15 @@ function reviewNotesFor(
 ): string[] {
   const notes: string[] = [];
   const asked = qty;
-  const packed = ln.packed_qty;
   // The server's own cap, restated here so the dialog names the same figure `create` will
-  // actually write - `need = min(requested, packed)`.
-  const willBe = Math.min(asked, packed);
-  if (asked > packed) {
-    notes.push(`Asked ${fmtInt(asked)}, packed ${fmtInt(packed)}, SPO will be ${fmtInt(willBe)}`);
+  // actually write - `need = min(requested, remaining_qty)` (R1: the remainder, not the raw
+  // packed figure - a prior `create` run may already have claimed part of this line).
+  const remaining = ln.remaining_qty;
+  const willBe = Math.min(asked, remaining);
+  if (asked > remaining) {
+    notes.push(
+      `Asked ${fmtInt(asked)}, ${fmtInt(asked - remaining)} over the remainder, SPO will be ${fmtInt(willBe)}`,
+    );
   }
   const poCovered = poCoveredFor(ln, takeIds);
   if (willBe > poCovered) {
@@ -322,7 +332,9 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
   const create = useCreateSpo(shipmentId);
   const deleteSpo = useDeleteSpo(shipmentId);
   const worksheet = useDownloadSpoWorksheet(shipmentId);
-  const [deleteOpen, setDeleteOpen] = useState(false);
+  /** Which row of the Created SPOs grid Delete was pressed on (R1: one row per SPO, not one
+   *  confirm for the whole shipment). */
+  const [deleteTarget, setDeleteTarget] = useState<SpoRef | null>(null);
   /** Create SPO no longer clamps or blocks live (R2) - everything worth a second look is
    *  read once, here, before the write (AC-I2, AC-I6). */
   const [reviewOpen, setReviewOpen] = useState(false);
@@ -363,7 +375,9 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
   }, [suggestion.data]);
 
   const lines = useMemo(() => suggestion.data?.lines ?? [], [suggestion.data]);
-  const alreadyConverted = suggestion.data?.already_converted ?? false;
+  // R1: every SPO this shipment has ever produced, oldest first - always populated, never
+  // gating the planner below it (a container is routinely converted in more than one pass).
+  const existingSpos = useMemo(() => suggestion.data?.existing_spos ?? [], [suggestion.data]);
 
   const stateFor = (ln: SpoSuggestionLine): LineState => {
     const held = state[ln.shipment_line_id];
@@ -667,6 +681,95 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
     );
   };
 
+  /** The Created SPOs grid (R1, AC-H6) - every SPO this shipment has ever produced, each a
+   *  link to its own PO detail (which carries the Plan card, AC-H7) and its own Delete. */
+  const createdSpoColumns = useMemo<ColumnDef<SpoRef>[]>(
+    () => [
+      {
+        id: 'po_number',
+        header: 'SPO',
+        cell: ({ row }) => (
+          <Link
+            href={`/scm/purchase-orders/${row.original.purchase_order_id}`}
+            className="font-medium text-primary hover:underline"
+            title={`Open ${row.original.po_number ?? EM_DASH}`}
+          >
+            {row.original.po_number ?? EM_DASH}
+          </Link>
+        ),
+        size: 160,
+        enableSorting: false,
+      },
+      {
+        id: 'supplier',
+        header: 'Supplier',
+        cell: ({ row }) => (
+          <span className="block truncate" title={row.original.supplier_name ?? undefined}>
+            {row.original.supplier_name ?? EM_DASH}
+          </span>
+        ),
+        size: 170,
+        enableSorting: false,
+      },
+      {
+        id: 'line_count',
+        header: 'Lines',
+        cell: ({ row }) => fmtInt(row.original.line_count),
+        size: 70,
+        enableSorting: false,
+        meta: RIGHT,
+      },
+      {
+        id: 'total_qty',
+        header: 'Qty',
+        cell: ({ row }) => fmtInt(row.original.total_qty),
+        size: 90,
+        enableSorting: false,
+        meta: RIGHT,
+      },
+      {
+        id: 'created_at',
+        header: 'Created',
+        cell: ({ row }) => fmtDate(row.original.created_at),
+        size: 110,
+        enableSorting: false,
+      },
+      {
+        id: 'status',
+        header: 'Status',
+        cell: ({ row }) => {
+          const pill = purchaseOrderStatusPill({ status: row.original.status });
+          return (
+            <Badge variant={pill.variant} size="sm">
+              {pill.label}
+            </Badge>
+          );
+        },
+        size: 110,
+        enableSorting: false,
+      },
+      {
+        id: 'delete',
+        header: '',
+        cell: ({ row }) => (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-8 text-muted-foreground hover:text-destructive"
+            aria-label={`Delete ${row.original.po_number ?? 'this SPO'}`}
+            onClick={() => setDeleteTarget(row.original)}
+          >
+            <Trash2 className="size-4" aria-hidden />
+          </Button>
+        ),
+        size: 56,
+        enableSorting: false,
+      },
+    ],
+    [],
+  );
+
   const columns = useMemo<ColumnDef<SpoSuggestionLine>[]>(
     () => [
       {
@@ -704,6 +807,11 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
         header: ({ column }) => <DataGridColumnHeader title="PO covers" column={column} />,
         cell: ({ row }) => {
           const ln = row.original;
+          // R1: nothing left on this line for THIS shipment to convert - a prior `create`
+          // run already claimed it all, so there is no tick to make any more.
+          if (ln.remaining_qty <= 0) {
+            return <span className="text-2xs text-muted-foreground">Done</span>;
+          }
           if (!ln.po_takes.length) {
             return <span className="tabular-nums text-muted-foreground">{fmtInt(0)}</span>;
           }
@@ -771,6 +879,9 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
         header: ({ column }) => <DataGridColumnHeader title="SO covered" column={column} />,
         cell: ({ row }) => {
           const ln = row.original;
+          if (ln.remaining_qty <= 0) {
+            return <span className="text-2xs text-muted-foreground">Done</span>;
+          }
           if (ln.cannot_convert || !(ln.so_coverage ?? []).length) {
             return <span className="tabular-nums text-muted-foreground">{EM_DASH}</span>;
           }
@@ -964,24 +1075,31 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
     );
   }
 
-  if (alreadyConverted) {
-    const existingSpos = suggestion.data?.existing_spos ?? [];
-    const spoNumbers = existingSpos.map((s) => s.po_number ?? EM_DASH).join(', ');
+  if (!lines.length && !existingSpos.length) {
     return (
-      <Card className="p-4">
-        {suggestion.data?.self_heal_note ? (
-          <Alert variant="warning" size="sm" className="mb-3">
-            <AlertDescription>{suggestion.data.self_heal_note}</AlertDescription>
-          </Alert>
-        ) : null}
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0">
-            <h3 className="text-sm font-semibold">SPO already created</h3>
-            <p className="text-2xs text-muted-foreground">
-              This packing list has already gone through Create SPO.
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
+      <Card className="p-8 text-center">
+        <p className="text-sm font-medium">This container has no line we hold a product for.</p>
+      </Card>
+    );
+  }
+
+  const deleteTargetName = deleteTarget?.po_number ?? 'this SPO';
+
+  return (
+    <div className="flex flex-col gap-4">
+      {suggestion.data?.self_heal_note ? (
+        <Alert variant="warning" size="sm">
+          <AlertDescription>{suggestion.data.self_heal_note}</AlertDescription>
+        </Alert>
+      ) : null}
+
+      {/* R1 (AC-H6): every SPO this container has ever produced, oldest first - a container is
+          routinely converted in more than one pass, so this sits above the remainder planner
+          rather than replacing it. */}
+      {existingSpos.length ? (
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between py-3">
+            <h3 className="text-sm font-semibold">Created SPOs</h3>
             <Button
               size="sm"
               variant="outline"
@@ -995,72 +1113,21 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
               )}
               Download worksheet
             </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              className="text-destructive hover:text-destructive"
-              onClick={() => setDeleteOpen(true)}
-              disabled={!existingSpos.length}
-            >
-              <Trash2 className="size-4" aria-hidden />
-              Delete SPO
-            </Button>
-          </div>
-        </div>
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <FileText className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-          {existingSpos.map((spo) => (
-            <Badge key={spo.purchase_order_id} variant="secondary" size="sm">
-              {spo.po_number ?? EM_DASH}
-              {spo.supplier_name ? ` · ${spo.supplier_name}` : ''}
-            </Badge>
-          ))}
-        </div>
-
-        <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Confirm delete</AlertDialogTitle>
-              <AlertDialogDescription>
-                {existingSpos.length === 1
-                  ? `This deletes ${spoNumbers}. `
-                  : `This deletes ${existingSpos.length} SPOs: ${spoNumbers}. `}
-                The planner can create them again, but the numbers are minted fresh - the ones
-                deleted here are gone. This action cannot be undone.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel disabled={deleteSpo.isPending}>Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                onClick={() => deleteSpo.mutate(undefined, { onSuccess: () => setDeleteOpen(false) })}
-                disabled={deleteSpo.isPending}
-                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              >
-                {deleteSpo.isPending ? 'Deleting...' : 'Delete'}
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      </Card>
-    );
-  }
-
-  if (!lines.length) {
-    return (
-      <Card className="p-8 text-center">
-        <p className="text-sm font-medium">This container has no line we hold a product for.</p>
-      </Card>
-    );
-  }
-
-  return (
-    <Card>
-      {suggestion.data?.self_heal_note ? (
-        <Alert variant="warning" size="sm" className="m-3 mb-0">
-          <AlertDescription>{suggestion.data.self_heal_note}</AlertDescription>
-        </Alert>
+          </CardHeader>
+          <CardTable>
+            <DrillTable
+              columns={createdSpoColumns}
+              rows={existingSpos}
+              getRowId={(spo) => spo.purchase_order_id}
+              emptyMessage="No SPO has been created from this container yet."
+            />
+          </CardTable>
+        </Card>
       ) : null}
-      <CardHeader className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+
+      {lines.length ? (
+        <Card>
+        <CardHeader className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <h3 className="text-sm font-semibold">SPO planner</h3>
         </div>
@@ -1302,7 +1369,43 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </Card>
+        </Card>
+      ) : null}
+
+      {/* Delete on a row of the Created SPOs grid above (R1) - confirms by the SPO's own
+          number, never a bare `confirm()`, and scopes the unwind to just that one header. */}
+      <AlertDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirm delete</AlertDialogTitle>
+            <AlertDialogDescription>
+              This deletes {deleteTargetName}. The planner can create another, but the number
+              is minted fresh - this one is gone. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteSpo.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (!deleteTarget) return;
+                deleteSpo.mutate(deleteTarget.purchase_order_id, {
+                  onSuccess: () => setDeleteTarget(null),
+                });
+              }}
+              disabled={deleteSpo.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleteSpo.isPending ? 'Deleting...' : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
   );
 }
 

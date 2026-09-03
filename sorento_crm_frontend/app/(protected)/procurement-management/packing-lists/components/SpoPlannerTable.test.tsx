@@ -100,82 +100,83 @@ beforeEach(() => {
 });
 
 const existingSpos = () => [
-  { purchase_order_id: 'po-1', po_number: 'CRM-SPO-0001', supplier_id: 'sup-1', supplier_name: 'Kailu' },
+  {
+    purchase_order_id: 'po-1',
+    po_number: 'CRM-SPO-0001',
+    supplier_id: 'sup-1',
+    supplier_name: 'Kailu',
+    line_count: 1,
+    total_qty: 40,
+    created_at: '2026-08-30T00:00:00',
+    status: 'active',
+  },
 ];
 
-describe('SpoPlannerTable - already-converted Delete action', () => {
-  it('offers a Delete SPO action alongside the worksheet download', async () => {
-    state.suggestion = suggestion({ already_converted: true, existing_spos: existingSpos() });
+/**
+ * R1 (`PLAN-scm-spo-planner-feedback-3sep.md`) - a container can carry MANY SPOs. The
+ * Created SPOs grid (AC-H6) lists every one, each a link to its own PO detail (which
+ * carries the Plan card, AC-H7), Delete per row scoped to that ONE SPO, and the remainder
+ * planner renders below it rather than being replaced by it.
+ */
+describe('SpoPlannerTable - Created SPOs grid (R1)', () => {
+  it('lists every SPO this shipment has made, each a link to its own PO detail', async () => {
+    state.suggestion = suggestion({ existing_spos: existingSpos() });
     renderTable();
 
-    await screen.findByRole('button', { name: /delete spo/i });
-    expect(screen.getByRole('button', { name: /delete spo/i })).toBeInTheDocument();
+    const link = await screen.findByRole('link', { name: 'CRM-SPO-0001' });
+    expect(link).toHaveAttribute('href', '/scm/purchase-orders/po-1');
+    expect(screen.getByText('Kailu')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /download worksheet/i })).toBeInTheDocument();
   });
 
-  it('names the SPO number and uses the standard "cannot be undone" copy in the confirm dialog', async () => {
-    state.suggestion = suggestion({ already_converted: true, existing_spos: existingSpos() });
-    renderTable();
-
-    await screen.findByRole('button', { name: /delete spo/i });
-    fireEvent.click(screen.getByRole('button', { name: /delete spo/i }));
-
-    await screen.findByText('Confirm delete');
-    expect(screen.getByText('Confirm delete')).toBeInTheDocument();
-    expect(screen.getByText(/This deletes CRM-SPO-0001/)).toBeInTheDocument();
-    expect(screen.getByText(/This action cannot be undone/)).toBeInTheDocument();
-  });
-
-  it('names every SPO and the count when more than one was created from this shipment', async () => {
+  it('Delete on a row opens the confirm naming that row\'s own SPO', async () => {
     state.suggestion = suggestion({
-      already_converted: true,
       existing_spos: [
         ...existingSpos(),
-        { purchase_order_id: 'po-2', po_number: 'CRM-SPO-0002', supplier_id: 'sup-2', supplier_name: 'Jiangmen' },
+        {
+          purchase_order_id: 'po-2',
+          po_number: 'CRM-SPO-0002',
+          supplier_id: 'sup-2',
+          supplier_name: 'Jiangmen',
+          line_count: 1,
+          total_qty: 30,
+          created_at: '2026-09-01T00:00:00',
+          status: 'active',
+        },
       ],
     });
     renderTable();
 
-    await screen.findByRole('button', { name: /delete spo/i });
-    fireEvent.click(screen.getByRole('button', { name: /delete spo/i }));
+    await screen.findByRole('link', { name: 'CRM-SPO-0002' });
+    fireEvent.click(screen.getByRole('button', { name: /delete crm-spo-0002/i }));
 
-    expect(
-      await screen.findByText(/This deletes 2 SPOs: CRM-SPO-0001, CRM-SPO-0002/),
-    ).toBeInTheDocument();
-  });
-
-  it('does not delete until the AlertDialog is confirmed', async () => {
-    state.suggestion = suggestion({ already_converted: true, existing_spos: existingSpos() });
-    renderTable();
-
-    await screen.findByRole('button', { name: /delete spo/i });
-    fireEvent.click(screen.getByRole('button', { name: /delete spo/i }));
     await screen.findByText('Confirm delete');
-
+    expect(screen.getByText(/This deletes CRM-SPO-0002/)).toBeInTheDocument();
+    expect(screen.getByText(/This action cannot be undone/)).toBeInTheDocument();
     expect(state.deleteSpo).not.toHaveBeenCalled();
   });
 
-  it('deletes on confirm and toasts the deleted SPO number', async () => {
-    state.suggestion = suggestion({ already_converted: true, existing_spos: existingSpos() });
+  it('confirming Delete calls delete with that row\'s own purchase_order_id, never the whole shipment', async () => {
+    state.suggestion = suggestion({ existing_spos: existingSpos() });
     renderTable();
 
-    await screen.findByRole('button', { name: /delete spo/i });
-    fireEvent.click(screen.getByRole('button', { name: /delete spo/i }));
+    await screen.findByRole('link', { name: 'CRM-SPO-0001' });
+    fireEvent.click(screen.getByRole('button', { name: /delete crm-spo-0001/i }));
     await screen.findByText('Confirm delete');
     fireEvent.click(screen.getByRole('button', { name: /^delete$/i }));
 
-    await waitFor(() => expect(state.deleteSpo).toHaveBeenCalledWith('sh-1'));
+    await waitFor(() => expect(state.deleteSpo).toHaveBeenCalledWith('sh-1', 'po-1'));
     await waitFor(() =>
       expect(toast.success).toHaveBeenCalledWith('Deleted SPO CRM-SPO-0001.'),
     );
   });
 
   it('closes the dialog on cancel without deleting anything', async () => {
-    state.suggestion = suggestion({ already_converted: true, existing_spos: existingSpos() });
+    state.suggestion = suggestion({ existing_spos: existingSpos() });
     renderTable();
 
-    await screen.findByRole('button', { name: /delete spo/i });
-    fireEvent.click(screen.getByRole('button', { name: /delete spo/i }));
+    await screen.findByRole('link', { name: 'CRM-SPO-0001' });
+    fireEvent.click(screen.getByRole('button', { name: /delete crm-spo-0001/i }));
     await screen.findByText('Confirm delete');
     fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
 
@@ -184,14 +185,14 @@ describe('SpoPlannerTable - already-converted Delete action', () => {
   });
 
   it('surfaces the crm_spo-only guard message as an error toast on a refused delete', async () => {
-    state.suggestion = suggestion({ already_converted: true, existing_spos: existingSpos() });
+    state.suggestion = suggestion({ existing_spos: existingSpos() });
     state.deleteSpo = vi.fn().mockRejectedValue(
       new Error('CRM-SPO-0001 was not created by Create SPO and cannot be deleted from this screen.'),
     );
     renderTable();
 
-    await screen.findByRole('button', { name: /delete spo/i });
-    fireEvent.click(screen.getByRole('button', { name: /delete spo/i }));
+    await screen.findByRole('link', { name: 'CRM-SPO-0001' });
+    fireEvent.click(screen.getByRole('button', { name: /delete crm-spo-0001/i }));
     await screen.findByText('Confirm delete');
     fireEvent.click(screen.getByRole('button', { name: /^delete$/i }));
 
@@ -204,7 +205,6 @@ describe('SpoPlannerTable - already-converted Delete action', () => {
 
   it('shows a self-heal note as an informational banner, not a toast', async () => {
     state.suggestion = suggestion({
-      already_converted: true,
       existing_spos: existingSpos(),
       self_heal_note: '1 SPO previously linked to this shipment no longer exists and has been cleared.',
     });
@@ -215,6 +215,38 @@ describe('SpoPlannerTable - already-converted Delete action', () => {
     ).toBeInTheDocument();
     expect(toast.warning).not.toHaveBeenCalled();
     expect(toast.info).not.toHaveBeenCalled();
+  });
+
+  it('the remainder planner still renders below the Created SPOs grid (AC-H6)', async () => {
+    state.suggestion = suggestion({
+      existing_spos: existingSpos(),
+      lines: [plannerLine()],
+    });
+    renderTable();
+
+    await screen.findByRole('link', { name: 'CRM-SPO-0001' });
+    expect(screen.getByRole('button', { name: /^create spo$/i })).toBeInTheDocument();
+    expect(screen.getByTestId('spo-qty-input')).toBeInTheDocument();
+  });
+
+  it('a fully spent line (remaining_qty 0) reads Done and its qty input is disabled', async () => {
+    state.suggestion = suggestion({
+      existing_spos: existingSpos(),
+      lines: [
+        plannerLine({
+          remaining_qty: 0,
+          cannot_convert: true,
+          reason: 'Already on CRM-SPO-0001.',
+          po_takes: [],
+          suggested_qty: 0,
+        }),
+      ],
+    });
+    renderTable();
+
+    const doneCells = await screen.findAllByText('Done');
+    expect(doneCells.length).toBeGreaterThanOrEqual(2); // PO covers AND SO covered
+    expect(screen.getByTestId('spo-qty-input')).toBeDisabled();
   });
 });
 
@@ -233,6 +265,7 @@ function plannerLine(over: Record<string, unknown> = {}) {
     supplier_id: 'sup-1',
     supplier_name: 'Kailu',
     packed_qty: 100,
+    remaining_qty: 100,
     po_covered_qty: 100,
     matched_po_number: '202605-S0060',
     matched_by: 'product' as const,
@@ -403,7 +436,7 @@ describe('F7 - the SPO planner chooses its POs and its SOs', () => {
 
   it('a take can only cover what its own line has open', async () => {
     state.suggestion = suggestion({
-      lines: [plannerLine({ packed_qty: 200, po_covered_qty: 100, suggested_qty: 100 })],
+      lines: [plannerLine({ packed_qty: 200, remaining_qty: 200, po_covered_qty: 100, suggested_qty: 100 })],
     });
     renderTable();
     await openPoDrill();
@@ -751,7 +784,7 @@ describe('F7 - unticking an SO line shows up as Unassigned', () => {
 
   it('says nothing about unassigned when every piece is spoken for', async () => {
     state.suggestion = suggestion({
-      lines: [plannerLine({ packed_qty: 70, po_covered_qty: 70, suggested_qty: 70 })],
+      lines: [plannerLine({ packed_qty: 70, remaining_qty: 70, po_covered_qty: 70, suggested_qty: 70 })],
     });
     renderTable();
     await screen.findByTitle(/which demand this spo is for/i);
@@ -829,6 +862,7 @@ function unbackedLine(over: Record<string, unknown> = {}) {
     shipment_line_id: 'sl-big',
     item_code: 'BIG-ITEM',
     packed_qty: 500,
+    remaining_qty: 500,
     po_covered_qty: 409,
     suggested_qty: 409,
     no_po_qty: 91,
@@ -925,6 +959,7 @@ describe('Section I - free quantity, one review dialog', () => {
           shipment_line_id: 'sl-nopo',
           item_code: 'NOPO-ITEM',
           packed_qty: 40,
+          remaining_qty: 40,
           po_covered_qty: 0,
           suggested_qty: 0,
           no_po_qty: 40,
@@ -1543,6 +1578,7 @@ describe('S4 - schedule cells (AC-D1-AC-D5)', () => {
 function takenPlannerLine() {
   return plannerLine({
     packed_qty: 60,
+    remaining_qty: 60,
     po_covered_qty: 60,
     suggested_qty: 60,
     po_takes: [

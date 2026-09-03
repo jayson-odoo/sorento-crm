@@ -62,6 +62,7 @@ import { purchaseOrdersPagerQuery } from '../../../hooks/usePurchaseOrders';
 import { PlanRowDialog } from '../../../components/PlanRowDialog';
 import { PlanNumberButton } from '../../../components/PlanNumberButton';
 import { PoLinePlacementsBody, placedQtyOf } from './PoLinePlacementsBody';
+import { PoPlanCard } from './PoPlanCard';
 import { BASE_CURRENCY, fmtDate, fmtInt } from '../../../lib/format';
 import {
   isDraftPurchaseOrder,
@@ -1150,6 +1151,10 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
               <Field label="Lines">{fmtInt(lineCount)}</Field>
             </section>
           </Card>
+
+          {/* R1 (AC-H7): a `crm_spo` order's own pulls/covers, off `plan_of`. Every other
+              order carries no plan (`po.spo_plan` is null), so nothing renders here for it. */}
+          {po.source === 'crm' && po.spo_plan ? <PoPlanCard plan={po.spo_plan} /> : null}
         </TabsContent>
 
         <TabsContent value="lines" className="mt-0 space-y-4 focus-visible:outline-none">
