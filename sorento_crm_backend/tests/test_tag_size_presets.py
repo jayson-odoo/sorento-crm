@@ -291,3 +291,31 @@ def test_a_foreign_companys_size_is_invisible(api):
     _scope(_SORENTO)
     db.expire_all()
     assert db.query(TagSizePreset).filter(TagSizePreset.id == mine_id).first() is not None
+
+
+def test_a_foreign_companys_size_cannot_be_deleted(api):
+    """DELETE is scoped the same as PUT (N5): a foreign preset 404s, not 204,
+    and stays on disk."""
+    from app.models.company import Company
+
+    db, _as, _scope = api
+
+    with TestClient(app) as client:
+        mine = client.post(
+            BASE, json={"name": unique_code("Mine"), "width_mm": 60, "height_mm": 90}
+        )
+        assert mine.status_code == 201, mine.text
+        mine_id = mine.json()["id"]
+
+    other_company = str(uuid.uuid4())
+    db.add(Company(id=other_company, name="ZZT other co", code=unique_code("ZZTC")))
+    db.commit()
+    _scope(other_company)
+
+    with TestClient(app) as client:
+        deleted = client.delete(f"{BASE}/{mine_id}")
+
+    assert deleted.status_code == 404, deleted.text
+    _scope(_SORENTO)
+    db.expire_all()
+    assert db.query(TagSizePreset).filter(TagSizePreset.id == mine_id).first() is not None

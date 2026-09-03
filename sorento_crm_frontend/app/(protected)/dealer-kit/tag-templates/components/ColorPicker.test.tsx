@@ -12,6 +12,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ColorPicker } from './ColorPicker';
+import { hsvToHex } from '@/lib/dealer-kit/colour';
 
 function hexBox(): HTMLInputElement {
   // Two inputs share the same accessible role/name pattern - the outer
@@ -73,6 +74,25 @@ describe('ColorPicker', () => {
     fireEvent.blur(hexBox());
 
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('reverts the box to the last real value on blur when what was typed is invalid (S4)', () => {
+    const onChange = openPopover('#123456');
+
+    fireEvent.change(hexBox(), { target: { value: '#ff' } });
+    fireEvent.blur(hexBox());
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(hexBox().value).toBe('#123456');
+  });
+
+  it('leaves a valid typed value in the box on blur, unreverted', () => {
+    openPopover('#123456');
+
+    fireEvent.change(hexBox(), { target: { value: '#ff0000' } });
+    fireEvent.blur(hexBox());
+
+    expect(hexBox().value).toBe('#ff0000');
   });
 
   it('a three-digit hex is accepted and reaches onChange as-typed', () => {
@@ -150,5 +170,92 @@ describe('ColorPicker', () => {
     fireEvent.click(await screen.findByTitle('Pick colour from screen'));
 
     await vi.waitFor(() => expect(onChange).toHaveBeenCalledWith('#654321'));
+  });
+
+  // -- N6: arrow-key access to the two pointer-only sliders -----------------
+
+  it('ArrowRight on the saturation/brightness square steps saturation up by one (N6)', () => {
+    const onChange = openPopover('#ff0000');
+
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'Saturation and brightness' }), {
+      key: 'ArrowRight',
+    });
+
+    expect(onChange).toHaveBeenCalledWith(hsvToHex({ h: 0, s: 100, v: 100 }));
+  });
+
+  it('ArrowDown on the saturation/brightness square steps brightness down by one (N6)', () => {
+    const onChange = openPopover('#ff0000');
+
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'Saturation and brightness' }), {
+      key: 'ArrowDown',
+    });
+
+    expect(onChange).toHaveBeenCalledWith(hsvToHex({ h: 0, s: 100, v: 99 }));
+  });
+
+  it('Shift steps the saturation/brightness square by ten (N6)', () => {
+    const onChange = openPopover('#ff0000');
+
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'Saturation and brightness' }), {
+      key: 'ArrowDown',
+      shiftKey: true,
+    });
+
+    expect(onChange).toHaveBeenCalledWith(hsvToHex({ h: 0, s: 100, v: 90 }));
+  });
+
+  it('ArrowLeft on the hue slider steps hue down by one (N6)', () => {
+    const onChange = openPopover('#ff0000');
+
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'Hue' }), { key: 'ArrowLeft' });
+
+    // Red is hue 0 - clamped at the bottom, so it stays 0 (still a real commit).
+    expect(onChange).toHaveBeenCalledWith(hsvToHex({ h: 0, s: 100, v: 100 }));
+  });
+
+  it('ArrowRight on the hue slider steps hue up by one (N6)', () => {
+    const onChange = openPopover('#ff0000');
+
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'Hue' }), { key: 'ArrowRight' });
+
+    expect(onChange).toHaveBeenCalledWith(hsvToHex({ h: 1, s: 100, v: 100 }));
+  });
+
+  it('an unrelated key on either slider does nothing', () => {
+    const onChange = openPopover('#ff0000');
+
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'Hue' }), { key: 'Tab' });
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'Saturation and brightness' }), {
+      key: 'Tab',
+    });
+
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  // -- N3: a cancelled pointer still detaches and commits -------------------
+
+  it('a pointercancel mid-drag on the SV square detaches its listeners and commits the last live value', () => {
+    const onChange = openPopover('#000000');
+    const square = screen.getByRole('slider', { name: 'Saturation and brightness' });
+    square.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, width: 100, height: 100 }) as DOMRect;
+    square.setPointerCapture = vi.fn();
+    square.releasePointerCapture = vi.fn();
+
+    fireEvent.pointerDown(square, { pointerId: 1, clientX: 50, clientY: 50 });
+    fireEvent(
+      square,
+      new PointerEvent('pointermove', { pointerId: 1, clientX: 80, clientY: 20 }),
+    );
+    fireEvent(square, new PointerEvent('pointercancel', { pointerId: 1 }));
+
+    // Committed once, off the pointercancel - the drag never got a pointerup.
+    expect(onChange).toHaveBeenCalledTimes(1);
+
+    // The cancel already detached the move/up listeners - a stray pointerup
+    // arriving afterwards (some browsers fire both) does not commit again.
+    fireEvent(square, new PointerEvent('pointerup', { pointerId: 1 }));
+    expect(onChange).toHaveBeenCalledTimes(1);
   });
 });

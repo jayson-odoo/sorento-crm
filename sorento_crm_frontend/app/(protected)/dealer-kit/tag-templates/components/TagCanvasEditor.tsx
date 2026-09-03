@@ -2037,24 +2037,28 @@ export function TagCanvasEditor({
 
       // B/I/U/Shift+X format the selected text layer(s) whether the inline
       // editor has focus or not (AC-S2-4, D4) - checked ahead of the
-      // `editingLayerId`/`isInput` guards below, because the inline editor
-      // IS a textarea and would otherwise never let these through.
-      if (modifier && !e.shiftKey && (e.key === 'b' || e.key === 'B')) {
+      // `isInput` guard below, because the inline editor IS a textarea and
+      // would otherwise never let these through. That exception is scoped to
+      // the inline editor specifically (N2): any OTHER input keeps the normal
+      // `isInput` guard, so Cmd+B while typing a name in "Save as template"
+      // types a B there instead of bolding the canvas underneath it.
+      const formatShortcutsAllowed = !isInput || Boolean(editingLayerId);
+      if (formatShortcutsAllowed && modifier && !e.shiftKey && (e.key === 'b' || e.key === 'B')) {
         e.preventDefault();
         applyTextFormat('bold');
         return;
       }
-      if (modifier && !e.shiftKey && (e.key === 'i' || e.key === 'I')) {
+      if (formatShortcutsAllowed && modifier && !e.shiftKey && (e.key === 'i' || e.key === 'I')) {
         e.preventDefault();
         applyTextFormat('italic');
         return;
       }
-      if (modifier && !e.shiftKey && (e.key === 'u' || e.key === 'U')) {
+      if (formatShortcutsAllowed && modifier && !e.shiftKey && (e.key === 'u' || e.key === 'U')) {
         e.preventDefault();
         applyTextFormat('underline');
         return;
       }
-      if (modifier && e.shiftKey && (e.key === 'x' || e.key === 'X')) {
+      if (formatShortcutsAllowed && modifier && e.shiftKey && (e.key === 'x' || e.key === 'X')) {
         e.preventDefault();
         applyTextFormat('strikethrough');
         return;

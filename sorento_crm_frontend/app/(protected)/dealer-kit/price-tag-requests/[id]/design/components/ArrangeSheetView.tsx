@@ -280,7 +280,7 @@ export function ArrangeSheetView({
 
             <div className="grid grid-cols-2 gap-1.5">
               <div>
-                <Label className="text-[10px] text-muted-foreground">Page W (mm)</Label>
+                <Label className="text-2xs text-muted-foreground">Page W (mm)</Label>
                 <Input
                   type="number"
                   className="mt-0.5 h-7 text-xs"
@@ -289,7 +289,7 @@ export function ArrangeSheetView({
                 />
               </div>
               <div>
-                <Label className="text-[10px] text-muted-foreground">Page H (mm)</Label>
+                <Label className="text-2xs text-muted-foreground">Page H (mm)</Label>
                 <Input
                   type="number"
                   className="mt-0.5 h-7 text-xs"

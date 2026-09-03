@@ -61,6 +61,10 @@ function clamp01(n: number): number {
   return Math.min(1, Math.max(0, n));
 }
 
+function clampPct(n: number): number {
+  return Math.min(100, Math.max(0, n));
+}
+
 // ---------------------------------------------------------------------------
 // Saturation/value square
 // ---------------------------------------------------------------------------
@@ -101,23 +105,47 @@ function SaturationValueField({
       latest = fromPoint(el, ev.clientX, ev.clientY);
       onLiveChange(latest);
     };
-    const onUp = (ev: PointerEvent) => {
+    const finish = (ev: PointerEvent) => {
       el.releasePointerCapture(ev.pointerId);
       el.removeEventListener('pointermove', onMove);
-      el.removeEventListener('pointerup', onUp);
+      el.removeEventListener('pointerup', finish);
+      el.removeEventListener('pointercancel', finish);
       onCommit(latest);
     };
     el.addEventListener('pointermove', onMove);
-    el.addEventListener('pointerup', onUp);
+    el.addEventListener('pointerup', finish);
+    // A pointer that leaves the window - or gets taken by the OS mid-drag,
+    // e.g. a scroll/system gesture - fires `pointercancel`, not `pointerup`
+    // (N3): without this the move/up listeners never detach and the last
+    // live value only commits by accident of a later stray pointerup.
+    el.addEventListener('pointercancel', finish);
+  };
+
+  // Arrow keys step the value the same way a drag does (N6): left/right
+  // move saturation, up/down move brightness. Each press is its own commit -
+  // there is no drag to separate a live preview from.
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const step = e.shiftKey ? 10 : 1;
+    let next: SvChange | null = null;
+    if (e.key === 'ArrowLeft') next = { s: clampPct(s - step), v };
+    else if (e.key === 'ArrowRight') next = { s: clampPct(s + step), v };
+    else if (e.key === 'ArrowUp') next = { s, v: clampPct(v + step) };
+    else if (e.key === 'ArrowDown') next = { s, v: clampPct(v - step) };
+    if (!next) return;
+    e.preventDefault();
+    onLiveChange(next);
+    onCommit(next);
   };
 
   return (
     <div
       role="slider"
+      tabIndex={0}
       aria-label="Saturation and brightness"
       aria-valuenow={v}
       onPointerDown={handlePointerDown}
-      className="relative mb-2 h-32 w-full touch-none rounded-md border border-input"
+      onKeyDown={handleKeyDown}
+      className="relative mb-2 h-32 w-full touch-none rounded-md border border-input focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
       style={{
         backgroundColor: `hsl(${hue}, 100%, 50%)`,
         backgroundImage:
@@ -161,25 +189,43 @@ function HueSlider({
       latest = fromPoint(el, ev.clientX);
       onLiveChange(latest);
     };
-    const onUp = (ev: PointerEvent) => {
+    const finish = (ev: PointerEvent) => {
       el.releasePointerCapture(ev.pointerId);
       el.removeEventListener('pointermove', onMove);
-      el.removeEventListener('pointerup', onUp);
+      el.removeEventListener('pointerup', finish);
+      el.removeEventListener('pointercancel', finish);
       onCommit(latest);
     };
     el.addEventListener('pointermove', onMove);
-    el.addEventListener('pointerup', onUp);
+    el.addEventListener('pointerup', finish);
+    // Same reasoning as the SV field above (N3): a cancelled pointer still
+    // has to detach its listeners and commit the last live value.
+    el.addEventListener('pointercancel', finish);
+  };
+
+  // Left/right steps the hue the same way a drag does (N6).
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const step = e.shiftKey ? 10 : 1;
+    let next: number | null = null;
+    if (e.key === 'ArrowLeft') next = Math.max(0, hue - step);
+    else if (e.key === 'ArrowRight') next = Math.min(360, hue + step);
+    if (next === null) return;
+    e.preventDefault();
+    onLiveChange(next);
+    onCommit(next);
   };
 
   return (
     <div
       role="slider"
+      tabIndex={0}
       aria-label="Hue"
       aria-valuenow={hue}
       aria-valuemin={0}
       aria-valuemax={360}
       onPointerDown={handlePointerDown}
-      className="relative mb-2 h-2.5 w-full touch-none rounded-full"
+      onKeyDown={handleKeyDown}
+      className="relative mb-2 h-2.5 w-full touch-none rounded-full focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
       style={{
         background: 'linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00)',
       }}
@@ -257,6 +303,18 @@ export function ColorPicker({ value, onChange, label, usedColours = [] }: ColorP
     const trimmed = hex.trim();
     if (HEX.test(trimmed) || trimmed === 'transparent') {
       onChange(trimmed);
+    }
+  };
+
+  /** Blur commits a real value, same as `commitHex` - an invalid one is
+   *  reverted to the last real value instead of staying on screen looking
+   *  applied when it never reached `onChange` (S4). */
+  const handleHexBlur = () => {
+    const trimmed = inputValue.trim();
+    if (HEX.test(trimmed) || trimmed === 'transparent') {
+      onChange(trimmed);
+    } else {
+      setInputValue(value);
     }
   };
 
@@ -350,7 +408,7 @@ export function ColorPicker({ value, onChange, label, usedColours = [] }: ColorP
                   className="h-7 flex-1 px-2 text-xs font-mono"
                   value={inputValue}
                   onChange={(e) => applyHexText(e.target.value)}
-                  onBlur={() => commitHex(inputValue)}
+                  onBlur={handleHexBlur}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') commitHex(inputValue);
                   }}
@@ -382,7 +440,7 @@ export function ColorPicker({ value, onChange, label, usedColours = [] }: ColorP
           className="h-7 px-2 text-xs font-mono"
           value={inputValue}
           onChange={(e) => applyHexText(e.target.value)}
-          onBlur={() => commitHex(inputValue)}
+          onBlur={handleHexBlur}
           onKeyDown={(e) => {
             if (e.key === 'Enter') commitHex(inputValue);
           }}

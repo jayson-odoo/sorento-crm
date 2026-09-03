@@ -1,6 +1,6 @@
 # PLAN - Price Tag Designer UX Round 3
 
-Status: Approved 3 Sep 2026 (lavish + grill, mockups approved) - implementation starting
+Status: Implemented 3 Sep 2026, in review (PR pending)
 UAC: `documentation/plans/dealer-kit/price-tag-ux-r3-acceptance-criteria.md`
 Predecessor: `documentation/plans/dealer-kit/PLAN-price-tag-feedback-r2.md` (shipped #549)
 
@@ -192,6 +192,22 @@ currently held by the r2 integration worktree - reclaim it first via
 - Component vitest: `TagSizeControl` grouping, `InlineTextEditor` commit paths,
   `ColorPicker` hex input.
 - Browser: one agent-browser evidence run per slice (AC-X-1).
+
+## Evidence
+
+Agent-browser runs, 1280px viewport, navigated by sidebar clicks from `/` every
+time (Dealer Kit -> Room Designer -> ...):
+
+- S1-S9 original slices: `documentation/plans/dealer-kit/seed-assets/verification/README.md`
+  (rounds 1-12 + the CI fix round), one run per slice per Testing seams above.
+- Review-fix round (3 Sep 2026), session `ptag-r3-fix`, request `PT-202609-0001`
+  (3 lines): B1 (apply-to-all then Undo restores the pre-apply line's design,
+  a nudge + reload persists it), B2 (double-click a bound layer, Esc writes
+  nothing, no Unlinked/Relink), S1 (typing into one text layer then clicking a
+  different one commits into the FIRST layer, the second is untouched) - each
+  proven with a fresh marker layer/text and DOM-state assertions, screenshots
+  in the coder report. Request restored to its original design and
+  re-verified clean afterward. Console/errors clean throughout.
 
 ## Out of scope (backlog)
 

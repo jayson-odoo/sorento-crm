@@ -26,6 +26,7 @@ import {
   defaultTemplateFor,
   impositionFit,
   impositionSlots,
+  normaliseImpositionPreset,
   pinKeyForPlacement,
   pinnedFromDoc,
   placementKey,
@@ -382,6 +383,20 @@ describe('impositionFit', () => {
   it('a tag wider than the usable area fits none (AC-S6-3)', () => {
     expect(impositionFit(50, 297, 3, 2, 95, 44.5)).toEqual({ cols: 0, rows: 6, perSheet: 0 });
   });
+
+  it('a zero tag size + zero gap divides by zero (Infinity) - treated as 0, not an unbounded grid (S2)', () => {
+    expect(impositionFit(210, 297, 3, 0, 0, 0)).toEqual({ cols: 0, rows: 0, perSheet: 0 });
+  });
+
+  it('a NaN input (empty/invalid field) never reaches the grid as NaN (S2)', () => {
+    expect(impositionFit(NaN, 297, 3, 2, 95, 44.5)).toEqual({ cols: 0, rows: 6, perSheet: 0 });
+  });
+
+  it('clamps an absurd page/tag ratio to a ceiling per axis rather than materialising 10^5+ slots (S2)', () => {
+    const fit = impositionFit(10000, 10000, 0, 0, 10, 10);
+    expect(fit.cols).toBeLessThanOrEqual(200);
+    expect(fit.rows).toBeLessThanOrEqual(200);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -415,11 +430,47 @@ describe('impositionSlots', () => {
     expect(slots[0]).toEqual({ x_mm: 3 + (44 - 95) / 2, y_mm: 3 + (291 - 44.5) / 2 });
   });
 
+  it('a NaN fit still falls back to a single centred slot, never an empty grid (S2)', () => {
+    // A NaN cols/rows used to slip past the `perSheet === 0` check (NaN !==
+    // 0) while the row/col loops still never ran (any comparison against NaN
+    // is false), leaving `slots` empty and `autoArrange` crashing on
+    // `slots[0]`.
+    const nanPage: ImpositionConfig = { ...PAGE_A4, page_width_mm: NaN };
+    const slots = impositionSlots(nanPage, 95, 44.5);
+    expect(slots).toHaveLength(1);
+  });
+
   it('the preset value no longer changes the layout - an old a4_3up/a4_2x2 doc lays out identically (AC-S6-4)', () => {
     const auto = impositionSlots({ ...PAGE_A4, preset: 'auto' }, 60, 40);
     expect(impositionSlots({ ...PAGE_A4, preset: 'a4_3up' }, 60, 40)).toEqual(auto);
     expect(impositionSlots({ ...PAGE_A4, preset: 'a4_2x2' }, 60, 40)).toEqual(auto);
     expect(impositionSlots({ ...PAGE_A4, preset: 'custom' }, 60, 40)).toEqual(auto);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// normaliseImpositionPreset - old presets migrate to 'auto' on load (S3, AC-S6-4)
+// ---------------------------------------------------------------------------
+
+describe('normaliseImpositionPreset', () => {
+  it.each(['a4_3up', 'a4_2x2'] as const)('migrates a pre-S6 %s preset to auto', (preset) => {
+    const result = normaliseImpositionPreset({ ...PAGE_A4, preset });
+    expect(result.preset).toBe('auto');
+  });
+
+  it('leaves auto alone', () => {
+    const doc = { ...PAGE_A4, preset: 'auto' as const };
+    expect(normaliseImpositionPreset(doc)).toEqual(doc);
+  });
+
+  it('leaves custom alone - a field edit already wrote it deliberately', () => {
+    const doc = { ...PAGE_A4, preset: 'custom' as const };
+    expect(normaliseImpositionPreset(doc)).toEqual(doc);
+  });
+
+  it('keeps every other field unchanged', () => {
+    const doc = { ...PAGE_A4, preset: 'a4_3up' as const, gap_mm: 7 };
+    expect(normaliseImpositionPreset(doc)).toMatchObject({ gap_mm: 7 });
   });
 });
 

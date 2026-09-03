@@ -158,13 +158,21 @@ vi.mock('../../../../services/priceTagRequestService', () => ({
   exportTagSheet: vi.fn(),
 }));
 // Tag Size control's "Saved sizes" group (S4): a react-query hook this suite
-// has no QueryClientProvider for, and nothing here tests the saved-sizes flow
-// itself - `TagSizeControl.test.tsx` (or its own coverage) owns that. An
-// empty list keeps every existing assertion about the "Custom" dropdown and
-// the resize flow unchanged.
+// has no QueryClientProvider for. `useTagSizesQuery` is a `vi.fn()` so the
+// "TagSizeControl - saved sizes group (S5)" tests below can override its
+// return value per test; every other test gets the empty-list default,
+// which keeps every existing assertion about the "Custom" dropdown and the
+// resize flow unchanged.
+const mockUseTagSizesQuery = vi.fn(() => ({ data: [] as unknown[] }));
+const mockDeleteRun = vi.fn();
+const mockUseDeleteTagSizePreset = vi.fn(() => ({
+  run: mockDeleteRun,
+  targetId: null as string | null,
+  isPending: false,
+}));
 vi.mock('../../../../tag-sizes/hooks/useTagSizes', () => ({
-  useTagSizesQuery: () => ({ data: [] }),
-  useDeleteTagSizePreset: () => ({ run: vi.fn(), targetId: null, isPending: false }),
+  useTagSizesQuery: (...args: unknown[]) => mockUseTagSizesQuery(...(args as [])),
+  useDeleteTagSizePreset: () => mockUseDeleteTagSizePreset(),
   useCreateTagSize: () => ({ mutateAsync: vi.fn(async () => ({})), isPending: false }),
 }));
 
@@ -175,6 +183,7 @@ import type {
   PriceTagRequestDetail,
   PriceTagRequestLine,
 } from '../../../../services/priceTagRequestService';
+import type { TagSizeRecord } from '../../../../services/tagSizeService';
 import type { LineTagData, TagSheetDoc, TagTemplate } from '@/lib/dealer-kit/tag-template-types';
 
 const mockListTemplates = vi.mocked(listPublishedTemplates);
@@ -790,6 +799,46 @@ describe('RequestTagDesigner - autosave (D22, AC-S8-3)', () => {
   });
 });
 
+describe('RequestTagDesigner - old imposition presets migrate on load (S3, AC-S6-4)', () => {
+  it("normalises a pre-S6 'a4_3up' preset to 'auto' so the next autosave catches it up", async () => {
+    mockListTemplates.mockResolvedValue([]);
+    mockResolveRequestLines.mockResolvedValue([lineTagData()]);
+    const onAutosave = vi.fn<AutosaveFn>(async () => {});
+
+    render(
+      <RequestTagDesigner
+        request={request()}
+        initialDoc={{
+          kind: 'tag_sheet',
+          imposition: {
+            preset: 'a4_3up',
+            page_width_mm: 210,
+            page_height_mm: 297,
+            bleed_mm: 3,
+            gap_mm: 2,
+          },
+          sheets: [],
+        }}
+        onSave={vi.fn(async () => {})}
+        onAutosave={onAutosave}
+      />,
+    );
+    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByRole('button', { name: 'Add layer' }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000);
+      });
+      expect(onAutosave).toHaveBeenCalledTimes(1);
+      expect(onAutosave.mock.calls[0][0].imposition.preset).toBe('auto');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Opening and browsing persist NOTHING (S3)
 //
@@ -1230,5 +1279,149 @@ describe('RequestTagDesigner - tag size control (D24, AC-S9-3)', () => {
     const tag = doc.sheets[0].tags.find((t) => t.request_line_id === 'line-a');
     // Refused - the tag keeps its ORIGINAL width (the template's print_size).
     expect(tag?.width_mm).toBe(60);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TagSizeControl - Template sizes / Saved sizes / Custom grouping (S4, S5,
+// AC-S4-3/S4-4). `TagSizeControl` is a private component of this file (not
+// its own module), so this is that promised coverage.
+// ---------------------------------------------------------------------------
+
+describe('RequestTagDesigner - tag size dropdown grouping (S5, AC-S4-3/S4-4)', () => {
+  const lineA = line({ id: 'line-a', product_id: 'prod-a', code: 'AAA-1' });
+
+  function savedSize(overrides: Partial<TagSizeRecord> = {}): TagSizeRecord {
+    return {
+      id: 'size-1',
+      name: 'My favourite',
+      width_mm: 80,
+      height_mm: 50,
+      created_by: null,
+      created_by_name: null,
+      created_at: '2026-08-01T00:00:00Z',
+      updated_at: '2026-08-01T00:00:00Z',
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    mockUseTagSizesQuery.mockReturnValue({ data: [] });
+    mockUseDeleteTagSizePreset.mockReturnValue({ run: mockDeleteRun, targetId: null, isPending: false });
+    mockDeleteRun.mockClear();
+  });
+
+  async function mountWithSavedSizes(saved: TagSizeRecord[]) {
+    mockUseTagSizesQuery.mockReturnValue({ data: saved });
+    mockListTemplates.mockResolvedValue([realTemplate()]);
+    mockResolveRequestLines.mockResolvedValue([
+      lineTagData({ line_id: 'line-a', code: 'AAA-1' }),
+    ]);
+
+    render(
+      <RequestTagDesigner
+        request={request({ lines: [lineA] })}
+        initialDoc={null}
+        onSave={vi.fn(async () => {})}
+        onAutosave={vi.fn<AutosaveFn>(async () => {})}
+      />,
+    );
+    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+  }
+
+  it('groups the dropdown into Template sizes and Saved sizes (AC-S4-4)', async () => {
+    await mountWithSavedSizes([savedSize()]);
+
+    fireEvent.click(screen.getByRole('combobox'));
+
+    expect(await screen.findByText('Template sizes')).toBeInTheDocument();
+    expect(screen.getByText('Saved sizes')).toBeInTheDocument();
+    expect(
+      screen.getByRole('option', { name: /Ala carte \(60 x 40 mm\)/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('option', { name: /My favourite \(80 x 50 mm\)/ }),
+    ).toBeInTheDocument();
+  });
+
+  it('hides the Saved sizes group entirely when there are none yet', async () => {
+    await mountWithSavedSizes([]);
+
+    fireEvent.click(screen.getByRole('combobox'));
+
+    expect(await screen.findByText('Template sizes')).toBeInTheDocument();
+    expect(screen.queryByText('Saved sizes')).not.toBeInTheDocument();
+  });
+
+  it('a saved-size row carries a delete x; a template-size row does not (AC-S4-4)', async () => {
+    await mountWithSavedSizes([savedSize()]);
+
+    fireEvent.click(screen.getByRole('combobox'));
+    await screen.findByText('Saved sizes');
+
+    expect(screen.getByLabelText('Delete saved size My favourite')).toBeInTheDocument();
+    expect(screen.queryByLabelText(/Delete saved size Ala carte/)).not.toBeInTheDocument();
+  });
+
+  it('clicking a saved size\'s x runs the deferred delete, not the select (does not resize the tag)', async () => {
+    await mountWithSavedSizes([savedSize()]);
+
+    fireEvent.click(screen.getByRole('combobox'));
+    fireEvent.click(await screen.findByLabelText('Delete saved size My favourite'));
+
+    expect(mockDeleteRun).toHaveBeenCalledWith({ id: 'size-1', subject: 'My favourite' });
+    // The tag's own width is untouched - the template's starting 60mm, not
+    // the saved size's 80mm the click would have applied had it fallen
+    // through to the option's own onClick.
+    expect(screen.getByLabelText('Tag width (mm)')).toHaveValue(60);
+  });
+
+  it('dims/disables the saved-size x while ITS OWN delete counts down (N4)', async () => {
+    mockUseDeleteTagSizePreset.mockReturnValue({
+      run: mockDeleteRun,
+      targetId: 'size-1',
+      isPending: true,
+    });
+    await mountWithSavedSizes([savedSize()]);
+
+    fireEvent.click(screen.getByRole('combobox'));
+    const deleteButton = await screen.findByLabelText('Delete saved size My favourite');
+
+    expect(deleteButton).toBeDisabled();
+    expect(deleteButton.className).toMatch(/opacity-50/);
+  });
+
+  it('leaves an UNRELATED saved-size x untouched while a different one counts down (N4)', async () => {
+    mockUseDeleteTagSizePreset.mockReturnValue({
+      run: mockDeleteRun,
+      targetId: 'size-other',
+      isPending: true,
+    });
+    await mountWithSavedSizes([savedSize()]);
+
+    fireEvent.click(screen.getByRole('combobox'));
+    const deleteButton = await screen.findByLabelText('Delete saved size My favourite');
+
+    expect(deleteButton).not.toBeDisabled();
+    expect(deleteButton.className).not.toMatch(/opacity-50/);
+  });
+
+  it('shows "Save as size" once the tag has been resized off every known size (Custom, AC-S4-3)', async () => {
+    await mountWithSavedSizes([]);
+
+    expect(screen.queryByRole('button', { name: 'Save as size' })).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Tag width (mm)'), { target: { value: '77' } });
+    fireEvent.blur(screen.getByLabelText('Tag width (mm)'));
+
+    expect(await screen.findByRole('button', { name: 'Save as size' })).toBeInTheDocument();
+  });
+
+  it('hides "Save as size" once the tag matches a saved size exactly, not only a template size', async () => {
+    await mountWithSavedSizes([savedSize({ width_mm: 60, height_mm: 40 })]);
+
+    // The template's own print_size (60x40) already matches - Custom never
+    // shows, so there is nothing to save.
+    expect(screen.queryByRole('button', { name: 'Save as size' })).not.toBeInTheDocument();
   });
 });

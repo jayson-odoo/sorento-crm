@@ -74,6 +74,7 @@ import {
   applyDesignToAllLines,
   autoArrange,
   defaultTemplateFor,
+  normaliseImpositionPreset,
   pinKeyForPlacement,
   pinnedFromDoc,
   resizeAllTags,
@@ -158,8 +159,14 @@ export function RequestTagDesigner({
   const [pinned, setPinned] = useState<Record<string, PinnedPlacement>>(() =>
     pinnedFromDoc(initialDoc),
   );
+  // A pre-S6 doc's `a4_3up`/`a4_2x2` preset migrates to 'auto' on load (S3,
+  // AC-S6-4) - the layout has been identical since S6, this just gets the
+  // saved value to catch up so the next autosave writes 'auto' instead of
+  // perpetuating history.
   const [imposition, setImposition] = useState<ImpositionConfig>(
-    initialDoc?.imposition ?? { preset: 'auto', ...IMPOSITION_PRESETS.auto },
+    initialDoc?.imposition
+      ? normaliseImpositionPreset(initialDoc.imposition)
+      : { preset: 'auto', ...IMPOSITION_PRESETS.auto },
   );
   /**
    * The size "Apply to all lines" (D24, S9) last set, persisted in the doc
@@ -1285,24 +1292,36 @@ function TagSizeControl({
           return (
             <div className="flex min-w-0 flex-1 items-center justify-between gap-2">
               <span className="truncate break-words">{opt.label}</span>
-              {saved && (
-                <button
-                  type="button"
-                  aria-label={`Delete saved size ${saved.name}`}
-                  className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-destructive"
-                  onPointerDown={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                  }}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    deleteSavedSize.run({ id: saved.id, subject: saved.name });
-                  }}
-                >
-                  <X className="size-3.5" />
-                </button>
-              )}
+              {saved &&
+                (() => {
+                  // Matches the listing rows' own `rowPending` dim (N4) - this
+                  // dropdown has no DataGrid row to dim, so the `x` itself
+                  // carries the same signal while ITS OWN delete counts down.
+                  const pending =
+                    deleteSavedSize.isPending && deleteSavedSize.targetId === saved.id;
+                  return (
+                    <button
+                      type="button"
+                      aria-label={`Delete saved size ${saved.name}`}
+                      disabled={pending}
+                      className={cn(
+                        'shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-destructive',
+                        pending && 'pointer-events-none opacity-50',
+                      )}
+                      onPointerDown={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                      }}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        deleteSavedSize.run({ id: saved.id, subject: saved.name });
+                      }}
+                    >
+                      <X className="size-3.5" />
+                    </button>
+                  );
+                })()}
             </div>
           );
         }}

@@ -459,12 +459,37 @@ export interface ImpositionFit {
 }
 
 /**
+ * A doc saved before S6 carries `preset: 'a4_3up'`/`'a4_2x2'` - `impositionSlots`
+ * already lays every preset out identically (AC-S6-4), but nothing ever WROTE
+ * `'auto'` back: a field edit writes `'custom'` and nothing else writes
+ * anything, so the old value would live in the doc forever (S3). Called when
+ * a doc is loaded, so the next autosave catches the value up to what the
+ * layout has already been doing since S6.
+ */
+export function normaliseImpositionPreset(imposition: ImpositionConfig): ImpositionConfig {
+  if (imposition.preset === 'a4_3up' || imposition.preset === 'a4_2x2') {
+    return { ...imposition, preset: 'auto' };
+  }
+  return imposition;
+}
+
+/** Hard ceiling per axis (S2): the arrange page has unbounded number fields, and
+ *  a page/tag ratio in the tens of thousands would otherwise rebuild a grid
+ *  with 10^5-10^6 slots on every keystroke. */
+const MAX_IMPOSITION_AXIS = 200;
+
+/**
  * How many tags of this size fit one sheet, per axis.
  *
  * `floor((usable + gap) / (tag + gap))` folds the last gap into the division
  * so N tags separated by N-1 gaps compares correctly against the usable span
  * (usable = page minus bleed on both sides). Either axis floors to 0 when the
  * tag does not fit at all, which floors `perSheet` to 0 too (AC-S6-3).
+ *
+ * A blank/invalid field (`NaN`) or `tag + gap === 0` (division by zero,
+ * `Infinity`) is not a valid grid - `Number.isFinite` catches both and folds
+ * them to 0, same as "does not fit" (S2). A grid that DOES fit is still
+ * clamped to `MAX_IMPOSITION_AXIS` per axis.
  */
 export function impositionFit(
   page_width_mm: number,
@@ -476,8 +501,10 @@ export function impositionFit(
 ): ImpositionFit {
   const usableW = page_width_mm - 2 * bleed_mm;
   const usableH = page_height_mm - 2 * bleed_mm;
-  const cols = Math.max(0, Math.floor((usableW + gap_mm) / (tag_width_mm + gap_mm)));
-  const rows = Math.max(0, Math.floor((usableH + gap_mm) / (tag_height_mm + gap_mm)));
+  const rawCols = Math.floor((usableW + gap_mm) / (tag_width_mm + gap_mm));
+  const rawRows = Math.floor((usableH + gap_mm) / (tag_height_mm + gap_mm));
+  const cols = Number.isFinite(rawCols) ? Math.min(MAX_IMPOSITION_AXIS, Math.max(0, rawCols)) : 0;
+  const rows = Number.isFinite(rawRows) ? Math.min(MAX_IMPOSITION_AXIS, Math.max(0, rawRows)) : 0;
   return { cols, rows, perSheet: cols * rows };
 }
 
