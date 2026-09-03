@@ -134,6 +134,18 @@ export function BoardLineDecisionPanel({
   const [savedOnce, setSavedOnce] = React.useState(() => Boolean(contribution.draft));
 
   /**
+   * N3 (fix round 5): re-seeded whenever the contribution's OWN saved draft changes - a
+   * refetch (another planner saved this line elsewhere) or an Undo fired from the pill
+   * (`BoardDecisionPill`), neither of which goes through this panel's own `save()` /
+   * `reject()`. Seeded at MOUNT only left a panel that stayed open across such a change
+   * reading a state the server had already moved on from: Undo cleared the draft server-side
+   * while this panel's own `savedOnce` (still `true` from mount) kept the button on "Saved".
+   */
+  React.useEffect(() => {
+    setSavedOnce(Boolean(contribution.draft));
+  }, [contribution.draft]);
+
+  /**
    * Saved AND untouched since (D4). `dirty` is set by every input on this panel, so an edit
    * of any kind puts "Save decision" back without this having to know which one moved.
    */
@@ -255,12 +267,8 @@ export function BoardLineDecisionPanel({
    * Approved. The reason goes with it, because an approval overrides nothing.
    */
   const save = async () => {
-    setDirty(false);
-    setLocked(false);
     let ok: boolean | void;
     if (approving) {
-      setDraft(suggestionDraftFrom(contribution));
-      setReason('');
       ok = await onDecide({ verdict: 'approved', suspected_system_issue: suspected });
     } else {
       ok = await onDecide({
@@ -274,7 +282,19 @@ export function BoardLineDecisionPanel({
     // actually landed - `onDecide` returning `false` (a rejected write) must not show a
     // check the server never earned. `undefined` (a caller with nothing to report) reads as
     // success, the same as before this fix.
+    //
+    // B1 (fix round 5): every "clean" state change - dirty, locked, and the approving branch's
+    // reseed to the suggestion - waits for that same guard. Setting them before the `await`
+    // meant a REJECTED second save still rendered the button as Saved and disabled: `dirty`
+    // was already false and `savedOnce` was already true from the first, successful save, so
+    // `saved = savedOnce && !dirty` read true over an edit the server never wrote.
     if (ok === false) return;
+    setDirty(false);
+    setLocked(false);
+    if (approving) {
+      setDraft(suggestionDraftFrom(contribution));
+      setReason('');
+    }
     // S4/AC-4.1: the button answers the click itself, within the interaction, before the
     // pill's own "Saved" and the toast even have to be looked at - and it keeps answering
     // until the line is edited again (D4).

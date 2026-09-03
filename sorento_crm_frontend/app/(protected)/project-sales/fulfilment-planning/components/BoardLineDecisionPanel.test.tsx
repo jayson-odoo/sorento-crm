@@ -1041,6 +1041,104 @@ describe('BoardLineDecisionPanel: the Save button says it saved (S4, AC-4.1)', (
     expect(screen.queryByRole('button', { name: 'Saved' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Save decision' })).toBeInTheDocument();
   });
+
+  it('does not lock a re-save as Saved when the server rejects it (B1, fix round 5)', async () => {
+    // First save lands; the planner edits again and saves a second time, and THAT write is
+    // the one the server refuses. The button must answer the second click, not the first.
+    const onDecide = vi
+      .fn()
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
+    const onDirtyChange = vi.fn();
+
+    render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf()}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={onDecide}
+        onDirtyChange={onDirtyChange}
+      />,
+    );
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
+    });
+    expect(screen.getByRole('button', { name: 'Saved' })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Reserve at BRW-AM'), {
+      target: { value: '5' },
+    });
+    fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
+      target: { value: '19' },
+    });
+    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+      target: { value: 'Agreed a smaller own-location share with the site.' },
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
+    });
+
+    expect(onDecide).toHaveBeenCalledTimes(2);
+    expect(
+      screen.getByRole('button', { name: 'Save decision' }),
+    ).toBeEnabled();
+    expect(
+      screen.queryByRole('button', { name: 'Saved' }),
+    ).not.toBeInTheDocument();
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+  });
+
+  /**
+   * N3 (fix round 5). `savedOnce` used to seed ONLY at mount (`useState(() =>
+   * Boolean(contribution.draft))`), so a panel a planner left OPEN across a change that did
+   * not come through its own `save()` / `reject()` - a refetch after another planner saved
+   * this line, or an Undo fired from the pill (`BoardDecisionPill`) - kept reading whatever
+   * was true when it first opened.
+   */
+  it('re-seeds when the contribution s own draft changes under it, not only at mount', () => {
+    const { rerender } = render(
+      <BoardLineDecisionPanel
+        contribution={contributionOf()}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Save decision' })).toBeInTheDocument();
+
+    // A refetch delivers a draft this panel never wrote itself (another planner's save).
+    rerender(
+      <BoardLineDecisionPanel
+        contribution={contributionOf({
+          draft: {
+            decision: { verdict: 'approved' },
+            saved_by: 'Mei',
+            saved_at: '2026-09-03T02:00:00',
+          },
+        })}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={vi.fn()}
+      />,
+    );
+    const saved = screen.getByRole('button', { name: 'Saved' });
+    expect(saved).toBeInTheDocument();
+    expect(saved).toBeDisabled();
+
+    // An Undo fired elsewhere (the pill) clears the draft under the same open panel.
+    rerender(
+      <BoardLineDecisionPanel
+        contribution={contributionOf()}
+        decision={null}
+        locations={LOCATIONS}
+        onDecide={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Save decision' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Saved' })).not.toBeInTheDocument();
+  });
 });
 
 /**
