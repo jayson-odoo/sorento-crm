@@ -50,6 +50,10 @@ export interface DraftLine {
   uom_id: string | null;
   /** Round-tripped untouched: the PUT dropped it, so the price lost its unit on every save. */
   currency: string | null;
+  /** Priced per unit, and the supplier's own note on the line - both editable on the
+   *  Shipment lines grid (AC-G1, AC-G5), same as every other measurement here. */
+  unit_cost: string;
+  remarks: string;
 }
 
 /** The header fields the Details tab types, beyond the clearance ones. */
@@ -196,6 +200,8 @@ export function PackingListProvider({
         gross_weight_per_carton: toInput(line.gross_weight_per_carton),
         uom_id: line.uom_id ?? null,
         currency: line.currency ?? null,
+        unit_cost: toInput(line.unit_cost),
+        remarks: toInput(line.remarks),
       })),
     );
     setEditing(true);
@@ -241,6 +247,8 @@ export function PackingListProvider({
         gross_weight_per_carton: '',
         uom_id: null,
         currency: null,
+        unit_cost: '',
+        remarks: '',
       },
     ]);
 
@@ -304,6 +312,8 @@ export function PackingListProvider({
         carton_height_cm: orUndefined(line.carton_height_cm),
         net_weight_per_carton: orUndefined(line.net_weight_per_carton),
         gross_weight_per_carton: orUndefined(line.gross_weight_per_carton),
+        unit_cost: orUndefined(line.unit_cost),
+        remarks: line.remarks.trim() || undefined,
       })),
     };
     // The clearance and cost fields are on the payload schema but not on

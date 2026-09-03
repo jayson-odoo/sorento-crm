@@ -1155,6 +1155,20 @@ export interface PackingListLine {
   cbm: number | null;
   /** What the supplier wrote on the line, and only that. */
   remarks: string | null;
+  /** Priced per unit. Null (or absent, on a payload built before this field existed) on a
+   *  line nobody has costed yet - never 0, which the split footer would then apportion
+   *  insurance against as if it were free. */
+  unit_cost?: number | null;
+  currency?: string | null;
+}
+
+/** The container's own header block and costs, off the same `build()` payload (S7's Split
+ *  card reads `costs`; the header block itself already prints on the packing-list Details
+ *  tab from `inbound_shipments` directly, so nothing here re-fetches it). */
+export interface PackingListCosts {
+  clearance_cost: number | null;
+  china_freight_cost: number | null;
+  insurance_rate: number | null;
 }
 
 export interface PackingListTotals {
@@ -1189,6 +1203,9 @@ export interface ConsolidatedPackingList {
   total: PackingListTotals;
   /** Both companies, always, zeros included: an absent row reads as a missing figure. */
   split: PackingListSplitRow[];
+  /** Typed per container; the split card apportions clearance and freight by CBM share and
+   *  insurance by amount share, the same ratios the export's footer formulas use. */
+  costs?: PackingListCosts;
 }
 
 export async function getConsolidatedPackingList(
