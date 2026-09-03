@@ -428,7 +428,7 @@ export function applyDesignToAllLines(
 
     const existing = next[line.id];
     next[line.id] = {
-      id: existing?.id ?? newId(),
+      id: newId(),
       template_id: source.template_id,
       request_line_id: line.id,
       x_mm: existing?.x_mm ?? 0,

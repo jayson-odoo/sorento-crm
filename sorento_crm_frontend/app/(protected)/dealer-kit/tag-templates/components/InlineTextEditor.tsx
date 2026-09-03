@@ -18,6 +18,11 @@
  * newline (the browser's own default - nothing to handle); Esc, Cmd/Ctrl+Enter
  * or losing focus commits and closes.
  *
+ * A commit where nothing changed (double-click, then Esc/blur with no typing)
+ * is a NO-OP (B2): it calls `onCancel` instead of `onCommit`, so a bound
+ * layer that was only opened and closed never gets a `text_override` written
+ * over its resolved value - that would silently unlink it from its binding.
+ *
  * B/I/U/Shift+X are NOT handled here - `TagCanvasEditor`'s own keydown
  * handler answers them ahead of its `isInput`/`editingLayerId` guards, so
  * they work whether this editor is open or not (AC-S2-4).
@@ -36,6 +41,12 @@ interface InlineTextEditorProps {
   originX: number;
   originY: number;
   onCommit: (value: string) => void;
+  /** Called instead of `onCommit` when the value never changed (B2). */
+  onCancel?: () => void;
+  /** Fired on every keystroke, ahead of any commit (S1) - lets the parent
+   *  flush the live value if the selection moves away before this editor's
+   *  own commit path (blur/Esc/Cmd+Enter) gets a chance to run. */
+  onChangeText?: (value: string) => void;
 }
 
 export function InlineTextEditor({
@@ -45,6 +56,8 @@ export function InlineTextEditor({
   originX,
   originY,
   onCommit,
+  onCancel,
+  onChangeText,
 }: InlineTextEditorProps) {
   const props = layer.props as Extract<TagLayerProps, { kind: 'text' }>;
   const [text, setText] = useState(value);
@@ -63,6 +76,10 @@ export function InlineTextEditor({
   const commit = () => {
     if (committedRef.current) return;
     committedRef.current = true;
+    if (text === value) {
+      onCancel?.();
+      return;
+    }
     onCommit(text);
   };
 
@@ -116,7 +133,10 @@ export function InlineTextEditor({
       data-testid="inline-text-editor"
       aria-label="Edit text"
       value={text}
-      onChange={(e) => setText(e.target.value)}
+      onChange={(e) => {
+        setText(e.target.value);
+        onChangeText?.(e.target.value);
+      }}
       onKeyDown={handleKeyDown}
       onBlur={commit}
       style={style}

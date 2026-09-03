@@ -2241,60 +2241,117 @@ export function TagCanvasEditor({
     : null;
 
   /**
-   * The content the Insert field dialog opens on, and where Done writes it.
-   *
-   * The same rule the Inspector's Content box already follows: a slot-bound
-   * layer is edited through `text_override` so the binding survives, an unbound
-   * one through its own text. Each path is one `setLayers` and one history
-   * entry, so a whole dialog's worth of edits undoes in one step.
+   * The content a given layer's Content box opens on, and where its commit
+   * writes to. A slot-bound layer is edited through `text_override` so the
+   * binding survives, an unbound one through its own text.
    */
-  const selectedContent = selectedLayer
-    ? selectedLayer.slot_binding
-      ? selectedLayer.text_override ??
-        selectedResolvedText ??
-        (selectedLayer.props.kind === 'text' ? selectedLayer.props.text : '')
-      : selectedLayer.props.kind === 'text'
-        ? selectedLayer.props.text
-        : ''
-    : '';
+  const contentFor = useCallback(
+    (layer: TagLayer) => {
+      if (layer.slot_binding) {
+        return (
+          layer.text_override ??
+          resolveSlotText(layer, dataOf(layer)) ??
+          (layer.props.kind === 'text' ? layer.props.text : '')
+        );
+      }
+      return layer.props.kind === 'text' ? layer.props.text : '';
+    },
+    [dataOf],
+  );
+
+  /**
+   * The content the Insert field dialog opens on, and where Done writes it.
+   * Each path is one `setLayers` and one history entry, so a whole dialog's
+   * worth of edits undoes in one step.
+   */
+  const selectedContent = selectedLayer ? contentFor(selectedLayer) : '';
+
+  const writeContentToLayer = useCallback(
+    (layerId: string, content: string) => {
+      const layer = layers.find((l) => l.id === layerId);
+      if (!layer) return;
+      if (layer.slot_binding) {
+        updateLayer(layer.id, { text_override: content });
+      } else if (layer.props.kind === 'text') {
+        updateLayerProps(layer.id, { ...layer.props, text: content });
+      }
+    },
+    [layers, updateLayer, updateLayerProps],
+  );
 
   const writeSelectedContent = useCallback(
     (content: string) => {
       if (!selectedLayer) return;
-      if (selectedLayer.slot_binding) {
-        updateLayer(selectedLayer.id, { text_override: content });
-      } else if (selectedLayer.props.kind === 'text') {
-        updateLayerProps(selectedLayer.id, { ...selectedLayer.props, text: content });
-      }
+      writeContentToLayer(selectedLayer.id, content);
     },
-    [selectedLayer, updateLayer, updateLayerProps],
+    [selectedLayer, writeContentToLayer],
   );
 
   /**
-   * The inline editor's commit (S2, D5): the exact same rule
-   * `writeSelectedContent` follows, plus closing the editor. `editingLayerId`
-   * is always the sole selected id while the editor is open (set together in
-   * `handleLayerDoubleClick`), so `writeSelectedContent` targets the right
-   * layer.
+   * The text layer the inline editor is open on - looked up by the id it was
+   * opened with, NOT the current selection (S1). Clicking a different text
+   * layer while editing moves `selectedLayer`, but the editor stays open on
+   * whatever it was double-clicked into until it commits, so it must keep
+   * targeting that same layer regardless of where the selection has moved.
+   */
+  const editingLayer = useMemo(
+    () => (editingLayerId ? (layers.find((l) => l.id === editingLayerId) ?? null) : null),
+    [editingLayerId, layers],
+  );
+
+  /** The seed value the inline editor opened with - stable for the whole edit. */
+  const editingContent = editingLayer ? contentFor(editingLayer) : '';
+
+  /** Mirrors the inline editor's live (uncommitted) text, for the effect below. */
+  const editingTextRef = useRef('');
+
+  // Re-seed the live-text mirror on every open, to `editingContent` AS OF
+  // this open - otherwise a selection change with nothing typed would flush
+  // whatever was left over from a PREVIOUS edit session against the newly
+  // opened layer.
+  useEffect(() => {
+    if (editingLayerId) editingTextRef.current = editingContent;
+    // Only re-seed when a NEW edit session opens, not on every keystroke -
+    // `editingTextRef` itself is the up-to-date value once one is in progress.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingLayerId]);
+
+  /**
+   * The inline editor's own commit (S2, D5): Esc, Cmd/Ctrl+Enter or blur
+   * already decided the text changed (InlineTextEditor's own no-op guard,
+   * B2) - write it to the layer that was opened, then close.
    */
   const commitInlineEdit = useCallback(
     (content: string) => {
-      writeSelectedContent(content);
+      if (editingLayerId) writeContentToLayer(editingLayerId, content);
       setEditingLayerId(null);
     },
-    [writeSelectedContent],
+    [editingLayerId, writeContentToLayer],
   );
 
-  // Belt-and-braces: if the layer being edited stops being the sole
-  // selection (or the selection stops being that text layer) through some
-  // path other than the editor's own commit, close it rather than leaving it
-  // open on a stale layer.
+  /** The inline editor's own no-op close (B2): nothing was typed, nothing to write. */
+  const cancelInlineEdit = useCallback(() => {
+    setEditingLayerId(null);
+  }, []);
+
+  /**
+   * Clicking a DIFFERENT layer while the inline editor is open changes
+   * `selectedLayer` - that used to just close the editor without saving
+   * (S1), discarding whatever was typed, or landing on whatever layer
+   * happened to be selected by the time the write ran. This flushes the
+   * text the editor is CURRENTLY showing (`editingTextRef`, kept live by
+   * `InlineTextEditor`) against the layer it was opened on
+   * (`editingLayerId`), then closes - a genuine commit-then-close, not a
+   * silent discard, and it never depends on native blur firing in time.
+   */
   useEffect(() => {
     if (!editingLayerId) return;
-    if (!selectedLayer || selectedLayer.id !== editingLayerId || selectedLayer.props.kind !== 'text') {
-      setEditingLayerId(null);
+    if (selectedLayer && selectedLayer.id === editingLayerId) return;
+    if (editingTextRef.current !== editingContent) {
+      writeContentToLayer(editingLayerId, editingTextRef.current);
     }
-  }, [editingLayerId, selectedLayer]);
+    setEditingLayerId(null);
+  }, [editingLayerId, selectedLayer, editingContent, writeContentToLayer]);
 
   /** The bound thing, named the way a person recognises it. Never a UUID. */
   const selectedBindingLabel = describeBindingData(selectedData);
@@ -2797,20 +2854,23 @@ export function TagCanvasEditor({
               )}
 
               {/* Inline text edit (S2, D5): a plain textarea laid over the
-                  node, same maths `KonvaTagLayer` uses for the node itself. */}
-              {editingLayerId &&
-                selectedLayer &&
-                selectedLayer.id === editingLayerId &&
-                selectedLayer.props.kind === 'text' && (
-                  <InlineTextEditor
-                    key={selectedLayer.id}
-                    layer={selectedLayer}
-                    value={selectedContent}
-                    scale={scale}
-                    originX={RULER_THICKNESS + view.panX}
-                    originY={RULER_THICKNESS + view.panY}
-                    onCommit={commitInlineEdit}
-                  />
+                  node, same maths `KonvaTagLayer` uses for the node itself.
+                  Kept open on `editingLayer` regardless of where the
+                  selection moves (S1) - see `commitInlineEdit` above. */}
+              {editingLayerId && editingLayer && editingLayer.props.kind === 'text' && (
+                <InlineTextEditor
+                  key={editingLayer.id}
+                  layer={editingLayer}
+                  value={editingContent}
+                  scale={scale}
+                  originX={RULER_THICKNESS + view.panX}
+                  originY={RULER_THICKNESS + view.panY}
+                  onChangeText={(text) => {
+                    editingTextRef.current = text;
+                  }}
+                  onCommit={commitInlineEdit}
+                  onCancel={cancelInlineEdit}
+                />
                 )}
             </div>
           </ContextMenuTrigger>

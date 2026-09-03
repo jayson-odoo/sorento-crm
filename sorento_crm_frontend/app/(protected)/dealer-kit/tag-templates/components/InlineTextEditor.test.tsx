@@ -129,6 +129,47 @@ describe('InlineTextEditor', () => {
     expect(onCommit).toHaveBeenCalledWith('Edited');
   });
 
+  it('calls onCancel, not onCommit, when Esc is pressed without typing anything (B2)', () => {
+    const onCommit = vi.fn();
+    const onCancel = vi.fn();
+    render(
+      <InlineTextEditor
+        layer={textLayer()}
+        value="Hello"
+        scale={4}
+        originX={0}
+        originY={0}
+        onCommit={onCommit}
+        onCancel={onCancel}
+      />,
+    );
+    const el = screen.getByTestId('inline-text-editor');
+    fireEvent.keyDown(el, { key: 'Escape' });
+    fireEvent.blur(el);
+    expect(onCommit).not.toHaveBeenCalled();
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('calls onCancel, not onCommit, on a blur-only no-op close (B2)', () => {
+    const onCommit = vi.fn();
+    const onCancel = vi.fn();
+    render(
+      <InlineTextEditor
+        layer={textLayer()}
+        value="Hello"
+        scale={4}
+        originX={0}
+        originY={0}
+        onCommit={onCommit}
+        onCancel={onCancel}
+      />,
+    );
+    const el = screen.getByTestId('inline-text-editor');
+    fireEvent.blur(el);
+    expect(onCommit).not.toHaveBeenCalled();
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
   it('leaves a plain Enter to insert a newline rather than committing', () => {
     const onCommit = vi.fn();
     render(

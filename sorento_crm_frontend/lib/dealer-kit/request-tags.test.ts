@@ -975,6 +975,18 @@ describe('applyDesignToAllLines', () => {
     expect(next.l2).toMatchObject({ x_mm: 12, y_mm: 34, pinned: true });
   });
 
+  it('gives a target line a fresh tag id even when it already had one, so Undo is not silently defeated (B1)', () => {
+    const tags = {
+      l1: sourceTag(),
+      l2: { ...placed('old-l2', 'l2'), x_mm: 12, y_mm: 34, pinned: true },
+    };
+    const lines = [productLine('l1'), productLine('l2')];
+
+    const next = applyDesignToAllLines(tags, lines, 'l1', newId);
+
+    expect(next.l2.id).not.toBe('old-l2');
+  });
+
   it('a line with no tag yet gets one too, so it never re-clones from the default template later (AC-S5-5)', () => {
     const tags = { l1: sourceTag() };
     const lines = [productLine('l1'), productLine('l2')];
