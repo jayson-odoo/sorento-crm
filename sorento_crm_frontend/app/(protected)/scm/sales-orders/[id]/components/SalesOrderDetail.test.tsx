@@ -1414,6 +1414,81 @@ describe('SalesOrderDetail - what has already been planned about a line', () => 
     ).toBeInTheDocument();
     expect(screen.getByRole('menuitemcheckbox', { name: 'Decided' })).toBeInTheDocument();
   });
+
+  /**
+   * D10 (captain, 3 Sep): a decision SAVED on the planning board but not yet confirmed
+   * reads here too, until Confirm replaces it with the frozen `supply_decided`/
+   * `decision_revision`. Before this the Lines tab answered "-"/"-"/"-" for a line the
+   * captain had just saved, which read as the save having done nothing.
+   */
+  it('shows a saved decision as its composition, a Saved badge and who saved it', () => {
+    useSalesOrder.mockReturnValue({
+      data: planned({
+        decision_revision: null,
+        supply_saved: [{ kind: 'buy', qty: '3', source_location: null, rung: null }],
+        saved_by: 'Leena',
+        saved_at: '2026-09-03T02:30:00Z',
+        saved_stale: false,
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    const row = screen.getByText('SKU-PLANNED').closest('tr') as HTMLElement;
+    expect(within(row).getByText('Buy 3')).toBeInTheDocument();
+    // Two "Saved"s on the row by design: the Decided column's badge, and the Decision
+    // column's own word - the same reading a saved-but-unconfirmed line gets on the board.
+    expect(within(row).getAllByText('Saved')).toHaveLength(2);
+    expect(within(row).getByTestId('saved-decision-badge-l-planned').textContent).toBe(
+      'Saved',
+    );
+    const decision = within(row).getByText('Saved', { selector: 'span.text-sm' });
+    expect(decision.title).toContain('Saved by Leena');
+  });
+
+  it('reads "Suggestion changed" on a saved decision the engine has since re-proposed', () => {
+    useSalesOrder.mockReturnValue({
+      data: planned({
+        decision_revision: null,
+        supply_saved: [{ kind: 'buy', qty: '3', source_location: null, rung: null }],
+        saved_by: 'Leena',
+        saved_at: '2026-09-03T02:30:00Z',
+        saved_stale: true,
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    const row = screen.getByText('SKU-PLANNED').closest('tr') as HTMLElement;
+    // The Decided column's own badge reads "Suggestion changed", never "Saved" - the
+    // Decision column beside it still names the saver, unrelated to this warning.
+    expect(within(row).getByTestId('saved-decision-badge-l-planned').textContent).toBe(
+      'Suggestion changed',
+    );
+  });
+
+  it('a confirmed line still reads Rev N, with no Saved badge', () => {
+    useSalesOrder.mockReturnValue({
+      data: planned({
+        supply_decided: [{ kind: 'buy', qty: '10', source_location: null, rung: 'buy' }],
+        supply_saved: null,
+        saved_by: null,
+        saved_stale: false,
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    const row = screen.getByText('SKU-PLANNED').closest('tr') as HTMLElement;
+    expect(within(row).getByText('Rev 2')).toBeInTheDocument();
+    expect(within(row).queryByText('Saved')).not.toBeInTheDocument();
+  });
 });
 
 /**

@@ -30,6 +30,7 @@ from app.services.error_handler import AppException
 from app.services.numbering_service import NumberingService
 from app.services.scm.demand import is_open_demand
 from app.services.scm.demand_class import DEMAND_CLASSES, class_of
+from app.services.scm.front_planning_engine import BORROW, BUY, RESERVE
 from app.services.scm.outstanding_diff import (
     DATE_AND_QTY_CHANGED,
     DATE_MOVED,
@@ -361,6 +362,10 @@ class SalesOrderService:
         # suggested (AC-D4). Off by default: the list prints none of it and would pay the
         # read across a page of 50 orders.
         decided = self._decided_lines(so) if line_planning else {}
+        # A SAVED (unconfirmed) decision, per line (D10). Same gate: a line that already
+        # carries `decided` never carries this too (Confirm deletes the draft it promotes),
+        # so the two reads never disagree about which one covers a line.
+        saved = self._saved_lines(so) if line_planning else {}
         # WHERE each line's Buy sits (AC-I9). Same gate, same reason: the list has no
         # column for it.
         links = self._line_links(so) if line_planning else {}
@@ -377,6 +382,7 @@ class SalesOrderService:
         for ln in sorted(so.lines, key=_line_sort_key):
             qo = float(ln.qty_ordered or 0)
             qd = float(ln.qty_delivered or 0)
+            saved_entry = saved.get(str(ln.id))
             # A CLOSED line is outstanding NOTHING, whatever its two quantities say. When a
             # re-uploaded book closes a line by absence, what actually shipped is unknown, so
             # `qty_delivered` stays 0 and `ordered - delivered` reads as the whole order still
@@ -441,6 +447,21 @@ class SalesOrderService:
                 # frozen before the proposal was recorded (AC-D1).
                 "supply_decided": (decided.get(str(ln.id)) or {}).get("decided"),
                 "supply_proposed": (decided.get(str(ln.id)) or {}).get("proposed"),
+                # A SAVED (unconfirmed) decision on this line (D10). `None` on a line no
+                # draft covers, including one already confirmed into `decided` above - the
+                # promotion deletes the draft in the same write, so the two never overlap.
+                "supply_saved": (
+                    self._saved_components(saved_entry["decision"]) if saved_entry else None
+                ),
+                "saved_by": (saved_entry["saved_by"] or None) if saved_entry else None,
+                "saved_at": (
+                    saved_entry["saved_at"].isoformat()
+                    if saved_entry and saved_entry["saved_at"]
+                    else None
+                ),
+                "saved_stale": (
+                    self._saved_is_stale(saved_entry, ln) if saved_entry else False
+                ),
             })
         order_dt = so.order_date or (so.created_at.date() if so.created_at else date.today())
         agent_code, agent_label = self._agent_fields(so.sales_agent_id, agent_map)
@@ -682,6 +703,101 @@ class SalesOrderService:
                 ),
             }
         return out
+
+    def _saved_lines(self, so: SalesOrder) -> dict[str, dict]:
+        """A SAVED-but-unconfirmed decision on each of this order's lines (D10, captain 3
+        Sep), keyed by CORE line id - the same key `_decided_lines` answers by, so a caller
+        can tell "confirmed" from "saved but not yet" without a third read.
+
+        Reads `projects.so_supply_decision_drafts` by the CORE `sales_order_id`, exactly the
+        predicate `project_line_draft_service.drafts_for_orders` uses for the planning
+        board: a save made there and a read made here name the same row. Confirm deletes the
+        draft it promotes inside its own transaction, so a line here never also answers in
+        `_decided_lines` - the two are the "not yet" and the "done" halves of one story.
+
+        ONE query for the whole order. The saver's name is resolved in it, never an id: the
+        page renders a person.
+        """
+        from app.models.project_so import SOSupplyDecisionDraft
+        from app.models.user import User
+
+        rows = (
+            self.db.query(SOSupplyDecisionDraft, User.name)
+            .outerjoin(User, User.id == SOSupplyDecisionDraft.saved_by)
+            .filter(SOSupplyDecisionDraft.sales_order_id == so.id)
+            .all()
+        )
+        return {
+            str(row.core_line_id): {
+                "decision": row.decision or {},
+                "saved_by": name or "",
+                "saved_at": row.saved_at,
+                "line_snapshot": row.line_snapshot,
+            }
+            for row, name in rows
+        }
+
+    @staticmethod
+    def _saved_is_stale(saved_entry: dict, ln: SalesOrderLine) -> bool:
+        """Has this line's own facts moved since the draft was saved (AC-4.4)?
+
+        Delegates to `project_line_draft_service.is_stale` - the SAME predicate the
+        planning board judges a draft by, so this page and the board cannot disagree about
+        which saved line the numbers have moved under. Judged on the line's own outstanding
+        quantity and required date, never the proposal - see that function's own docstring
+        for why.
+        """
+        from app.services.project_line_draft_service import is_stale
+        from app.services.project_supply_service import _open_of
+
+        return is_stale(saved_entry.get("line_snapshot"), _open_of(ln), ln.required_date)
+
+    @staticmethod
+    def _saved_components(decision: dict) -> list[dict]:
+        """A SAVED decision's composition, in the same vocabulary `_supply_components`
+        states a confirmed one in (D10).
+
+        `decision` is the frontend's own `BoardDecision` JSON, stored opaque by
+        `project_line_draft_service` - the server reads nothing out of it there, and this
+        is the one place it is. A reserve row becomes a `reserve` component with its
+        location and quantity, a borrow row a `borrow` component, and a positive `buy_qty`
+        a `buy` component - the same three kinds `_apply_frozen`
+        (`project_fulfilment_board_service.py`) reads off a decision this shape, mirrored
+        rather than imported: that reader also builds `warehouse_ids`/`rows` state this
+        page has no use for.
+
+        An APPROVAL carries none of the three: `BoardLineDecisionPanel.save()` posts
+        `{verdict: "approved"}` alone when nothing was amended - the engine's own
+        suggestion IS the decision, and nothing was typed to state again - so this reads
+        `[]` for a saved line nobody amended. There is no suggestion-vs-decided split to
+        fall back to here, the way `supply_decided`/`supply_proposed` have one: a saved
+        line has not been confirmed into a snapshot that freezes a suggestion beside it.
+        """
+        raw: list[dict] = []
+        for component in decision.get("reserve") or []:
+            qty = _money(component.get("qty")) or Decimal(0)
+            if qty > 0:
+                raw.append({
+                    "kind": RESERVE,
+                    "qty": component.get("qty"),
+                    "source_location": component.get("location"),
+                    "rung": component.get("rung"),
+                })
+        for component in decision.get("borrow") or []:
+            qty = _money(component.get("qty")) or Decimal(0)
+            if qty > 0:
+                raw.append({
+                    "kind": BORROW,
+                    "qty": component.get("qty"),
+                    "source_location": (
+                        component.get("warehouse_code") or component.get("location")
+                    ),
+                    "donor_so_number": component.get("donor_so_number"),
+                })
+        buy_qty = _money(decision.get("buy_qty")) or Decimal(0)
+        if buy_qty > 0:
+            raw.append({"kind": BUY, "qty": decision.get("buy_qty")})
+        return SalesOrderService._supply_components(raw)
 
     def with_links(self, rows: list[dict]) -> list[dict]:
         """Attach each order's purchase-order claims, in ONE query for the whole page.

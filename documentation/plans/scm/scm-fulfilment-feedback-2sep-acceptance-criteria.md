@@ -102,6 +102,10 @@ or a rule: those live once on the Policies page.
   "suggestion changed" state and is not silently confirmed.
 - AC-4.5 A second planner sees the first planner's saved lines; saving over one replaces
   it (popover names the newer saver).
+- AC-4.6 (D10, captain 3 Sep) The sales order page's Lines tab shows a saved (unconfirmed)
+  decision as Decided `<composition>` with a Saved pill and Decision "Saved" naming the
+  saver, until Confirm replaces it with Rev N. An approval with no typed composition prints
+  Decided "-" beside the Saved pill - there is nothing to state beyond the pill itself.
 
 ## S5 upload
 
