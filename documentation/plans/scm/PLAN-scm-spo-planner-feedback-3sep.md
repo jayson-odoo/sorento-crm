@@ -267,6 +267,11 @@ S1 → S2 → S3 → S4 → S5 (BE test-first, then FE) → S7 (BE test-first) �
   review dialog says "Asked 500, POs cover 409, 91 without PO backing". Tests
   `test_create_refuses_when_nothing_ticked_has_a_po_behind_it` and `test_suggest_with_no_open_po_at_all_cannot_convert_and_names_why`
   flip to the new rule (kept as tests of the new behaviour, not deleted).
+- **Captain's ruling (4 Sep, live on :3160): the "Review before creating" dialog is withdrawn.**
+  "i don't want this popup." The server already caps every line at its own remainder and writes
+  the uncovered part without a PO pull, so there is nothing to confirm - Create SPO calls
+  `create.mutate` directly on the click. AC-I2/AC-I3/AC-I6 (the dialog's own UAC lines) are
+  withdrawn; AC-I1, AC-I4, AC-I5 stand.
 
 ### R3. Class = the sales order's own class
 
