@@ -262,21 +262,35 @@ section K (AC-K1-AC-K3).
   with the right values - `data-aria-hidden="true"` on an ancestor was the entire cause,
   not the row-commit guard). A table row is not a Dialog; hiding its other fields the
   moment one cell's dropdown opens is wrong there, and `Select`/`DropdownMenu` parity was
-  never the actual bug being fixed (the Dialog wheel-scroll swallow was). `modal` is now
-  computed once per mount from the trigger's own DOM position -
-  `isInsideOpenDialog(triggerEl)` in the new `components/common/floatingAncestry.ts` -
-  `true` only when the default trigger is physically inside an open Dialog's content,
-  `false` otherwise. `renderTrigger` callers (a custom trigger element) keep the
-  unconditional `true` this shipped with rather than composing a ref through arbitrary
-  consumer markup: no evidenced Dialog-nested case uses `renderTrigger`, and both verified
-  Dialog consumers (`PlanContainerDialog`'s Supplier, `role-edit-dialog.tsx`'s Add
-  Permissions) use the default trigger, which the detection covers. `dialog.tsx`'s
+  never the actual bug being fixed (the Dialog wheel-scroll swallow was). The FIRST fix
+  round kept `modal` but made it conditional (`isInsideOpenDialog`); that turned out to be
+  only half enough - `hideOthers` ALSO broke `ContactAccessTypesAdmin.portalForms.test.tsx`,
+  a real Dialog case (`SearchableMultiSelect`'s "Portal forms" field): its list stays open
+  across multiple picks (a multi-select never auto-closes on select), and Radix Dialog is
+  ITSELF portalled, so from `hideOthers`' point of view the Dialog's own content - including
+  its own Update button - is just another sibling to hide once the nested popover goes
+  modal. Neither `SearchableSelect` nor `SearchableMultiSelect` asks Radix `Popover` for
+  `modal` at all, in EITHER context now. The one thing actually needed - winning the
+  Dialog's `react-remove-scroll` lock stack - is applied by hand: new
+  `components/common/PopoverScrollLock.tsx` wraps `PopoverContent` in `RemoveScroll`
+  (`react-remove-scroll`, the same library Radix's own modal Popover uses internally,
+  newly added as a direct dependency though already resolved transitively) via `Slot` so
+  no extra DOM node is introduced, `active` = the SAME `isInsideOpenDialog(triggerEl)`
+  detection from `components/common/floatingAncestry.ts` - `true` only when the default
+  trigger is physically inside an open Dialog's content, `false` otherwise. `renderTrigger`
+  callers (a custom trigger element) get the wrap unconditionally: composing a ref through
+  arbitrary consumer markup has no evidenced Dialog-nested case, and unlike `modal` the
+  wrap has no aria/focus side effect to weigh against defaulting it on. `dialog.tsx`'s
   outside-click guard and `InlineLineTable`'s row-commit guard shared a near-identical
   "is this a floating surface" selector that had started to drift; both now call the same
   `focusIsInsideFloating` from `floatingAncestry.ts`, which also recognises
   `[data-radix-focus-guard]` (Radix's tab-trap sentinel, a `<body>`-level sibling of every
   portal root) and `[cmdk-root]` - grepped for every other `relatedTarget` guard in the
-  app; `InlineLineTable.tsx` is the only one.
+  app; `InlineLineTable.tsx` is the only one. Verified with two throwaway probe tests (not
+  committed): a `SearchableMultiSelect` inside an open Dialog, list held open across a
+  pick, leaves that SAME Dialog's own sibling button reachable (not `aria-hidden`) while a
+  TRUE outside-the-dialog sibling is still correctly hidden by the DIALOG's own
+  (unrelated, unchanged) `hideOthers`.
 - `app/(protected)/scm/loading-plan/components/SupplierCodesTab.tsx` +
   `app/(protected)/scm/hooks/useSupplierCodeAliases.ts`: a **Confirm (N)** button, left of
   Refresh matching, N = rows decided (matched or dismissed) this visit and still present in

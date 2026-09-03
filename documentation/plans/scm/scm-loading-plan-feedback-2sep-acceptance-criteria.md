@@ -273,13 +273,21 @@ the match.
   `hideOthers` (which `modal` also pulls in, to trap focus / block outside pointer events)
   marks EVERYTHING outside the popover `aria-hidden`, including the rest of the same table
   row the popover's own trigger sits in, the instant it opens; a row is not a Dialog, so
-  hiding the fields beside the one just opened is wrong there. `modal` is now conditional -
-  `true` only when the trigger is physically inside an open Dialog (`renderTrigger` callers
-  keep the unconditional `true` this shipped with, since composing a ref through an
-  arbitrary custom trigger has no evidenced Dialog-nested case yet, and both verified
-  Dialog consumers use the default trigger). `dialog.tsx`'s outside-click guard and
-  `InlineLineTable`'s row-commit guard now share one selector,
-  `focusIsInsideFloating` (`components/common/floatingAncestry.ts`), which also recognises
+  hiding the fields beside the one just opened is wrong there. A first pass kept `modal`
+  but made it conditional on `isInsideOpenDialog`; that was still only half enough - the
+  same `hideOthers` also broke a REAL Dialog case
+  (`ContactAccessTypesAdmin.portalForms.test.tsx`, `SearchableMultiSelect`'s "Portal forms"
+  field, whose list stays open across multiple picks), because Radix Dialog is itself
+  portalled, so `hideOthers` reads the Dialog's own content - including its own Update
+  button - as just another sibling to hide. Neither component asks Radix `Popover` for
+  `modal` at all now, in either context: `components/common/PopoverScrollLock.tsx` applies
+  ONLY the scroll-lock half by hand, wrapping `PopoverContent` in `RemoveScroll`
+  (`react-remove-scroll`, the library Radix's own modal Popover already uses internally)
+  via `Slot`, `active` = the same `isInsideOpenDialog` detection (`renderTrigger` callers
+  keep the wrap unconditionally, since it carries no aria/focus side effect to weigh
+  against defaulting it on). `dialog.tsx`'s outside-click guard and `InlineLineTable`'s
+  row-commit guard now share one selector, `focusIsInsideFloating`
+  (`components/common/floatingAncestry.ts`), which also recognises
   `[data-radix-focus-guard]` and `[cmdk-root]`.
 - **AC-K2** `[FE][T]` The Supplier codes tab's "Needs a decision" header carries a **Confirm
   (N)** button, left of Refresh matching, where N = codes decided (matched or dismissed) THIS

@@ -18,6 +18,7 @@ import {
 } from '@/components/common/select-trigger-variants';
 import { SEARCH_DEBOUNCE_MS } from '@/hooks/useDebouncedSearch';
 import { isInsideOpenDialog } from '@/components/common/floatingAncestry';
+import { PopoverScrollLock } from '@/components/common/PopoverScrollLock';
 
 export type SearchableSelectOption = {
   value: string;
@@ -162,20 +163,30 @@ export function SearchableSelect({
   const [open, setOpen] = React.useState(false);
 
   /**
-   * `modal` (below) fixes ONE thing: a popover portalled inside an open Dialog needs to
-   * win the Dialog's `react-remove-scroll` lock, or a wheel over its own list is silently
-   * swallowed. It also does two things nobody asked for - Radix's `hideOthers` marks
-   * everything BUT the popover `aria-hidden` while it is open, and traps focus - both fine
-   * for a real modal, wrong for a small inline picker (a table cell, a filter bar) where
-   * the rest of the page is still what the person is doing: an inline-add row's OTHER
-   * cells going `aria-hidden` the instant its own Unit dropdown opened is what broke this
-   * ("keeps a freshly added row alive when its picker is opened", InlineLineTable.test.tsx).
-   * So `modal` is scoped to where it is actually needed - detected once, from the
-   * trigger's own DOM position, not declared per call site (278 call sites at last count).
-   * `renderTrigger` callers keep the unconditional `true` this shipped with: composing a
-   * ref through an arbitrary custom trigger has no evidenced Dialog-nested case yet, and
-   * the ones that DO exist (Plan a container's Supplier, role-edit-dialog's Add
-   * Permissions) both use the default trigger, which this covers.
+   * A popover portalled inside an open Dialog needs to win the Dialog's own
+   * `react-remove-scroll` lock, or a wheel over its own list is silently swallowed (the
+   * Dialog's lock exempts only its OWN content subtree, and this popover portals to
+   * `<body>`, outside it). Radix's `Popover` `modal` prop gets that lock, but bundles in
+   * two things nobody asked for: `hideOthers` marks EVERYTHING outside the popover
+   * `aria-hidden` while it is open, and it traps focus - both fine for a real modal, wrong
+   * here twice over. Nested in an editable table row, that hid the row's OTHER cells the
+   * instant one cell's own dropdown opened ("keeps a freshly added row alive when its
+   * picker is opened", InlineLineTable.test.tsx). Nested in a real Dialog, it hid the
+   * DIALOG's OWN Update/Save button, because that button lives in a SEPARATE portal
+   * subtree from the popover's - Radix Dialog is itself portalled, so from `hideOthers`'
+   * point of view the dialog's whole content is just another sibling to hide
+   * (ContactAccessTypesAdmin.portalForms.test.tsx, a `SearchableMultiSelect` whose list
+   * stays open across multiple picks and only then submits).
+   *
+   * So neither component ever asks Radix `Popover` for `modal`. The ONE thing actually
+   * needed - winning the scroll-lock stack - is applied by hand: `RemoveScroll` (the same
+   * library Radix's own modal Popover uses internally) wraps `PopoverContent` via `Slot`
+   * so it adds no DOM node, scoped to when the trigger is physically inside an open
+   * Dialog's content (detected once from the trigger's own DOM position - no call site
+   * needs a new prop, out of 278 combined consumers of the two components).
+   * `renderTrigger` callers get the wrap unconditionally: composing a ref through an
+   * arbitrary custom trigger element has no evidenced Dialog-nested case yet, and the
+   * wrap has no aria/focus side effect to weigh against defaulting it on.
    */
   const triggerElRef = React.useRef<HTMLElement | null>(null);
   const [triggerInsideDialog, setTriggerInsideDialog] = React.useState(false);
@@ -185,7 +196,7 @@ export function SearchableSelect({
   React.useEffect(() => {
     setTriggerInsideDialog(isInsideOpenDialog(triggerElRef.current));
   }, []);
-  const modalPopover = renderTrigger ? true : triggerInsideDialog;
+  const needsDialogScrollLock = renderTrigger ? true : triggerInsideDialog;
 
   // Async state
   const [asyncOptions, setAsyncOptions] = React.useState<SearchableSelectOption[]>([]);
@@ -318,8 +329,8 @@ export function SearchableSelect({
   };
 
   return (
-    // See `modalPopover` above for why this is conditional rather than a bare `modal`.
-    <Popover modal={modalPopover} open={open} onOpenChange={(o) => !isDisabled && setOpen(o)}>
+    // See `needsDialogScrollLock` above for why `Popover` never gets `modal`.
+    <Popover open={open} onOpenChange={(o) => !isDisabled && setOpen(o)}>
       <PopoverTrigger asChild>
         {renderTrigger ? (
           renderTrigger({ selected, open, disabled: isDisabled })
@@ -389,6 +400,7 @@ export function SearchableSelect({
       </PopoverTrigger>
       {/* Portalled so a dialog's overflow can't clip the menu when it flips upward. */}
       <PopoverPortal>
+      <PopoverScrollLock active={needsDialogScrollLock}>
       <PopoverContent
         className={cn(
             // Cap to the space Radix measured, or a long list makes the menu taller than
@@ -495,6 +507,7 @@ export function SearchableSelect({
           </CommandList>
         </Command>
       </PopoverContent>
+      </PopoverScrollLock>
       </PopoverPortal>
     </Popover>
   );
