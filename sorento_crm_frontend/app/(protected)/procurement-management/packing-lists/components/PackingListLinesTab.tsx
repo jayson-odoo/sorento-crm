@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 import Link from 'next/link';
 import { ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import { Info, Trash2 } from 'lucide-react';
@@ -21,7 +21,7 @@ import { getProducts } from '@/app/(protected)/master-data-management/products/s
 import { ProductComboboxSearchable } from './ProductComboboxSearchable';
 import { SupplierCombobox } from './SupplierCombobox';
 import { PackingListSplitCard } from './PackingListSplitCard';
-import { deriveLineCells, fmtDp, fmtStated } from './packingListLineMath';
+import { deriveLineCells, fmtDp, fmtStated, toNum } from './packingListLineMath';
 import {
   usePackingListRecord,
   type DraftLine,
@@ -252,6 +252,16 @@ export function PackingListLinesTab() {
     return { qty, ctnQty, totalCbm, unmeasuredCbm, totalNw, totalGw, amount };
   }, [rows]);
 
+  /** Read by the footer cells INSTEAD of `footerTotals` directly (AC-J1): `footerTotals` is a
+   *  fresh object on every keystroke (it is derived off `rows`, which is derived off
+   *  `draftLines`), and the `columns` memo below used to list it as a dependency - rebuilding
+   *  every column, with brand-new cell renderer functions, on every character typed. React
+   *  treats a changed renderer as a changed component type, so it unmounted and remounted
+   *  every `<Input>` on the grid each time, which is what dropped focus after one keystroke.
+   *  A ref lets the footer read the CURRENT totals without `columns` needing to change. */
+  const footerTotalsRef = useRef(footerTotals);
+  footerTotalsRef.current = footerTotals;
+
   /** Server-searched, so any of the 10k+ products is reachable rather than a first page. */
   const fetchProducts = async (query: string, pageIndex: number) => {
     const res = await getProducts({
@@ -307,27 +317,39 @@ export function PackingListLinesTab() {
         header: ({ column }) => <DataGridColumnHeader title="Model" column={column} />,
         cell: ({ row }) => {
           const line = row.original;
-          if (editing && !line.id) {
+          // An EXISTING line gets the same picker as a new one (AC-J3): the factory's
+          // packing list is sometimes matched to the wrong catalogue product, and there was
+          // no way to correct that short of removing the line and re-adding it.
+          if (editing) {
             return (
               <ProductComboboxSearchable
                 className="w-52"
                 value={line.product_id}
                 onChange={(v) => setLineField(line.key, 'product_id', v)}
+                // The code/name travel WITH the id (AC-J2, AC-J3): they are what the
+                // trigger falls back to displaying while the just-picked id is not on the
+                // page's own fetched options any more (a resort, a re-render off other
+                // state). Left stale, the trigger read the id's NEW product against the
+                // PREVIOUS product's code the moment one was picked.
+                onOptionChange={(opt) => {
+                  setLineField(line.key, 'product_code', opt?.product_code ?? '');
+                  setLineField(line.key, 'product_name', opt?.product_name ?? null);
+                }}
                 fetchProducts={fetchProducts}
+                productFallback={
+                  line.product_id
+                    ? {
+                        id: line.product_id,
+                        product_code: line.product_code,
+                        product_name: line.product_name ?? undefined,
+                      }
+                    : null
+                }
                 placeholder="Search a product"
               />
             );
           }
           if (!line.id) return <span className="text-muted-foreground">{EM_DASH}</span>;
-          // Editing an EXISTING line does not re-open its product picker - unchanged from
-          // before this slice; only a freshly added line (no id yet) gets one.
-          if (editing) {
-            return (
-              <span className="block truncate font-medium" title={line.product_code || undefined}>
-                {line.product_code || EM_DASH}
-              </span>
-            );
-          }
           return (
             <Link
               href={`/master-data-management/products/${line.product_id}`}
@@ -411,7 +433,7 @@ export function PackingListLinesTab() {
         size: 85,
         enableSorting: false,
         meta: { headerTitle: 'Qty', ...numMeta },
-        footer: () => <span>{footerTotals.qty}</span>,
+        footer: () => <span>{footerTotalsRef.current.qty}</span>,
       },
       {
         id: 'pcs_per_carton',
@@ -438,13 +460,24 @@ export function PackingListLinesTab() {
         id: 'ctn_qty',
         header: ({ column }) => <DataGridColumnHeader title="Ctn qty" column={column} />,
         cell: ({ row }) => {
-          const cells = deriveLineCells(row.original);
+          const line = row.original;
+          // Derived off Pcs/ctn (`= Qty / Pcs per carton`, the workbook's own `H` formula)
+          // whenever a pack size is stated - editing it there would disagree with the number
+          // it derives. Where Pcs/ctn is blank there is nothing to derive it FROM, so it is
+          // the stated carton count instead (AC-J4), and typing it is the only way a
+          // container with no pack size can ever carry one.
+          if (editing && !toNum(line.pcs_per_carton)) {
+            return (
+              <LineNumberInput line={line} name="cartons_count" label="Ctn qty" onChange={setLineField} />
+            );
+          }
+          const cells = deriveLineCells(line);
           return cells.ctnQty === null ? EM_DASH : fmtDp(cells.ctnQty, 2);
         },
         size: 90,
         enableSorting: false,
         meta: { headerTitle: 'Ctn qty', ...numMeta },
-        footer: () => <span>{fmtDp(footerTotals.ctnQty, 2)}</span>,
+        footer: () => <span>{fmtDp(footerTotalsRef.current.ctnQty, 2)}</span>,
       },
       {
         id: 'l',
@@ -514,10 +547,10 @@ export function PackingListLinesTab() {
         meta: { headerTitle: 'Total CBM', ...numMeta },
         footer: () => (
           <span>
-            {fmtDp(footerTotals.totalCbm, 3)}
-            {footerTotals.unmeasuredCbm > 0 ? (
+            {fmtDp(footerTotalsRef.current.totalCbm, 3)}
+            {footerTotalsRef.current.unmeasuredCbm > 0 ? (
               <span className="ms-1 font-normal text-muted-foreground">
-                ({footerTotals.unmeasuredCbm} unmeasured)
+                ({footerTotalsRef.current.unmeasuredCbm} unmeasured)
               </span>
             ) : null}
           </span>
@@ -563,7 +596,7 @@ export function PackingListLinesTab() {
         size: 100,
         enableSorting: false,
         meta: { headerTitle: 'Total NW (kg)', ...numMeta },
-        footer: () => <span>{fmtDp(footerTotals.totalNw, 2)}</span>,
+        footer: () => <span>{fmtDp(footerTotalsRef.current.totalNw, 2)}</span>,
       },
       {
         id: 'total_gw',
@@ -575,7 +608,7 @@ export function PackingListLinesTab() {
         size: 100,
         enableSorting: false,
         meta: { headerTitle: 'Total GW (kg)', ...numMeta },
-        footer: () => <span>{fmtDp(footerTotals.totalGw, 2)}</span>,
+        footer: () => <span>{fmtDp(footerTotalsRef.current.totalGw, 2)}</span>,
       },
       {
         id: 'logo',
@@ -641,7 +674,7 @@ export function PackingListLinesTab() {
         size: 110,
         enableSorting: false,
         meta: { headerTitle: 'Amount', ...numMeta },
-        footer: () => <span>{fmtDp(footerTotals.amount, 2)}</span>,
+        footer: () => <span>{fmtDp(footerTotalsRef.current.amount, 2)}</span>,
       },
       {
         id: 'from_pi',
@@ -856,8 +889,13 @@ export function PackingListLinesTab() {
     }
 
     return cols;
+    // `footerTotals` deliberately absent: it is a fresh object on every keystroke and the
+    // footer cells read it through `footerTotalsRef` instead, precisely so this memo does
+    // NOT rebuild while somebody is typing (AC-J1, see `footerTotalsRef`'s own comment).
+    // `setLineField` and `removeLine` are stable (`useCallback`, empty deps, in
+    // `packing-list-context.tsx`) so they cost nothing as dependencies here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editing, suppliers, supplierNameById, footerTotals, setLineField, removeLine]);
+  }, [editing, suppliers, supplierNameById, setLineField, removeLine]);
 
   const table = useReactTable({
     data: rows,

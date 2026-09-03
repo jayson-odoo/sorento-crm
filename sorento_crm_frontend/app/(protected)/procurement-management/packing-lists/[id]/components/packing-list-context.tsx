@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import {
   usePackingList,
@@ -81,7 +81,7 @@ interface PackingListContextValue {
   draft: Record<string, string>;
   draftLines: DraftLine[];
   setField: (name: string, value: string) => void;
-  setLineField: (key: string, name: keyof DraftLine, value: string) => void;
+  setLineField: (key: string, name: keyof DraftLine, value: string | null) => void;
   addLine: () => void;
   removeLine: (key: string) => void;
   beginEdit: () => void;
@@ -220,20 +220,36 @@ export function PackingListProvider({
     setDraftLines([]);
   };
 
-  const setField = (name: string, value: string) =>
-    setDraft((prev) => ({ ...prev, [name]: value }));
+  const setField = useCallback(
+    (name: string, value: string) => setDraft((prev) => ({ ...prev, [name]: value })),
+    [],
+  );
 
-  const setLineField = (key: string, name: keyof DraftLine, value: string) =>
-    setDraftLines((prev) =>
-      prev.map((line) => (line.key === key ? { ...line, [name]: value } : line)),
-    );
+  /**
+   * `useCallback` with an EMPTY dependency array, and every state write goes through the
+   * functional updater form (`prev => ...`) rather than closing over `draftLines` itself -
+   * so this function's identity never changes across a render. The Shipment lines grid's
+   * `columns` memo takes it as a dependency (AC-J1): before this, every keystroke produced a
+   * NEW `setLineField`, which rebuilt `columns` with brand-new cell renderer functions, and
+   * React treats a changed renderer as a changed component type - it unmounted and
+   * remounted every `<Input>` on the grid, dropping focus after the first character typed.
+   */
+  const setLineField = useCallback(
+    (key: string, name: keyof DraftLine, value: string | null) =>
+      setDraftLines((prev) =>
+        prev.map((line) => (line.key === key ? { ...line, [name]: value } : line)),
+      ),
+    [],
+  );
 
-  const removeLine = (key: string) =>
-    setDraftLines((prev) => prev.filter((line) => line.key !== key));
+  const removeLine = useCallback(
+    (key: string) => setDraftLines((prev) => prev.filter((line) => line.key !== key)),
+    [],
+  );
 
   /** A blank line for the operator to fill. Its product is the first thing it asks for,
    *  because a shipment line with no product is not a line the backend can store. */
-  const addLine = () =>
+  const addLine = useCallback(() => {
     setDraftLines((prev) => [
       ...prev,
       {
@@ -259,6 +275,7 @@ export function PackingListProvider({
         remarks: '',
       },
     ]);
+  }, []);
 
   const saveEdit = async () => {
     if (!packingList) return;
