@@ -254,3 +254,62 @@ def _stored_session(session_factory, contact_id: str) -> dict:
     ).first()
     raw = row.session_vars if row is not None else {}
     return json.loads(raw) if isinstance(raw, str) else (raw or {})
+
+
+# --------------------------------------------------------------------------- #
+# The grader is asserted against, not just relied on: proves `_assert_world` fails
+# the instant `reply.text` differs by ONE character, so the world-replay gate is
+# checking the WORDS a customer reads, never just the response's shape (keys
+# present, types right, text merely non-empty).
+# --------------------------------------------------------------------------- #
+
+# Three worlds confirmed to reach `_assert_world` (not skipped by `_grade_or_skip`)
+# on the vendored-plus-full corpus available at S2 time. Picked, not derived, because
+# the point of this test is the GRADER's sensitivity, not corpus coverage (that is
+# `test_world_replay`'s job) - a world list that changes under the corpus should not
+# make this test flap.
+_GRADED_SAMPLE_IDS = (
+    "clone-spine-RS/rs09-t2",
+    "clone-spine-RS/rs09-t3",
+    "clone-spine-RS/s57-t0",
+)
+
+
+def _graded_sample() -> list[worlds_mod.World]:
+    by_id = {w.world_id: w for w in WORLDS}
+    return [by_id[world_id] for world_id in _GRADED_SAMPLE_IDS if world_id in by_id]
+
+
+class _MutatedResult:
+    def __init__(self, reply: dict, actions: list) -> None:
+        self.reply = reply
+        self.actions = actions
+
+
+@pytest.mark.parametrize(
+    "world",
+    _graded_sample() or [None],
+    ids=lambda w: w.world_id if w else "no-graded-worlds-available",
+)
+def test_the_grader_fails_on_a_one_character_text_change(world, world_db, stub_world, session_factory) -> None:
+    if world is None:
+        pytest.skip(
+            f"none of {_GRADED_SAMPLE_IDS} are gradeable in this checkout; "
+            f"{_skip_reason()}"
+        )
+    world_db(world)
+    stub_world(world)
+    done, head = _run(world, session_factory)
+    _grade_or_skip(world, head, done.session_patch)
+
+    # The world must ACTUALLY pass on the real reply first - a world that fails on its
+    # own tells us nothing about whether the grader is sensitive to a small change.
+    _assert_world(world, done, done.session_patch)
+
+    original = done.reply.get("text") or ""
+    assert original, f"{world.world_id}: no reply text to mutate"
+    flipped = ("!" if original[-1] != "!" else "?")
+    mutated = _MutatedResult(reply={**done.reply, "text": original[:-1] + flipped}, actions=done.actions)
+
+    with pytest.raises(AssertionError):
+        _assert_world(world, mutated, done.session_patch)

@@ -172,6 +172,48 @@ class TestDymOfferLifecycle:
         cleared = _compile({"outcome": {}}, _ctx_with_offer(_offer(ttl=1)))
         assert cleared["variables"]["dym_candidates"] == []
 
+    def test_rule_null_nothing_to_carry_stays_none(self) -> None:
+        """AC-204's 8th named rule ("null"): no fresh offer AND no prior offer at all -
+        the `elif not prev_offer` branch, distinct from rule 2 (a domain switch KILLING
+        a LIVE offer) and from rule 6 (a TTL death, which also needs a prior offer)."""
+        patch = _compile({"outcome": {}}, _ctx())
+        assert patch["variables"]["dym_offer"] is None
+
+
+# --------------------------------------------------------------------------- #
+# RS-9 Fix 6: `tier_menu` persistence, keyed on the domain the customer named.
+#
+# Found by the tester's kill-test pass (S2): flipping `tm_domain_ok` in
+# `compile_state.py` to a hardcoded `True` OR `False` leaves the entire corpus -
+# 1,300+ node-replay fixtures and all 103 worlds - green. Neither direction of the
+# rule was pinned by anything, so these three cases are what makes a regression here
+# fail loudly instead of shipping silently.
+# --------------------------------------------------------------------------- #
+
+
+class TestTierMenuDomainCarry:
+    PREV_MENU = [{"idx": 1, "label": "Tier A"}, {"idx": 2, "label": "Tier B"}]
+
+    def _ctx_with_tier_menu(self, **qf_overrides):
+        ctx = _ctx(**qf_overrides)
+        ctx["session"] = {"session_vars": {"variables": {"tier_menu": self.PREV_MENU}}}
+        return ctx
+
+    def test_a_null_domain_carries_the_menu(self) -> None:
+        """A bare digit reply names no domain, and the tier thread must still resolve."""
+        patch = _compile({"outcome": {}}, self._ctx_with_tier_menu(domain_hint=None))
+        assert patch["variables"]["tier_menu"] == self.PREV_MENU
+
+    def test_the_promotion_domain_carries_the_menu(self) -> None:
+        patch = _compile({"outcome": {}}, self._ctx_with_tier_menu(domain_hint="promotion"))
+        assert patch["variables"]["tier_menu"] == self.PREV_MENU
+
+    def test_an_explicit_different_domain_clears_the_menu(self) -> None:
+        """The customer named a different domain outright - the tier thread is over,
+        and the key must be ABSENT (never re-seated as an empty/null value)."""
+        patch = _compile({"outcome": {}}, self._ctx_with_tier_menu(domain_hint="order"))
+        assert "tier_menu" not in patch["variables"]
+
 
 # --------------------------------------------------------------------------- #
 # AC-205 / H29: a roster born THIS turn beats a carried picker

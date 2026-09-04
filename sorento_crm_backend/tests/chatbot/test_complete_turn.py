@@ -187,6 +187,31 @@ class TestDryRunWritesNothing:
         done = engine_mod.complete_turn(head.turn_id, _fragments(), session_factory=session_factory)
         assert done.session_patch is None, "the caller reads the session, it is not echoed"
 
+    def test_the_dry_run_patch_equals_what_a_live_run_would_have_written(
+        self, seeded, stub_parser, session_factory
+    ):
+        """AC-206 + D14: same fragments, same starting session, two DIFFERENT turns (a
+        dry run cannot be replayed live on the SAME turn id - `complete_turn` is
+        idempotent past the first close, AC-201). The dry run's returned `session_patch`
+        must be byte-equal to the `variables` a live run actually persists."""
+        dry_head = _head(session_factory, is_test=True)
+        dry_done = engine_mod.complete_turn(
+            dry_head.turn_id, _fragments(), session_factory=session_factory
+        )
+        assert _session_of(session_factory) == PRIOR_SESSION, "the dry run must not have written"
+
+        from tests.chatbot.test_engine import _envelope as _build_envelope
+
+        live_envelope = _build_envelope(is_test=False)
+        live_envelope.message["message"]["messageId"] = "ZZT-msg-live-cmp"
+        live_head = engine_mod.run_turn(live_envelope, session_factory=session_factory)
+        engine_mod.complete_turn(live_head.turn_id, _fragments(), session_factory=session_factory)
+        live_patch = _session_of(session_factory)
+
+        assert dry_done.session_patch is not None
+        assert dry_done.session_patch["variables"] == live_patch["variables"]
+        assert dry_done.session_patch.get("user_response") == live_patch.get("user_response")
+
 
 class TestGuards:
     def test_an_unknown_turn_id_is_a_lookup_error_not_a_crash(self, seeded, session_factory):
@@ -205,6 +230,53 @@ class TestGuards:
         second = engine_mod.complete_turn(head.turn_id, _fragments(), session_factory=session_factory)
         assert second.reply == first.reply
         assert _integration_logs(session_factory, "respond_contacts.session_vars") == 1
+
+    @pytest.mark.xfail(
+        reason="DEFECT (tester, S2): `complete_turn` (engine.py) only special-cases "
+        "`row.status == 'done'` (the D15 replay). A turn that never delegated - "
+        "status='failed' from a parser error, or any other non-'delegated' status - "
+        "falls through to the normal tail run: it does NOT raise, is not a 409, and "
+        "silently produces a reply from whatever `item.branch_kind` the CALLER's "
+        "fragments happen to carry (decoupled from the real failure) and closes the "
+        "turn status='done'. Confirmed manually: a parser-failure turn "
+        "(status='failed', stage='understood') fed `_fragments()` (branch_kind "
+        "'not_supported') completed with a fabricated 'not supported' reply and no "
+        "error. red until `complete_turn` checks `row.status == 'delegated'` before "
+        "running the tail and raises a 409-shaped error otherwise.",
+        strict=False,
+    )
+    def test_completing_a_turn_that_never_delegated_is_refused(
+        self, seeded, session_factory, monkeypatch
+    ):
+        """D15's shape one stage earlier: a turn the head never handed to a lane (a
+        failed parse) has no tail to run, and `/complete` must say so rather than
+        inventing an answer."""
+        from app.services.chatbot.head import parser as parser_mod
+
+        def fake_resolve_config(db, *, current_date):
+            return parser_mod.ParserConfig(
+                system_prompt="stub", prompt_version=1, provider="openai", model="gpt-test", api_key="sk-test",
+            )
+
+        monkeypatch.setattr(parser_mod, "resolve_config", fake_resolve_config)
+        monkeypatch.setattr(
+            parser_mod, "parse", lambda config, user_block: (_ for _ in ()).throw(
+                parser_mod.ParserError("boom")
+            )
+        )
+        monkeypatch.setattr(
+            engine_mod,
+            "check_access",
+            lambda db, **kw: {"allowed": True, "decision": "allow", "agent_name": "General"},
+        )
+        monkeypatch.setattr(engine_mod, "default_space_id", lambda db: None)
+
+        head = _head(session_factory, is_test=False)
+        assert head.status == "failed", "the head must have actually failed for this to prove anything"
+
+        with pytest.raises(Exception) as raised:
+            engine_mod.complete_turn(head.turn_id, _fragments(), session_factory=session_factory)
+        assert "409" in str(raised.value) or "not delegated" in str(raised.value).lower()
 
     def test_a_key_outside_the_allowlist_raises_before_the_write(
         self, seeded, stub_parser, session_factory, monkeypatch
@@ -227,6 +299,71 @@ class TestGuards:
             engine_mod.complete_turn(head.turn_id, _fragments(), session_factory=session_factory)
         assert "dym_probe_entities" in str(raised.value)
         assert _session_of(session_factory) == PRIOR_SESSION, "it wrote before validating"
+
+    def test_a_second_probe_key_also_raises_before_the_write(
+        self, seeded, stub_parser, session_factory, monkeypatch
+    ):
+        """A second harness-shaped key, `_dym_probe_input` (leading underscore, the shape
+        an internal diagnostic would use): `extra = "forbid"` has to reject EVERY
+        undeclared key, not just the one example the sibling test happens to use."""
+        from app.services.chatbot.tail import compile_state as compile_mod
+
+        real = compile_mod.compile_current_state
+
+        def poisoned(item, ctx, **kwargs):
+            compiled = real(item, ctx, **kwargs)
+            compiled.item["reply"]["session_patch"]["variables"]["_dym_probe_input"] = {"x": 1}
+            return compiled
+
+        monkeypatch.setattr(
+            "app.services.chatbot.tail.compile_state.compile_current_state", poisoned
+        )
+        head = _head(session_factory, is_test=False)
+        n_contacts_before = session_factory().execute(
+            text("SELECT count(*) FROM respond_contacts")
+        ).scalar_one()
+        with pytest.raises(Exception) as raised:
+            engine_mod.complete_turn(head.turn_id, _fragments(), session_factory=session_factory)
+        assert "_dym_probe_input" in str(raised.value)
+        n_contacts_after = session_factory().execute(
+            text("SELECT count(*) FROM respond_contacts")
+        ).scalar_one()
+        assert n_contacts_after == n_contacts_before, "the allowlist raise must not touch respond_contacts at all"
+        assert _session_of(session_factory) == PRIOR_SESSION
+
+    @pytest.mark.xfail(
+        reason="DEFECT (tester, S2): `complete_turn` has no except-block around the "
+        "SessionVars(**variables) raise (engine.py, around line 912-925 - the raise sits "
+        "between `turn_trace.record('replied', ...)` and `_close_turn`, and nothing calls "
+        "`_close_turn` on this path). The turn row is left at whatever the HEAD wrote "
+        "(status='delegated', stage='routed') instead of being closed "
+        "status='failed', stage='remembered' the way R4 promises every other failure "
+        "path in this codebase. Row count on respond_contacts IS unaffected (confirmed), "
+        "only the turn row's own status/stage is wrong. red until engine.complete_turn "
+        "gets a try/except around the SessionVars construction that calls _close_turn.",
+        strict=False,
+    )
+    def test_the_turn_row_is_closed_failed_at_remembered_when_the_allowlist_raises(
+        self, seeded, stub_parser, session_factory, monkeypatch
+    ):
+        from app.services.chatbot.tail import compile_state as compile_mod
+
+        real = compile_mod.compile_current_state
+
+        def poisoned(item, ctx, **kwargs):
+            compiled = real(item, ctx, **kwargs)
+            compiled.item["reply"]["session_patch"]["variables"]["dym_probe_entities"] = ["harness"]
+            return compiled
+
+        monkeypatch.setattr(
+            "app.services.chatbot.tail.compile_state.compile_current_state", poisoned
+        )
+        head = _head(session_factory, is_test=False)
+        with pytest.raises(Exception):
+            engine_mod.complete_turn(head.turn_id, _fragments(), session_factory=session_factory)
+        row = _turn_row(session_factory, head.turn_id)
+        assert row.status == "failed"
+        assert row.stage == "remembered"
 
 
 class TestTheEndpoint:
@@ -281,6 +418,61 @@ class TestTheEndpoint:
         body = resp.json()
         for key in ("turn_id", "reply", "actions", "session_patch"):
             assert key in body, f"{key!r} missing from the response body: {body}"
-        assert body["reply"]["attachments_src"] is None
+        # Every field of `reply`, not just the two the earlier version of this test
+        # happened to pick: `text` and `result_set` are exactly as droppable as
+        # `attachments_src` if a future edit to `CompleteResponse` forgets one.
+        assert body["reply"]["text"] == "hi"
         assert body["reply"]["quick_replies"] == "a,b"
+        assert body["reply"]["result_set"] == []
+        assert body["reply"]["attachments_src"] is None
+        assert body["actions"] == canned["actions"]
         assert body["session_patch"] == canned["session_patch"]
+
+    @pytest.mark.xfail(
+        reason="DEFECT (tester, S2): the engine raises no distinguishable exception for "
+        "a non-delegated turn (see test_completing_a_turn_that_never_delegated_is_refused "
+        "in TestGuards), so the route's `except Exception` catches whatever generic error "
+        "surfaces and returns 500, never 409. red until the engine names the condition "
+        "(e.g. a dedicated exception type) and the route maps it to 409.",
+        strict=False,
+    )
+    def test_complete_on_a_non_delegated_turn_is_a_409(
+        self, client, api_key, session_factory, monkeypatch
+    ):
+        from app.services.chatbot.head import parser as parser_mod
+
+        monkeypatch.setattr("app.api.v1.external.chat.SessionLocal", session_factory)
+
+        def fake_resolve_config(db, *, current_date):
+            return parser_mod.ParserConfig(
+                system_prompt="stub", prompt_version=1, provider="openai", model="gpt-test", api_key="sk-test",
+            )
+
+        monkeypatch.setattr(parser_mod, "resolve_config", fake_resolve_config)
+        monkeypatch.setattr(
+            parser_mod, "parse", lambda config, user_block: (_ for _ in ()).throw(
+                parser_mod.ParserError("boom")
+            )
+        )
+        monkeypatch.setattr(
+            engine_mod,
+            "check_access",
+            lambda db, **kw: {"allowed": True, "decision": "allow", "agent_name": "General"},
+        )
+        monkeypatch.setattr(engine_mod, "default_space_id", lambda db: None)
+
+        db = session_factory()
+        db.execute(
+            text(
+                "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars) "
+                "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb))"
+            ),
+            {"cid": CONTACT_ID, "phone": "+60000000009", "sv": json.dumps({"variables": {}})},
+        )
+        db.commit()
+
+        head = engine_mod.run_turn(_envelope(), session_factory=session_factory)
+        assert head.status == "failed"
+
+        resp = self._post(client, api_key, head.turn_id, _fragments())
+        assert resp.status_code == 409, resp.text
