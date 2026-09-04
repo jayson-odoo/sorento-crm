@@ -105,6 +105,16 @@ describe('listNavQuery round-trip', () => {
     expect(Object.keys(parsed.filters)).toEqual(['assigned_to']);
     expect(parsed.filters.id).toBeUndefined();
   });
+
+  // M5-07: `from` is the row the reader is being restored TO on Back, not a
+  // list filter - a list re-applying it as a column filter would break every
+  // list whose columns do not have a `from` field.
+  it('does not surface `from` (the row-restore param) as a filter (M5-07)', () => {
+    const sp = new URLSearchParams({ page: '2', limit: '50', from: 'row-38', assigned_to: 'a1' });
+    const parsed = parseDetailSearch(sp);
+    expect(Object.keys(parsed.filters)).toEqual(['assigned_to']);
+    expect(parsed.filters.from).toBeUndefined();
+  });
 });
 
 /**

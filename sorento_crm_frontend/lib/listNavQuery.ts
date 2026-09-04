@@ -64,7 +64,8 @@ export function parseDetailSearch(searchParams: URLSearchParams): {
 
   const sorting: SortingState = sort ? [{ id: sort, desc: dir === 'desc' }] : [];
 
-  const reserved = new Set(['page', 'limit', 'sort', 'dir', 'query', 'id']);
+  // `from` (M5-07) names the row Back should restore, not a list filter.
+  const reserved = new Set(['page', 'limit', 'sort', 'dir', 'query', 'id', 'from']);
   const filters: Record<string, string> = {};
   for (const [k, v] of searchParams.entries()) {
     if (!reserved.has(k) && v !== '') filters[k] = v;

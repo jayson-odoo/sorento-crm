@@ -641,7 +641,7 @@ describe('SalesAgentDetail - walking the list', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Next sales agent' }));
 
     expect(push).toHaveBeenCalledWith(
-      '/master-data-management/sales-agents/agent-2?page=1&limit=50&sort=sales_agent&dir=asc',
+      '/master-data-management/sales-agents/agent-2?page=1&limit=50&sort=sales_agent&dir=asc&from=agent-2',
     );
   });
 

@@ -119,7 +119,7 @@ describe('useListPager', () => {
 
     act(() => result.current.goNext());
 
-    expect(push).toHaveBeenCalledWith('/things/a3?page=1&limit=3');
+    expect(push).toHaveBeenCalledWith('/things/a3?page=1&limit=3&from=a3');
     expect(fetchPage).not.toHaveBeenCalled();
   });
 
@@ -134,7 +134,7 @@ describe('useListPager', () => {
 
     expect(fetchPage).toHaveBeenCalledTimes(1);
     expect(fetchPage.mock.calls[0][0].pageIndex).toBe(1);
-    expect(push).toHaveBeenCalledWith('/things/b1?page=2&limit=3');
+    expect(push).toHaveBeenCalledWith('/things/b1?page=2&limit=3&from=b1');
   });
 
   it('S3-04: previous on the first row of page 2 lands on the last row of page 1', async () => {
@@ -149,7 +149,7 @@ describe('useListPager', () => {
 
     expect(fetchPage).toHaveBeenCalledTimes(1);
     expect(fetchPage.mock.calls[0][0].pageIndex).toBe(0);
-    expect(push).toHaveBeenCalledWith('/things/a3?page=1&limit=3');
+    expect(push).toHaveBeenCalledWith('/things/a3?page=1&limit=3&from=a3');
   });
 
   it('S3-04: previous is disabled on row 1 of page 1', () => {
@@ -214,7 +214,7 @@ describe('useListPager', () => {
     await act(async () => {
       release(PAGES[1]);
     });
-    expect(push).toHaveBeenCalledWith('/things/b1?page=2&limit=3');
+    expect(push).toHaveBeenCalledWith('/things/b1?page=2&limit=3&from=b1');
   });
 
   it('D3: a next page that comes back empty disables Next instead of doing nothing', async () => {
@@ -258,8 +258,8 @@ describe('useListPager', () => {
     seed(0);
     renderPager('a2');
 
-    await waitFor(() => expect(prefetch).toHaveBeenCalledWith('/things/a1?page=1&limit=3'));
-    expect(prefetch).toHaveBeenCalledWith('/things/a3?page=1&limit=3');
+    await waitFor(() => expect(prefetch).toHaveBeenCalledWith('/things/a1?page=1&limit=3&from=a1'));
+    expect(prefetch).toHaveBeenCalledWith('/things/a3?page=1&limit=3&from=a3');
   });
 
   it('M4-06: prefetches each href only once, even across re-renders', async () => {
@@ -287,5 +287,18 @@ describe('useListPager', () => {
     const second = renderPager('b1');
     expect(second.result.current.index).toBe(1);
     expect(fetchPage).toHaveBeenCalledTimes(1);
+  });
+
+  it('M5-07: every step href carries from=<the id it lands on>, not the id it started from', () => {
+    seed(0);
+    // Two different starting rows step to two different neighbours: `from`
+    // has to name the LANDING row each time, not a fixed value.
+    const forward = renderPager('a1');
+    act(() => forward.result.current.goNext());
+    expect(push).toHaveBeenLastCalledWith('/things/a2?page=1&limit=3&from=a2');
+
+    const backward = renderPager('a3');
+    act(() => backward.result.current.goPrevious());
+    expect(push).toHaveBeenLastCalledWith('/things/a2?page=1&limit=3&from=a2');
   });
 });

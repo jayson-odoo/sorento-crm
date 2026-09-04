@@ -18,14 +18,49 @@ import { usePrefetchOnce } from '@/hooks/usePrefetchOnce';
 import { cn } from '@/lib/utils';
 
 /**
+ * The id a row is named by for Back-to-list restore (M5-07, `from=`).
+ *
+ * ONE function for both directions - `appendListState` writes it into the
+ * detail href, `DataGridTable` reads it back on mount to find the row again -
+ * so read and write cannot silently name different things. Resolution order:
+ *
+ *   1. `row.id`, when the table itself resolves row identity (`getRowId` is
+ *      set) - the caller's own stable key, so it wins over anything else.
+ *   2. `row.original.id`, the record's own id field.
+ *   3. the last path segment of the row's own href - what every `rowHref` in
+ *      this app already embeds (`/module/entity/${id}`), for the rare row
+ *      whose shape carries neither.
+ *
+ * Returns `undefined` when none of the three resolves anything, which makes
+ * both callers no-ops rather than tagging a row with an empty string.
+ */
+function rowRestoreId<TData>(
+  table: Table<TData>,
+  row: Row<TData>,
+  href?: string,
+): string | undefined {
+  if (typeof table.options.getRowId === 'function') return row.id;
+  const original = row.original as { id?: unknown };
+  if (typeof original?.id === 'string' && original.id) return original.id;
+  if (typeof original?.id === 'number') return String(original.id);
+  if (!href) return undefined;
+  const path = href.split('?')[0].split('#')[0];
+  const segments = path.split('/').filter(Boolean);
+  return segments.length ? segments[segments.length - 1] : undefined;
+}
+
+/**
  * Appends the list state the grid is showing to a row's detail href.
  *
  * The detail page's pager walks the page the user came FROM, so the URL has to
  * name that page. Param names come from `buildDetailSearch` (the same builder
  * the list GET uses), and anything the caller put in its own query string wins -
  * that is where a filter the list keeps outside TanStack rides along.
+ *
+ * Also appends `from=<row id>` (M5-07, `rowRestoreId`) so the list can scroll
+ * this exact row back into view and highlight it when the reader returns.
  */
-function appendListState<TData>(href: string, table: Table<TData>): string {
+function appendListState<TData>(href: string, table: Table<TData>, row: Row<TData>): string {
   // A fragment has to survive, and it sits AFTER the query string - splitting on
   // '?' alone turns `/orders/a1#lines` into a param named `a1#lines`.
   const hashAt = href.indexOf('#');
@@ -43,6 +78,8 @@ function appendListState<TData>(href: string, table: Table<TData>): string {
   if (ownSearch) {
     for (const [key, value] of new URLSearchParams(ownSearch)) params.set(key, value);
   }
+  const restoreId = rowRestoreId(table, row, href);
+  if (restoreId) params.set('from', restoreId);
   return `${path}?${params.toString()}${hash}`;
 }
 
@@ -558,6 +595,72 @@ function LinkableBodyRow({
   );
 }
 
+function subscribeToNothing() {
+  // No ongoing subscription: `getSnapshot` is read once, right after
+  // hydration, by React's own internal check (see `useReturnedRowId`) - this
+  // feature has no reason to re-run on every later URL change.
+  return () => {};
+}
+function currentLocationSearch(): string {
+  return window.location.search;
+}
+function emptyLocationSearch(): string {
+  return '';
+}
+
+/**
+ * The `from=` row id (M5-07), read once after hydration and cleared on the
+ * reader's first pointer interaction with the page - "until the next pointer
+ * event", not for the life of the URL.
+ *
+ * Reads `window.location.search` through `useSyncExternalStore` rather than
+ * `next/navigation`'s `useSearchParams()`. That hook needs a router context
+ * every one of the grid's ~190 call sites (and their tests) would then have
+ * to provide for a feature most never exercise, and a test that mocks
+ * `next/navigation` for `usePathname`/`useRouter` without also stubbing it
+ * throws on the call itself (vitest's mock proxy flags the missing export) -
+ * real failures this file's own suite found
+ * (`components/common/onboarding/PeopleGrid.test.tsx`,
+ * `app/(protected)/project-sales/parties/components/PartiesClient.test.tsx`).
+ * `useSyncExternalStore`'s `getServerSnapshot` is the React-native tool for
+ * exactly this shape: SSR, and the client's FIRST (hydrating) render, both
+ * see `''` - no `from`, no mismatch - and React re-renders with the REAL
+ * value immediately after commit, entirely without a router dependency.
+ *
+ * Called once PER ROW rather than lifted to a single ancestor and threaded
+ * down: every row reads the same value off the same query string and clears
+ * on the same document-wide event, so the result is identical either way,
+ * and a row that mounts late (the skeleton -> real row swap after a page
+ * arrives) still reads the right value at ITS OWN mount time.
+ */
+function useReturnedRowId(): string | null {
+  const search = React.useSyncExternalStore(
+    subscribeToNothing,
+    currentLocationSearch,
+    emptyLocationSearch,
+  );
+  const fromParam = new URLSearchParams(search).get('from');
+  const [cleared, setCleared] = React.useState(false);
+  React.useEffect(() => {
+    if (!fromParam || cleared) return;
+    const clear = () => setCleared(true);
+    document.addEventListener('pointerdown', clear, { once: true });
+    return () => document.removeEventListener('pointerdown', clear);
+  }, [fromParam, cleared]);
+  return cleared ? null : fromParam;
+}
+
+/** Combines a caller-supplied ref (dnd-kit's, possibly) with our own. */
+function mergeRefs<T>(...refs: Array<React.Ref<T> | undefined>): React.RefCallback<T> {
+  return (node) => {
+    for (const ref of refs) {
+      if (!ref) continue;
+      if (typeof ref === 'function') ref(node);
+      else (ref as React.MutableRefObject<T | null>).current = node;
+    }
+  };
+}
+
 function DataGridTableBodyRow<TData>({
   children,
   row,
@@ -577,7 +680,7 @@ function DataGridTableBodyRow<TData>({
 
   // The whole row opens the record, from anywhere on it, by mouse or by keyboard.
   // 78 of 193 lists did this and 26 had a detail route with no way to reach it.
-  const href = props.rowHref ? appendListState(props.rowHref(row.original), table) : undefined;
+  const href = props.rowHref ? appendListState(props.rowHref(row.original), table, row) : undefined;
 
   // A record on its way out stays visible and says so, rather than vanishing
   // before the reader can cancel (S6-07).
@@ -587,17 +690,32 @@ function DataGridTableBodyRow<TData>({
   const extraClassName = props.rowClassName?.(row.original);
   const extraAttributes = props.rowAttributes?.(row.original) ?? {};
 
+  // M5-07: the row Back should restore, on mount only - `returnedFromId` is
+  // read ONCE from `from=` and cleared on the reader's first pointer
+  // interaction with the page, so it highlights "until the next pointer
+  // event" rather than for the life of the URL.
+  const returnedFromId = useReturnedRowId();
+  const restoreId = href ? rowRestoreId(table, row, props.rowHref?.(row.original)) : undefined;
+  const isReturned = Boolean(restoreId && returnedFromId && restoreId === returnedFromId);
+  const scrollRef = React.useRef<HTMLTableRowElement | null>(null);
+  React.useEffect(() => {
+    if (isReturned) scrollRef.current?.scrollIntoView({ block: 'center' });
+  }, [isReturned]);
+
   const rowProps: React.ComponentProps<'tr'> = {
-    ref: dndRef,
+    ref: mergeRefs(dndRef, scrollRef),
     style: { ...(dndStyle ? dndStyle : null) },
     'data-state': table.options.enableRowSelection && row.getIsSelected() ? 'selected' : undefined,
     'data-pending': isPending ? 'true' : undefined,
+    'data-returned': isReturned ? 'true' : undefined,
     ...extraAttributes,
     ...(dndAttributes ?? {}),
     ...(dndListeners ?? {}),
     className: cn(
       'hover:bg-muted/40 data-[state=selected]:bg-muted/50',
       isPending && 'opacity-50',
+      // M5-07: the row Back restores, until the reader's next pointer event.
+      'data-[returned=true]:bg-primary/5',
       extraClassName,
       (href || props.onRowClick) && 'cursor-pointer',
       // The press cue belongs to the rows that take a press. It is not on the
