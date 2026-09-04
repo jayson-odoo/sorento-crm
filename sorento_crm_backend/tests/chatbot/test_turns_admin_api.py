@@ -69,6 +69,7 @@ import app.main  # noqa: F401  isort:skip - registers every model before any que
 from app.config import settings
 from app.main import app
 from app.dependencies import get_current_user, get_current_user_or_api_key, get_db
+from app.models.chat_history import ChatHistory
 from app.models.chatbot_turn import ChatbotTurn
 from app.services.user_service import UserPermissionService
 
@@ -507,3 +508,83 @@ def test_retry_is_idempotent_per_attempt(client, db, retry_ingress_configured):
     second = client.post(f"{BASE}/{turn.id}/retry")
     assert second.status_code == 409, second.text
     retry_ingress_configured.assert_called_once()  # the second click made no new call
+
+
+# =============================================================================
+# S2b hardening (1): GET /api/v1/system/chat-history with repeated contact_id.
+# The list's "Failed turns only" filter drives this - AC-255's aggregate names WHICH
+# contacts failed, and the list asks this endpoint for their messages by repeating
+# `contact_id` (see app/services/chat_history_query.py::_apply_filters).
+# =============================================================================
+
+
+def _chat_history_row(contact_id: str, *, minutes_ago: int = 0) -> ChatHistory:
+    return ChatHistory(
+        channel="whatsapp",
+        contact_id=contact_id,
+        phone_number="+60000000000",
+        message=f"hello from {contact_id}",
+        sent_at=datetime.now(timezone.utc) - timedelta(minutes=minutes_ago),
+        type="incoming",
+    )
+
+
+def test_chat_history_several_contact_ids_narrows_to_them(client, db):
+    a, b, c = (_contact(f"ch-{i}") for i in range(3))
+    for contact in (a, b, c):
+        db.add(_chat_history_row(contact))
+    db.commit()
+
+    resp = client.get(
+        "/api/v1/system/chat-history",
+        params=[("contact_id", a), ("contact_id", b)],
+    )
+    assert resp.status_code == 200, resp.text
+    seen = {row["contact_id"] for row in resp.json()["data"]}
+    assert seen == {a, b}
+
+
+def test_chat_history_one_contact_id_narrows_to_it(client, db):
+    a, b = (_contact(f"ch-one-{i}") for i in range(2))
+    for contact in (a, b):
+        db.add(_chat_history_row(contact))
+    db.commit()
+
+    resp = client.get("/api/v1/system/chat-history", params={"contact_id": a})
+    assert resp.status_code == 200, resp.text
+    seen = {row["contact_id"] for row in resp.json()["data"]}
+    assert seen == {a}
+
+
+def test_chat_history_empty_contact_id_list_matches_nobody(client, db):
+    """Fail closed: an EXPLICIT empty selection ('Failed turns only' with zero failed
+    contacts in range) must show nothing, not silently fall back to every message.
+
+    There is no way to put a literal empty LIST on the wire for a FastAPI repeatable
+    query param - it is either absent or has one-or-more values - so the fail-closed
+    signal is a single BLANK value (`contact_id=`), which `_apply_filters` strips to an
+    empty list before checking it (`[c for c in contact_id if c]`)."""
+    contact = _contact("ch-empty")
+    db.add(_chat_history_row(contact))
+    db.commit()
+
+    resp = client.get(
+        "/api/v1/system/chat-history",
+        params=[("contact_id", "")],
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["data"] == []
+    assert body["pagination"]["total"] == 0
+
+
+def test_chat_history_absent_contact_id_applies_no_filter(client, db):
+    a, b = (_contact(f"ch-absent-{i}") for i in range(2))
+    for contact in (a, b):
+        db.add(_chat_history_row(contact))
+    db.commit()
+
+    resp = client.get("/api/v1/system/chat-history")
+    assert resp.status_code == 200, resp.text
+    seen = {row["contact_id"] for row in resp.json()["data"]}
+    assert {a, b} <= seen
