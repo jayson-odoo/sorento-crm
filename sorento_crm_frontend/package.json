@@ -79,6 +79,7 @@
     "react-leaflet": "^5.0.0",
     "react-markdown": "^10.1.0",
     "react-quill-new": "^3.8.3",
+    "react-remove-scroll": "^2.7.2",
     "react-resizable-panels": "^3.0.3",
     "react-wrap-balancer": "^1.1.1",
     "recharts": "2.15.1",

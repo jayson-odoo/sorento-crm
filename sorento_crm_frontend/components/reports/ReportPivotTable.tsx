@@ -31,10 +31,10 @@ function measureText(value: string | undefined, measure: ReportColumn): string {
  * carries, mixed against the page instead of layered over it.
  */
 const PINNED_HEAD =
-  'sticky start-0 z-20 min-w-40 bg-[color-mix(in_oklab,var(--muted)_40%,var(--background))]';
-const PINNED_CELL = 'sticky start-0 z-10 min-w-40 bg-background';
+  'sticky start-0 z-(--z-sticky-content) min-w-40 bg-[color-mix(in_oklab,var(--muted)_40%,var(--background))]';
+const PINNED_CELL = 'sticky start-0 z-(--z-sticky-content) min-w-40 bg-background';
 const PINNED_FOOT =
-  'sticky start-0 z-10 min-w-40 bg-[color-mix(in_oklab,var(--muted)_50%,var(--background))]';
+  'sticky start-0 z-(--z-sticky-content) min-w-40 bg-[color-mix(in_oklab,var(--muted)_50%,var(--background))]';
 
 /**
  * The pivot half of a report: row dimension down the side, column dimension across the

@@ -45,9 +45,19 @@ export interface SpoMatrixEntry<T> {
   row_key: string;
   row_label: string;
   row_description?: string | null;
+  /** Which shipment line this entry came off (S4, AC-D2) - how a clicked cell finds the
+   *  line to open `PlanRowDialog` for. `row_key` groups by item code, which can be more
+   *  than one shipment line, so this lives on the ENTRY, not the row. */
+  shipment_line_id: string;
   /** ISO date, or null for "No date". */
   date: string | null;
   qty: number;
+  /** What is occupied by ANOTHER SPO on this same date, additive to `qty` (S5). Absent or
+   *  0 on an entry this SPO itself takes from. */
+  taken_qty?: number;
+  /** The SPO number(s) behind `taken_qty`, oldest first - absent on an entry this SPO
+   *  itself takes from. */
+  taken_by?: string[];
   detail: T;
 }
 
@@ -62,12 +72,20 @@ export interface SpoMatrixRow {
   key: string;
   label: string;
   description?: string | null;
+  /** The FIRST entry's shipment line - a row groups by item code, so this does not name
+   *  every line behind it (S4). */
+  shipment_line_id: string;
 }
 
 export interface SpoMatrixCell<T> {
   row_key: string;
   bucket_key: string;
   qty: number;
+  /** Sum of `taken_qty` across this cell's entries (S5) - occupied by another SPO. */
+  taken_qty: number;
+  /** Every `taken_by` name across this cell's entries, in entry order (S5) - the FIRST one
+   *  is what a mixed cell's second line names ("+N on SPO-...", first if several). */
+  taken_by: string[];
   entries: SpoMatrixEntry<T>[];
 }
 
@@ -79,13 +97,25 @@ export interface SpoMatrix<T> {
 
 const NO_DATE_KEY = 'no_date';
 
+function isoDate(d: Date): string {
+  // Local-date formatting, NOT `toISOString().slice(0, 10)` (S5, S4's own follow-up bug): on
+  // a UTC+8 host `toISOString()` first converts to UTC, which on any date whose LOCAL
+  // midnight is still the previous UTC day rolls the key (and the label built off it) back
+  // by one - every Monday read as the prior Sunday in prod (30 Aug, 13 Sept). The arithmetic
+  // above is already local (`getDay`/`setDate`), so the formatting has to stay local too.
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 function startOfWeekIso(iso: string): string {
   const d = new Date(`${iso}T00:00:00`);
   const day = d.getDay();
   // Monday-start week, matching `containerRequestMatrix.ts`'s own `startOfWeek(..., { weekStartsOn: 1 })`.
   const diff = (day === 0 ? -6 : 1) - day;
   d.setDate(d.getDate() + diff);
-  return d.toISOString().slice(0, 10);
+  return isoDate(d);
 }
 
 function weekLabel(startIso: string): string {
@@ -99,30 +129,50 @@ function bucketFor(date: string | null): SpoMatrixBucket {
   return { key: start, kind: 'dated', label: weekLabel(start), start };
 }
 
+/** The week bucket a date falls in, as a bare key - so a caller can match a document's own
+ *  date against the bucket a clicked cell names (S4, AC-D3) without rebuilding a matrix. */
+export function bucketKeyFor(date: string | null): string {
+  return bucketFor(date).key;
+}
+
 export function buildSpoScheduleMatrix<T>(entries: SpoMatrixEntry<T>[]): SpoMatrix<T> {
   const rowMap = new Map<string, SpoMatrixRow>();
   const bucketMap = new Map<string, SpoMatrixBucket>();
   const cellMap = new Map<string, SpoMatrixCell<T>>();
 
   for (const entry of entries) {
-    if (!(entry.qty > 0)) continue;
+    const takenQty = entry.taken_qty ?? 0;
+    // A fully-taken entry carries `qty: 0` (S5) and must still land on the schedule, grey -
+    // only an entry with NEITHER figure is nothing to draw.
+    if (!(entry.qty > 0) && !(takenQty > 0)) continue;
     if (!rowMap.has(entry.row_key)) {
       rowMap.set(entry.row_key, {
         key: entry.row_key,
         label: entry.row_label,
         description: entry.row_description,
+        shipment_line_id: entry.shipment_line_id,
       });
     }
     const bucket = bucketFor(entry.date);
     if (!bucketMap.has(bucket.key)) bucketMap.set(bucket.key, bucket);
 
+    const takenBy = entry.taken_by ?? [];
     const cellKey = `${entry.row_key}|${bucket.key}`;
     const existing = cellMap.get(cellKey);
     if (existing) {
       existing.qty += entry.qty;
+      existing.taken_qty += takenQty;
+      existing.taken_by.push(...takenBy);
       existing.entries.push(entry);
     } else {
-      cellMap.set(cellKey, { row_key: entry.row_key, bucket_key: bucket.key, qty: entry.qty, entries: [entry] });
+      cellMap.set(cellKey, {
+        row_key: entry.row_key,
+        bucket_key: bucket.key,
+        qty: entry.qty,
+        taken_qty: takenQty,
+        taken_by: [...takenBy],
+        entries: [entry],
+      });
     }
   }
 

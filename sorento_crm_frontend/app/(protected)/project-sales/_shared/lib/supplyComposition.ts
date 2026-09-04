@@ -19,7 +19,13 @@ import type {
   BorrowDonorImpact,
 } from '../types/fulfilmentPlanning.types';
 
-const SCALE = 10_000;
+/**
+ * One whole unit, in the minor units every comparison here is done in. EXPORTED because
+ * ladder v8's pool share has to floor to a WHOLE unit (`poolShare.ts`, R-K: "47 free reads
+ * 23"), and a second copy of this number is how two files come to disagree about precision.
+ */
+export const QTY_SCALE = 10_000;
+const SCALE = QTY_SCALE;
 
 /** A quantity that is not a number at all counts as 0, so a half-typed input never NaNs. */
 export function toMinor(qty: string | number | null | undefined): number {
@@ -204,11 +210,98 @@ export function lineBalance(draft: DraftLine): LineBalance {
 }
 
 /**
+ * What each SITE POOL may lend THIS line, and the one net over all of them (D5).
+ *
+ * The whole-line rule has exactly one carve-out (R-C): a site pool keeps a share back for
+ * dealers and lends the rest, so a line bigger than that share is legitimately "BRW 62 +
+ * Buy 73" - which is what the engine itself proposes inside the immediate window. The
+ * server's confirm admits it (`ProjectSupplyService._is_pool_share_split`); without these
+ * figures the client refused the engine's own suggestion before it could be saved.
+ *
+ * Both numbers are the SERVER's, read off the cell's own site pool rows
+ * (`BoardCellLocation.available_for_project` and `net` - see `poolShareLimitsOf`), never
+ * recomputed here: the allowance is what the walk obeyed, and a second arithmetic would be a
+ * second opinion about it.
+ *
+ * Absent (the per-order SHEET, which has no cell to read) means no carve-out at all, which
+ * is the rule as it stood: a screen that cannot check the allowance must not assume it.
+ */
+export interface PoolShareLimits {
+  /** Warehouse id -> that pool's `available_for_project`. A bin absent from it is not a pool. */
+  allowanceByWarehouseId: Record<string, string | null | undefined>;
+  /** The five site pools' NET, which bounds the pools TOGETHER (R-D). */
+  net: string | null | undefined;
+}
+
+/**
+ * The pool-share carve-out, judged (D5). `null` when this composition is not one, and the
+ * sentence that refuses it when it is one and overdraws.
+ *
+ * Deliberately NARROWER than "some of it came from a pool": every from-stock unit has to be
+ * a reserve at a pool that STATES an allowance, because a borrow, a timely SPO or an own-bin
+ * reserve beside a Buy is the mix the rule exists to refuse.
+ *
+ * ONE difference from the server, stated rather than hidden: the server also requires the
+ * line to be inside `immediate_window_days`, a figure the board does not send. A far-dated
+ * line composed this way by hand is therefore allowed here and refused at confirm, with the
+ * server's own message - the engine never proposes one, so the only way to reach it is to
+ * type it.
+ */
+function poolShareSplit(
+  draft: DraftLine,
+  limits: PoolShareLimits,
+  subject: string,
+  balance: LineBalance,
+): { allowed: boolean; blocker?: string } {
+  const whole =
+    `Take the whole ${fromMinor(balance.openMinor)} from stock, or buy the whole ` +
+    `${fromMinor(balance.openMinor)}.`;
+  if (balance.borrowMinor > 0 || balance.timelyMinor > 0) return { allowed: false };
+  const rows = draft.reserve.filter((row) => toMinor(row.qty) > 0);
+  if (rows.length === 0) return { allowed: false };
+  const perPool = new Map<string, { location: string; minor: number; allowance: number }>();
+  for (const row of rows) {
+    const stated = limits.allowanceByWarehouseId[row.warehouse_id];
+    if (stated === null || stated === undefined) return { allowed: false };
+    const seen = perPool.get(row.warehouse_id);
+    perPool.set(row.warehouse_id, {
+      location: row.location || seen?.location || 'this pool',
+      minor: (seen?.minor ?? 0) + toMinor(row.qty),
+      allowance: toMinor(stated),
+    });
+  }
+  for (const pool of perPool.values()) {
+    if (pool.minor > pool.allowance) {
+      return {
+        allowed: false,
+        blocker:
+          `${subject}: ${pool.location} can spare ${fromMinor(pool.allowance)} for this ` +
+          `line, and ${fromMinor(pool.minor)} was asked for. ${whole}`,
+      };
+    }
+  }
+  const pooled = [...perPool.values()].reduce((total, pool) => total + pool.minor, 0);
+  const net = Math.max(toMinor(limits.net ?? '0'), 0);
+  if (pooled > net) {
+    return {
+      allowed: false,
+      blocker:
+        `${subject}: the site pools net ${fromMinor(net)} between them, and ` +
+        `${fromMinor(pooled)} was asked for. ${whole}`,
+    };
+  }
+  return { allowed: true };
+}
+
+/**
  * Everything that stops this line being confirmed, in the order CS can act on it. One
  * sentence each, naming the line, because the Confirm button is at the foot of a sheet
  * that may hold ten lines and "something is wrong" is not an instruction.
+ *
+ * `limits` is the site pools' own allowances when the caller has them (the BOARD does; the
+ * sheet does not) - see `PoolShareLimits`.
  */
-export function lineBlockers(draft: DraftLine): string[] {
+export function lineBlockers(draft: DraftLine, limits?: PoolShareLimits): string[] {
   const blockers: string[] = [];
   const subject = `Line ${draft.line_no}${draft.item_code ? `, ${draft.item_code}` : ''}`;
   const balance = lineBalance(draft);
@@ -238,12 +331,21 @@ export function lineBlockers(draft: DraftLine): string[] {
   // its open quantity has not finished stating a composition to judge.
   const fromStockMinor = balance.timelyMinor + balance.reserveMinor + balance.borrowMinor;
   if (balance.balanced && fromStockMinor > 0 && balance.buyMinor > 0) {
-    blockers.push(
-      `${subject}: a line is either met wholly from stock or wholly bought. This one ` +
-        `mixes ${fromMinor(fromStockMinor)} from stock with a Buy of ${fromMinor(
-          balance.buyMinor,
-        )}.`,
-    );
+    // R-C's one carve-out first (D5): a site pool's share beside a Buy is a composition the
+    // engine MAKES, so refusing it here refused the suggestion on screen.
+    const split = limits
+      ? poolShareSplit(draft, limits, subject, balance)
+      : { allowed: false, blocker: undefined };
+    if (split.blocker) {
+      blockers.push(split.blocker);
+    } else if (!split.allowed) {
+      blockers.push(
+        `${subject}: a line is either met wholly from stock or wholly bought. This one ` +
+          `mixes ${fromMinor(fromStockMinor)} from stock with a Buy of ${fromMinor(
+            balance.buyMinor,
+          )}.`,
+      );
+    }
   }
 
   for (const row of draft.borrow) {

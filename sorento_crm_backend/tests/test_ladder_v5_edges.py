@@ -131,24 +131,43 @@ def test_question_one_names_the_whole_line_rule_when_it_had_stock_but_not_enough
 
 
 def test_an_overdue_promise_that_still_lands_in_time_is_drawn_as_water_and_dated():
-    """R31 (29 August 2026) REPLACES the 27 August reading of an overdue promise.
+    """R-O (3 September 2026, #586) SUPERSEDES R31 (29 August 2026) for a document that is
+    late but not dead.
 
-    It used to be drawn: 40 days past its own date, still arriving before the line needs
-    it, so it covered the line as `timely_spo`. The captain's ruling reverses that with a
-    measurement behind it - every one of the 725 open SPO lines on the live book is dated
-    August 2026 or earlier - so a document whose arrival has passed with nothing received
-    is NOT supply until somebody re-dates it, and promising against it is promising against
-    a date nobody believes. The line buys, and the trail says the group had nothing to give.
+    R31 read an overdue promise as not supply at all - the captain's ruling that every one
+    of the 725 open SPO lines on the live book was dated August 2026 or earlier, and
+    promising against a passed date was promising against paperwork nobody believed. R-O
+    keeps that distrust but gives it a number: a document whose arrival has passed with
+    nothing received still counts, landing on `as_of + overdue_grace_days` rather than the
+    date it stated. Relative to this fixture's `as_of` (`TODAY`, 18 Aug 2026) the document's
+    lateness is TODAY minus its wall-clock arrival date, not the 40 days the wall clock
+    would read against real `today` - the sentence's number drifts with the calendar since
+    the arrival is dated off `date.today()`. Its ASSUMED arrival - 1 Sep, off the
+    RECOMMENDED 14-day grace this test activates explicitly - lands before the line's own
+    3 Sep, so question 1 draws it whole, dated at the assumed day, and the sentence states
+    the lateness. A document past
+    `overdue_dead_days` (90, also activated explicitly) is still not supply (R31 stands for
+    the dead).
+
+    R-O SHIPS at 0 / 0 (captain's ruling, 3 Sep 2026), so this fixture activates the
+    RECOMMENDED 14 / 90 itself rather than relying on the shipped default - it is proving
+    the grace RULE, not the number production starts at.
 
     The DRILL-DOWN table (`stock_detail`, behind the frontend's `StockDocumentsPanel`) keeps
-    carrying `overdue_days`, which is where "go and chase this one" belongs.
+    carrying `overdue_days` off the WALL CLOCK, which is where "go and chase this one"
+    belongs - a different measurement from the walk's own `as_of`-relative one above.
     """
     with blank_session() as db:
         product = _product(db, f"ZZT-{_uid()[:6]}")
         own = _warehouse(db, f"ZZTP{_uid()[:5]}-BB"[:20])
-        # `overdue_days` is measured against the WALL CLOCK (`spo_supply.overdue_days`'s
-        # own default), not against the board's `as_of` dial - so the arrival is dated off
-        # `date.today()`, never off the fixture's own `TODAY` constant.
+        _policy(db, overdue_grace_days=14, overdue_dead_days=90)
+        # `overdue_days` (the drill-down's) is measured against the WALL CLOCK
+        # (`spo_supply.overdue_days`'s own default), not against the board's `as_of` dial -
+        # so the arrival is dated off `date.today()`, never off the fixture's own `TODAY`
+        # constant. The WALK's own lateness (`days_late` on the trail's sentence) is
+        # measured against `as_of` instead, which is why the two numbers below differ for
+        # the very same document: 40 is the fixed wall-clock offset below, while the
+        # walk's number is TODAY minus this arrival date and so drifts with the calendar.
         arrives = date.today() - timedelta(days=40)
         late = _incoming(
             db, product, own, spo_number="ZZT-SPO-LATE", allocated=40, received=0,
@@ -160,11 +179,16 @@ def test_an_overdue_promise_that_still_lands_in_time_is_drawn_as_water_and_dated
         contribution = _contribution(db, order, product)
 
         own_step = _step(contribution, "own")
-        assert own_step["answer"] == "no", "an overdue document is not supply (R31)"
-        assert own_step["took"] == "0"
+        assert own_step["answer"] == "yes", "R-O: a late-but-alive document is supply again"
+        assert own_step["took"] == "40"
         assert [(s["kind"], s["rung"]) for s in contribution["sources"]] == [
-            ("buy", "buy")
+            ("timely_spo", "group_take")
         ]
+        source = contribution["sources"][0]
+        # The ASSUMED date (`as_of` + the 14-day grace), not the date the paperwork states.
+        assert source["arrival_date"] == TODAY + timedelta(days=14)
+        expected_late = (TODAY - arrives).days
+        assert f"is {expected_late} days late, assumed by" in source["reason"], source["reason"]
 
         detail = _service(db).stock_detail(str(product.id), str(own.id))
         incoming_row = next(
@@ -365,11 +389,13 @@ def test_the_trail_is_five_rows_with_no_leaked_rung_vocabulary_and_a_note_that_a
         contribution = _contribution(db, order, product)
 
         # ---- shape ----
+        # LADDER V8 (R-A, review round 1 S5): five rows still, in the WALK's own order -
+        # the site pool's share leads it now.
         assert [step["question"] for step in contribution["trail"]] == [
+            "Can we take from the pool?",
             "Can we use our locations?",
             "Can we borrow on hand from a later order?",
             "Can we borrow incoming from a later order?",
-            "Can we take from the pool?",
             "Buy",
         ]
         for step in contribution["trail"]:

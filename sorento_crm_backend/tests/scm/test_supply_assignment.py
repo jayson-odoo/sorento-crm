@@ -150,7 +150,11 @@ def test_ac_s2_3_tba_and_undated_lines_draw_nothing():
     _assert_case("ac_s2_3_tba_and_undated_draw_nothing")
 
 
-def test_ac_s2_4b_overdue_supply_counts_as_nothing_and_is_still_listed():
+def test_ac_s2_4b_a_dead_document_counts_as_nothing_and_is_still_listed():
+    """R31, as R-O leaves it (3 Sep 2026): a document past `overdue_dead_days` counts as
+    nothing. The fixture's document was re-dated to 1 April when R-O landed - at 16 days
+    late it is now alive and counted at its assumed date, which is a different case (the
+    R-O block at the bottom of this file)."""
     _assert_case("ac_s2_4b_overdue_supply_counts_nothing")
 
 
@@ -629,19 +633,23 @@ def test_a_line_with_no_warehouse_draws_nothing_and_lands_in_its_own_bucket():
     assert [m.balance for m in result.months] == [500.0]
 
 
-def test_a_pin_on_an_overdue_document_holds_the_line_without_counting_the_document():
+def test_a_pin_on_a_dead_document_holds_the_line_without_counting_the_document():
     """R31 and R21 at once, and they do not cancel each other out.
 
-    An SPO whose arrival has passed with nothing received is NOT supply until somebody
-    re-dates it, so it adds nothing to the month. But somebody was already promised it, and
-    that promise still stands: the line reads `pinned`, and the drill can still say WHICH
-    order the overdue document is placed against instead of showing it as free.
+    An SPO so late that the grace period has given up on it (R-O: later than
+    `overdue_dead_days`) is NOT supply until somebody re-dates it, so it adds nothing to
+    the month. But somebody was already promised it, and that promise still stands: the
+    line reads `pinned`, and the drill can still say WHICH order the document is placed
+    against instead of showing it as free.
+
+    Dated 5 January against a walk taken on 1 September - 239 days late. Under R31 any
+    past arrival was this case; under R-O only a dead one is.
     """
     overdue = SupplyEvent(
         key="spo:old",
         kind="spo",
         warehouse="BRW-BB",
-        at=date(2026, 7, 1),
+        at=date(2026, 1, 5),
         qty=40,
         ref="SPO OLD",
     )
@@ -663,3 +671,295 @@ def test_a_pin_on_an_overdue_document_holds_the_line_without_counting_the_docume
     assert [event.key for event in result.uncounted] == ["spo:old"]
     # Counted as nothing: the month still owes the 40 (R31).
     assert [m.balance for m in result.months] == [-40.0]
+
+
+# --------------------------------------------------------------------------- R-M (3 Sep)
+
+
+def test_a_groups_book_position_nets_its_whole_open_book_not_the_asking_date():
+    """R-M's arithmetic, from the production cell (SO419417, SRTWT7443, 3 Sep 2026).
+
+    BRW-IB holds 2,237 on hand against 2,684 of open IB demand - 1,708 due on or before the
+    asking BB line's 5 October and 976 after it - so IB's own book is 447 SHORT. The
+    date-bounded pile the offer used to be made of reads 529 free on 5 October, because
+    demand due AFTER that day is not subtracted from it; the book position is the figure
+    that says the group has nothing to spare.
+    """
+    from app.services.scm.supply_assignment import group_book_positions
+
+    result = assign(
+        "p",
+        as_of=AS_OF,
+        tba_from=TBA,
+        lead_days=90,
+        supply=[_hand("BRW-IB", 2237)],
+        demand=[
+            _line("ib_near", "BRW-IB", date(2026, 10, 1), 1708),
+            _line("ib_far", "BRW-IB", date(2026, 11, 20), 976),
+            _line("bb_asker", "BRW-BB", date(2026, 10, 5), 4),
+        ],
+    )
+
+    assert group_book_positions(result)["IB"] == -447.0
+    assert group_book_positions(result)["BB"] == -4.0
+
+
+def test_a_groups_book_position_counts_the_supply_the_assignment_counted():
+    """The book is on hand PLUS the counted supply (R31, as R-O leaves it: a DEAD document
+    is not supply).
+
+    2,237 on hand and an SPO of 256 landing inside the span reads -191 against the same
+    2,684 of demand; a dead SPO of 500 adds nothing at all. The dead one was dated 1 August
+    until R-O landed, which is 31 days late and therefore alive now - the live-and-late
+    half of the same rule is `test_a_group_book_counts_a_late_alive_document_and_not_a_dead_one`.
+    """
+    from app.services.scm.supply_assignment import group_book_positions
+
+    result = assign(
+        "p",
+        as_of=AS_OF,
+        tba_from=TBA,
+        lead_days=90,
+        supply=[
+            _hand("BRW-IB", 2237),
+            SupplyEvent(
+                key="spo:ib", kind="spo", warehouse="BRW-IB",
+                at=date(2026, 10, 20), qty=256, ref="SPO IB",
+            ),
+            SupplyEvent(
+                key="spo:overdue", kind="spo", warehouse="BRW-IB",
+                at=date(2026, 1, 5), qty=500, ref="SPO OVERDUE",
+            ),
+        ],
+        demand=[
+            _line("ib_near", "BRW-IB", date(2026, 10, 1), 1708),
+            _line("ib_far", "BRW-IB", date(2026, 11, 20), 976),
+        ],
+    )
+
+    assert group_book_positions(result)["IB"] == -191.0
+
+
+def test_a_cross_group_hold_leaves_the_lending_groups_book_by_what_it_pinned():
+    """A confirmed hold at IB's bin taken by a BB line is not in IB's demand, so the book
+    has to subtract it or the same 40 would read as IB's twice."""
+    from app.services.scm.supply_assignment import group_book_positions
+
+    result = assign(
+        "p",
+        as_of=AS_OF,
+        tba_from=TBA,
+        lead_days=90,
+        supply=[_hand("BRW-IB", 100), _hand("BRW-BB", 0)],
+        demand=[
+            _line("ib_own", "BRW-IB", date(2026, 10, 1), 20),
+            _line("bb_pinned", "BRW-BB", date(2026, 9, 20), 40),
+        ],
+        pinned=[Hold(line_key="bb_pinned", supply_key="on_hand:BRW-IB", qty=40)],
+    )
+
+    positions = group_book_positions(result)
+    assert positions["IB"] == 40.0, "100 on hand, 20 of its own owed, 40 pinned away"
+    assert positions["BB"] == -40.0
+
+
+# --------------------------------------------------------------------------- R-O (3 Sep)
+#
+# AN OVERDUE DOCUMENT COUNTS AS SUPPLY AFTER A GRACE PERIOD (`PLAN-scm-pool-chain-first.md`
+# ruling R-O, issue #586), superseding R31 for everything that is not yet dead.
+#
+# The captain on SO419417, 3 September 2026: "Available for Project" at BRW read 355 off
+# 725 SPO units dated 24 July and 6 August and still unreceived, while the ladder lent 4
+# off the 11 standing on the floor. The display was right; the engine was ignoring a late
+# document. A document whose arrival has passed with nothing received now counts as supply
+# landing on `today + overdue_grace_days`, and one later than `overdue_dead_days` counts as
+# nothing at all - which is R31 kept for the dead.
+#
+# These cases are inline rather than JSON fixtures because `_assert_case` credits a month
+# off the INPUT arrival date, and the whole point here is that the walk plans against a
+# DIFFERENT one.
+
+#: The captain's own day, and the document's own dates, so the arithmetic in the UAC
+#: ("41 days late, assumed by 17 Sep 2026") is the arithmetic here.
+R_O_AS_OF = date(2026, 9, 3)
+R_O_STATED = date(2026, 7, 24)
+R_O_ASSUMED = date(2026, 9, 17)
+
+
+def _late_spo(at: date, qty: float = 100) -> SupplyEvent:
+    return SupplyEvent(
+        key="spo:late",
+        kind="spo",
+        warehouse="BRW-BB",
+        at=at,
+        qty=qty,
+        ref="SPO 2026/07-0031",
+    )
+
+
+def test_an_alive_late_document_counts_as_supply_at_the_assumed_date():
+    """AC-O.1. 41 days late on 3 September, a 14-day grace: the 100 lands 17 September and
+    the line due 20 September is covered by it, off a bin holding nothing."""
+    result = assign(
+        "p",
+        as_of=R_O_AS_OF,
+        tba_from=TBA,
+        lead_days=90,
+        supply=[_late_spo(R_O_STATED)],
+        demand=[_line("waiting", "BRW-BB", date(2026, 9, 20), 50)],
+        overdue_grace_days=14,
+        overdue_dead_days=90,
+    )
+
+    assert [event.key for event in result.uncounted] == [], (
+        "a late-but-alive document is no longer uncounted (R-O supersedes R31)"
+    )
+    counted = {event.key: event for event in result.supply}
+    assert counted["spo:late"].at == R_O_ASSUMED, "the walk plans against the ASSUMED date"
+    assert counted["spo:late"].stated_at == R_O_STATED, (
+        "and it still carries the date the document itself states"
+    )
+    line = result.lines[0]
+    assert line.status == "covered"
+    assert line.uncovered == 0
+    assert [(item.event.key, item.qty) for item in line.assigned] == [("spo:late", 50.0)]
+
+
+def test_a_line_due_inside_the_grace_gets_nothing_from_the_late_document():
+    """AC-O.2. The same document against a line due 10 September: the goods are not
+    assumed to be there before the 17th, so the line goes without ON ITS OWN DATE and the
+    walk carries on (the ladder reads `short_at_date`, so it is offered nothing)."""
+    result = assign(
+        "p",
+        as_of=R_O_AS_OF,
+        tba_from=TBA,
+        lead_days=90,
+        supply=[_late_spo(R_O_STATED)],
+        demand=[_line("early", "BRW-BB", date(2026, 9, 10), 50)],
+        overdue_grace_days=14,
+        overdue_dead_days=90,
+    )
+
+    line = result.lines[0]
+    assert line.short_at_date == 50.0, "nothing had arrived by the 10th"
+    assert line.status == "late", "the 17th clears it afterwards, which is not a promise"
+
+
+def test_a_dead_late_document_counts_as_nothing_exactly_as_r31_said():
+    """AC-O.3. 125 days late against a 90-day dead line: not supply, and still RETURNED as
+    uncounted so the screen can ask somebody to chase it."""
+    result = assign(
+        "p",
+        as_of=R_O_AS_OF,
+        tba_from=TBA,
+        lead_days=90,
+        supply=[_late_spo(date(2026, 5, 1))],
+        demand=[_line("waiting", "BRW-BB", date(2026, 9, 20), 50)],
+        overdue_grace_days=14,
+        overdue_dead_days=90,
+    )
+
+    assert [event.key for event in result.uncounted] == ["spo:late"]
+    assert result.supply == ()
+    line = result.lines[0]
+    assert line.status == "short"
+    assert line.uncovered == 50.0
+
+
+def test_the_grace_and_the_dead_line_are_read_off_the_arguments():
+    """The two numbers are POLICY (`scm.priority_policy`, migration 464), so the module
+    obeys what it is handed: a 0-day grace lands the document today, and a dead line of 30
+    kills the same 41-day-late document the 90-day one keeps."""
+    landed_today = assign(
+        "p", as_of=R_O_AS_OF, tba_from=TBA, lead_days=90,
+        supply=[_late_spo(R_O_STATED)],
+        demand=[_line("waiting", "BRW-BB", date(2026, 9, 20), 50)],
+        overdue_grace_days=0, overdue_dead_days=90,
+    )
+    assert {e.key: e.at for e in landed_today.supply}["spo:late"] == R_O_AS_OF
+
+    dead_sooner = assign(
+        "p", as_of=R_O_AS_OF, tba_from=TBA, lead_days=90,
+        supply=[_late_spo(R_O_STATED)],
+        demand=[_line("waiting", "BRW-BB", date(2026, 9, 20), 50)],
+        overdue_grace_days=14, overdue_dead_days=30,
+    )
+    assert [event.key for event in dead_sooner.uncounted] == ["spo:late"]
+
+
+def test_defaults_unset_reproduce_r31_a_day_late_is_dead_today_still_counts():
+    """SHIPPED default (captain's ruling, 3 Sep 2026): with NEITHER argument passed, the
+    module falls back to `DEFAULT_OVERDUE_GRACE_DAYS` / `DEFAULT_OVERDUE_DEAD_DAYS`, both 0
+    at ship. Dead at 0 makes ANY lateness dead - which is R31 exactly - so production keeps
+    today's behaviour until someone raises the two numbers through the settings route.
+    """
+    one_day_late = assign(
+        "p", as_of=R_O_AS_OF, tba_from=TBA, lead_days=90,
+        supply=[_late_spo(date(2026, 9, 2))],
+        demand=[_line("waiting", "BRW-BB", date(2026, 9, 20), 50)],
+    )
+    assert [event.key for event in one_day_late.uncounted] == ["spo:late"], (
+        "a document one day late counts as nothing at all, exactly as R31 always had it"
+    )
+
+    arrives_today = assign(
+        "p", as_of=R_O_AS_OF, tba_from=TBA, lead_days=90,
+        supply=[_late_spo(R_O_AS_OF)],
+        demand=[_line("waiting", "BRW-BB", date(2026, 9, 20), 50)],
+    )
+    assert [event.key for event in arrives_today.uncounted] == [], (
+        "arriving TODAY is not late at all, and it still counts"
+    )
+    assert {e.key: e.at for e in arrives_today.supply}["spo:late"] == R_O_AS_OF
+
+
+def test_the_dead_line_itself_is_still_counted_not_uncounted():
+    """Review fix round nit: the boundary `days_late == overdue_dead_days` is pinned
+    explicitly beside the two arguments above. `counted_event` refuses only what is
+    STRICTLY past the dead line (`days_late > dead`), so a document exactly as late as the
+    dead line still counts - the 41-day-late document against a dead line of 41 lands, not
+    uncounted."""
+    exactly_dead_line = assign(
+        "p", as_of=R_O_AS_OF, tba_from=TBA, lead_days=90,
+        supply=[_late_spo(R_O_STATED)],
+        demand=[_line("waiting", "BRW-BB", date(2026, 9, 20), 50)],
+        overdue_grace_days=14, overdue_dead_days=41,
+    )
+    assert [event.key for event in exactly_dead_line.uncounted] == []
+    assert {e.key: e.at for e in exactly_dead_line.supply}["spo:late"] == R_O_ASSUMED
+
+
+def test_a_group_book_counts_a_late_alive_document_and_not_a_dead_one():
+    """AC-O.4. `group_book_positions` follows the counted-events rule and nothing else, so
+    the board's lending cap and the walk can never disagree about a late document."""
+    from app.services.scm.supply_assignment import group_book_positions
+
+    def book(stated: date) -> float:
+        result = assign(
+            "p",
+            as_of=R_O_AS_OF,
+            tba_from=TBA,
+            lead_days=90,
+            supply=[
+                SupplyEvent(
+                    key="on_hand:BRW-IB", kind="on_hand", warehouse="BRW-IB",
+                    at=R_O_AS_OF, qty=2237,
+                ),
+                SupplyEvent(
+                    key="spo:late", kind="spo", warehouse="BRW-IB",
+                    at=stated, qty=500, ref="SPO LATE",
+                ),
+            ],
+            demand=[
+                _line("ib_near", "BRW-IB", date(2026, 10, 1), 1708),
+                _line("ib_far", "BRW-IB", date(2026, 11, 20), 976),
+            ],
+            overdue_grace_days=14,
+            overdue_dead_days=90,
+        )
+        return group_book_positions(result)["IB"]
+
+    # 2,237 + 500 - 2,684: the late-but-alive document is in the book.
+    assert book(date(2026, 8, 1)) == 53.0
+    # 2,237 - 2,684: the dead one is not (R31).
+    assert book(date(2026, 1, 5)) == -447.0

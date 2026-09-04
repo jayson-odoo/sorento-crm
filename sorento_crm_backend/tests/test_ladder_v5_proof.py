@@ -49,15 +49,21 @@ WHEN = date(2026, 9, 3)
 BUCKET = "2026-08-31"
 
 
-def _policy(db):
+def _policy(db, *, overdue_grace_days=None, overdue_dead_days=None):
     """An active fulfilment-priority policy, so the ladder ranks against a real row.
 
     Was `_cap`: the cross-group borrow limit it used to set is gone with v7.1 (R5), and any
     ownership group may donate now.
+
+    `overdue_grace_days` / `overdue_dead_days` default to None, which is `create_revision`'s
+    own "unset" - the column's SHIPPED default (0 / 0, captain's ruling 3 Sep 2026) - so a
+    caller proving R-O's grace RULE (rather than its shipped default) passes both explicitly.
     """
     priority.create_revision(
         db, name=f"{MARKER}-v5-{_uid()[:6]}", factors={}, demand_class_weights={},
         reorder_coverage_until=None,
+        overdue_grace_days=overdue_grace_days,
+        overdue_dead_days=overdue_dead_days,
     )
     db.commit()
 
@@ -85,17 +91,19 @@ def test_the_proof_is_five_rows_the_four_questions_and_buy():
 
         contribution = _contribution(db, order, product)
 
+        # LADDER V8 (R-A, review round 1 S5): the proof asks its questions in the WALK's
+        # own order, and the walk asks the site pool first.
         assert [step["question"] for step in contribution["trail"]] == [
+            "Can we take from the pool?",
             "Can we use our locations?",
             "Can we borrow on hand from a later order?",
             "Can we borrow incoming from a later order?",
-            "Can we take from the pool?",
             "Buy",
         ]
         # The rung names stay INTERNAL keys. Nothing renders them, and nothing here reads
         # "Incoming" - an SPO is inside question 1's own net (AC-V2).
         assert [step["kind"] for step in contribution["trail"]] == [
-            "own", "order_borrow", "supply_borrow", "pool", "buy",
+            "pool", "own", "order_borrow", "supply_borrow", "buy",
         ]
         for step in contribution["trail"]:
             assert step["answer"] in ("yes", "no")
@@ -141,23 +149,30 @@ def test_the_pool_is_asked_before_another_location_and_answers_the_whole_line():
 
         contribution = _contribution(db, order, product)
 
-        # LADDER V7.1 (R1, R5): the pool is the LAST stock step, and another project
-        # group's FREE pile is step 1's second half. So the 100 at the `-NTC` site answers
-        # first and the 268 in the pool is left where it is - which is the reversal AC-V7
-        # used to pin the other way round.
+        # LADDER V8 (R-A) puts the pool back in FRONT, where v5 had it and v7.1 had moved
+        # it from: the asking bin's own pool may spare 134 of its 268 and 24 fits inside
+        # that, so the pool answers and the 100 at the `-NTC` site is never reached.
         assert [(s["kind"], s["qty"], s["location"]) for s in contribution["sources"]] == [
-            ("reserve", "24", donor.warehouse_code),
+            ("reserve", "24", pool.warehouse_code),
         ]
-        assert _step(contribution, "own")["answer"] == "yes"
-        assert _step(contribution, "own")["took"] == "24"
-        assert _step(contribution, "pool")["answer"] == "no"
+        assert _step(contribution, "pool")["answer"] == "yes"
+        assert _step(contribution, "pool")["took"] == "24"
+        assert _step(contribution, "own")["answer"] == "no"
         assert _step(contribution, "buy")["answer"] == "no"
 
 
 # --------------------------------------------------------------------------- AC-V6
 
 
-def test_dealer_hot_selling_refuses_the_whole_pile_not_this_site_s_share_of_it():
+def test_another_sites_pool_answers_a_line_whose_own_pool_is_empty():
+    """AC-V6, RE-BLESSED TWICE BY LADDER V8. R-A retired the dealer hot-selling gate this
+    case was written for - the SHARE keeps stock for dealers now - and R-L then answers the
+    question the case asks: the asking bin's own pool holds nothing, so the OTHER site
+    pool is asked for the remainder, under its own allowance, and its 500 covers a line of
+    10 whole.
+
+    The pool step therefore says YES here, where every earlier ladder said no.
+    """
     from app.models.scm import ItemClassification
 
     with blank_session() as db:
@@ -184,11 +199,10 @@ def test_dealer_hot_selling_refuses_the_whole_pile_not_this_site_s_share_of_it()
         contribution = _contribution(db, order, product)
 
         pool = _step(contribution, "pool")
-        assert pool["answer"] == "no"
-        assert pool["took"] == "0"
-        assert "hot-selling" in pool["why"] and "retail" in pool["why"]
-        assert _step(contribution, "buy")["took"] == "10", (
-            "500 sits in the pile at the other site and none of it is offered"
+        assert pool["answer"] == "yes"
+        assert pool["took"] == "10"
+        assert _step(contribution, "buy")["took"] == "0", (
+            "500 sits in the pile at the other site and R-L asks it for the remainder"
         )
 
 

@@ -16,7 +16,7 @@ pair of odd-looking field names.
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -203,20 +203,25 @@ class BoardItemFlags(BaseModel):
     project hot selling / discontinued, to see if we can take from BRW?" They were consulted
     on every line and never printed - stating the flags plainly is the answer.
 
-    Amended 19 August 2026 (PLAN 3.3a): hot-selling is now judged PER DEMAND CLASS - a SKU
-    can be hot-selling on retail demand, on project demand, on both (dealer wins) or on
-    neither, ranked BY QUANTITY delivered in that class in the trailing-12mo window, not by
-    value. Own-location Reserve is always eligible regardless of either flag; the flags gate
-    only how much the SHARED POOL contributes.
+    Amended 19 August 2026 (PLAN 3.3a): hot-selling is judged PER DEMAND CLASS - a SKU can
+    be hot-selling on retail demand, on project demand, on both (dealer wins) or on neither,
+    ranked BY QUANTITY delivered in that class in the trailing-12mo window, not by value.
+
+    NEITHER FLAG GATES ANYTHING any more (ladder v8, R-A, and v4 section 1d before it).
+    They are evidence a planner reads beside the pool's own numbers; what decides how much
+    the pool contributes is its SHARE and the five pools' net.
     """
 
-    #: ABC class A by quantity on RETAIL (dealer)-classed demand (3.3a): the shared pool
-    #: contributes nothing at all - it is kept for retail.
+    #: ABC class A by quantity on RETAIL (dealer)-classed demand (3.3a). EVIDENCE ONLY
+    #: since ladder v8 (R-A): it used to remove the pool step entirely, and what keeps
+    #: stock for dealers now is the SHARE the pool holds back from every project line,
+    #: whatever the item's class. The chip is still shown, because the class is a fact the
+    #: planner reads.
     dealer_hot_selling: bool = False
     #: The locations where it earned that, by code. Evidence, not a bare verdict.
     dealer_hot_selling_where: List[str] = []
-    #: ABC class A by quantity on PROJECT-classed demand (3.3a): the shared pool contributes
-    #: only while its own signed availability stays positive.
+    #: ABC class A by quantity on PROJECT-classed demand (3.3a). Evidence only too, since
+    #: ladder v4 (section 1d): the pile's own net bounds every draw the same way.
     project_hot_selling: bool = False
     #: The locations where it earned that, by code.
     project_hot_selling_where: List[str] = []
@@ -273,7 +278,7 @@ class BoardTrailStep(BaseModel):
     #: WHY, in ONE plain sentence, with the deciding figure in it.
     why: Optional[str] = None
     #: ONE short structured hint, never a paragraph: "checked BRW, DC1", "MWH-IB 12000 · BRW
-    #: 9000", "dealer hot-selling: the whole pile is kept for retail".
+    #: 9000", "no shared pool".
     note: Optional[str] = None
     #: Warehouse CODE of the source. Null for Buy, which is held nowhere, and for the borrow
     #: questions, whose donors are several and are listed on the contribution itself.
@@ -298,11 +303,13 @@ class BoardTrailStep(BaseModel):
 
 
 class BoardLadderOption(BaseModel):
-    """One step of ladder v7.1, answered whether or not it was taken (R36, AC-S3-14).
+    """One step of ladder v8, answered whether or not it was taken (R36, AC-S3-14, R-A/R-B).
 
-    FIVE per walked line, in step order - `use`, `order_borrow`, `supply_borrow`, `pool`,
-    `buy` - because a step the server omitted reads as a step nobody walked. The client
-    renders them as given and never sorts them.
+    FIVE per walked line, in step order - `pool_share`, `use`, `order_borrow`,
+    `supply_borrow`, `buy` - because a step the server omitted reads as a step nobody walked.
+    The client renders them as given and never sorts them. Ladder v8 moved the site pool from
+    last to FIRST and gave it a share rather than an all-or-nothing draw (R-A/R-B); the v7.1
+    key `pool` reaches this schema only from a frozen snapshot being re-rendered.
     """
 
     #: The step's own key. Addressing and test ids; the reader is shown `label`.
@@ -310,8 +317,19 @@ class BoardLadderOption(BaseModel):
     #: The step in a planner's words. The SERVER's sentence, so two screens cannot spell
     #: one step two ways.
     label: str
-    #: Does it cover the WHOLE planning unit (R10, R33)? Half a unit is not an option.
+    #: Does it cover the WHOLE planning unit (R10, R33)? Half a unit is not an option -
+    #: except on `pool_share`, which may cover part of a line BY RULE (R-B) and says how
+    #: much in `gives_qty`.
     whole: bool = False
+    #: How much this step can give. On `pool_share` it is the share itself - the one figure
+    #: in the table a reader cannot derive from `whole` - and on every other step it is what
+    #: that step would contribute to what is LEFT after the share (AC-2.1: "Use BRW stock
+    #: 450, Use our locations 0, Buy 200").
+    gives_qty: Optional[str] = None
+    #: The step's own sentence, where the quantity alone does not say it: "600 is more than
+    #: the 450 BRW can spare" (AC-2.4). Null on a step whose label and quantity are the whole
+    #: answer.
+    reason: Optional[str] = None
     #: When the unit would be fulfilled if this were taken. NULL exactly when the step
     #: offered nothing, and `days_late` is null with it: "nothing was offered" and
     #: "offered, on time" are different answers.
@@ -473,6 +491,61 @@ class BoardProposed(BaseModel):
     components: List[BoardSource] = []
 
 
+class BoardLineDraft(BaseModel):
+    """A decision SAVED on a line but not yet confirmed (S4, R-F).
+
+    Written by `PUT .../fulfilment-planning/lines/{contribution_key}/draft`, removed by the
+    matching `DELETE` (Undo), deleted by the Confirm that promotes it, and stamped back onto
+    every contribution the drafts table holds a row for. Drafts are SHARED, not per user:
+    one planning team, so a second planner sees the same saved lines and the pill names who
+    saved.
+    """
+
+    #: The composition the planner saved, in the frontend's own `BoardDecision` words, and
+    #: OPAQUE to the server: it stores this and hands it back. Declared as a free object
+    #: rather than transcribed field by field on purpose - the confirmation is posted from
+    #: the board's own body, never from here, so a model restating that shape would only be
+    #: a second place for it to drift, and a field it had not declared would be dropped in
+    #: silence on the way out.
+    decision: Dict[str, Any]
+    #: The saver's NAME. Never an id: the pill's popover renders it.
+    saved_by: str
+    saved_at: datetime
+    #: The engine has re-suggested this line since it was saved (AC-4.4), compared on the
+    #: composition alone - kind, quantity and location, never the reason sentence beside
+    #: them. The board excludes a stale line from Confirm and says so on the pill instead of
+    #: posting a decision taken against numbers that have moved.
+    stale: bool = False
+    #: WHAT THE ENGINE SUGGESTED at save time (D12, #573, captain ruling): the caller's own
+    #: `sources` for this contribution, echoed back opaque. NOT what `stale` above is
+    #: judged against (S1 still holds - that stays the line's own facts) - this exists so
+    #: the Sales Order page's Suggested column can read a saved-but-unconfirmed line's
+    #: composition, the way an active revision's frozen `proposed_components` already
+    #: lets it read a confirmed one. `None` on a draft saved before D12, or on a save
+    #: nothing was offered for.
+    proposed: Optional[List[BoardSource]] = None
+
+
+class BoardLineDraftBody(BaseModel):
+    """`PUT .../fulfilment-planning/lines/{contribution_key}/draft`.
+
+    `decision` carries no `proposed` inside IT (S1, code review round 3, captain ruling
+    still holds): a proposal depends on which orders share the board, its granularity and
+    its window, so a save made on one view compared against a proposal computed for
+    another flipped `stale` falsely across views and silently dropped a saved line from
+    Confirm. The server snapshots the LINE's own facts (outstanding qty, required date) at
+    save time instead - `is_stale` is judged on those, never on a proposal.
+
+    `proposed` as a SIBLING field is a DIFFERENT thing (D12, #573): the contribution's own
+    `sources` at save time, carried opaque and read back only by the Sales Order page's
+    `supply_proposed` column - never by `is_stale`. Optional and additive: an older client
+    that never sends it saves exactly as it always has.
+    """
+
+    decision: Dict[str, Any]
+    proposed: Optional[List[BoardSource]] = None
+
+
 class BoardContribution(BaseModel):
     """One contributing sales-order line inside a cell: a row of the breakdown table."""
 
@@ -627,6 +700,13 @@ class BoardContribution(BaseModel):
     #: taking side, so the agent whose stock moved found out when the delivery did not.
     #: An empty list when nothing was lent, never absent: the cell has one shape to read.
     lent_to: List[BoardLineLending] = Field(default_factory=list)
+    #: A decision SAVED on this line but not yet confirmed (S4, R-F): it survives leaving
+    #: the page, another device and another planner. Null when nobody has saved one.
+    #:
+    #: Distinct from `decision` above, which is what an ACTIVE revision froze. A line can
+    #: carry a draft with no decision (saved, not confirmed), a decision with no draft
+    #: (confirmed - Confirm deletes the draft it promotes), or neither.
+    draft: Optional[BoardLineDraft] = None
 
 
 class BorrowDonorImpact(BaseModel):
@@ -725,12 +805,22 @@ class StockDetailIncoming(BaseModel):
     supplier_name: Optional[str] = None
     #: The bin it lands at, for the same reason a sales-order row states one.
     location: Optional[str] = None
+    #: The date the DOCUMENT states. Unchanged by R-O: what the paperwork says is a fact,
+    #: and the assumed date travels beside it rather than instead of it.
     expected_date: Optional[date] = None
     spo_qty: str
-    #: Days late, when the promised arrival has passed with nothing received. The service
+    #: Days late, on the outstanding balance of a promised arrival that has passed. The service
     #: has always stated it and the panel has always rendered it; undeclared here, the
     #: response model dropped it on the way out, so every row read as fresh.
     overdue_days: Optional[int] = None
+    #: R-O (3 Sep 2026, #586): the day the WALK plans this late document against -
+    #: `today + overdue_grace_days`. `None` when the document is not late, or when it is so
+    #: late that nothing is assumed about it at all. `response_model` drops an undeclared
+    #: field, so this is named here or the ledger row can never print it.
+    assumed_date: Optional[date] = None
+    #: False when the document is later than `overdue_dead_days` and therefore counts as
+    #: nothing (R31, as R-O leaves it). The row reads "not counted".
+    counted: bool = True
 
 
 class StockDetailHold(BaseModel):
@@ -795,6 +885,13 @@ class StockDetail(BaseModel):
     incoming: List[StockDetailIncoming] = []
     #: Confirmed holds taken by lines booked outside this set. Group reading only.
     holds: List[StockDetailHold] = []
+    #: LADDER V8 (R-K), the SITE POOL reading only: what the five pools net between them and
+    #: how much of a pool is kept back for dealers. Together they are what turns this read's
+    #: running "Balance after" column into "Available for Project" - the pool's own share of
+    #: each running balance, capped by the net the walk was bound by (R-D). Null on a bin or
+    #: an ownership group, which keep no dealer share.
+    five_pool_net: Optional[str] = None
+    pool_share_pct: Optional[int] = None
 
 
 class PileQueueLine(BaseModel):
@@ -934,6 +1031,20 @@ class BoardCellLocation(BaseModel):
     #: Which set that net is over, for the subtotal's own label: the group code (`IB`),
     #: `pools`, or None where no set applies.
     net_of: Optional[str] = None
+    #: THE RAW net (N1, fix round 5): `net` above has the asking line's own demand added
+    #: BACK IN (`_mine_in`) so the SUBTOTAL a planner reads matches "what is left for me" -
+    #: but the SERVER's own confirm-time guard (`ProjectSupplyService._is_pool_share_split`)
+    #: and `stock-detail` bound a pool-share composition by the net WITHOUT that addition
+    #: (`fact.pools_net`). `poolShareLimitsOf` (D5) read `net` and so admitted a split the
+    #: server's own guard would refuse the instant this line's own demand padded the figure
+    #: past what the raw pile actually carries. Absent wherever `net` is.
+    net_raw: Optional[str] = None
+    #: LADDER V8 (R-K): what a SITE POOL row may give a project line once the dealers' share
+    #: is kept back - `min(floor(available_qty x (100 - pool_share_pct) / 100), max(net, 0))`,
+    #: the SAME allowance the walk's own step 0 asked the pool for. `0` rather than blank on
+    #: an addressable pool row; absent on `own` / `group` / `other_group`, which keep no
+    #: dealer share and where a zero would read as an empty location.
+    available_for_project: Optional[str] = None
     incoming: List["BoardIncoming"] = []
     qty_proposed_reserve: str = "0"
     qty_proposed_incoming: str = "0"
@@ -1060,3 +1171,8 @@ class PlanningBoard(BaseModel):
     #: supply first. Allocation runs over the whole selection, not over the window, so this is
     #: the selection's contest count on every granularity.
     contested_line_count: int = 0
+    #: LADDER V8 (R-K): how much of a site pool is kept back for dealers, in percent. Every
+    #: pool ROW already carries its own `available_for_project`; this is what the Stock tab's
+    #: pool SUBTOTAL applies the same rule with, over the pool's own net - a figure that
+    #: belongs to the SET and so appears on no row.
+    pool_share_pct: int = 50

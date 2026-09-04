@@ -8,9 +8,11 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { formatDateInMalaysia } from '@/lib/helpers';
+import { spoDetailHref } from '@/lib/spo-detail';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
 import { useStockDetail } from '../../_shared/hooks/useFulfilmentPlanning';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
+import { availableForProject, POOLS_SET } from '../../_shared/lib/poolShare';
 import type {
   StockDocumentMatch,
   StockDonorMatch,
@@ -65,6 +67,11 @@ function normalizeSpoNumber(value: string | null | undefined): string {
  *   row. Step 1 of the ladder draws the GROUP's pile - a `BRW-IB` line is fed by `MWH-IB` stock
  *   - so the group is the only level at which "what was left when my line came round" is true.
  *   The asker's own line is marked and `My line` jumps to it.
+ * - Under the SITE POOL subtotal specifically (`group === 'pools'`), the running column reads
+ *   "Available for Project" instead of "Balance after" - R-K, S2: the pool's own share of that
+ *   running balance, never the raw pile, capped by the same five-pool net the summary row's
+ *   own column is. An ownership group keeps the raw pile: there is no dealer share to keep
+ *   back from `IB` or `BB`.
  */
 export function StockDocumentsPanel({
   productId,
@@ -102,6 +109,12 @@ export function StockDocumentsPanel({
 }) {
   const detail = useStockDetail(productId, warehouseId ?? null, lineIds, group);
   const isGroup = Boolean(group);
+  /**
+   * R-K, S2: under a SITE POOL section the running column is the pool's share, not the raw
+   * pile - a GROUP section (`IB`, `BB`, ...) keeps plain `Balance after`, unchanged, because
+   * there is no dealer share to keep back from an ownership group.
+   */
+  const isPoolsSection = group === POOLS_SET;
   const panelRef = React.useRef<HTMLDivElement | null>(null);
 
   const rows = React.useMemo<StockDetailRow[]>(() => {
@@ -124,6 +137,8 @@ export function StockDocumentsPanel({
         doc_date: order.doc_date ?? null,
         due_date: order.delivery_date ?? null,
         overdue_days: null,
+        assumed_date: null,
+        counted: true,
         qty: order.so_qty,
         // A sales order takes stock away from the pile.
         delta: -toMinor(order.so_qty),
@@ -144,32 +159,41 @@ export function StockDocumentsPanel({
         ),
         is_document: false,
       })),
-      ...data.incoming.map((leg, index) => ({
-        key: `spo-${index}-${leg.spo_number}`,
-        doc_type: 'SPO' as const,
-        doc_no: leg.spo_number,
-        sales_order_id: null,
-        party: leg.supplier_name ?? null,
-        agent_code: null,
-        project_label: null,
-        location: leg.location ?? null,
-        doc_date: null,
-        due_date: leg.expected_date ?? null,
-        overdue_days: leg.overdue_days ?? null,
-        qty: leg.spo_qty,
-        delta: toMinor(leg.spo_qty),
-        balance: null,
-        line_id: null,
-        is_this_line: false,
-        is_donor: false,
-        // AC-3.4: the SPO the active suggestion named. Normalised on both sides - the
-        // engine's sentence always says "SPO ...", the drill's own number does not always.
-        is_document: Boolean(
-          documentInfo &&
-          normalizeSpoNumber(leg.spo_number) ===
-            normalizeSpoNumber(documentInfo.spoNumber),
-        ),
-      })),
+      ...data.incoming.map((leg, index) => {
+        // R-O, review fix round S5: a document the walk counts as nothing (past the dead
+        // line) still LISTS, labelled "Not counted" (`dateCellText`), but must not move
+        // the balance - it is the row that says "the walk gave you nothing here", and a
+        // delta from it would silently add supply the ladder itself refused.
+        const counted = leg.counted !== false;
+        return {
+          key: `spo-${index}-${leg.spo_number}`,
+          doc_type: 'SPO' as const,
+          doc_no: leg.spo_number,
+          sales_order_id: null,
+          party: leg.supplier_name ?? null,
+          agent_code: null,
+          project_label: null,
+          location: leg.location ?? null,
+          doc_date: null,
+          due_date: leg.expected_date ?? null,
+          overdue_days: leg.overdue_days ?? null,
+          assumed_date: leg.assumed_date ?? null,
+          counted,
+          qty: leg.spo_qty,
+          delta: counted ? toMinor(leg.spo_qty) : 0,
+          balance: null,
+          line_id: null,
+          is_this_line: false,
+          is_donor: false,
+          // AC-3.4: the SPO the active suggestion named. Normalised on both sides - the
+          // engine's sentence always says "SPO ...", the drill's own number does not always.
+          is_document: Boolean(
+            documentInfo &&
+            normalizeSpoNumber(leg.spo_number) ===
+              normalizeSpoNumber(documentInfo.spoNumber),
+          ),
+        };
+      }),
     ];
     if (!isGroup) return documents;
 
@@ -189,6 +213,8 @@ export function StockDocumentsPanel({
         doc_date: null,
         due_date: hold.required_date ?? null,
         overdue_days: null,
+        assumed_date: null,
+        counted: true,
         qty: hold.qty,
         delta: -toMinor(hold.qty),
         balance: null,
@@ -217,6 +243,8 @@ export function StockDocumentsPanel({
         doc_date: null,
         due_date: null,
         overdue_days: null,
+        assumed_date: null,
+        counted: true,
         qty: bin.qty_on_hand,
         delta: toMinor(bin.qty_on_hand),
         balance: null,
@@ -401,6 +429,22 @@ export function StockDocumentsPanel({
               >
                 {row.original.doc_no}
               </Link>
+            ) : row.original.doc_type === 'SPO' && row.original.doc_no !== '-' ? (
+              // The captain's own complaint (3 Sep 2026, SO418869 SRTWCX7405-RL-S-PJ): the
+              // sentence above the table jumps TO this row, but there was no way OUT of the
+              // dialog onto the document itself. `stopPropagation` because a row here may
+              // one day carry its own click handler, the way the group reading's rows do.
+              <Link
+                href={spoDetailHref(row.original.doc_no)}
+                onClick={(event) => event.stopPropagation()}
+                className={cn(
+                  'truncate text-sm font-medium text-primary hover:underline',
+                  emphasis(row.original),
+                )}
+                title={row.original.doc_no}
+              >
+                {row.original.doc_no}
+              </Link>
             ) : (
               <span
                 className={cn(
@@ -536,13 +580,10 @@ export function StockDocumentsPanel({
             'block truncate text-sm tabular-nums',
             emphasis(row.original),
           )}
+          title={dateCellText(row.original)}
         >
-          {row.original.due_date
-            ? formatDateInMalaysia(row.original.due_date)
-            : row.original.doc_type === 'On hand'
-              ? 'Held now'
-              : 'Not stated'}
-          {row.original.overdue_days ? (
+          {dateCellText(row.original)}
+          {row.original.overdue_days && row.original.counted ? (
             <span className="text-amber-600 ms-1">
               (overdue {row.original.overdue_days}{' '}
               {row.original.overdue_days === 1 ? 'day' : 'days'})
@@ -594,14 +635,25 @@ export function StockDocumentsPanel({
           {row.original.qty}
         </span>
       ),
-      // Per TYPE, because an S/O subtracts where an SPO adds: one blended total would be a
-      // number that matches nothing in the header above it.
+      // Per TYPE on a PER-BIN reading, because an S/O subtracts where an SPO adds and the
+      // point of this footer is the one figure that already sits above the table: this
+      // bin's own outstanding demand, the row's own "SO qty".
+      //
+      // D9 (captain, 3 Sep; AC-2.6c): on the GROUP reading it is the opposite mistake - the
+      // ledger HAS a running balance (`balance`, below), and the S/O-only sum disagreed with
+      // it on a site pool subtotal ("On hand 49 + 586 + 20, S/O 1, SPO 113 + 4" read Quantity
+      // "1" beside a closing Available for Project of 385). The Total is the SIGNED NET of
+      // every row listed instead - on hand and SPO add, S/O and Hold subtract, `row.delta`
+      // already carries the sign - which is the same arithmetic the running column's own
+      // last value is built from, so the two figures cannot disagree.
       footer: () => (
         <span className="tabular-nums">
           {fromMinor(
-            rows
-              .filter((row) => row.doc_type === 'S/O')
-              .reduce((total, row) => total + toMinor(row.qty), 0),
+            isGroup
+              ? rows.reduce((total, row) => total + row.delta, 0)
+              : rows
+                  .filter((row) => row.doc_type === 'S/O')
+                  .reduce((total, row) => total + toMinor(row.qty), 0),
           )}
         </span>
       ),
@@ -611,50 +663,77 @@ export function StockDocumentsPanel({
     });
 
     if (isGroup) {
+      // R-K, S2: under the pools SET the running column is the pool's own share of each row's
+      // balance, capped by the five-pool net the SAME stock-detail read now carries
+      // (`five_pool_net`) - a GROUP set (`IB`, `BB`, ...) keeps the raw pile, unlabelled and
+      // uncapped, exactly as it always has.
+      const balanceHeading = isPoolsSection ? 'Available for Project' : 'Balance after';
+      const fivePoolNet = isPoolsSection ? (detail.data?.five_pool_net ?? null) : null;
+      const sharePct = detail.data?.pool_share_pct;
+      const displayedBalance = (balance: string | null): string | null =>
+        isPoolsSection
+          ? (availableForProject(balance, fivePoolNet, sharePct) ?? balance)
+          : balance;
       list.push({
         id: 'balance',
-        accessorFn: (row) => Number(row.balance || 0),
+        // SORTED ON WHAT IS SHOWN (review round 2, nit 9). Under a site-pool section the
+        // cell renders the SHARE of each balance, and sorting the raw pile put the rows in
+        // an order the column's own numbers contradict - a floor and a cap are not
+        // order-preserving, so two rows can read 12 and 12 off balances of 25 and 24.
+        accessorFn: (row) => Number(displayedBalance(row.balance) || 0),
         header: ({ column }) => (
-          <DataGridColumnHeader title="Balance after" column={column} />
+          <DataGridColumnHeader title={balanceHeading} column={column} />
         ),
-        cell: ({ row }) => (
-          <span
-            data-testid={`stock-balance-${row.original.key}`}
-            className={cn(
-              'block truncate text-sm tabular-nums',
-              emphasis(row.original),
-              isNegative(row.original.balance) && 'text-destructive',
-            )}
-          >
-            {row.original.balance}
-          </span>
-        ),
+        cell: ({ row }) => {
+          const shown = displayedBalance(row.original.balance);
+          return (
+            <span
+              data-testid={`stock-balance-${row.original.key}`}
+              className={cn(
+                'block truncate text-sm tabular-nums',
+                emphasis(row.original),
+                isNegative(shown) && 'text-destructive',
+              )}
+            >
+              {shown}
+            </span>
+          );
+        },
         // Where the group ends up once every row has been read. It is the subtotal's own
         // Available less two things the subtotal does not carry, both of them rows in this
         // list: THIS cell's own demand (the subtotal adds it back, because a line does not
-        // compete with itself) and any hold taken from outside the group.
+        // compete with itself) and any hold taken from outside the group. Under the pools SET
+        // this closing figure equals the Stock tab's own "Available for Project" summary cell
+        // (AC-2.6b) - the same share formula, over the same closing balance.
         footer: () => {
           const closing =
             rows.length > 0 ? rows[rows.length - 1].balance : null;
+          const shown = displayedBalance(closing);
           return (
             <span
               className={cn(
                 'tabular-nums',
-                isNegative(closing) && 'text-destructive',
+                isNegative(shown) && 'text-destructive',
               )}
             >
-              {closing ?? '-'}
+              {shown ?? '-'}
             </span>
           );
         },
         size: 130,
         minSize: 110,
-        meta: { headerTitle: 'Balance after' },
+        meta: { headerTitle: balanceHeading },
       });
     }
 
     return list;
-  }, [isGroup, rows]);
+  }, [
+    isGroup,
+    rows,
+    isPoolsSection,
+    detail.data?.five_pool_net,
+    detail.data?.pool_share_pct,
+  ]);
 
   return (
     <div
@@ -736,13 +815,18 @@ export function StockDocumentsPanel({
  * date it is wanted or lands on, supply before demand on a tie - the ordering
  * `supply_assignment` walks, so a container cleared in the morning covers a despatch due the
  * same day. A document with no date lists last: "not stated" is not "wanted immediately".
+ *
+ * A late-but-alive document sorts on its ASSUMED date (R-O, review fix round S5), never the
+ * stated one it is dated after: the walk and the drill-down both plan against `as_of + grace`,
+ * and a ledger ordered by the stated date would slot a document that is really landing in two
+ * weeks in among documents from months ago, well ahead of demand it cannot actually cover.
  */
 function compareByEngineDate(
   left: StockDetailRow,
   right: StockDetailRow,
 ): number {
-  const leftDate = left.due_date ?? '';
-  const rightDate = right.due_date ?? '';
+  const leftDate = left.assumed_date ?? left.due_date ?? '';
+  const rightDate = right.assumed_date ?? right.due_date ?? '';
   if (!leftDate !== !rightDate) return leftDate ? -1 : 1;
   if (leftDate !== rightDate) return leftDate < rightDate ? -1 : 1;
   const leftSupply = left.delta >= 0 ? 0 : 1;
@@ -760,6 +844,28 @@ function isNegative(value: string | null): boolean {
   return value !== null && Number(value) < 0;
 }
 
+/**
+ * What the date cell says, in one place because three readings share it (R-O, 3 Sep 2026).
+ *
+ * A document the walk plans against a DIFFERENT day from the one it states says both:
+ * "assumed 17 Sep 2026, stated 24 Jul 2026". The assumed day is what a promise gets made
+ * on, and the stated one is what the buyer chases the supplier about, so printing only one
+ * of them loses the half the reader needs. A document so late the walk counts it as nothing
+ * says exactly that, because a date beside it would read as a promise.
+ *
+ * No new column: this is the existing cell's text.
+ */
+function dateCellText(row: StockDetailRow): string {
+  if (!row.counted) return 'Not counted';
+  const stated = row.due_date ? formatDateInMalaysia(row.due_date) : null;
+  if (row.assumed_date) {
+    const assumed = formatDateInMalaysia(row.assumed_date);
+    return stated ? `assumed ${assumed}, stated ${stated}` : `assumed ${assumed}`;
+  }
+  if (stated) return stated;
+  return row.doc_type === 'On hand' ? 'Held now' : 'Not stated';
+}
+
 interface StockDetailRow {
   key: string;
   doc_type: 'S/O' | 'SPO' | 'On hand' | 'Hold';
@@ -774,6 +880,14 @@ interface StockDetailRow {
   due_date: string | null;
   /** Days late, on a purchase document whose promised arrival has passed. */
   overdue_days: number | null;
+  /**
+   * The day the WALK plans a LATE document against (R-O, 3 September 2026). Set, the date
+   * cell reads "assumed 17 Sep 2026, stated 24 Jul" - the assumed day is what a promise is
+   * made on and the stated one is what the paperwork says, and a planner needs both.
+   */
+  assumed_date: string | null;
+  /** False on a document so late the walk counts it as nothing: the row reads "not counted". */
+  counted: boolean;
   qty: string;
   /** Signed minor units: supply adds to the pile, demand takes from it. */
   delta: number;

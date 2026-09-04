@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import {
@@ -56,7 +56,7 @@ import {
   salesOrderStatusVariant,
 } from '../../lib/salesOrderStatus';
 import { useCustomerOptions } from '../../hooks/useScmOptions';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import {
   useCreateSalesOrder,
   useResetSalesOrderPlanning,
@@ -74,6 +74,7 @@ import { runHistoryKey, todayRunKey } from '../../reorder/hooks/useReorderRun';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { useListingViewPreferences } from '@/lib/listing-column-preferences/useListingViewPreferences';
 
 /**
  * THE sales-order table. One component, two places: the Sales Orders list (`SalesOrdersList`,
@@ -205,6 +206,45 @@ function DeliveryDatesCell({ dates }: { dates: string[] }) {
   );
 }
 
+/**
+ * The listing's shipped default, until the user has left one behind: latest document date
+ * first, so the list opens on what came in most recently rather than the row that happened
+ * to be inserted last (the captain, 3 Sep - rolled out from the Stock Inquiries pilot).
+ */
+const DEFAULT_SORTING: SortingState = [{ id: 'order_date', desc: true }];
+
+/**
+ * Shape of what this page stores in the opaque `filters` blob (PLAN-listing-view-memory).
+ * BUMP whenever this shape changes, so a blob written by the old shape is discarded rather
+ * than applied (AC-B4). `outstanding` is `true` or absent - there is no "explicitly off"
+ * state to store, an absent key already means off.
+ *
+ * v2: the customer axis is keyed `customer_code`, not `customer_id` - the value the
+ * Customer select actually holds is a customer code, and `customer_id` was never read by
+ * anything on the wire (the Customer filter itself was a no-op, fixed alongside this bump).
+ */
+const FILTERS_VERSION = 2;
+
+type SalesOrdersFilters = {
+  status?: string;
+  priority?: string;
+  source?: string;
+  date_from?: string;
+  date_to?: string;
+  customer_code?: string;
+  sales_agent_id?: string;
+  demand_class?: string;
+  outstanding?: true;
+};
+
+/** Looks a stored/selected value up in a `{value,label}` option list for the chip's words. */
+function optionLabel(
+  options: { value: string; label: string }[],
+  value: string,
+): string | undefined {
+  return options.find((o) => o.value === value)?.label;
+}
+
 export interface SalesOrdersGridProps {
   /**
    * Pin the grid to ONE agent's orders.
@@ -239,8 +279,11 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
   const pinnedToAgent = !!salesAgentId;
   // A row whose delete is counting down stays visible and dims (S6-07).
   const rowPending = useRowPending<SalesOrder>('scm_sales_order');
+  const pathname = usePathname();
+  // The SAME key `DataGrid` derives for column prefs (`listingKey ?? pathname`), so the
+  // sort/filter row and the column row are one row (PLAN-listing-view-memory §3.2).
+  const effectiveListingKey = listingKey ?? pathname;
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
-  const [sorting, setSorting] = useState<SortingState>([]);
   const {
     value: searchInput,
     setValue: setSearchInput,
@@ -248,38 +291,73 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
     isSettling: searchSettling,
     reset: resetSearchQuery,
   } = useDebouncedSearch();
-  const [statusFilter, setStatusFilter] = useState('');
-  const [priorityFilter, setPriorityFilter] = useState('');
+
+  // The sort and every filter are remembered per user, per listing. Page number and search
+  // text are deliberately NOT remembered (AC-D1/D2).
+  const {
+    sorting,
+    setSorting,
+    filters: viewFilters,
+    setFilters: setViewFilters,
+    isLoading: isViewPrefsLoading,
+  } = useListingViewPreferences<SalesOrdersFilters>({
+    listingKey: effectiveListingKey,
+    defaultSorting: DEFAULT_SORTING,
+    filtersVersion: FILTERS_VERSION,
+  });
+
+  const statusFilter = viewFilters?.status ?? '';
+  const priorityFilter = viewFilters?.priority ?? '';
   // "Show me the orders the Order Inquiry sheet created" is a filter on this list rather
   // than a screen of its own: a second list of the same entity is how two screens start
   // disagreeing about the same order.
-  const [sourceFilter, setSourceFilter] = useState('');
+  const sourceFilter = viewFilters?.source ?? '';
   // The three questions this screen is actually asked: what came in over these dates, whose
   // orders are these, and what is still owed.
-  const [dateFrom, setDateFrom] = useState('');
-  const [dateTo, setDateTo] = useState('');
-  const [customerFilter, setCustomerFilter] = useState('');
+  const dateFrom = viewFilters?.date_from ?? '';
+  const dateTo = viewFilters?.date_to ?? '';
+  const customerFilter = viewFilters?.customer_code ?? '';
   // The planning class the classification agents resolved - `order_type_label` is the ERP
   // document type and is blank on almost every row, so it never answered this question.
-  const [demandClassFilter, setDemandClassFilter] = useState('');
-  const [agentFilter, setAgentFilter] = useState('');
-  const [outstandingOnly, setOutstandingOnly] = useState(false);
+  const demandClassFilter = viewFilters?.demand_class ?? '';
+  // Never surfaced while pinned: the pin already wins in `effectiveAgentId`, and a stored
+  // agent filter from the unpinned list has nothing to say inside one agent's own record.
+  const agentFilter = pinnedToAgent ? '' : (viewFilters?.sales_agent_id ?? '');
+  const outstandingOnly = viewFilters?.outstanding === true;
 
-  // Back hands the list its own query string back, and the pager keeps
-  // rewriting it, so the list reads it (S3-01). One hook, every list.
+  // Merges a change over the current filters, drops empties, resets to page 1. Every
+  // filter control below goes through this ONE path, so the chip's Clear and the popover's
+  // own "Clear filters" cannot disagree about what clearing means.
+  const applyFilters = useCallback(
+    (partial: Partial<SalesOrdersFilters>) => {
+      const merged: SalesOrdersFilters = { ...(viewFilters ?? {}), ...partial };
+      const cleaned: SalesOrdersFilters = {};
+      if (merged.status) cleaned.status = merged.status;
+      if (merged.priority) cleaned.priority = merged.priority;
+      if (merged.source) cleaned.source = merged.source;
+      if (merged.date_from) cleaned.date_from = merged.date_from;
+      if (merged.date_to) cleaned.date_to = merged.date_to;
+      if (merged.customer_code) cleaned.customer_code = merged.customer_code;
+      if (merged.sales_agent_id) cleaned.sales_agent_id = merged.sales_agent_id;
+      if (merged.demand_class) cleaned.demand_class = merged.demand_class;
+      if (merged.outstanding) cleaned.outstanding = true;
+      setViewFilters(Object.keys(cleaned).length ? cleaned : null);
+      setPagination((p) => ({ ...p, pageIndex: 0 }));
+    },
+    [viewFilters, setViewFilters],
+  );
+
+  const clearFilters = useCallback(() => {
+    setViewFilters(null);
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
+  }, [setViewFilters]);
+
+  // Back hands the list its own query string back, and the pager keeps rewriting it (S3-01).
+  // Only pagination and search are restored from it now: sort and filter come from the
+  // remembered view, which already holds what was active when the row was clicked.
   useListStateFromUrl((state) => {
     setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
-    setSorting(state.sorting);
     resetSearchQuery(state.searchQuery);
-    setStatusFilter(state.filters.status ?? '');
-    setPriorityFilter(state.filters.priority ?? '');
-    setSourceFilter(state.filters.source ?? '');
-    setDateFrom(state.filters.date_from ?? '');
-    setDateTo(state.filters.date_to ?? '');
-    setCustomerFilter(state.filters.customer_id ?? '');
-    setAgentFilter(state.filters.sales_agent_id ?? '');
-    setDemandClassFilter(state.filters.demand_class ?? '');
-    setOutstandingOnly(state.filters.outstanding === 'true');
   });
 
   // Create-only: editing happens on the detail page in place (A5), the same shape as the
@@ -310,10 +388,12 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
     source: sourceFilter || null,
     dateFrom: dateFrom || null,
     dateTo: dateTo || null,
-    customerId: customerFilter || null,
+    customerCode: customerFilter || null,
     outstanding: outstandingOnly,
     salesAgentId: effectiveAgentId,
     demandClass: demandClassFilter || null,
+    // One fetch, with the remembered view already applied (AC-B3).
+    enabled: !isViewPrefsLoading,
   });
 
   const customerOptions = useCustomerOptions();
@@ -323,20 +403,20 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
   const createMut = useCreateSalesOrder();
   const resetMut = useResetSalesOrderPlanning();
 
+  // A search brings the reader back to page 0 to see the matches - but not on the FIRST
+  // run, or this would wipe the page `useListStateFromUrl` just restored from Back's own
+  // query string, landing every "Back to sales orders" on page 1 (mirrors
+  // `StockInquiriesList.tsx`'s own `searchMounted` guard). Filter changes reset the page
+  // themselves (`applyFilters`/`clearFilters`); search is the only thing left that needs
+  // its own reset here.
+  const searchMounted = useRef(false);
   useEffect(() => {
+    if (!searchMounted.current) {
+      searchMounted.current = true;
+      return;
+    }
     setPagination((p) => ({ ...p, pageIndex: 0 }));
-  }, [
-    searchQuery,
-    statusFilter,
-    priorityFilter,
-    sourceFilter,
-    dateFrom,
-    dateTo,
-    customerFilter,
-    agentFilter,
-    outstandingOnly,
-    demandClassFilter,
-  ]);
+  }, [searchQuery]);
 
   const rows = useMemo<SalesOrder[]>(() => data?.data ?? [], [data]);
 
@@ -785,6 +865,54 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
     (outstandingOnly ? 1 : 0) +
     (demandClassFilter ? 1 : 0);
 
+  // The chip's plain-words label (PLAN-listing-view-memory). Every axis states a NAME, never
+  // a raw code or id; an axis whose name has not resolved yet (the customer/agent list still
+  // loading) states its axis word (Customer, Agent) until the name arrives, so the chip is
+  // never blank.
+  const activeFilterLabel = useMemo(() => {
+    const parts: string[] = [];
+    if (statusFilter) parts.push(salesOrderStatusLabel(statusFilter));
+    if (priorityFilter) parts.push(formatStatusLabel(priorityFilter));
+    if (sourceFilter) {
+      const label = SOURCE_LABELS[sourceFilter];
+      if (label) parts.push(label);
+    }
+    if (demandClassFilter) {
+      const label = optionLabel(DEMAND_CLASS_FILTER_OPTIONS, demandClassFilter);
+      if (label) parts.push(label);
+    }
+    if (dateFrom && dateTo) parts.push(`Dates ${fmtDate(dateFrom)} to ${fmtDate(dateTo)}`);
+    else if (dateFrom) parts.push(`Dates from ${fmtDate(dateFrom)}`);
+    else if (dateTo) parts.push(`Dates to ${fmtDate(dateTo)}`);
+    // Customer/agent options are a multi-thousand-row master that loads slower than the
+    // grid's own first paint, so "not resolved yet" is the NORMAL first render for a user
+    // who has only a customer or agent filter remembered - not a rare edge. The axis word
+    // stands in until the name arrives, so the chip is never blank.
+    if (customerFilter) {
+      const name = optionLabel(customerOptions.data ?? [], customerFilter);
+      parts.push(name ?? 'Customer');
+    }
+    if (!pinnedToAgent && agentFilter) {
+      const name = optionLabel(agentOptions.options ?? [], agentFilter);
+      parts.push(name ?? 'Agent');
+    }
+    if (outstandingOnly) parts.push('Outstanding qty');
+    return parts.join(', ');
+  }, [
+    statusFilter,
+    priorityFilter,
+    sourceFilter,
+    demandClassFilter,
+    dateFrom,
+    dateTo,
+    customerFilter,
+    agentFilter,
+    outstandingOnly,
+    pinnedToAgent,
+    customerOptions.data,
+    agentOptions.options,
+  ]);
+
   // An empty book and an over-filtered one look identical in the grid, so they say different
   // things: one is a dead end the user can clear, the other is the step they have not done yet.
   // Inside an agent's record the third answer is neither: the book is full, this agent simply
@@ -809,7 +937,7 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
       <DataGrid
         table={table}
         recordCount={data?.pagination.total || 0}
-        isLoading={isLoading}
+        isLoading={isLoading || isViewPrefsLoading}
         emptyMessage={emptyMessage}
         // The whole row opens the order. The SO-number link stays a real anchor so
         // middle-click and copy-link still work, and stops its own click propagating.
@@ -839,6 +967,14 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
                 kind: 'custom',
                 active: filtersActive > 0,
                 activeCount: filtersActive,
+                // The chip states what is active in plain words, and its Clear is the SAME
+                // function the popover's own "Clear filters" button calls below - one clear
+                // path, not two (PLAN-listing-view-memory). Only passed once there is a word
+                // to show - an empty label would otherwise render a blank chip with an
+                // `aria-label="Clear filter: "`.
+                activeSummary: activeFilterLabel
+                  ? { label: activeFilterLabel, onClear: clearFilters }
+                  : undefined,
                 content: (
                   <div className="space-y-4">
                     <div className="flex items-center justify-between gap-3 rounded-md border p-2.5">
@@ -850,7 +986,9 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
                       <Switch
                         id="so-outstanding-only"
                         checked={outstandingOnly}
-                        onCheckedChange={setOutstandingOnly}
+                        onCheckedChange={(checked) =>
+                          applyFilters({ outstanding: checked ? true : undefined })
+                        }
                       />
                     </div>
                     <div>
@@ -860,7 +998,7 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
                       <SearchableSelect
                         id="so-customer"
                         value={customerFilter}
-                        onChange={setCustomerFilter}
+                        onChange={(v) => applyFilters({ customer_code: v || undefined })}
                         options={customerOptions.data ?? []}
                         placeholder="All customers"
                         clearable
@@ -876,7 +1014,7 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
                         <SearchableSelect
                           id="so-agent"
                           value={agentFilter}
-                          onChange={setAgentFilter}
+                          onChange={(v) => applyFilters({ sales_agent_id: v || undefined })}
                           options={agentOptions.options}
                           placeholder="All agents"
                           clearable
@@ -891,10 +1029,9 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
                         id="so-date-range"
                         from={dateFrom || null}
                         to={dateTo || null}
-                        onChange={({ from, to }) => {
-                          setDateFrom(from ?? '');
-                          setDateTo(to ?? '');
-                        }}
+                        onChange={({ from, to }) =>
+                          applyFilters({ date_from: from ?? undefined, date_to: to ?? undefined })
+                        }
                         placeholder="All dates"
                       />
                     </div>
@@ -905,7 +1042,7 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
                       <SearchableSelect
                         id="so-type"
                         value={demandClassFilter}
-                        onChange={setDemandClassFilter}
+                        onChange={(v) => applyFilters({ demand_class: v || undefined })}
                         options={DEMAND_CLASS_FILTER_OPTIONS}
                         placeholder="All types"
                       />
@@ -917,7 +1054,7 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
                       <SearchableSelect
                         id="so-status"
                         value={statusFilter}
-                        onChange={setStatusFilter}
+                        onChange={(v) => applyFilters({ status: v || undefined })}
                         options={SALES_ORDER_STATUS_FILTER_OPTIONS}
                         placeholder="All statuses"
                       />
@@ -929,7 +1066,7 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
                       <SearchableSelect
                         id="so-priority"
                         value={priorityFilter}
-                        onChange={setPriorityFilter}
+                        onChange={(v) => applyFilters({ priority: v || undefined })}
                         options={PRIORITY_FILTER_OPTIONS}
                         placeholder="All priorities"
                       />
@@ -941,7 +1078,7 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
                       <SearchableSelect
                         id="so-source"
                         value={sourceFilter}
-                        onChange={setSourceFilter}
+                        onChange={(v) => applyFilters({ source: v || undefined })}
                         options={SOURCE_FILTER_OPTIONS}
                         placeholder="All sources"
                         clearable
@@ -952,17 +1089,7 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => {
-                            setStatusFilter('');
-                            setPriorityFilter('');
-                            setSourceFilter('');
-                            setDateFrom('');
-                            setDateTo('');
-                            setCustomerFilter('');
-                            setAgentFilter('');
-                            setOutstandingOnly(false);
-                            setDemandClassFilter('');
-                          }}
+                          onClick={clearFilters}
                         >
                           Clear filters
                         </Button>

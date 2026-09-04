@@ -9,7 +9,7 @@
  * takes it from there - so this pins the class set at both ends: two columns and twenty.
  */
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { FulfilmentBoardMatrix } from './FulfilmentBoardMatrix';
 import { COLOURS } from '../../_shared/lib/supplyVocabulary';
@@ -45,6 +45,8 @@ describe('FulfilmentBoardMatrix fills its container', () => {
         cells={[]}
         draft={{}}
         onOpenCell={() => {}}
+        onDecideMany={vi.fn()}
+        onUndoMany={vi.fn()}
       />,
     );
 
@@ -71,6 +73,8 @@ describe('FulfilmentBoardMatrix fills its container', () => {
         cells={[]}
         draft={{}}
         onOpenCell={() => {}}
+        onDecideMany={vi.fn()}
+        onUndoMany={vi.fn()}
       />,
     );
 
@@ -89,6 +93,8 @@ describe('FulfilmentBoardMatrix fills its container', () => {
         cells={[]}
         draft={{}}
         onOpenCell={() => {}}
+        onDecideMany={vi.fn()}
+        onUndoMany={vi.fn()}
       />,
     );
 
@@ -155,17 +161,30 @@ function cellWith(contributions: BoardContribution[]): BoardCell {
   };
 }
 
-function renderMatrix(cells: BoardCell[], draft: BoardDraft = {}) {
-  return render(
+function renderMatrix(
+  cells: BoardCell[],
+  draft: BoardDraft = {},
+  overrides: {
+    onOpenCell?: () => void;
+    onDecideMany?: (keys: string[]) => Promise<{ saved: number; failed: number }>;
+    onUndoMany?: (keys: string[]) => Promise<{ saved: number; failed: number }>;
+  } = {},
+) {
+  const onDecideMany = overrides.onDecideMany ?? vi.fn();
+  const onUndoMany = overrides.onUndoMany ?? vi.fn();
+  const utils = render(
     <FulfilmentBoardMatrix
       dateBuckets={buckets(2)}
       rows={rows}
       rowHeader="Product"
       cells={cells}
       draft={draft}
-      onOpenCell={() => {}}
+      onOpenCell={overrides.onOpenCell ?? (() => {})}
+      onDecideMany={onDecideMany}
+      onUndoMany={onUndoMany}
     />,
   );
+  return { ...utils, onDecideMany, onUndoMany };
 }
 
 function source(over: Partial<BoardSource> = {}): BoardSource {
@@ -306,6 +325,8 @@ describe('FulfilmentBoardMatrix tints the past on the column header only', () =>
         cells={[cellWith([contribution()])]}
         draft={{}}
         onOpenCell={() => {}}
+        onDecideMany={vi.fn()}
+        onUndoMany={vi.fn()}
       />,
     );
 
@@ -424,7 +445,9 @@ describe('FulfilmentBoardMatrix: the whole cell is the click target', () => {
   it('carries a pointer cursor and a hover ring across the whole button, not a corner of it', () => {
     renderMatrix([cellWith([contribution()])]);
 
-    const button = screen.getByRole('button');
+    // D15 adds a small quick-save icon of its own to the cell, a SIBLING of the cell's own
+    // open button - named to tell the two apart.
+    const button = screen.getByRole('button', { name: /^ZZT-PRODUCT,/ });
     expect(button.className).toContain('cursor-pointer');
     expect(button.className).toContain('hover:ring-1');
     // Fills the cell (the `td` gives it no padding of its own to fill).
@@ -441,10 +464,137 @@ describe('FulfilmentBoardMatrix: the whole cell is the click target', () => {
         cells={[cellWith([contribution()])]}
         draft={{}}
         onOpenCell={onOpenCell}
+        onDecideMany={vi.fn()}
+        onUndoMany={vi.fn()}
       />,
     );
 
-    fireEvent.click(screen.getByRole('button'));
+    fireEvent.click(screen.getByRole('button', { name: /^ZZT-PRODUCT,/ }));
     expect(onOpenCell).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * S3b, R-J, `PillOverflow`'s own contract: the whole cell is a `<button>`, and the strip's
+   * pills are `role="button"` spans nested inside it - one click landing on a pill has to stop
+   * there, or it opens BOTH the pill's own popover and the cell it sits inside.
+   */
+  it('a click on a strip pill opens its own popover, not the cell underneath it', () => {
+    const onOpenCell = vi.fn();
+    const cell = {
+      ...cellWith([contribution()]),
+      locations: [
+        { location: 'BRW-BB', qty: '10' },
+        { location: 'MWH-BB', qty: '5' },
+      ],
+    };
+    render(
+      <FulfilmentBoardMatrix
+        dateBuckets={buckets(2)}
+        rows={rows}
+        rowHeader="Product"
+        cells={[cell]}
+        draft={{}}
+        onOpenCell={onOpenCell}
+        onDecideMany={vi.fn()}
+        onUndoMany={vi.fn()}
+      />,
+    );
+
+    // Scoped to the VISIBLE strip (`cell-locations-<row>-<bucket>`), never the whole
+    // document - `PillOverflow`'s own hidden measuring row repeats the same pill text
+    // off-screen so it can size itself, and a plain `getByText` finds that copy too.
+    const strip = within(
+      screen.getByTestId('cell-locations-ZZT-PRODUCT-2026-01-01'),
+    );
+    fireEvent.click(strip.getByText('BRW-BB 10'));
+
+    expect(onOpenCell).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * D15: a cell's own save-everything / undo-everything icon, pinned to the cell's corner - a
+ * SIBLING of the cell's open button, never a child of it, and its own click must not open the
+ * cell underneath it.
+ */
+describe('FulfilmentBoardMatrix: a cell’s own quick save and undo (D15)', () => {
+  it('offers a save icon when the cell holds an eligible line, and posts through onDecideMany', () => {
+    const { onDecideMany } = renderMatrix([cellWith([contribution()])]);
+
+    const button = screen.getByRole('button', {
+      name: 'Save ZZT-PRODUCT Bucket 1 as suggested',
+    });
+    fireEvent.click(button);
+
+    expect(onDecideMany).toHaveBeenCalledWith(['so-1|1|ZZT-PRODUCT|2026-01-01']);
+  });
+
+  it('a click on the save icon does not open the cell', () => {
+    const onOpenCell = vi.fn();
+    renderMatrix([cellWith([contribution()])], {}, { onOpenCell });
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Save ZZT-PRODUCT Bucket 1 as suggested' }),
+    );
+
+    expect(onOpenCell).not.toHaveBeenCalled();
+  });
+
+  it('saves only the ELIGIBLE keys of the cell, not the covered or already-drafted ones', () => {
+    const eligible = contribution({ key: 'so-1|1|ZZT-PRODUCT|2026-01-01' });
+    const covered = contribution({
+      key: 'so-2|2|ZZT-PRODUCT|2026-01-01',
+      covered: true,
+      decision: frozen(1),
+    });
+    const drafted = contribution({ key: 'so-3|3|ZZT-PRODUCT|2026-01-01' });
+    const { onDecideMany } = renderMatrix(
+      [cellWith([eligible, covered, drafted])],
+      { [drafted.key]: { verdict: 'approved' } },
+    );
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Save ZZT-PRODUCT Bucket 1 as suggested' }),
+    );
+
+    expect(onDecideMany).toHaveBeenCalledWith([eligible.key]);
+  });
+
+  it('offers Undo instead once every line in the cell is drafted and none is left to save', () => {
+    const row = contribution();
+    const { onUndoMany } = renderMatrix([cellWith([row])], {
+      [row.key]: { verdict: 'approved' },
+    });
+
+    const button = screen.getByRole('button', { name: 'Undo ZZT-PRODUCT Bucket 1' });
+    fireEvent.click(button);
+
+    expect(onUndoMany).toHaveBeenCalledWith([row.key]);
+  });
+
+  it('shows neither icon on a cell whose only line is covered', () => {
+    renderMatrix([cellWith([contribution({ covered: true, decision: frozen(1) })])]);
+
+    expect(
+      screen.queryByRole('button', { name: /as suggested$/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /^Undo ZZT-PRODUCT/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('shows the save icon, not Undo, when the cell holds both an eligible and a drafted line', () => {
+    const eligible = contribution({ key: 'so-1|1|ZZT-PRODUCT|2026-01-01' });
+    const drafted = contribution({ key: 'so-2|2|ZZT-PRODUCT|2026-01-01' });
+    renderMatrix([cellWith([eligible, drafted])], {
+      [drafted.key]: { verdict: 'approved' },
+    });
+
+    expect(
+      screen.getByRole('button', { name: 'Save ZZT-PRODUCT Bucket 1 as suggested' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /^Undo ZZT-PRODUCT/ }),
+    ).not.toBeInTheDocument();
   });
 });

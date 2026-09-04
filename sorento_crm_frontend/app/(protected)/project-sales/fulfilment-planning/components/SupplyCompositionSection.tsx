@@ -21,10 +21,11 @@ import type {
 } from '../../_shared/types/fulfilmentPlanning.types';
 import {
   confirmLineFromDraft,
-  draftBlockers,
   draftFromLine,
+  lineBlockers,
   type DraftLine,
 } from '../../_shared/lib/supplyComposition';
+import { poolShareLimitsFromLine } from '../../_shared/lib/poolShare';
 import { ConfirmProjectSoDialog } from './ConfirmProjectSoDialog';
 import { SupplyLineCard } from './SupplyLineCard';
 
@@ -141,9 +142,24 @@ export function SupplyCompositionSection({
     [plannableLines],
   );
 
+  /**
+   * B2 (fix round 5): each line's OWN pool-share allowance, never one shared limit across
+   * the order - `pool_allowances` is per line, the same way the board's cell reads it off
+   * its own locations. Without this, a line seeded from the engine's own "BRW 62 + Buy 73"
+   * (LADDER V8, R-C) ran `lineBlockers` with no `limits` at all and the whole-line rule read
+   * it as a mix, blocking the whole order's Confirm.
+   */
   const blockers = React.useMemo(
-    () => (frozen ? [] : [...locationBlockers, ...draftBlockers(activeDrafts)]),
-    [frozen, locationBlockers, activeDrafts],
+    () =>
+      frozen
+        ? []
+        : [
+            ...locationBlockers,
+            ...plannableLines.flatMap((line) =>
+              lineBlockers(draftFor(line), poolShareLimitsFromLine(line)),
+            ),
+          ],
+    [frozen, locationBlockers, plannableLines, draftFor],
   );
 
   async function submit() {

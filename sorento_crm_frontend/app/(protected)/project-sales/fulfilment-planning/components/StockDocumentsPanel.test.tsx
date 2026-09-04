@@ -184,6 +184,60 @@ describe('StockDocumentsPanel', () => {
     expect(table.textContent).toContain('332');
   });
 
+  it('a late document reads its ASSUMED date beside the stated one (R-O)', async () => {
+    // R-O (3 September 2026): an overdue document counts as supply landing
+    // `today + overdue_grace_days`, so the ledger row has to say which day the walk is
+    // planning against AND which day the paperwork claims - the first is what a promise
+    // gets made on, the second is what the buyer chases the supplier about.
+    getStockDetail.mockResolvedValue(
+      captainsPosition({
+        incoming: [
+          {
+            spo_number: 'SPO-2026/07-0031',
+            supplier_name: 'FOSHAN WORKS',
+            expected_date: '2026-07-24',
+            spo_qty: '100',
+            overdue_days: 41,
+            assumed_date: '2026-09-17',
+            counted: true,
+          },
+        ],
+      }),
+    );
+
+    renderPanel();
+
+    const table = await screen.findByRole('table');
+    // Through the shared `formatDateInMalaysia`, so the two dates read the same way as
+    // every other date in this table rather than in a spelling of their own.
+    expect(table.textContent).toContain('assumed 17/09/2026, stated 24/07/2026');
+    expect(table.textContent).toContain('(overdue 41 days)');
+  });
+
+  it('a DEAD document reads "not counted" and no date at all (R-O / R31)', async () => {
+    getStockDetail.mockResolvedValue(
+      captainsPosition({
+        incoming: [
+          {
+            spo_number: 'SPO-2026/01-0002',
+            supplier_name: 'FOSHAN WORKS',
+            expected_date: '2026-01-05',
+            spo_qty: '500',
+            overdue_days: 241,
+            assumed_date: null,
+            counted: false,
+          },
+        ],
+      }),
+    );
+
+    renderPanel();
+
+    const table = await screen.findByRole('table');
+    expect(table.textContent).toContain('Not counted');
+    expect(table.textContent).not.toContain('overdue 241');
+  });
+
   it('says nothing about overdue when the arrival is still ahead', async () => {
     getStockDetail.mockResolvedValue(
       captainsPosition({
@@ -253,6 +307,35 @@ describe('StockDocumentsPanel', () => {
     expect(await screen.findByRole('link', { name: 'SO391698' })).toHaveAttribute(
       'href',
       '/scm/sales-orders/so-a',
+    );
+  });
+
+  /**
+   * The captain's own complaint (3 Sep 2026, SO418869 SRTWCX7405-RL-S-PJ): the SPO number
+   * in this table was plain text, with no way to reach the document it names - only the
+   * suggestion sentence's own chip could jump BACK to this row, never out to the document.
+   */
+  it('links an SPO the same way an SO links, to its own document page', async () => {
+    getStockDetail.mockResolvedValue(
+      captainsPosition({
+        incoming: [
+          {
+            spo_number: 'SPO-2026/08-0061',
+            supplier_name: 'FOSHAN WORKS',
+            expected_date: '2026-09-12',
+            spo_qty: '500',
+          },
+        ],
+      }),
+    );
+
+    renderPanel();
+
+    expect(
+      await screen.findByRole('link', { name: 'SPO-2026/08-0061' }),
+    ).toHaveAttribute(
+      'href',
+      '/procurement-management/spo-allocations/SPO-2026%2F08-0061',
     );
   });
 
@@ -473,6 +556,82 @@ describe('StockDocumentsPanel: the group reading', () => {
     expect(short.className).toContain('text-destructive');
   });
 
+  it('a document counted as nothing does not move the balance, only labels itself (review fix round, S5)', async () => {
+    // The row still lists (that is what "Not counted" is FOR - a planner sees the document
+    // and why it does not help), but 5000 units the walk itself refused must not silently
+    // inflate the running pile: the balance after this row is exactly what the opening pile
+    // already was.
+    getStockDetail.mockResolvedValue({
+      ...groupPosition(),
+      sales_orders: [],
+      incoming: [
+        {
+          spo_number: 'SPO-2026/01-0002',
+          supplier_name: 'FOSHAN WORKS',
+          location: 'BRW-IB',
+          expected_date: '2026-01-05',
+          spo_qty: '5000',
+          overdue_days: 241,
+          assumed_date: null,
+          counted: false,
+        },
+      ],
+    });
+
+    renderPanel('IB');
+    const table = await screen.findByRole('table');
+
+    expect(table.textContent).toContain('Not counted');
+    const documents = rowsOf().map((cells) => [cells[1], cells[7]]);
+    expect(documents).toEqual([
+      ['-', '100'],
+      ['-', '120'],
+      ['SPO-2026/01-0002', '120'],
+    ]);
+  });
+
+  it('sorts a late-but-alive document at its ASSUMED date, not its stated one (review fix round, S5)', async () => {
+    // The document states 24 Jul - sorted on THAT date it opens the walk, ahead of the
+    // fresh SPO stated 1 Sep. It is the walk's ASSUMED arrival (17 Sep,
+    // `today + overdue_grace_days`) that decides when it actually lands, so the fresh SPO
+    // must come FIRST once the ledger sorts by the date each document really lands on.
+    getStockDetail.mockResolvedValue({
+      ...groupPosition(),
+      sales_orders: [],
+      incoming: [
+        {
+          spo_number: 'SPO-2026/07-0031',
+          supplier_name: 'FOSHAN WORKS',
+          location: 'BRW-IB',
+          expected_date: '2026-07-24',
+          spo_qty: '50',
+          overdue_days: 41,
+          assumed_date: '2026-09-17',
+          counted: true,
+        },
+        {
+          spo_number: 'SPO-2026/09-0002',
+          supplier_name: 'FOSHAN WORKS',
+          location: 'BRW-IB',
+          expected_date: '2026-09-01',
+          spo_qty: '20',
+        },
+      ],
+    });
+
+    renderPanel('IB');
+    const table = await screen.findByRole('table');
+
+    expect(table.textContent).toContain('assumed 17/09/2026, stated 24/07/2026');
+    const documents = rowsOf().map((cells) => [cells[1], cells[7]]);
+    expect(documents).toEqual([
+      ['-', '100'],
+      ['-', '120'],
+      ['SPO-2026/09-0002', '140'],
+      ['SPO-2026/07-0031', '190'],
+    ]);
+  });
+
   // NO LOCAL "My line" BUTTON HERE ANYMORE (retired, review round S3): it duplicated the
   // sticky toolbar's own "My line" (`BoardCellBreakdownDialog`), which already reaches this
   // exact row through `jumpTarget` and lands it WITH the flash this local button never had -
@@ -560,6 +719,147 @@ describe('StockDocumentsPanel: the group reading', () => {
  * S3 (PLAN-scm-planning-feedback-31aug): the "Donor" and "This document" badges (AC-3.3/3.4),
  * the search (AC-3.5) and the jump flash (AC-3.1/3.11).
  */
+describe('StockDocumentsPanel: the site pool ledger (R-K, AC-2.6b)', () => {
+  /**
+   * The five-pool SET, which is the one section whose running column is not the raw pile:
+   * it reads `Available for Project` - the share of each balance a project line may take,
+   * capped by the five-pool net - so the ledger and the walk quote one number.
+   */
+  function poolsPosition(): StockDetail {
+    return {
+      product_id: 'prod-1',
+      item_code: 'SRTWCX8840-S-RL',
+      warehouse_id: null,
+      location: null,
+      group: 'pools',
+      bins: [{ warehouse_id: 'wh-brw', location: 'BRW', qty_on_hand: '102' }],
+      qty_on_hand: '102',
+      so_qty: '1',
+      spo_qty: '510',
+      available_qty: '611',
+      qty_reserved: '0',
+      qty_held_by_decisions: '0',
+      qty_free: '102',
+      five_pool_net: '900',
+      pool_share_pct: 50,
+      sales_orders: [
+        {
+          sales_order_id: 'so-dealer',
+          so_number: 'SO400001',
+          customer_name: 'A DEALER',
+          location: 'BRW',
+          doc_date: '2026-01-05',
+          delivery_date: '2026-09-05',
+          so_qty: '1',
+          line_id: 'line-d',
+          is_this_line: false,
+        },
+      ],
+      incoming: [
+        {
+          spo_number: 'SPO-2026/09-0001',
+          supplier_name: 'FOSHAN WORKS',
+          location: 'BRW',
+          expected_date: '2026-09-20',
+          spo_qty: '510',
+        },
+      ],
+    };
+  }
+
+  function balancesOf(): (string | null)[] {
+    return [
+      ...document.querySelectorAll('[data-testid^="stock-balance-"]'),
+    ].map((cell) => cell.textContent);
+  }
+
+  it('heads the running column Available for Project and shares every balance', async () => {
+    getStockDetail.mockResolvedValue(poolsPosition());
+
+    renderPanel('pools');
+    await screen.findByRole('table');
+
+    expect(screen.getByText('Available for Project')).toBeTruthy();
+    // 102 on hand -> 51, less the 1-unit dealer order -> 50, plus the 510 SPO -> 305.
+    // The share is applied to the BALANCE the walk landed on, never to the row's own qty.
+    expect(balancesOf()).toEqual(['51', '50', '305']);
+  });
+
+  it('caps every shared balance by the five-pool net, so the ledger cannot promise past the pile', async () => {
+    getStockDetail.mockResolvedValue({ ...poolsPosition(), five_pool_net: '52' });
+
+    renderPanel('pools');
+    await screen.findByRole('table');
+
+    // R-D: the pool's own free pile says WHERE, the net says HOW MUCH. 305 is what the
+    // share alone would read and 52 is what the five pools actually net between them.
+    expect(balancesOf()).toEqual(['51', '50', '52']);
+  });
+
+  /**
+   * D9 (captain, 3 Sep, SRTWB241's site pool subtotal ledger). The Total row's Quantity used
+   * to sum only the S/O rows - on hand 49 + 586 + 20, S/O 1, SPO 113 + 4 read "1" beside a
+   * closing Available for Project of 385. The rule: Total Quantity is the SIGNED NET of every
+   * row listed (on hand and SPO add, S/O and Hold subtract) - the same arithmetic that
+   * produces the last running value, so it reads 771 here and the running column's own total
+   * stays the last running value (385), unchanged.
+   */
+  it('totals Quantity as the signed net of every row, not only the S/O rows', async () => {
+    getStockDetail.mockResolvedValue({
+      ...poolsPosition(),
+      bins: [
+        { warehouse_id: 'wh-1', location: 'BRW', qty_on_hand: '49' },
+        { warehouse_id: 'wh-2', location: 'BRW', qty_on_hand: '586' },
+        { warehouse_id: 'wh-3', location: 'BRW', qty_on_hand: '20' },
+      ],
+      sales_orders: [
+        {
+          sales_order_id: 'so-dealer',
+          so_number: 'SO400001',
+          customer_name: 'A DEALER',
+          location: 'BRW',
+          doc_date: '2026-01-05',
+          delivery_date: '2026-09-05',
+          so_qty: '1',
+          line_id: 'line-d',
+          is_this_line: false,
+        },
+      ],
+      incoming: [
+        {
+          spo_number: 'SPO-2026/09-0001',
+          supplier_name: 'FOSHAN WORKS',
+          location: 'BRW',
+          expected_date: '2026-09-20',
+          spo_qty: '113',
+        },
+        {
+          spo_number: 'SPO-2026/09-0002',
+          supplier_name: 'FOSHAN WORKS',
+          location: 'BRW',
+          expected_date: '2026-09-21',
+          spo_qty: '4',
+        },
+      ],
+      five_pool_net: '400',
+      pool_share_pct: 50,
+    });
+
+    renderPanel('pools');
+
+    const table = await screen.findByRole('table');
+    const footer = [...(table.querySelector('tfoot')?.querySelectorAll('td') ?? [])].map(
+      (cell) => cell.textContent ?? '',
+    );
+    // 49 + 586 + 20 (on hand) + 113 + 4 (SPO) - 1 (S/O) = 771, never the "1" a sum of the
+    // S/O rows alone used to print.
+    expect(footer).toContain('771');
+    // The running column's own total is untouched: the last running value, shared and capped
+    // exactly as `balancesOf` already proves for this section.
+    expect(footer).toContain('385');
+  });
+});
+
 describe('StockDocumentsPanel: the S3 badges, search and jump', () => {
   it('AC-3.3: badges the donor row by its core line id, and leaves other rows plain', async () => {
     getStockDetail.mockResolvedValue(captainsPosition());

@@ -317,6 +317,20 @@ export interface SalesOrderLine {
   supply_decided?: SalesOrderLineSupplyComponent[] | null;
   supply_proposed?: SalesOrderLineSupplyComponent[] | null;
   /**
+   * A SAVED (unconfirmed) decision on this line - the planning board's own draft, not yet
+   * promoted by Confirm (D10, captain 3 Sep). `null` when no draft covers the line, OR the
+   * line already carries `supply_decided`: Confirm deletes the draft it promotes in the
+   * same write, so the two never both answer for one line at once.
+   */
+  supply_saved?: SalesOrderLineSupplyComponent[] | null;
+  /** Who saved it, by name - never an id - and when, ISO. Both `null` exactly when
+   *  `supply_saved` is `null`. */
+  saved_by?: string | null;
+  saved_at?: string | null;
+  /** The engine has re-suggested this line since it was saved, judged on the line's own
+   *  outstanding quantity and required date - never true when `supply_saved` is `null`. */
+  saved_stale?: boolean;
+  /**
    * Where this line's Buy actually sits (AC-I9): every link on the order inquiry row that
    * covers the line, PO or SPO, with the quantity each holds. Read off the SAME child
    * table (`projects.order_inquiry_links`) the worklist's "Linked to" column and the PO
@@ -336,6 +350,12 @@ export interface SalesOrderLineLink {
   document: string;
   /** `L3` when the book numbered the line. Absent when it did not - never invented. */
   line_label?: string | null;
+  /**
+   * The PO/SPO header this link points at (L4, review round). Never rendered as text - it
+   * makes `document` a link to `/scm/purchase-orders/{id}`. Absent when the caller building
+   * this row does not have the id at hand, in which case `document` stays plain text.
+   */
+  purchase_order_id?: string | null;
   qty: string;
   location?: string | null;
   expected_date?: string | null;
@@ -600,6 +620,11 @@ export interface PurchaseOrderPlacement {
   kind?: 'inquiry' | 'spo';
   /** The SPO that took this quantity - `spo` rows only. */
   spo_number?: string | null;
+  /**
+   * The SPO's own header id (L2, review round). Never rendered as text - makes
+   * `spo_number` a link to `/scm/purchase-orders/{id}`. `spo` rows only.
+   */
+  purchase_order_id?: string | null;
   /** The container it is on, by container number or shipment number - `spo` rows only. */
   packing_list?: string | null;
   /** Where it is landing, and how much at each - `spo` rows only. */
@@ -665,6 +690,31 @@ export interface PurchaseOrderDedication {
   source: string;
 }
 
+/** One SOURCE purchase-order line a CRM SPO line pulled from (R1, AC-H5). */
+export interface SpoPlanPull {
+  /** Null on an older payload that predated this field - the FE renders the number as plain
+   *  text rather than a link when it is absent. */
+  purchase_order_id: string | null;
+  po_number: string | null;
+  po_line_label: string | null;
+  qty: number;
+}
+
+/** One retail sales-order line a CRM SPO line covers (R1, AC-H5). */
+export interface SpoPlanCover {
+  so_number: string | null;
+  customer: string | null;
+  qty: number;
+  warehouse: string | null;
+}
+
+/** The PO detail's Plan card (R1) - a `crm_spo` order's own pulls/covers, read off its
+ *  lines' `source_ref`. `null`/absent on every other order. */
+export interface SpoPlan {
+  pulls: SpoPlanPull[];
+  covers: SpoPlanCover[];
+}
+
 export interface PurchaseOrder {
   id: string;
   /** Human-readable PO number - shown in the UI (never a UUID). */
@@ -715,6 +765,8 @@ export interface PurchaseOrder {
   total_amount?: string | null;
   /** The currency the order is written in. Blank means ringgit. */
   currency?: string | null;
+  /** A `crm_spo` order's own pulls/covers (R1, AC-H7). `null`/absent on every other order. */
+  spo_plan?: SpoPlan | null;
 }
 
 /**

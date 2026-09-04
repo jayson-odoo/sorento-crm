@@ -40,7 +40,7 @@ import {
   filenameFromContentDisposition,
   saveBlobAs,
 } from '@/app/(protected)/project-sales/_shared/services/fileDownload';
-import type { UploadTestResult } from '../reorder/components/UploadTestVerdict';
+import type { SupplierCheck, UploadTestResult } from '../reorder/components/UploadTestVerdict';
 
 export interface StockListSummary {
   rows: number;
@@ -55,6 +55,9 @@ export interface StockListSummary {
   unmeasured_item_codes: string[];
   unmapped_headers: string[];
   unreadable_rows: number;
+  /** Does the file's own letterhead name a different active supplier (S7, AC-G3)? `null`
+   *  when the file states no letterhead above its header row. */
+  supplier_check: SupplierCheck | null;
 }
 
 export interface StockListPreview {
@@ -179,10 +182,19 @@ async function readJson<T>(res: Response, fallback: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-function stockForm(file: File, supplierId: string): FormData {
+function stockForm(
+  file: File,
+  supplierId: string,
+  loadingPlanId?: string | null,
+): FormData {
   const body = new FormData();
   body.append('file', file);
   body.append('supplier_id', supplierId);
+  // S6 - which plan OWNS the rows this upload writes. Stated, the apply replaces only that
+  // plan's rows and stamps the new ones with it, so a later upload for the same supplier
+  // cannot move an older plan's figures. Absent (the standalone stock-list page) it keeps
+  // the supplier-wide replace it always did.
+  if (loadingPlanId) body.append('loading_plan_id', loadingPlanId);
   return body;
 }
 
@@ -199,10 +211,24 @@ export async function previewStockList(
   return { ...body, ok: body.readable };
 }
 
-export async function applyStockList(file: File, supplierId: string): Promise<StockListResult> {
+/**
+ * Write the supplier's stock list.
+ *
+ * ── CONTRACT ADDED BY S6 ───────────────────────────────────────────────────
+ * `loadingPlanId` (multipart field `loading_plan_id`, optional) - the plan this snapshot
+ * belongs to. With it the apply deletes and rewrites ONLY that plan's rows; without it the
+ * supplier-wide snapshot is replaced exactly as before. It is what makes "a plan owns its
+ * statement" true: the ROYAL MIRROR plan read a stale supplier-wide snapshot uploaded from
+ * a different plan, and said "No file" while doing it.
+ */
+export async function applyStockList(
+  file: File,
+  supplierId: string,
+  loadingPlanId?: string | null,
+): Promise<StockListResult> {
   const res = await apiFetch('/api/v1/scm/supplier-inventory/apply', {
     method: 'POST',
-    body: stockForm(file, supplierId),
+    body: stockForm(file, supplierId, loadingPlanId),
   });
   return readJson<StockListResult>(res, 'Failed to save the stock list');
 }
@@ -321,9 +347,19 @@ export interface LoadingPlanRecord {
   /** "Sales order cut-off". Null = every open order counts. */
   plan_horizon_date: string | null;
   document_kind: PlanDocumentKind;
-  /** Ready to print: "Stock list 27/07/2026" / "Proforma invoice PI-x" / "No file". */
+  /** Ready to print, off THIS plan's own rows (S6, AC-F7): "Stock list 27/07/2026",
+   *  "Proforma invoice PI-x", "Proforma invoice <file stem> · 5 blocks", "No file". Never
+   *  re-looked-up from whatever the supplier sent last. */
   document_label: string;
+  /** The date of the statement this plan is bound to - its stock rows' `as_of`, or the
+   *  latest invoice date across its bound invoices. Null on a "No file" plan, which reads
+   *  no statement at all (AC-G1). */
+  statement_as_of: string | null;
+  /** The stored copy of the sheet THIS plan was started from, stamped at apply time (S6).
+   *  Null on a plan started with no file, and on every plan that predates the stamp. */
   source_attachment_id: string | null;
+  /** That file's own name - the preview picks its viewer off the extension. */
+  source_attachment_filename: string | null;
   status: LoadingPlanStatus;
   /** The latest notice for this plan, so the list can say how and when it went out. */
   sent_channel: 'email' | 'chat' | null;
@@ -396,11 +432,6 @@ export async function updateLoadingPlanCutOff(
   return readJson<LoadingPlanRecord>(res, 'Failed to change the cut-off');
 }
 
-export async function cancelLoadingPlan(id: string): Promise<LoadingPlanRecord> {
-  const res = await apiFetch(`/api/v1/scm/loading-plans/${id}/cancel`, { method: 'POST' });
-  return readJson<LoadingPlanRecord>(res, 'Failed to cancel the plan');
-}
-
 /**
  * The typed quantities, WHOLE map, one transaction (R6). Not a patch: what is not in the map
  * is not an edit any more, so a cleared cell cannot survive as a stale override.
@@ -422,27 +453,57 @@ export async function deleteLoadingPlan(id: string): Promise<void> {
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to delete the loading plan'));
 }
 
+/** One `/procurement/suppliers/select` row, as far as this feed cares. */
+interface SupplierSelectRow {
+  id: string;
+  supplier_code: string;
+  supplier_name: string;
+}
+
+const SUPPLIER_PAGE_SIZE = 50;
+
 /**
- * Suppliers, from the existing procurement select. Value is the id the API needs.
+ * Suppliers, from the existing procurement select. Value is the id the API needs; label is
+ * the supplier NAME only (captain, 3 Sep) - `SearchableSelect` already keys each option on
+ * its id, so two suppliers sharing a name (a real duplicate-data case, "Testing Company" x3
+ * in the lane DB) are distinct OPTIONS even though their labels read the same; a `<code> -
+ * <name>` label was tried and reverted, since the code is not something a person reads a
+ * supplier by.
  *
- * The endpoint caps at 100 rows (`app/api/v1/procurement/suppliers.py`), so a bare no-query
- * call is only ever a first page - fine for a short client-filtered pool, silently wrong for
- * a book of hundreds of suppliers where the one somebody wants is past row 100 and simply
- * never reachable by typing its name. `query` ilikes code + name server-side and is the fix:
- * pass it (typically from `SearchableSelect`'s own `fetchOptions`, which already debounces
- * and re-queries as the user types) rather than fetching the unfiltered page once and
- * filtering it client-side.
+ * `pageIndex` is optional and 0-based (`SearchableSelect`'s `fetchOptions` contract): passed,
+ * this pages the backend (`page = pageIndex + 1`, `limit = 50`) so a `paginated` select (the
+ * PI upload dialog, the loading plan container dialog) can offer Load more past the first
+ * page - a book of hundreds of suppliers used to have no way past row 100. Omitted, it asks
+ * for the endpoint's legacy bare array (still capped at 100), for callers that want the whole
+ * list at once rather than a picker (the PI list filter, the incoming-containers filter).
+ * `query` ilikes code + name server-side in either mode, typically fed from
+ * `SearchableSelect`'s own debounced search text.
  */
 export async function getFulfilmentSuppliers(
   query?: string,
+  pageIndex?: number,
 ): Promise<{ value: string; label: string }[]> {
-  const qs = query?.trim() ? `?query=${encodeURIComponent(query.trim())}` : '';
+  const params = new URLSearchParams();
+  if (query?.trim()) params.set('query', query.trim());
+  if (pageIndex !== undefined) {
+    params.set('page', String(pageIndex + 1));
+    params.set('limit', String(SUPPLIER_PAGE_SIZE));
+  }
+  const qs = params.toString() ? `?${params.toString()}` : '';
   const res = await apiFetch(`/api/v1/procurement/suppliers/select${qs}`);
-  const rows = await readJson<{ id: string; supplier_name: string }[]>(
-    res,
-    'Failed to load suppliers',
-  );
-  return rows.map((s) => ({ value: s.id, label: s.supplier_name }));
+  const toOption = (s: SupplierSelectRow) => ({
+    value: s.id,
+    label: s.supplier_name,
+  });
+  if (pageIndex !== undefined) {
+    const body = await readJson<{ items: SupplierSelectRow[]; has_more: boolean }>(
+      res,
+      'Failed to load suppliers',
+    );
+    return body.items.map(toOption);
+  }
+  const rows = await readJson<SupplierSelectRow[]>(res, 'Failed to load suppliers');
+  return rows.map(toOption);
 }
 
 /**
@@ -503,19 +564,6 @@ export interface SupplierNotice {
   created_by: string | null;
 }
 
-export async function approveLoadingPlan(
-  planId: string,
-): Promise<{ notices: SupplierNotice[]; document_filename: string }> {
-  const res = await apiFetch(`/api/v1/scm/loading-plans/${planId}/notices`, { method: 'POST' });
-  return readJson(res, 'Failed to send the supplier notice');
-}
-
-export async function getPlanNotices(planId: string): Promise<SupplierNotice[]> {
-  const res = await apiFetch(`/api/v1/scm/loading-plans/${planId}/notices`);
-  const body = await readJson<{ data: SupplierNotice[] }>(res, 'Failed to load the notices');
-  return body.data;
-}
-
 export async function getNoticeDocumentUrl(
   noticeId: string,
   kind: 'pdf' | 'xlsx' = 'pdf',
@@ -542,8 +590,8 @@ export async function getNoticeDocumentUrl(
  * Rows on the stock list with no open need (`has_demand: false`) sort after them, suggested 0,
  * unranked - nothing the stock list holds vanishes in the merge. `include_lines=true` (always
  * requested by this FE - the matrix and the SO drill both need it) adds the flat open-SO lines
- * behind every demand row. `send` turns Ms Tee's reviewed lines into a notice through the same
- * S8 machinery `approveLoadingPlan` uses.
+ * behind every demand row. `send` turns Ms Tee's reviewed lines into a notice through the
+ * same S8 notice machinery the plan approval used.
  *
  * `planHorizonDate` ("Plan until", captain 20 Aug) is an optional request field, not a stored
  * column - `build` recomputes on every call, so there is no run row to carry it on. When set,
@@ -558,6 +606,14 @@ export async function getNoticeDocumentUrl(
  *       Body: { supplier_id, plan_horizon_date?: "YYYY-MM-DD" }. Auth: `scm.dashboard.view`.
  *  POST /api/v1/scm/container-requests       -> 201 { notices, document_filename }. Auth: `scm.reorder.run`.
  */
+/** One invoice block behind a proforma row's "They hold" figure (S6, AC-F4). */
+export interface ContainerRequestHoldingBlock {
+  /** Which block of the uploaded file this invoice was read from, 1-based. */
+  block_index: number | null;
+  pi_number: string;
+  qty: number;
+}
+
 export interface ContainerRequestRow {
   /** Whose FIGURES this row shows. On a set row that is the driver member's id (R19), which
    *  is what the SO drill and the twelve-month history are keyed on. */
@@ -629,6 +685,14 @@ export interface ContainerRequestRow {
    *  quantity on a proforma row. Null - never 0 - when neither document names it. */
   holding_qty: number | null;
   holding_as_of: string | null;
+  /** How many invoice blocks this plan's proforma statement was read from (S6, AC-F4). One
+   *  file can hold five stacked blocks, and the plan binds to every one of them, so the cell
+   *  says "PI 31/07/2026 · 5 blocks" rather than quietly reporting one block's figure. 1 on
+   *  a single-invoice plan, 0 on a stock-list or "No file" row. */
+  holding_blocks: number;
+  /** The per-block split behind `holding_qty`, so the drill can show where the sum came
+   *  from. Empty on anything but a proforma row. */
+  blocks: ContainerRequestHoldingBlock[];
   /** The stock list's own two figures. Both 0 on a proforma row: a proforma states one
    *  quantity per line and there is no unfinished half of it to report. */
   qty_packed: number;
@@ -1147,6 +1211,10 @@ export interface PackingListLine {
   product_id: string;
   product_code: string;
   product_name: string | null;
+  /** The supplier's own wording for the item (S9). The product's name when the line has
+   *  none - `build()` already resolves the fallback server-side. Optional (absent on a
+   *  payload built before this field existed), same convention `unit_cost` below uses. */
+  description?: string | null;
   brand: string | null;
   company: PackingListCompany;
   qty: number;
@@ -1155,6 +1223,20 @@ export interface PackingListLine {
   cbm: number | null;
   /** What the supplier wrote on the line, and only that. */
   remarks: string | null;
+  /** Priced per unit. Null (or absent, on a payload built before this field existed) on a
+   *  line nobody has costed yet - never 0, which the split footer would then apportion
+   *  insurance against as if it were free. */
+  unit_cost?: number | null;
+  currency?: string | null;
+}
+
+/** The container's own header block and costs, off the same `build()` payload (S7's Split
+ *  card reads `costs`; the header block itself already prints on the packing-list Details
+ *  tab from `inbound_shipments` directly, so nothing here re-fetches it). */
+export interface PackingListCosts {
+  clearance_cost: number | null;
+  china_freight_cost: number | null;
+  insurance_rate: number | null;
 }
 
 export interface PackingListTotals {
@@ -1189,6 +1271,9 @@ export interface ConsolidatedPackingList {
   total: PackingListTotals;
   /** Both companies, always, zeros included: an absent row reads as a missing figure. */
   split: PackingListSplitRow[];
+  /** Typed per container; the split card apportions clearance and freight by CBM share and
+   *  insurance by amount share, the same ratios the export's footer formulas use. */
+  costs?: PackingListCosts;
 }
 
 export async function getConsolidatedPackingList(
@@ -1236,30 +1321,55 @@ export async function downloadPackingListExport(
  *     Never a remainder after PO/stock is subtracted.
  *   * `on_hand` / `incoming_spo` are CONTEXT ONLY - shown, never netted.
  *   * `no_po_qty = max(packed_qty - po_covered_qty, 0)` - the portion nothing open can back.
- *     When `po_covered_qty` is zero, the WHOLE line is `cannot_convert` (same shape as the
- *     no-supplier case, unselectable) with `reason` "No PO to pull from - raise the PO in
- *     AutoCount first."; a PARTIALLY-backed line stays selectable at `po_covered_qty`, with
- *     the shortfall named on `reason` too.
  *   * `covered` is GONE - it meant "nothing left to ask for", a concept that only existed
  *     when a PO was a deduction.
  *
+ * ── R2 (captain's ruling, 3 Sep) - the PO CAP is also removed ────────────────
+ * `create`'s `need = min(requested, packed)` is now the SPO line's quantity outright; the PO
+ * cascade still pulls and advances only what it reaches, and whatever is left over is written
+ * on the SAME line with no pull (`source_ref.no_po_qty` on the backend). `suggested_qty` /
+ * `po_covered_qty` is only the DEFAULT the FE's qty input starts at, never a ceiling - it can
+ * be typed past. `cannot_convert` is true ONLY for a line with no supplier at all; a line with
+ * a supplier and no open PO (`po_covered_qty` zero) is fully convertible, `reason` naming the
+ * shortfall as information (`_REASON_NO_PO`, backend), never a block.
+ *
+ * ── R1 (captain's ruling, 3 Sep) - many SPOs per container, no blanket refusal ──
+ * A container is routinely converted in more than one pass (a partial tick today, the
+ * remainder once the rest is ready). `already_converted` NEVER flips to `true` any more -
+ * kept on the response, always `false`, only so an older build reading it does not break.
+ * `existing_spos` is ALWAYS populated (every SPO this shipment has ever produced, oldest
+ * first, each now carrying `line_count` / `total_qty` / `created_at` / `status` for the
+ * Created SPOs grid) and `lines` is ALWAYS the REMAINDER planner: `packed_qty` stays the
+ * untouched physical fact while the new `remaining_qty` is what is left to convert -
+ * `packed_qty` minus every prior `create` run's own take on that line. A line with nothing
+ * left (`remaining_qty <= 0`) is `cannot_convert: true`, `reason` "Already on <SPO
+ * number(s)>" - the same disabled-row shape the no-supplier case already used.
+ *
  * ── BACKEND CONTRACT (app/api/v1/scm/fulfilment.py) ─────────────────────────
  *  GET  /api/v1/scm/inbound-shipments/{id}/spo-suggestion -> 200 SpoSuggestion. Auth:
- *       `scm.dashboard.view`. `already_converted: true` when this shipment already has
- *       SPOs from a prior run - `lines` is empty and `existing_spos` names them instead.
+ *       `scm.dashboard.view`.
  *  POST /api/v1/scm/inbound-shipments/{id}/spo -> 201 SpoCreateResult. Body:
  *       { lines: [{shipment_line_id, qty, include, location_splits}] } - EVERY line on the
  *       shipment, ticked or not. `qty`/`location_splits` are RE-VALIDATED server-side against
  *       LIVE PO data, never trusted off an earlier `suggest` read - a line whose pull shrinks
- *       to zero between the two calls is skipped, not overdrawn. 409 when this shipment was
- *       already converted (names the existing SPOs). Auth: `scm.reorder.run` (a PO-book
- *       write, same permission the packing-list apply and PI-convert paths use).
+ *       to zero between the two calls is skipped, not overdrawn. 422 `nothing_left` when NO
+ *       line has anything left to convert at all (R1 - never a 409 any more; `nothing_selected`
+ *       stays the answer for "something is left, but nothing was ticked"). Auth: `scm.reorder.
+ *       run` (a PO-book write, same permission the packing-list apply and PI-convert paths
+ *       use).
+ *  DELETE /api/v1/scm/inbound-shipments/{id}/spo?purchase_order_id= -> 200 SpoDeleteResult.
+ *       `purchase_order_id` (R1) narrows the delete to ONE SPO - the Delete action on a row
+ *       of the Created SPOs grid; absent deletes every SPO the shipment ever made (the
+ *       legacy shape). 404 when `purchase_order_id` does not name one of this shipment's own
+ *       SPOs.
  *  GET  /api/v1/scm/inbound-shipments/{id}/spo-worksheet/export -> 200 .xlsx bytes. The
- *       AutoCount handoff - what to key, per supplier. 404 until "Create SPO" has run.
+ *       AutoCount handoff - what to key, per supplier, across every SPO ever created off
+ *       this shipment. 404 until "Create SPO" has run at all.
  *
  * One SPO per SUPPLIER represented on the shipment - a container is routinely several
  * factories, and AutoCount POs are per supplier too. A line with no supplier recorded (the
- * n8n PDF path), or with nothing pullable from any open PO, cannot convert.
+ * n8n PDF path) cannot convert; a line WITH a supplier but nothing pullable from any open PO
+ * is still convertible since R2 (captain's ruling, 3 Sep), just written without a pull.
  *
  * **Recording the pull, and the honesty decision the plan asked to settle.** `create`
  * ADVANCES the source PO line's own `qty_received` by what it pulls (the IDENTICAL write
@@ -1297,22 +1407,25 @@ export async function downloadPackingListExport(
  * He created SPOs, then deleted their `spo_allocations` on the SPO Allocations screen, and
  * the planner stayed stuck on "SPO already created" with no way back. Two additions:
  *
- *  DELETE /api/v1/scm/inbound-shipments/{id}/spo -> 200 SpoDeleteResult. Auth: `scm.reorder.
- *       run` (same as create). Unwinds the whole conversion for this shipment - every
- *       `purchase_orders` header it minted, their lines, the `shipment_line_spo_link` rows,
- *       any `spo_allocations` left hanging off those PO lines, AND (doctrine correction)
- *       REVERSES the `qty_received` advance `create` made on every source PO line those
- *       lines pulled from (`restored_po_line_count`). 409 (`not_crm_spo`) when a linked
- *       header was not created by Create SPO (an AutoCount import) - refused, not skipped.
- *       404 when this shipment has no SPO to delete. Exposed on the planner as the Delete
- *       action on the already-converted state.
+ *  DELETE /api/v1/scm/inbound-shipments/{id}/spo?purchase_order_id= -> 200 SpoDeleteResult.
+ *       Auth: `scm.reorder.run` (same as create). Unwinds ONE SPO (R1: `purchase_order_id`
+ *       narrows it - absent unwinds every SPO the shipment ever made, the legacy shape) -
+ *       its `purchase_orders` header, its lines, the MATCHED `shipment_line_spo_link` rows
+ *       pointing at it, any `spo_allocations` left hanging off those PO lines, AND (doctrine
+ *       correction) REVERSES the `qty_received` advance `create` made on every source PO
+ *       line those lines pulled from (`restored_po_line_count`). 409 (`not_crm_spo`) when a
+ *       linked header was not created by Create SPO (an AutoCount import) - refused, not
+ *       skipped. 404 when this shipment has no SPO to delete, or `purchase_order_id` does
+ *       not name one of its own. Exposed on the planner as the Delete action on a row of the
+ *       Created SPOs grid.
  *  `SpoSuggestion.self_heal_note` - non-null only when THIS `spo-suggestion` call actually
  *       cleaned up a link left behind by a CRM SPO removed some OTHER way than the DELETE
  *       above (a generic PO delete, a bad migration) - shown as a small informational note,
  *       never a toast, since it describes something that already happened silently. That
  *       bypass path does NOT reverse the source PO's advance (only `unwind` does), so a
- *       self-healed line can come back `cannot_convert` rather than restored - a documented
- *       limitation, not a bug.
+ *       self-healed line can come back with nothing left to pull (`po_covered_qty` 0) rather
+ *       than restored - still convertible since R2 (unbacked, not `cannot_convert`) - a
+ *       documented limitation, not a bug.
  */
 export type SpoMatchedBy = 'po_ref' | 'product' | null;
 
@@ -1331,6 +1444,11 @@ export interface SpoPoTake {
    *  re-runs the walk over the lines still ticked, and `qty` alone cannot answer that: a
    *  line that gave 40 while its neighbour was ticked may have 150 to give without it. */
   open_qty: number;
+  /** How much of this line an EARLIER SPO already pulled, and its number(s) - oldest first
+   *  (S5). A row with `qty: 0` and `taken_qty > 0` is fully occupied elsewhere: never this
+   *  cascade's own take, always someone else's. */
+  taken_qty: number;
+  taken_by: string[];
 }
 
 /** One open SO line behind a location's `outstanding_so` - "what SO am I covering"
@@ -1368,6 +1486,15 @@ export interface SpoCoverageLine {
   /** Pre-ticked by the default walk: project by required date, then retail by required
    *  date, until the packed quantity is used up (Q4). */
   default_ticked: boolean;
+  /** How much of this row an EARLIER SPO already covers, and its number(s) - oldest first
+   *  (S5). A row with `qty: 0` and `taken_qty > 0` is fully occupied elsewhere: never
+   *  tickable, never this SPO's own tick. */
+  taken_qty: number;
+  taken_by: string[];
+  /** `sales_orders.demand_class` as stored - what the SO ITSELF is classified as, distinct
+   *  from `kind` (which family the row came from). A project row is always `'project'`; a
+   *  book line carries whatever its own sales order was stamped, including `null` (R3). */
+  demand_class: 'project' | 'retail' | null;
 }
 
 /** One candidate destination warehouse for a line's SPO qty, ranked. */
@@ -1396,6 +1523,11 @@ export interface SpoSuggestionLine {
   supplier_id: string | null;
   supplier_name: string | null;
   packed_qty: number;
+  /** What is left to convert on this line (R1): `packed_qty` minus every prior `create` run's
+   *  own take on it. `0` once every prior run has claimed it all - `cannot_convert: true`,
+   *  `reason` names the SPO(s). Every other figure on this line (`po_covered_qty`,
+   *  `suggested_qty`, `no_po_qty`, `so_coverage`) is computed against THIS, not `packed_qty`. */
+  remaining_qty: number;
   po_covered_qty: number;
   matched_po_number: string | null;
   matched_by: SpoMatchedBy;
@@ -1405,17 +1537,19 @@ export interface SpoSuggestionLine {
   on_hand: number;
   incoming_spo: number;
   /** `po_covered_qty`, capped at `packed_qty` by the cascade - what the PO(s) PULL this SPO
-   *  up to. Editable, but cannot exceed `po_covered_qty` (nothing more to pull). */
+   *  up to. R2 (captain's ruling, 3 Sep): only the DEFAULT the FE's qty input starts at, no
+   *  longer a ceiling - the buyer can type past it, up to `packed_qty`. */
   suggested_qty: number;
-  /** `max(packed_qty - po_covered_qty, 0)` - the portion nothing open can back. Shown as
-   *  context on a selectable line; the reason the WHOLE line is `cannot_convert` when it
-   *  equals `packed_qty`. */
+  /** `max(packed_qty - po_covered_qty, 0)` - the portion nothing open can back, at the
+   *  DEFAULT quantity. Shown as context on a selectable line. */
   no_po_qty: number;
-  /** No supplier recorded, OR nothing at all is pullable from an open PO - cannot become an
-   *  SPO line, like the no-supplier case. */
+  /** No supplier recorded - the ONLY reason a line cannot become an SPO line (R2, captain's
+   *  ruling, 3 Sep). A line with a supplier and nothing pullable from any open PO is fully
+   *  convertible, simply unbacked. */
   cannot_convert: boolean;
-  /** Why `cannot_convert`, or a note about a partially-uncovered remainder. Null on a line
-   *  fully backed by an open PO. */
+  /** Informational only since R2: names why `po_covered_qty` falls short of `packed_qty`
+   *  (or is zero), never a reason the line is blocked. Null on a line fully backed by an
+   *  open PO. */
   reason: string | null;
   unit_cost: number | null;
   currency: string | null;
@@ -1433,14 +1567,20 @@ export interface SpoRef {
   po_number: string | null;
   supplier_id: string | null;
   supplier_name: string | null;
+  /** How many SPO lines this one header carries - one `create` run always writes exactly
+   *  one header per supplier, so this is that header's whole content. */
+  line_count: number;
+  total_qty: number;
+  created_at: string | null;
+  status: string;
 }
 
 export interface SpoSuggestion {
   shipment_id: string;
   shipment_number: string | null;
   shipment_status: string | null;
-  /** True when this shipment already has SPOs from a prior "Create SPO" - `lines` is empty
-   *  and the caller shows `existing_spos` instead of a confirm screen. */
+  /** R1: never flips to `true` any more - kept only so an older build reading it does not
+   *  break. `existing_spos` and `lines` (the remainder planner) are always both populated. */
   already_converted: boolean;
   existing_spos: SpoRef[];
   lines: SpoSuggestionLine[];
@@ -1522,7 +1662,7 @@ export async function createSpo(
   return readJson<SpoCreateResult>(res, 'Failed to create the SPO');
 }
 
-/** The result of the Delete action on an already-converted planner row. */
+/** The result of the Delete action on a row of the Created SPOs grid. */
 export interface SpoDeleteResult {
   shipment_id: string;
   shipment_number: string | null;
@@ -1533,8 +1673,16 @@ export interface SpoDeleteResult {
   restored_po_line_count: number;
 }
 
-export async function deleteSpo(shipmentId: string): Promise<SpoDeleteResult> {
-  const res = await apiFetch(`/api/v1/scm/inbound-shipments/${shipmentId}/spo`, {
+/** `purchaseOrderId` (R1) deletes only that one SPO; absent deletes every SPO this shipment
+ *  ever made (the legacy shape). */
+export async function deleteSpo(
+  shipmentId: string,
+  purchaseOrderId?: string,
+): Promise<SpoDeleteResult> {
+  const query = purchaseOrderId
+    ? `?purchase_order_id=${encodeURIComponent(purchaseOrderId)}`
+    : '';
+  const res = await apiFetch(`/api/v1/scm/inbound-shipments/${shipmentId}/spo${query}`, {
     method: 'DELETE',
   });
   return readJson<SpoDeleteResult>(res, 'Failed to delete the SPO');

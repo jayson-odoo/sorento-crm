@@ -68,6 +68,9 @@ import { useSalesAgentOptions } from '../../hooks/useSalesAgentOptions';
 import DetailActions from '@/components/common/DetailActions';
 import { salesOrdersPagerQuery } from '../../../hooks/useSalesOrders';
 import { getSalesOrderUoms, type SalesOrderPlanningChangeBatch } from '../../../services/salesOrderService';
+import { PlanRowDialog } from '../../../components/PlanRowDialog';
+import { PlanNumberButton } from '../../../components/PlanNumberButton';
+import { SoLineLinksBody } from './SoLineLinksBody';
 import { fmtDate, fmtInt } from '../../../lib/format';
 import { demandClassBadge } from '../../../lib/demandClass';
 import {
@@ -84,7 +87,6 @@ import type {
 // ONE vocabulary for where supply comes from (PLAN-scm-cs-planning-uat.md section 2), shared
 // with the planning board rather than restated here.
 import { describe as describeSupply } from '../../../../project-sales/_shared/lib/supplyVocabulary';
-import { lateDaysOf } from '../../../../project-sales/_shared/lib/orderInquiryWorklist';
 import { useRouter } from 'next/navigation';
 import BackToList, { useBackToListHref } from '@/components/common/BackToList';
 import { useSalesOrderActions } from '../../actions';
@@ -395,6 +397,9 @@ export function SalesOrderDetail({ id }: { id: string }) {
   // cannot linger and describe a batch a later save superseded.
   const [planningChangeBatch, setPlanningChangeBatch] =
     useState<SalesOrderPlanningChangeBatch | null>(null);
+  // Which LINE's "Linked" figure was pressed (R5, AC-L4) - one dialog for the whole grid,
+  // replacing the inline multi-link text the cell used to render.
+  const [linksLineId, setLinksLineId] = useState<string | null>(null);
 
   const beginEdit = (so: SalesOrder) => {
     setPlanningChangeBatch(null);
@@ -648,6 +653,35 @@ export function SalesOrderDetail({ id }: { id: string }) {
         },
       },
       {
+        // R5: was the inline multi-link text (AC-I9); now the SUM of every link's qty as a
+        // figure that opens the lightbox (AC-L4) - the same child table the order-inquiry
+        // worklist's "Linked to" column and the PO occupancy panel read from, so the three
+        // surfaces still answer with one voice, one level down. A line whose inquiry row
+        // exists but holds no link reads "Not linked"; a line with no inquiry row at all
+        // reads "-", which is the difference between "nothing has been linked" and "nobody
+        // was told".
+        id: 'linked_to',
+        accessorFn: (row) =>
+          row.linked_to ? row.linked_to.reduce((sum, link) => sum + Number(link.qty), 0) : null,
+        header: ({ column }) => <DataGridColumnHeader title="Linked to" column={column} />,
+        cell: ({ row }) => {
+          const links = row.original.linked_to;
+          if (!links) return <span className="text-muted-foreground">-</span>;
+          if (links.length === 0)
+            return <span className="text-muted-foreground">Not linked</span>;
+          const total = links.reduce((sum, link) => sum + Number(link.qty), 0);
+          return (
+            <PlanNumberButton
+              value={fmtInt(total)}
+              label={`Linked to ${row.original.sku}`}
+              onClick={() => setLinksLineId(row.original.id)}
+            />
+          );
+        },
+        size: 120,
+        meta: { headerTitle: 'Linked to' },
+      },
+      {
         id: 'unit_price',
         accessorFn: (line) => Number(line.unit_price ?? 0),
         header: ({ column }) => <DataGridColumnHeader title="Unit price" column={column} />,
@@ -891,78 +925,6 @@ export function SalesOrderDetail({ id }: { id: string }) {
         meta: { headerTitle: 'Order inquiry' },
       },
       {
-        // AC-I9: WHERE this line's Buy actually sits. The same child table the order
-        // inquiry worklist's "Linked to" column and the PO occupancy panel read, so the
-        // three surfaces answer with one voice. A line whose inquiry row exists but holds
-        // no link reads "Not linked"; a line with no inquiry row at all reads "-", which
-        // is the difference between "nothing has been linked" and "nobody was told".
-        id: 'linked_to',
-        accessorFn: (row) => row.linked_to ?? null,
-        header: ({ column }) => <DataGridColumnHeader title="Linked to" column={column} />,
-        cell: ({ row }) => {
-          const links = row.original.linked_to;
-          if (!links) return <span className="text-muted-foreground">-</span>;
-          if (links.length === 0)
-            return <span className="text-muted-foreground">Not linked</span>;
-          return (
-            <div className="min-w-0 space-y-0.5">
-              {links.map((link, index) => {
-                // LOCATION first (AC-D16). Every SPO allocation carries a line number, so
-                // printing the label first meant this cell read `L14 1` on every SPO link
-                // and the warehouse - the one thing that says where the goods land -
-                // never showed. The label keeps its place in the title.
-                const where = link.location || null;
-                const labelled = [link.line_label || null, where].filter(Boolean).join(' ');
-                const due = link.expected_date ? fmtDate(link.expected_date) : null;
-                // WHEN it lands, beside where it sits (AC-G7). A link that says which SPO
-                // covers this line and not when it arrives answers half the question the
-                // person reading it came with.
-                const label = `${link.document}${where ? ` ${where}` : ''} ${link.qty}${
-                  due ? ` due ${due}` : ''
-                }`;
-                const titleLabel = `${link.document}${labelled ? ` ${labelled}` : ''} ${
-                  link.qty
-                }${due ? ` due ${due}` : ''}`;
-                const lateDays = lateDaysOf(link);
-                return (
-                  <span
-                    // The INDEX is always in the key. One line can be linked to the same
-                    // SPO line twice - the SPO covers it in two goes, each link carrying
-                    // its own quantity - and kind + document + label collided on the
-                    // second, which React reported as two children with the same key.
-                    key={`${link.kind}-${link.document}-${where ?? 'x'}-${index}`}
-                    className="flex min-w-0 items-center gap-1"
-                    title={
-                      link.late
-                        ? `${titleLabel} - ${
-                            lateDays !== null
-                              ? `lands ${lateDays} day${lateDays === 1 ? '' : 's'} late`
-                              : 'arrives late'
-                          }`
-                        : titleLabel
-                    }
-                  >
-                    <span className="shrink-0 rounded-sm bg-muted px-1 py-0.5 text-[10px] font-medium uppercase text-muted-foreground">
-                      {link.kind}
-                    </span>
-                    <span className="truncate tabular-nums">{label}</span>
-                    {/* AC-D17: it lands after the line needs it, and by how much.
-                        Purchasing decides; nothing is unlinked for lateness. */}
-                    {link.late ? (
-                      <span className="shrink-0 rounded-sm bg-amber-100 px-1 py-0.5 text-[10px] font-medium text-amber-800">
-                        {lateDays !== null ? `late ${lateDays} d` : 'late'}
-                      </span>
-                    ) : null}
-                  </span>
-                );
-              })}
-            </div>
-          );
-        },
-        size: 240,
-        meta: { headerTitle: 'Linked to' },
-      },
-      {
         // AC-D4: the board's two compositions, on the order they belong to. The SECONDARY
         // surface for the same question - the board is where the decision is taken, this is
         // where somebody looking at the order alone can see what was taken.
@@ -981,30 +943,76 @@ export function SalesOrderDetail({ id }: { id: string }) {
       },
       {
         id: 'supply_decided',
-        accessorFn: (row) => row.supply_decided ?? null,
+        accessorFn: (row) => row.supply_decided ?? row.supply_saved ?? null,
         header: ({ column }) => <DataGridColumnHeader title="Decided" column={column} />,
-        cell: ({ row }) => (
-          <SupplyText
-            parts={row.original.supply_decided}
-            ownLocation={row.original.warehouse_code}
-            absent="-"
-          />
-        ),
-        size: 220,
+        // D10 (captain, 3 Sep): a SAVED (unconfirmed) decision reads here too, until
+        // Confirm replaces it with the frozen one - a save on the board used to read "-"
+        // on this page, which looked like the save had done nothing. `supply_decided` and
+        // `supply_saved` never both answer for one line (Confirm deletes the draft it
+        // promotes), so this is never a choice between two real compositions.
+        cell: ({ row }) => {
+          if (row.original.supply_decided != null) {
+            return (
+              <SupplyText
+                parts={row.original.supply_decided}
+                ownLocation={row.original.warehouse_code}
+                absent="-"
+              />
+            );
+          }
+          if (row.original.supply_saved == null) {
+            return <SupplyText parts={null} ownLocation={row.original.warehouse_code} absent="-" />;
+          }
+          return (
+            <div className="flex min-w-0 items-center gap-1.5">
+              <span className="min-w-0 flex-1">
+                <SupplyText
+                  parts={row.original.supply_saved}
+                  ownLocation={row.original.warehouse_code}
+                  absent="-"
+                />
+              </span>
+              <Badge
+                data-testid={`saved-decision-badge-${row.original.id}`}
+                variant={row.original.saved_stale ? 'warning' : 'success'}
+                appearance="light"
+                size="sm"
+                className="shrink-0"
+              >
+                {row.original.saved_stale ? 'Suggestion changed' : 'Saved'}
+              </Badge>
+            </div>
+          );
+        },
+        size: 240,
         meta: { headerTitle: 'Decided' },
       },
       {
         id: 'decision_revision',
-        accessorFn: (row) => row.decision_revision ?? null,
+        accessorFn: (row) =>
+          row.decision_revision ?? (row.supply_saved != null ? 'saved' : null),
         header: ({ column }) => <DataGridColumnHeader title="Decision" column={column} />,
-        // Which confirmed revision covers this line. A line the active decision left out is
-        // as undecided as a line on an order nobody planned, and both read "-".
-        cell: ({ row }) =>
-          row.original.decision_revision == null ? (
-            <span className="text-muted-foreground">-</span>
-          ) : (
-            <span className="tabular-nums">{`Rev ${row.original.decision_revision}`}</span>
-          ),
+        // Which confirmed revision covers this line, or - before that - who saved it and
+        // when (D10). A line the active decision left out, with no draft either, is as
+        // undecided as a line on an order nobody planned, and both read "-".
+        cell: ({ row }) => {
+          if (row.original.decision_revision != null) {
+            return <span className="tabular-nums">{`Rev ${row.original.decision_revision}`}</span>;
+          }
+          if (row.original.supply_saved != null) {
+            const savedBy = row.original.saved_by;
+            const savedAt = row.original.saved_at;
+            const title = savedBy
+              ? `Saved by ${savedBy}${savedAt ? ` · ${formatDateTimeInMalaysia(savedAt)}` : ''}`
+              : undefined;
+            return (
+              <span className="text-sm" title={title}>
+                Saved
+              </span>
+            );
+          }
+          return <span className="text-muted-foreground">-</span>;
+        },
         size: 110,
         meta: { headerTitle: 'Decision' },
       },
@@ -1080,6 +1088,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
 
   const so = data;
   const lineCount = so.line_count ?? lines.length;
+  const linksLine = linksLineId ? (lines.find((l) => l.id === linksLineId) ?? null) : null;
 
   const handleSave = async () => {
     setError(null);
@@ -1534,7 +1543,12 @@ export function SalesOrderDetail({ id }: { id: string }) {
             // A real key, not the empty "do not persist" one: a 200-line order is read with
             // the same few columns every time, and the choice has to survive the visit. Keyed
             // off the permission slug plus a stable id, never the record's own path.
-            listingKey="scm.dashboard.view::sales-order-lines"
+            // -v2 (F4, review round): R4 moved `linked_to` earlier in the column order, but a
+            // saved preference keeps whatever POSITION a user last dragged it to - so anyone
+            // who had already used this screen kept the OLD 13th-of-16 slot regardless of the
+            // code change (AC-K1 failed on a live account for exactly this reason). A fresh
+            // key means everyone reads R4's own order once, same as a first-time visitor.
+            listingKey="scm.dashboard.view::sales-order-lines-v2"
           >
             <Card>
               <CardHeader className="flex-wrap gap-3">
@@ -1620,6 +1634,22 @@ export function SalesOrderDetail({ id }: { id: string }) {
           />
         </TabsContent>
       </Tabs>
+
+      {/* R5: the "Linked" figure's lightbox - one dialog for the whole grid, the shell every
+          SCM screen's drillable figure opens (AC-L4). */}
+      {linksLine ? (
+        <PlanRowDialog
+          kind="links"
+          productCode={linksLine.sku}
+          productName={linksLine.product_name}
+          open
+          onOpenChange={(next) => {
+            if (!next) setLinksLineId(null);
+          }}
+        >
+          <SoLineLinksBody links={linksLine.linked_to ?? []} />
+        </PlanRowDialog>
+      ) : null}
     </div>
   );
 }

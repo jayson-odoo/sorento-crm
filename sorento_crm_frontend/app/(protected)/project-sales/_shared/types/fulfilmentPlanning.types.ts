@@ -439,6 +439,16 @@ export interface SupplyLine {
    * instead. Kept for wire compatibility. */
   pool_cap?: string | null;
   pool_reorder_level?: string | null;
+  /**
+   * The pool-share carve-out (LADDER V8, R-C), stated on THIS line the way the board's cell
+   * states it on its locations (B2, fix round 5): `{warehouse_id: available_for_project}`
+   * for every site pool this line's own walk consulted. Read into `PoolShareLimits` by
+   * `poolShareLimitsFromLine` (`_shared/lib/poolShare.ts`), the sheet's own source for the
+   * allowance the board reads off `BoardCellLocation` instead.
+   */
+  pool_allowances?: Record<string, string | null | undefined>;
+  /** The five site pools' NET (R-D), bounding every pool's allowance together. */
+  pools_net?: string | null;
   components: SupplyComponent[];
   /**
    * THE FIVE STEPS OF LADDER v7.1 FOR THIS LINE, taken or not (R36, AC-S3-14).
@@ -790,8 +800,14 @@ export interface BoardTrailStep {
  * `use` is the free pile (own group, then the other project groups), `order_borrow` is on hand
  * held by a later order, `supply_borrow` is the SUPPLY a later order holds (one document, S4),
  * then the pool's own book, then Buy.
+ *
+ * `pool_share` is ladder v8's replacement for `pool` (`PLAN-scm-fulfilment-feedback-2sep.md`
+ * S2, R-A/R-B): the site pool of the asking bin is asked FIRST rather than last, for up to its
+ * share allowance, and the label reads "Use BRW stock". `pool` is kept only so a trail frozen
+ * under v7.1 still renders in its own words; no LIVE v8 walk emits it.
  */
 export type BoardLadderStep =
+  | 'pool_share'
   | 'use'
   | 'order_borrow'
   | 'supply_borrow'
@@ -840,6 +856,20 @@ export interface BoardLadderOption {
   debt_month?: string | null;
   /** The option the engine proposed. Exactly one option carries it, or none when nothing covers. */
   chosen: boolean;
+  /**
+   * How much THIS step can give (S2, R-B). On `pool_share` it is the SHARE - the one step
+   * that may cover part of the unit rather than whole-or-nothing, so the one row whose
+   * quantity `whole` does not already state. On every other row it is what that step would
+   * contribute to what is LEFT after the share ("Use BRW stock 450, Use our locations 0,
+   * Buy 200", AC-2.1). `0` renders as `0`, never blank (R-K).
+   */
+  gives_qty?: string | null;
+  /**
+   * The step's own sentence, where the quantity alone does not say it - "600 is more than
+   * the 450 BRW can spare" (AC-2.4). Set on `pool_share`; null elsewhere, because a reason
+   * per row for its own sake is noise.
+   */
+  reason?: string | null;
 }
 
 /**
@@ -1222,6 +1252,16 @@ export interface BoardContribution {
   /** What was frozen, when the row is covered. Absent otherwise, never an empty object. */
   decision?: BoardLineDecision | null;
   /**
+   * A decision SAVED here but not yet confirmed (S4, R-F): survives leaving the page,
+   * another device, another planner. `null`/absent on a line nobody has saved.
+   *
+   * Distinct from `decision` above, which is what an ACTIVE (confirmed) revision froze -
+   * a line can carry a `draft` with no `decision` (saved, not yet confirmed), a `decision`
+   * with no `draft` (confirmed, and Confirm deletes the draft it promotes), or neither
+   * (untouched, running on the suggestion).
+   */
+  draft?: BoardLineDraft | null;
+  /**
    * The order inquiry purchasing was given for this line, reached through the planning
    * record's mirror line, and the state that instruction is in.
    *
@@ -1471,6 +1511,15 @@ export interface BoardCellLocation {
   net?: string | null;
   /** Which set that net covers, for the subtotal's label: a group code, or `pools`. */
   net_of?: string | null;
+  /**
+   * THE RAW net (N1, fix round 5): `net` above has the asking line's own demand added back
+   * in, so the SUBTOTAL a planner reads matches "what is left for me" - but the SERVER's own
+   * confirm-time guard and `stock-detail` bound a pool-share composition by the net WITHOUT
+   * that addition. `poolShareLimitsOf` reads THIS field, never `net`, or it could admit a
+   * split the server's own guard refuses the instant this line's own demand padded the
+   * figure past what the raw pile carries.
+   */
+  net_raw?: string | null;
   /** What is owed here. `qty` is kept as an alias of it. */
   qty: string;
   qty_demand?: string | null;
@@ -1493,6 +1542,19 @@ export interface BoardCellLocation {
   qty_proposed_reserve?: string | null;
   qty_proposed_incoming?: string | null;
   qty_proposed_buy?: string | null;
+  /**
+   * S2 (`PLAN-scm-fulfilment-feedback-2sep.md`, R-K): what a `site_pool` row - and the
+   * "Site pool subtotal" row built from it - may give a PROJECT line once the pool's own
+   * dealer share is kept back: `min(floor(available_qty x (100 - pool_share_pct) / 100),
+   * max(net, 0))`, `net` being this SAME row's own five-pool net. Never rendered for an
+   * `own` / `group` / `other_group` row (there is no pool share to keep there); on an
+   * addressable `site_pool` row it is always a number, `0` included, never blank.
+   *
+   * The SAME allowance the walk's own step 0 asked the pool for
+   * (`front_planning_engine.available_for_project`): the planner reads the number the
+   * engine obeyed, never a second computation of it.
+   */
+  available_for_project?: string | null;
 }
 
 /** One cell: this row, by this bucket, across every selected order. */
@@ -1643,6 +1705,14 @@ export interface PlanningBoard {
   unplannable_line_count: number;
   /** Of those, the lines the allocation rule could not cover from free stock (13.5). */
   contested_line_count: number;
+  /**
+   * S2 (R-K): how much of a site pool is kept back for dealers, in percent, off the active
+   * policy row. Every site-pool ROW already carries the server's own
+   * `available_for_project`; this is what the Stock tab's pool SUBTOTAL applies the same
+   * rule with, over the pool's own net - a figure that belongs to the SET and so appears on
+   * no row.
+   */
+  pool_share_pct?: number;
   dateBuckets: BoardDateBucket[];
   productRows: BoardProductRow[];
   cells: BoardCell[];
@@ -1772,8 +1842,43 @@ export interface BoardDecision {
   suspected_system_issue?: boolean;
 }
 
-/** Keyed by `BoardContribution.key`. Client-side in Phase 1 (13.4). */
+/**
+ * The panel's own working copy, keyed by `BoardContribution.key` (13.4). Seeded from every
+ * `contribution.draft` the board carries and written through to the server by `decide()`.
+ */
 export type BoardDraft = Record<string, BoardDecision>;
+
+/**
+ * A decision saved on the SERVER but not yet confirmed (S4, R-F, PLAN-scm-fulfilment-
+ * feedback-2sep.md). `PUT /fulfilment-planning/lines/{contribution_key}/draft` upserts one
+ * of these; `DELETE` (Undo) removes it; Confirm promotes the keys it posts and deletes their
+ * drafts in the same write. Drafts are SHARED, not per user (R-F: "a second planner sees the
+ * same saved lines and the pill names who saved").
+ */
+export interface BoardLineDraft {
+  decision: BoardDecision;
+  /** The saver's display name - never a UUID. */
+  saved_by: string;
+  /** ISO timestamp. */
+  saved_at: string;
+  /**
+   * The engine has re-suggested this line since it was saved (AC-4.4: "a line saved but
+   * then re-suggested by a new upload"). Computed by the SERVER on every board read,
+   * against the LINE's own facts at save time (S1, code review round 3) - open quantity
+   * and required date, never `proposed` below. False on an ordinary saved line.
+   */
+  stale?: boolean;
+  /**
+   * WHAT THE ENGINE SUGGESTED at save time (D12, #573, captain ruling): the contribution's
+   * own `sources` the moment the draft was written, in the SAME shape. NOT what `stale`
+   * above is judged against (that stays the line's own facts, S1) - this exists only so
+   * the Sales Order page's Suggested column can read a saved-but-unconfirmed line's
+   * composition the way the board's list view already does ("BRW 3 (BRW)"), until Confirm
+   * freezes a revision. `null`/absent on a draft saved before D12, or on a save nothing
+   * was offered for.
+   */
+  proposed?: BoardSource[] | null;
+}
 
 // ---------------------------------------------------------------------------
 // Stock Status with Detail: what the figures on a location ROW of the cell's stock table are
@@ -1829,6 +1934,17 @@ export interface StockDetailIncoming {
    * supplier to chase instead of wondering why the cover never lands.
    */
   overdue_days?: number | null;
+  /**
+   * The day the WALK plans this late document against - `today + overdue_grace_days`
+   * (R-O, 3 September 2026). Null when the document is not late, or when it is so late
+   * that nothing is assumed about it at all.
+   */
+  assumed_date?: string | null;
+  /**
+   * False when the document is later than `overdue_dead_days` and therefore counts as
+   * nothing (R31, as R-O leaves it). The row reads "not counted".
+   */
+  counted?: boolean;
 }
 
 /**
@@ -1890,6 +2006,21 @@ export interface StockDetail {
   incoming: StockDetailIncoming[];
   /** Confirmed holds taken by lines booked outside this set. Group reading only. */
   holds?: StockDetailHold[];
+  /**
+   * S2 (R-K): the five site pools' own net, for capping "Available for Project" on the
+   * `group: 'pools'` reading's running ledger. Absent on every other read (a bin, or a
+   * non-pool group), which has no pool share to cap.
+   *
+   * Signed, and read off the engine's own `netting().pools_net()`, so the cap the ledger
+   * applies is the cap the walk was bound by (R-D).
+   */
+  five_pool_net?: string | null;
+  /**
+   * S2 (R-K): how much of a site pool is kept back for dealers, in percent, off the active
+   * policy row. Sent with `five_pool_net` on the `group: 'pools'` reading only; the ledger
+   * needs it because it computes its running balances itself and the server never sees them.
+   */
+  pool_share_pct?: number | null;
 }
 
 // ---------------------------------------------------------------------------

@@ -13,7 +13,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 
 import type { PortalContact } from '../lib/portal-client';
 
@@ -186,14 +186,20 @@ describe('SubmissionForm - retry after create-succeeded/flush-failed does not du
 
     fireEvent.click(screen.getByTestId('attach-pending-file'));
 
+    // The trigger button and the AlertDialogAction confirm button share the
+    // same accessible name ("Submit stock inquiry"), so `findAllByRole` can
+    // resolve on WHICHEVER one is queryable first - a race that flaked ~40%
+    // of CI runs (#597): the trigger re-click was a no-op, `handleSubmit`
+    // never ran, and the assertions below timed out at zero. Scoping to the
+    // dialog's own role removes the ambiguity outright.
     const openAndConfirm = async () => {
       fireEvent.click(
         screen.getByRole('button', { name: 'Submit stock inquiry' }),
       );
-      const buttons = await screen.findAllByRole('button', {
-        name: 'Submit stock inquiry',
-      });
-      fireEvent.click(buttons[buttons.length - 1]);
+      const dialog = await screen.findByRole('alertdialog');
+      fireEvent.click(
+        within(dialog).getByRole('button', { name: 'Submit stock inquiry' }),
+      );
     };
 
     await openAndConfirm();
@@ -212,6 +218,6 @@ describe('SubmissionForm - retry after create-succeeded/flush-failed does not du
     // nothing left to create.
     await waitFor(() => expect(uploadAttachment).toHaveBeenCalledTimes(2));
     expect((uploadAttachment as Mock).mock.calls[1][1]).toBe('new-si-2');
-    expect(saveDraft).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(saveDraft).toHaveBeenCalledTimes(1));
   });
 });

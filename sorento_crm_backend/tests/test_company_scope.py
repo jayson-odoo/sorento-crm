@@ -483,7 +483,18 @@ def test_every_company_id_table_is_registered():
     # is a saved filter/sort/column view of a listing, and a shared/published one can name
     # another company's suppliers, products or warehouses inside its filter blob - owned
     # the same reason `price_tag_requests` is, loaded by id on publish/set-default/delete.
-    expected_owned = 126
+    #
+    # PLAN-scm-fulfilment-feedback-2sep.md S4 adds 1: `so_supply_decision_drafts` is one
+    # planner's SAVED-but-not-yet-confirmed decision on one line of one company's sales
+    # order, loaded by (company, sales order, line, item code) on every save/undo and
+    # stamped by the mixin at insert - owned the same reason `so_supply_decisions` is.
+    #
+    # PLAN-price-tag-ux-r3.md S4 adds 1: `dealer_kit.tag_size_preset` is owned for the
+    # same reason `tag_template` is - a saved, named tag size is one company's own
+    # catalogue shortcut, offered under the designer's Tag Size dropdown and editable at
+    # `/dealer-kit/tag-sizes`, with a `(company_id, name)` unique constraint so a name is
+    # only unique within that company's own set of saved sizes.
+    expected_owned = 128
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

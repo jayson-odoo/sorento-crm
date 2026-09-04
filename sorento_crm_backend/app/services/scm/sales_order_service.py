@@ -30,6 +30,7 @@ from app.services.error_handler import AppException
 from app.services.numbering_service import NumberingService
 from app.services.scm.demand import is_open_demand
 from app.services.scm.demand_class import DEMAND_CLASSES, class_of
+from app.services.scm.front_planning_engine import BORROW, BUY, RESERVE
 from app.services.scm.outstanding_diff import (
     DATE_AND_QTY_CHANGED,
     DATE_MOVED,
@@ -136,7 +137,7 @@ def _line_sort_key(ln: SalesOrderLine):
 
 
 def _order_by(sort_cols: dict, sort: Optional[str], direction: str) -> list:
-    """The sort, always made total by `id`.
+    """The sort, always made total by `id`, and always NULLS LAST.
 
     11,006 of the orders in this book share ONE `created_at`: they were absorbed in a single
     import. Ordering on that column alone leaves their relative order up to the planner, so
@@ -145,11 +146,17 @@ def _order_by(sort_cols: dict, sort: Optional[str], direction: str) -> list:
     shuffle of the same rows, and how a row can appear on two pages or neither.
 
     `id` is arbitrary but it is STABLE, which is the whole requirement.
+
+    `nullslast()` on both directions: Postgres defaults DESC to NULLS FIRST, which would put
+    a row nobody dated at the very top of a "latest first" list (the shipped default for
+    `order_date`, PLAN-listing-view-memory) - read as the newest thing in the book rather
+    than as the unfiled row it is. Unsortable belongs at the end whichever way the column
+    is read.
     """
     col = sort_cols.get(sort or "", SalesOrder.created_at)
     if direction == "asc":
-        return [col.asc(), SalesOrder.id.asc()]
-    return [col.desc(), SalesOrder.id.desc()]
+        return [col.asc().nullslast(), SalesOrder.id.asc()]
+    return [col.desc().nullslast(), SalesOrder.id.desc()]
 
 
 class SalesOrderService:
@@ -361,9 +368,17 @@ class SalesOrderService:
         # suggested (AC-D4). Off by default: the list prints none of it and would pay the
         # read across a page of 50 orders.
         decided = self._decided_lines(so) if line_planning else {}
+        # A SAVED (unconfirmed) decision, per line (D10). Same gate: a line that already
+        # carries `decided` never carries this too (Confirm deletes the draft it promotes),
+        # so the two reads never disagree about which one covers a line.
+        saved = self._saved_lines(so) if line_planning else {}
         # WHERE each line's Buy sits (AC-I9). Same gate, same reason: the list has no
-        # column for it.
+        # column for it. `links` covers a PROJECT line (an order-inquiry link);
+        # `spo_links` covers a RETAIL line's own SPO coverage (S7) - the retail tick
+        # writes no order-inquiry link at all, so without the second read a retail line
+        # an SPO already promised reads "-" forever.
         links = self._line_links(so) if line_planning else {}
+        spo_links = self._spo_line_links(so) if line_planning else {}
         total_qty = 0.0
         committed = 0.0
         lines = []
@@ -377,6 +392,7 @@ class SalesOrderService:
         for ln in sorted(so.lines, key=_line_sort_key):
             qo = float(ln.qty_ordered or 0)
             qd = float(ln.qty_delivered or 0)
+            saved_entry = saved.get(str(ln.id))
             # A CLOSED line is outstanding NOTHING, whatever its two quantities say. When a
             # re-uploaded book closes a line by absence, what actually shipped is unknown, so
             # `qty_delivered` stays 0 and `ordered - delivered` reads as the whole order still
@@ -429,18 +445,49 @@ class SalesOrderService:
                 # caller asked for them (`line_planning`), and null on a line nobody has
                 # raised or decided anything on - which is most of the book.
                 "order_inquiry": inquiries.get(str(ln.id)),
-                # AC-I9: WHERE this line's Buy sits, off the SAME reader the order
-                # inquiry worklist's "Linked to" column and the PO occupancy panel use.
-                # `None` when no inquiry row covers the line at all, `[]` when one does
-                # and holds no link: "nobody was told" and "told, nothing linked" are
-                # different answers and the column says so.
-                "linked_to": links.get(str(ln.id)),
+                # AC-I9 / S7: WHERE this line's Buy sits - the order-inquiry link(s) a
+                # PROJECT line carries first, then a RETAIL line's own SPO coverage (S7,
+                # AC-G2..G6) after them. `None` when NEITHER exists (no inquiry row covers
+                # the line and no SPO has been pointed at it); `[]` when an inquiry row
+                # covers it but holds no link yet: "nobody was told" and "told, nothing
+                # linked" are different answers and the column says so.
+                "linked_to": self._linked_to_for(links.get(str(ln.id)), spo_links.get(str(ln.id))),
                 "decision_revision": (decided.get(str(ln.id)) or {}).get("revision_no"),
                 # The two compositions in the planning board's vocabulary. Both null on a
-                # line no active revision covers; `supply_proposed` also null on a revision
-                # frozen before the proposal was recorded (AC-D1).
+                # line no active revision covers; `supply_decided` STAYS null there even
+                # with a saved draft (a draft is not a decision - `supply_saved` states
+                # that). `supply_proposed`, though, falls back to the DRAFT's own
+                # `proposed` when no active revision covers the line (D12, #573, captain
+                # ruling): a saved draft keeps the engine's suggestion at save time, so
+                # this page reads it the same way the board's own list view already does,
+                # until Confirm freezes a revision and the snapshot's `proposed_components`
+                # takes over. Also null on a revision frozen before the proposal was
+                # recorded (AC-D1), or a draft saved before this field existed.
                 "supply_decided": (decided.get(str(ln.id)) or {}).get("decided"),
-                "supply_proposed": (decided.get(str(ln.id)) or {}).get("proposed"),
+                "supply_proposed": (
+                    (decided.get(str(ln.id)) or {}).get("proposed")
+                    if str(ln.id) in decided
+                    else (
+                        self._supply_components(saved_entry.get("proposed"))
+                        if saved_entry and saved_entry.get("proposed")
+                        else None
+                    )
+                ),
+                # A SAVED (unconfirmed) decision on this line (D10). `None` on a line no
+                # draft covers, including one already confirmed into `decided` above - the
+                # promotion deletes the draft in the same write, so the two never overlap.
+                "supply_saved": (
+                    self._saved_components(saved_entry["decision"]) if saved_entry else None
+                ),
+                "saved_by": (saved_entry["saved_by"] or None) if saved_entry else None,
+                "saved_at": (
+                    saved_entry["saved_at"].isoformat()
+                    if saved_entry and saved_entry["saved_at"]
+                    else None
+                ),
+                "saved_stale": (
+                    self._saved_is_stale(saved_entry, ln) if saved_entry else False
+                ),
             })
         order_dt = so.order_date or (so.created_at.date() if so.created_at else date.today())
         agent_code, agent_label = self._agent_fields(so.sales_agent_id, agent_map)
@@ -591,6 +638,9 @@ class SalesOrderService:
                         "kind": link["kind"],
                         "document": link["document"],
                         "line_label": link["line_label"],
+                        # L4 (review round): the header id `links_for_rows` already resolves
+                        # for both kinds, so `document` can be a link rather than plain text.
+                        "purchase_order_id": link.get("purchase_order_id"),
                         "qty": link["qty"],
                         "location": link["location"],
                         # AC-P3-7: "arrives late" wherever the link is shown. Derived once,
@@ -611,6 +661,40 @@ class SalesOrderService:
                 )
         return out
 
+    def _spo_line_links(self, so: SalesOrder) -> dict[str, list[dict]]:
+        """The RETAIL half of AC-I9 / S7: every CRM SPO already pointed at one of this
+        order's lines, keyed by CORE line id.
+
+        `_line_links` above reads `projects.order_inquiry_links`, which hangs off an
+        order-inquiry row - a PROJECT concept a retail line has none of. The retail tick
+        (`spo_conversion_service.create`'s `so_line_ids`) is recorded only on the covering
+        SPO line's own `source_ref.so_coverage`, so this is the other reader: ONE call into
+        `spo_conversion_service.coverage_for_so_lines`, the SAME row scan the SPO planner's
+        own `taken_by` reads (S5), so the two surfaces can never name a different SPO for the
+        same line.
+        """
+        from app.services.scm.spo_conversion_service import coverage_for_so_lines
+
+        core_ids = [str(ln.id) for ln in so.lines]
+        return coverage_for_so_lines(self.db, core_ids)
+
+    @staticmethod
+    def _linked_to_for(
+        oi_links: Optional[list[dict]], spo_cover: Optional[list[dict]]
+    ) -> Optional[list[dict]]:
+        """AC-G5: a PROJECT line's order-inquiry links first, a RETAIL line's SPO coverage
+        after them - `None` only when NEITHER source has anything to say about the line.
+
+        `oi_links` is `None` for a line with no inquiry row at all (never combined with
+        `spo_cover` in that case, or a retail line's coverage would print under a `[]` that
+        implies an inquiry row exists); `[]` for one that has a row but no link yet - both
+        distinct from `None`, and the serializer above tells them apart.
+        """
+        spo_cover = spo_cover or []
+        if oi_links is None and not spo_cover:
+            return None
+        return (oi_links or []) + spo_cover
+
     @staticmethod
     def _supply_components(components) -> list[dict]:
         """A frozen composition in the board's own vocabulary (PLAN section 2).
@@ -618,12 +702,23 @@ class SalesOrderService:
         The components, never a sentence: the words are written once, on the screen
         (`supplyVocabulary.ts`), and composing them here would be a second implementation of
         the same vocabulary free to drift against the board's.
+
+        `source_location` falls back to `location` (D12, #573): a confirmed snapshot's
+        `proposed_components` (`_decided_lines`) and a saved decision's own raw components
+        (`_saved_components`) both already carry `source_location`, but a DRAFT's
+        `proposed` is stored exactly as the board's `BoardSource` wire shape names it -
+        `location`, never `source_location` - since it is the contribution's own `sources`
+        echoed back opaque. The fallback lets this one converter read either without a
+        second copy of it.
         """
         return [
             {
                 "kind": (component or {}).get("kind"),
                 "qty": str((component or {}).get("qty") or "0"),
-                "source_location": (component or {}).get("source_location"),
+                "source_location": (
+                    (component or {}).get("source_location")
+                    or (component or {}).get("location")
+                ),
                 "rung": (component or {}).get("rung"),
                 "donor_so_number": (component or {}).get("donor_so_number"),
             }
@@ -682,6 +777,104 @@ class SalesOrderService:
                 ),
             }
         return out
+
+    def _saved_lines(self, so: SalesOrder) -> dict[str, dict]:
+        """A SAVED-but-unconfirmed decision on each of this order's lines (D10, captain 3
+        Sep), keyed by CORE line id - the same key `_decided_lines` answers by, so a caller
+        can tell "confirmed" from "saved but not yet" without a third read.
+
+        Reads `projects.so_supply_decision_drafts` by the CORE `sales_order_id`, exactly the
+        predicate `project_line_draft_service.drafts_for_orders` uses for the planning
+        board: a save made there and a read made here name the same row. Confirm deletes the
+        draft it promotes inside its own transaction, so a line here never also answers in
+        `_decided_lines` - the two are the "not yet" and the "done" halves of one story.
+
+        ONE query for the whole order. The saver's name is resolved in it, never an id: the
+        page renders a person.
+        """
+        from app.models.project_so import SOSupplyDecisionDraft
+        from app.models.user import User
+
+        rows = (
+            self.db.query(SOSupplyDecisionDraft, User.name)
+            .outerjoin(User, User.id == SOSupplyDecisionDraft.saved_by)
+            .filter(SOSupplyDecisionDraft.sales_order_id == so.id)
+            .all()
+        )
+        return {
+            str(row.core_line_id): {
+                "decision": row.decision or {},
+                # D12 (#573): what the engine suggested when this was saved, in the
+                # board's `BoardSource` shape - see `SOSupplyDecisionDraft.proposed`.
+                "proposed": row.proposed,
+                "saved_by": name or "",
+                "saved_at": row.saved_at,
+                "line_snapshot": row.line_snapshot,
+            }
+            for row, name in rows
+        }
+
+    @staticmethod
+    def _saved_is_stale(saved_entry: dict, ln: SalesOrderLine) -> bool:
+        """Has this line's own facts moved since the draft was saved (AC-4.4)?
+
+        Delegates to `project_line_draft_service.is_stale` - the SAME predicate the
+        planning board judges a draft by, so this page and the board cannot disagree about
+        which saved line the numbers have moved under. Judged on the line's own outstanding
+        quantity and required date, never the proposal - see that function's own docstring
+        for why.
+        """
+        from app.services.project_line_draft_service import is_stale
+        from app.services.project_supply_service import _open_of
+
+        return is_stale(saved_entry.get("line_snapshot"), _open_of(ln), ln.required_date)
+
+    @staticmethod
+    def _saved_components(decision: dict) -> list[dict]:
+        """A SAVED decision's composition, in the same vocabulary `_supply_components`
+        states a confirmed one in (D10).
+
+        `decision` is the frontend's own `BoardDecision` JSON, stored opaque by
+        `project_line_draft_service` - the server reads nothing out of it there, and this
+        is the one place it is. A reserve row becomes a `reserve` component with its
+        location and quantity, a borrow row a `borrow` component, and a positive `buy_qty`
+        a `buy` component - the same three kinds `_apply_frozen`
+        (`project_fulfilment_board_service.py`) reads off a decision this shape, mirrored
+        rather than imported: that reader also builds `warehouse_ids`/`rows` state this
+        page has no use for.
+
+        An APPROVAL carries none of the three: `BoardLineDecisionPanel.save()` posts
+        `{verdict: "approved"}` alone when nothing was amended - the engine's own
+        suggestion IS the decision, and nothing was typed to state again - so this reads
+        `[]` for a saved line nobody amended. There is no suggestion-vs-decided split to
+        fall back to here, the way `supply_decided`/`supply_proposed` have one: a saved
+        line has not been confirmed into a snapshot that freezes a suggestion beside it.
+        """
+        raw: list[dict] = []
+        for component in decision.get("reserve") or []:
+            qty = _money(component.get("qty")) or Decimal(0)
+            if qty > 0:
+                raw.append({
+                    "kind": RESERVE,
+                    "qty": component.get("qty"),
+                    "source_location": component.get("location"),
+                    "rung": component.get("rung"),
+                })
+        for component in decision.get("borrow") or []:
+            qty = _money(component.get("qty")) or Decimal(0)
+            if qty > 0:
+                raw.append({
+                    "kind": BORROW,
+                    "qty": component.get("qty"),
+                    "source_location": (
+                        component.get("warehouse_code") or component.get("location")
+                    ),
+                    "donor_so_number": component.get("donor_so_number"),
+                })
+        buy_qty = _money(decision.get("buy_qty")) or Decimal(0)
+        if buy_qty > 0:
+            raw.append({"kind": BUY, "qty": decision.get("buy_qty")})
+        return SalesOrderService._supply_components(raw)
 
     def with_links(self, rows: list[dict]) -> list[dict]:
         """Attach each order's purchase-order claims, in ONE query for the whole page.
@@ -984,8 +1177,10 @@ class SalesOrderService:
             # The START of the delivery span the list prints - "what is due first", which is
             # the question that column is scanned with. In SQL over the SAME
             # `min(required_date)` the serializer prints, so the header's order and the cell
-            # cannot come apart. Null placement is Postgres's default, the same as the
-            # `order_date` sort beside it: an order no line has dated sorts last ascending.
+            # cannot come apart. Null placement is explicit, not Postgres's default: `_order_by`
+            # calls `nullslast()` on every sorted column in both directions, this one included,
+            # the same as the `order_date` sort beside it - an order no line has dated sorts
+            # last whichever way the column is read.
             "delivery_date_from": (
                 select(func.min(SalesOrderLine.required_date))
                 .where(SalesOrderLine.sales_order_id == SalesOrder.id)

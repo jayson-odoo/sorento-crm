@@ -26,6 +26,7 @@ vi.mock('../../_shared/services/fulfilmentPlanningService', () => ({
 }));
 
 import { CellStockTable } from './CellStockTable';
+import type { SupplyKind } from '../../_shared/lib/supplyVocabulary';
 import type {
   BoardCellLocation,
   CellStockTableHandle,
@@ -54,13 +55,19 @@ function renderTable(
   locations: BoardCellLocation[],
   groupNote?: string | null,
   taken?: Map<string, string>,
+  takenKinds?: Map<string, { kind: SupplyKind; qty: string }[]>,
 ) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
   });
   render(
     <QueryClientProvider client={client}>
-      <CellStockTable locations={locations} groupNote={groupNote} taken={taken} />
+      <CellStockTable
+        locations={locations}
+        groupNote={groupNote}
+        taken={taken}
+        takenKinds={takenKinds}
+      />
     </QueryClientProvider>,
   );
 }
@@ -98,6 +105,10 @@ describe('CellStockTable: the position, tabulated', () => {
       'SO qty',
       'SPO qty',
       'Available',
+      // LADDER v8 (R-K): what a SITE POOL row may give a project once the dealers' share is
+      // kept back. It sits beside Available because it is a reading OF Available, and it is
+      // the number the walk's own first step obeyed.
+      'Available for Project',
       'PO qty',
       'Taken',
     ]);
@@ -129,6 +140,10 @@ describe('CellStockTable: the position, tabulated', () => {
       '47009',
       '0',
       '-46531',
+      // D2 (captain, 3 Sep): an own location keeps no dealer share, so everything Available
+      // there is available to a project - the same signed figure, never the "-" this used
+      // to print, which read as missing data rather than as a rule that does not apply.
+      '-46531',
       '0',
       '0',
     ]);
@@ -139,6 +154,7 @@ describe('CellStockTable: the position, tabulated', () => {
       '1015',
       '9028',
       '500',
+      '-7513',
       '-7513',
       '0',
       '0',
@@ -188,7 +204,7 @@ describe('CellStockTable: the position, tabulated', () => {
 
     const cells = cellsOf('none');
     expect(cells[1]).toBe('No location');
-    expect(cells.slice(3)).toEqual(['-', '-', '-', '-', '-', '-']);
+    expect(cells.slice(3)).toEqual(['-', '-', '-', '-', '-', '-', '-']);
     expect(cells).not.toContain('0');
     // The phrase is gone from the table: it was the answer to a question this table no
     // longer asks (AC-B2).
@@ -526,6 +542,12 @@ describe('CellStockTable: the whole ladder, in sections', () => {
           so_qty: '0',
           spo_qty: '0',
           available_qty: '100',
+          // LADDER v8 (R-K): the SERVER states this per pool row - half of the 100 available,
+          // capped by the five pools' net. The table prints what it is given and computes
+          // nothing of its own here.
+          available_for_project: '50',
+          net: '500',
+          net_of: 'pools',
         }),
       ),
     ];
@@ -566,17 +588,176 @@ describe('CellStockTable: the whole ladder, in sections', () => {
     expect(group).toContain('Group subtotal');
     expect(group).toContain('40');
 
+    // The pool rows carry the set they net over (`net_of: 'pools'`), which is what the
+    // server sends and what names the section.
     const pool = [
-      ...screen.getByTestId('stock-subtotal-site_pool').querySelectorAll('td'),
+      ...screen.getByTestId('stock-subtotal-pools').querySelectorAll('td'),
     ].map((entry) => entry.textContent ?? '');
     expect(pool).toContain('Site pool subtotal');
     expect(pool).toContain('500');
+    // AC-2.6b: the subtotal's own Available for Project is the share of the pool's NET -
+    // half of 500 - and not a sum of the rows above it, exactly as Available is not.
+    expect(
+      screen.getByTestId('stock-subtotal-available-for-project-pools').textContent,
+    ).toBe('250');
 
     const footer = [...screen.getByRole('table').querySelectorAll('tfoot td')].map(
       (entry) => entry.textContent ?? '',
     );
     expect(footer).toContain('Total');
     expect(footer).toContain('580');
+    // D2 (captain, 3 Sep): the TOTAL's own "Available for Project" is the SUBTOTALS added
+    // up - own 40, group 40, and the pool's own share of its net, 250 - never a sum of the
+    // pool ROWS (which summed to "400" above a subtotal reading "250", the round-3 nit).
+    expect(screen.getByTestId('stock-total-available-for-project').textContent).toBe(
+      '330',
+    );
+  });
+
+  /**
+   * Nit (code review round 3 batch 2), the case that actually catches a naive `sumOf`: two
+   * pool rows whose OWN `available_for_project` figures (150 and 250, summing to 400) do
+   * not sum to the pool's own net-based allowance (`availableForProject(400, 400, 50)` =
+   * 200) - the exact "Total 400 above Subtotal 200" the finding named. `ladder()`'s five
+   * pool rows happen to sum to the same number the formula gives (5 x 50 = 250 = the
+   * subtotal), which is why that test alone would not have caught this.
+   */
+  it('does not sum the pool rows for the total: two rows summing to 400 still total 200', () => {
+    renderTable([
+      position({ where: 'own', qty_on_hand: '40', available_qty: '40' }),
+      position({
+        location: 'BRW',
+        warehouse_id: 'wh-p0',
+        where: 'site_pool',
+        qty_on_hand: '300',
+        so_qty: '0',
+        spo_qty: '0',
+        available_qty: '300',
+        available_for_project: '150',
+        net: '400',
+        net_of: 'pools',
+      }),
+      position({
+        location: 'MWH',
+        warehouse_id: 'wh-p1',
+        where: 'site_pool',
+        qty_on_hand: '100',
+        so_qty: '0',
+        spo_qty: '0',
+        available_qty: '100',
+        available_for_project: '250',
+        net: '400',
+        net_of: 'pools',
+      }),
+    ]);
+
+    expect(
+      screen.getByTestId('stock-subtotal-available-for-project-pools').textContent,
+    ).toBe('200');
+    // D2: the own section's own subtotal (40) rides with it, and the pool ROWS still do not.
+    expect(screen.getByTestId('stock-total-available-for-project').textContent).toBe(
+      '240',
+    );
+    // S4 (fix round 5): Available reads the SAME way now - own's 40 plus the pool
+    // SUBTOTAL's own net-based 400, never the pool ROWS' own 300 + 100 = 400 (which, on
+    // THIS fixture, happens to equal the net anyway - the discriminating case is the pool
+    // subtotal test right below, where the net and the row sum genuinely differ).
+    expect(screen.getByTestId('stock-total-available').textContent).toBe('440');
+  });
+
+  /**
+   * S4 (captain ruling, fix round 5): the case that actually catches Available summing its
+   * ROWS instead of its SECTION SUBTOTALS - a pool whose net (400) does not equal what its
+   * own two rows add up to (300 + 200 = 500, a location this cell drew from was left off
+   * the rows the server listed here). Available for Project already summed subtotals; this
+   * pins Available doing the same, so the two Total columns cannot disagree outside a pool.
+   */
+  it('does not sum the pool rows for the Available total either: rows summing to 500 still total 440', () => {
+    renderTable([
+      position({ where: 'own', qty_on_hand: '40', available_qty: '40' }),
+      position({
+        location: 'BRW',
+        warehouse_id: 'wh-p0',
+        where: 'site_pool',
+        qty_on_hand: '300',
+        so_qty: '0',
+        spo_qty: '0',
+        available_qty: '300',
+        available_for_project: '150',
+        net: '400',
+        net_of: 'pools',
+      }),
+      position({
+        location: 'MWH',
+        warehouse_id: 'wh-p1',
+        where: 'site_pool',
+        qty_on_hand: '200',
+        so_qty: '0',
+        spo_qty: '0',
+        available_qty: '200',
+        available_for_project: '250',
+        net: '400',
+        net_of: 'pools',
+      }),
+    ]);
+
+    expect(screen.getByTestId('stock-subtotal-available-pools').textContent).toBe('400');
+    expect(screen.getByTestId('stock-total-available').textContent).toBe('440');
+  });
+
+  /**
+   * D2, captain 3 Sep. "Available for Project" used to print "-" on every row that is not a
+   * site pool, and a dash in a numeric column reads as missing data rather than as a rule
+   * that does not apply. Outside a site pool nothing is kept back for dealers, so the
+   * answer is simply the row's own Available - signed, negative included.
+   */
+  it('prints Available as Available for Project on every row that keeps no dealer share', () => {
+    renderTable(ladder());
+
+    // The own location: 40 available, 40 available to a project.
+    expect(cellsOf('BRW-BB')[6]).toBe('40');
+    expect(cellsOf('BRW-BB')[7]).toBe('40');
+    // A group sibling, the same rule.
+    expect(cellsOf('MWH-BB')[6]).toBe('10');
+    expect(cellsOf('MWH-BB')[7]).toBe('10');
+    // And the site pool keeps the share formula it always had.
+    expect(cellsOf('BRW')[7]).toBe('50');
+
+    // The GROUP subtotal prints its own Available too, and the site pool subtotal does not.
+    expect(
+      screen.getByTestId('stock-subtotal-available-for-project-group').textContent,
+    ).toBe(screen.getByTestId('stock-subtotal-available-group').textContent);
+    expect(
+      screen.getByTestId('stock-subtotal-available-for-project-pools').textContent,
+    ).toBe('250');
+  });
+
+  it('prints a negative Available for Project rather than a dash on an oversold group', () => {
+    renderTable([
+      // The captain's own numbers: BRW-IB oversold by 23,458 inside an IB group netting
+      // -17,912. Both used to read "-" in this column.
+      position({
+        location: 'BRW-IB',
+        where: 'own',
+        qty_on_hand: '478',
+        so_qty: '23936',
+        spo_qty: '0',
+        available_qty: '-23458',
+        net: '-17912',
+        net_of: 'IB',
+      }),
+    ]);
+
+    expect(cellsOf('BRW-IB')[7]).toBe('-23458');
+    // The subtotal reads the SET's net, exactly as its own Available cell does: the figure
+    // covers every IB location, listed here or not. There is no Total row on a one-location
+    // table - "one location IS its own total" - so the subtotal is the whole of it.
+    expect(
+      screen.getByTestId('stock-subtotal-available-for-project-IB').textContent,
+    ).toBe('-17912');
+    expect(
+      screen.getByTestId('stock-subtotal-available-IB').textContent,
+    ).toBe('-17912');
   });
 
   /**
@@ -586,9 +767,12 @@ describe('CellStockTable: the whole ladder, in sections', () => {
   it('shows what a pool holds even when nothing was drawn from it', () => {
     renderTable(ladder(), null, new Map([['BRW', '71']]));
 
-    expect(cellsOf('BRW')[7]).toBe('0');
-    expect(cellsOf('BRW')[8]).toBe('71');
-    expect(cellsOf('MWH')[8]).toBe('0');
+    // Available for Project, PO qty, Taken - the server's own share figure, then the two
+    // columns the new one pushed along.
+    expect(cellsOf('BRW')[7]).toBe('50');
+    expect(cellsOf('BRW')[8]).toBe('0');
+    expect(cellsOf('BRW')[9]).toBe('71');
+    expect(cellsOf('MWH')[9]).toBe('0');
   });
 });
 
@@ -641,6 +825,50 @@ describe('CellStockTable: PO qty and Taken', () => {
 
     expect(screen.getByTestId('stock-taken-BRW-BB').textContent).toBe('0');
     expect(screen.getByTestId('stock-taken-BRW').textContent).toBe('0');
+  });
+
+  /**
+   * S3b (R-J): a location this cell draws on from more than one KIND - a Reserve off the
+   * floor and a borrow, say - gets a pill per part under the Taken number; a location drawn
+   * on by exactly one kind shows the number alone, unchanged.
+   */
+  it('shows a pill per kind under Taken for a location drawn on by two kinds, and the number alone for one', () => {
+    renderTable(
+      [
+        position({ location: 'DC1-BB', warehouse_id: 'wh-1', where: 'group' }),
+        position({ location: 'MWH-BB', warehouse_id: 'wh-2', where: 'group' }),
+      ],
+      null,
+      new Map([
+        ['DC1-BB', '25'],
+        ['MWH-BB', '10'],
+      ]),
+      new Map<string, { kind: SupplyKind; qty: string }[]>([
+        [
+          'DC1-BB',
+          [
+            { kind: 'own', qty: '15' },
+            { kind: 'borrow_other', qty: '10' },
+          ],
+        ],
+        ['MWH-BB', [{ kind: 'own', qty: '10' }]],
+      ]),
+    );
+
+    // Two kinds: the number, plus one pill per part, under it. At jsdom's own zero width
+    // only the first pill shows; the rest folds behind "+1", which opens the same popover
+    // every pill does and states the whole composition (the pattern every other adopting
+    // suite in this feature already documents).
+    expect(screen.getByTestId('stock-taken-DC1-BB').textContent).toBe('25');
+    const dc1Pills = within(screen.getByTestId('stock-taken-pills-DC1-BB'));
+    expect(dc1Pills.getByText('Own 15')).toBeInTheDocument();
+    fireEvent.click(dc1Pills.getByText('+1'));
+    const popover = screen.getByTestId('stock-taken-pills-DC1-BB-popover');
+    expect(within(popover).getByText('Borrow (other) 10')).toBeInTheDocument();
+
+    // One kind: the number alone, no pill row at all.
+    expect(screen.getByTestId('stock-taken-MWH-BB').textContent).toBe('10');
+    expect(screen.queryByTestId('stock-taken-pills-MWH-BB')).not.toBeInTheDocument();
   });
 });
 
@@ -1020,6 +1248,29 @@ describe('CellStockTable: the S3 jump handles', () => {
     act(() => ref.current?.jumpToDocument());
 
     expect(await screen.findByTestId('stock-set-expansion-pools')).toBeInTheDocument();
+  });
+
+  /**
+   * N2 (fix round 5). This section carries NO net (`falls back to the sum` above is the
+   * same shape), so a jump used to open EVERY row of it - and every open ledger's own
+   * section row is sticky under the table's header (D3), so several open at once stacked.
+   * Only the row the donor actually names may open.
+   */
+  it('opens only the ROW a donor jump names, not every row of its (net-less) section', async () => {
+    const ref = renderWithRef(
+      [
+        position({ location: 'MWH-BB', warehouse_id: 'wh-1', where: 'group' }),
+        position({ location: 'DC1-BB', warehouse_id: 'wh-2', where: 'group' }),
+        position({ location: 'WH3-BB', warehouse_id: 'wh-3', where: 'group' }),
+      ],
+      { donor: [{ soNumber: 'SO401624', location: 'DC1-BB' }] },
+    );
+
+    act(() => ref.current?.jumpToDonor());
+
+    expect(await screen.findByTestId('stock-expansion-DC1-BB')).toBeInTheDocument();
+    expect(screen.queryByTestId('stock-expansion-MWH-BB')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('stock-expansion-WH3-BB')).not.toBeInTheDocument();
   });
 
   it('falls back to the own section, never a crash, when the named location matches no row', () => {

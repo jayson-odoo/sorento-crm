@@ -1,8 +1,12 @@
 'use client';
 
 import * as React from 'react';
+import { Check, Undo2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
+import { PillOverflow, type PillItem } from '@/components/common/PillOverflow';
 import { bucketLabelText } from '../../_shared/lib/fulfilmentBoard';
+import { canQuickSave } from '../../_shared/lib/boardAmend';
 import { toMinor } from '../../_shared/lib/supplyComposition';
 import { BoardChangeTable } from './BoardChangeTable';
 import { BoardDecidedMarker, decidedRevisions } from './BoardDecidedMarker';
@@ -38,9 +42,13 @@ const DATE_COL = 'min-w-[150px]';
  * (the "Product" corner) has to beat a cell pinned on one, because with equal z-index the
  * winner is whichever the DOM happened to put last rather than whichever a reader expects.
  * Same rule, and the same reason, as the delivery-schedule matrix.
+ *
+ * Both tokens (css/config.reui.css) sit below --z-header/--z-sidebar: a pinned cell has to
+ * beat the columns scrolling under it, but never the app shell - the collapsed sidebar's
+ * hover flyout has to render over the frozen Product column, not under it.
  */
-const Z_PINNED = 'z-20';
-const Z_CORNER = 'z-30';
+const Z_PINNED = 'z-(--z-sticky-content)';
+const Z_CORNER = 'z-(--z-sticky-content-corner)';
 
 /**
  * A pinned cell has to be OPAQUE. `bg-destructive/10` is ninety percent transparent, so a
@@ -106,6 +114,8 @@ export function FulfilmentBoardMatrix({
   draft,
   annotations,
   onOpenCell,
+  onDecideMany,
+  onUndoMany,
 }: {
   dateBuckets: BoardDateBucket[];
   /** Whatever the vertical axis is: products, sales orders, customers or projects. */
@@ -124,6 +134,14 @@ export function FulfilmentBoardMatrix({
    */
   annotations?: Map<string, BoardChangeAnnotation[]>;
   onOpenCell: (cell: BoardCell) => void;
+  /**
+   * D15: a cell's own "save everything still eligible in this cell" icon posts through this -
+   * the same quiet-bulk path the board-wide "Save all suggested" button uses, one toast for
+   * the whole press.
+   */
+  onDecideMany: (keys: string[]) => Promise<{ saved: number; failed: number }>;
+  /** D15: the cell's own Undo, for a cell holding only drafted lines and nothing left to save. */
+  onUndoMany: (keys: string[]) => Promise<{ saved: number; failed: number }>;
 }) {
   // Keyed by the cell's ROW KEY, which is the item code on the product axis and an id on the
   // pivoted ones - two customers sharing a name must not share a row.
@@ -220,11 +238,23 @@ export function FulfilmentBoardMatrix({
                     )}
                   >
                     {cell ? (
-                      <>
+                      <div className="relative">
                         <BoardCellButton
                           cell={cell}
                           draft={draft}
                           onOpen={() => onOpenCell(cell)}
+                        />
+                        {/* D15: the cell's own save-everything / undo-everything icon, a
+                            SIBLING of the button rather than nested inside it - a button
+                            inside a button is invalid HTML the browser reflows out of it,
+                            which is why this is absolutely positioned in the cell's own
+                            corner instead. */}
+                        <BoardCellQuickAction
+                          cell={cell}
+                          bucketLabel={bucketLabelText(bucket.label)}
+                          draft={draft}
+                          onDecideMany={onDecideMany}
+                          onUndoMany={onUndoMany}
                         />
                         {/* What the re-uploaded book did to the lines in this cell
                             (AC-P3-2). A SIBLING of the button, never inside it: a table is
@@ -237,7 +267,7 @@ export function FulfilmentBoardMatrix({
                             <BoardChangeTable annotation={annotation} compact />
                           </div>
                         ))}
-                      </>
+                      </div>
                     ) : null}
                   </td>
                 );
@@ -278,10 +308,13 @@ function BoardCellButton({
   // the sales agent's ownership group, which holds none of this cell's demand - listing those
   // here would read "BRW-BB 42 · MWH-BB 0 · DC1-BB 0" on a grid whose whole job is to be
   // scanned. Their stock position is the drill-down's answer, not this strip's.
-  const strip = cell.locations
-    .filter((entry) => toMinor(entry.qty) > 0)
-    .map((entry) => `${entry.location ?? 'No location'} ${entry.qty}`)
-    .join(' · ');
+  const stripLocations = cell.locations.filter(
+    (entry) => toMinor(entry.qty) > 0,
+  );
+  const stripPills: PillItem[] = stripLocations.map((entry, index) => ({
+    key: `${entry.location ?? 'no-location'}-${index}`,
+    label: `${entry.location ?? 'No location'} ${entry.qty}`,
+  }));
   const orders = new Set(cell.contributions.map((entry) => entry.so_number))
     .size;
   // Confirmed in the DATABASE, not ticked in the draft: the `decided` badge below already
@@ -328,15 +361,24 @@ function BoardCellButton({
         <BoardDecidedMarker revisions={confirmedRevisions} />
       </span>
 
-      {/* The source strip. One entry per distinct location, because one cell legitimately
+      {/* The source strip. One pill per distinct location, because one cell legitimately
           spans several: the location is the line's own, and lines from different orders do
-          not have to agree about it (PLAN 13.7). */}
-      <span
-        className="block truncate text-[11px] text-muted-foreground"
-        title={strip}
-      >
-        {strip}
-      </span>
+          not have to agree about it (PLAN 13.7). S3b/R-J: pills, not a `·`-joined string, so
+          a narrow column folds the rest behind "+N" instead of truncating it away entirely. */}
+      {stripPills.length > 0 && (
+        <PillOverflow
+          items={stripPills}
+          ariaLabel="Locations"
+          testId={`cell-locations-${cell.row_key ?? cell.item_code}-${cell.bucket_key}`}
+          renderPopover={(items: PillItem[]) => (
+            <div className="space-y-1">
+              {items.map((item) => (
+                <p key={item.key}>{item.label}</p>
+              ))}
+            </div>
+          )}
+        />
+      )}
 
       {/* The supply bar, and the dominant kind in words under it. The words are there because
           a colour alone is not a label, and short because the column is 150px wide. */}
@@ -399,4 +441,78 @@ function BoardCellButton({
       </span>
     </button>
   );
+}
+
+/**
+ * A cell's own save-everything / undo-everything icon (D15), pinned to the cell's own corner.
+ *
+ * A SIBLING of `BoardCellButton`, never a child of it: the button already fills the `td`, and
+ * a button nested inside a button is invalid HTML the browser reflows out of - the same reason
+ * the change-annotation table beside it is a sibling too. `event.stopPropagation()` alone would
+ * not have been enough on its own: without the sibling structure the click still bubbles through
+ * an ancestor `<button>`'s own click handler once the browser has un-nested the markup.
+ *
+ * SAVE wins over UNDO when a cell holds both an eligible line and a drafted one (the fact sheet's
+ * own rule): the drafted line's own Undo is still reachable inside the dialog, and a cell-wide
+ * verb has to pick one action per press.
+ */
+function BoardCellQuickAction({
+  cell,
+  bucketLabel,
+  draft,
+  onDecideMany,
+  onUndoMany,
+}: {
+  cell: BoardCell;
+  bucketLabel: string;
+  draft: BoardDraft;
+  onDecideMany: (keys: string[]) => Promise<{ saved: number; failed: number }>;
+  onUndoMany: (keys: string[]) => Promise<{ saved: number; failed: number }>;
+}) {
+  const eligible = cell.contributions.filter((entry) => canQuickSave(entry, draft));
+  const drafted = cell.contributions.filter((entry) => Boolean(draft[entry.key]));
+
+  if (eligible.length > 0) {
+    const keys = eligible.map((entry) => entry.key);
+    return (
+      <Button
+        type="button"
+        mode="icon"
+        variant="ghost"
+        size="sm"
+        className="absolute end-1 top-1 z-10 size-6 rounded-full bg-background/90 shadow-sm"
+        title="Save cell as suggested"
+        aria-label={`Save ${cell.item_code} ${bucketLabel} as suggested`}
+        onClick={(event) => {
+          event.stopPropagation();
+          void onDecideMany(keys);
+        }}
+      >
+        <Check className="size-3.5" aria-hidden />
+      </Button>
+    );
+  }
+
+  if (drafted.length > 0) {
+    const keys = drafted.map((entry) => entry.key);
+    return (
+      <Button
+        type="button"
+        mode="icon"
+        variant="ghost"
+        size="sm"
+        className="absolute end-1 top-1 z-10 size-6 rounded-full bg-background/90 shadow-sm"
+        title="Undo"
+        aria-label={`Undo ${cell.item_code} ${bucketLabel}`}
+        onClick={(event) => {
+          event.stopPropagation();
+          void onUndoMany(keys);
+        }}
+      >
+        <Undo2 className="size-3.5" aria-hidden />
+      </Button>
+    );
+  }
+
+  return null;
 }

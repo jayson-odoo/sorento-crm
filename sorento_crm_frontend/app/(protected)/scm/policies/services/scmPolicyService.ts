@@ -62,6 +62,26 @@
  *    A PUT that OMITS `tba_date_from` keeps the active revision's value; it is optional on
  *    the body precisely so an older caller cannot silently reset it.
  *
+ *    Fulfilment feedback batch S1 (2 Sep, migration TBD) adds two more numbers to the SAME
+ *    row, reusing this same GET/PUT rather than a new route (plan: "whatever the 31 Aug
+ *    transfer_days field used"):
+ *      + immediate_window_days : int, 0-365, default 30. A line due within this many days
+ *          may take up to the pool's share allowance now; beyond it, whole-allowance-or-
+ *          nothing.
+ *      + pool_share_pct : int, 0-100, default 50. Percent of the site pool's free pile kept
+ *          back for dealers before a project line may take a share.
+ *
+ *    R-O (3 Sep, migration 464) adds two more to the same row and the same route:
+ *      + overdue_grace_days : int, 0-365, SHIPPED default 0. A document whose arrival has
+ *          passed counts as supply on its outstanding balance, landing `today + this`.
+ *      + overdue_dead_days : int, 0-365, SHIPPED default 0. Past this much lateness it
+ *          counts as nothing at all - 0 reproduces R31 exactly (captain's ruling, 3 Sep
+ *          2026); 14 / 90 is the RECOMMENDED pair once the grace is turned on.
+ *    Phase 1 (this file, pre-migration): the panel sends both on every save the same way it
+ *    always sends `transfer_days`; until the backend column exists the values are accepted
+ *    and silently dropped (Pydantic ignores unrecognised fields), and a GET that predates
+ *    the column omits both keys, so the panel seeds 30 / 50 itself.
+ *
  * Server-authoritative validation (mirrored client-side for UX) - AC-VAL-*,
  * AC-CFG-2, AC-SUP-2 - returns 422 via the global AppException handler.
  * ============================================================================

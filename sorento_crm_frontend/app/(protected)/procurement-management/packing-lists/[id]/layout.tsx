@@ -171,9 +171,12 @@ function PackingListToolbar({ id }: { id: string }) {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={beginEdit} disabled={!packingList}>
-                    <Edit className="size-4" />
-                    Edit
+                  <DropdownMenuItem
+                    onClick={() => exportWorkbook.mutate()}
+                    disabled={exportWorkbook.isPending || !packingList}
+                  >
+                    <Download className="size-4" />
+                    Download packing list
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => setImportOpen(true)}>
                     <Upload className="size-4" />
@@ -192,12 +195,9 @@ function PackingListToolbar({ id }: { id: string }) {
               </DropdownMenu>
             }
             primary={
-              <Button
-                onClick={() => exportWorkbook.mutate()}
-                disabled={exportWorkbook.isPending || !packingList}
-              >
-                <Download className="size-4" />
-                Download packing list
+              <Button onClick={beginEdit} disabled={!packingList}>
+                <Edit className="size-4" />
+                Edit
               </Button>
             }
           />
@@ -220,6 +220,7 @@ function PackingListToolbar({ id }: { id: string }) {
 function PackingListTabs({ id }: { id: string }) {
   const router = useRouter();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const { packingList, isLoading } = usePackingListRecord();
   const base = `/procurement-management/packing-lists/${id}`;
 
@@ -230,6 +231,10 @@ function PackingListTabs({ id }: { id: string }) {
   }, [pathname, base]);
 
   const lineCount = packingList?.shipment_lines?.length ?? 0;
+  // Tabs are routes, so the click must carry the list position (page/sort/search)
+  // the detail URL is holding, or the record pager falls back to "row 1" the
+  // moment a tab is clicked (it reads that query string, not local state).
+  const query = searchParams.toString();
 
   return (
     <Tabs value={active}>
@@ -239,7 +244,10 @@ function PackingListTabs({ id }: { id: string }) {
             key={key}
             value={key}
             disabled={isLoading}
-            onClick={() => router.push(segment ? `${base}/${segment}` : base)}
+            onClick={() => {
+              const target = segment ? `${base}/${segment}` : base;
+              router.push(query ? `${target}?${query}` : target);
+            }}
           >
             <Icon />
             <span>{title}</span>

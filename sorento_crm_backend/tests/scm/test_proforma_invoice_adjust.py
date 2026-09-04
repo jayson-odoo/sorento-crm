@@ -19,7 +19,7 @@ import uuid
 
 import pytest
 
-from app.models.scm import ContainerSize, ProformaInvoice, ProformaInvoiceLine
+from app.models.scm import ProformaInvoice, ProformaInvoiceLine
 from app.services.error_handler import AppException
 from app.services.scm import proforma_invoice_service as svc
 from tests._pg_fixture import pg_session
@@ -126,7 +126,9 @@ def test_the_supplier_figures_are_frozen_at_import():
 # --------------------------------------------------------------------------------- #
 
 
-def test_the_header_states_the_volume_against_a_65_cbm_40hq():
+def test_the_header_states_its_own_volume_only_not_a_container_fit():
+    """S5, ruling 1: the PI keeps its total cbm as a NUMBER; the capacity gauge (which
+    container, how full, over by how much) moved to the shipment payload."""
     with pg_session() as db:
         _seed_container_sizes(db)
         w = World(db)
@@ -135,11 +137,10 @@ def test_the_header_states_the_volume_against_a_65_cbm_40hq():
         out = svc.serialize(db, invoices[0])
 
         assert out["total_cbm"] == pytest.approx(69.36)
-        assert out["container_cbm"] == pytest.approx(65)
-        assert out["container_size_code"] == "40HQ"
-        assert out["fill_pct"] == pytest.approx(106.7, abs=0.1)
-        assert out["over_by_cbm"] == pytest.approx(4.36, abs=0.01)
         assert out["unmeasured_lines"] == 0
+        for key in ("container_cbm", "container_size_code", "fill_pct", "over_by_cbm",
+                    "container_size_id"):
+            assert key not in out, key
 
 
 def test_an_unmeasured_document_counts_its_lines_rather_than_reading_zero():
@@ -153,25 +154,6 @@ def test_an_unmeasured_document_counts_its_lines_rather_than_reading_zero():
 
         assert out["total_cbm"] is None
         assert out["unmeasured_lines"] == out["line_count"] > 0
-        assert out["fill_pct"] is None
-
-
-def test_the_container_size_is_changeable_on_the_invoice():
-    with pg_session() as db:
-        _seed_container_sizes(db)
-        w = World(db)
-        invoice = _apply_preloading(db, w)[0]
-        small = (
-            db.query(ContainerSize).filter(ContainerSize.code == "20GP").one()
-        )
-
-        out = svc.set_container_size(db, str(invoice.id), str(small.id))
-
-        assert out["container_size_code"] == "20GP"
-        assert out["container_cbm"] == pytest.approx(28)
-        # And back to the tenant default, which is what a cleared select means.
-        out = svc.set_container_size(db, str(invoice.id), None)
-        assert out["container_size_code"] == "40HQ"
 
 
 # --------------------------------------------------------------------------------- #
@@ -208,7 +190,7 @@ def test_adjusting_a_line_recomputes_its_volume_and_its_money():
         assert float(line.cbm_total) == pytest.approx(0.17 * 380)
         assert float(line.amount) == pytest.approx(250 * 380)
         assert out["total_cbm"] == pytest.approx(0.17 * 380)
-        assert out["over_by_cbm"] is None
+        assert "over_by_cbm" not in out
 
 
 def test_adjusting_stamps_who_and_when():

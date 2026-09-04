@@ -119,7 +119,56 @@ describe('FulfilmentPriorityPanel', () => {
       reorder_coverage_until: '2026-12-01',
       tba_date_from: DEFAULT_TBA,
       transfer_days: 0,
+      immediate_window_days: 30,
+      pool_share_pct: 50,
+      overdue_grace_days: 0,
+      overdue_dead_days: 0,
     });
+  });
+
+  it('renders the two overdue-grace fields and round-trips them (R-O, AC-O.5)', async () => {
+    hooks.useFulfilmentPriority.mockReturnValue({
+      data: { ...DATA, overdue_grace_days: 21, overdue_dead_days: 60 },
+      isLoading: false,
+      isError: false,
+    });
+    render(<FulfilmentPriorityPanel />);
+
+    // Seeded from what the GET states, not from the panel's own fallback.
+    expect(screen.getByLabelText(/Overdue grace \(days\)/i)).toHaveValue(21);
+    expect(screen.getByLabelText(/Overdue dead after \(days\)/i)).toHaveValue(60);
+
+    fireEvent.change(screen.getByLabelText(/Overdue grace \(days\)/i), {
+      target: { value: '7' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Save fulfilment priority/i }));
+
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalled());
+    expect(mutateAsync.mock.calls[0][0].overdue_grace_days).toBe(7);
+    expect(mutateAsync.mock.calls[0][0].overdue_dead_days).toBe(60);
+  });
+
+  it('seeds the overdue defaults (SHIPPED 0 / 0, captain\'s ruling 3 Sep 2026) when the GET predates migration 464', () => {
+    hooks.useFulfilmentPriority.mockReturnValue({ data: DATA, isLoading: false, isError: false });
+    render(<FulfilmentPriorityPanel />);
+
+    expect(screen.getByLabelText(/Overdue grace \(days\)/i)).toHaveValue(0);
+    expect(screen.getByLabelText(/Overdue dead after \(days\)/i)).toHaveValue(0);
+  });
+
+  it('blocks a save with an out-of-range overdue grace', () => {
+    hooks.useFulfilmentPriority.mockReturnValue({ data: DATA, isLoading: false, isError: false });
+    render(<FulfilmentPriorityPanel />);
+
+    fireEvent.change(screen.getByLabelText(/Overdue grace \(days\)/i), {
+      target: { value: '400' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Save fulfilment priority/i }));
+
+    expect(
+      screen.getByText(/Overdue grace \(days\) must be between 0 and 365/i),
+    ).toBeInTheDocument();
+    expect(mutateAsync).not.toHaveBeenCalled();
   });
 
   it('renders and saves the transfer-days field (AC-2.3)', async () => {

@@ -16,6 +16,10 @@ export interface ProductSupplierSourcingTerms {
   unit_cost?: number | string | null;
   currency?: string | null;
   is_primary_supplier?: boolean;
+  /** The supplier's own spelling of this product's code, read off a manual match on the
+   *  loading plan's Supplier codes tab (S4). Not a column here - the alias table is the
+   *  single writer, so this is filled by the backend from a join, never sent on write. */
+  supplier_item_code?: string | null;
 }
 
 export interface ProductSupplier extends ProductSupplierSourcingTerms {

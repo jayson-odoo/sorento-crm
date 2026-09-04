@@ -1,6 +1,10 @@
 # PLAN - Listing view memory (sticky sort + sticky filter)
 
-**Status:** Implemented on `fm/listing-view-memory` (pilot: Stock Inquiries). Browser evidence run pending - no free stack slot at hand-off; AC-E4 is covered by a listing-level vitest instead of a new Playwright spec (repo standing order).
+**Status:** Implemented on `fm/listing-view-memory` (pilot: Stock Inquiries). Rolled out to SCM
+Sales Orders on `feat/scm-sales-orders-view-memory`, 3 Sep 2026 (section 8 below) - vitest +
+agent-browser evidence run done. Two pre-existing bugs the rollout exposed (null order_date
+sort order, a no-op customer filter) were fixed in the same lane as a second commit; see
+section 8.
 **Classification:** CORE - `public` schema, no new table, no migration
 **UAC (the contract):** `documentation/plans/listings/listing-view-memory-acceptance-criteria.md`
 **Pilot listing:** Procurement Management -> Stock Inquiries
@@ -246,3 +250,111 @@ written today:
 
 Scope (sticky sort + sticky filter, no segments) and rollout (Stock Inquiries pilot) were
 decided on the design note at `.lavish/list-view-memory.html`.
+
+## 8. Rollout: SCM Sales Orders (3 Sep 2026)
+
+Second listing, one line each per §4.3: `app/(protected)/scm/sales-orders/components/
+SalesOrdersGrid.tsx` (the one grid behind both `/scm/sales-orders` and the sales-agent
+record's Sales orders tab) and `useSalesOrders` (`app/(protected)/scm/hooks/useSalesOrders.ts`)
+widened with the same `enabled?: boolean` gate `useStockInquiries` carries, kept OUT of the
+query key.
+
+**Shipped default sort changed alongside the rollout.** Latest Document date (`order_date`)
+first, replacing the implicit `created_at desc` fallback - the captain's call, so a buyer lands
+on what came in most recently rather than on insertion order. No backend change: `order_date`
+was already a sortable column (`_order_by` in `app/services/scm/sales_order_service.py`).
+
+**Blob shape**, `filtersVersion: 2` (bumped from 1 once the customer axis below moved to
+`customer_code`, so an older stored blob is discarded rather than silently read as empty):
+
+```ts
+type SalesOrdersFilters = {
+  status?: string; priority?: string; source?: string;
+  date_from?: string; date_to?: string; customer_code?: string;
+  sales_agent_id?: string; demand_class?: string; outstanding?: true;
+};
+```
+
+Nine `useState` filters collapsed into this one blob, applied through a single `applyFilters`
+merge helper (mirrors AC-C2's Clear contract: an empty selection stores `null`, not an empty
+object). The existing "reset page on filter change" effect - previously a nine-value dependency
+array - is now just `[searchQuery]`; `applyFilters`/`clearFilters` reset the page themselves.
+
+**Pin vs remembered view.** The grid is also rendered pinned to one sales agent
+(`salesAgentId` prop, `listingKey="master_data.sales_agents.view::sales-orders"` - a stable key,
+not the per-agent route). A stored `sales_agent_id` from the UNPINNED list must never leak into
+a pinned agent's own tab: the pin wins in `effectiveAgentId` as before, and the derived
+`agentFilter` is forced to `''` whenever `pinnedToAgent`, so the stored value never reaches the
+chip label either.
+
+**Chip label.** `activeSummary.label` joins the active axes in plain words - the status
+(`salesOrderStatusLabel`), priority, source, type, an `Ordered` date range (`Dates D/M/Y to
+D/M/Y`), the customer's name and the agent's name resolved from `useCustomerOptions` /
+`useSalesAgentOptions`, and `Outstanding qty`. An axis whose name has not resolved yet (options
+still loading) is left out rather than shown blank or as a raw code/id.
+
+**`useListStateFromUrl` narrowed.** This grid already restores list state from the detail
+page's Back-to-list URL (S3-01, unrelated to this feature). Sort and every filter used to be
+part of that restore; now only pagination and search are - sort and filters come from the
+remembered view, which already holds what was active when the row was clicked (the debounced
+write races navigation only in the accepted "lost on fast navigation away" case, PLAN §6).
+
+**Tests.** `SalesOrdersGrid.viewMemory.test.tsx` mirrors the pilot's harness (real
+`useListingViewPreferences`, stubbed transport, stubbed `useSalesOrders` and option hooks): the
+gated single fetch (AC-B2/B3), the chip's plain-words label with no raw id (AC-C1), a
+`filtersVersion: 0` blob discarded while the sort survives (AC-B4), a changed filter and a
+changed sort each debounce-writing (AC-B5/B6) with no `page`/`query` key (AC-D1/D2), the chip's
+Clear (AC-C2), and the pinned-agent case above. The seven pre-existing
+`SalesOrdersList.*.test.tsx` / `SalesOrdersGrid.test.tsx` suites needed one added mock each
+(`listColumnPreferencesService`, resolving `config: null` fast) so their real
+`useListingViewPreferences` fetch unblocks the gate; no assertion in them was touched.
+
+**Found AND fixed in this rollout, as a second commit (both pre-existing, and each one defeats
+the feature just shipped - a null-dated row on top of "latest first"; a remembered customer
+filter that filters nothing):**
+
+- **`_order_by`'s `order_date` sort had no NULLS LAST.** Postgres defaults `ORDER BY ... DESC` to
+  NULLS FIRST, so any row with a null `order_date` sorted to the very top of the new default
+  view regardless of how recent it actually is - even though the same row's serializer already
+  falls back to `created_at` for DISPLAY (`sales_order_service.py` line ~481). Verified against
+  the dev DB: exactly one row out of 14,210 sales orders has a null `order_date` (a smoke-test
+  fixture, `AC-SMOKE-SO-1`), so the practical blast radius was one row - but a manually created
+  SO that skips the create-time default would hit it too, and a user who clicks the Document
+  date header to sort manually already hit it, pre-dating this rollout. Fixed test-first:
+  `_order_by` now returns `col.desc().nullslast()` / `col.asc().nullslast()`, tie-break by `id`
+  unchanged. `tests/scm/test_sales_order_list_filters.py::
+  test_order_date_desc_puts_a_null_dated_order_last_not_first` seeds three orders (one undated)
+  and asserts the undated row is last in BOTH directions; confirmed red without the fix (the
+  desc case put it first), green with it. The pre-existing
+  `test_the_sort_is_always_made_total_by_id` needed its own assertion widened to
+  `NULLS LAST`.
+- **The Customer filter had been a no-op since 8 Aug 2026.** `getSalesOrders` in
+  `app/(protected)/scm/services/salesOrderService.ts` sent the selected customer as
+  `customer_id`, but the route (`app/api/v1/scm/sales_orders.py`) declares the param
+  `customer_code`, and `useCustomerOptions`' option value IS a customer code (never an id) - so
+  every customer filter on this list silently matched everything (`getSalesOrders({customerId:
+  'C001', ...})` produced `?customer_id=C001`, which the route does not read at all). The
+  SAME mismatch was independently present in `salesOrdersListParamsFromUrl` (the detail page's
+  prev/next pager rebuilds its list query from `params.filters.customer_id`, but the URL the
+  page itself writes carries `customer_code` - so the pager's own reconstruction never saw a
+  customer filter either). Fixed both call sites to use `customer_code`; the FE's opaque
+  `SalesOrdersFilters` blob key was renamed `customer_id` -> `customer_code` to match, with
+  `FILTERS_VERSION` bumped 1 -> 2 so a blob written under the old key is discarded rather than
+  silently read as empty (no real user is on v1 yet - this branch is unmerged - so the bump is
+  precautionary, not a backfill). `salesOrderService.test.ts` gained a request-URL assertion;
+  `SalesOrdersGrid.viewMemory.test.tsx`'s stored-config fixtures moved to `customer_code` /
+  `filtersVersion: 2`. Re-verified live: picking UNIJOH DEVELOPMENT SDN BHD narrowed the grid
+  from 14,210 rows to 131, all that customer.
+
+**Browser evidence (agent-browser, 1280x800):** signed in, sidebar Supply Chain -> Orders ->
+Sales Orders (session `orders-vm`). Default load sorted by Document date descending
+(`sort=order_date&dir=desc`, one request, `AC-SMOKE-SO-1`'s null date no longer at the top after
+the fix). Set status=Outstanding and customer=UNIJOH via the Filters popover; chip read "Clear
+filter: Outstanding, UNIJOH DEVELOPMENT SDN BHD (PROJECT)" - no raw code. Opened a row, "Back to
+sales orders" returned to the list with the chip and the filtered request still applied. A bare
+reload of `/scm/sales-orders` (no query string) still carried the same chip and exactly one
+fetch, already filtered. Clear on the chip returned the grid to the default sort with no filter
+and no chip. Opened a sales-agent record's Sales orders tab: loaded with the default sort, the
+pinned agent id, and none of the main list's remembered filters or agent column/filter. Second
+pass (session `orders-vm2`, after the customer-filter fix): total dropped from 14,210 to 131 on
+picking UNIJOH, with `customer_code=300-U003` on the wire and every visible row that customer's.

@@ -181,12 +181,23 @@ class InboundShipment(Base, CompanyScopedMixin):
     china_freight_cost = Column(Numeric(15, 2), nullable=True)
     insurance_rate = Column(Numeric(15, 4), nullable=True)
 
+    #: Which box this container is being loaded into. NULL means the tenant's default size,
+    #: resolved on read rather than copied in (S5, migration 465). Capacity is a property of
+    #: the CONTAINER, not any one proforma invoice that fed it - this column used to live on
+    #: `scm.proforma_invoice`, one level too low: a packing list routinely consolidates
+    #: several PIs, and the box only has one size however many of them are inside it.
+    container_size_id = Column(
+        UUID(as_uuid=False), ForeignKey("scm.container_size.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
     # Every ETA revision writes an `audit_logs` row with old_values/new_values,
     # which is what replaces a revisions table (D5).
     __audit_track__ = True
 
     supplier = relationship("Supplier", back_populates="inbound_shipments")
     attachment = relationship("Attachment")
+    container_size = relationship("ContainerSize")
     # Order matters: delete allocations before lines (allocations can reference lines)
     spo_allocations = relationship(
         "SPOAllocation",
@@ -331,6 +342,11 @@ class InboundShipmentLine(Base, CompanyScopedMixin):
     # The supplier's own note on the line (`备注`). Kept separate from the discrepancies the
     # system derives, which are computed at read time and never stored.
     remarks = Column(Text, nullable=True)
+    # The supplier's own wording for the item (migration 466, S9), copied off
+    # `proforma_invoice_line.description` at convert. NULL on a line drafted before this
+    # column existed or uploaded from a packing list with no description column of its own -
+    # both the export and the grid read the product's name instead when this is unset.
+    description = Column(Text, nullable=True)
 
     # ---- What the container workbook measures the line by -------------------
     # Read off the supplier's proforma / packing list, editable on the packing list

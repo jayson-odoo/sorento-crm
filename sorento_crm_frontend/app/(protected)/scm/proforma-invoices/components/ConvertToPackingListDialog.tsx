@@ -14,19 +14,22 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { useContainerSizes } from '../../hooks/useFulfilment';
 import { useProformaInvoice } from '../../hooks/useProformaInvoices';
-import { EM_DASH, fmtQty } from '../../lib/format';
+import { EM_DASH, fmtQty, fmtTrimmedDecimal } from '../../lib/format';
 
 /**
- * How much of THIS invoice goes onto a container (AC-F10, Q9).
+ * How much of THIS invoice goes onto a container (AC-F10, Q9), and which container (S5,
+ * ruling 1).
  *
- * One question: each line's REMAINING quantity, pre-filled, because the normal case is
- * "all of what is left" and the split is the exception that has to be typed. A convert
- * always opens a NEW draft packing list - "add to an existing draft" was dropped
- * everywhere (captain, Q6), so there is nothing to choose before the quantities.
- *
- * This is the PI DETAIL's surface only: placing part of an invoice is a deliberate act
- * made on one document. The list converts the whole selection at once, no dialog (R15).
+ * The per-line quantity question is the PI DETAIL's own: placing part of an invoice is a
+ * deliberate act made on one document, so the list converts its whole selection at once and
+ * never sees that part of the body (R15, `single` stays null for a multi-invoice convert).
+ * The Container size select is common to both surfaces, because both are the SAME write
+ * (`convert_to_draft_shipment`) and the box being loaded is a property of the shipment
+ * either way.
  */
 export function ConvertToPackingListDialog({
   open,
@@ -39,18 +42,39 @@ export function ConvertToPackingListDialog({
   onOpenChange: (next: boolean) => void;
   invoiceIds: string[];
   pending?: boolean;
-  onConvert: (args: { lineQuantities: Record<string, number> }) => void;
+  onConvert: (args: {
+    lineQuantities: Record<string, number>;
+    containerSizeId: string | null;
+  }) => void;
 }) {
   const single = invoiceIds.length === 1 ? invoiceIds[0] : null;
   const { data: invoice, isLoading } = useProformaInvoice(open ? single : null);
   const [quantities, setQuantities] = useState<Record<string, string>>({});
+  const containerSizes = useContainerSizes();
+  const [containerSizeId, setContainerSizeId] = useState<string | null>(null);
 
   // Re-read on every open: a remainder typed last time describes an invoice that has since
-  // moved, and a stale figure here places the wrong quantity silently.
+  // moved, and a stale figure here places the wrong quantity silently. The size resets to
+  // the tenant default too - a size chosen for a previous convert says nothing about this
+  // one.
   useEffect(() => {
     if (!open) return;
     setQuantities({});
+    setContainerSizeId(null);
   }, [open]);
+
+  const defaultSize = useMemo(
+    () => (containerSizes.data ?? []).find((s) => s.is_default) ?? null,
+    [containerSizes.data],
+  );
+  const containerSizeOptions = useMemo(
+    () =>
+      (containerSizes.data ?? []).map((s) => ({
+        value: s.id,
+        label: `${s.code} - ${fmtTrimmedDecimal(s.cbm, 2)} cbm${s.is_default ? ' (default)' : ''}`,
+      })),
+    [containerSizes.data],
+  );
 
   const placeable = useMemo(
     () => (invoice?.lines ?? []).filter((line) => (line.remaining_qty ?? 0) > 0),
@@ -89,7 +113,7 @@ export function ConvertToPackingListDialog({
       if (Number.isNaN(parsed)) continue;
       lineQuantities[line.id] = parsed;
     }
-    onConvert({ lineQuantities });
+    onConvert({ lineQuantities, containerSizeId });
   };
 
   const invalid = placeable.some((line) => {
@@ -112,6 +136,25 @@ export function ConvertToPackingListDialog({
         </DialogHeader>
 
         <DialogBody className="space-y-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="convert-container-size" className="text-xs">
+              Container size
+            </Label>
+            <SearchableSelect
+              id="convert-container-size"
+              size="sm"
+              value={containerSizeId ?? ''}
+              onChange={(v: string) => setContainerSizeId(v || null)}
+              options={containerSizeOptions}
+              placeholder={
+                defaultSize
+                  ? `${defaultSize.code} - ${fmtTrimmedDecimal(defaultSize.cbm, 2)} cbm (default)`
+                  : 'Default size'
+              }
+              clearable
+            />
+          </div>
+
           {single && isLoading ? (
             <p className="flex items-center gap-2 text-xs text-muted-foreground">
               <LoaderCircle className="size-3.5 animate-spin" /> Reading the invoice...

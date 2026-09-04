@@ -9,6 +9,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import or_, and_, func, exists, false
 from decimal import Decimal
+from app.utils.chunking import chunked
 from app.models.order import Order, OrderStatus, Customer, OrderLine, Transporter
 from app.models.product import Product
 from app.models.inventory import Warehouse
@@ -2353,10 +2354,6 @@ class OrderService:
                     if header:
                         row_data[header] = value
                 yield row_idx, row_data
-
-        def chunked(values, size):
-            for i in range(0, len(values), size):
-                yield values[i:i + size]
 
         def normalize_order_number(value):
             if value is None:

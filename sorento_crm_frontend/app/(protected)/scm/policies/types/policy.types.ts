@@ -163,6 +163,24 @@ export interface FulfilmentPriorityPolicy {
    *  free reads a realistic day rather than the same day as an own-location one (31 Aug
    *  ruling R-B, migration 451). Default 0: no charge until a tenant configures one. */
   transfer_days: number;
+  /** How many days out a line counts as "immediate" for the site pool's share step (R-B,
+   *  2 Sep ruling). A line due within this many days may take up to the pool's share
+   *  allowance now; beyond it, a line takes the whole allowance or nothing. 0-365,
+   *  default 30. */
+  immediate_window_days: number;
+  /** Percent of the site pool's free pile kept back for dealers before a project line may
+   *  take a share (R-B). The remaining `100 - pool_share_pct` is what a line may draw on,
+   *  bounded by the five-pool net. 0-100, default 50. */
+  pool_share_pct: number;
+  /** How long a document whose arrival has passed is assumed to take, on its outstanding
+   *  balance (R-O, 3 Sep ruling, migration 464). It counts as supply landing `today + this`,
+   *  so a line due before that day gets nothing from it. 0-365, SHIPPED default 0 (captain's
+   *  ruling, 3 Sep 2026) - 14 is the recommended value once the grace is turned on. */
+  overdue_grace_days: number;
+  /** How late a document may be before it counts as nothing at all (R-O). Past this the
+   *  ladder ignores it entirely, which is R31 kept for the dead. 0-365, SHIPPED default 0 -
+   *  0 reproduces R31 exactly; 90 is the recommended value once the grace is turned on. */
+  overdue_dead_days: number;
   /** False only on a database that has never activated a fulfilment-priority policy. */
   exists: boolean;
 }

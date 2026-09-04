@@ -286,6 +286,7 @@ def _spo_rows(db: Session, product_id: str, *, open_rows: bool) -> list[dict]:
         SELECT sa.spo_number,
                s.id::text AS shipment_id,
                s.shipment_number,
+               s.shipping_container_number,
                w.warehouse_code,
                s.estimated_arrival_date,
                s.actual_arrival_date,
@@ -302,8 +303,9 @@ def _spo_rows(db: Session, product_id: str, *, open_rows: bool) -> list[dict]:
           AND {where}
           {("AND " + prod_scope) if prod_scope else ""}
           {("AND " + wh_scope) if wh_scope else ""}
-        GROUP BY sa.spo_number, s.id, s.shipment_number, w.warehouse_code,
-                 s.estimated_arrival_date, s.actual_arrival_date, s.shipment_status
+        GROUP BY sa.spo_number, s.id, s.shipment_number, s.shipping_container_number,
+                 w.warehouse_code, s.estimated_arrival_date, s.actual_arrival_date,
+                 s.shipment_status
         {order}
     """
     rows = (
@@ -316,6 +318,7 @@ def _spo_rows(db: Session, product_id: str, *, open_rows: bool) -> list[dict]:
             "spo_number": r["spo_number"],
             "shipment_id": r["shipment_id"],
             "shipment_number": r["shipment_number"],
+            "container_number": r["shipping_container_number"],
             "warehouse_code": r["warehouse_code"],
             "qty": _f(r["qty"]),
             "received": _f(r["received"]),

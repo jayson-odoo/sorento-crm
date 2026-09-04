@@ -47,6 +47,7 @@ vi.mock('../../_shared/services/fulfilmentPlanningService', () => ({
 }));
 
 import { BoardCellBreakdownDialog, sourceAt } from './BoardCellBreakdownDialog';
+import { suggestedDecisionFor } from '../../_shared/lib/boardAmend';
 import { LADDER_VERSION } from '../../_shared/lib/supplyVocabulary';
 import {
   buildBoard,
@@ -110,7 +111,22 @@ function renderDialog(
   freeStock: Record<string, string> = {},
   draft: BoardDraft = {},
 ) {
+  const cell = cellOf(lines, freeStock);
   const onDecide = vi.fn();
+  // D15: the same quiet-bulk path the panel wires up for real, standing in here for it - each
+  // key's own suggestion, composed off THIS cell's contributions, posted through the same
+  // `onDecide` every test already reads. A mock that merely forwarded keys without a
+  // composition would break every existing "Approve selected" assertion on `call[1]`.
+  const onDecideMany = vi.fn(async (keys: string[]) => {
+    let saved = 0;
+    for (const key of keys) {
+      const contribution = cell.contributions.find((entry) => entry.key === key);
+      if (!contribution) continue;
+      onDecide(key, suggestedDecisionFor(contribution));
+      saved += 1;
+    }
+    return { saved, failed: keys.length - saved };
+  });
   const onClose = vi.fn();
   // A client is needed even here (nothing in this describe block opens a query itself): every
   // item-flag chip now carries a Proof button (`ClassificationProofPopover`), and `useQuery`
@@ -121,15 +137,16 @@ function renderDialog(
   render(
     <QueryClientProvider client={client}>
       <BoardCellBreakdownDialog
-        cell={cellOf(lines, freeStock)}
+        cell={cell}
         bucketLabel="31 Aug 2026"
         draft={draft}
         onDecide={onDecide}
+        onDecideMany={onDecideMany}
         onClose={onClose}
       />
     </QueryClientProvider>,
   );
-  return { onDecide, onClose };
+  return { onDecide, onDecideMany, onClose };
 }
 
 /**
@@ -259,6 +276,7 @@ describe('BoardCellBreakdownDialog: the cell summary, at the top', () => {
           bucketLabel="31 Aug 2026"
           draft={{}}
           onDecide={vi.fn()}
+          onDecideMany={vi.fn()}
           onClose={vi.fn()}
         />
       </QueryClientProvider>,
@@ -443,8 +461,18 @@ describe('BoardCellBreakdownDialog: the table', () => {
     // SECTION 2'S word for the rung, off `SHORT_LABELS` - the same word the bar, the
     // legend and the Suggestion card use for this quantity. The strip used to speak
     // ladder v2's own names (Group take) beside a card saying "Own" about the same 40.
-    expect(screen.getByText(/Own 40/)).toBeInTheDocument();
-    expect(screen.getByText(/Buy 60/)).toBeInTheDocument();
+    // Scoped to the VISIBLE pill row (`sources-pills-<key>`), never to the whole document -
+    // `PillOverflow`'s own hidden measuring row repeats the same pill text off-screen so it
+    // can size itself, and a plain `getByText` finds that copy too.
+    const sourceTestId = `sources-pills-${key}`;
+    const sourcePills = within(screen.getByTestId(sourceTestId));
+    expect(sourcePills.getByText(/Own 40/)).toBeInTheDocument();
+    // At this width (jsdom's own zero) only the first pill shows; the rest folds behind
+    // "+1", which opens the SAME popover every pill does and states the whole composition.
+    fireEvent.click(sourcePills.getByText('+1'));
+    expect(screen.getByTestId(`${sourceTestId}-popover`).textContent).toContain(
+      'Buy60',
+    );
     // The rule's own sentence is behind the info icon now, not a plain `title` - so the
     // numbers above stay directly readable and only the prose needs a hover.
     expect(await sourceNoteOf(key)).toContain(
@@ -528,6 +556,7 @@ describe('BoardCellBreakdownDialog: the table', () => {
           bucketLabel="31 Aug 2026"
           draft={{}}
           onDecide={vi.fn()}
+          onDecideMany={vi.fn()}
           onClose={vi.fn()}
         />
       </QueryClientProvider>,
@@ -611,6 +640,7 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
           bucketLabel="31 Aug 2026"
           draft={{}}
           onDecide={vi.fn()}
+          onDecideMany={vi.fn()}
           onClose={vi.fn()}
         />
       </QueryClientProvider>,
@@ -641,10 +671,11 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
       }),
     );
 
-    // Location, On hand, SO qty, SPO qty, Available, PO qty, Taken - after the chevron cell,
-    // which carries no text. No demand column: the table below says that per line. No
-    // Reserved and no Free either: Free was `On hand - Reserved`, and Reserved itself was read
-    // by nothing on this screen once `Available` turned out not to use it.
+    // Location, On hand, SO qty, SPO qty, Available, Available for Project, PO qty, Taken -
+    // after the chevron cell, which carries no text. No demand column: the table below says
+    // that per line. No Reserved and no Free either: Free was `On hand - Reserved`, and
+    // Reserved itself was read by nothing on this screen once `Available` turned out not to
+    // use it.
     expect(stockRow('BRW-BB').slice(1)).toEqual([
       'BRW-BB',
       'Own location',
@@ -653,6 +684,10 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
       '0',
       // A negative available is the whole point: it is the shortfall, and clamping it to zero
       // would turn the one number that says "this cannot be met" into one that says it can.
+      '-46531',
+      // Available for Project: on an own location it IS Available (D2, captain 3 Sep) -
+      // there is no dealer share to keep back outside a site pool, so everything available
+      // there is available to a project. It used to print "-", which read as missing data.
       '-46531',
       // PO qty and Taken: the server stated neither, and a row that names a location reads 0.
       '0',
@@ -701,7 +736,7 @@ describe('BoardCellBreakdownDialog: the facts the server sends', () => {
 
     const row = stockRow('none');
     expect(row[1]).toBe('No location');
-    expect(row.slice(3)).toEqual(['-', '-', '-', '-', '-', '-']);
+    expect(row.slice(3)).toEqual(['-', '-', '-', '-', '-', '-', '-']);
     expect(row).not.toContain('0');
   });
 
@@ -871,10 +906,16 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
     fireEvent.click(screen.getByText('SO403340'));
     fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
 
-    expect(onDecide).toHaveBeenCalledWith('so-a|1|WESERP10B|2026-08-31', {
-      verdict: 'approved',
-      suspected_system_issue: false,
-    });
+    // D11: the composition rides along with the approval too - the exact shape is
+    // `BoardLineDecisionPanel.test.tsx`'s own job, this only checks the row's Save reaches
+    // this dialog's `onDecide` with the right verdict.
+    expect(onDecide).toHaveBeenCalledWith(
+      'so-a|1|WESERP10B|2026-08-31',
+      expect.objectContaining({
+        verdict: 'approved',
+        suspected_system_issue: false,
+      }),
+    );
   });
 
   it('reject, from the row, needs a reason', () => {
@@ -927,7 +968,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
     );
   });
 
-  it('shows Approved on a row the draft already decided, and reads the pill accordingly', () => {
+  it('shows Saved on a row the draft already decided, and reads the pill accordingly (S4, R-F)', () => {
     renderDialog(
       [demand()],
       {},
@@ -939,7 +980,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
 
     expect(
       screen.getByTestId('decision-pill-so-a|1|WESERP10B|2026-08-31'),
-    ).toHaveTextContent('Approved');
+    ).toHaveTextContent('Saved');
   });
 
   it('a row the draft already decided opens unlocked - no undo step before it can be edited again', () => {
@@ -979,7 +1020,7 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
 
     expect(
       screen.getByTestId('decision-pill-so-a|1|WESERP10B|2026-08-31'),
-    ).toHaveTextContent('Amended');
+    ).toHaveTextContent('Saved');
     expect(
       screen.queryByRole('button', { name: 'Undo' }),
     ).not.toBeInTheDocument();
@@ -993,10 +1034,14 @@ describe('BoardCellBreakdownDialog: deciding a line in the row', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
 
-    expect(onDecide).toHaveBeenCalledWith('so-a|1|WESERP10B|2026-08-31', {
-      verdict: 'approved',
-      suspected_system_issue: false,
-    });
+    // D11: the composition rides along with the approval too.
+    expect(onDecide).toHaveBeenCalledWith(
+      'so-a|1|WESERP10B|2026-08-31',
+      expect.objectContaining({
+        verdict: 'approved',
+        suspected_system_issue: false,
+      }),
+    );
   });
 });
 
@@ -1111,6 +1156,7 @@ describe('BoardCellBreakdownDialog: the actions can never be covered', () => {
           bucketLabel="31 Aug 2026"
           draft={{}}
           onDecide={vi.fn()}
+          onDecideMany={vi.fn()}
           onClose={onClose}
         />
       </QueryClientProvider>,
@@ -1183,6 +1229,7 @@ describe('BoardCellBreakdownDialog: the family lightbox, and its two tabs', () =
           bucketLabel="31 Aug 2026"
           draft={{}}
           onDecide={vi.fn()}
+          onDecideMany={vi.fn()}
           onClose={vi.fn()}
         />
       </QueryClientProvider>,
@@ -1342,6 +1389,7 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
           bucketLabel="28 Sep 2026"
           draft={{}}
           onDecide={vi.fn()}
+          onDecideMany={vi.fn()}
           onClose={vi.fn()}
         />
       </QueryClientProvider>,
@@ -1354,7 +1402,7 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
    * It has to read as incoming stock rather than falling through to a bare code.
    */
   it('renders a timely SPO source as Incoming', () => {
-    renderServerCell([
+    const cell = renderServerCell([
       {
         kind: 'timely_spo',
         qty: '15',
@@ -1367,7 +1415,11 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
     ]);
     openLines();
 
-    expect(screen.getByText(/Incoming 15/)).toBeInTheDocument();
+    expect(
+      within(
+        screen.getByTestId(`sources-pills-${cell.contributions[0].key}`),
+      ).getByText(/Incoming 15/),
+    ).toBeInTheDocument();
   });
 
   /**
@@ -1417,14 +1469,18 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
           bucketLabel="31 Aug 2026"
           draft={{}}
           onDecide={vi.fn()}
+          onDecideMany={vi.fn()}
           onClose={vi.fn()}
         />
       </QueryClientProvider>,
     );
     openLines();
 
+    // LADDER v8 (R-E): the unit is still one cell, but its lines no longer share ONE
+    // composition - they walk one at a time, smallest first, each fed what the previous one
+    // left - so the sentence names the unit and points at the per-line rows.
     expect(await sourceNoteOf(cell.contributions[0].key)).toContain(
-      'Planned with 1 other line of this order for 04/09/2026: 30 in all, covered or bought as one.',
+      "Planned with 1 other line of this order for 04/09/2026: 30 in all. Each line's own composition is shown on its own row.",
     );
   });
 
@@ -1445,6 +1501,7 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
           bucketLabel="31 Aug 2026"
           draft={{}}
           onDecide={vi.fn()}
+          onDecideMany={vi.fn()}
           onClose={vi.fn()}
         />
       </QueryClientProvider>,
@@ -1458,7 +1515,7 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
 
   /** Deviation 8: Pool and Borrow never reach the board; they cross locations. */
   it('reads a timely SPO as Incoming in the row strip, not as a Reserve', () => {
-    renderServerCell([
+    const cell = renderServerCell([
       {
         kind: 'timely_spo',
         qty: '10',
@@ -1474,10 +1531,90 @@ describe('BoardCellBreakdownDialog: the real board’s sources', () => {
     ]);
     openLines();
 
-    expect(
-      screen.getByText('Incoming 10 at BRW-BB · Buy 5'),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/Reserve 10/)).not.toBeInTheDocument();
+    const sourceTestId = `sources-pills-${cell.contributions[0].key}`;
+    const sourcePills = within(screen.getByTestId(sourceTestId));
+    expect(sourcePills.getByText('Incoming 10 at BRW-BB')).toBeInTheDocument();
+    expect(sourcePills.queryByText(/Reserve 10/)).not.toBeInTheDocument();
+    // At this width (jsdom's own zero) only the first pill shows; the rest folds behind
+    // "+1", which opens the SAME popover every pill does and states the whole composition.
+    fireEvent.click(sourcePills.getByText('+1'));
+    expect(screen.getByTestId(`${sourceTestId}-popover`).textContent).toContain(
+      'Buy5',
+    );
+  });
+
+  /**
+   * S3b, R-J: "clicking any pill ... opens the composition with each part's location,
+   * quantity, kind and the option row it came from." The two adopting suites above only
+   * ever assert the popover's raw `textContent` for a two-part composition; this pins each
+   * PART'S OWN row (`source-popover-row-<key>-<index>`) so a location, a kind or an option
+   * label going missing from one part cannot hide behind a passing substring match on the
+   * whole popover.
+   */
+  it('lists kind, qty, location and the option row for each part of a two-part composition (AC-3b.2/AC-3b.3)', () => {
+    const base = serverCell([
+      {
+        kind: 'reserve',
+        qty: '10',
+        location: 'BRW-BB',
+        reason: 'Free unclaimed stock at BRW-BB covers this much.',
+        rung: 'group_take',
+      },
+      {
+        kind: 'buy',
+        qty: '5',
+        location: null,
+        reason: 'The residual is bought.',
+      },
+    ]);
+    const cell = {
+      ...base,
+      contributions: [
+        {
+          ...base.contributions[0],
+          options: [
+            { step: 'use' as const, label: 'Use own location', whole: true, chosen: true },
+            { step: 'buy' as const, label: 'Buy', whole: true, chosen: false },
+          ],
+        },
+      ],
+    };
+    render(
+      <QueryClientProvider
+        client={
+          new QueryClient({
+            defaultOptions: { queries: { retry: false, gcTime: 0 } },
+          })
+        }
+      >
+        <BoardCellBreakdownDialog
+          cell={cell}
+          bucketLabel="28 Sep 2026"
+          draft={{}}
+          onDecide={vi.fn()}
+          onDecideMany={vi.fn()}
+          onClose={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+    openLines();
+
+    const key = cell.contributions[0].key;
+    const sourceTestId = `sources-pills-${key}`;
+    fireEvent.click(within(screen.getByTestId(sourceTestId)).getByText('+1'));
+
+    const popover = screen.getByTestId(`${sourceTestId}-popover`);
+    const reserveRow = within(popover).getByTestId(`source-popover-row-${key}-0`);
+    expect(reserveRow).toHaveTextContent('Own10');
+    expect(reserveRow).toHaveTextContent('at BRW-BB');
+    expect(reserveRow).toHaveTextContent('Use own location');
+
+    // The Buy carries no rung, so `optionForRung` matches nothing for it - the row states
+    // its kind and quantity and no location line, and no option row rather than a wrong one.
+    const buyRow = within(popover).getByTestId(`source-popover-row-${key}-1`);
+    expect(buyRow).toHaveTextContent('Buy5');
+    expect(buyRow).not.toHaveTextContent('at ');
+    expect(buyRow).not.toHaveTextContent('Use own location');
   });
 });
 
@@ -1532,6 +1669,7 @@ describe('BoardCellBreakdownDialog: what was left for this line', () => {
           bucketLabel="31 Aug 2026"
           draft={{}}
           onDecide={vi.fn()}
+          onDecideMany={vi.fn()}
           onClose={vi.fn()}
         />
       </QueryClientProvider>,
@@ -1609,7 +1747,11 @@ describe('BoardCellBreakdownDialog: what was left for this line', () => {
     openLines();
 
     // A bare site code is the shared pool, whatever the line's own location is.
-    expect(screen.getByText(/BRW 9 at BRW/)).toBeInTheDocument();
+    expect(
+      within(
+        screen.getByTestId(`sources-pills-${cell.contributions[0].key}`),
+      ).getByText(/BRW 9 at BRW/),
+    ).toBeInTheDocument();
     const note = await shareNoteOf(cell);
     expect(note).toContain(
       '12 lines ahead wanting 1015 · 0 left for this line at BRW-BB',
@@ -1767,7 +1909,11 @@ describe('BoardCellBreakdownDialog: bulk approve and reject', () => {
 
     expect(onDecide).toHaveBeenCalledTimes(3);
     for (const call of onDecide.mock.calls) {
-      expect(call[1]).toEqual({ verdict: 'approved' });
+      // D11: an approval CARRIES the engine's composition. A bare `{verdict: 'approved'}`
+      // confirms nothing that was proposed, and the sales order page reads it as Decided "-".
+      expect(call[1]).toEqual(
+        expect.objectContaining({ verdict: 'approved', buy_qty: '100' }),
+      );
     }
   });
 
@@ -1856,9 +2002,10 @@ describe('BoardCellBreakdownDialog: bulk approve and reject', () => {
 
     // Only the ticked row carries the bulk verdict.
     expect(onDecide).toHaveBeenCalledTimes(1);
-    expect(onDecide).toHaveBeenCalledWith('so-a|1|WESERP10B|2026-08-31', {
-      verdict: 'approved',
-    });
+    expect(onDecide).toHaveBeenCalledWith(
+      'so-a|1|WESERP10B|2026-08-31',
+      expect.objectContaining({ verdict: 'approved', buy_qty: '100' }),
+    );
 
     // Row 2 is untouched: still Suggested, and still expandable and decidable on its own -
     // the bulk verb is an addition, never a replacement for the per-row decision.
@@ -1870,6 +2017,179 @@ describe('BoardCellBreakdownDialog: bulk approve and reject', () => {
     expect(
       screen.getByRole('button', { name: 'Save decision' }),
     ).toBeInTheDocument();
+  });
+});
+
+/**
+ * D14 (the captain: a quick save for the lines that need nothing amended, and an Undo for the
+ * one line a quick save was wrong for). "Save as suggested" writes the ENGINE's own
+ * composition - the same object an untouched Save on the row would post - so a bulk quick
+ * save is byte-identical to opening every one of those rows and pressing Save.
+ */
+describe('BoardCellBreakdownDialog: quick save as suggested and per-line undo', () => {
+  function threeLines() {
+    return [
+      demand({ line_no: 1, so_number: 'SO000001', sales_order_id: 'so-a' }),
+      demand({ line_no: 2, so_number: 'SO000002', sales_order_id: 'so-b' }),
+      demand({ line_no: 3, so_number: 'SO000003', sales_order_id: 'so-c' }),
+    ];
+  }
+
+  function selectAll() {
+    fireEvent.click(
+      screen.getByRole('checkbox', { name: 'Select all rows on this page' }),
+    );
+  }
+
+  it('saves the ticked rows with the engine composition, and clears the selection', () => {
+    const { onDecide } = renderDialog(threeLines());
+    openLines();
+
+    selectAll();
+    fireEvent.click(screen.getByRole('button', { name: 'Approve selected' }));
+
+    expect(onDecide).toHaveBeenCalledTimes(3);
+    for (const call of onDecide.mock.calls) {
+      expect(call[1]).toEqual(
+        expect.objectContaining({ verdict: 'approved', buy_qty: '100' }),
+      );
+    }
+    expect(screen.queryByText('3 selected')).not.toBeInTheDocument();
+  });
+
+  it('has ONE control for the bulk quick save, not a second one beside Approve', () => {
+    renderDialog(threeLines());
+    openLines();
+
+    selectAll();
+    // "Approve selected" IS the quick save since D11 (an approval carries the composition),
+    // so a "Save as suggested (N)" beside it was one verb with two buttons.
+    expect(
+      screen.queryByRole('button', { name: /^Save as suggested/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('will not tick a line that is already saved, and says why on its own checkbox', () => {
+    const draft: BoardDraft = {
+      'so-b|2|WESERP10B|2026-08-31': { verdict: 'approved', buy_qty: '100' },
+    };
+    const { onDecide } = renderDialog(threeLines(), {}, draft);
+    openLines();
+
+    selectAll();
+    expect(screen.getByText('2 selected')).toBeInTheDocument();
+    expect(
+      screen.getAllByTitle('Already saved. Undo it before saving it again.'),
+    ).not.toHaveLength(0);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Approve selected' }));
+
+    // The saved row keeps whatever was saved on it: a quick save would overwrite an amended
+    // composition with the engine's own, which is what Undo exists for.
+    expect(onDecide).toHaveBeenCalledTimes(2);
+    expect(onDecide.mock.calls.map((call) => call[0]).sort()).toEqual(
+      ['so-a|1|WESERP10B|2026-08-31', 'so-c|3|WESERP10B|2026-08-31'].sort(),
+    );
+  });
+
+  /**
+   * D15: both bulk verbs post through `onDecideMany` now, not a loop of `onDecide` calls -
+   * the panel's own quiet-bulk path, one toast for the whole press instead of D14's one per
+   * line. `renderDialog`'s own `onDecideMany` mock still composes each key's suggestion and
+   * forwards it to `onDecide` (the assertions above and below read that), but the PROP
+   * actually reached has to be `onDecideMany` for that one-toast behaviour to exist at all.
+   */
+  it('Approve selected posts through onDecideMany, not a loop of onDecide', () => {
+    const { onDecideMany } = renderDialog(threeLines());
+    openLines();
+
+    selectAll();
+    fireEvent.click(screen.getByRole('button', { name: 'Approve selected' }));
+
+    expect(onDecideMany).toHaveBeenCalledTimes(1);
+    expect(onDecideMany.mock.calls[0][0].sort()).toEqual(
+      [
+        'so-a|1|WESERP10B|2026-08-31',
+        'so-b|2|WESERP10B|2026-08-31',
+        'so-c|3|WESERP10B|2026-08-31',
+      ].sort(),
+    );
+  });
+
+  it('Save all suggested reaches every selectable line with no selection needed', () => {
+    const { onDecide, onDecideMany } = renderDialog(threeLines());
+    openLines();
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Save all suggested' }),
+    );
+
+    expect(onDecideMany).toHaveBeenCalledTimes(1);
+    expect(onDecide).toHaveBeenCalledTimes(3);
+    const keys = onDecide.mock.calls.map((call) => call[0]).sort();
+    expect(keys).toEqual(
+      [
+        'so-a|1|WESERP10B|2026-08-31',
+        'so-b|2|WESERP10B|2026-08-31',
+        'so-c|3|WESERP10B|2026-08-31',
+      ].sort(),
+    );
+  });
+
+  it('Save all suggested skips a confirmed line and a line already saved', () => {
+    const draft: BoardDraft = {
+      'so-b|2|WESERP10B|2026-08-31': { verdict: 'approved' },
+    };
+    const { onDecide } = renderDialog(
+      [
+        demand({ line_no: 1, so_number: 'SO000001', sales_order_id: 'so-a' }),
+        demand({ line_no: 2, so_number: 'SO000002', sales_order_id: 'so-b' }),
+        demand({
+          line_no: 3,
+          so_number: 'SO000003',
+          sales_order_id: 'so-c',
+          decision: {
+            revision_no: 1,
+            timely_spo_qty: '0',
+            reserve: [],
+            borrow: [],
+            buy_qty: '100',
+          },
+        }),
+      ],
+      {},
+      draft,
+    );
+    openLines();
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Save all suggested' }),
+    );
+
+    expect(onDecide).toHaveBeenCalledTimes(1);
+    expect(onDecide.mock.calls[0][0]).toBe('so-a|1|WESERP10B|2026-08-31');
+  });
+
+  it('offers no per-line Undo until a line carries a draft', () => {
+    renderDialog(threeLines());
+    openLines();
+
+    expect(
+      screen.queryByRole('button', { name: /^Undo SO/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('Undo on one saved line removes its draft and leaves the others alone', () => {
+    const draft: BoardDraft = {
+      'so-a|1|WESERP10B|2026-08-31': { verdict: 'approved' },
+    };
+    const { onDecide } = renderDialog(threeLines(), {}, draft);
+    openLines();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Undo SO000001 line 1' }));
+
+    expect(onDecide).toHaveBeenCalledTimes(1);
+    expect(onDecide).toHaveBeenCalledWith('so-a|1|WESERP10B|2026-08-31', null);
   });
 });
 
@@ -2040,6 +2360,7 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
           bucketLabel="31 Aug 2026"
           draft={{}}
           onDecide={vi.fn()}
+          onDecideMany={vi.fn()}
           onClose={vi.fn()}
         />
       </QueryClientProvider>,
@@ -2157,7 +2478,11 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     renderDialog(lines, freeStock);
     openLines();
 
-    expect(screen.getByText(/Own 100/)).toBeInTheDocument();
+    expect(
+      within(
+        screen.getByTestId(`sources-pills-${cell.contributions[0].key}`),
+      ).getByText(/Own 100/),
+    ).toBeInTheDocument();
     // The word is gone from the screen (the captain, 27 Aug); the flag stays on the row.
     expect(screen.queryByText('Contested')).toBeNull();
     // Both rows still carry a share sentence, now behind the icon rather than always visible.
@@ -2212,8 +2537,11 @@ describe('BoardCellBreakdownDialog: how the decision was reached', () => {
     expect(
       screen.getByTestId(`trail-flag-${contribution.key}-dealer-hot-selling`),
     ).toHaveAttribute(
+      // LADDER v8 (R-A): the chip names the classification and no longer promises that the
+      // pool is kept for retail - the SHARE is what keeps stock for dealers now, and it
+      // keeps it from every project line whatever the item's class.
       'title',
-      'Dealer hot-selling at BRW, BRW-IB. The shared pool is kept for retail, not offered.',
+      'Dealer hot-selling at BRW, BRW-IB.',
     );
     expect(
       screen.queryByTestId(`trail-flag-${contribution.key}-not-classified`),
@@ -2412,6 +2740,7 @@ describe('BoardCellBreakdownDialog: the stock expansions belong to the cell', ()
           bucketLabel="31 Aug 2026"
           draft={{}}
           onDecide={vi.fn()}
+          onDecideMany={vi.fn()}
           onClose={vi.fn()}
         />
       </QueryClientProvider>
@@ -2485,9 +2814,17 @@ describe('BoardCellBreakdownDialog: a line a decision already covers', () => {
     renderDialog([covered()]);
     openLines();
 
+    const testId = 'sources-pills-so-a|1|WESERP10B|2026-08-31';
+    const sourcePills = within(screen.getByTestId(testId));
     expect(
-      screen.getByText('Borrow (other) 10 from MWH-IB · Buy 33'),
+      sourcePills.getByText('Borrow (other) 10 from MWH-IB'),
     ).toBeInTheDocument();
+    // At this width (jsdom's own zero) only the first pill shows; the rest folds behind
+    // "+1", which opens the SAME popover every pill does and states the whole composition.
+    fireEvent.click(sourcePills.getByText('+1'));
+    expect(screen.getByTestId(`${testId}-popover`).textContent).toContain(
+      'Buy33',
+    );
   });
 
   it('says nothing about a queue it is not in', async () => {
@@ -2529,7 +2866,7 @@ describe('BoardCellBreakdownDialog: a line a decision already covers', () => {
     expect(screen.getByLabelText('Buy the whole line')).not.toBeChecked();
   });
 
-  it('behaves like any amended row once it has been amended: the pill reads Amended, and it opens unlocked', () => {
+  it('behaves like any amended row once it has been amended: the pill reads Saved (S4), and it opens unlocked', () => {
     renderDialog(
       [covered()],
       {},
@@ -2549,7 +2886,7 @@ describe('BoardCellBreakdownDialog: a line a decision already covers', () => {
 
     expect(
       screen.getByTestId('decision-pill-so-a|1|WESERP10B|2026-08-31'),
-    ).toHaveTextContent('Amended');
+    ).toHaveTextContent('Saved');
 
     fireEvent.click(screen.getByText('SO403340'));
     expect(screen.getByLabelText('Buy the whole line')).toBeEnabled();
@@ -2672,6 +3009,7 @@ describe('BoardCellBreakdownDialog: how the Suggestion card names its sources', 
           bucketLabel="31 Aug 2026"
           draft={{}}
           onDecide={vi.fn()}
+          onDecideMany={vi.fn()}
           onClose={vi.fn()}
         />
       </QueryClientProvider>,
@@ -2758,6 +3096,7 @@ describe('BoardCellBreakdownDialog: how the Suggestion card names its sources', 
           bucketLabel="31 Aug 2026"
           draft={{}}
           onDecide={vi.fn()}
+          onDecideMany={vi.fn()}
           onClose={vi.fn()}
         />
       </QueryClientProvider>,
@@ -2822,6 +3161,7 @@ describe('BoardCellBreakdownDialog: how the Suggestion card names its sources', 
           bucketLabel="31 Aug 2026"
           draft={{}}
           onDecide={vi.fn()}
+          onDecideMany={vi.fn()}
           onClose={vi.fn()}
         />
       </QueryClientProvider>,
@@ -2884,6 +3224,7 @@ describe('BoardCellBreakdownDialog: the Decision card', () => {
           bucketLabel="31 Aug 2026"
           draft={draft}
           onDecide={vi.fn()}
+          onDecideMany={vi.fn()}
           onClose={vi.fn()}
         />
       </QueryClientProvider>,
@@ -3268,6 +3609,7 @@ describe('BoardCellBreakdownDialog: S3 suggestion sentence, sticky toolbar, line
           bucketLabel="31 Aug 2026"
           draft={{}}
           onDecide={vi.fn()}
+          onDecideMany={vi.fn()}
           onClose={vi.fn()}
         />
       </QueryClientProvider>
@@ -3329,6 +3671,61 @@ describe('BoardCellBreakdownDialog: S3 suggestion sentence, sticky toolbar, line
     );
     expect(screen.getByTestId('stock-jump-donor')).toBeInTheDocument();
     expect(screen.getByTestId('stock-jump-document').textContent).toBe('SPO 202609-0041');
+  });
+
+  /**
+   * The captain's own complaint (3 Sep 2026, SO418869 SRTWCX7405-RL-S-PJ): "SPO
+   * SPO-2026/08-0085 is 28 days late" jumped the table on click and nowhere opened the
+   * document. The chip beside it keeps doing exactly what it always did (a BUTTON, never a
+   * link, so it never navigates); a second, tiny control opens the document itself.
+   */
+  it('AC-3.4 fix: an open-SPO link sits beside the jump chip, and the chip stays a button', () => {
+    render(
+      dialogFor(
+        cellWithSource({
+          reason:
+            'Borrow 30 arriving 20 Oct 2026 (SPO 202609-0041) from SO397460 line 2; its debt lands in Jul 2027.',
+          donor_so_number: 'SO397460',
+          supply_document: 'SPO 202609-0041',
+        }),
+      ),
+    );
+
+    // Unchanged: the chip is still what jumps the table below, and it is still a button
+    // rather than a second link that would navigate instead of jumping.
+    const chip = screen.getByTestId('suggestion-document-link');
+    expect(chip.tagName).toBe('BUTTON');
+    expect(() => fireEvent.click(chip)).not.toThrow();
+
+    const openLink = screen.getByTestId('suggestion-document-open-link');
+    expect(openLink.tagName).toBe('A');
+    expect(openLink).toHaveAttribute(
+      'href',
+      '/procurement-management/spo-allocations/202609-0041',
+    );
+    expect(openLink).toHaveAttribute('aria-label', 'Open SPO 202609-0041');
+  });
+
+  it('AC-3.4 fix: a number the book already writes with its own "SPO-" opens on itself, never doubled', () => {
+    // Post the backend fix, a number that already carries the word arrives in the reason
+    // AS ITSELF (`SPO-2026/08-0085`), never "SPO SPO-2026/08-0085" - the open link has to
+    // resolve to the SAME raw number the SPO detail route expects.
+    render(
+      dialogFor(
+        cellWithSource({
+          reason: 'SPO-2026/08-0085 is 28 days late, assumed by 17 Sep 2026',
+          supply_document: 'SPO-2026/08-0085',
+        }),
+      ),
+    );
+
+    expect(screen.getByTestId('suggestion-document-link').textContent).toBe(
+      'SPO-2026/08-0085',
+    );
+    expect(screen.getByTestId('suggestion-document-open-link')).toHaveAttribute(
+      'href',
+      '/procurement-management/spo-allocations/SPO-2026%2F08-0085',
+    );
   });
 
   it('AC-4.5: a use-incoming (step 1 water, no donor) source links and jumps its SPO the same way a borrow-incoming one does', () => {

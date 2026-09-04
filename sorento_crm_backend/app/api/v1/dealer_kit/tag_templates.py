@@ -10,10 +10,7 @@ Permission gates:
 """
 from __future__ import annotations
 
-import logging
-
 from fastapi import APIRouter, Depends, Query, status
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
@@ -25,6 +22,7 @@ from app.schemas.price_tag import (
     ResolvePreviewIn,
     ResolvePreviewOut,
     TagTemplateCreate,
+    TagTemplateFromTagCreate,
     TagTemplatePublishIn,
     TagTemplateResponse,
     TagTemplateUpdate,
@@ -33,8 +31,6 @@ from app.schemas.price_tag import (
 )
 from app.services.dealer_kit import tag_data_service, tag_template_service
 from app.services.error_handler import AppException
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/tag-templates", tags=["tag-templates"])
 
@@ -147,6 +143,30 @@ def resolve_preview(
     )
 
 
+# DECLARED BEFORE ``/{template_id}``, same reason as ``/resolve-preview``
+# above: FastAPI matches in declaration order, so a uuid path param registered
+# first would swallow ``/from-tag`` whole.
+@router.post(
+    "/from-tag", response_model=TagTemplateResponse, status_code=status.HTTP_201_CREATED
+)
+def create_tag_template_from_tag(
+    payload: TagTemplateFromTagCreate,
+    db: Session = Depends(get_db),
+    user: dict = Depends(_MANAGE),
+):
+    """"Save as template" (S4, PLAN D1): the request designer's tag, published
+    as v1 in one call. See ``tag_template_service.create_and_publish``."""
+    t = tag_template_service.create_and_publish(
+        db,
+        name=payload.name,
+        family=payload.family,
+        doc=payload.doc,
+        print_size=payload.print_size,
+        created_by=_user_id(user),
+    )
+    return _response_for(t)
+
+
 @router.get("/{template_id}", response_model=TagTemplateResponse)
 def get_tag_template(
     template_id: str,
@@ -221,43 +241,15 @@ def publish_tag_template(
 ):
     """Snapshot the draft into a new immutable version and move the pointer.
 
-    Never rewrites an existing version - the next number is always
-    ``max(version_no) + 1`` for this template, so History is append-only and
-    View/Restore have something permanent to point at.
+    Body lives in ``tag_template_service.publish`` - shared with S4's
+    "Save as template" (``create_tag_template_from_tag`` above), which cannot
+    be a route calling this one because it has no existing template to 404
+    against yet.
     """
-    from sqlalchemy import func
-
     t = _get_template_or_404(db, template_id)
-    next_version_no = (
-        db.query(func.coalesce(func.max(TagTemplateVersion.version_no), 0))
-        .filter(TagTemplateVersion.template_id == t.id)
-        .scalar()
-    ) + 1
-    version = TagTemplateVersion(
-        template_id=t.id,
-        version_no=next_version_no,
-        doc=t.doc,
-        print_size=t.print_size,
-        note=payload.note if payload else None,
-        created_by=_user_id(user),
+    t = tag_template_service.publish(
+        db, t, note=payload.note if payload else None, created_by=_user_id(user)
     )
-    db.add(version)
-    try:
-        db.flush()
-        t.published_version_id = version.id
-        db.commit()
-    except IntegrityError as exc:
-        # Two publishes racing land on the same `next_version_no` - the
-        # `uq_dealer_kit_tag_template_version` unique index is the only thing
-        # left holding the line, and it fires as a 500 unless translated here.
-        db.rollback()
-        logger.warning("tag template publish hit a version conflict: %s", getattr(exc, "orig", exc))
-        raise AppException(
-            status_code=409,
-            message="Someone else just published this template. Reload and try again.",
-            code="tag_template_publish_conflict",
-        ) from exc
-    db.refresh(t)
     return _response_for(t)
 
 

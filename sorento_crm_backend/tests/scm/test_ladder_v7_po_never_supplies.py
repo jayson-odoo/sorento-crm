@@ -142,7 +142,9 @@ def test_a_po_backed_book_with_a_pool_take_lands_on_pool_not_use():
         _group, sites = _group_sites(db)
         own, pool = sites["BRW"]
         donor_bin = _warehouse(db, f"ZZTDC1-IR{_uid()[:3]}")
-        _stock(db, product, pool, on_hand=40)
+        # 80, not 40: ladder v8 lets a project line have HALF the pool (R-B), and this
+        # case is about the unit landing on the pool step rather than on the PO.
+        _stock(db, product, pool, on_hand=80)
         _lead_time(db, product, LEAD_DAYS)
         _policy(db)
 

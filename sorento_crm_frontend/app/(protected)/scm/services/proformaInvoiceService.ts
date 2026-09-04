@@ -31,23 +31,26 @@
  *       Auth: `scm.proforma_invoice.upload` (same as single delete).
  *  POST /api/v1/scm/proforma-invoices/convert-to-draft-shipment -> 201
  *       ConvertToDraftShipmentResult. Body: { proforma_invoice_ids: string[],
- *       override_capacity?: boolean, override_reason?: string }. One or more PIs (any
- *       suppliers) become ONE draft inbound shipment, pre-filled with their lines - the
- *       packing-list amendment (PLAN-scm-proforma-to-spo.md). 409 when any given PI was
- *       already converted (names the shipment), or when one is OVER its container's capacity
- *       and no override was given (`detail: 'over_capacity'`, AC-E5). Auth: `scm.reorder.run`
- *       (a shipment write, same permission the packing-list apply path uses).
+ *       override_capacity?: boolean, override_reason?: string, container_size_id?: string |
+ *       null }. One or more PIs (any suppliers) become ONE draft inbound shipment, pre-filled
+ *       with their lines - the packing-list amendment (PLAN-scm-proforma-to-spo.md).
+ *       `container_size_id` is the box the convert dialog chose (S5, ruling 1) - null/absent
+ *       means the tenant default - and is written onto the draft. 409 when any given PI was
+ *       already converted (names the shipment), or when the COMBINED volume of every
+ *       selected invoice is OVER that size and no override was given (`detail:
+ *       'over_capacity'`, AC-E5, naming the combined figure). Auth: `scm.reorder.run` (a
+ *       shipment write, same permission the packing-list apply path uses).
  *  POST /api/v1/scm/proforma-invoices/{id}/mark-as-revision-of -> 200 ProformaInvoiceDetail
  *       Body: { previous_id }. Links a PI uploaded as new to its predecessor and supersedes
  *       that one (AC-E11). 422 on itself or another supplier's; 409 when either end is
  *       already superseded or already a revision.
  *  PUT  /api/v1/scm/proforma-invoices/{id}          -> 200 ProformaInvoiceDetail
- *       Body: { pi_number?, container_size_id?, lines? }. The whole document as the edit
- *       screen holds it: rows with an `id` update, rows without create, and a line the array
- *       no longer names is deleted. An ABSENT field is left alone; `container_size_id: null`
- *       means the tenant's default size. 409 `duplicate_pi_number` on a rename onto a number
- *       this supplier already uses, and 409 on a superseded revision or an invoice already
- *       converted to a shipment. Auth: `scm.proforma_invoice.upload`.
+ *       Body: { pi_number?, lines? }. The whole document as the edit screen holds it: rows
+ *       with an `id` update, rows without create, and a line the array no longer names is
+ *       deleted. No `container_size_id` here (S5) - capacity moved to the convert dialog and
+ *       the shipment it creates. An ABSENT field is left alone. 409 `duplicate_pi_number` on
+ *       a rename onto a number this supplier already uses, and 409 on a superseded revision
+ *       or an invoice already converted to a shipment. Auth: `scm.proforma_invoice.upload`.
  *       The per-line `PATCH`/`DELETE` routes still exist on the backend; nothing here calls
  *       them, because a draft that is saved once cannot be sent one line at a time.
  *  GET  /api/v1/scm/proforma-invoices/{id}/export    -> 200 .xlsx bytes, the pre-loading
@@ -67,7 +70,7 @@ import {
   filenameFromContentDisposition,
   saveBlobAs,
 } from '@/app/(protected)/project-sales/_shared/services/fileDownload';
-import type { UploadTestResult } from '../reorder/components/UploadTestVerdict';
+import type { SupplierCheck, UploadTestResult } from '../reorder/components/UploadTestVerdict';
 
 /** Where a document's currency came from, in the order AC-P3.1 resolves it. */
 export type CurrencySource = 'form' | 'document' | 'supplier_price_list' | 'none';
@@ -123,6 +126,9 @@ export interface ProformaInvoicePreview {
   currency: string | null;
   currency_source: CurrencySource;
   priced_lines_without_currency: number;
+  /** Does the file's own letterhead name a different active supplier (S7, AC-G3)? `null`
+   *  when the file states no letterhead above its first invoice block. */
+  supplier_check: SupplierCheck | null;
 }
 
 export interface ProformaApplyResultDocument {
@@ -164,19 +170,15 @@ export interface ProformaInvoiceListRow {
   uploaded_by: string | null;
   created_at: string | null;
   updated_at: string | null;
-  /** Which box this invoice is measured against - the tenant default when the operator
-   *  never chose one. `container_cbm` is that box's loadable volume (40HQ = 65). */
-  container_size_id: string | null;
-  container_size_code: string | null;
-  container_cbm: number | null;
-  /** Sum of the lines' total cbm. Null when NO line states a volume (Kailu's shape) -
-   *  distinct from 0, which would read as an empty container. */
+  /** Sum of the lines' total cbm - the number Ms Tee adds up across invoices to decide
+   *  which of them share a box. Null when NO line states a volume (Kailu's shape) -
+   *  distinct from 0, which would read as an empty container. No container size, fill
+   *  percentage or "over by" here (S5, ruling 1): capacity is a property of the CONTAINER
+   *  this invoice's goods end up sharing with however many others, which the shipment
+   *  payload states, not this one. */
   total_cbm: number | null;
   /** Lines carrying no volume at all, so a fill figure can say what it is missing. */
   unmeasured_lines: number;
-  fill_pct: number | null;
-  /** Only when it is over: the cbm above capacity, so the copy never says "over by -3". */
-  over_by_cbm: number | null;
   /** `current` or `superseded`. A superseded revision is read-only and never a cost. */
   status: ProformaInvoiceStatus;
   revision_no: number;
@@ -249,6 +251,12 @@ export interface ProformaInvoiceLine {
    *  adjust; these two are theirs and are never written again (AC-E2). */
   supplier_qty: number | null;
   supplier_unit_price: number | null;
+  /** The catalogue ids the line is bound to, when it names one - so the edit screen's
+   *  Product select has an id to pre-select rather than reading empty on every open
+   *  (AC-B1/AC-B2). `product_code` below is the human label; these are what Save sends
+   *  back. Mutually exclusive: a line binds to a product OR a set, never both (R19). */
+  product_id: string | null;
+  product_set_id: string | null;
   /** What we hold, by CODE - the product's, or the SET's when the line names one of our
    *  product sets (R19). Null when the line matched nothing (AC-P1.3). */
   product_code: string | null;
@@ -391,6 +399,7 @@ function proformaForm(
   supplierId: string,
   revisionOf?: RevisionSelection | null,
   fileAsNew?: string[] | null,
+  loadingPlanId?: string | null,
 ): FormData {
   const body = new FormData();
   body.append('file', file);
@@ -404,6 +413,10 @@ function proformaForm(
   if (fileAsNew && fileAsNew.length > 0) {
     body.append('file_as_new', JSON.stringify(fileAsNew));
   }
+  // S6 - the plan that OWNS the invoices this upload writes. Every invoice created or
+  // revised here is stamped with it, so the plan reads its own five blocks rather than
+  // whichever single invoice sorted first for the supplier.
+  if (loadingPlanId) body.append('loading_plan_id', loadingPlanId);
   return body;
 }
 
@@ -418,15 +431,26 @@ export async function previewProformaInvoice(
   return readJson<ProformaInvoicePreview>(res, 'Failed to read the proforma invoice');
 }
 
+/**
+ * Write one proforma invoice per block in the file.
+ *
+ * ── CONTRACT ADDED BY S6 ───────────────────────────────────────────────────
+ * `loadingPlanId` (multipart field `loading_plan_id`, optional) - the plan these invoices
+ * belong to. Every invoice this apply creates or revises is stamped with it, so the plan's
+ * "They hold" figures are the SUM over its own blocks and a later upload for the same
+ * supplier cannot move them. Refused with 422 `invoice_supplier_mismatch` when the plan
+ * belongs to a different supplier. Absent (the standalone proforma page) nothing is stamped.
+ */
 export async function applyProformaInvoice(
   file: File,
   supplierId: string,
   revisionOf?: RevisionSelection | null,
   fileAsNew?: string[] | null,
+  loadingPlanId?: string | null,
 ): Promise<ProformaApplyResult> {
   const res = await apiFetch('/api/v1/scm/proforma-invoices/apply', {
     method: 'POST',
-    body: proformaForm(file, supplierId, revisionOf, fileAsNew),
+    body: proformaForm(file, supplierId, revisionOf, fileAsNew, loadingPlanId),
   });
   return readJson<ProformaApplyResult>(res, 'Failed to save the proforma invoice');
 }
@@ -476,6 +500,8 @@ export interface ConvertOptions {
   lineQuantities?: Record<string, number>;
   /** The operator's answer to an over-capacity refusal, with their reason (AC-E5). */
   override?: { reason: string };
+  /** The box the convert dialog chose (S5, ruling 1). Null/omitted = the tenant default. */
+  containerSizeId?: string | null;
 }
 
 /**
@@ -499,6 +525,7 @@ export async function convertProformaInvoicesToDraftShipment(
         ? { line_quantities: options.lineQuantities }
         : {}),
       ...(override ? { override_capacity: true, override_reason: override.reason } : {}),
+      container_size_id: options?.containerSizeId ?? null,
     }),
   });
   if (!res.ok) {
@@ -512,10 +539,15 @@ export async function convertProformaInvoicesToDraftShipment(
  *
  * `id` present = update that line; absent = a line the operator added. A line already on the
  * invoice and missing from the array is DELETED - the array is the document.
+ *
+ * `product_id` / `product_set_id` follow the whole-document rule: a key OMITTED from a line
+ * leaves the stored value alone, and an explicit `null` unbinds it (AC-B3). `saveEdit` sends
+ * one of these only for a line the operator actually touched.
  */
 export interface ProformaInvoiceLineWrite {
   id?: string;
   product_id?: string | null;
+  product_set_id?: string | null;
   item_code: string;
   description?: string | null;
   qty: number;
@@ -528,11 +560,10 @@ export interface ProformaInvoiceLineWrite {
   gross_weight?: number | null;
 }
 
-/** The whole document as one Save. An ABSENT field is left alone - `container_size_id: null`
- *  means the tenant default, which is a different instruction from not mentioning it. */
+/** The whole document as one Save. An ABSENT field is left alone. No `container_size_id`
+ *  (S5) - capacity is chosen on the convert dialog, never on the invoice. */
 export interface ProformaInvoiceWrite {
   pi_number?: string;
-  container_size_id?: string | null;
   lines?: ProformaInvoiceLineWrite[];
 }
 

@@ -186,10 +186,23 @@ DEFAULT_TBA_DATE_FROM = date(2029, 1, 1)
 #: `transfer_days` is 0 (31 Aug ruling, R-B): the flat 2-day transfer charge
 #: `front_planning_engine.TRANSFER_DAYS` used to hard-code is retired, and an unconfigured
 #: install charges nothing rather than guessing a number nobody set.
+#: The site pool's share step defaults (fulfilment feedback batch, S1, 2 Sep ruling R-B,
+#: migration 460): a database that never set them charges 50% kept for dealers with a
+#: 30-day immediate window, the values the plan documents.
+#: The overdue grace defaults (R-O, 3 Sep 2026, migration 464): a late document counts as
+#: supply landing `overdue_grace_days` out, and one more than `overdue_dead_days` late
+#: counts as nothing (R31 kept for the dead). SHIPPED at 0 / 0 (captain's ruling, 3 Sep
+#: 2026): dead at 0 makes any lateness dead, which is exactly R31, so production keeps
+#: today's behaviour until someone raises these; 14 / 90 is the RECOMMENDED pair, set
+#: through the settings route once the captain is ready to turn the grace on.
 FULFILMENT_SETTINGS_DEFAULTS = {
     "reorder_coverage_until": None,
     "tba_date_from": DEFAULT_TBA_DATE_FROM,
     "transfer_days": 0,
+    "immediate_window_days": 30,
+    "pool_share_pct": 50,
+    "overdue_grace_days": 0,
+    "overdue_dead_days": 0,
 }
 
 #: What the admin screen shows when NO policy has ever been activated (a database that
@@ -201,15 +214,17 @@ _NO_POLICY_NAME = "Fulfilment priority (no policy activated yet)"
 
 
 def fulfilment_settings(policy: Optional[PriorityPolicy]) -> dict:
-    """`{reorder_coverage_until, tba_date_from, transfer_days}` for a policy, or the
-    documented default.
+    """`{reorder_coverage_until, tba_date_from, transfer_days, immediate_window_days,
+    pool_share_pct, overdue_grace_days, overdue_dead_days}` for a policy, or the documented
+    default.
 
     A sibling of `policy_weights` for the ladder's calendar dates and its transfer charge:
     one place reads them off the active row, so the admin screen and the engine cannot come
-    to different views of how far purchasing covers, where TBA starts, and what a bin
-    transfer costs. `transfer_days` is read None-safe - a row written before migration
-    451 (or a database still mid-migration on another branch) reads 0, the same as an
-    unconfigured install, rather than raising."""
+    to different views of how far purchasing covers, where TBA starts, what a bin
+    transfer costs, and how much of the site pool a project line may share. Every numeric
+    field is read None-safe - a row written before its migration (or a database still
+    mid-migration on another branch) reads the documented default rather than raising.
+    """
     if policy is None:
         return dict(FULFILMENT_SETTINGS_DEFAULTS)
     return {
@@ -217,6 +232,26 @@ def fulfilment_settings(policy: Optional[PriorityPolicy]) -> dict:
         "tba_date_from": policy.tba_date_from or DEFAULT_TBA_DATE_FROM,
         "transfer_days": (
             int(policy.transfer_days) if policy.transfer_days is not None else 0
+        ),
+        "immediate_window_days": (
+            int(policy.immediate_window_days)
+            if policy.immediate_window_days is not None
+            else FULFILMENT_SETTINGS_DEFAULTS["immediate_window_days"]
+        ),
+        "pool_share_pct": (
+            int(policy.pool_share_pct)
+            if policy.pool_share_pct is not None
+            else FULFILMENT_SETTINGS_DEFAULTS["pool_share_pct"]
+        ),
+        "overdue_grace_days": (
+            int(policy.overdue_grace_days)
+            if getattr(policy, "overdue_grace_days", None) is not None
+            else FULFILMENT_SETTINGS_DEFAULTS["overdue_grace_days"]
+        ),
+        "overdue_dead_days": (
+            int(policy.overdue_dead_days)
+            if getattr(policy, "overdue_dead_days", None) is not None
+            else FULFILMENT_SETTINGS_DEFAULTS["overdue_dead_days"]
         ),
     }
 
@@ -299,6 +334,10 @@ def create_revision(
     reorder_coverage_until: Optional[date],
     tba_date_from: Optional[date] = None,
     transfer_days: Optional[int] = None,
+    immediate_window_days: Optional[int] = None,
+    pool_share_pct: Optional[int] = None,
+    overdue_grace_days: Optional[int] = None,
+    overdue_dead_days: Optional[int] = None,
     notes: Optional[str] = None,
 ) -> PriorityPolicy:
     """Write a NEW policy revision and activate it. Never mutates an old row.
@@ -334,6 +373,26 @@ def create_revision(
         reorder_coverage_until=reorder_coverage_until,
         tba_date_from=tba_date_from or DEFAULT_TBA_DATE_FROM,
         transfer_days=transfer_days if transfer_days is not None else 0,
+        immediate_window_days=(
+            immediate_window_days
+            if immediate_window_days is not None
+            else FULFILMENT_SETTINGS_DEFAULTS["immediate_window_days"]
+        ),
+        pool_share_pct=(
+            pool_share_pct
+            if pool_share_pct is not None
+            else FULFILMENT_SETTINGS_DEFAULTS["pool_share_pct"]
+        ),
+        overdue_grace_days=(
+            overdue_grace_days
+            if overdue_grace_days is not None
+            else FULFILMENT_SETTINGS_DEFAULTS["overdue_grace_days"]
+        ),
+        overdue_dead_days=(
+            overdue_dead_days
+            if overdue_dead_days is not None
+            else FULFILMENT_SETTINGS_DEFAULTS["overdue_dead_days"]
+        ),
         notes=notes,
     )
     savepoint = db.begin_nested()
@@ -412,6 +471,38 @@ def save_fulfilment_priority(db: Session, body) -> PriorityPolicy:
             body.transfer_days
             if body.transfer_days is not None
             else (current.transfer_days if current is not None else None)
+        ),
+        # Same "not said, so unchanged" shape - the range check (0-365 / 0-100) already
+        # ran in `FulfilmentPriorityWrite._check`, so nothing left to validate here.
+        immediate_window_days=(
+            body.immediate_window_days
+            if body.immediate_window_days is not None
+            else (current.immediate_window_days if current is not None else None)
+        ),
+        pool_share_pct=(
+            body.pool_share_pct
+            if body.pool_share_pct is not None
+            else (current.pool_share_pct if current is not None else None)
+        ),
+        # R-O's two, same "not said, so unchanged" shape - the range check (0-365 each)
+        # already ran in `FulfilmentPriorityWrite._check`.
+        overdue_grace_days=(
+            body.overdue_grace_days
+            if body.overdue_grace_days is not None
+            else (
+                getattr(current, "overdue_grace_days", None)
+                if current is not None
+                else None
+            )
+        ),
+        overdue_dead_days=(
+            body.overdue_dead_days
+            if body.overdue_dead_days is not None
+            else (
+                getattr(current, "overdue_dead_days", None)
+                if current is not None
+                else None
+            )
         ),
         notes=current.notes if current is not None else None,
     )

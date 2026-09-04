@@ -42,24 +42,24 @@ describe('BoardDecisionPill: the five labels (C3, R6)', () => {
     expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent('Suggested');
   });
 
-  it('reads Approved', () => {
+  it('reads Saved for an approval, not Approved (S4, R-F)', () => {
     render(
       <BoardDecisionPill
         contribution={contributionOf()}
         decision={{ verdict: 'approved' }}
       />,
     );
-    expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent('Approved');
+    expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent('Saved');
   });
 
-  it('reads Amended', () => {
+  it('reads Saved for an amendment, not Amended (S4, R-F)', () => {
     render(
       <BoardDecisionPill
         contribution={contributionOf()}
         decision={{ verdict: 'amended' }}
       />,
     );
-    expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent('Amended');
+    expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent('Saved');
   });
 
   it('reads Rejected', () => {
@@ -152,5 +152,85 @@ describe('BoardDecisionPill: the warning flag (C10)', () => {
       />,
     );
     expect(screen.queryByTestId(`decision-flag-${KEY}`)).not.toBeInTheDocument();
+  });
+});
+
+describe('BoardDecisionPill: a saved line the engine has re-suggested (S4, AC-4.4)', () => {
+  it('reads "Suggestion changed" rather than Saved', () => {
+    render(
+      <BoardDecisionPill
+        contribution={contributionOf({
+          draft: {
+            decision: { verdict: 'amended' },
+            saved_by: 'Eling',
+            saved_at: '2026-09-03T01:00:00',
+            stale: true,
+          },
+        })}
+        decision={null}
+      />,
+    );
+    expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent(
+      'Suggestion changed',
+    );
+  });
+
+  it('reads Saved once the same draft is no longer stale', () => {
+    render(
+      <BoardDecisionPill
+        contribution={contributionOf({
+          draft: {
+            decision: { verdict: 'amended' },
+            saved_by: 'Eling',
+            saved_at: '2026-09-03T01:00:00',
+            stale: false,
+          },
+        })}
+        decision={null}
+      />,
+    );
+    expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent('Saved');
+  });
+
+  it('leaves a CONFIRMED line alone: a stale draft never overrides what was frozen', () => {
+    render(
+      <BoardDecisionPill
+        contribution={contributionOf({
+          covered: true,
+          draft: {
+            decision: { verdict: 'amended' },
+            saved_by: 'Eling',
+            saved_at: '2026-09-03T01:00:00',
+            stale: true,
+          },
+        })}
+        decision={null}
+      />,
+    );
+    expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent('Confirmed');
+  });
+
+  /**
+   * N6 (code review round 3): resolution order is `confirmed > rejected > stale > saved`,
+   * matching `confirmSummaryFor` (`_shared/lib/fulfilmentBoard.ts`). A REJECTED decision on
+   * a stale line commits nothing either way, and "Rejected" is what the planner actually did
+   * about it - "Suggestion changed" said something happened that the planner had already
+   * answered.
+   */
+  it('reads Rejected before Suggestion changed, when THIS session rejected a stale line', () => {
+    render(
+      <BoardDecisionPill
+        contribution={contributionOf({
+          draft: {
+            decision: { verdict: 'amended' },
+            saved_by: 'Eling',
+            saved_at: '2026-09-03T01:00:00',
+            stale: true,
+          },
+        })}
+        decision={{ verdict: 'rejected', reason: 'The customer cancelled this line.' }}
+      />,
+    );
+    expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent('Rejected');
   });
 });

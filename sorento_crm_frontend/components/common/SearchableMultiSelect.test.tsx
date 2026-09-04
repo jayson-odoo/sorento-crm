@@ -99,6 +99,55 @@ describe('SearchableMultiSelect - select all', () => {
   });
 });
 
+// Same standard as SearchableSelect (S10 fix 1a): filtering here is manual (`visibleOptions`,
+// `shouldFilter={false}`), and `CommandItem`'s `value` was already `opt.value` (unique by
+// construction) rather than `searchText ?? label + description`, so this component never had
+// the identity collision - but it is pinned here so a future edit that copies the wrong pattern
+// from elsewhere trips a test, not a prod incident with duplicate labels.
+describe('SearchableMultiSelect identity with duplicate labels', () => {
+  const DUPES: SearchableMultiSelectOption[] = [
+    { value: 'sup-1', label: 'Testing Company' },
+    { value: 'sup-2', label: 'Testing Company' },
+  ];
+  const options = () => [...document.querySelectorAll('[role="option"]')];
+
+  it('highlights only the hovered option among identically labelled ones', async () => {
+    render(<SearchableMultiSelect value={[]} onChange={vi.fn()} options={DUPES} />);
+    openMenu();
+    await waitFor(() => expect(options()).toHaveLength(2));
+
+    fireEvent.pointerMove(options()[1]);
+
+    await waitFor(() => {
+      const [first, second] = options();
+      expect(first.getAttribute('aria-selected')).toBe('false');
+      expect(second.getAttribute('aria-selected')).toBe('true');
+    });
+  });
+
+  it('toggling the second of two identically labelled options returns its own id', async () => {
+    const onChange = vi.fn();
+    render(<SearchableMultiSelect value={[]} onChange={onChange} options={DUPES} />);
+    openMenu();
+    await waitFor(() => expect(options()).toHaveLength(2));
+
+    fireEvent.click(options()[1]);
+
+    expect(onChange).toHaveBeenCalledWith(['sup-2']);
+  });
+
+  it('toggling one of two identically labelled options keeps the other already-selected id', async () => {
+    const onChange = vi.fn();
+    render(<SearchableMultiSelect value={['sup-1']} onChange={onChange} options={DUPES} />);
+    openMenu();
+    await waitFor(() => expect(options()).toHaveLength(2));
+
+    fireEvent.click(options()[1]);
+
+    expect(onChange).toHaveBeenCalledWith(['sup-1', 'sup-2']);
+  });
+});
+
 /**
  * A controlled parent, which is how every caller uses this: the value it hands
  * back is the value the next click is computed against.

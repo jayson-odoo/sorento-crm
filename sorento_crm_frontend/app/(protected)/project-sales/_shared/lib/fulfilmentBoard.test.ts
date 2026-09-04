@@ -17,6 +17,7 @@ import {
   bucketLabelText,
   commitPreviewFor,
   confirmLinesFor,
+  confirmSummaryFor,
   DAY_WINDOW_COLUMNS as BOARD_DAY_WINDOW_COLUMNS,
   factorLabel,
   matchesSuggestion,
@@ -1050,6 +1051,32 @@ describe('confirmLinesFor', () => {
     });
   });
 
+  /**
+   * D11: `BoardLineDecisionPanel.save()` now writes the suggested COMPOSITION onto an
+   * approved draft too (reserve, borrow, buy_qty, timely_spo_qty), not only the verdict, so
+   * the sales order page's own "Decided" column has something to read. Confirm must not
+   * double-count it: an uncovered approval's own branch (`lineFor`) never reads
+   * `decision.reserve`/`decision.borrow`/`decision.buy_qty` at all, deriving fresh off the
+   * contribution's own `qty_proposed_*` and source strip instead - so a draft that now
+   * carries the composition confirms identically to one that carried only the verdict.
+   */
+  it('confirms identically whether or not the approved draft also carries the suggested composition', () => {
+    const bare = confirmLinesFor(contributions, 'so-a', {
+      [keyOf('SO000001', 1)]: { verdict: 'approved' },
+    });
+    const composed = confirmLinesFor(contributions, 'so-a', {
+      [keyOf('SO000001', 1)]: {
+        verdict: 'approved',
+        reserve_qty: '100',
+        timely_spo_qty: '0',
+        reserve: [{ warehouse_id: 'wh-BRW-BB', location: 'BRW-BB', qty: '100' }],
+        borrow: [],
+        buy_qty: '0',
+      },
+    });
+    expect(composed).toEqual(bare);
+  });
+
   it('moves what an amendment took off the Reserve into the Buy', () => {
     // 50 owed, 20 free: the rule proposed reserve 20 + buy 30. Amended down to 5, the other
     // 15 has to be bought - the difference cannot simply vanish.
@@ -1610,6 +1637,61 @@ describe('confirmLinesFor and a line an active decision already covers', () => {
     expect(
       commitPreviewFor(standing, confirmLinesFor(contributions, 'so-a', draft).length),
     ).toEqual({ committing: 2, leaving_undecided: 0, blocked: 0 });
+  });
+
+  /**
+   * N6 (code review round 3): resolution order `confirmed > rejected > stale > saved`, the
+   * same order `BoardDecisionPill` reads by. A covered line's frozen composition is what the
+   * server carries forward regardless of a local click - marking it "rejected" in THIS
+   * session cannot make Confirm refuse a line the database already holds, so it must not be
+   * counted as a rejection either.
+   */
+  it('counts a covered line as carried rather than rejected, even when this session marked it rejected', () => {
+    const summary = confirmSummaryFor(contributions, {
+      [keyOf(1)]: { verdict: 'rejected', reason: 'Changed my mind.' },
+    });
+    expect(summary.rejected).toBe(0);
+    // Line 2 (untouched, uncovered) still counts by R11's silence-is-agreement.
+    expect(summary.toConfirm).toBe(1);
+  });
+});
+
+/**
+ * C4 (code review round 3 batch 2): a stale line is dropped from Confirm with no trace -
+ * `lineFor` posts nothing for it, `confirmSummaryFor` skips it, and until this the planner's
+ * only signal was the pill itself, which is easy to miss on a board of forty lines. `changed`
+ * is the count that says so where Confirm is pressed.
+ */
+describe('confirmSummaryFor: changed (C4)', () => {
+  it('counts a saved-but-stale line under `changed`, and leaves it out of `toConfirm`', () => {
+    const board = buildBoard(
+      [line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 1, qty: '100' })],
+      { today: TODAY },
+    );
+    const base = board.cells[0].contributions[0];
+    const stale = {
+      ...base,
+      draft: {
+        decision: { verdict: 'amended' as const },
+        saved_by: 'Eling',
+        saved_at: '2026-09-03T01:00:00',
+        stale: true,
+      },
+    };
+
+    const summary = confirmSummaryFor([stale], {});
+
+    expect(summary.changed).toBe(1);
+    expect(summary.toConfirm).toBe(0);
+  });
+
+  it('reads 0 when nothing saved is stale', () => {
+    const board = buildBoard(
+      [line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 1, qty: '100' })],
+      { today: TODAY },
+    );
+    const summary = confirmSummaryFor(board.cells.flatMap((cell) => cell.contributions), {});
+    expect(summary.changed).toBe(0);
   });
 });
 

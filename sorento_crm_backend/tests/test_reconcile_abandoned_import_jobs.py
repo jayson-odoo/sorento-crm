@@ -113,6 +113,34 @@ def test_started_row_whose_rq_job_failed_is_settled(db, monkeypatch):
     assert "AbandonedJobError" in (row.error or "")
 
 
+def test_a_long_traceback_still_stores_the_exception_line(db, monkeypatch):
+    """S1 (fix round 5): ``task_scheduler`` used to hand ``fail_job`` ``reason[:2000]`` -
+    truncated BEFORE ``_summarise_error`` ever ran - so a traceback whose exception line
+    falls past character 2000 lost it entirely, and the summariser picked a mid-stack frame
+    line instead. ``_summarise_error`` already caps its own OUTPUT to 2000 chars, so the raw
+    text must reach it whole.
+    """
+    row = _make_job(db, status=JobStatus.STARTED)
+    frame = (
+        'File "/app/app/tasks/import_tasks.py", line 42, in process_outstanding_import\n'
+        '    do_the_thing()\n'
+    )
+    traceback_text = (
+        "Traceback (most recent call last):\n"
+        + frame * 120
+        + "ValueError: the real failure reason"
+    )
+    assert len(traceback_text) > 5000
+    _install_rq(monkeypatch, {row.job_id: _FakeJob("failed", exc_info=traceback_text)})
+
+    assert _reconcile_orphan_import_jobs(db) == 1
+
+    db.refresh(row)
+    assert row.error == (
+        "ValueError: the real failure reason (in process_outstanding_import)"
+    )
+
+
 def test_started_row_still_running_is_left_alone(db, monkeypatch):
     """A long import must never be called dead while RQ is still running it."""
     row = _make_job(db, status=JobStatus.STARTED, age_minutes=90)

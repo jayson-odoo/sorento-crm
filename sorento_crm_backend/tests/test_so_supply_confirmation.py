@@ -1713,6 +1713,82 @@ def test_a_pool_reserve_across_two_lines_of_one_confirmation_shares_the_pools_av
     )
 
 
+def test_one_lending_groups_book_is_spent_once_across_a_confirmations_lines(api):
+    """R-M (3 Sep 2026) bounds the LENDING GROUP, so one confirmation spends it once.
+
+    The recheck seeded its capacity per (product, location) from each unit's own capped
+    read, and a unit's read is capped by the group's book on its own. Two units whose dates
+    bring DIFFERENT bins of one lending group into view therefore each cleared the whole
+    budget: the group here holds 100 at each of two bins and owes 160 (100 on day 45, 60 on
+    day 100), so its book spares 40, and a line due on day 30 reserving 40 at the first bin
+    and a line due on day 60 reserving 40 at the second both landed - 80 written out of a
+    book with 40 in it, on the lending group's own short.
+
+    The second line is now refused, in the same wording every other exhausted location gets.
+    """
+    from app.models.project_so import SOSupplyDecision
+
+    client, world = api
+    db = world.db
+    lender = f"LN{_suffix()}"
+    bins = [_warehouse(db, f"ZZTA-{lender}"), _warehouse(db, f"ZZTB-{lender}")]
+    for row in bins:
+        _stock(db, world.product, row, on_hand=100)
+    # The assignment draws a group's pile oldest first, and two on-hand piles agree about
+    # the day - so the tie falls to the event key, `on_hand:<warehouse id>`. Read here
+    # rather than assumed, so the case does not depend on which id Postgres minted.
+    first, second = sorted(bins, key=lambda row: f"on_hand:{row.id}")
+    theirs = _behind_ours(_core_so(db, world.company_id))
+    _core_line(
+        db, theirs, world.product, first, qty_ordered="100",
+        required_date=date.today() + timedelta(days=45),
+    )
+    _core_line(
+        db, theirs, world.product, first, qty_ordered="60",
+        required_date=date.today() + timedelta(days=100),
+    )
+
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    near = _core_line(
+        db, core_so, world.product, world.own_wh, qty_ordered="40",
+        required_date=date.today() + timedelta(days=30),
+    )
+    far = _core_line(
+        db, core_so, world.product, world.own_wh, qty_ordered="40",
+        required_date=date.today() + timedelta(days=60),
+    )
+    line_one = _project_line(db, order, line_no=1, product=world.product, core_line=near)
+    line_two = _project_line(db, order, line_no=2, product=world.product, core_line=far)
+    db.commit()
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(
+                    line_one.id, reserve=[{"warehouse_id": first.id, "qty": "40"}],
+                ),
+                _line_payload(
+                    line_two.id, reserve=[{"warehouse_id": second.id, "qty": "40"}],
+                ),
+            ]
+        },
+    )
+    assert response.status_code == 409, response.text
+    body = response.json()
+    assert {row["line_no"] for row in body["failing_lines"]} == {2}, body
+    reason = body["failing_lines"][0]["reason"]
+    assert second.warehouse_code in reason and "now has 0 free" in reason, reason
+
+    # Atomic (AC-C01): nothing is written, the first line's own Reserve included.
+    assert (
+        db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == order.id)
+        .first()
+        is None
+    )
+
 # --------------------------------------------------- the donor's availability nets holds
 
 
@@ -2125,10 +2201,14 @@ def test_a_line_mixing_stock_with_a_buy_is_refused_the_whole_line_rule_reaches_a
     is exactly the composition purchasing cannot act on: the order inquiry asks for 15 of a
     line the customer owes 20 of, at a location holding the other 5, and nobody can tell from
     the row whether that is a partial buy or a mistake.
+
+    LADDER V8 (R-C) carves ONE case out of the rule - the site pool's own share plus a Buy of
+    the rest, which is a proposal the engine itself now makes - so the mix pinned here is
+    composed at the line's own GROUP location, where the rule is untouched.
     """
     client, world = api
     db = world.db
-    _stock(db, world.product, world.pool_wh, on_hand=100)
+    _stock(db, world.product, world.own_wh, on_hand=100)
     order = _project_so(db, world.project)
     core_so = _core_so(db, world.company_id)
     core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20")
@@ -2142,7 +2222,7 @@ def test_a_line_mixing_stock_with_a_buy_is_refused_the_whole_line_rule_reaches_a
                 {
                     "project_line_id": str(line.id),
                     "timely_spo_qty": "0",
-                    "reserve": [{"warehouse_id": world.pool_wh.id, "qty": "5"}],
+                    "reserve": [{"warehouse_id": world.own_wh.id, "qty": "5"}],
                     "buy_qty": "15",
                 }
             ]
@@ -2333,15 +2413,18 @@ def test_the_frozen_proposal_does_not_depend_on_the_order_the_lines_were_posted_
     therefore the order the planner was actually shown."""
     client, world = api
     db = world.db
-    # 30 in the pool against two lines wanting 20 each: whoever is walked first takes the
-    # bigger share, so the order of the walk is visible in the frozen numbers.
+    # 60 in the pool - 30 of it lendable to a project - against two lines wanting 20 each:
+    # whoever is walked first takes the bigger share, so the order of the walk is visible in
+    # the frozen numbers.
     #
     # TWO DELIVERY DATES, which is what keeps that true under ladder v6: one order's lines
     # for the same item, location and date are ONE planning unit now, and a unit has no
     # internal walk order to be sensitive to - both lines of it would simply buy. A week
     # apart they are two units, the ledger still passes from the first to the second, and
     # this test is still about the order the units are walked in.
-    _stock(db, world.product, world.pool_wh, on_hand=30)
+    # 60, not 30: ladder v8 lends a project HALF the pool (R-B), so 60 is what leaves the
+    # first line 20 to take and the second nothing - the shape this case is about.
+    _stock(db, world.product, world.pool_wh, on_hand=60)
     order = _project_so(db, world.project)
     core_so = _core_so(db, world.company_id)
     first = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20")
@@ -2471,3 +2554,122 @@ def test_a_frozen_proposal_is_stamped_with_the_ladder_that_composed_it(api):
     proposed = decision.line_snapshots[0]["proposed_components"]
     assert proposed, "the engine's own composition is frozen beside the decided one"
     assert {part["ladder"] for part in proposed} == {LADDER_VERSION}
+
+
+# --------------------------------------------------------------------------- R-N (3 Sep)
+
+
+def test_the_pool_chain_composes_two_pools_and_the_confirm_admits_each_ones_floor(api):
+    """AC-N.9 (`PLAN-scm-pool-chain-first.md`): step 0 walks EVERY site pool.
+
+    The board's own SO419417 shape, end to end: the asking bin's pool may spare 4 (half of
+    the 8 it holds, the other half kept for dealers) and a second site pool holds 687, so a
+    line of 8 composes `BRW 4 + WH3 4` rather than stopping at the 4 its own pool could
+    give and reaching for another site's GROUP bin. Confirming it writes TWO Reserve
+    components at two pool warehouses, and the confirm-time recheck admits each against
+    THAT pool's own free floor - `pool_reserve_capacity` spends the one five-pool net down
+    across the chain, so neither pool is judged by the other's pile.
+    """
+    from app.models.project_so import SOLineAllocation, SOSupplyDecision
+
+    client, world = api
+    db = world.db
+    far_own = _warehouse(db, f"ZZT-OWN2-{_suffix()}", segment="project")
+    far_pool = _warehouse(db, f"ZZT-WH3-{_suffix()}", segment="dealer")
+    far_own.pool_warehouse_id = far_pool.id
+    _stock(db, world.product, world.pool_wh, on_hand=8)
+    _stock(db, world.product, far_pool, on_hand=687)
+
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="8")
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    proposal = client.get(f"{BASE}/sales-orders/{order.id}/supply")
+    assert proposal.status_code == 200, proposal.text
+    composed = [
+        (c["kind"], c["qty"], c["source_location"])
+        for c in proposal.json()["lines"][0]["components"]
+    ]
+    assert composed == [
+        ("reserve", "4", world.pool_wh.warehouse_code),
+        ("reserve", "4", far_pool.warehouse_code),
+    ], composed
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(
+                    line.id,
+                    reserve=[
+                        {"warehouse_id": world.pool_wh.id, "qty": "4"},
+                        {"warehouse_id": far_pool.id, "qty": "4"},
+                    ],
+                )
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    decision = (
+        db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == order.id)
+        .one()
+    )
+    allocations = (
+        db.query(SOLineAllocation)
+        .filter(SOLineAllocation.decision_id == decision.id)
+        .all()
+    )
+    reserved = {
+        str(row.warehouse_id): Decimal(str(row.qty)) for row in allocations
+    }
+    assert reserved == {
+        str(world.pool_wh.id): Decimal("4"),
+        str(far_pool.id): Decimal("4"),
+    }, (
+        "both pools are held, each against its own floor",
+        [(a.source_type, str(a.warehouse_id), str(a.qty)) for a in allocations],
+    )
+
+
+def test_a_pool_of_the_chain_is_still_judged_by_its_own_floor_at_confirm(api):
+    """AC-N.9's other half: the chain widened WHAT may be composed, not by how much.
+
+    The second pool holding 687 does not make the asking pool's 4 into 5: each pool of the
+    chain is admitted against its own free floor, and the refusal names that pool.
+    """
+    client, world = api
+    db = world.db
+    far_own = _warehouse(db, f"ZZT-OWN2-{_suffix()}", segment="project")
+    far_pool = _warehouse(db, f"ZZT-WH3-{_suffix()}", segment="dealer")
+    far_own.pool_warehouse_id = far_pool.id
+    _stock(db, world.product, world.pool_wh, on_hand=4)
+    _stock(db, world.product, far_pool, on_hand=687)
+
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="8")
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(
+                    line.id,
+                    reserve=[
+                        {"warehouse_id": world.pool_wh.id, "qty": "5"},
+                        {"warehouse_id": far_pool.id, "qty": "3"},
+                    ],
+                )
+            ]
+        },
+    )
+    assert response.status_code in (409, 422), response.text
+    failing = response.json()["failing_lines"]
+    assert failing[0]["line_no"] == 10
+    assert world.pool_wh.warehouse_code in failing[0]["reason"], failing

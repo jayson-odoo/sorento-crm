@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import List, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -178,6 +178,14 @@ class SupplyLadderOption(BaseModel):
     step: str
     label: str
     whole: bool = False
+    #: LADDER V8 (C5, code review round 3 batch 2): how much this step can give. On
+    #: `pool_share` it is the share itself - the one figure a reader cannot derive from
+    #: `whole` - and on every other step it is what that step would contribute to what is
+    #: LEFT after the share. Same field the board's own `BoardLadderOption` carries.
+    gives_qty: Optional[str] = None
+    #: The step's own sentence, where the quantity alone does not say it ("600 is more than
+    #: the 450 BRW can spare"). Null on a step whose label and quantity are the whole answer.
+    reason: Optional[str] = None
     #: Null exactly when the step offered nothing, and `days_late` is null with it.
     fulfil_date: Optional[date] = None
     #: Never negative: landing early is on time, not minus six days late.
@@ -222,6 +230,13 @@ class SupplyLine(BaseModel):
     #: pool's own availability instead. Kept for wire compatibility, never a number again.
     pool_cap: Optional[str] = None
     pool_reorder_level: Optional[str] = None
+    #: The pool-share carve-out (LADDER V8, R-C), stated on THIS line the way the board's
+    #: cell states it on its locations (B2, fix round 5): `{warehouse_id:
+    #: available_for_project}` for every site pool the walk consulted, and the five pools'
+    #: own net. Without them the per-order sheet's `lineBlockers` had no allowance to check
+    #: a reserve-plus-Buy split against, and refused the engine's own suggestion.
+    pool_allowances: Dict[str, str] = {}
+    pools_net: Optional[str] = None
     components: List[SupplyComponent] = []
     #: The FIVE options of ladder v7.1 (R36, AC-S3-14), always all five and always in step
     #: order, one chosen at most - the same table the board's contribution carries, because

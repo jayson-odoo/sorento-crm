@@ -153,13 +153,18 @@ def _stated_board(contribution):
 # --------------------------------------------------------------------------- AC-U1
 
 
-def test_two_lines_of_one_order_for_one_date_are_bought_as_one_quantity():
-    """AC-U1, the captain's own case. 10 and 20 of one item at one location on one date; the
-    group nets -30 and offers nothing, the pools net 0, and another group holds 12.
+def test_the_smaller_line_of_a_unit_takes_what_the_pile_can_cover_and_the_bigger_one_buys():
+    """AC-U1, RE-BLESSED BY LADDER V8 (R-E). 10 and 20 of one item at one location on one
+    date; the group nets -30 and offers nothing, the pools net 0, and another group holds 12.
 
-    Under v5 line 31 walked first, borrowed the 10 it needed whole, and line 32 then found 12
-    against a need of 20 and bought. Under v6 the two lines are 30, 12 of 30 can be covered,
-    and the whole unit is bought - which is what "buy all or use stock for all" means.
+    v5 walked the lines in line order: 31 took the 10 it needed and 32 found 2 left and
+    bought. v6 planned the unit as ONE quantity of 30, could cover only 12 of it, and bought
+    BOTH lines - which is what the captain asked for then, and what he asked to be undone on
+    2 September after SO419208 read "Buy 1440" with 135 sitting on the floor.
+
+    v8 walks the unit's lines one at a time, SMALLEST FIRST, each fed what the previous one
+    left: the 10 is covered whole from the donor group's free pile, and the 20 finds 2 left
+    - not the whole of its own need - so it buys whole. The unit is still one board cell.
     """
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)
@@ -178,13 +183,14 @@ def test_two_lines_of_one_order_for_one_date_are_bought_as_one_quantity():
         )
         lines = _sheet(db, order)
 
-    assert _stated_sheet(lines[31]) == [("buy", "10", None, "buy")]
+    assert _stated_sheet(lines[31]) == [
+        ("reserve", "10", donor.warehouse_code, "group_take")
+    ]
     assert _stated_sheet(lines[32]) == [("buy", "20", None, "buy")]
-    for line_no in (31, 32):
-        reason = lines[line_no]["components"][0]["reason"]
-        assert "Only 12 of 30" in reason, (
-            "the reason states what the UNIT could be covered with, not the line"
-        )
+    assert "Only 2 of 20" in lines[32]["components"][0]["reason"], (
+        "the reason states what was left for THIS line when it was walked, which is what "
+        "R-E's per-line walk makes true"
+    )
 
 
 def test_the_unit_is_covered_whole_when_the_ladder_reaches_the_whole_of_it():
@@ -262,10 +268,14 @@ def test_the_unit_draws_the_pool_once_and_the_draw_is_split_in_line_order():
     assert _stated_sheet(lines[32]) == [
         ("reserve", "20", pool.warehouse_code, "pool")
     ]
-    assert composed[31][1] == Decimal("63")
-    assert composed[32][1] == Decimal("63"), (
-        "the second line of a unit reads the pool as the unit found it, not as the "
-        "first line left it - the draw happens once, for the unit"
+    # AC-N.12: the walk's pool ledger is one entry PER POOL LOCATION now (it carried the
+    # asking bin's own pool alone until step 0 started walking the whole chain), so the
+    # proof reads the asking pool's own entry out of it.
+    assert composed[31][1][pool.warehouse_code] == Decimal("63")
+    assert composed[32][1][pool.warehouse_code] == Decimal("53"), (
+        "LADDER V8 (R-E): the second line of a unit reads the pool as the FIRST LINE LEFT "
+        "it - 63 less the 10 that line took - because the unit's lines walk one at a time "
+        "now. Under v6 the unit drew once and both members reported the same opening pile."
     )
 
 
@@ -335,15 +345,16 @@ def test_two_fulfilment_locations_are_two_units():
 # --------------------------------------------------------------------------- AC-U5
 
 
-def test_a_component_straddling_two_lines_keeps_its_kind_source_rung_and_reason():
-    """AC-U5. The unit of 30 is covered by 5 at its own location and 25 at a sibling of its
-    ownership group, so the sibling's component falls across the boundary between the lines:
-    5 to the first, 20 to the second. Both halves say the same thing, because they ARE the
-    same component.
+def test_each_line_of_a_unit_draws_the_shared_bin_for_itself_and_says_so():
+    """AC-U5, RE-BLESSED BY LADDER V8 (R-E). The unit of 30 is covered by 5 at its own
+    location and 25 at a sibling of its ownership group, and the two lines share both bins.
 
-    Both halves are ONE STEP since ladder v7.1: a step covers the whole unit or gives
-    nothing (R33), so the fixture that used to mix the group with the pool - two steps -
-    would now buy whole and would be testing the whole-unit rule instead of the split.
+    Under v6 the unit was composed once and SPLIT across the lines, so the sibling's
+    component straddled the boundary and both halves carried one sentence - they were one
+    component described twice. Under v8 each line walks for itself off what the previous one
+    left, so there is no straddle: the 10 takes 5 and 5, the 20 takes the 20 that is left,
+    and each sentence is a share of ITS OWN line's offer (5 of 30, then 20 of 20). The
+    quantities are the same; what changed is that each line's row now describes its own draw.
     """
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)
@@ -371,9 +382,18 @@ def test_a_component_straddling_two_lines_keeps_its_kind_source_rung_and_reason(
     ]
     first_half = lines[31]["components"][1]
     second_half = lines[32]["components"][0]
-    assert first_half["reason"] == second_half["reason"]
-    assert first_half["source_warehouse_id"] == second_half["source_warehouse_id"]
-    assert Decimal(first_half["qty"]) + Decimal(second_half["qty"]) == Decimal("25")
+    assert first_half["source_warehouse_id"] == second_half["source_warehouse_id"], (
+        "one bin, drawn by both lines"
+    )
+    assert Decimal(first_half["qty"]) + Decimal(second_half["qty"]) == Decimal("25"), (
+        "and the two draws still add up to what that bin had"
+    )
+    assert first_half["reason"] != second_half["reason"], (
+        "each line's sentence is a share of its OWN offer now (R-E), not one component's "
+        "sentence printed twice"
+    )
+    assert "5 of the 30" in first_half["reason"], first_half["reason"]
+    assert "20 of the 20" in second_half["reason"], second_half["reason"]
 
 
 # --------------------------------------------------------------------------- AC-U6
@@ -578,13 +598,21 @@ def test_the_pools_net_is_one_pile_across_the_walk_and_the_later_dates_buy():
         frozen = _frozen(db, order)
         sheet = _sheet(db, order)
 
-    assert _stated_board(board[1]) == [("reserve", "30", pool.warehouse_code, "pool")]
+    # LADDER V8 (R-B): the pile nets 31 and a PROJECT may have half of it - 15 - so the
+    # first date takes the 15 and buys the other 15 (R-C: the share is its own sub-unit),
+    # and the later dates find the share spent and buy whole. The ledger this case is about
+    # is now two ledgers, both running across the walk: the pile's net, and the share of it
+    # projects may have.
+    assert _stated_board(board[1]) == [
+        ("reserve", "15", pool.warehouse_code, "pool"),
+        ("buy", "15", None, "buy"),
+    ]
     assert _stated_board(board[2]) == [("buy", "30", None, "buy")]
     assert _stated_board(board[3]) == [("buy", "15", None, "buy")]
     # The proof states the pile as the walk found it, not the live net: question 2 on the
-    # second date is answered from 1, not from 31.
+    # second date is answered from what the first date left, never from the opening 31.
     pool_step = next(step for step in board[2]["trail"] if step["kind"] == "pool")
-    assert "1" in pool_step["why"] and "of the 31" not in pool_step["why"], pool_step["why"]
+    assert "of the 31" not in pool_step["why"], pool_step["why"]
     for line_no in (1, 2, 3):
         assert _stated(frozen[line_no]) == _stated_board(board[line_no]), (
             f"the freeze and the board disagree about line {line_no}"
@@ -626,7 +654,14 @@ def test_the_pools_net_ledger_holds_for_a_site_with_no_pool_of_its_own():
         board = _board(db, core_so, as_of=date.today())
         frozen = _frozen(db, order)
 
-    assert _stated_board(board[1]) == [("reserve", "30", pool.warehouse_code, "pool")]
+    # The same v8 shape as the case above (R-B/R-C), and the point this case adds: the site
+    # with NO pool of its own reaches MWH through the chain, and the share ledger is seeded
+    # off that same chain - a ledger keyed off the own pool alone would have seeded 0 and
+    # offered the pile twice.
+    assert _stated_board(board[1]) == [
+        ("reserve", "15", pool.warehouse_code, "pool"),
+        ("buy", "15", None, "buy"),
+    ]
     assert _stated_board(board[2]) == [("buy", "30", None, "buy")]
     assert _stated_board(board[3]) == [("buy", "15", None, "buy")]
     for line_no in (1, 2, 3):
@@ -780,9 +815,11 @@ def test_confirming_one_line_of_a_unit_freezes_the_proposal_the_sheet_showed():
     """S2. The frozen suggestion is what the planner was shown, so it is composed over the
     ORDER, not over the lines the payload happens to name.
 
-    25 in the pool against a unit of 30: the sheet buys both lines whole. Confirming line 32
-    on its own used to freeze "Reserve 20 from the pool" beside it - the composition of a
-    line planned alone, which is not a line anybody was ever shown.
+    25 in the pool against a unit of 30. Under ladder v8 the walk takes the pool's share
+    line by line (R-B/R-E): the 10 goes whole off the 12 the pool may lend a project, and
+    line 32 finds 2 left and buys the other 18. Confirming line 32 on its own must freeze
+    THAT - the composition of the line as it stood in its unit's walk - and not the
+    composition of a line planned alone, which is not a line anybody was ever shown.
     """
     from ..test_so_supply_confirmation import _active_snapshots, _shape
 
@@ -799,6 +836,8 @@ def test_confirming_one_line_of_a_unit_freezes_the_proposal_the_sheet_showed():
                 (32, "20", own, REQUIRED_DATE),
             ],
         )
+        # Read inside the session: the code is compared after it closes.
+        pool_code = pool.warehouse_code
         lines = _sheet(db, order)
         response = _confirm(db, company_id, eling, order, [_payload_line(lines[32])])
         assert response.status_code == 200, response.text
@@ -806,7 +845,12 @@ def test_confirming_one_line_of_a_unit_freezes_the_proposal_the_sheet_showed():
             snapshot["line_no"]: snapshot for snapshot in _active_snapshots(db, order.id)
         }
 
-    assert _stated_sheet(lines[32]) == [("buy", "20", None, "buy")]
+    # The pool nets 25 and may lend a project 12 of it. Line 31 walks first (R-E, smallest
+    # first) and takes 10, so line 32 finds 2 left of the share and buys the other 18.
+    assert _stated_sheet(lines[32]) == [
+        ("reserve", "2", pool_code, "pool"),
+        ("buy", "18", None, "buy"),
+    ]
     assert _shape(snapshots[32]["proposed_components"]) == _stated_sheet(lines[32])
 
 
@@ -887,7 +931,13 @@ def test_a_covered_line_is_out_of_the_unit_on_the_sheet_as_it_is_on_the_board():
         sheet = _sheet(db, order)
         board = _board(db, core_so, as_of=date.today())
 
-    assert _stated_sheet(sheet[32]) == [("reserve", "20", pool.warehouse_code, "pool")]
+    # LADDER V8 (R-B): the pool nets 25 and a project line may have 12 of it, so the open
+    # line takes 12 and buys 8. What this case is about is unchanged - the covered line is
+    # out of the unit on BOTH surfaces, so both give the open line the same answer.
+    assert _stated_sheet(sheet[32]) == [
+        ("reserve", "12", pool.warehouse_code, "pool"),
+        ("buy", "8", None, "buy"),
+    ]
     assert _stated_board(board[32]) == _stated_sheet(sheet[32])
     assert sheet[32]["unit_line_count"] == 1
     assert board[32]["unit_line_count"] == 1

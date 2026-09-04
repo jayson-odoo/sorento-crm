@@ -66,6 +66,11 @@ class SalesOrderLineLink(BaseModel):
     kind: str
     document: Optional[str] = None
     line_label: Optional[str] = None
+    #: The PO/SPO header this link points at (L2/L4, review round). Never rendered as text -
+    #: the FE uses it to make `document` a link to `/scm/purchase-orders/{id}` - `None` when
+    #: the caller building this row does not have the id at hand, in which case `document`
+    #: reads as plain text same as before this field existed.
+    purchase_order_id: Optional[str] = None
     qty: str
     location: Optional[str] = None
     expected_date: Optional[str] = None
@@ -137,6 +142,27 @@ class SalesOrderLine(BaseModel):
     #: 300 engine walks for a column the board already answers.
     supply_decided: Optional[List[SalesOrderLineSupplyComponent]] = None
     supply_proposed: Optional[List[SalesOrderLineSupplyComponent]] = None
+    #: A SAVED (unconfirmed) decision on this line - the planning board's own draft, not
+    #: yet promoted by Confirm (D10, captain 3 Sep). `None` when no draft covers the line,
+    #: OR the same line already carries `supply_decided`: Confirm deletes the draft it
+    #: promotes in the same write, so the two never both answer for one line at once.
+    #:
+    #: Components, in the same vocabulary `supply_decided` is - `project_line_draft_
+    #: service` stores the frontend's own `BoardDecision` JSON opaque, and this is the one
+    #: place it is read. An approval with no edits carries none of the three kinds this
+    #: reads (the engine's suggestion IS the decision, nothing was typed to state again),
+    #: so it prints `[]` - only an amendment (a Buy, a Reserve add, a Borrow) has a
+    #: composition to show.
+    supply_saved: Optional[List[SalesOrderLineSupplyComponent]] = None
+    #: Who saved it, by name - never an id - and when, ISO. Both `None` exactly when
+    #: `supply_saved` is `None`.
+    saved_by: Optional[str] = None
+    saved_at: Optional[str] = None
+    #: The engine has re-suggested this line since it was saved (the board's own AC-4.4
+    #: predicate, `project_line_draft_service.is_stale`), judged on the LINE's own
+    #: outstanding quantity and required date rather than the proposal - never true when
+    #: `supply_saved` is `None`, since nothing was written down to compare.
+    saved_stale: bool = False
     #: WHERE this line's Buy sits (AC-I9): every link on the order inquiry row covering
     #: the line, PO or SPO, with the quantity each holds. Read off the SAME child table
     #: (`projects.order_inquiry_links`) the order inquiry worklist's "Linked to" column
@@ -426,6 +452,10 @@ class PurchaseOrderPlacement(BaseModel):
     kind: str = "inquiry"
     #: The SPO that took this quantity. `spo` rows only.
     spo_number: Optional[str] = None
+    #: The SPO's own `purchase_orders.id` (L2, review round). Never rendered as text - the FE
+    #: uses it to make `spo_number` a link to `/scm/purchase-orders/{id}`. `spo` rows only;
+    #: `None` on an `inquiry` row, which has no purchase order of its own to point at.
+    purchase_order_id: Optional[str] = None
     #: The container it is on, by container number or shipment number. `spo` rows only.
     packing_list: Optional[str] = None
     #: Where it lands, and how much at each. `spo` rows only.
@@ -491,6 +521,32 @@ class PurchaseOrderLineAllocation(BaseModel):
     placements: List[PurchaseOrderPlacement] = Field(default_factory=list)
 
 
+class SpoPlanPull(BaseModel):
+    """One SOURCE purchase-order line a CRM SPO line pulled from (R1, AC-H5)."""
+
+    purchase_order_id: Optional[str] = None
+    po_number: Optional[str] = None
+    po_line_label: Optional[str] = None
+    qty: float = 0.0
+
+
+class SpoPlanCover(BaseModel):
+    """One retail sales-order line a CRM SPO line covers (R1, AC-H5)."""
+
+    so_number: Optional[str] = None
+    customer: Optional[str] = None
+    qty: float = 0.0
+    warehouse: Optional[str] = None
+
+
+class SpoPlan(BaseModel):
+    """The PO detail's Plan card (R1): a `crm_spo` order's own pulls/covers, read off its
+    lines' `source_ref`. Declared here or `response_model` drops it on the way out."""
+
+    pulls: List[SpoPlanPull] = Field(default_factory=list)
+    covers: List[SpoPlanCover] = Field(default_factory=list)
+
+
 class PurchaseOrder(BaseModel):
     id: str
     po_number: str
@@ -533,6 +589,8 @@ class PurchaseOrder(BaseModel):
     is_on_order: bool = False
     source: str = "manual"           # recommendation | import | manual
     gr_reference: Optional[str] = None
+    #: A `crm_spo` order's own pulls/covers (R1, AC-H7); `None` on every other order.
+    spo_plan: Optional[SpoPlan] = None
 
 
 class PurchaseOrderLineInput(BaseModel):

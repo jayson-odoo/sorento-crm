@@ -112,6 +112,8 @@ import {
   ArrowDownToLine,
   ArrowUp,
   ArrowUpToLine,
+  ChevronLeft,
+  ChevronRight,
   ClipboardPaste,
   Copy,
   CornerLeftUp,
@@ -129,6 +131,7 @@ import {
   Unlock,
   X,
 } from 'lucide-react';
+import type { ImperativePanelHandle } from 'react-resizable-panels';
 import { AssetPickerDialog } from './AssetPickerDialog';
 import { FontUploadDialog } from './FontUploadDialog';
 import { ProductPickDialog, type PickMode } from './ProductPickDialog';
@@ -142,6 +145,23 @@ import { InspectorPanel } from './InspectorPanel';
 import { InsertFieldDialog } from './InsertFieldDialog';
 import { useCanvasHistory } from './useCanvasHistory';
 import { useSnapGuides } from './useSnapGuides';
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
+import {
+  DEFAULT_PANEL_LAYOUT,
+  LEFT_MAX_PX,
+  LEFT_MIN_PX,
+  RAIL_MIN_PX,
+  RIGHT_MAX_PX,
+  RIGHT_MIN_PX,
+  clampLeft,
+  clampRailSplit,
+  clampRight,
+  readPanelLayout,
+  writePanelLayout,
+  type PanelLayout,
+} from '@/lib/dealer-kit/canvas-panels';
+import { toggleBold, toggleTextFlag, type TextFormatFlag } from '@/lib/dealer-kit/text-format';
+import { InlineTextEditor } from './InlineTextEditor';
 
 /** What a previewed block is showing, named the way a person reads it. */
 interface PreviewChoice {
@@ -316,10 +336,18 @@ export function TagCanvasEditor({
 }: TagCanvasEditorProps) {
   const [layers, setLayers] = useState<TagLayer[]>(doc.layers);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  /** The text layer the inline editor (S2, D5) is currently open on, if any. */
+  const [editingLayerId, setEditingLayerId] = useState<string | null>(null);
   const [view, setView] = useState<CanvasView>({ zoom: 1, panX: 0, panY: 0 });
   const [tool, setTool] = useState<CanvasTool>('select');
   const [spaceHeld, setSpaceHeld] = useState(false);
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
+  /**
+   * Side-panel widths + collapsed state (S1, D7). Starts at the default so
+   * server and first-paint markup match, then hydrates from localStorage -
+   * the same trick `useDriveViewMode` uses to avoid a hydration mismatch.
+   */
+  const [panelLayout, setPanelLayoutState] = useState<PanelLayout>(DEFAULT_PANEL_LAYOUT);
   const [marquee, setMarquee] = useState<{
     x_mm: number;
     y_mm: number;
@@ -382,6 +410,11 @@ export function TagCanvasEditor({
   const library = useKitLibrary();
 
   const containerRef = useRef<HTMLDivElement>(null);
+  /** The whole [left][canvas][right] row, measured to convert px <-> % (S1). */
+  const panelGroupRef = useRef<HTMLDivElement>(null);
+  const [panelGroupSize, setPanelGroupSize] = useState({ width: 0, height: 0 });
+  const leftPanelRef = useRef<ImperativePanelHandle>(null);
+  const rightPanelRef = useRef<ImperativePanelHandle>(null);
   const stageRef = useRef<Konva.Stage | null>(null);
   const transformerRef = useRef<Konva.Transformer>(null);
   const dragRef = useRef<DragSession | null>(null);
@@ -483,6 +516,41 @@ export function TagCanvasEditor({
       });
     },
     [history],
+  );
+
+  /**
+   * B/I/U/Shift+X (S2, D4): applied to every selected TEXT layer at once, one
+   * history entry, all landing on the same target state (AC-S2-4) - a mixed
+   * selection turns the flag ON, an all-set selection turns it OFF. Bold is
+   * `fontWeight`, not a boolean, so it gets its own branch using the same
+   * "already bold" reading (>= 600) `toggleBold` itself uses per layer.
+   */
+  const applyTextFormat = useCallback(
+    (flag: 'bold' | TextFormatFlag) => {
+      const targetIds = Array.from(selectedIds).filter(
+        (id) => layers.find((l) => l.id === id)?.props.kind === 'text',
+      );
+      if (targetIds.length === 0) return;
+
+      if (flag === 'bold') {
+        const targeted = layers.filter((l) => targetIds.includes(l.id));
+        const allBold = targeted.every(
+          (l) => (l.props as Extract<TagLayerProps, { kind: 'text' }>).fontWeight >= 600,
+        );
+        const nextWeight = toggleBold(allBold ? 600 : 400);
+        commit(
+          layers.map((l) =>
+            targetIds.includes(l.id) && l.props.kind === 'text'
+              ? { ...l, props: { ...l.props, fontWeight: nextWeight } }
+              : l,
+          ),
+        );
+        return;
+      }
+
+      commit(toggleTextFlag(layers, targetIds, flag));
+    },
+    [layers, selectedIds, commit],
   );
 
   const addLayer = useCallback(
@@ -1089,7 +1157,15 @@ export function TagCanvasEditor({
     (rawId: string) => {
       const targetId = resolveTarget(rawId);
       const target = layers.find((layer) => layer.id === targetId);
-      if (!target || target.props.kind !== 'group') return;
+      if (!target) return;
+      // A text layer opens the inline editor in place (S2, D5); a group still
+      // steps a level in, exactly as before.
+      if (target.props.kind === 'text') {
+        setSelectedIds(new Set([target.id]));
+        setEditingLayerId(target.id);
+        return;
+      }
+      if (target.props.kind !== 'group') return;
       const point = pointerMm();
       const childId = point
         ? topmostChildAt(layers, targetId, point.x_mm, point.y_mm)
@@ -1564,6 +1640,150 @@ export function TagCanvasEditor({
     handleFit();
   }, [stageWidth, stageHeight, handleFit]);
 
+  // -- Side panels (S1, D7) ---------------------------------------------------
+
+  /**
+   * `onCollapse`/`onExpand` (unlike `onResize`) fire once on MOUNT too, to
+   * announce a collapsible panel's initial state - which happens before the
+   * hydration effect below has replaced `panelLayout` with what is actually
+   * stored, so persisting unconditionally clobbered the stored left/right/
+   * railSplit with plain defaults on every load. Guarded the same way as the
+   * resize handlers below, just against "has hydration run" rather than "is a
+   * handle being dragged", since a collapse/expand can be a button click.
+   */
+  const hasHydratedRef = useRef(false);
+
+  /**
+   * True only between a handle's own `onDragging(true)` and `onDragging(false)`
+   * (react-resizable-panels calls it once per pointer drag). It gates which
+   * `onResize` calls are a genuine user action worth persisting.
+   *
+   * The library ALSO fires `onResize` on its own, outside any drag, whenever
+   * the group's real pixel width first becomes known: `defaultSize` is only
+   * honoured on a Panel's very first mount, and that first mount happens
+   * before the group has been measured (percentages have to come from
+   * SOMETHING, so a generic fallback width stands in) - once the real width
+   * arrives, the panel's minSize/maxSize percentages are recomputed against
+   * it and, if the mount-time percentage now reads as below the real minimum,
+   * the library corrects the panel up to it and reports that as a resize.
+   * Persisting that correction would floor the STORED width to the minimum
+   * on every load, discarding whatever the user actually had it at - which is
+   * exactly the bug this ref exists to avoid.
+   */
+  const draggingHandleRef = useRef(false);
+
+  // Hydrate from localStorage after mount (avoids a hydration mismatch - see
+  // the state's own comment). A stored COLLAPSED flag needs an imperative
+  // `.collapse()` call here, not just the state update: the panel already
+  // mounted expanded (hydration runs after mount, and `defaultSize` is only
+  // ever read at mount, before this state existed), so without this the
+  // collapsed half of AC-S1-5 would silently not apply on reload even though
+  // the value round-trips through storage correctly.
+  useEffect(() => {
+    const stored = readPanelLayout();
+    setPanelLayoutState(stored);
+    hasHydratedRef.current = true;
+    if (stored.leftCollapsed) leftPanelRef.current?.collapse();
+    if (stored.rightCollapsed) rightPanelRef.current?.collapse();
+  }, []);
+
+  useEffect(() => {
+    const element = panelGroupRef.current;
+    if (!element) return;
+    const observer = new ResizeObserver((entries) => {
+      const rect = entries[0].contentRect;
+      setPanelGroupSize({ width: rect.width, height: rect.height });
+    });
+    observer.observe(element);
+    setPanelGroupSize({ width: element.clientWidth, height: element.clientHeight });
+    return () => observer.disconnect();
+  }, []);
+
+  const persistPanelLayout = useCallback((updater: (prev: PanelLayout) => PanelLayout) => {
+    setPanelLayoutState((prev) => {
+      const next = updater(prev);
+      writePanelLayout(next);
+      return next;
+    });
+  }, []);
+
+  // Percentages `react-resizable-panels` wants, converted from the persisted
+  // pixel widths against the group's own measured size. Before that size is
+  // known, a generic fallback keeps the first paint sane; the ResizeObserver
+  // above corrects it a moment later, the same one-frame settle every other
+  // measured layout in this file already accepts (`containerSize` does the
+  // same at 0x0 until its own observer fires). jsdom never fires it at all
+  // (no real layout engine), so this fallback is also what every panel test
+  // renders against - a fixed, environment-independent number rather than 0.
+  const groupWidth = panelGroupSize.width || 1200;
+  const groupHeight = panelGroupSize.height || 600;
+  /**
+   * Below this, the side columns are `hidden` (AC-S1-7) but still mounted -
+   * squeezing the group this narrow can force the library to auto-collapse a
+   * panel just to satisfy its own `minSize`, which is a viewport-width
+   * artefact, not a choice. `onCollapse`/`onExpand` below skip persisting
+   * while the group is this narrow so a phone-width visit does not leave the
+   * desktop layout collapsed the next time it is opened wide.
+   */
+  const isGroupInteractive = groupWidth >= 640;
+  const leftPercent = (panelLayout.left / groupWidth) * 100;
+  const rightPercent = (panelLayout.right / groupWidth) * 100;
+  const leftMinPercent = (LEFT_MIN_PX / groupWidth) * 100;
+  const leftMaxPercent = (LEFT_MAX_PX / groupWidth) * 100;
+  const rightMinPercent = (RIGHT_MIN_PX / groupWidth) * 100;
+  const rightMaxPercent = (RIGHT_MAX_PX / groupWidth) * 100;
+  const railPercent = (panelLayout.railSplit / groupHeight) * 100;
+  const railMinPercent = (RAIL_MIN_PX / groupHeight) * 100;
+  const railMaxPercent = 100 - railMinPercent;
+
+  const handleLeftResize = useCallback(
+    (size: number) => {
+      if (!draggingHandleRef.current) return;
+      // Dragging PAST the minimum is the library's own collapse gesture, which
+      // reports a run of intermediate sizes below `leftMinPercent` on its way
+      // to 0 - `onCollapse` below owns that transition, so anything under the
+      // real minimum is ignored here rather than clamped and persisted (that
+      // would floor the stored width to LEFT_MIN_PX and lose whatever the
+      // panel was actually at before the user dragged it shut).
+      if (size < leftMinPercent - 0.1) return;
+      persistPanelLayout((prev) => ({ ...prev, left: clampLeft((size / 100) * groupWidth) }));
+    },
+    [groupWidth, leftMinPercent, persistPanelLayout],
+  );
+
+  const handleRightResize = useCallback(
+    (size: number) => {
+      if (!draggingHandleRef.current) return;
+      if (size < rightMinPercent - 0.1) return;
+      persistPanelLayout((prev) => ({ ...prev, right: clampRight((size / 100) * groupWidth) }));
+    },
+    [groupWidth, rightMinPercent, persistPanelLayout],
+  );
+
+  const handleRailResize = useCallback(
+    (size: number) => {
+      if (!draggingHandleRef.current) return;
+      if (size < railMinPercent - 0.1 || size > railMaxPercent + 0.1) return;
+      persistPanelLayout((prev) => ({
+        ...prev,
+        railSplit: clampRailSplit((size / 100) * groupHeight),
+      }));
+    },
+    [groupHeight, railMinPercent, railMaxPercent, persistPanelLayout],
+  );
+
+  // A layout change that came from actually dragging a handle is worth
+  // re-centring the artboard for (unlike the collapse toggle, which the
+  // chevron buttons drive directly) - the same "Fit to View" the toolbar and
+  // Ctrl+0 already trigger.
+  const handlePanelDragEnd = useCallback(
+    (isDragging: boolean) => {
+      draggingHandleRef.current = isDragging;
+      if (!isDragging) handleFit();
+    },
+    [handleFit],
+  );
+
   const handleZoomIn = useCallback(() => {
     setView((v) =>
       zoomAt(v, { x: stageWidth / 2, y: stageHeight / 2 }, ZOOM_BUTTON_FACTOR, ZOOM_LIMITS),
@@ -1813,9 +2033,44 @@ export function TagCanvasEditor({
         e.target instanceof HTMLInputElement ||
         e.target instanceof HTMLTextAreaElement ||
         e.target instanceof HTMLSelectElement;
-      if (isInput) return;
-
       const modifier = e.ctrlKey || e.metaKey;
+
+      // B/I/U/Shift+X format the selected text layer(s) whether the inline
+      // editor has focus or not (AC-S2-4, D4) - checked ahead of the
+      // `isInput` guard below, because the inline editor IS a textarea and
+      // would otherwise never let these through. That exception is scoped to
+      // the inline editor specifically (N2): any OTHER input keeps the normal
+      // `isInput` guard, so Cmd+B while typing a name in "Save as template"
+      // types a B there instead of bolding the canvas underneath it.
+      const formatShortcutsAllowed = !isInput || Boolean(editingLayerId);
+      if (formatShortcutsAllowed && modifier && !e.shiftKey && (e.key === 'b' || e.key === 'B')) {
+        e.preventDefault();
+        applyTextFormat('bold');
+        return;
+      }
+      if (formatShortcutsAllowed && modifier && !e.shiftKey && (e.key === 'i' || e.key === 'I')) {
+        e.preventDefault();
+        applyTextFormat('italic');
+        return;
+      }
+      if (formatShortcutsAllowed && modifier && !e.shiftKey && (e.key === 'u' || e.key === 'U')) {
+        e.preventDefault();
+        applyTextFormat('underline');
+        return;
+      }
+      if (formatShortcutsAllowed && modifier && e.shiftKey && (e.key === 'x' || e.key === 'X')) {
+        e.preventDefault();
+        applyTextFormat('strikethrough');
+        return;
+      }
+
+      // The inline editor is its own textarea layered over the canvas; while
+      // it is open nothing else here may fire (AC-S2-8). Redundant with the
+      // `isInput` check right below - which already covers it, since the
+      // editor IS a textarea - kept explicit for safety per the plan.
+      if (editingLayerId) return;
+
+      if (isInput) return;
 
       if (e.key === ' ' && !modifier) {
         e.preventDefault();
@@ -1931,6 +2186,8 @@ export function TagCanvasEditor({
   }, [
     selectedIds,
     selectedGuideId,
+    editingLayerId,
+    applyTextFormat,
     deleteSelectedLayers,
     duplicateSelectedLayers,
     groupSelectedLayers,
@@ -1988,34 +2245,117 @@ export function TagCanvasEditor({
     : null;
 
   /**
-   * The content the Insert field dialog opens on, and where Done writes it.
-   *
-   * The same rule the Inspector's Content box already follows: a slot-bound
-   * layer is edited through `text_override` so the binding survives, an unbound
-   * one through its own text. Each path is one `setLayers` and one history
-   * entry, so a whole dialog's worth of edits undoes in one step.
+   * The content a given layer's Content box opens on, and where its commit
+   * writes to. A slot-bound layer is edited through `text_override` so the
+   * binding survives, an unbound one through its own text.
    */
-  const selectedContent = selectedLayer
-    ? selectedLayer.slot_binding
-      ? selectedLayer.text_override ??
-        selectedResolvedText ??
-        (selectedLayer.props.kind === 'text' ? selectedLayer.props.text : '')
-      : selectedLayer.props.kind === 'text'
-        ? selectedLayer.props.text
-        : ''
-    : '';
+  const contentFor = useCallback(
+    (layer: TagLayer) => {
+      if (layer.slot_binding) {
+        return (
+          layer.text_override ??
+          resolveSlotText(layer, dataOf(layer)) ??
+          (layer.props.kind === 'text' ? layer.props.text : '')
+        );
+      }
+      return layer.props.kind === 'text' ? layer.props.text : '';
+    },
+    [dataOf],
+  );
+
+  /**
+   * The content the Insert field dialog opens on, and where Done writes it.
+   * Each path is one `setLayers` and one history entry, so a whole dialog's
+   * worth of edits undoes in one step.
+   */
+  const selectedContent = selectedLayer ? contentFor(selectedLayer) : '';
+
+  const writeContentToLayer = useCallback(
+    (layerId: string, content: string) => {
+      const layer = layers.find((l) => l.id === layerId);
+      if (!layer) return;
+      if (layer.slot_binding) {
+        updateLayer(layer.id, { text_override: content });
+      } else if (layer.props.kind === 'text') {
+        updateLayerProps(layer.id, { ...layer.props, text: content });
+      }
+    },
+    [layers, updateLayer, updateLayerProps],
+  );
 
   const writeSelectedContent = useCallback(
     (content: string) => {
       if (!selectedLayer) return;
-      if (selectedLayer.slot_binding) {
-        updateLayer(selectedLayer.id, { text_override: content });
-      } else if (selectedLayer.props.kind === 'text') {
-        updateLayerProps(selectedLayer.id, { ...selectedLayer.props, text: content });
-      }
+      writeContentToLayer(selectedLayer.id, content);
     },
-    [selectedLayer, updateLayer, updateLayerProps],
+    [selectedLayer, writeContentToLayer],
   );
+
+  /**
+   * The text layer the inline editor is open on - looked up by the id it was
+   * opened with, NOT the current selection (S1). Clicking a different text
+   * layer while editing moves `selectedLayer`, but the editor stays open on
+   * whatever it was double-clicked into until it commits, so it must keep
+   * targeting that same layer regardless of where the selection has moved.
+   */
+  const editingLayer = useMemo(
+    () => (editingLayerId ? (layers.find((l) => l.id === editingLayerId) ?? null) : null),
+    [editingLayerId, layers],
+  );
+
+  /** The seed value the inline editor opened with - stable for the whole edit. */
+  const editingContent = editingLayer ? contentFor(editingLayer) : '';
+
+  /** Mirrors the inline editor's live (uncommitted) text, for the effect below. */
+  const editingTextRef = useRef('');
+
+  // Re-seed the live-text mirror on every open, to `editingContent` AS OF
+  // this open - otherwise a selection change with nothing typed would flush
+  // whatever was left over from a PREVIOUS edit session against the newly
+  // opened layer.
+  useEffect(() => {
+    if (editingLayerId) editingTextRef.current = editingContent;
+    // Only re-seed when a NEW edit session opens, not on every keystroke -
+    // `editingTextRef` itself is the up-to-date value once one is in progress.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingLayerId]);
+
+  /**
+   * The inline editor's own commit (S2, D5): Esc, Cmd/Ctrl+Enter or blur
+   * already decided the text changed (InlineTextEditor's own no-op guard,
+   * B2) - write it to the layer that was opened, then close.
+   */
+  const commitInlineEdit = useCallback(
+    (content: string) => {
+      if (editingLayerId) writeContentToLayer(editingLayerId, content);
+      setEditingLayerId(null);
+    },
+    [editingLayerId, writeContentToLayer],
+  );
+
+  /** The inline editor's own no-op close (B2): nothing was typed, nothing to write. */
+  const cancelInlineEdit = useCallback(() => {
+    setEditingLayerId(null);
+  }, []);
+
+  /**
+   * Clicking a DIFFERENT layer while the inline editor is open changes
+   * `selectedLayer` - that used to just close the editor without saving
+   * (S1), discarding whatever was typed, or landing on whatever layer
+   * happened to be selected by the time the write ran. This flushes the
+   * text the editor is CURRENTLY showing (`editingTextRef`, kept live by
+   * `InlineTextEditor`) against the layer it was opened on
+   * (`editingLayerId`), then closes - a genuine commit-then-close, not a
+   * silent discard, and it never depends on native blur firing in time.
+   */
+  useEffect(() => {
+    if (!editingLayerId) return;
+    if (selectedLayer && selectedLayer.id === editingLayerId) return;
+    if (editingTextRef.current !== editingContent) {
+      writeContentToLayer(editingLayerId, editingTextRef.current);
+    }
+    setEditingLayerId(null);
+  }, [editingLayerId, selectedLayer, editingContent, writeContentToLayer]);
 
   /** The bound thing, named the way a person recognises it. Never a UUID. */
   const selectedBindingLabel = describeBindingData(selectedData);
@@ -2126,24 +2466,114 @@ export function TagCanvasEditor({
         selectionIsGroup={selectionIsGroup}
       />
 
-      <div className="flex flex-1 overflow-hidden">
-        {/* Left sidebar: the host's rail, then the Layers panel */}
-        <div className="hidden w-52 shrink-0 md:flex md:flex-col md:overflow-hidden">
-          {leftRail}
-          <div className="min-h-0 flex-1">
-            <LayersPanel
-              layers={layers}
-              selectedIds={selectedIds}
-              onSelect={handleSelect}
-              onToggleVisibility={handleToggleVisibility}
-              onToggleLock={handleToggleLock}
-              onMoveLayer={handleMoveLayer}
-            />
-          </div>
-        </div>
+      <div ref={panelGroupRef} className="flex flex-1 overflow-hidden">
+        {/* Left column collapsed strip: rendered OUTSIDE the panel so it stays
+            clickable while the panel itself is at collapsedSize={0}. */}
+        {panelLayout.leftCollapsed && (
+          <button
+            type="button"
+            className="hidden w-6 shrink-0 items-start justify-center border-r bg-muted/30 pt-2 hover:bg-muted md:flex"
+            title="Expand Lines + Layers"
+            aria-label="Expand Lines + Layers"
+            onClick={() => {
+              leftPanelRef.current?.expand(leftPercent);
+              handleFit();
+            }}
+          >
+            <ChevronRight className="size-3.5" />
+          </button>
+        )}
 
-        {/* Centre: canvas workspace. The Stage fills it and the artboard sits at
-            a pan offset inside (D33), so there is nothing to scroll. */}
+        <ResizablePanelGroup direction="horizontal" className="flex-1">
+          {/* Left sidebar: the host's rail, then the Layers panel (AC-S1-1, AC-S1-3). */}
+          <ResizablePanel
+            ref={leftPanelRef}
+            id="canvas-left"
+            order={1}
+            collapsible
+            collapsedSize={0}
+            minSize={leftMinPercent}
+            maxSize={leftMaxPercent}
+            defaultSize={panelLayout.leftCollapsed ? 0 : leftPercent}
+            onResize={handleLeftResize}
+            onCollapse={() => {
+              if (!hasHydratedRef.current || !isGroupInteractive) return;
+              persistPanelLayout((prev) => ({ ...prev, leftCollapsed: true }));
+            }}
+            onExpand={() => {
+              if (!hasHydratedRef.current || !isGroupInteractive) return;
+              persistPanelLayout((prev) => ({ ...prev, leftCollapsed: false }));
+            }}
+            className="relative hidden md:flex md:flex-col md:overflow-hidden"
+          >
+            <button
+              type="button"
+              className="absolute right-1 top-1 z-10 flex size-5 items-center justify-center rounded bg-background/80 text-muted-foreground hover:bg-accent hover:text-foreground"
+              title="Collapse Lines + Layers"
+              aria-label="Collapse Lines + Layers"
+              onClick={() => {
+                leftPanelRef.current?.collapse();
+                handleFit();
+              }}
+            >
+              <ChevronLeft className="size-3.5" />
+            </button>
+            {leftRail ? (
+              <ResizablePanelGroup direction="vertical" className="h-full">
+                <ResizablePanel
+                  id="canvas-left-rail"
+                  order={1}
+                  minSize={railMinPercent}
+                  maxSize={railMaxPercent}
+                  defaultSize={railPercent}
+                  onResize={handleRailResize}
+                  className="flex flex-col"
+                >
+                  {/* The Panel itself clips at its own bounds (overflow:hidden
+                      from the primitive) - this inner div is what actually
+                      scrolls once the divider drags the pane below the rail's
+                      natural content height. */}
+                  <div className="flex h-full flex-col overflow-y-auto">{leftRail}</div>
+                </ResizablePanel>
+                <ResizableHandle
+                  withHandle
+                  onDragging={handlePanelDragEnd}
+                  aria-label="Resize Lines and Layers"
+                />
+                <ResizablePanel id="canvas-left-layers" order={2} minSize={railMinPercent} className="min-h-0">
+                  <LayersPanel
+                    layers={layers}
+                    selectedIds={selectedIds}
+                    onSelect={handleSelect}
+                    onToggleVisibility={handleToggleVisibility}
+                    onToggleLock={handleToggleLock}
+                    onMoveLayer={handleMoveLayer}
+                  />
+                </ResizablePanel>
+              </ResizablePanelGroup>
+            ) : (
+              <div className="min-h-0 flex-1">
+                <LayersPanel
+                  layers={layers}
+                  selectedIds={selectedIds}
+                  onSelect={handleSelect}
+                  onToggleVisibility={handleToggleVisibility}
+                  onToggleLock={handleToggleLock}
+                  onMoveLayer={handleMoveLayer}
+                />
+              </div>
+            )}
+          </ResizablePanel>
+          <ResizableHandle
+            withHandle
+            className="hidden md:flex"
+            onDragging={handlePanelDragEnd}
+            aria-label="Resize Lines and Layers panel"
+          />
+
+          {/* Centre: canvas workspace. The Stage fills it and the artboard sits at
+              a pan offset inside (D33), so there is nothing to scroll. */}
+          <ResizablePanel id="canvas-centre" order={2} className="flex">
         <ContextMenu>
           <ContextMenuTrigger asChild>
             <div
@@ -2426,6 +2856,26 @@ export function TagCanvasEditor({
                   )}
                 </>
               )}
+
+              {/* Inline text edit (S2, D5): a plain textarea laid over the
+                  node, same maths `KonvaTagLayer` uses for the node itself.
+                  Kept open on `editingLayer` regardless of where the
+                  selection moves (S1) - see `commitInlineEdit` above. */}
+              {editingLayerId && editingLayer && editingLayer.props.kind === 'text' && (
+                <InlineTextEditor
+                  key={editingLayer.id}
+                  layer={editingLayer}
+                  value={editingContent}
+                  scale={scale}
+                  originX={RULER_THICKNESS + view.panX}
+                  originY={RULER_THICKNESS + view.panY}
+                  onChangeText={(text) => {
+                    editingTextRef.current = text;
+                  }}
+                  onCommit={commitInlineEdit}
+                  onCancel={cancelInlineEdit}
+                />
+                )}
             </div>
           </ContextMenuTrigger>
 
@@ -2549,31 +2999,87 @@ export function TagCanvasEditor({
             )}
           </ContextMenuContent>
         </ContextMenu>
+          </ResizablePanel>
 
-        {/* Right sidebar: Inspector panel */}
-        <div className="hidden w-60 shrink-0 lg:block">
-          <InspectorPanel
-            layer={selectedLayer}
-            onUpdate={updateLayer}
-            onUpdateProps={updateLayerProps}
-            resolvedText={selectedResolvedText}
-            bindingLabel={selectedBindingLabel}
-            fontOptions={library.fontOptions}
-            onUploadFont={() => setFontUploadOpen(true)}
-            onInsertField={() => setInsertFieldOpen(true)}
-            onChooseImage={handleChooseImage}
-            onChooseBadge={handleChooseBadge}
-            onRebind={handleRebind}
-            onRelinkGroup={handleRelinkGroup}
-            onUseTemplate={onUseTemplate}
-            previewBlockId={selectedBlock?.groupId ?? null}
-            previewBlockLabel={
-              selectedBlock ? previewChoices[selectedBlock.groupId]?.label ?? null : null
-            }
-            onPreviewBlock={openBlockPreview}
-            onClearBlockPreview={clearBlockPreview}
+          {/* Right sidebar: Inspector panel (AC-S1-2, AC-S1-3). */}
+          <ResizableHandle
+            withHandle
+            className="hidden lg:flex"
+            onDragging={handlePanelDragEnd}
+            aria-label="Resize Inspector panel"
           />
-        </div>
+          <ResizablePanel
+            ref={rightPanelRef}
+            id="canvas-right"
+            order={3}
+            collapsible
+            collapsedSize={0}
+            minSize={rightMinPercent}
+            maxSize={rightMaxPercent}
+            defaultSize={panelLayout.rightCollapsed ? 0 : rightPercent}
+            onResize={handleRightResize}
+            onCollapse={() => {
+              if (!hasHydratedRef.current || !isGroupInteractive) return;
+              persistPanelLayout((prev) => ({ ...prev, rightCollapsed: true }));
+            }}
+            onExpand={() => {
+              if (!hasHydratedRef.current || !isGroupInteractive) return;
+              persistPanelLayout((prev) => ({ ...prev, rightCollapsed: false }));
+            }}
+            className="relative hidden lg:block"
+          >
+            <button
+              type="button"
+              className="absolute right-1 top-1 z-10 flex size-5 items-center justify-center rounded bg-background/80 text-muted-foreground hover:bg-accent hover:text-foreground"
+              title="Collapse Inspector"
+              aria-label="Collapse Inspector"
+              onClick={() => {
+                rightPanelRef.current?.collapse();
+                handleFit();
+              }}
+            >
+              <ChevronRight className="size-3.5" />
+            </button>
+            <InspectorPanel
+              layer={selectedLayer}
+              onUpdate={updateLayer}
+              onUpdateProps={updateLayerProps}
+              layers={layers}
+              resolvedText={selectedResolvedText}
+              bindingLabel={selectedBindingLabel}
+              fontOptions={library.fontOptions}
+              onUploadFont={() => setFontUploadOpen(true)}
+              onInsertField={() => setInsertFieldOpen(true)}
+              onChooseImage={handleChooseImage}
+              onChooseBadge={handleChooseBadge}
+              onRebind={handleRebind}
+              onRelinkGroup={handleRelinkGroup}
+              onUseTemplate={onUseTemplate}
+              previewBlockId={selectedBlock?.groupId ?? null}
+              previewBlockLabel={
+                selectedBlock ? previewChoices[selectedBlock.groupId]?.label ?? null : null
+              }
+              onPreviewBlock={openBlockPreview}
+              onClearBlockPreview={clearBlockPreview}
+            />
+          </ResizablePanel>
+        </ResizablePanelGroup>
+
+        {/* Right column collapsed strip - see the left column's own comment. */}
+        {panelLayout.rightCollapsed && (
+          <button
+            type="button"
+            className="hidden w-6 shrink-0 items-start justify-center border-l bg-muted/30 pt-2 hover:bg-muted lg:flex"
+            title="Expand Inspector"
+            aria-label="Expand Inspector"
+            onClick={() => {
+              rightPanelRef.current?.expand(rightPercent);
+              handleFit();
+            }}
+          >
+            <ChevronLeft className="size-3.5" />
+          </button>
+        )}
       </div>
 
       {/* Pickers. Rendered here rather than beside their buttons so the

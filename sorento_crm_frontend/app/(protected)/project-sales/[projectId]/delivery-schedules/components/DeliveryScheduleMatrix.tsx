@@ -96,9 +96,13 @@ export const TOTAL_COL = 'w-[124px] min-w-[124px] max-w-[124px]';
  * pinned on one, because those are the only two that ever cover the same pixels, and with
  * equal z-index the winner is whichever the DOM happened to put last rather than whichever
  * a reader expects to see.
+ *
+ * Both tokens (css/config.reui.css) sit below --z-header/--z-sidebar: a pinned cell has to
+ * beat the columns scrolling under it, but never the app shell - the collapsed sidebar's
+ * hover flyout has to render over a frozen column, not under it.
  */
-export const Z_PINNED = 'z-20';
-export const Z_CORNER = 'z-30';
+export const Z_PINNED = 'z-(--z-sticky-content)';
+export const Z_CORNER = 'z-(--z-sticky-content-corner)';
 
 /**
  * A pinned cell has to be OPAQUE, and this is the whole of the "stray number in the header"

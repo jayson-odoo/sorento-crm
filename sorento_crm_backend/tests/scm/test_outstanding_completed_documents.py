@@ -398,7 +398,8 @@ def test_a_completed_document_that_reopens_is_active_again(seeded_po, db):
 def test_a_settled_row_never_revives_the_history_line_it_matches(seeded_po, db):
     """`po_history_service` writes closed, fully received lines into these same tables so
     the on-order views cannot count them. A completed book must not wake one up: it is the
-    guard `_closed_line` already carries, and a settled row reaches that code path too."""
+    guard `_preload_closed_lines` already carries, and a settled row reaches that code path
+    too."""
     codes = seeded_po
     supplier_id = db.execute(text("SELECT id FROM suppliers WHERE supplier_code = :c"),
                              {"c": codes.creditor_main}).scalar()

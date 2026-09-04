@@ -459,7 +459,11 @@ def test_reassign_dual_team_set_prefers_trackings_own_set(notify, db):
     assert tracking.agent_id == agent_id
 
 
-def test_reassign_scope_b_enforced(db):
+def test_reassign_crosses_teams(db):
+    """Hand-off may cross teams (decision 2026-09-03): the actor owns the task
+    (passes the assignee-scope guard above), and the target belongs to SOME
+    team (any team, not necessarily one shared with the actor), so the
+    reassignment succeeds."""
     pid = _policy(db)
     me = _user(db, "me")
     outsider = _user(db, "outsider")
@@ -469,8 +473,25 @@ def test_reassign_scope_b_enforced(db):
     _member(db, other, outsider)
     tid = _track(db, pid, assignee=me, src="complaint")
 
-    with pytest.raises(AppException):
+    tracking = ConversationSLATrackingService(db).reassign(tid, me, outsider)
+
+    assert tracking.assigned_to_id == outsider
+
+
+def test_reassign_rejects_user_with_no_team(db):
+    """A target with no team membership at all has no SLA routing, so the
+    hand-off is still rejected."""
+    pid = _policy(db)
+    me = _user(db, "me")
+    outsider = _user(db, "no-team-outsider")
+    my_team = _team(db, "Mine")
+    _member(db, my_team, me)
+    tid = _track(db, pid, assignee=me, src="complaint")
+
+    with pytest.raises(AppException) as exc:
         ConversationSLATrackingService(db).reassign(tid, me, outsider)
+    message = str(exc.value.detail.get("message", "")).lower()
+    assert "not in any team" in message
 
 
 # ---- admin bypass ---------------------------------------------------------
@@ -491,8 +512,12 @@ def _make_admin(db, user_id: str) -> None:
     db.commit()
 
 
-def test_reassign_denied_message_names_the_real_reason_not_deleted(db):
-    """Out-of-scope must not claim the row is missing: the user is looking at it."""
+@patch("app.services.sla_service.ConversationSLATrackingService._notify_reassignment")
+def test_reassign_allowed_when_assignee_is_outside_my_teams(notify, db):
+    """Decision 2026-09-03: the actor gate no longer requires the assignee to be
+    in the actor's visible scope. Any team member may reassign any unresolved
+    task, so this used-to-be-denied scenario (me in Mine, assignee in Other)
+    now succeeds, as long as the target belongs to some team."""
     pid = _policy(db)
     me = _user(db, "cs-agent")
     outsider = _user(db, "purchasing-owner")
@@ -502,10 +527,51 @@ def test_reassign_denied_message_names_the_real_reason_not_deleted(db):
     _member(db, other, outsider)
     tid = _track(db, pid, assignee=outsider, src="stock_inquiry")
 
+    updated = ConversationSLATrackingService(db).reassign(tid, me, outsider)
+    assert updated.assigned_to_id == outsider
+
+
+@patch("app.services.sla_service.ConversationSLATrackingService._notify_reassignment")
+def test_reassign_escalated_away_to_parent_team_still_reassignable(notify, db):
+    """The real-world trigger for decision 2026-09-03: a ticket escalates to the
+    assignee's manager (a PARENT team, outside the actor's downward scope) while
+    the actor is mid-click on Reassign. The actor (in the child team) must still
+    be able to hand it to a peer in her own team."""
+    pid = _policy(db)
+    child = _team(db, "CS Agents")
+    parent = _team(db, "CS Managers", parent_id=None)
+    # Reparent: child reports up to parent (mirrors how other tests link tiers).
+    db.query(Team).filter(Team.id == child).update({"parent_team_id": parent})
+    db.commit()
+    me = _user(db, "agent")
+    manager = _user(db, "manager")
+    peer = _user(db, "peer")
+    _member(db, child, me)
+    _member(db, child, peer)
+    _member(db, parent, manager)
+    tid = _track(db, pid, assignee=manager, src="stock_inquiry")
+
+    updated = ConversationSLATrackingService(db).reassign(tid, me, peer)
+    assert updated.assigned_to_id == peer
+
+
+def test_reassign_rejects_actor_with_no_team(db):
+    """An actor with no team membership at all cannot own or hand off SLA
+    tasks, admin bypass aside."""
+    pid = _policy(db)
+    no_team_actor = _user(db, "no-team-actor")
+    assignee_team = _team(db, "Assignee Team")
+    target_team = _team(db, "Target Team")
+    assignee = _user(db, "some-assignee")
+    target = _user(db, "some-target")
+    _member(db, assignee_team, assignee)
+    _member(db, target_team, target)
+    tid = _track(db, pid, assignee=assignee, src="stock_inquiry")
+
     with pytest.raises(AppException) as exc:
-        ConversationSLATrackingService(db).reassign(tid, me, outsider)
+        ConversationSLATrackingService(db).reassign(tid, no_team_actor, target)
     message = str(exc.value.detail.get("message", "")).lower()
-    assert "outside your teams" in message
+    assert "not in any team" in message
     assert "deleted" not in message
 
 
@@ -537,10 +603,15 @@ def test_admin_picker_lists_users_outside_their_own_teams(db):
     assert admin not in ids
 
 
-def test_non_admin_picker_still_scoped_to_their_teams(db):
+def test_picker_lists_every_team_member_not_just_mine(db):
+    """Reassign picker is any-user-in-any-team, not scoped to the actor's own
+    teams (decision 2026-09-03): a peer AND an outsider in a different team
+    both show up, but someone with no team membership at all is excluded
+    (they have no SLA routing)."""
     me = _user(db, "cs-agent")
     peer = _user(db, "cs-peer")
     outsider = _user(db, "purchasing-owner")
+    no_team = _user(db, "no-team-user")
     mine = _team(db, "Mine")
     _member(db, mine, me)
     _member(db, mine, peer)
@@ -548,7 +619,8 @@ def test_non_admin_picker_still_scoped_to_their_teams(db):
 
     ids = {u["id"] for u in ConversationSLATrackingService(db).list_visible_users(me)}
     assert peer in ids
-    assert outsider not in ids
+    assert outsider in ids
+    assert no_team not in ids
 
 
 def test_the_picker_says_who_is_respond_linked(db):

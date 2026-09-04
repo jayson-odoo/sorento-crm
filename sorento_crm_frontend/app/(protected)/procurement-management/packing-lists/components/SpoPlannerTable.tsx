@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
 import {
   ColumnDef,
   ExpandedState,
@@ -16,7 +17,6 @@ import {
   ChevronsDownUp,
   ChevronsUpDown,
   Download,
-  FileText,
   Info,
   LayoutGrid,
   LoaderCircle,
@@ -48,9 +48,11 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
+  DrillTable,
   OnHandTable,
   PlanRowDialog,
   PoTakesPicker,
+  RIGHT,
   SoCoveragePicker,
   SpoTabs,
   type PlanRowDialogKind,
@@ -62,6 +64,8 @@ import {
   useDownloadSpoWorksheet,
   useSpoSuggestion,
 } from '@/app/(protected)/scm/hooks/useFulfilment';
+import { purchaseOrderStatusPill } from '@/app/(protected)/scm/lib/purchaseOrderStatus';
+import { formatDateInMalaysia } from '@/lib/helpers';
 import type {
   SpoConfirmLine,
   SpoCoverageLine,
@@ -69,9 +73,16 @@ import type {
   SpoLocationOption,
   SpoLocationSplit,
   SpoPoTake,
+  SpoRef,
   SpoSuggestionLine,
 } from '@/app/(protected)/scm/services/fulfilmentService';
-import { cascadeTake, buildSpoScheduleMatrix, type SpoMatrixEntry } from './spoScheduleMatrix';
+import {
+  cascadeTake,
+  buildSpoScheduleMatrix,
+  bucketKeyFor,
+  type SpoMatrixBucket,
+  type SpoMatrixEntry,
+} from './spoScheduleMatrix';
 import { SpoScheduleMatrixTable } from './SpoScheduleMatrixTable';
 
 /**
@@ -82,12 +93,19 @@ import { SpoScheduleMatrixTable } from './SpoScheduleMatrixTable';
  * confirm without hiding the row.
  *
  * DOCTRINE CORRECTION (captain, 21 Aug): "when there is PO, then we only can do SPO... it is
- * when we got PO, then we only can pull from the PO to form SPO." `suggested_qty` is now
- * `po_covered_qty` itself - what an open PO PULLS this SPO up to, never a deduction. A line
- * with nothing pullable (`cannot_convert`) is not selectable, same shape as the no-supplier
- * case; a partially-backed line stays selectable at `po_covered_qty`, with the uncovered
- * remainder (`no_po_qty`) named on `reason`. On hand / incoming SPO are CONTEXT columns only -
- * they never feed the qty. See `fulfilmentService.ts`'s own contract doc for the full story.
+ * when we got PO, then we only can pull from the PO to form SPO." `suggested_qty` is
+ * `po_covered_qty` itself - what an open PO PULLS this SPO up to. On hand / incoming SPO are
+ * CONTEXT columns only - they never feed the qty. See `fulfilmentService.ts`'s own contract
+ * doc for the full story.
+ *
+ * R2 (captain's ruling, 3 Sep): the PO cap is REMOVED. `po_covered_qty` / `suggested_qty` is
+ * only the DEFAULT the qty input starts at now, never a ceiling - the input takes any whole
+ * number, no live clamp. `cannot_convert` (input disabled) is true ONLY for a line with no
+ * supplier; a line with a supplier and no open PO is fully editable, simply unbacked. Nothing
+ * about the quantity - past packed, past what a PO covers, an over-tick - blocks Create SPO.
+ * The server caps every line at its own remainder and writes the uncovered part without a PO
+ * pull, so there is nothing to confirm: Create SPO creates on the click (captain, 4 Sep - the
+ * "Review before creating" dialog this used to open is gone, no replacement dialog either).
  *
  * Four asks from the same doctrine-correction message, all on this table:
  *   1. The PO-takes drill names the PO's own date and supplier, and opens as the shared
@@ -129,6 +147,26 @@ type LineState = {
 };
 type ScheduleView = 'po' | 'so';
 
+/** A `po_takes` row occupied by ANOTHER SPO entirely (S5) - `qty: 0` is never this
+ *  cascade's own take, so the row can never be ticked. */
+function isTakenPo(t: SpoPoTake): boolean {
+  return t.qty === 0 && t.taken_qty > 0;
+}
+
+/** Every `po_line_id` this line's take set could TICK - a taken row is never one of them
+ *  (S5). The initial-tick default (every take, AC-G1) and a re-tick from the picker both
+ *  read through this so neither can hand a taken row's id back into state. */
+function tickablePoTakeIds(ln: SpoSuggestionLine): string[] {
+  return ln.po_takes.filter((t) => !isTakenPo(t)).map((t) => t.po_line_id);
+}
+
+/** A `so_coverage` row occupied by ANOTHER SPO entirely (S5) - `qty: 0` is never tickable
+ *  here either; `default_ticked` is already `false` for it server-side, so this only guards
+ *  a re-tick handed back by the picker. */
+function isTakenCoverage(c: SpoCoverageLine): boolean {
+  return c.qty === 0 && c.taken_qty > 0;
+}
+
 /**
  * What the ticked takes cover - the ceiling on this line's SPO quantity (AC-G2).
  *
@@ -142,7 +180,9 @@ function poCoveredFor(ln: SpoSuggestionLine, takeIds: string[]): number {
   const available = ln.po_takes
     .filter((t) => takeIds.includes(t.po_line_id))
     .reduce((sum, t) => sum + (t.open_qty ?? t.qty), 0);
-  return Math.min(available, ln.packed_qty);
+  // Capped at what is actually LEFT to convert on this line (R1), not the raw packed
+  // figure - a prior `create` run already claimed the rest.
+  return Math.min(available, ln.remaining_qty);
 }
 
 /**
@@ -239,11 +279,27 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
   const create = useCreateSpo(shipmentId);
   const deleteSpo = useDeleteSpo(shipmentId);
   const worksheet = useDownloadSpoWorksheet(shipmentId);
-  const [deleteOpen, setDeleteOpen] = useState(false);
+  /** Which row of the Created SPOs grid Delete was pressed on (R1: one row per SPO, not one
+   *  confirm for the whole shipment). */
+  const [deleteTarget, setDeleteTarget] = useState<SpoRef | null>(null);
   const [view, setView] = useState<'table' | 'schedule'>('table');
   const [scheduleView, setScheduleView] = useState<ScheduleView>('po');
 
   const [state, setState] = useState<Record<string, LineState>>({});
+  /**
+   * The live per-line state, as the grid CELLS read it.
+   *
+   * `columns` below has to keep a STABLE identity: `flexRender` renders a column's `cell`
+   * function as a React component TYPE (`createElement(columnDef.cell, ctx)`), so a columns
+   * array rebuilt on every keystroke hands React a new type for every cell - which unmounts
+   * the SPO qty input mid-word and takes the caret with it (captain, live, 4 Sep: the
+   * operator had to click back into the field for each digit). The cells therefore close
+   * over this ref rather than over `state`, and every helper they call bottoms out at
+   * `stateFor`, which reads it - so the closure the columns memo captured on its FIRST
+   * render still gives the current answer on every later one.
+   */
+  const stateRef = useRef(state);
+  stateRef.current = state;
   /** Which lines have their destinations open (R22). Closed to start with: the table is a
    *  ranked reading first, and every row open turns it into a form. */
   const [expanded, setExpanded] = useState<ExpandedState>({});
@@ -251,7 +307,7 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
    *  Four dialogs mounted per row would be four Radix roots per row; the grid holds one and
    *  the cells only say what to put in it. */
   const [dialog, setDialog] = useState<
-    { kind: PlanRowDialogKind; line: SpoSuggestionLine } | null
+    { kind: PlanRowDialogKind; line: SpoSuggestionLine; bucket?: SpoMatrixBucket } | null
   >(null);
 
   useEffect(() => {
@@ -261,8 +317,9 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
     const next: Record<string, LineState> = {};
     for (const ln of suggestion.data?.lines ?? []) {
       // Every take ticked and the server's own demand walk pre-ticked: the default IS the
-      // answer for most containers, and the ticks exist for the ones where it is not.
-      const poTakeIds = ln.po_takes.map((t) => t.po_line_id);
+      // answer for most containers, and the ticks exist for the ones where it is not - a
+      // TAKEN row (S5) is never one of them, no matter how it landed on `po_takes`.
+      const poTakeIds = tickablePoTakeIds(ln);
       const soKeys = defaultSoKeys(ln, ln.suggested_qty);
       next[ln.shipment_line_id] = {
         qty: ln.suggested_qty,
@@ -276,16 +333,18 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
   }, [suggestion.data]);
 
   const lines = useMemo(() => suggestion.data?.lines ?? [], [suggestion.data]);
-  const alreadyConverted = suggestion.data?.already_converted ?? false;
+  // R1: every SPO this shipment has ever produced, oldest first - always populated, never
+  // gating the planner below it (a container is routinely converted in more than one pass).
+  const existingSpos = useMemo(() => suggestion.data?.existing_spos ?? [], [suggestion.data]);
 
   const stateFor = (ln: SpoSuggestionLine): LineState => {
-    const held = state[ln.shipment_line_id];
+    const held = stateRef.current[ln.shipment_line_id];
     if (held) return held;
     const soKeys = defaultSoKeys(ln, ln.suggested_qty);
     return {
       qty: ln.suggested_qty,
       typedQty: null,
-      poTakeIds: ln.po_takes.map((t) => t.po_line_id),
+      poTakeIds: tickablePoTakeIds(ln),
       soKeys,
       splits: splitsFromTicks(ln, soKeys, ln.suggested_qty),
     };
@@ -328,13 +387,19 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
    * they never touched is a derived default and follows the takes.
    */
   const setTakeIds = (ln: SpoSuggestionLine, poTakeIds: string[]) => {
+    // A taken row's checkbox is disabled in the picker, but its id is never trusted from the
+    // caller either way (S5) - the same defensiveness `_keep` uses server-side.
+    const tickable = new Set(tickablePoTakeIds(ln));
+    const nextIds = poTakeIds.filter((id) => tickable.has(id));
     const current = stateFor(ln);
-    const covered = poCoveredFor(ln, poTakeIds);
-    // Derived from the TYPED figure, never from the clamped one on screen: clamping is a
-    // view of what can be sent right now, and storing it destroyed the decision behind it.
-    const qty = current.typedQty === null ? covered : Math.min(current.typedQty, covered);
+    const covered = poCoveredFor(ln, nextIds);
+    // The PO cap is removed (captain's ruling, 3 Sep, R2): a typed quantity is the buyer's
+    // own decision and is never clamped down to what the ticked takes cover - the SPO line
+    // simply pulls less and writes the rest without a pull. Only an UNTYPED (still default)
+    // quantity follows the takes.
+    const qty = current.typedQty === null ? covered : current.typedQty;
     patch(ln, {
-      poTakeIds,
+      poTakeIds: nextIds,
       qty,
       soKeys: current.soKeys,
       splits: splitsFromTicks(ln, current.soKeys, qty),
@@ -343,8 +408,14 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
 
   /** Tick the demand this SPO is for; the split follows (AC-G3, AC-G4). */
   const setSoKeys = (ln: SpoSuggestionLine, soKeys: string[]) => {
+    // Same defensiveness as `setTakeIds` (S5): a taken row's key is never trusted, however
+    // it arrived.
+    const takenKeys = new Set(
+      (ln.so_coverage ?? []).filter(isTakenCoverage).map((c) => c.key),
+    );
+    const nextKeys = soKeys.filter((key) => !takenKeys.has(key));
     const current = stateFor(ln);
-    patch(ln, { soKeys, splits: splitsFromTicks(ln, soKeys, current.qty) });
+    patch(ln, { soKeys: nextKeys, splits: splitsFromTicks(ln, nextKeys, current.qty) });
   };
 
   const confirmLines: SpoConfirmLine[] = useMemo(
@@ -386,72 +457,29 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
     }
     return bad;
   }, [lines, confirmLines]);
-
-  /**
-   * Lines where the ticked demand asks for more than the container holds (AC-G5).
-   *
-   * The figures are shown rather than the ticks being silently clamped: the operator ticked
-   * four orders for a container that can serve three, and which of them to drop is their
-   * decision, not an arithmetic one.
-   */
-  const overTicked = useMemo(() => {
-    const bad = new Map<string, string[]>();
-    for (const ln of lines) {
-      if (ln.cannot_convert) continue;
-      // An order this SPO cannot serve AT ALL - the operator ticked past what the
-      // container holds. Which one to drop is their decision, so it is named rather than
-      // silently untitcked, and Create waits until they have made it (AC-G5).
-      const starved = coverageTakes(ln, soKeysFor(ln), qtyFor(ln))
-        .filter((t) => t.take <= 0)
-        .map((t) => t.entry.document ?? t.entry.key);
-      if (starved.length) bad.set(ln.shipment_line_id, starved);
-    }
-    return bad;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lines, state]);
-
-  /**
-   * Ticked demand this SPO can only PART-cover - stated, never blocking (AC-G5's figures).
-   *
-   * The default walk does this on its last entry every time a container is smaller than the
-   * demand behind it, which is most of them, so disabling Create for it would disable Create
-   * for the normal case. What it is not allowed to do is stay quiet: the order is going to
-   * be short, and the person sending it should read that here rather than discover it when
-   * the container lands.
-   */
-  const partlyCovered = useMemo(() => {
-    const out = new Map<string, { asked: number; covered: number; short: string[] }>();
-    for (const ln of lines) {
-      if (ln.cannot_convert) continue;
-      const takes = coverageTakes(ln, soKeysFor(ln), qtyFor(ln));
-      const short = takes
-        .filter((t) => t.take > 0 && t.take < t.entry.qty)
-        .map((t) => t.entry.document ?? t.entry.key);
-      if (!short.length) continue;
-      out.set(ln.shipment_line_id, {
-        asked: takes.reduce((sum, t) => sum + t.entry.qty, 0),
-        covered: takes.reduce((sum, t) => sum + t.take, 0),
-        short,
-      });
-    }
-    return out;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lines, state]);
+  /** Read by the Location cell and its expanded panel, which live inside the identity-stable
+   *  `columns` memo - see `stateRef`. */
+  const splitMismatchRef = useRef(splitMismatch);
+  splitMismatchRef.current = splitMismatch;
 
   const renderQtyCell = (ln: SpoSuggestionLine) => (
     <Input
       type="number"
       min={0}
-      max={poCoveredFor(ln, takeIdsFor(ln)) || undefined}
       step={1}
       className="h-8 w-24 tabular-nums"
       value={qtyFor(ln)}
       disabled={ln.cannot_convert}
-      title="What the TICKED POs pull this SPO up to - cannot exceed it"
+      aria-label="SPO qty"
+      // A test hook, not a live tooltip (the `title` this used to carry was the explanatory
+      // clamp text R2 removed) - the drills open a MODAL that marks the rest of the grid
+      // `aria-hidden`, which takes this input out of the accessibility tree `getByRole`
+      // reads, so a test asserting the figure WHILE a drill is open needs a query that does
+      // not depend on that tree.
+      data-testid="spo-qty-input"
       onChange={(e) => {
         const raw = Math.max(0, Number(e.target.value) || 0);
-        const next = Math.min(raw, poCoveredFor(ln, takeIdsFor(ln)));
-        setQty(ln, next);
+        setQty(ln, raw);
       }}
     />
   );
@@ -475,9 +503,19 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
    * cannot hold a second opinion about the same rows. On hand and Incoming SPO are the
    * SHARED reorder / loading-plan bodies, which fetch their own rows on open.
    */
-  const dialogBody = (kind: PlanRowDialogKind, ln: SpoSuggestionLine) => {
+  const dialogBody = (kind: PlanRowDialogKind, ln: SpoSuggestionLine, bucket?: SpoMatrixBucket) => {
     switch (kind) {
-      case 'po_takes':
+      case 'po_takes': {
+        // S4, AC-D3: opened from a schedule cell, the rows whose OWN date fell in that
+        // clicked week are marked - the same week function the matrix bucketed them into,
+        // so the picker cannot disagree with the cell that opened it.
+        const bucketHits = bucket
+          ? new Set(
+              ln.po_takes
+                .filter((t) => bucketKeyFor(t.expected_date) === bucket.key)
+                .map((t) => t.po_line_id),
+            )
+          : undefined;
         return (
           <PoTakesPicker
             takes={ln.po_takes}
@@ -485,9 +523,18 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
             onChange={(ids) => setTakeIds(ln, ids)}
             coveredQty={poCoveredFor(ln, takeIdsFor(ln))}
             packedQty={ln.packed_qty}
+            bucketHits={bucketHits}
           />
         );
-      case 'so_coverage':
+      }
+      case 'so_coverage': {
+        const bucketHits = bucket
+          ? new Set(
+              (ln.so_coverage ?? [])
+                .filter((c) => bucketKeyFor(c.required_date) === bucket.key)
+                .map((c) => c.key),
+            )
+          : undefined;
         return (
           <SoCoveragePicker
             coverage={ln.so_coverage ?? []}
@@ -499,8 +546,10 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
             takes={Object.fromEntries(
               coverageTakes(ln, soKeysFor(ln), qtyFor(ln)).map((t) => [t.entry.key, t.take]),
             )}
+            bucketHits={bucketHits}
           />
         );
+      }
       case 'on_hand':
         return <OnHandTable productId={ln.product_id} />;
       case 'spo':
@@ -508,16 +557,6 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
       default:
         return null;
     }
-  };
-
-  /** The figure the rows have to add up to, beside the title. */
-  const dialogContext = (kind: PlanRowDialogKind, ln: SpoSuggestionLine): string | null => {
-    if (kind === 'so_coverage') {
-      return `${fmtInt(tickedQty(ln, soKeysFor(ln), qtyFor(ln)))} of packed ${fmtInt(ln.packed_qty)}`;
-    }
-    if (kind === 'on_hand') return `${fmtInt(ln.on_hand)} at site pools`;
-    if (kind === 'spo') return `${fmtInt(ln.incoming_spo)} arriving at site pools`;
-    return null;
   };
 
   /** A line nothing can be sent for has nowhere to send it, so it does not open (R22). */
@@ -544,7 +583,7 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
           ? ln.location_options.find((o) => o.warehouse_id === splits[0].warehouseId)?.warehouse_code ??
             'Choose'
           : `${splits.length} locations`;
-    const mismatch = splitMismatch.has(ln.shipment_line_id);
+    const mismatch = splitMismatchRef.current.has(ln.shipment_line_id);
     const expanded = row.getIsExpanded();
     return (
       <div className="flex min-w-0 flex-col gap-0.5">
@@ -579,6 +618,101 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
     );
   };
 
+  /** The Created SPOs grid (R1, AC-H6) - every SPO this shipment has ever produced, each a
+   *  link to its own PO detail (which carries the Plan card, AC-H7) and its own Delete. */
+  const createdSpoColumns = useMemo<ColumnDef<SpoRef>[]>(
+    () => [
+      {
+        id: 'po_number',
+        header: 'SPO',
+        cell: ({ row }) => (
+          <Link
+            href={`/scm/purchase-orders/${row.original.purchase_order_id}`}
+            className="font-medium text-primary hover:underline"
+            title={`Open ${row.original.po_number ?? EM_DASH}`}
+          >
+            {row.original.po_number ?? EM_DASH}
+          </Link>
+        ),
+        size: 160,
+        enableSorting: false,
+      },
+      {
+        id: 'supplier',
+        header: 'Supplier',
+        cell: ({ row }) => (
+          <span className="block truncate" title={row.original.supplier_name ?? undefined}>
+            {row.original.supplier_name ?? EM_DASH}
+          </span>
+        ),
+        size: 170,
+        enableSorting: false,
+      },
+      {
+        id: 'line_count',
+        header: 'Lines',
+        cell: ({ row }) => fmtInt(row.original.line_count),
+        size: 70,
+        enableSorting: false,
+        meta: RIGHT,
+      },
+      {
+        id: 'total_qty',
+        header: 'Qty',
+        cell: ({ row }) => fmtInt(row.original.total_qty),
+        size: 90,
+        enableSorting: false,
+        meta: RIGHT,
+      },
+      {
+        id: 'created_at',
+        header: 'Created',
+        // F2 (review round): `created_at` is a naive UTC ISO string - `fmtDate`'s
+        // `new Date(iso)` + `toLocaleDateString` reads it in the BROWSER's own timezone,
+        // which prints the wrong civil date for anyone not on UTC. Malaysia is the one
+        // timezone this product runs in, so `formatDateInMalaysia` is the correct read
+        // everywhere else this column's own sibling dates are shown.
+        cell: ({ row }) =>
+          row.original.created_at ? formatDateInMalaysia(row.original.created_at) : EM_DASH,
+        size: 110,
+        enableSorting: false,
+      },
+      {
+        id: 'status',
+        header: 'Status',
+        cell: ({ row }) => {
+          const pill = purchaseOrderStatusPill({ status: row.original.status });
+          return (
+            <Badge variant={pill.variant} size="sm">
+              {pill.label}
+            </Badge>
+          );
+        },
+        size: 110,
+        enableSorting: false,
+      },
+      {
+        id: 'delete',
+        header: '',
+        cell: ({ row }) => (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-8 text-muted-foreground hover:text-destructive"
+            aria-label={`Delete ${row.original.po_number ?? 'this SPO'}`}
+            onClick={() => setDeleteTarget(row.original)}
+          >
+            <Trash2 className="size-4" aria-hidden />
+          </Button>
+        ),
+        size: 56,
+        enableSorting: false,
+      },
+    ],
+    [],
+  );
+
   const columns = useMemo<ColumnDef<SpoSuggestionLine>[]>(
     () => [
       {
@@ -587,25 +721,19 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
         cell: ({ row }) => {
           const ln = row.original;
           return (
-            <div className={ln.cannot_convert ? 'flex min-w-0 flex-col opacity-60' : 'flex min-w-0 flex-col'}>
-              <span className="flex items-center gap-1 font-medium">
-                <span className="truncate" title={ln.item_code ?? ''}>
-                  {ln.item_code ?? EM_DASH}
+            <div className={ln.cannot_convert ? 'flex min-w-0 items-center gap-1 opacity-60' : 'flex min-w-0 items-center gap-1'}>
+              <span className="truncate font-medium" title={ln.item_code ?? ''}>
+                {ln.item_code ?? EM_DASH}
+              </span>
+              {ln.reason ? (
+                <span className="shrink-0" title={ln.reason} aria-label={ln.reason}>
+                  <Info className="size-3.5 text-muted-foreground" aria-hidden />
                 </span>
-                {ln.reason ? (
-                  <span className="shrink-0" title={ln.reason} aria-label={ln.reason}>
-                    <Info className="size-3.5 text-muted-foreground" aria-hidden />
-                  </span>
-                ) : null}
-              </span>
-              <span className="truncate text-2xs text-muted-foreground" title={ln.product_name ?? ''}>
-                {ln.product_name ?? EM_DASH}
-                {ln.supplier_name ? ` · ${ln.supplier_name}` : ''}
-              </span>
+              ) : null}
             </div>
           );
         },
-        size: 230,
+        size: 160,
         enableSorting: false,
         meta: { headerTitle: 'Product' },
       },
@@ -622,21 +750,21 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
         header: ({ column }) => <DataGridColumnHeader title="PO covers" column={column} />,
         cell: ({ row }) => {
           const ln = row.original;
+          // R1: nothing left on this line for THIS shipment to convert - a prior `create`
+          // run already claimed it all, so there is no tick to make any more.
+          if (ln.remaining_qty <= 0) {
+            return <span className="text-2xs text-muted-foreground">Done</span>;
+          }
           if (!ln.po_takes.length) {
             return <span className="tabular-nums text-muted-foreground">{fmtInt(0)}</span>;
           }
           const ticked = takeIdsFor(ln);
           return (
-            <div className="flex min-w-0 flex-col gap-0.5">
-              <PlanNumberButton
-                value={fmtInt(poCoveredFor(ln, ticked))}
-                label="Which PO covers this, oldest purchase order first"
-                onClick={() => setDialog({ kind: 'po_takes', line: ln })}
-              />
-              <span className="text-2xs text-muted-foreground">
-                {ticked.length} of {ln.po_takes.length} POs
-              </span>
-            </div>
+            <PlanNumberButton
+              value={fmtInt(poCoveredFor(ln, ticked))}
+              label="Which PO covers this, oldest purchase order first"
+              onClick={() => setDialog({ kind: 'po_takes', line: ln })}
+            />
           );
         },
         size: 130,
@@ -694,6 +822,9 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
         header: ({ column }) => <DataGridColumnHeader title="SO covered" column={column} />,
         cell: ({ row }) => {
           const ln = row.original;
+          if (ln.remaining_qty <= 0) {
+            return <span className="text-2xs text-muted-foreground">Done</span>;
+          }
           if (ln.cannot_convert || !(ln.so_coverage ?? []).length) {
             return <span className="tabular-nums text-muted-foreground">{EM_DASH}</span>;
           }
@@ -728,15 +859,20 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
               splits={splitsFor(ln)}
               qty={qtyFor(ln)}
               disabled={cannotSplit(ln)}
-              mismatch={splitMismatch.has(ln.shipment_line_id)}
+              mismatch={splitMismatchRef.current.has(ln.shipment_line_id)}
               onChange={(next) => setSplits(ln, next)}
             />
           ),
         },
       },
     ],
+    // The deps are EMPTY on purpose and must stay that way: a rebuilt columns array
+    // remounts every cell (see `stateRef`), which is what made the SPO qty input lose focus
+    // after each keystroke. The cells read live state through `stateRef` / `splitMismatchRef`
+    // instead, and re-run on every render of this component because `DataGridTable` builds a
+    // fresh element for each cell.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [state],
+    [],
   );
 
   const table = useReactTable({
@@ -760,14 +896,35 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
   const poMatrix = useMemo(() => {
     const entries: SpoMatrixEntry<SpoPoTake & { item_code: string | null }>[] = [];
     for (const ln of lines) {
+      const rowKey = ln.item_code ? `item:${ln.item_code}` : `line:${ln.shipment_line_id}`;
+      const rowLabel = ln.item_code ?? ln.product_name ?? 'Unresolved';
       const takes = cascadeTake(ln.po_takes, qtyFor(ln));
       for (const t of takes) {
         entries.push({
-          row_key: ln.item_code ? `item:${ln.item_code}` : `line:${ln.shipment_line_id}`,
-          row_label: ln.item_code ?? ln.product_name ?? 'Unresolved',
-          row_description: ln.product_name,
+          row_key: rowKey,
+          row_label: rowLabel,
+          row_description: null,
+          shipment_line_id: ln.shipment_line_id,
           date: t.expected_date,
           qty: t.takenQty,
+          taken_qty: 0,
+          detail: { ...t, item_code: ln.item_code },
+        });
+      }
+      // S5 (AC-E8): every candidate line ANOTHER SPO already pulled from, on its own entry
+      // (`qty: 0`) - whether or not THIS cascade also took from the same line, so a mixed
+      // cell (both figures) and a taken-only cell (grey) both fall out of the same sum.
+      for (const t of ln.po_takes) {
+        if (!(t.taken_qty > 0)) continue;
+        entries.push({
+          row_key: rowKey,
+          row_label: rowLabel,
+          row_description: null,
+          shipment_line_id: ln.shipment_line_id,
+          date: t.expected_date,
+          qty: 0,
+          taken_qty: t.taken_qty,
+          taken_by: t.taken_by,
           detail: { ...t, item_code: ln.item_code },
         });
       }
@@ -783,6 +940,8 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
     const entries: SpoMatrixEntry<SpoDemandLine & { item_code: string | null }>[] = [];
     for (const ln of lines) {
       if (ln.cannot_convert) continue;
+      const rowKey = ln.item_code ? `item:${ln.item_code}` : `line:${ln.shipment_line_id}`;
+      const rowLabel = ln.item_code ?? ln.product_name ?? 'Unresolved';
       const keys = soKeysFor(ln);
       let left = qtyFor(ln);
       for (const entry of ln.so_coverage ?? []) {
@@ -792,11 +951,13 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
         if (take <= 0) continue;
         left -= take;
         entries.push({
-          row_key: ln.item_code ? `item:${ln.item_code}` : `line:${ln.shipment_line_id}`,
-          row_label: ln.item_code ?? ln.product_name ?? 'Unresolved',
-          row_description: ln.product_name,
+          row_key: rowKey,
+          row_label: rowLabel,
+          row_description: null,
+          shipment_line_id: ln.shipment_line_id,
           date: entry.required_date,
           qty: take,
+          taken_qty: 0,
           detail: {
             so_number: entry.document,
             customer_name: entry.customer_name,
@@ -804,6 +965,30 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
             required_date: entry.required_date,
             order_date: null,
             qty: take,
+            item_code: ln.item_code,
+          },
+        });
+      }
+      // S5 (AC-E8): every piece of demand ANOTHER SPO already covers, on its own entry
+      // (`qty: 0`) - see the PO loop above for why this is separate from the take loop.
+      for (const entry of ln.so_coverage ?? []) {
+        if (!(entry.taken_qty > 0)) continue;
+        entries.push({
+          row_key: rowKey,
+          row_label: rowLabel,
+          row_description: null,
+          shipment_line_id: ln.shipment_line_id,
+          date: entry.required_date,
+          qty: 0,
+          taken_qty: entry.taken_qty,
+          taken_by: entry.taken_by,
+          detail: {
+            so_number: entry.document,
+            customer_name: entry.customer_name,
+            agent_name: null,
+            required_date: entry.required_date,
+            order_date: null,
+            qty: 0,
             item_code: ln.item_code,
           },
         });
@@ -838,24 +1023,31 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
     );
   }
 
-  if (alreadyConverted) {
-    const existingSpos = suggestion.data?.existing_spos ?? [];
-    const spoNumbers = existingSpos.map((s) => s.po_number ?? EM_DASH).join(', ');
+  if (!lines.length && !existingSpos.length) {
     return (
-      <Card className="p-4">
-        {suggestion.data?.self_heal_note ? (
-          <Alert variant="warning" size="sm" className="mb-3">
-            <AlertDescription>{suggestion.data.self_heal_note}</AlertDescription>
-          </Alert>
-        ) : null}
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0">
-            <h3 className="text-sm font-semibold">SPO already created</h3>
-            <p className="text-2xs text-muted-foreground">
-              This packing list has already gone through Create SPO.
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
+      <Card className="p-8 text-center">
+        <p className="text-sm font-medium">This container has no line we hold a product for.</p>
+      </Card>
+    );
+  }
+
+  const deleteTargetName = deleteTarget?.po_number ?? 'this SPO';
+
+  return (
+    <div className="flex flex-col gap-4">
+      {suggestion.data?.self_heal_note ? (
+        <Alert variant="warning" size="sm">
+          <AlertDescription>{suggestion.data.self_heal_note}</AlertDescription>
+        </Alert>
+      ) : null}
+
+      {/* R1 (AC-H6): every SPO this container has ever produced, oldest first - a container is
+          routinely converted in more than one pass, so this sits above the remainder planner
+          rather than replacing it. */}
+      {existingSpos.length ? (
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between py-3">
+            <h3 className="text-sm font-semibold">Created SPOs</h3>
             <Button
               size="sm"
               variant="outline"
@@ -869,86 +1061,31 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
               )}
               Download worksheet
             </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              className="text-destructive hover:text-destructive"
-              onClick={() => setDeleteOpen(true)}
-              disabled={!existingSpos.length}
-            >
-              <Trash2 className="size-4" aria-hidden />
-              Delete SPO
-            </Button>
-          </div>
-        </div>
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <FileText className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-          {existingSpos.map((spo) => (
-            <Badge key={spo.purchase_order_id} variant="secondary" size="sm">
-              {spo.po_number ?? EM_DASH}
-              {spo.supplier_name ? ` · ${spo.supplier_name}` : ''}
-            </Badge>
-          ))}
-        </div>
-
-        <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Confirm delete</AlertDialogTitle>
-              <AlertDialogDescription>
-                {existingSpos.length === 1
-                  ? `This deletes ${spoNumbers}. `
-                  : `This deletes ${existingSpos.length} SPOs: ${spoNumbers}. `}
-                The planner can create them again, but the numbers are minted fresh - the ones
-                deleted here are gone. This action cannot be undone.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel disabled={deleteSpo.isPending}>Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                onClick={() => deleteSpo.mutate(undefined, { onSuccess: () => setDeleteOpen(false) })}
-                disabled={deleteSpo.isPending}
-                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              >
-                {deleteSpo.isPending ? 'Deleting...' : 'Delete'}
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      </Card>
-    );
-  }
-
-  if (!lines.length) {
-    return (
-      <Card className="p-8 text-center">
-        <p className="text-sm font-medium">This container has no line we hold a product for.</p>
-      </Card>
-    );
-  }
-
-  return (
-    <Card>
-      {suggestion.data?.self_heal_note ? (
-        <Alert variant="warning" size="sm" className="m-3 mb-0">
-          <AlertDescription>{suggestion.data.self_heal_note}</AlertDescription>
-        </Alert>
+          </CardHeader>
+          <CardTable>
+            <DrillTable
+              columns={createdSpoColumns}
+              rows={existingSpos}
+              getRowId={(spo) => spo.purchase_order_id}
+              emptyMessage="No SPO has been created from this container yet."
+            />
+          </CardTable>
+        </Card>
       ) : null}
-      <CardHeader className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+
+      {lines.length ? (
+        <Card>
+        <CardHeader className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <h3 className="text-sm font-semibold">SPO planner</h3>
-          <p className="text-2xs text-muted-foreground">
-            {suggestion.data?.shipment_status === 'draft'
-              ? "Draft shipment - based on this draft's own packed quantities, not a real packing list yet."
-              : 'What an open PO pulls this SPO up to, and where it should land.'}
-          </p>
         </div>
         <Button
           size="sm"
+          // Creates on the click (captain, 4 Sep): the server caps every line at its own
+          // remainder and writes the uncovered part without a PO pull, so there is nothing
+          // to confirm - no review dialog.
           onClick={() => create.mutate(confirmLines)}
-          disabled={
-            !includedCount || splitMismatch.size > 0 || overTicked.size > 0 || create.isPending
-          }
+          disabled={!includedCount || splitMismatch.size > 0 || create.isPending}
         >
           {create.isPending ? (
             <LoaderCircle className="size-4 animate-spin" aria-hidden />
@@ -960,108 +1097,99 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
       </CardHeader>
 
       <div className="flex flex-col gap-3 border-t border-border px-4 py-2.5 sm:flex-row sm:items-center sm:justify-between">
-        <div className="inline-flex rounded-md border border-input" role="group" aria-label="Planner view">
-          <Button
-            type="button"
-            size="sm"
-            variant={view === 'table' ? 'primary' : 'ghost'}
-            className="rounded-e-none"
-            aria-pressed={view === 'table'}
-            onClick={() => setView('table')}
-          >
-            <Table2 className="size-4" aria-hidden />
-            Table
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant={view === 'schedule' ? 'primary' : 'ghost'}
-            className="rounded-s-none border-s border-input"
-            aria-pressed={view === 'schedule'}
-            onClick={() => setView('schedule')}
-          >
-            <LayoutGrid className="size-4" aria-hidden />
-            Schedule
-          </Button>
-        </div>
-        {view === 'table' ? (
-          <div className="flex items-center gap-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="inline-flex rounded-md border border-input" role="group" aria-label="Planner view">
             <Button
               type="button"
               size="sm"
-              variant="ghost"
-              disabled={nothingToExpand}
-              title={nothingToExpand ? 'No line can be split yet' : undefined}
-              // Only the lines that CAN be split. `toggleAllRowsExpanded(true)` ignores
-              // `getRowCanExpand`, so it opened a split panel under every covered line too -
-              // a panel with a disabled editor and nothing to do in it.
-              onClick={() =>
-                table.setExpanded(
-                  Object.fromEntries(
-                    table
-                      .getRowModel()
-                      .rows.filter((r) => r.getCanExpand())
-                      .map((r) => [r.id, true]),
-                  ),
-                )
-              }
+              variant={view === 'table' ? 'primary' : 'ghost'}
+              className="rounded-e-none"
+              aria-pressed={view === 'table'}
+              onClick={() => setView('table')}
             >
-              <ChevronsUpDown className="size-4" aria-hidden />
-              Expand all
+              <Table2 className="size-4" aria-hidden />
+              Table
             </Button>
             <Button
               type="button"
               size="sm"
-              variant="ghost"
-              disabled={nothingToExpand}
-              title={nothingToExpand ? 'No line can be split yet' : undefined}
-              onClick={() => table.setExpanded({})}
+              variant={view === 'schedule' ? 'primary' : 'ghost'}
+              className="rounded-s-none border-s border-input"
+              aria-pressed={view === 'schedule'}
+              onClick={() => setView('schedule')}
             >
-              <ChevronsDownUp className="size-4" aria-hidden />
-              Collapse all
+              <LayoutGrid className="size-4" aria-hidden />
+              Schedule
             </Button>
           </div>
-        ) : null}
-        {view === 'schedule' ? (
-          <div className="flex items-center gap-2">
-            <Label htmlFor="spo-schedule-mode" className="text-xs text-muted-foreground">
-              Bucketed by
-            </Label>
-            <div className="w-52">
-              <SearchableSelect
-                id="spo-schedule-mode"
-                value={scheduleView}
-                onChange={(v) => setScheduleView(v as ScheduleView)}
-                options={[
-                  { value: 'po', label: "PO coverage (PO's expected date)" },
-                  { value: 'so', label: "SO coverage (SO's needed date)" },
-                ]}
-              />
+          {view === 'table' ? (
+            <div className="flex items-center gap-1">
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                disabled={nothingToExpand}
+                title={nothingToExpand ? 'No line can be split yet' : undefined}
+                // Only the lines that CAN be split. `toggleAllRowsExpanded(true)` ignores
+                // `getRowCanExpand`, so it opened a split panel under every covered line too -
+                // a panel with a disabled editor and nothing to do in it.
+                onClick={() =>
+                  table.setExpanded(
+                    Object.fromEntries(
+                      table
+                        .getRowModel()
+                        .rows.filter((r) => r.getCanExpand())
+                        .map((r) => [r.id, true]),
+                    ),
+                  )
+                }
+              >
+                <ChevronsUpDown className="size-4" aria-hidden />
+                Expand all
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                disabled={nothingToExpand}
+                title={nothingToExpand ? 'No line can be split yet' : undefined}
+                onClick={() => table.setExpanded({})}
+              >
+                <ChevronsDownUp className="size-4" aria-hidden />
+                Collapse all
+              </Button>
             </div>
-          </div>
-        ) : null}
-        {splitMismatch.size > 0 ? (
-          <span className="text-2xs font-medium text-destructive">
-            {splitMismatch.size} line{splitMismatch.size === 1 ? '' : 's'} - location split does not add up
-            to the SPO qty
-          </span>
-        ) : null}
-        {overTicked.size > 0 ? (
-          <span className="text-2xs font-medium text-destructive">
-            {[...overTicked.values()].flat().join(', ')} - this container has nothing left
-            for it. Untick it, or send more.
-          </span>
-        ) : null}
-        {overTicked.size === 0 && partlyCovered.size > 0 ? (
-          <span className="text-2xs text-muted-foreground">
-            {[...partlyCovered.values()]
-              .map(
-                (p) =>
-                  `${fmtInt(p.asked)} ticked, ${fmtInt(p.covered)} on this container - ${p.short.join(', ')} partly covered`,
-              )
-              .join('; ')}
-          </span>
-        ) : null}
+          ) : null}
+        </div>
+        <div className="flex min-w-0 items-center justify-end gap-2 sm:ms-auto">
+          {/* S3 (review): this gates Create SPO in EITHER view, so it renders in both - a
+              disabled Create SPO with no reason on screen reads as broken. It sits before
+              the schedule View select so the reason is read first. */}
+          {splitMismatch.size > 0 ? (
+            <span className="text-2xs text-end font-medium text-destructive">
+              {splitMismatch.size} line{splitMismatch.size === 1 ? '' : 's'} - location split does not add up
+              to the SPO qty
+            </span>
+          ) : null}
+          {view === 'schedule' ? (
+            <div className="flex items-center gap-2">
+              <Label htmlFor="spo-schedule-mode" className="text-xs text-muted-foreground">
+                View
+              </Label>
+              <div className="w-44">
+                <SearchableSelect
+                  id="spo-schedule-mode"
+                  value={scheduleView}
+                  onChange={(v) => setScheduleView(v as ScheduleView)}
+                  options={[
+                    { value: 'po', label: 'Purchase order' },
+                    { value: 'so', label: 'Sales order' },
+                  ]}
+                />
+              </div>
+            </div>
+          ) : null}
+        </div>
       </div>
 
       {view === 'table' ? (
@@ -1087,21 +1215,14 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
               rows={poMatrix.rows}
               buckets={poMatrix.buckets}
               cells={poMatrix.cells}
-              renderDrill={(cell, label) => (
-                <>
-                  <p className="text-xs font-medium">{label}</p>
-                  <div className="space-y-1">
-                    {cell.entries.map((e) => (
-                      <div key={e.detail.po_line_id} className="flex items-center justify-between text-xs">
-                        <span className="truncate" title={`${e.detail.po_number} - ${e.detail.supplier_name ?? EM_DASH}`}>
-                          {e.detail.po_number}
-                        </span>
-                        <span className="tabular-nums">{fmtInt(e.qty)}</span>
-                      </div>
-                    ))}
-                  </div>
-                </>
-              )}
+              onCellClick={(cell, bucket) => {
+                // The clicked CELL's own first entry, not the row's: a row groups by item
+                // code and can hold more than one shipment line, and the row's own
+                // `shipment_line_id` names whichever line first CREATED the row - not
+                // necessarily the one behind THIS cell (S4, AC-D2).
+                const ln = lines.find((l) => l.shipment_line_id === cell.entries[0]?.shipment_line_id);
+                if (ln) setDialog({ kind: 'po_takes', line: ln, bucket });
+              }}
             />
           </div>
         )
@@ -1116,21 +1237,10 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
             rows={soMatrix.rows}
             buckets={soMatrix.buckets}
             cells={soMatrix.cells}
-            renderDrill={(cell, label) => (
-              <>
-                <p className="text-xs font-medium">{label}</p>
-                <div className="space-y-1">
-                  {cell.entries.map((e, i) => (
-                    <div key={`${e.detail.so_number}-${i}`} className="flex items-center justify-between text-xs">
-                      <span className="truncate" title={e.detail.customer_name ?? ''}>
-                        {e.detail.so_number ?? EM_DASH}
-                      </span>
-                      <span className="tabular-nums">{fmtInt(e.qty)}</span>
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
+            onCellClick={(cell, bucket) => {
+              const ln = lines.find((l) => l.shipment_line_id === cell.entries[0]?.shipment_line_id);
+              if (ln) setDialog({ kind: 'so_coverage', line: ln, bucket });
+            }}
           />
         </div>
       )}
@@ -1143,15 +1253,51 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
           kind={dialog.kind}
           productCode={dialog.line.item_code ?? dialog.line.product_name ?? EM_DASH}
           productName={dialog.line.product_name}
-          context={dialogContext(dialog.kind, dialog.line)}
           onOpenChange={(open) => {
             if (!open) setDialog(null);
           }}
         >
-          {dialogBody(dialog.kind, dialog.line)}
+          {dialogBody(dialog.kind, dialog.line, dialog.bucket)}
         </PlanRowDialog>
       ) : null}
-    </Card>
+
+        </Card>
+      ) : null}
+
+      {/* Delete on a row of the Created SPOs grid above (R1) - confirms by the SPO's own
+          number, never a bare `confirm()`, and scopes the unwind to just that one header. */}
+      <AlertDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => {
+          if (!open) setDeleteTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirm delete</AlertDialogTitle>
+            <AlertDialogDescription>
+              This deletes {deleteTargetName}. The planner can create another, but the number
+              is minted fresh - this one is gone. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteSpo.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (!deleteTarget) return;
+                deleteSpo.mutate(deleteTarget.purchase_order_id, {
+                  onSuccess: () => setDeleteTarget(null),
+                });
+              }}
+              disabled={deleteSpo.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleteSpo.isPending ? 'Deleting...' : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
   );
 }
 

@@ -15,6 +15,7 @@ from app.api.v1.dealer_kit import (
     price_tag_requests,
     selections,
     tag_data,
+    tag_sizes,
     tag_templates,
 )
 
@@ -33,4 +34,5 @@ router.include_router(flyer_readings.router)
 router.include_router(editions.router)
 router.include_router(price_tag_requests.router)
 router.include_router(tag_templates.router)
+router.include_router(tag_sizes.router)
 router.include_router(tag_data.router)

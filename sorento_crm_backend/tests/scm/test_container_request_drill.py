@@ -89,6 +89,35 @@ def _landed_spo(db, w: World, key: str, wh, qty: float, *, arrived: date) -> Non
     db.flush()
 
 
+def _open_spo_with_container(
+    db, w: World, key: str, wh, qty: float, *, container_number: str
+) -> None:
+    """An open SPO allocation on a shipment that already carries a container number (AC-D1,
+    S4 of `PLAN-scm-loading-plan-lightbox-feedback-3sep.md`)."""
+    ship = InboundShipment(
+        id=str(uuid.uuid4()),
+        shipment_number=f"{MARKER}-SH-{uuid.uuid4().hex[:8]}",
+        supplier_id=w.supplier.id,
+        shipment_date=date(2026, 1, 1),
+        shipment_status="in_transit",
+        shipping_container_number=container_number,
+    )
+    db.add(ship)
+    db.flush()
+    db.add(
+        SPOAllocation(
+            id=str(uuid.uuid4()),
+            spo_number=f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}",
+            inbound_shipment_id=ship.id,
+            product_id=w.product(key).id,
+            warehouse_id=wh.id,
+            allocated_quantity=qty,
+            quantity_received=0,
+        )
+    )
+    db.flush()
+
+
 def _closed_po(db, w: World, key: str, wh, qty: float, *, issued: date) -> None:
     """A purchase order line that has nothing left to come - the PO dialog's History tab."""
     po_id = str(uuid.uuid4())
@@ -215,6 +244,24 @@ def test_drill_spo_total_is_the_spo_cell_and_counts_site_pools_only(scm_app):
     assert row["received"] == 0
 
 
+def test_drill_spo_open_row_carries_the_container_number(scm_app):
+    # AC-D1: the SPO reader now selects the shipment's container, same as the Incoming PL
+    # reader already does - so the "Packing list" column can become "Container" (S4).
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+    w.stock("A", packed=10, cbm=0.5)
+    _so(db, w, "A", 200)
+    pool = _warehouse(db)
+    _open_spo_with_container(db, w, "A", pool, 90, container_number="ZZTU1234567")
+
+    r = _drill(app, str(w.supplier.id), str(w.product("A").id), "spo")
+
+    assert r.status_code == 200, r.text
+    row = r.json()["rows"][0]
+    assert row["container_number"] == "ZZTU1234567"
+
+
 def test_drill_spo_counts_an_allocation_that_has_no_shipment_yet(scm_app):
     # AC-B5. `scm.on_order_v` LEFT JOINs the shipment and keeps `s.id IS NULL`, so an
     # allocation that names a warehouse before anyone puts it on a packing list is on order
@@ -252,6 +299,7 @@ def test_drill_spo_counts_an_allocation_that_has_no_shipment_yet(scm_app):
     assert unshipped[0]["qty"] == 25
     # Nothing invented for the columns a shipment would have carried.
     assert unshipped[0]["shipment_number"] is None
+    assert unshipped[0]["container_number"] is None
     assert unshipped[0]["status"] is None
     assert unshipped[0]["eta"] is None
     assert unshipped[0]["warehouse_code"] == pool.warehouse_code

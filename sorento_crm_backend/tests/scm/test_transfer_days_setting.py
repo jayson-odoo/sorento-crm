@@ -50,7 +50,11 @@ from .test_project_supply_service_ladder import (
 
 
 def _pool_option(proposal):
-    return next(option for option in _options(proposal) if option["step"] == "pool")
+    """LADDER V8 (R-A): the pool's row is `pool_share` and it leads the walk; `pool` was
+    v7.1's own key for the same pile, asked last."""
+    return next(
+        option for option in _options(proposal) if option["step"] == "pool_share"
+    )
 
 
 def _use_option(proposal):
@@ -67,7 +71,9 @@ def test_no_policy_row_charges_no_transfer_between_bins():
         company_id, _eling, project, product = _world(db)
         _group, sites = _group_sites(db)
         own, pool = sites["BRW"]
-        _stock(db, product, pool, on_hand=15)
+        # 30 rather than 15: under ladder v8 a project line may have half of the pool
+        # (R-B), and this case is about the transfer CHARGE on a whole pool take.
+        _stock(db, product, pool, on_hand=30)
         _lead_time(db, product, LEAD_DAYS)
         # No `priority.create_revision` call at all - a policy-less database.
 
@@ -90,7 +96,9 @@ def test_a_policy_row_with_no_transfer_days_set_also_charges_nothing():
         company_id, _eling, project, product = _world(db)
         _group, sites = _group_sites(db)
         own, pool = sites["BRW"]
-        _stock(db, product, pool, on_hand=15)
+        # 30 rather than 15: under ladder v8 a project line may have half of the pool
+        # (R-B), and this case is about the transfer CHARGE on a whole pool take.
+        _stock(db, product, pool, on_hand=30)
         _lead_time(db, product, LEAD_DAYS)
         priority.create_revision(
             db, name=f"zzt-transfer-{_uid()[:6]}", factors={},
@@ -119,7 +127,9 @@ def test_a_configured_transfer_charge_moves_the_non_own_location_option_out():
         company_id, _eling, project, product = _world(db)
         _group, sites = _group_sites(db)
         own, pool = sites["BRW"]
-        _stock(db, product, pool, on_hand=15)
+        # 30 rather than 15: under ladder v8 a project line may have half of the pool
+        # (R-B), and this case is about the transfer CHARGE on a whole pool take.
+        _stock(db, product, pool, on_hand=30)
         _lead_time(db, product, LEAD_DAYS)
         priority.create_revision(
             db, name=f"zzt-transfer-{_uid()[:6]}", factors={},
@@ -180,7 +190,9 @@ def test_changing_the_setting_after_a_confirm_does_not_touch_the_stored_decision
         company_id, eling, project, product = _world(db)
         _group, sites = _group_sites(db)
         own, pool = sites["BRW"]
-        _stock(db, product, pool, on_hand=15)
+        # 30 rather than 15: under ladder v8 a project line may have half of the pool
+        # (R-B), and this case is about the transfer CHARGE on a whole pool take.
+        _stock(db, product, pool, on_hand=30)
         _lead_time(db, product, LEAD_DAYS)
         priority.create_revision(
             db, name=f"zzt-transfer-{_uid()[:6]}", factors={},

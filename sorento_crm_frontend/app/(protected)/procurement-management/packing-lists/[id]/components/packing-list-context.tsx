@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 import {
   usePackingList,
@@ -36,6 +36,9 @@ export interface DraftLine {
   product_id: string;
   product_code: string;
   product_name: string | null;
+  /** The supplier's own wording for the item (S9). Null shows the product's name instead;
+   *  editing here writes this field alone, never the name it stands in for. */
+  description: string;
   quantity_shipped: string;
   supplier_id: string;
   cartons_count: string;
@@ -50,6 +53,10 @@ export interface DraftLine {
   uom_id: string | null;
   /** Round-tripped untouched: the PUT dropped it, so the price lost its unit on every save. */
   currency: string | null;
+  /** Priced per unit, and the supplier's own note on the line - both editable on the
+   *  Shipment lines grid (AC-G1, AC-G5), same as every other measurement here. */
+  unit_cost: string;
+  remarks: string;
 }
 
 /** The header fields the Details tab types, beyond the clearance ones. */
@@ -74,7 +81,7 @@ interface PackingListContextValue {
   draft: Record<string, string>;
   draftLines: DraftLine[];
   setField: (name: string, value: string) => void;
-  setLineField: (key: string, name: keyof DraftLine, value: string) => void;
+  setLineField: (key: string, name: keyof DraftLine, value: string | null) => void;
   addLine: () => void;
   removeLine: (key: string) => void;
   beginEdit: () => void;
@@ -171,6 +178,9 @@ export function PackingListProvider({
       shipper: packingList.shipper ?? '',
       forwarder_order_ref: packingList.forwarder_order_ref ?? '',
       notes: packingList.notes ?? '',
+      // The Container card's own select (S5) - null reads as the tenant default, the same
+      // convention every other clearable id field here uses.
+      container_size_id: packingList.container_size_id ?? '',
     };
     for (const f of CONTAINER_COST_FIELDS) next[f.name] = toInput(record[f.name]);
     for (const cp of checkpoints) next[cp.field] = toDateInput(record[cp.field]);
@@ -183,6 +193,7 @@ export function PackingListProvider({
         product_id: line.product_id,
         product_code: line.product?.product_code ?? '',
         product_name: line.product?.product_name ?? null,
+        description: toInput(line.description),
         quantity_shipped: String(line.quantity_shipped ?? 0),
         supplier_id: line.supplier_id ?? '',
         cartons_count: toInput(line.cartons_count),
@@ -196,6 +207,8 @@ export function PackingListProvider({
         gross_weight_per_carton: toInput(line.gross_weight_per_carton),
         uom_id: line.uom_id ?? null,
         currency: line.currency ?? null,
+        unit_cost: toInput(line.unit_cost),
+        remarks: toInput(line.remarks),
       })),
     );
     setEditing(true);
@@ -207,20 +220,36 @@ export function PackingListProvider({
     setDraftLines([]);
   };
 
-  const setField = (name: string, value: string) =>
-    setDraft((prev) => ({ ...prev, [name]: value }));
+  const setField = useCallback(
+    (name: string, value: string) => setDraft((prev) => ({ ...prev, [name]: value })),
+    [],
+  );
 
-  const setLineField = (key: string, name: keyof DraftLine, value: string) =>
-    setDraftLines((prev) =>
-      prev.map((line) => (line.key === key ? { ...line, [name]: value } : line)),
-    );
+  /**
+   * `useCallback` with an EMPTY dependency array, and every state write goes through the
+   * functional updater form (`prev => ...`) rather than closing over `draftLines` itself -
+   * so this function's identity never changes across a render. The Shipment lines grid's
+   * `columns` memo takes it as a dependency (AC-J1): before this, every keystroke produced a
+   * NEW `setLineField`, which rebuilt `columns` with brand-new cell renderer functions, and
+   * React treats a changed renderer as a changed component type - it unmounted and
+   * remounted every `<Input>` on the grid, dropping focus after the first character typed.
+   */
+  const setLineField = useCallback(
+    (key: string, name: keyof DraftLine, value: string | null) =>
+      setDraftLines((prev) =>
+        prev.map((line) => (line.key === key ? { ...line, [name]: value } : line)),
+      ),
+    [],
+  );
 
-  const removeLine = (key: string) =>
-    setDraftLines((prev) => prev.filter((line) => line.key !== key));
+  const removeLine = useCallback(
+    (key: string) => setDraftLines((prev) => prev.filter((line) => line.key !== key)),
+    [],
+  );
 
   /** A blank line for the operator to fill. Its product is the first thing it asks for,
    *  because a shipment line with no product is not a line the backend can store. */
-  const addLine = () =>
+  const addLine = useCallback(() => {
     setDraftLines((prev) => [
       ...prev,
       {
@@ -228,6 +257,7 @@ export function PackingListProvider({
         product_id: '',
         product_code: '',
         product_name: null,
+        description: '',
         quantity_shipped: '0',
         supplier_id: '',
         cartons_count: '',
@@ -241,8 +271,11 @@ export function PackingListProvider({
         gross_weight_per_carton: '',
         uom_id: null,
         currency: null,
+        unit_cost: '',
+        remarks: '',
       },
     ]);
+  }, []);
 
   const saveEdit = async () => {
     if (!packingList) return;
@@ -259,13 +292,22 @@ export function PackingListProvider({
     // operator just deleted came straight back on the next read, reading as a save that did
     // not work.
     const orNull = (value: string | undefined) => (value ?? '').trim() || null;
-    const orUndefined = (value: string) => (value === '' ? undefined : Number(value));
+    // Never the JS literal NaN: `JSON.stringify(NaN)` silently becomes the JSON `null`, and a
+    // field the backend declares as a plain (non-Optional) number then 422s on it - the
+    // operator sees "[object Object]" for a blank they never even touched. Anything that does
+    // not parse is treated the same as blank: nothing was stated.
+    const orUndefined = (value: string) => {
+      const trimmed = (value ?? '').trim();
+      if (trimmed === '') return undefined;
+      const n = Number(trimmed);
+      return Number.isNaN(n) ? undefined : n;
+    };
     const payload: Partial<PackingListFormData> = {
       shipment_number: orNull(draft.shipment_number),
       supplier_id: orNull(draft.supplier_id),
-      // The one field with no cleared state: the backend requires a shipment date, so
-      // sending null would be refused rather than clearing anything.
-      shipment_date: draft.shipment_date,
+      // Optional on the update schema, so a cleared date is a cleared date - sending the raw
+      // (possibly empty) string 422'd instead of clearing anything.
+      shipment_date: orNull(draft.shipment_date),
       estimated_arrival_date: orNull(draft.estimated_arrival_date),
       actual_arrival_date: orNull(draft.actual_arrival_date),
       bill_of_lading_number: orNull(draft.bill_of_lading_number),
@@ -275,9 +317,13 @@ export function PackingListProvider({
       shipper: orNull(draft.shipper),
       forwarder_order_ref: orNull(draft.forwarder_order_ref),
       notes: orNull(draft.notes),
+      container_size_id: orNull(draft.container_size_id),
       shipment_lines: draftLines.map((line) => ({
         product_id: line.product_id,
-        quantity_shipped: Number(line.quantity_shipped || 0),
+        // Required and non-nullable on the line schema, so garbage text falls back to 0
+        // rather than sending NaN-turned-null and 422ing on a line the operator never meant
+        // to touch.
+        quantity_shipped: orUndefined(line.quantity_shipped) ?? 0,
         supplier_id: line.supplier_id || undefined,
         uom_id: line.uom_id || undefined,
         // The unit the price is in. Sent back untouched - a payload that carried the cost
@@ -292,6 +338,14 @@ export function PackingListProvider({
         carton_height_cm: orUndefined(line.carton_height_cm),
         net_weight_per_carton: orUndefined(line.net_weight_per_carton),
         gross_weight_per_carton: orUndefined(line.gross_weight_per_carton),
+        unit_cost: orUndefined(line.unit_cost),
+        // NULL for a cleared field, never `undefined` - same reasoning as `orNull` above.
+        // The line PUT is an existing-row upsert keyed on presence (`_upsert_shipment_lines`
+        // in the backend), so an omitted key is "unchanged" but an explicit null clears it;
+        // `.trim() || undefined` used to send the omitted form for BOTH, so blanking the
+        // Description or Remarks and saving kept the old value forever (review, PR #594).
+        remarks: orNull(line.remarks),
+        description: orNull(line.description),
       })),
     };
     // The clearance and cost fields are on the payload schema but not on
@@ -301,10 +355,10 @@ export function PackingListProvider({
     for (const cp of checkpoints) extra[cp.field] = orNull(draft[cp.field]);
     for (const f of CLEARANCE_ATTRIBUTE_FIELDS) extra[f.name] = orNull(draft[f.name]);
     // A cost cleared back to blank is null, not 0: nobody has priced this container yet
-    // and a zero would be apportioned across the companies as a real figure.
+    // and a zero would be apportioned across the companies as a real figure. Unparseable
+    // text is treated the same as blank, not sent as NaN-turned-null-turned-422.
     for (const f of CONTAINER_COST_FIELDS) {
-      const value = (draft[f.name] ?? '').trim();
-      extra[f.name] = value === '' ? null : Number(value);
+      extra[f.name] = orUndefined(draft[f.name] ?? '') ?? null;
     }
     try {
       await updateMutation.mutateAsync({ id: packingListId, data: payload });

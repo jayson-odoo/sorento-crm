@@ -53,6 +53,7 @@
  */
 
 import { fromMinor, toMinor } from './supplyComposition';
+import type { PillTone } from '@/components/common/PillOverflow';
 import type {
   BoardCell,
   BoardContribution,
@@ -69,7 +70,7 @@ import type {
  * that no longer runs, and the screen labels it as history rather than passing it off as
  * today's answer (AC-V8).
  */
-export const LADDER_VERSION = 'v7.1';
+export const LADDER_VERSION = 'v8';
 
 export type SupplyKind =
   | 'buy'
@@ -126,6 +127,21 @@ export const COLOURS: Record<SupplyKind, { bar: string; text: string }> = {
   borrow_incoming: { bar: 'bg-amber-500', text: 'text-amber-700' },
   borrow_other: { bar: 'bg-amber-500', text: 'text-amber-700' },
   incoming: { bar: 'bg-violet-500', text: 'text-violet-700' },
+};
+
+/**
+ * The SAME seven kinds, read onto `PillOverflow`'s own six-tone vocabulary (S3b, R-J). One
+ * mapping, here, so the Sourced-from cell, the Stock tab's Taken cell and the board grid
+ * strip cannot each invent their own answer to "what colour is a borrow".
+ */
+export const PILL_TONE: Record<SupplyKind, PillTone> = {
+  buy: 'buy',
+  shared: 'pool',
+  own: 'own',
+  borrow_order: 'borrow',
+  borrow_incoming: 'borrow',
+  borrow_other: 'borrow',
+  incoming: 'spo',
 };
 
 /**
@@ -494,16 +510,29 @@ export function partsBreakdown(
 ): SuggestionRow[] {
   const parts: SupplyPart[] = [];
   const why = new Map<SupplyKind, Set<string>>();
+  const lentBy = new Map<SupplyKind, Set<string>>();
   for (const entry of entries) {
+    const ownGroup = groupOf(entry.ownLocation);
     for (const source of entry.parts) {
       const kind = rowOf(source, entry.ownLocation);
       if (!kind) continue;
+      const at = source.location ?? source.source_location ?? null;
       parts.push({
         kind: source.kind,
         rung: rungFor(kind),
         qty: source.qty,
-        location: source.location ?? source.source_location ?? null,
+        location: at,
       });
+      // WHOSE STOCK IT IS (R-M, 3 Sep 2026). Resolved here, per entry, because it is the
+      // CONTRIBUTING LINE's own group that decides it - `DC1-BB` is somebody else's stock
+      // on a `BRW-IB` line and the line's own on a `BRW-BB` one - and the aggregation
+      // below has no line left to ask.
+      const from = groupOf(at);
+      if (ownGroup && from && from !== ownGroup) {
+        const lenders = lentBy.get(kind) ?? new Set<string>();
+        lenders.add(from);
+        lentBy.set(kind, lenders);
+      }
       const reason = (source as { reason?: string | null }).reason;
       if (!reason) continue;
       const seen = why.get(kind) ?? new Set<string>();
@@ -517,12 +546,36 @@ export function partsBreakdown(
     const reasons = [...(why.get(segment.kind) ?? [])];
     return {
       key: segment.kind,
-      label: LABELS[segment.kind],
+      label: labelOf(segment.kind, lentBy.get(segment.kind)),
       qty: segment.qty,
       places: places.get(segment.kind) ?? [],
       ...(reasons.length === 1 ? { note: reasons[0] } : {}),
     };
   });
+}
+
+/**
+ * The card's own words for a row, naming the LENDING GROUP where step 1 drew on one (R-M).
+ *
+ * The board's options row has said "Use IB group stock" since S4
+ * (`front_planning_engine._use_step_label`), and the Suggestion card beside it went on
+ * saying "Use own location" for the same composition - the captain's production cell was a
+ * `BRW-BB` line proposed off `BRW-IB` reading as the line's own stock on one surface and as
+ * IB's on the other. This is that label, spelled exactly as the engine spells it, so the two
+ * surfaces cannot drift again.
+ *
+ * Only the two STEP 1 kinds take it: `own` is the group's floor and `incoming` is its water,
+ * and they are the only rows a group other than the line's own can appear on. Everything
+ * else keeps its fixed word.
+ */
+function labelOf(kind: SupplyKind, lenders?: Set<string>): string {
+  if (!lenders || lenders.size === 0) return LABELS[kind];
+  if (kind !== 'own' && kind !== 'incoming') return LABELS[kind];
+  const named = [...lenders]
+    .sort()
+    .map((group) => `${group} group`)
+    .join(' and ');
+  return kind === 'incoming' ? `Use incoming from ${named}` : `Use ${named} stock`;
 }
 
 /**
@@ -875,6 +928,53 @@ export function takenByLocation(
   return new Map(
     [...minor].map(([location, qty]) => [location, fromMinor(qty)]),
   );
+}
+
+/**
+ * `takenByLocation`'s own sibling, kept apart by KIND rather than summed (S3b, R-J): the Stock
+ * tab's Taken cell used to print one number per location, and a location the cell draws on
+ * from two kinds at once - a Reserve off the floor AND a borrow, say - read as one figure with
+ * no way to tell which part is whose. Same loop, same exclusions (a Buy is not held yet; the
+ * retired rung 1's incoming took nothing off this row's pile), the KIND dimension only kept
+ * rather than collapsed.
+ *
+ * Ordered per `ORDER` (own first, Buy last - Buy never appears here, but the order still
+ * reads the same way the strip and the bar do), so a location drawn from three kinds lists
+ * them in the ladder's own reading order rather than in draw order.
+ */
+export function takenKindsByLocation(
+  cell: Pick<BoardCell, 'contributions'>,
+  draft: Record<string, BoardDecision>,
+): Map<string, { kind: SupplyKind; qty: string }[]> {
+  const byLocation = new Map<string, Map<SupplyKind, number>>();
+  for (const contribution of cell.contributions) {
+    const { parts } = contributionParts(
+      contribution,
+      draft[contribution.key] ?? null,
+    );
+    for (const part of parts) {
+      if (part.kind === 'buy' || part.rung === 'buy') continue;
+      if (part.rung === 'incoming') continue;
+      const at = locationOf(part);
+      if (!at) continue;
+      const kind = rowOf(part, contribution.fulfilment_location);
+      if (!kind) continue;
+      const byKind = byLocation.get(at) ?? new Map<SupplyKind, number>();
+      byKind.set(kind, (byKind.get(kind) ?? 0) + toMinor(part.qty));
+      byLocation.set(at, byKind);
+    }
+  }
+  const result = new Map<string, { kind: SupplyKind; qty: string }[]>();
+  for (const [location, byKind] of byLocation) {
+    result.set(
+      location,
+      ORDER.filter((kind) => byKind.has(kind)).map((kind) => ({
+        kind,
+        qty: fromMinor(byKind.get(kind) as number),
+      })),
+    );
+  }
+  return result;
 }
 
 /**

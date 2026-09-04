@@ -8,6 +8,7 @@
  * load time.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { BoardSource } from '../types/fulfilmentPlanning.types';
 
 beforeEach(() => {
   vi.resetModules();
@@ -376,5 +377,135 @@ describe('fulfilmentPlanningService, wired to the real backend', () => {
     const { getPlanningBoard } = await loadService();
 
     await expect(getPlanningBoard(['SO391698'])).rejects.toThrow('Backend said no');
+  });
+});
+
+/**
+ * S4 saved decisions (R-F), Phase 2: the two draft endpoints are real, and the Phase 1
+ * overlay (`lib/fulfilmentS4Mock.ts`) is gone. What is pinned here is the wire - the URL
+ * with the contribution key ENCODED into it, the body, and the one status Undo forgives.
+ */
+describe('fulfilmentPlanningService: saved decisions (S4)', () => {
+  const apiFetch = vi.fn();
+
+  async function loadService() {
+    vi.doMock('@/lib/api', () => ({ apiFetch: (...args: unknown[]) => apiFetch(...args) }));
+    vi.doMock('@/lib/api-client', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('@/lib/api-client')>();
+      return { ...actual, extractApiError: vi.fn(async () => 'Backend said no') };
+    });
+    return import('./fulfilmentPlanningService');
+  }
+
+  const KEY = 'a1b2|3|B2155-NL-BLUE|2026-09-07';
+  const ENCODED =
+    '/api/v1/project-sales/fulfilment-planning/lines/' +
+    'a1b2%7C3%7CB2155-NL-BLUE%7C2026-09-07/draft';
+
+  it('saves through the documented PUT, with the key encoded into the path', async () => {
+    apiFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        decision: { verdict: 'amended' },
+        saved_by: 'Eling',
+        saved_at: '2026-09-03T01:00:00',
+        stale: false,
+      }),
+    } as Response);
+    const { putLineDraft } = await loadService();
+
+    const saved = await putLineDraft(KEY, { verdict: 'amended', buy_qty: '4' });
+
+    const [url, init] = apiFetch.mock.calls[0];
+    // The key embeds `|`, which a raw path segment may not carry.
+    expect(url).toBe(ENCODED);
+    expect(init).toMatchObject({ method: 'PUT' });
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({
+      decision: { verdict: 'amended', buy_qty: '4' },
+    });
+    expect(saved.saved_by).toBe('Eling');
+    expect(saved.stale).toBe(false);
+  });
+
+  it('carries no `proposed` (S1, code review round 3): the server snapshots the line\'s own facts, never the proposal', async () => {
+    apiFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ decision: {}, saved_by: 'Eling', saved_at: '', stale: false }),
+    } as Response);
+    const { putLineDraft } = await loadService();
+
+    await putLineDraft(KEY, { verdict: 'approved' });
+
+    expect(
+      Object.keys(
+        JSON.parse((apiFetch.mock.calls[0][1] as RequestInit).body as string),
+      ),
+    ).toEqual(['decision']);
+  });
+
+  it('carries `proposed` when given (D12, #573): the draft keeps the engine\'s suggestion at save time', async () => {
+    apiFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ decision: {}, saved_by: 'Eling', saved_at: '', stale: false }),
+    } as Response);
+    const { putLineDraft } = await loadService();
+    const proposed: BoardSource[] = [
+      { kind: 'reserve', qty: '3', location: 'BRW', reason: 'Reserve from BRW' },
+    ];
+
+    await putLineDraft(KEY, { verdict: 'approved' }, proposed);
+
+    expect(JSON.parse((apiFetch.mock.calls[0][1] as RequestInit).body as string)).toEqual({
+      decision: { verdict: 'approved' },
+      proposed,
+    });
+  });
+
+  it('reports a refused save through the shared extractor', async () => {
+    apiFetch.mockResolvedValue({
+      ok: false,
+      status: 422,
+      headers: { get: () => 'application/json' },
+      json: async () => ({}),
+    } as unknown as Response);
+    const { putLineDraft } = await loadService();
+
+    await expect(putLineDraft(KEY, { verdict: 'approved' })).rejects.toThrow(
+      'Backend said no',
+    );
+  });
+
+  it('undoes through the documented DELETE on the same encoded path', async () => {
+    apiFetch.mockResolvedValue({ ok: true, status: 204 } as Response);
+    const { deleteLineDraft } = await loadService();
+
+    await deleteLineDraft(KEY);
+
+    expect(apiFetch.mock.calls[0][0]).toBe(ENCODED);
+    expect(apiFetch.mock.calls[0][1]).toMatchObject({ method: 'DELETE' });
+  });
+
+  it('treats a 404 on Undo as the line already being clear', async () => {
+    apiFetch.mockResolvedValue({
+      ok: false,
+      status: 404,
+      headers: { get: () => 'application/json' },
+      json: async () => ({}),
+    } as unknown as Response);
+    const { deleteLineDraft } = await loadService();
+
+    await expect(deleteLineDraft(KEY)).resolves.toBeUndefined();
+  });
+
+  it('still reports any OTHER refusal on Undo', async () => {
+    apiFetch.mockResolvedValue({
+      ok: false,
+      status: 403,
+      headers: { get: () => 'application/json' },
+      json: async () => ({}),
+    } as unknown as Response);
+    const { deleteLineDraft } = await loadService();
+
+    await expect(deleteLineDraft(KEY)).rejects.toThrow('Backend said no');
   });
 });

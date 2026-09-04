@@ -1,19 +1,20 @@
 /**
- * The loading plan RECORD (part 4, R5 / R6 - AC-A12, A13, A14, A15, A16, and the read-only
- * half of A8).
+ * The loading plan RECORD (part 4, R5 / R6 - AC-A12, A13, A14, A15, A16, the read-only half
+ * of A8, and S1's AC-A2).
  *
- * What this suite pins is the toolbar, because that is what the captain's 27 Aug ruling
- * reshaped: the supplier is the title, the subtitle states started / cut-off / document, the
- * status is a badge, and the right cluster reads [gear] [Save (N)] [Send to supplier] [Back]
- * with the gear FIRST. Save counts the rows that differ from the engine's own answer, Send
- * saves before it sends, leaving with unsaved edits asks, and a cancelled plan can do neither.
+ * What this suite pins is the toolbar: the supplier is the title, the subtitle states
+ * started / cut-off / document, the status is a badge, and the right cluster reads
+ * [pager] [gear] [Save (N)] [Back] - Send to supplier moved into the gear (captain's markup,
+ * 2 Sep), so there is no standalone Send button any more. Save counts the rows that differ
+ * from the engine's own answer, Send saves before it sends, leaving with unsaved edits asks,
+ * and a cancelled plan can do neither.
  *
  * The ranked grid inside it is `ContainerRequestSection.test.tsx`; the popup that starts a
  * plan is `PlanContainerDialog.test.tsx`.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { LoadingPlanRecord } from '../../services/fulfilmentService';
 
@@ -36,13 +37,18 @@ if (!window.ResizeObserver) {
 }
 
 const push = vi.fn();
+const replace = vi.fn();
+// The URL is what the tab strip reads and writes (AC-B2) - a real `URLSearchParams` so
+// `.get('tab')` and `.toString()` both behave, swappable per test to prove a reload lands
+// back on the tab named in it.
+let currentSearchParams = new URLSearchParams();
 // The pager has its own tests (hooks/useListPager.test.ts).
 vi.mock('@/components/common/ListPager', () => ({ __esModule: true, default: () => null }));
 
 vi.mock('next/navigation', () => ({
   usePathname: () => '/scm/loading-plan/plan-1',
-  useRouter: () => ({ push, replace: vi.fn() }),
-  useSearchParams: () => ({ get: () => null }),
+  useRouter: () => ({ push, replace }),
+  useSearchParams: () => currentSearchParams,
 }));
 
 vi.mock('sonner', () => ({
@@ -74,9 +80,10 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
 }));
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
-// The queue panel has its own suite; here it only has to prove it mounted.
-vi.mock('./UnmatchedSupplierCodesPanel', () => ({
-  UnmatchedSupplierCodesPanel: () => <div data-testid="unmatched-panel" />,
+// The tab has its own suite (SupplierCodesTab.test.tsx); here it only has to prove it
+// mounted, on the codes tab and nowhere else.
+vi.mock('./SupplierCodesTab', () => ({
+  SupplierCodesTab: () => <div data-testid="supplier-codes-tab" />,
 }));
 
 // The grid is a controlled child now (R5): the record owns the typed quantities, so the stub
@@ -126,7 +133,9 @@ const PLAN: LoadingPlanRecord = {
   plan_horizon_date: '2026-09-30',
   document_kind: 'stock_list',
   document_label: 'Stock list 27/07/2026',
+  statement_as_of: '2026-07-27',
   source_attachment_id: 'att-1',
+  source_attachment_filename: 'plan-own-list.xlsx',
   status: 'planning',
   sent_channel: null,
   sent_at: null,
@@ -145,11 +154,20 @@ const state = {
   rows: [ENGINE_ROW],
   /** Make the pre-send Save refuse, which used to leave an unhandled rejection and send anyway. */
   saveFails: false,
+  /** The Supplier codes tab's badge count (S2) - empty by default in this suite, which is
+   *  about the toolbar and the Lines tab, not the queue itself (`SupplierCodesTab` and
+   *  `SentRequestsPanel` own their own contents; `LoadingPlanView.test.tsx` (tabs) covers
+   *  the strip and the badges). */
+  unmatchedCodes: [] as unknown[],
+  /** The Sent tab's badge count and body (S2). */
+  notices: [] as unknown[],
+  /** Which supplier the legacy stock-list lookup was asked about, or null when the record
+   *  read the plan's own stamped file instead (BL-3). */
+  stockListFileAskedAbout: null as string | null,
 };
 
 const saveEdits = vi.fn();
 const sendRequest = vi.fn();
-const cancelPlan = vi.fn();
 const changeCutOff = vi.fn();
 const refetchBuild = vi.fn();
 
@@ -199,18 +217,21 @@ vi.mock('../../hooks/useFulfilment', () => ({
     },
     isLoading: false,
   }),
-  useCancelLoadingPlan: () => ({ mutate: cancelPlan, isPending: false }),
   useDownloadContainerRequestDocument: () => ({ mutate: vi.fn(), isPending: false }),
   useLoadingPlanList: () => ({ data: { data: [{ id: 'plan-1' }], total: 1 } }),
-  useSupplierNotices: () => ({ data: [] }),
-  useSupplierStockListFile: () => ({
-    data: { attachment_id: 'att-1', filename: 'stock.xlsx' },
-    isLoading: false,
-  }),
+  useSupplierNotices: () => ({ data: state.notices }),
+  useSupplierStockListFile: (supplierId: string | null) => {
+    state.stockListFileAskedAbout = supplierId;
+    return {
+      data: supplierId ? { attachment_id: 'att-supplier', filename: 'supplier.xlsx' } : null,
+      isLoading: false,
+    };
+  },
 }));
 
 vi.mock('../../hooks/useSupplierCodeAliases', () => ({
   useRematchSupplierCodes: () => ({ mutate: vi.fn(), isPending: false }),
+  useUnmatchedSupplierCodes: () => ({ data: state.unmatchedCodes }),
 }));
 
 import { LoadingPlanView } from './LoadingPlanView';
@@ -230,6 +251,10 @@ describe('LoadingPlanView (the record)', () => {
     state.plan = { ...PLAN };
     state.rows = [ENGINE_ROW];
     state.saveFails = false;
+    state.unmatchedCodes = [];
+    state.notices = [];
+    state.stockListFileAskedAbout = null;
+    currentSearchParams = new URLSearchParams();
   });
 
   it('titles the record with the supplier and states started, cut-off and document', () => {
@@ -255,23 +280,57 @@ describe('LoadingPlanView (the record)', () => {
     expect(screen.queryByRole('button', { name: /^Upload$/i })).toBeNull();
   });
 
-  it('offers the gear items the plan lists, and only one gear', () => {
+  it('offers the gear items the plan lists, in the order S1 names, and only one gear (AC-A2)', () => {
     renderView();
 
     expect(screen.getAllByRole('button', { name: 'Plan actions' })).toHaveLength(1);
-    for (const item of [
+    const menu = screen.getByTestId('menu-content');
+    const labels = [
       'View uploaded list',
       'Refresh matching',
       'Refresh suggestion',
       'Copy link',
       'Download XLSX',
       'Download PDF',
+      'Send to supplier',
       'Change cut-off',
       'Cancel plan',
       'Delete plan',
-    ]) {
-      expect(screen.getByRole('button', { name: item })).toBeTruthy();
-    }
+    ];
+    const buttons = Array.from(menu.querySelectorAll('button')).map((b) => b.textContent);
+    expect(buttons).toEqual(labels);
+  });
+
+  // BL-3: "View uploaded list" opened the SUPPLIER's latest sheet, whoever uploaded it and
+  // for whichever plan. S6 stamps the file a plan was started from on the plan itself, so
+  // that is what the record reads - and a plan with no file of its own offers nothing.
+  it("opens the plan's OWN uploaded list, never the supplier's latest (BL-3)", () => {
+    renderView();
+
+    const menu = screen.getByTestId('menu-content');
+    expect(within(menu).getByRole('button', { name: 'View uploaded list' })).toBeTruthy();
+    // The supplier-wide lookup is not consulted at all once the plan names its own file.
+    expect(state.stockListFileAskedAbout).toBeNull();
+  });
+
+  it('offers no uploaded list on a plan that has no file of its own (BL-3)', () => {
+    state.plan = { ...PLAN, document_kind: 'proforma', source_attachment_id: null };
+    renderView();
+
+    const menu = screen.getByTestId('menu-content');
+    expect(within(menu).queryByRole('button', { name: 'View uploaded list' })).toBeNull();
+    expect(state.stockListFileAskedAbout).toBeNull();
+  });
+
+  it("falls back to the supplier's sheet only on a legacy stock-list plan (BL-3)", () => {
+    // Every plan open when 454 landed has no stamped file; blanking their only way back to
+    // the sheet they were started from would be a worse answer than today's lookup.
+    state.plan = { ...PLAN, document_kind: 'stock_list', source_attachment_id: null };
+    renderView();
+
+    const menu = screen.getByTestId('menu-content');
+    expect(within(menu).getByRole('button', { name: 'View uploaded list' })).toBeTruthy();
+    expect(state.stockListFileAskedAbout).toBe('sup-1');
   });
 
   it('says why Copy link cannot act when nothing has been sent', () => {
@@ -298,7 +357,7 @@ describe('LoadingPlanView (the record)', () => {
     renderView();
     fireEvent.click(screen.getByTestId('type-qty'));
 
-    fireEvent.click(screen.getByTestId('send-to-supplier'));
+    fireEvent.click(screen.getByRole('button', { name: 'Send to supplier' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Send' }));
 
     await waitFor(() => expect(saveEdits).toHaveBeenCalledWith({ 'row-a': 4000 }));
@@ -320,7 +379,7 @@ describe('LoadingPlanView (the record)', () => {
     renderView();
     fireEvent.click(screen.getByTestId('type-qty'));
 
-    fireEvent.click(screen.getByTestId('send-to-supplier'));
+    fireEvent.click(screen.getByRole('button', { name: 'Send to supplier' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Send' }));
 
     await waitFor(() => expect(saveEdits).toHaveBeenCalled());
@@ -373,7 +432,7 @@ describe('LoadingPlanView (the record)', () => {
 
     expect(screen.getByText('Cancelled')).toBeTruthy();
     const save = screen.getByTestId('save-plan-edits') as HTMLButtonElement;
-    const send = screen.getByTestId('send-to-supplier') as HTMLButtonElement;
+    const send = screen.getByRole('button', { name: 'Send to supplier' }) as HTMLButtonElement;
     expect(save.disabled).toBe(true);
     expect(send.disabled).toBe(true);
     expect(send.getAttribute('title')).toBe('This plan is cancelled.');
@@ -413,6 +472,9 @@ describe('LoadingPlanView, measured against what is SAVED', () => {
     // What the server sends back once that edit is saved: the engine still says 4242.
     state.rows = [{ ...ENGINE_ROW, suggested_qty: 4000 }];
     state.saveFails = false;
+    state.unmatchedCodes = [];
+    state.notices = [];
+    currentSearchParams = new URLSearchParams();
   });
 
   it('a saved edit is not something to save again', () => {
@@ -453,6 +515,9 @@ describe('LoadingPlanView, changing the cut-off with edits on the screen', () =>
     state.plan = { ...PLAN };
     state.rows = [ENGINE_ROW];
     state.saveFails = false;
+    state.unmatchedCodes = [];
+    state.notices = [];
+    currentSearchParams = new URLSearchParams();
   });
 
   it('asks before the new cut-off drops the typed quantities, and drops them for real', async () => {
@@ -475,5 +540,133 @@ describe('LoadingPlanView, changing the cut-off with edits on the screen', () =>
     expect((screen.getByTestId('save-plan-edits') as HTMLButtonElement).textContent).toContain(
       'Save (0)',
     );
+  });
+});
+
+/** Radix `TabsTrigger` activates on mousedown; `fireEvent.click` alone is not enough in jsdom. */
+function selectTab(name: string) {
+  const tab = screen.getByRole('tab', { name });
+  fireEvent.mouseDown(tab, { button: 0 });
+  fireEvent.click(tab);
+}
+
+describe('LoadingPlanView - the tab strip (S2, AC-B1-B4)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    state.plan = { ...PLAN };
+    state.rows = [ENGINE_ROW];
+    state.saveFails = false;
+    state.unmatchedCodes = [];
+    state.notices = [];
+    state.stockListFileAskedAbout = null;
+    currentSearchParams = new URLSearchParams();
+  });
+
+  it('renders Lines, Supplier codes and Sent, Lines active by default, with no badge at zero (AC-B1, AC-B2)', () => {
+    renderView();
+
+    expect(screen.getByRole('tab', { name: 'Lines' })).toHaveAttribute('data-state', 'active');
+    expect(screen.getByRole('tab', { name: 'Supplier codes' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Sent' })).toBeTruthy();
+    // On screen already, since Lines is the default tab.
+    expect(screen.getByTestId('container-request-section')).toBeInTheDocument();
+    // Neither of the other two tabs' bodies is mounted yet.
+    expect(screen.queryByTestId('supplier-codes-tab')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('requests-sent')).not.toBeInTheDocument();
+  });
+
+  it('shows a count once there is one, on both the codes and the sent tab (AC-B1)', () => {
+    state.unmatchedCodes = [{ item_code: 'A' }, { item_code: 'B' }];
+    state.notices = [{ id: 'n-1', notice_type: 'container_request', channel: 'email' }];
+    renderView();
+
+    expect(screen.getByRole('tab', { name: 'Supplier codes (2)' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Sent (1)' })).toBeTruthy();
+  });
+
+  it('clicking Supplier codes writes ?tab=codes (AC-B2)', () => {
+    renderView();
+
+    selectTab('Supplier codes');
+
+    expect(replace).toHaveBeenCalledWith('/scm/loading-plan/plan-1?tab=codes', { scroll: false });
+  });
+
+  it('clicking Lines from another tab clears ?tab= rather than writing ?tab=lines', () => {
+    currentSearchParams = new URLSearchParams('tab=sent');
+    renderView();
+
+    selectTab('Lines');
+
+    expect(replace).toHaveBeenCalledWith('/scm/loading-plan/plan-1', { scroll: false });
+  });
+
+  // `Tabs` is controlled by the URL (`activeTab`, derived from `?tab=`); the mocked router
+  // does not actually navigate, so these preset `?tab=` before mount rather than click and
+  // expect the same jsdom render to reflow - exactly how `LoadingPlanView` itself reads a
+  // deep link or a reload, and the click tests above already prove the write half survives.
+  it('?tab=codes lands on the Supplier codes tab and shows the tab body (AC-B2)', () => {
+    state.unmatchedCodes = [{ item_code: 'A' }];
+    currentSearchParams = new URLSearchParams('tab=codes');
+    renderView();
+
+    expect(screen.getByRole('tab', { name: 'Supplier codes (1)' })).toHaveAttribute(
+      'data-state',
+      'active',
+    );
+    expect(screen.getByTestId('supplier-codes-tab')).toBeInTheDocument();
+    expect(screen.queryByTestId('container-request-section')).not.toBeInTheDocument();
+  });
+
+  // The exact empty-state copy ("Every code on file is matched") is `SupplierCodesTab`'s own
+  // (SupplierCodesTab.test.tsx, AC-B4/AC-C3): the tab now mounts unconditionally so the
+  // Remembered group is reachable even once the queue is answered down to nothing, so what
+  // this level of the record owns is only that the tab keeps mounting at zero.
+  it('the Supplier codes tab still mounts its body with nothing left to answer (AC-B4)', () => {
+    currentSearchParams = new URLSearchParams('tab=codes');
+    renderView();
+
+    expect(screen.getByTestId('supplier-codes-tab')).toBeInTheDocument();
+  });
+
+  it('an empty Sent tab says nothing has gone out yet and offers Send (AC-B4)', async () => {
+    currentSearchParams = new URLSearchParams('tab=sent');
+    renderView();
+
+    const sentCard = screen.getByTestId('requests-sent');
+    expect(within(sentCard).getByText('Nothing sent yet.')).toBeInTheDocument();
+    fireEvent.click(within(sentCard).getByRole('button', { name: /send to supplier/i }));
+    // The same Send dialog the gear opens - the Sent tab's own trigger, not a second flow.
+    expect(await screen.findByRole('button', { name: 'Send' })).toBeTruthy();
+  });
+
+  // The row menu's Send navigates here with `?send=1` (a row has no built lines to hand the
+  // dialog itself). Clearing it used to `replace` the bare path, which threw away whatever
+  // tab the operator was on and scrolled the record back to the top (SF-4).
+  it('?send=1 opens the Send dialog and clears only that parameter', async () => {
+    currentSearchParams = new URLSearchParams('tab=sent&send=1');
+    renderView();
+
+    expect(await screen.findByRole('button', { name: 'Send' })).toBeTruthy();
+    expect(replace).toHaveBeenCalledWith('/scm/loading-plan/plan-1?tab=sent', {
+      scroll: false,
+    });
+  });
+
+  it('?send=1 on its own leaves no query string behind', async () => {
+    currentSearchParams = new URLSearchParams('send=1');
+    renderView();
+
+    expect(await screen.findByRole('button', { name: 'Send' })).toBeTruthy();
+    expect(replace).toHaveBeenCalledWith('/scm/loading-plan/plan-1', { scroll: false });
+  });
+
+  it('a reload on ?tab=sent lands on the Sent tab, not Lines (AC-B2)', () => {
+    currentSearchParams = new URLSearchParams('tab=sent');
+    renderView();
+
+    expect(screen.getByRole('tab', { name: 'Sent' })).toHaveAttribute('data-state', 'active');
+    expect(screen.getByTestId('requests-sent')).toBeInTheDocument();
+    expect(screen.queryByTestId('container-request-section')).not.toBeInTheDocument();
   });
 });

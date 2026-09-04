@@ -14,7 +14,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
+  BoardCell,
+  BoardContribution,
   ConfirmSupplyBody,
+  PlanningBoard,
   ReconciliationSummary,
   SupplyProposal,
 } from '../types/fulfilmentPlanning.types';
@@ -26,6 +29,8 @@ const getSupply = vi.fn();
 const confirmSupply = vi.fn();
 const getStockDetail = vi.fn();
 const confirmMany = vi.fn();
+const putLineDraft = vi.fn();
+const deleteLineDraft = vi.fn();
 
 vi.mock('../services/fulfilmentPlanningService', () => ({
   listFulfilmentPlanning: (...args: unknown[]) => listFulfilmentPlanning(...args),
@@ -35,6 +40,8 @@ vi.mock('../services/fulfilmentPlanningService', () => ({
   confirmSupply: (...args: unknown[]) => confirmSupply(...args),
   getStockDetail: (...args: unknown[]) => getStockDetail(...args),
   confirmMany: (...args: unknown[]) => confirmMany(...args),
+  putLineDraft: (...args: unknown[]) => putLineDraft(...args),
+  deleteLineDraft: (...args: unknown[]) => deleteLineDraft(...args),
 }));
 
 const toastSuccess = vi.fn();
@@ -55,8 +62,10 @@ import {
   RECONCILIATION_KEY,
   STOCK_DETAIL_KEY,
   SUPPLY_KEY,
+  patchContributionDraft,
   useConfirmManyMutation,
   useFulfilmentPlanning,
+  useLineDraftMutation,
   useReconciliation,
   useReconciliationMutations,
   useStockDetail,
@@ -105,6 +114,57 @@ function supplyProposal(overrides: Partial<SupplyProposal> = {}): SupplyProposal
     status: 'published',
     review_state: 'needs_cs_review',
     lines: [],
+    ...overrides,
+  };
+}
+
+/** A minimal contribution - just enough for `patchContributionDraft` and the draft mutations. */
+function contribution(overrides: Partial<BoardContribution> = {}): BoardContribution {
+  return {
+    key: 'so-a|22|SRTWB7518|2026-06-29',
+    sales_order_id: 'so-a',
+    so_number: 'SO397450',
+    line_no: 22,
+    item_code: 'SRTWB7518',
+    qty: '10',
+    unplannable: false,
+    rank_score: 0,
+    rank_factors: [],
+    sources: [],
+    contested: false,
+    ...overrides,
+  };
+}
+
+/** A minimal cell carrying its own copy of a contribution, the same way the server does. */
+function cell(overrides: Partial<BoardCell> = {}): BoardCell {
+  return {
+    item_code: 'SRTWB7518',
+    bucket_key: '2026-06-29',
+    total_qty: '10',
+    locations: [],
+    contributions: [contribution()],
+    unplannable_count: 0,
+    contested_count: 0,
+    ...overrides,
+  };
+}
+
+/** A minimal board - just the two arrays `patchContributionDraft` walks. */
+function board(overrides: Partial<PlanningBoard> = {}): PlanningBoard {
+  return {
+    granularity: 'week',
+    policy: { id: 'default', label: 'Default', weights: [] } as unknown as PlanningBoard['policy'],
+    as_of: '2026-09-03',
+    line_count: 1,
+    past_line_count: 0,
+    unplannable_line_count: 0,
+    contested_line_count: 0,
+    dateBuckets: [],
+    productRows: [],
+    cells: [cell()],
+    contributions: [contribution()],
+    orders: [],
     ...overrides,
   };
 }
@@ -577,5 +637,208 @@ describe('useStockDetail', () => {
       product_id: 'prod-1',
       group: 'IB',
     });
+  });
+});
+
+/**
+ * Save decision / Undo (S4, R-F, D16). What the hook owes: the service call with the key and
+ * the suggestion the save was taken against, a PATCH of the cached board rather than an
+ * invalidation (a draft is never `active`, so no count anywhere else moves, and re-running the
+ * whole board query for it was the cause of the flicker the captain called "very choppy" 3
+ * September 2026), no success toast (the panel's own `decide()` says "Line N saved - K to
+ * confirm" off the draft it just wrote), and the message on a refusal.
+ */
+describe('useLineDraftMutation', () => {
+  async function drafts() {
+    let mutation: ReturnType<typeof useLineDraftMutation> | null = null;
+    function Harness({ onReady }: { onReady: (api: typeof mutation) => void }) {
+      const api = useLineDraftMutation();
+      React.useEffect(() => {
+        onReady(api);
+      }, [api, onReady]);
+      return null;
+    }
+    render(
+      <QueryClientProvider client={client}>
+        <Harness onReady={(value) => (mutation = value)} />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(mutation).not.toBeNull());
+    return mutation!;
+  }
+
+  const KEY = 'so-a|22|SRTWB7518|2026-06-29';
+
+  it('saves the key and the decision, and carries no proposal (S1, code review round 3)', async () => {
+    putLineDraft.mockResolvedValue({
+      decision: { verdict: 'amended' },
+      saved_by: 'Eling',
+      saved_at: '2026-09-03T01:00:00',
+      stale: false,
+    });
+
+    const api = await drafts();
+    const saved = await api.save(KEY, { verdict: 'amended' });
+
+    // No saver: the server reads that off the caller's own JWT. No proposal either: the
+    // server snapshots the line's own facts at save time, never the proposal.
+    expect(putLineDraft).toHaveBeenCalledWith(KEY, { verdict: 'amended' });
+    expect(saved.saved_by).toBe('Eling');
+  });
+
+  /**
+   * D12 (#573): the caller (`FulfilmentBoardPanel.decide()`) may now pass the
+   * contribution's own `sources`, which the service carries as `proposed` so the Sales
+   * Order page's Suggested column reads it back on a saved line. Distinct from the S1
+   * ruling above: staleness is still judged on the line's own facts only.
+   */
+  it('passes a given proposal through to the service (D12)', async () => {
+    putLineDraft.mockResolvedValue({
+      decision: { verdict: 'approved' },
+      saved_by: 'Eling',
+      saved_at: '2026-09-03T01:00:00',
+      stale: false,
+    });
+    const proposed = [
+      { kind: 'reserve', qty: '3', location: 'BRW', reason: 'Reserve from BRW' },
+    ];
+
+    const api = await drafts();
+    await api.save(KEY, { verdict: 'approved' }, proposed);
+
+    expect(putLineDraft).toHaveBeenCalledWith(KEY, { verdict: 'approved' }, proposed);
+  });
+
+  it('patches the cached board in place on save, and invalidates nothing (D16)', async () => {
+    const saved = {
+      decision: { verdict: 'approved' as const },
+      saved_by: 'Eling',
+      saved_at: '2026-09-03T01:00:00',
+      stale: false,
+    };
+    putLineDraft.mockResolvedValue(saved);
+
+    // The default `gcTime: 0` (`beforeEach` above) evicts a query the moment it has no
+    // observer, which this seeded one never gets - only `useLineDraftMutation`'s own
+    // mutations run here, nothing subscribes to the board itself. Pinned so the seeded
+    // entry survives long enough for the assertions below to read it back.
+    client.setQueryDefaults([PLANNING_BOARD_KEY], { gcTime: Infinity });
+    const otherContribution = contribution({ key: 'so-b|1|ITEM|2026-06-30' });
+    client.setQueryData([PLANNING_BOARD_KEY, 'so-a'], board({ contributions: [contribution(), otherContribution] }));
+
+    const api = await drafts();
+    await api.save(KEY, { verdict: 'approved' });
+
+    // No refetch of the board query at all - that IS the fix (the captain, 3 Sep: "very
+    // choppy"). Only the cache write above did anything to it.
+    expect(invalidated).toEqual([]);
+    expect(toastSuccess).not.toHaveBeenCalled();
+
+    const patched = client.getQueryData<PlanningBoard>([PLANNING_BOARD_KEY, 'so-a'])!;
+    expect(patched.contributions[0].draft).toEqual(saved);
+    // The cell's own copy of the same line agrees - Confirm-all and the grid each read a
+    // different one of the two arrays.
+    expect(patched.cells[0].contributions[0].draft).toEqual(saved);
+    // An UNRELATED contribution is untouched, and stays the SAME OBJECT: the seeding effect
+    // in `FulfilmentBoardPanel` reads `contribution.draft` off every one of them on every
+    // render, and a new reference there would re-render a card this write never touched.
+    expect(patched.contributions[1]).toBe(otherContribution);
+  });
+
+  it('undoes by key: patches the draft to null, and invalidates nothing (D16)', async () => {
+    deleteLineDraft.mockResolvedValue(undefined);
+
+    client.setQueryDefaults([PLANNING_BOARD_KEY], { gcTime: Infinity });
+    const savedDraft = {
+      decision: { verdict: 'approved' as const },
+      saved_by: 'Eling',
+      saved_at: '2026-09-03T01:00:00',
+    };
+    client.setQueryData(
+      [PLANNING_BOARD_KEY, 'so-a'],
+      board({ contributions: [contribution({ draft: savedDraft })] }),
+    );
+
+    const api = await drafts();
+    await api.remove(KEY);
+
+    expect(deleteLineDraft).toHaveBeenCalledWith(KEY);
+    expect(invalidated).toEqual([]);
+
+    const patched = client.getQueryData<PlanningBoard>([PLANNING_BOARD_KEY, 'so-a'])!;
+    expect(patched.contributions[0].draft).toBeNull();
+  });
+
+  it('names the refusal, and lets the caller put the row back', async () => {
+    putLineDraft.mockRejectedValue(new Error('Backend said no'));
+
+    const api = await drafts();
+    await expect(api.save(KEY, { verdict: 'approved' })).rejects.toThrow(
+      'Backend said no',
+    );
+
+    expect(toastError).toHaveBeenCalledWith('Backend said no');
+  });
+
+  it('names a refused Undo too', async () => {
+    deleteLineDraft.mockRejectedValue(new Error('Backend said no'));
+
+    const api = await drafts();
+    await expect(api.remove(KEY)).rejects.toThrow('Backend said no');
+
+    expect(toastError).toHaveBeenCalledWith('Backend said no');
+  });
+});
+
+/**
+ * The pure updater itself (D16), on its own: what `useLineDraftMutation` above hands to
+ * `setQueriesData`.
+ */
+describe('patchContributionDraft', () => {
+  const KEY = 'so-a|22|SRTWB7518|2026-06-29';
+
+  it('sets the draft on the matching contribution in BOTH arrays', () => {
+    const source = board();
+    const draft = {
+      decision: { verdict: 'amended' as const },
+      saved_by: 'Eling',
+      saved_at: '2026-09-03T01:00:00',
+    };
+
+    const patched = patchContributionDraft(source, KEY, draft);
+
+    expect(patched.contributions[0].draft).toEqual(draft);
+    expect(patched.cells[0].contributions[0].draft).toEqual(draft);
+  });
+
+  it('clears the draft to null on Undo, without touching anything else on the row', () => {
+    const source = board({
+      contributions: [
+        contribution({ draft: { decision: { verdict: 'approved' }, saved_by: 'Eling', saved_at: 'x' } }),
+      ],
+    });
+
+    const patched = patchContributionDraft(source, KEY, null);
+
+    expect(patched.contributions[0].draft).toBeNull();
+    expect(patched.contributions[0].qty).toBe('10');
+  });
+
+  it('leaves every unrelated contribution at the SAME OBJECT reference', () => {
+    const untouched = contribution({ key: 'so-b|1|ITEM|2026-06-30' });
+    const source = board({ contributions: [contribution(), untouched] });
+
+    const patched = patchContributionDraft(source, KEY, null);
+
+    expect(patched.contributions[1]).toBe(untouched);
+  });
+
+  it('is a no-op (but still a fresh board object) when the key matches nothing', () => {
+    const source = board();
+
+    const patched = patchContributionDraft(source, 'no-such-key', null);
+
+    expect(patched.contributions[0]).toBe(source.contributions[0]);
+    expect(patched.cells[0]).not.toBe(source.cells[0]);
   });
 });

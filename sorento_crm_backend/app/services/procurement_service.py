@@ -29,8 +29,12 @@ from app.models.product import Product
 from app.models.resources import Attachment
 from app.models.user import User
 from app.models.inventory import Warehouse
+from app.models.scm import SupplierProductCodeAlias
 from app.services.identifier_resolver import resolve_identifier
 from app.services.fuzzy_resolver import resolve_via_embedding_then_ilike
+from app.services.scm.container_capacity import container_sizes as _container_sizes
+from app.services.scm.container_capacity import fit as _fit_capacity
+from app.services.scm.container_capacity import line_cbm as _line_cbm
 from app.schemas.procurement import (
     SupplierCreate, SupplierUpdate, ProductSupplierCreate, ProductSupplierUpdate,
     InboundShipmentCreate, InboundShipmentUpdate,
@@ -435,6 +439,13 @@ def shipment_supplier_predicate(supplier_id):
     )
 
 
+#: Line fields where an explicit `null` on the PUT is a stated "clear it", not "not
+#: mentioned" - see `_upsert_shipment_lines`. Both are free text with no fallback that
+#: `_merge_shipment_lines` computes on the caller's behalf (unlike `supplier_id`), so the
+#: key's mere presence in the merged dict already carries the caller's intent correctly.
+_CLEARABLE_LINE_FIELDS = {"description", "remarks"}
+
+
 def _effective_line_supplier(line_dict: dict, header_supplier_id: Optional[str]) -> Optional[str]:
     """Whose line this is: what the line says, else what the header says.
 
@@ -547,6 +558,30 @@ def _merge_shipment_lines(lines_data, header_supplier_id: Optional[str]) -> list
         ) / total_qty
 
     return list(merged.values())
+
+
+def _duplicate_line_product_id(
+    lines_data, header_supplier_id: Optional[str]
+) -> Optional[str]:
+    """The first `product_id` stated twice in one line set for the same effective supplier.
+
+    `_merge_shipment_lines` would silently SUM two lines that land on the same
+    `(product, supplier)` key - correct where a packing list legitimately states one item
+    twice at two prices, a mid-order renegotiation
+    (`test_one_product_on_two_lines_at_two_prices_merges_to_the_weighted_average`, the
+    import channel). `update_shipment`'s only caller is the Shipment lines grid, where the
+    same collision means an operator just repicked one row's product onto a row already on
+    screen - losing the other row's identity into a silent sum there reads as data loss, not
+    a stated fact about the container, so it is refused before the merge runs.
+    """
+    seen: set[tuple[str, Optional[str]]] = set()
+    for line_data in lines_data or []:
+        d = line_data.model_dump(exclude_unset=True) if hasattr(line_data, "model_dump") else dict(line_data)
+        key = (str(d["product_id"]), _effective_line_supplier(d, header_supplier_id))
+        if key in seen:
+            return d["product_id"]
+        seen.add(key)
+    return None
 
 
 def _line_company_kwargs(shipment: "InboundShipment") -> dict:
@@ -882,7 +917,7 @@ class InboundShipmentService:
         ).filter(InboundShipment.id.in_(resolved_ids)).first()
         if not shipment:
             raise handle_not_found("Inbound Shipment", shipment_id)
-        return shipment
+        return self._attach_capacity(shipment)
 
     def get_received_quantities_by_product(self, shipment_id: str) -> dict[str, int]:
         """Return received qty per product for a shipment, ignoring warehouse boundaries.
@@ -1020,6 +1055,38 @@ class InboundShipmentService:
         elif (shipment.shipment_status or "").strip().lower() in ("received", "fully_received"):
             shipment.shipment_status = "in_transit"
         self.db.commit()
+
+    def _attach_capacity(self, shipment: InboundShipment) -> InboundShipment:
+        """The fill gauge, computed onto the ORM object rather than stored (S5, ruling 1).
+
+        `_fit` moved here from the proforma-invoice serializer: capacity is a property of
+        the CONTAINER, and this shipment's own lines - not any one PI that fed it - are what
+        the gauge measures. `line_cbm` (S12) is the SAME figure `consolidated_packing_list
+        .build()` reads per line - stored `cbm`, else the line's own carton dimensions, else
+        the catalogue's - so a line typed with only its own dimensions counts here too, not
+        only on the Split card. It is also the same figure a convert wrote in the first
+        place (per-unit volume times the placed quantity, or a supplier's own stated total
+        on a real packing-list upload), so a percentage cannot drift between the convert's
+        over-capacity refusal and this gauge.
+
+        Set as plain attributes, the same pattern the packing-list route already uses for
+        `spo_allocated_quantity` / `quantity_received` on a line: `InboundShipmentResponse`
+        declares these fields and `from_attributes=True` picks them straight off the object.
+        """
+        lines = shipment.shipment_lines or []
+        cbms = [_line_cbm(line) for line in lines]
+        known = [c for c in cbms if c is not None]
+        total_cbm = float(sum(known)) if known else None
+        unmeasured = len(lines) - len(known)
+        sizes_by_id, default_size = _container_sizes(self.db)
+        result = _fit_capacity(shipment.container_size_id, total_cbm, sizes_by_id, default_size)
+        setattr(shipment, "container_size_code", result["container_size_code"])
+        setattr(shipment, "container_cbm", result["container_cbm"])
+        setattr(shipment, "total_cbm", result["total_cbm"])
+        setattr(shipment, "fill_pct", result["fill_pct"])
+        setattr(shipment, "over_by_cbm", result["over_by_cbm"])
+        setattr(shipment, "unmeasured_lines", unmeasured)
+        return shipment
 
     def _derive_header_supplier(
         self, shipment: InboundShipment, payload_supplier_id: Optional[str] = None
@@ -1172,9 +1239,20 @@ class InboundShipmentService:
 
         for line, d in updates:
             for field, value in d.items():
-                # None means "the payload did not state it", never "clear it": supplier,
-                # cbm and remarks are read off the packing list, not typed into the edit
-                # form that is saving over them.
+                if field in _CLEARABLE_LINE_FIELDS:
+                    # A key PRESENT here already means "the payload stated this" - real
+                    # text, or an explicit None to clear it - because `_merge_shipment_lines`
+                    # never fabricates a value for `description` / `remarks` the way it does
+                    # for `supplier_id` below; the key comes straight from the caller's
+                    # `model_dump(exclude_unset=True)`. Skipping None here kept a cleared
+                    # Description/Remarks reading its stale value forever (review, PR #594).
+                    setattr(line, field, value)
+                    continue
+                # None means "the payload did not state it", never "clear it": supplier and
+                # cbm are read off the packing list, not typed into the edit form that is
+                # saving over them - and `supplier_id` is unconditionally written into the
+                # dict above even when nothing named a supplier, so its own None has to stay
+                # a no-op.
                 if value is not None:
                     setattr(line, field, value)
         for d in inserts:
@@ -1292,7 +1370,7 @@ class InboundShipmentService:
             self.db.refresh(existing)
             self.refresh_shipment_line_statuses(existing.id)
             setattr(existing, "_already_existed", True)
-            return existing
+            return self._attach_capacity(existing)
 
         # Create shipment and lines in transaction
         shipment_dict = shipment_data.model_dump(exclude={"shipment_lines"})
@@ -1332,8 +1410,8 @@ class InboundShipmentService:
         self.db.commit()
         self.db.refresh(shipment)
         self.refresh_shipment_line_statuses(shipment.id)
-        return shipment
-    
+        return self._attach_capacity(shipment)
+
     def update_shipment(self, shipment_id: str, shipment_data: InboundShipmentUpdate, updated_by: str):
         """Update an inbound shipment. If shipment_lines provided, replace existing lines."""
         shipment = self.get_shipment(shipment_id)
@@ -1351,6 +1429,19 @@ class InboundShipmentService:
             # AND supplier - the same key `create_shipment` merges on, because the same
             # product from two factories is two rows).
             header_supplier = getattr(shipment, "supplier_id", None)
+            duplicate_product_id = _duplicate_line_product_id(
+                shipment_data.shipment_lines, header_supplier
+            )
+            if duplicate_product_id:
+                code = (
+                    self.db.query(Product.product_code)
+                    .filter(Product.id == duplicate_product_id)
+                    .scalar()
+                ) or duplicate_product_id
+                raise handle_conflict(
+                    f"Product {code} is on this line set twice for the same supplier; "
+                    "combine the two lines or pick a different product on one of them."
+                )
             self._upsert_shipment_lines(
                 shipment, _merge_shipment_lines(shipment_data.shipment_lines, header_supplier)
             )
@@ -1362,7 +1453,7 @@ class InboundShipmentService:
         self.db.commit()
         self.db.refresh(shipment)
         self.refresh_shipment_line_statuses(shipment_id)
-        return shipment
+        return self._attach_capacity(shipment)
 
     def delete_shipment(self, shipment_id: str) -> None:
         """Delete an inbound shipment. Lines and SPO allocations cascade via DB."""
@@ -5648,7 +5739,38 @@ class ProductSupplierService:
         if not product_supplier:
             raise handle_not_found("Product Supplier", product_supplier_id)
         return product_supplier
-    
+
+    def list_suppliers_for_product(self, product_id: str) -> list:
+        """Every current sourcing link for a product, with "their code" alongside each one
+        (S4, AC-D2) - the supplier's own spelling, read off `scm.supplier_product_code_alias`
+        for that (product, supplier) pair, never a column on `product_suppliers` itself: the
+        alias table is the single writer, so a manual match and this field cannot drift.
+
+        A supplier who has been matched on more than one code for this product (a correction,
+        or two spellings that both landed here) shows the NEWEST alias; a dismissal names no
+        product, so it never joins here at all.
+        """
+        rows = self.list_product_suppliers(page=1, limit=1000, product_id=product_id).get(
+            "data", []
+        )
+        supplier_ids = {str(r.supplier_id) for r in rows}
+        code_by_supplier: Dict[str, str] = {}
+        if supplier_ids:
+            alias_rows = (
+                self.db.query(SupplierProductCodeAlias)
+                .filter(
+                    SupplierProductCodeAlias.product_id == product_id,
+                    SupplierProductCodeAlias.supplier_id.in_(supplier_ids),
+                )
+                .order_by(SupplierProductCodeAlias.created_at.desc())
+                .all()
+            )
+            for alias in alias_rows:
+                code_by_supplier.setdefault(str(alias.supplier_id), alias.supplier_code)
+        for row in rows:
+            row.supplier_item_code = code_by_supplier.get(str(row.supplier_id))
+        return rows
+
     @staticmethod
     def _assert_priced_in_a_currency(unit_cost, currency) -> None:
         """A price with no currency is read as ringgit everywhere downstream.

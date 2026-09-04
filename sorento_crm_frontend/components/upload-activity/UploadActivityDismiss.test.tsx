@@ -115,14 +115,17 @@ describe('upload activity badge dismissal', () => {
     await waitFor(() => expect(screen.queryByText('1')).toBeNull());
   });
 
-  it('shows the whole RQ failure string rather than cutting it mid-timestamp', async () => {
+  it('shows the whole RQ failure string, on hover if the row cannot fit it', async () => {
     renderShell();
     fireEvent.click(await screen.findByRole('button', { name: /upload/i }));
     const summary = await screen.findByText(RQ_ERROR);
-    // `truncate` clips to one line and loses the reason; the row wraps instead
-    // and carries the full text on hover.
+    // A real production traceback overflowed the row and pushed the status icon
+    // off the drawer's edge (`errorSummary` picks the last line; a single-line
+    // RQ failure string like this one passes through unchanged). `line-clamp-2
+    // break-words` (N4, fix round 5; `break-all` reverted N-3, fix round 7) wraps
+    // the row rather than overflowing it; the full text is still one hover away.
+    expect(summary.className).toContain('line-clamp-2');
     expect(summary.className).not.toContain('truncate');
-    expect(summary.className).toContain('break-words');
     expect(summary.getAttribute('title')).toBe(RQ_ERROR);
   });
 });

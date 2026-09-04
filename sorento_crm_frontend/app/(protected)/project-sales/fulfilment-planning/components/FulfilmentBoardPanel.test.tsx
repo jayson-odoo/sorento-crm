@@ -52,6 +52,16 @@ vi.mock('../../_shared/services/fulfilmentPlanningService', () => ({
   getSupply: vi.fn(),
   confirmSupply: (...args: unknown[]) => confirmSupply(...args),
   confirmMany: (...args: unknown[]) => confirmMany(...args),
+  // S4 (`useLineDraftMutation`): no test here presses Save deep enough to reach these -
+  // that interaction is `BoardLineDecisionPanel.test.tsx`'s, against a plain `vi.fn()`
+  // `onDecide` - but `decide()` closes over them regardless, so an undefined export would
+  // throw the moment it did.
+  putLineDraft: vi.fn().mockResolvedValue({
+    decision: { verdict: 'approved' },
+    saved_by: 'Test Planner',
+    saved_at: '2026-09-03T00:00:00Z',
+  }),
+  deleteLineDraft: vi.fn().mockResolvedValue(undefined),
   // Declared INSIDE the factory: `vi.mock` is hoisted above every top-level binding, so a
   // class declared outside it is not initialised yet when the factory runs.
   ConfirmSupplyError: class ConfirmSupplyError extends Error {
@@ -86,6 +96,15 @@ vi.mock('../../_shared/services/planningChangeService', () => ({
 
 vi.mock('sonner', () => ({
   toast: { success: vi.fn(), warning: vi.fn(), error: vi.fn() },
+}));
+
+// S4: `decide()` names the saver off the session (R-F). A harmless authenticated session -
+// the popover-content assertion is left to `BoardDecisionPill.test.tsx`.
+vi.mock('next-auth/react', () => ({
+  useSession: () => ({
+    data: { user: { id: 'user-1', name: 'Test Planner' } },
+    status: 'authenticated',
+  }),
 }));
 
 /**
@@ -137,6 +156,13 @@ vi.mock('@/components/common/SearchableSelect', () => ({
 }));
 
 import { toast } from 'sonner';
+// The mocked module's own `putLineDraft` / `deleteLineDraft` (B1): imported here, rather
+// than only referenced inside the factory above, so a test can control ONE call's outcome
+// (`mockImplementationOnce`) without touching every other test's default resolved value.
+import {
+  deleteLineDraft,
+  putLineDraft,
+} from '../../_shared/services/fulfilmentPlanningService';
 import {
   FulfilmentBoardPanel,
   unpostableNotices,
@@ -522,7 +548,19 @@ describe('FulfilmentBoardPanel: the cells', () => {
 
     renderPanel();
 
-    expect(await screen.findByTitle('BRW-BB 22 · BRW 21')).toBeInTheDocument();
+    // S3b: the strip is pills now, not a `·`-joined title string - one pill per location,
+    // folding what does not fit into "+N". jsdom lays every element out at width 0, so only
+    // the first pill shows and the second folds behind "+1" (the same trap
+    // `PillOverflow.test.tsx` documents); both locations are still present either way.
+    const cell = await screen.findByRole('button', {
+      name: /WESERP10B, 43 across 1 sales order/,
+    });
+    // Scoped to the visible pill row (`role="group"`), not just the cell: the hidden
+    // measuring row repeats the same label text off-screen so it can size itself, and a
+    // plain `getByText` finds that copy too.
+    const pills = within(cell).getByRole('group', { name: 'Locations' });
+    expect(within(pills).getByText('BRW-BB 22')).toBeInTheDocument();
+    expect(within(pills).getByText('+1')).toBeInTheDocument();
   });
 
   it('marks a cell that carries a line with no location', async () => {
@@ -593,7 +631,11 @@ describe('FulfilmentBoardPanel: the cells', () => {
     const empty = matrix.querySelector('[data-cell="TPE-9204|2026-08-31"]');
     expect(empty).not.toBeNull();
     expect(empty?.textContent).toBe('');
-    expect(within(matrix).getAllByRole('button').length).toBe(2);
+    // Scoped to /across/ - a cell button's own accessible name - because the source strip's
+    // pills (S3b) are `role="button"` too, and an unscoped query would also count those.
+    expect(
+      within(matrix).getAllByRole('button', { name: /across/ }).length,
+    ).toBe(2);
   });
 });
 
@@ -687,9 +729,13 @@ describe('FulfilmentBoardPanel: the confirm counter is selection-scoped, not win
       ),
     );
 
-    // The window shows three of the forty; the counter must still say forty.
+    // The window shows three of the forty; the counter must still say forty. Scoped to
+    // /across/ - a cell button's own accessible name - because the source strip's pills
+    // (S3b) are `role="button"` too, and an unscoped query would also count those.
     const matrix = await screen.findByTestId('fulfilment-board-matrix');
-    expect(within(matrix).getAllByRole('button')).toHaveLength(3);
+    expect(
+      within(matrix).getAllByRole('button', { name: /across/ }),
+    ).toHaveLength(3);
     await waitFor(() =>
       expect(screen.getByTestId('board-confirm-summary')).toHaveTextContent(
         '40 to confirm · 0 rejected',
@@ -783,6 +829,132 @@ describe('FulfilmentBoardPanel: the confirm counter is selection-scoped, not win
         '39 to confirm · 1 rejected',
       ),
     );
+  });
+});
+
+/**
+ * D16 (captain, 3 Sep, screenshots: "very choppy"). A save or Undo no longer reaches this at
+ * all - `useLineDraftMutation` patches the cache without asking for a refetch - so what is
+ * left to prove here is Confirm's OWN background refetch, on the SAME selection: the rows
+ * already on screen must stay mounted and merely dim, never drop to a skeleton or an empty
+ * state, for the length of that round trip. (A granularity/day-window turn is a genuinely
+ * DIFFERENT selection and keeps the true skeleton - see the note on `usePlanningBoard`.)
+ */
+describe('FulfilmentBoardPanel: a background refetch dims the board, never blanks it (D16)', () => {
+  it('keeps the matrix mounted and dims it while Confirm’s own refetch is in flight', async () => {
+    getPlanningBoard.mockResolvedValueOnce(boardOf([demand()]));
+    confirmMany.mockResolvedValue({
+      results: [
+        {
+          pso_id: 'pso-so-a',
+          ok: true,
+          decision_revision: 1,
+          inquiry_rows_created: 0,
+          transfers_written: 0,
+        },
+      ],
+    });
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    expect(screen.getByTestId('board-content')).toHaveClass('opacity-100');
+
+    // Confirm's own success invalidates the board (it changes what every OTHER order can be
+    // offered) - held open here so the in-flight moment can be asserted.
+    let resolveRefetch: (value: PlanningBoard) => void = () => {};
+    getPlanningBoard.mockImplementationOnce(
+      () =>
+        new Promise<PlanningBoard>((resolve) => {
+          resolveRefetch = resolve;
+        }),
+    );
+
+    fireEvent.click(screen.getByTestId('board-confirm'));
+    await screen.findByRole('alertdialog');
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+
+    // In flight: the row already on screen stays mounted and dims - never a skeleton, never
+    // the empty state - which is the flicker itself (the captain, 3 Sep: "very choppy").
+    await waitFor(() =>
+      expect(screen.getByTestId('board-content')).toHaveClass('opacity-60'),
+    );
+    expect(screen.getByTestId('fulfilment-board-matrix')).toBeInTheDocument();
+    expect(screen.queryByText(/Nothing is outstanding/)).not.toBeInTheDocument();
+
+    resolveRefetch(boardOf([demand()]));
+
+    await waitFor(() =>
+      expect(screen.getByTestId('board-content')).toHaveClass('opacity-100'),
+    );
+  });
+});
+
+/**
+ * C4 (code review round 3 batch 2): a stale saved line is dropped from Confirm with no
+ * trace beyond the pill, which is easy to miss on a board of forty lines - `changed` names
+ * it in the header and again in the Confirm dialog.
+ */
+describe('FulfilmentBoardPanel: a stale saved line is named as "changed" (C4)', () => {
+  function boardWithOneStaleLine() {
+    const board = boardOf([demand()]);
+    return withContribution(
+      board,
+      () => true,
+      (entry) => ({
+        ...entry,
+        draft: {
+          decision: { verdict: 'amended' },
+          saved_by: 'Test Planner',
+          saved_at: '2026-09-03T00:00:00Z',
+          stale: true,
+        },
+      }),
+    );
+  }
+
+  it('says nothing about "changed" when nothing saved is stale', async () => {
+    getPlanningBoard.mockResolvedValue(boardOf([demand()]));
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    expect(screen.getByTestId('board-confirm-summary')).not.toHaveTextContent('changed');
+  });
+
+  it('adds "· N changed" to the header summary once a saved line is stale', async () => {
+    getPlanningBoard.mockResolvedValue(boardWithOneStaleLine());
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    expect(screen.getByTestId('board-confirm-summary')).toHaveTextContent('1 changed');
+  });
+
+  it('names the changed count in the Confirm dialog, and re-save as what clears it', async () => {
+    // A SECOND, plannable line beside the stale one: a board where the stale line is the
+    // ONLY line has nothing left to confirm, and Confirm disables itself before the dialog
+    // ever opens - this board keeps Confirm pressable so the sentence can be read.
+    const mixed = withContribution(
+      boardOf([demand(), demand({ sales_order_id: 'so-b', so_number: 'SO398322', line_no: 1, item_code: 'WESERP20B' })]),
+      (entry) => entry.item_code === 'WESERP10B',
+      (entry) => ({
+        ...entry,
+        draft: {
+          decision: { verdict: 'amended' },
+          saved_by: 'Test Planner',
+          saved_at: '2026-09-03T00:00:00Z',
+          stale: true,
+        },
+      }),
+    );
+    getPlanningBoard.mockResolvedValue(mixed);
+    renderPanel(['SO403340', 'SO398322']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    fireEvent.click(screen.getByTestId('board-confirm'));
+
+    expect(
+      await screen.findByText(
+        '1 saved line whose suggestion changed will not be confirmed; re-save it first.',
+      ),
+    ).toBeInTheDocument();
   });
 });
 
@@ -2373,8 +2545,9 @@ describe('FulfilmentBoardPanel: Undo all asks first (D2)', () => {
     await waitFor(() =>
       expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument(),
     );
+    // Saved (S4, R-F), not Approved: the pill reads the plain word once a decision exists.
     expect(await screen.findByTestId(/^decision-pill-/)).toHaveTextContent(
-      'Approved',
+      'Saved',
     );
   });
 
@@ -2392,6 +2565,202 @@ describe('FulfilmentBoardPanel: Undo all asks first (D2)', () => {
         'Suggested',
       ),
     );
+  });
+
+  /** Two lines, one board, each on its own order - so Undo all has more than one key to walk. */
+  async function decideTwoLinesInTheList() {
+    getPlanningBoard.mockResolvedValue(
+      boardOf([
+        demand(),
+        demand({
+          sales_order_id: 'so-b',
+          so_number: 'SO398322',
+          line_no: 1,
+          item_code: 'WESERP20B',
+        }),
+      ]),
+    );
+    renderPanel(['SO403340', 'SO398322']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+
+    fireEvent.click(await screen.findByText('WESERP10B'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Save decision' }));
+    await waitFor(() => expect(pillFor('WESERP10B')).toHaveTextContent('Saved'));
+
+    fireEvent.click(await screen.findByText('WESERP20B'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Save decision' }));
+    await waitFor(() => expect(pillFor('WESERP20B')).toHaveTextContent('Saved'));
+  }
+
+  function pillFor(itemCode: string): HTMLElement {
+    const pill = screen
+      .getAllByTestId(/^decision-pill-/)
+      .find((el) => el.getAttribute('data-testid')?.includes(itemCode));
+    if (!pill) throw new Error(`No decision pill carries ${itemCode} in its key`);
+    return pill;
+  }
+
+  /**
+   * B1 (code review round 3): "Undo all" used to loop `decide(key, null)`, each call reading
+   * `draft` off the SAME stale closure - N batched calls each dropped only their own key and
+   * the last write wins, so a second saved line was still reading Saved after Undo all said
+   * it had discarded both. Both lines have to come back Suggested TOGETHER.
+   */
+  it('undoes BOTH saved lines together, one line never surviving the other’s write', async () => {
+    await decideTwoLinesInTheList();
+
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Board actions' }), {
+      key: 'Enter',
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Undo all' }));
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent(
+      'Discard 2 draft decisions?',
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Discard' }));
+
+    await waitFor(() => expect(pillFor('WESERP10B')).toHaveTextContent('Suggested'));
+    expect(pillFor('WESERP20B')).toHaveTextContent('Suggested');
+
+    // The count the dialog's own title reads off is back to zero: Undo all disables itself.
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Board actions' }), {
+      key: 'Enter',
+    });
+    expect(await screen.findByRole('menuitem', { name: 'Undo all' })).toHaveAttribute(
+      'data-disabled',
+    );
+  });
+
+  /**
+   * B1: a DELETE failure on one key reverts ONLY that key, not the whole map - and not the
+   * OTHER key's successful discard either. `setDraft(previous)` used to resurrect every line
+   * Undo all had touched, including the one whose DELETE actually succeeded.
+   */
+  it('keeps only the line whose DELETE failed, on a partial-failure Undo all', async () => {
+    await decideTwoLinesInTheList();
+
+    vi.mocked(deleteLineDraft).mockImplementationOnce(() => Promise.resolve(undefined));
+    vi.mocked(deleteLineDraft).mockImplementationOnce(() =>
+      Promise.reject(new Error('Failed to remove the saved decision')),
+    );
+
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Board actions' }), {
+      key: 'Enter',
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Undo all' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Discard' }));
+
+    await waitFor(() => expect(pillFor('WESERP10B')).toHaveTextContent('Suggested'));
+    expect(pillFor('WESERP20B')).toHaveTextContent('Saved');
+  });
+
+  /**
+   * C1 (code review round 3 batch 2, extends B1): a rejected PUT on one line must not
+   * touch a DIFFERENT line's own successful save - `decide`'s revert already restores only
+   * the key it was called for (B1's own fix), so this pins that the two-line case actually
+   * holds end to end.
+   */
+  it('a rejected save on one line leaves a different line’s own successful save alone (C1)', async () => {
+    getPlanningBoard.mockResolvedValue(
+      boardOf([
+        demand(),
+        demand({
+          sales_order_id: 'so-b',
+          so_number: 'SO398322',
+          line_no: 1,
+          item_code: 'WESERP20B',
+        }),
+      ]),
+    );
+    renderPanel(['SO403340', 'SO398322']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+
+    vi.mocked(putLineDraft).mockRejectedValueOnce(new Error('Failed to save the decision'));
+
+    fireEvent.click(await screen.findByText('WESERP10B'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Save decision' }));
+    await waitFor(() => expect(pillFor('WESERP10B')).toHaveTextContent('Suggested'));
+
+    fireEvent.click(await screen.findByText('WESERP20B'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Save decision' }));
+    await waitFor(() => expect(pillFor('WESERP20B')).toHaveTextContent('Saved'));
+
+    // A's rejection must not have resurrected or otherwise touched B.
+    expect(pillFor('WESERP10B')).toHaveTextContent('Suggested');
+  });
+});
+
+/**
+ * C1 (code review round 3 batch 2), updated for D16: the seeding effect that carries a
+ * server-saved line back onto the board (S4, AC-4.5) must not re-seed a key whose OWN Undo
+ * is still on the wire, even when a DIFFERENT line's save touches the SAME cached board.
+ *
+ * The trigger changed with D16 (a save no longer invalidates/refetches the board - it
+ * patches the cache), but the hazard did not: `patchContributionDraft` only replaces the ONE
+ * contribution its own write named, so Y's save still hands `FulfilmentBoardPanel` a board
+ * object with a NEW top-level `contributions` array - which re-runs the seeding effect - while
+ * X's OWN entry inside it is untouched and still carries X's server draft, because X's own
+ * DELETE has not landed yet. `pendingDeletes` is the ref that closes that window.
+ */
+describe('FulfilmentBoardPanel: a line mid-Undo is not re-seeded by a sibling save (C1, D16)', () => {
+  function pillFor(itemCode: string): HTMLElement {
+    const pill = screen
+      .getAllByTestId(/^decision-pill-/)
+      .find((el) => el.getAttribute('data-testid')?.includes(itemCode));
+    if (!pill) throw new Error(`No decision pill carries ${itemCode} in its key`);
+    return pill;
+  }
+
+  it('keeps X off the board once its Undo settles, even though a Y save patched the SAME cached board mid-flight', async () => {
+    const twoLines = [
+      demand(),
+      demand({
+        sales_order_id: 'so-b',
+        so_number: 'SO398322',
+        line_no: 1,
+        item_code: 'WESERP20B',
+      }),
+    ];
+
+    getPlanningBoard.mockResolvedValue(boardOf(twoLines));
+    renderPanel(['SO403340', 'SO398322']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+
+    // X is saved (D16: patches the cache, no refetch).
+    fireEvent.click(await screen.findByText('WESERP10B'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Save decision' }));
+    await waitFor(() => expect(pillFor('WESERP10B')).toHaveTextContent('Saved'));
+
+    // Undo all starts X's DELETE, held open on a promise this test controls.
+    let settleDelete: (() => void) | null = null;
+    vi.mocked(deleteLineDraft).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          settleDelete = resolve;
+        }),
+    );
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Board actions' }), {
+      key: 'Enter',
+    });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Undo all' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Discard' }));
+    await waitFor(() => expect(settleDelete).not.toBeNull());
+
+    // While X's DELETE is still unsettled, Y is saved too - its own patch replaces the
+    // board's top-level array (re-running the seeding effect) but leaves X's OWN cached
+    // contribution untouched, still carrying X's server draft (the DELETE has not landed).
+    fireEvent.click(await screen.findByText('WESERP20B'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Save decision' }));
+    await waitFor(() => expect(pillFor('WESERP20B')).toHaveTextContent('Saved'));
+
+    // X's own Undo settles.
+    settleDelete!();
+    await waitFor(() => expect(pillFor('WESERP10B')).toHaveTextContent('Suggested'));
+    // Still Suggested a beat later - nothing re-seeds it back off the sibling's write.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(pillFor('WESERP10B')).toHaveTextContent('Suggested');
   });
 });
 
@@ -2428,6 +2797,128 @@ describe('FulfilmentBoardPanel: an order whose change is already applied is not 
       ),
     ).toBeInTheDocument();
     expect(confirmMany).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * D15: a board-wide "Save all suggested" button, left of the gear - every line the board is
+ * showing that a quick save could still touch, in one press, one toast.
+ */
+describe('FulfilmentBoardPanel: Save all suggested (D15)', () => {
+  function twoLines() {
+    return [
+      demand({ item_code: 'WESERP10B', line_no: 1 }),
+      demand({
+        item_code: 'WESERP20B',
+        line_no: 1,
+        sales_order_id: 'so-b',
+        so_number: 'SO398322',
+      }),
+    ];
+  }
+
+  it('is disabled at zero before there is a board to save', () => {
+    getPlanningBoard.mockResolvedValue(boardOf([]));
+    renderPanel(['SO403340']);
+
+    expect(
+      screen.getByRole('button', { name: 'Save all suggested (0)' }),
+    ).toBeDisabled();
+  });
+
+  it('counts every eligible line across the board, not just what is on screen', async () => {
+    getPlanningBoard.mockResolvedValue(boardOf(twoLines()));
+    renderPanel(['SO403340', 'SO398322']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    expect(
+      screen.getByRole('button', { name: 'Save all suggested (2)' }),
+    ).not.toBeDisabled();
+  });
+
+  it('drops a line from the count once a product search hides it', async () => {
+    getPlanningBoard.mockResolvedValue(boardOf(twoLines()));
+    renderPanel(['SO403340', 'SO398322']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    fireEvent.change(
+      screen.getByPlaceholderText('Search sales order, customer, project or product'),
+      { target: { value: 'WESERP10B' } },
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Save all suggested (1)' }),
+      ).toBeInTheDocument(),
+    );
+  });
+
+  it('saves every eligible line quietly and toasts ONCE with the count, not once per line', async () => {
+    getPlanningBoard.mockResolvedValue(boardOf(twoLines()));
+    renderPanel(['SO403340', 'SO398322']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save all suggested (2)' }));
+
+    await waitFor(() => expect(putLineDraft).toHaveBeenCalledTimes(2));
+    expect(toast.success).toHaveBeenCalledTimes(1);
+    expect(toast.success).toHaveBeenCalledWith(
+      expect.stringMatching(/^2 lines saved · \d+ to confirm$/),
+    );
+    // Never the D14/S4 per-line wording - a bulk press is one action, one toast.
+    expect(toast.success).not.toHaveBeenCalledWith(expect.stringMatching(/^Line \d/));
+  });
+
+  it('both lines read Saved once the press settles', async () => {
+    getPlanningBoard.mockResolvedValue(boardOf(twoLines()));
+    renderPanel(['SO403340', 'SO398322']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save all suggested (2)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+
+    await waitFor(() =>
+      expect(screen.getAllByTestId(/^decision-pill-/)).toHaveLength(2),
+    );
+    for (const pill of screen.getAllByTestId(/^decision-pill-/)) {
+      expect(pill).toHaveTextContent('Saved');
+    }
+  });
+});
+
+/**
+ * D15: a grid cell's own undo icon, for a cell holding only drafted lines - `undoMany` deletes
+ * every one of them and toasts once, rather than the per-line Undo's silent single delete.
+ */
+describe('FulfilmentBoardPanel: a cell’s own Undo saves and toasts once (D15)', () => {
+  it('undoes every drafted line in the cell together, with one toast', async () => {
+    getPlanningBoard.mockResolvedValue(
+      boardOf([
+        demand({ line_no: 1, sales_order_id: 'so-a', so_number: 'SO403340' }),
+        demand({ line_no: 1, sales_order_id: 'so-b', so_number: 'SO398322' }),
+      ]),
+    );
+    renderPanel(['SO403340', 'SO398322']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    // Both lines share one product and one date, so they land in the same cell - drafting
+    // both through the board-wide button first.
+    fireEvent.click(screen.getByRole('button', { name: /^Save all suggested/ }));
+    await waitFor(() => expect(putLineDraft).toHaveBeenCalledTimes(2));
+    vi.mocked(toast.success).mockClear();
+
+    fireEvent.click(
+      screen.getByRole('button', { name: /^Undo WESERP10B/ }),
+    );
+
+    await waitFor(() => expect(deleteLineDraft).toHaveBeenCalledTimes(2));
+    expect(toast.success).toHaveBeenCalledTimes(1);
+    expect(toast.success).toHaveBeenCalledWith('2 lines back to suggested');
+
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+    for (const pill of screen.getAllByTestId(/^decision-pill-/)) {
+      expect(pill).toHaveTextContent('Suggested');
+    }
   });
 });
 

@@ -112,8 +112,12 @@ function listProducts(): string[] {
     .map((row) => within(row).getAllByRole('cell')[PRODUCT_CELL]?.textContent ?? '');
 }
 
-/** Sales order, Agent, Customer, PRODUCT, ... - the list's column order. */
-const PRODUCT_CELL = 3;
+/**
+ * Select, Sales order, Agent, Customer, PRODUCT, ... - the list's column order. D14 (quick
+ * save as suggested) added the select checkbox as the first column, which moved every cell
+ * one to the right of what this test used to read.
+ */
+const PRODUCT_CELL = 4;
 
 describe('the grid and the list agree about the product order', () => {
   it('the list follows the board axis, not the order the lines arrived in', () => {
@@ -137,13 +141,20 @@ describe('the grid and the list agree about the product order', () => {
         cells={[]}
         draft={{}}
         onOpenCell={() => {}}
+        onDecideMany={vi.fn()}
+        onUndoMany={vi.fn()}
       />,
     );
     const gridSequence = matrixProducts();
     grid.unmount();
 
     render(
-      <FulfilmentBoardListView contributions={ordered} draft={{}} onDecide={vi.fn()} />,
+      <FulfilmentBoardListView
+        contributions={ordered}
+        draft={{}}
+        onDecide={vi.fn()}
+        onDecideMany={vi.fn()}
+      />,
     );
     const listSequence = listProducts();
 

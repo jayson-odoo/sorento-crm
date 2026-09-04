@@ -81,7 +81,11 @@ function getPinningStyles<TData>(column: Column<TData>): CSSProperties {
     right: isPinned === 'right' ? `${column.getAfter('right')}px` : undefined,
     position: isPinned ? 'sticky' : 'relative',
     width: column.getSize(),
-    zIndex: isPinned ? 1 : 0,
+    // `--z-sticky-content` (css/config.reui.css), not a bare number: a pinned
+    // column has to beat the columns scrolling under it, but stay below the
+    // app shell's fixed header/sidebar, or the collapsed sidebar's hover
+    // flyout renders under a frozen column instead of over it.
+    zIndex: isPinned ? 'var(--z-sticky-content)' : 0,
   };
 }
 
@@ -510,17 +514,23 @@ function DataGridTableBodyRow<TData>({
   // A record on its way out stays visible and says so, rather than vanishing
   // before the reader can cancel (S6-07).
   const isPending = props.rowPending?.(row.original) ?? false;
+  // S4: a picker opened from a schedule cell tints the rows whose date fell in the clicked
+  // week, so the click reads as "these rows" once the dialog opens.
+  const extraClassName = props.rowClassName?.(row.original);
+  const extraAttributes = props.rowAttributes?.(row.original) ?? {};
 
   const rowProps: React.ComponentProps<'tr'> = {
     ref: dndRef,
     style: { ...(dndStyle ? dndStyle : null) },
     'data-state': table.options.enableRowSelection && row.getIsSelected() ? 'selected' : undefined,
     'data-pending': isPending ? 'true' : undefined,
+    ...extraAttributes,
     ...(dndAttributes ?? {}),
     ...(dndListeners ?? {}),
     className: cn(
       'hover:bg-muted/40 data-[state=selected]:bg-muted/50',
       isPending && 'opacity-50',
+      extraClassName,
       (href || props.onRowClick) && 'cursor-pointer',
       !props.tableLayout?.stripped &&
         props.tableLayout?.rowBorder &&

@@ -65,13 +65,25 @@ LEAD_DAYS = 30
 WINDOW_DAY = LEAD_DAYS + 14
 
 
-def _policy(db, name: str | None = None):
+def _policy(
+    db,
+    name: str | None = None,
+    *,
+    overdue_grace_days: int | None = None,
+    overdue_dead_days: int | None = None,
+):
     priority.create_revision(
         db,
         name=name or f"zzt-v7-{_uid()[:6]}",
         factors={},
         demand_class_weights={},
         reorder_coverage_until=None,
+        # None-means-unchanged all the way down to `create_revision`, which takes the
+        # column's own SHIPPED default (0 / 0, captain's ruling 3 Sep 2026) when a caller
+        # never asks for the grace explicitly - a caller that DOES care about it (R-O's own
+        # suite) passes both.
+        overdue_grace_days=overdue_grace_days,
+        overdue_dead_days=overdue_dead_days,
     )
     db.commit()
 
@@ -131,15 +143,20 @@ def test_the_own_group_covers_the_unit_from_its_own_bin_first_then_its_siblings(
 def test_another_project_groups_free_pile_covers_the_unit_before_any_borrow_is_tried():
     """AC-S3-1, second half (R5): another PROJECT group's FREE pile is step 1's own second
     half. Free means owed to nobody, so it is a Reserve, it raises no order-back, and it is
-    reached before either borrow step and before the pool."""
+    reached before either borrow step.
+
+    LADDER V8 (R-A) puts the site pool in FRONT of step 1, so the pool holds nothing here -
+    what this case is about is the free pile answering before a BORROW, and a pool that
+    could also cover the unit would now answer first and test nothing.
+    """
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)
         _group, sites = _group_sites(db)
         own, pool = sites["BRW"]
         donor = _warehouse(db, f"ZZTDC1-IR{_uid()[:3]}")
         _stock(db, product, donor, on_hand=100)
-        # The pool could cover it too, and must not be reached: the pool is step 4.
-        _stock(db, product, pool, on_hand=100)
+        # The pool holds nothing (ladder v8, R-A: it is asked FIRST now).
+        _stock(db, product, pool, on_hand=0)
         _lead_time(db, product, LEAD_DAYS)
         _policy(db)
 
@@ -196,19 +213,29 @@ def test_an_undecided_line_leaves_the_other_groups_pile_alone_in_the_assignment(
     ]
 
 
-def test_a_confirmed_cross_group_hold_depletes_that_groups_pile_for_its_own_later_asker():
+def test_a_confirmed_cross_group_hold_depletes_that_groups_pile_for_the_next_asker():
     """R40's second half: the OFFER becomes an assumption the moment somebody Confirms it.
 
-    Before the Confirm the IR pile is whole and IR's own later line reads `covered`; after
-    it, 40 of the 100 is pinned to the BB line, so IR's own asker for 80 can only draw 60
-    and step 1 - whole unit or nothing - gives it nothing.
+    RE-BLESSED under R-M (3 Sep 2026). The case used to hold 100 at the IR bin against IR's
+    own later line of 80, let a BB line confirm 40 of it, and assert that IR's own asker
+    then went `short` by 20. Under R-M that Confirm is refused before it is written ("IR now
+    has 20 free for this line, and 40 was asked for"), because what another group may lend
+    is bounded by its WHOLE open book and IR's book was 20. A cross-group Confirm can no
+    longer make the lending group's own line go short - which is the ruling, not a loss of
+    coverage here.
+
+    So the same story is told with the numbers the cap allows: IR holds 120 against its own
+    80, so its book spares exactly 40, and the BB line confirms all of it. IR's own line
+    stays `covered` - R-M never lends away a group's own cover - and the PILE is gone: 40
+    free at the IR bin before the Confirm, nothing after it, so the next asker is offered
+    nothing at all.
     """
     with blank_session() as db:
         company_id, eling, project, product = _world(db)
         _group, sites = _group_sites(db)
         own, _pool = sites["BRW"]
         donor = _warehouse(db, f"ZZTDC1-IR{_uid()[:3]}")
-        _stock(db, product, donor, on_hand=100)
+        _stock(db, product, donor, on_hand=120)
         _lead_time(db, product, LEAD_DAYS)
         _policy(db)
 
@@ -227,6 +254,12 @@ def test_a_confirmed_cross_group_hold_depletes_that_groups_pile_for_its_own_late
         before_status = next(
             r.status for r in before.lines if r.line.key == str(later_core.id)
         )
+        before_free = before.free[f"on_hand:{donor.id}"]
+        # The offer the BB line is made is the group's BOOK, not the date-bounded pile:
+        # 120 less IR's own 80, which is exactly the 40 it asks for.
+        asker_components = _components(
+            ProjectSupplyService(db).proposal_for(asker)
+        )
 
         # The BB line takes the offer: a Reserve at the IR bin, confirmed.
         _decide(db, asker, asker_line, donor, "40", eling)
@@ -236,16 +269,23 @@ def test_a_confirmed_cross_group_hold_depletes_that_groups_pile_for_its_own_late
         after_row = next(
             r for r in after.lines if r.line.key == str(later_core.id)
         )
+        after_free = after.free[f"on_hand:{donor.id}"]
         later_components = _components(
             ProjectSupplyService(db).proposal_for(later)
         )
+        donor_code = donor.warehouse_code
 
     assert before_status == "covered", "IR's own line had the whole pile before the Confirm"
-    assert (after_row.status, after_row.uncovered) == ("short", 20.0), (
-        "60 of IR's 100 is left once 40 is pinned to the BB line"
+    assert before_free == 40.0, "40 of IR's 120 is spare once its own 80 is met"
+    assert [(c["kind"], c["qty"], c["source_location"]) for c in asker_components] == [
+        ("reserve", "40", donor_code),
+    ]
+    assert (after_row.status, after_row.uncovered) == ("covered", 0.0), (
+        "R-M lends only what IR's own book can spare, so IR's own line is never the payer"
     )
-    assert [(c["kind"], c["qty"]) for c in later_components] == [("buy", "80")], (
-        "60 is not the whole unit, so step 1 gives nothing (R10/R33)"
+    assert after_free == 0.0, "the pile is spoken for: the next asker is offered nothing"
+    assert [(c["kind"], c["qty"]) for c in later_components] == [("reserve", "80")], (
+        "IR's own line still draws its own group's stock, which nobody took from it"
     )
 
 
@@ -1125,12 +1165,16 @@ def test_a_partial_borrow_is_dropped_and_the_unit_buys_whole():
 
 def test_the_pool_is_the_last_stock_step_and_its_free_pile_raises_nothing():
     """AC-S3-7, first half (R34): the pool's free pile covers the whole unit, so it is a
-    `reserve` at rung `pool` and nobody is owed it back."""
+    `reserve` at rung `pool` and nobody is owed it back.
+
+    LADDER V8: 120 in the pool rather than 60, because a project line may take half of it
+    (R-B) and this case is about what a WHOLE pool draw owes, which is nothing.
+    """
     with blank_session() as db:
         company_id, eling, project, product = _world(db)
         _group, sites = _group_sites(db)
         own, pool = sites["BRW"]
-        _stock(db, product, pool, on_hand=60)
+        _stock(db, product, pool, on_hand=120)
         _lead_time(db, product, LEAD_DAYS)
         _policy(db)
 
@@ -1228,8 +1272,16 @@ def test_a_later_pool_order_lends_its_on_hand_and_is_owed_it_back():
     assert locations == [pool_code]
 
 
-def test_the_dealer_hot_selling_gate_still_empties_the_whole_pool_step():
-    """AC-S3-7's last sentence: hot at retail keeps the pool for retail, both halves of it."""
+def test_the_dealer_hot_selling_gate_is_retired_and_the_share_keeps_the_stock_instead():
+    """AC-S3-7's last sentence, RETIRED BY LADDER V8 (R-A). Hot at retail used to empty the
+    whole pool step; what keeps stock for dealers now is the SHARE (R-B), which keeps a
+    percentage of every pool from every project line rather than the whole of one pool from
+    the hot items alone.
+
+    500 in the pool, half of it on offer, and a line of 10 fits inside that - so the line
+    that used to buy takes the pool. The captain's own AC-2.7 is this case with WESERP10B's
+    own numbers.
+    """
     from app.models.scm import ItemClassification
 
     with blank_session() as db:
@@ -1251,7 +1303,9 @@ def test_the_dealer_hot_selling_gate_still_empties_the_whole_pool_step():
         )
         components = _components(ProjectSupplyService(db).proposal_for(order))
 
-    assert [c["kind"] for c in components] == ["buy"]
+    assert [(c["kind"], c["qty"], c["rung"]) for c in components] == [
+        ("reserve", "10", "pool")
+    ]
 
 
 # --------------------------------------------------------------------------- AC-S3-8
@@ -1397,10 +1451,13 @@ def test_every_walked_unit_carries_five_options_in_step_order_with_one_chosen():
         world = _borrow_world(db)
         options = _options(ProjectSupplyService(db).proposal_for(world["asker"]))
 
+    # LADDER V8 (R-A): the site pool leads the walk and is named after the pool it asks;
+    # `pool` is gone from a live walk and survives only on a frozen trail.
     assert [option["step"] for option in options] == [
-        "use", "order_borrow", "supply_borrow", "pool", "buy",
+        "pool_share", "use", "order_borrow", "supply_borrow", "buy",
     ]
-    assert [option["label"] for option in options][0] == "Use our locations"
+    assert [option["label"] for option in options][1] == "Use our locations"
+    assert options[0]["label"].startswith("Use "), options[0]["label"]
     assert sum(1 for option in options if option["chosen"]) == 1
     chosen = next(option for option in options if option["chosen"])
     assert chosen["step"] == "order_borrow"

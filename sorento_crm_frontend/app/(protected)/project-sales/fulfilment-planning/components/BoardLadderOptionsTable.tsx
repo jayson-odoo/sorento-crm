@@ -27,6 +27,13 @@ import type { BoardLadderOption } from '../../_shared/types/fulfilmentPlanning.t
  * row, with no sort, paging, resize or column preference to apply to it. Its obligations are
  * met the same way - it scrolls inside its own container and long text truncates with a
  * `title`.
+ *
+ * LADDER v8 (S2, `PLAN-scm-fulfilment-feedback-2sep.md`, R-A/R-B): rows arrive in `options`
+ * in the WALK order, and the walk now asks the site pool FIRST - "Use BRW stock", the pool's
+ * share allowance, then "Use our locations", the two borrows and Buy. The table renders
+ * whatever order it is given; it never re-sorts. The "Gives" column exists because that
+ * first step is the one that may cover PART of the unit (R-B) rather than whole-or-nothing
+ * like every other step - `option.gives_qty`, blank where the step does not state one.
  */
 export function BoardLadderOptionsTable({
   options,
@@ -46,6 +53,7 @@ export function BoardLadderOptionsTable({
         <thead>
           <tr className="border-b text-2xs uppercase tracking-wide text-muted-foreground">
             <th className="px-3 py-1.5 text-start font-medium">Option</th>
+            <th className="px-2 py-1.5 text-end font-medium">Gives</th>
             <th className="px-2 py-1.5 text-start font-medium">Whole</th>
             <th className="px-2 py-1.5 text-start font-medium">Fulfilled</th>
             <th className="px-2 py-1.5 text-end font-medium">Days late</th>
@@ -69,6 +77,29 @@ export function BoardLadderOptionsTable({
                 <span className="block truncate" title={option.label}>
                   {option.label}
                 </span>
+                {/* AC-2.4: the row that gives less than the whole line says WHY, in the
+                    server's own sentence ("600 is more than the 450 BRW can spare").
+                    Under the label rather than in a column of its own: it belongs to one
+                    step, and an empty column beside four blank cells reads as a defect. */}
+                {option.reason ? (
+                  <span
+                    data-testid={`ladder-option-reason-${contributionKey}-${option.step}`}
+                    className="mt-0.5 block truncate text-2xs font-normal text-muted-foreground"
+                    title={option.reason}
+                  >
+                    {option.reason}
+                  </span>
+                ) : null}
+              </td>
+              {/* R-B, S2: `pool_share` may cover PART of the unit rather than
+                  whole-or-nothing, so it states the SHARE; every other row states what it
+                  would give of what is LEFT after that share (AC-2.1). `0` renders as `0`,
+                  never blank (R-K) - it is the answer, not an absence. */}
+              <td
+                data-testid={`ladder-option-gives-${contributionKey}-${option.step}`}
+                className="px-2 py-1.5 text-end tabular-nums"
+              >
+                {option.gives_qty ?? ''}
               </td>
               <td className="px-2 py-1.5">
                 <span

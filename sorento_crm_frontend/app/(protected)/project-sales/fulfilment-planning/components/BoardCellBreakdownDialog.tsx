@@ -1,7 +1,8 @@
 'use client';
 
 import * as React from 'react';
-import { Check, ChevronDown, ChevronRight, Info, X } from 'lucide-react';
+import Link from 'next/link';
+import { Check, ChevronDown, ChevronRight, ExternalLink, Info, Undo2, X } from 'lucide-react';
 import { ColumnDef, RowSelectionState } from '@tanstack/react-table';
 import { Button } from '@/components/ui/button';
 import {
@@ -23,15 +24,18 @@ import {
 } from '@/components/ui/tooltip';
 import { StatCard } from '@/components/scm/StatCard';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { PillOverflow, type PillItem } from '@/components/common/PillOverflow';
 import {
   isSearchInFlight,
   useDebouncedSearch,
 } from '@/hooks/useDebouncedSearch';
 import { cn } from '@/lib/utils';
 import { formatDateInMalaysia } from '@/lib/helpers';
+import { spoDetailHref, spoNumberFromLabel } from '@/lib/spo-detail';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
 import { OrderInquiryStatePill } from '../../_shared/components/OrderInquiryVerbPill';
 import {
+  PILL_TONE,
   SHORT_LABELS,
   contributionSuggestion,
   decisionBreakdown,
@@ -41,10 +45,12 @@ import {
   rowText,
   suggestionBreakdown,
   takenByLocation,
+  takenKindsByLocation,
 } from '../../_shared/lib/supplyVocabulary';
 import type { SuggestionRow } from '../../_shared/lib/supplyVocabulary';
 import { LADDER_VERSION } from '../../_shared/lib/supplyVocabulary';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
+import { canQuickSave } from '../../_shared/lib/boardAmend';
 import { BoardDecisionPill } from './BoardDecisionPill';
 import { BoardLineDecisionPanel } from './BoardLineDecisionPanel';
 import { BoardTrailPopover, ItemFlagChips } from './BoardTrailPopover';
@@ -58,11 +64,13 @@ import type {
   BoardContribution,
   BoardDecision,
   BoardDraft,
+  BoardLadderOption,
   BoardSource,
   CellStockTableHandle,
   StockDocumentMatch,
   StockDonorMatch,
 } from '../../_shared/types/fulfilmentPlanning.types';
+import type { SupplyKind } from '../../_shared/lib/supplyVocabulary';
 
 /**
  * The breakdown behind one cell, and the decision on it (PLAN 13, journey step 4).
@@ -98,13 +106,27 @@ export function BoardCellBreakdownDialog({
   cell,
   bucketLabel,
   draft,
+  poolSharePct,
   onDecide,
+  onDecideMany,
   onClose,
 }: {
   cell: BoardCell;
   bucketLabel: string;
   draft: BoardDraft;
-  onDecide: (key: string, decision: BoardDecision | null) => void;
+  /**
+   * The board's own `pool_share_pct` (LADDER v8, R-K), passed through to the Stock tab so
+   * its site-pool SUBTOTAL applies the tenant's real policy rather than a constant. Every
+   * pool ROW arrives with the server's own `available_for_project` and needs nothing here.
+   */
+  poolSharePct?: number;
+  onDecide: (key: string, decision: BoardDecision | null) => Promise<boolean> | void;
+  /**
+   * D15: the quiet-bulk path "Approve selected" and "Save all suggested" both post through -
+   * each key's own suggestion, one toast for the whole press, rather than D14's N separate
+   * "Line N saved" toasts.
+   */
+  onDecideMany: (keys: string[]) => Promise<{ saved: number; failed: number }>;
   onClose: () => void;
 }) {
   // NO RANK, ANYWHERE ON THIS TABLE (R8, the captain 27 Aug: "rank goes"). Under ladder v4
@@ -163,6 +185,14 @@ export function BoardCellBreakdownDialog({
    */
   const taken = React.useMemo(
     () => takenByLocation(cell, draft),
+    [cell, draft],
+  );
+  /**
+   * The SAME draw, kept apart by kind (S3b, R-J), so the Taken cell can show a pill per part
+   * rather than folding a Reserve and a borrow at one location into one number.
+   */
+  const takenKinds = React.useMemo(
+    () => takenKindsByLocation(cell, draft),
     [cell, draft],
   );
   /**
@@ -373,6 +403,41 @@ export function BoardCellBreakdownDialog({
   );
 
   /**
+   * APPROVE, ticked row by ticked row - the same loop `decideSelected` runs, but each key
+   * gets ITS OWN suggestion rather than one decision applied to every row, because
+   * "approved" is not one object across lines with different suggestions the way "rejected"
+   * is.
+   *
+   * D11 is why this is the only approve verb here: a bare `{verdict: 'approved'}` carries no
+   * composition, so a Save-untouched confirms nothing the engine proposed and the sales order
+   * page reads it as Decided "-". An approval IS the suggested composition, which is exactly
+   * what `BoardLineDecisionPanel`'s own untouched Save posts - so approving in bulk and
+   * "saving as suggested" were one verb with two buttons, and this is the one.
+   *
+   * D15: posts through `onDecideMany` now, not a loop of `onDecide` calls - the composition is
+   * still each key's own suggestion, computed the same way, but the board posts them quietly
+   * and toasts once for the whole press instead of once per line.
+   */
+  const approveSelected = React.useCallback(() => {
+    void onDecideMany(selectedKeys);
+    setRowSelection({});
+  }, [selectedKeys, onDecideMany]);
+
+  /**
+   * D14: every line in the cell a quick save could still touch - not covered (there is
+   * nothing to approve on a confirmed line) and not already drafted (nothing a re-save would
+   * change). No selection needed for this one; it is the cell's own "nothing here is worth a
+   * second look" button.
+   */
+  const suggestibleContributions = React.useMemo(
+    () => cell.contributions.filter((entry) => canQuickSave(entry, draft)),
+    [cell.contributions, draft],
+  );
+  const saveAllSuggested = React.useCallback(() => {
+    void onDecideMany(suggestibleContributions.map((entry) => entry.key));
+  }, [suggestibleContributions, onDecideMany]);
+
+  /**
    * The muted line under the title, in the shape the family's shell wants it (`PlanRowDialog`,
    * `StockDebtCellDialog`): the facts about the CELL that neither tab states.
    *
@@ -394,11 +459,19 @@ export function BoardCellBreakdownDialog({
       // The repo's own select column, the one the users list uses, so the header select-all and
       // its indeterminate state are not a second implementation.
       buildSelectColumn<BoardContribution>({
-        enableRow: (row) => !row.original.unplannable && !row.original.covered,
+        // Already SAVED is out here for the same reason it is out of the list view and out
+        // of "Save all suggested": a quick save would overwrite an amended draft with the
+        // engine's own composition, which is the one thing a planner who amended it does
+        // not want. Undo is how a saved row comes back into play.
+        enableRow: (row) => canQuickSave(row.original, draft),
         disabledReason: (row) =>
           row.original.covered
             ? 'This line is already confirmed. Amend it to change what was decided.'
-            : 'This line cannot be decided here: its sales order states no fulfilment location.',
+            : row.original.unplannable
+              ? 'This line cannot be decided here: its sales order states no fulfilment location.'
+              : draft[row.original.key]
+                ? 'Already saved. Undo it before saving it again.'
+                : undefined,
         rowLabel: (row) =>
           `Select ${row.original.so_number} line ${row.original.line_no}`,
       }),
@@ -613,40 +686,91 @@ export function BoardCellBreakdownDialog({
           <DataGridColumnHeader title="Sourced from" column={column} />
         ),
         cell: ({ row }) => {
-          // Merged per label AND location, in the order the ladder drew them. Question 1
+          const contribution = row.original;
+          // Merged per KIND (the ladder v8 SupplyKind, off `rowOf`) AND location, in the
+          // order the ladder drew them - one pill per merged source (S3b, R-J). Question 1
           // hands over TWO components at one location whenever part of the group's offer is
           // on the water (a `reserve` off the floor and a `timely_spo` off the SPO): both
-          // read "Use own location", so an unmerged strip printed the same words twice with
-          // two quantities, which reads as a defect rather than as one draw in two forms.
-          const merged: { label: string; at: string; minor: number }[] = [];
-          for (const source of row.original.sources) {
-            const label = sourceLabel(source, row.original.fulfilment_location);
+          // read "Own", so an unmerged strip printed the same word twice with two
+          // quantities, which reads as a defect rather than as one draw in two forms.
+          const merged: {
+            kind: SupplyKind | null;
+            label: string;
+            at: string;
+            minor: number;
+            representative: BoardSource;
+          }[] = [];
+          for (const source of contribution.sources) {
+            const kind = rowOf(source, contribution.fulfilment_location);
+            const label = kind ? SHORT_LABELS[kind] : 'Cannot be sourced';
             const at = sourceAt(source);
             const seen = merged.find((m) => m.label === label && m.at === at);
             if (seen) seen.minor += toMinor(source.qty);
-            else merged.push({ label, at, minor: toMinor(source.qty) });
+            else merged.push({ kind, label, at, minor: toMinor(source.qty), representative: source });
           }
-          const strip = merged
-            .map((m) => `${m.label} ${fromMinor(m.minor)}${m.at}`)
-            .join(' · ');
+          const pills: PillItem[] = merged.map((m, index) => ({
+            key: `${contribution.key}-source-${index}`,
+            label: `${m.label} ${fromMinor(m.minor)}${m.at}`,
+            tone: m.kind ? PILL_TONE[m.kind] : 'neutral',
+          }));
           // The engine's own sentences. `spo_number` and `arrival_date` are always null
           // because the SPO and its date are INSIDE the sentence (deviation 2), so the
           // sentence is the only place the fact exists and it may never be dropped - it moves
           // BEHIND the info icon rather than out of the row.
-          const why = row.original.sources
+          const why = contribution.sources
             .map((source) => source.reason)
             .join(' ');
-          const share = shareNote(row.original);
-          const unit = unitNote(row.original);
+          const share = shareNote(contribution);
+          const unit = unitNote(contribution);
           return (
             <div className="min-w-0">
-              <div className="flex items-start gap-1">
-                <span
-                  className="min-w-0 flex-1 truncate text-sm tabular-nums"
-                  title={strip}
-                >
-                  {strip}
-                </span>
+              <div className="flex items-center gap-1">
+                {pills.length === 0 ? (
+                  <span className="text-sm text-muted-foreground">
+                    Cannot be sourced
+                  </span>
+                ) : (
+                  <PillOverflow
+                    items={pills}
+                    ariaLabel="Sourced from"
+                    testId={`sources-pills-${contribution.key}`}
+                    className="min-w-0 flex-1"
+                    renderPopover={() => (
+                      <div className="space-y-2">
+                        {merged.map((m, index) => {
+                          const option = optionForRung(
+                            m.representative.rung,
+                            contribution.options ?? [],
+                          );
+                          return (
+                            <div
+                              key={index}
+                              data-testid={`source-popover-row-${contribution.key}-${index}`}
+                              className="space-y-0.5 border-b border-border pb-2 last:border-0 last:pb-0"
+                            >
+                              <div className="flex items-center justify-between gap-2 font-medium">
+                                <span>{m.label}</span>
+                                <span className="tabular-nums">
+                                  {fromMinor(m.minor)}
+                                </span>
+                              </div>
+                              {m.at.trim() && (
+                                <p className="text-muted-foreground">
+                                  {m.at.trim()}
+                                </p>
+                              )}
+                              {option && (
+                                <p className="text-muted-foreground">
+                                  {option.label}
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  />
+                )}
                 {/* The two prose sentences behind the numbers above - why this rung fired,
                     and what was left for this line at its own pile - under one visible icon
                     rather than a silent `title` nobody hovers or two lines of wrapped text
@@ -722,17 +846,37 @@ export function BoardCellBreakdownDialog({
         header: ({ column }) => (
           <DataGridColumnHeader title="Decision" column={column} />
         ),
-        // A PILL, AND NOTHING ELSE (C2). The three verbs used to live here, which is why the
-        // column was 210px wide and still truncated its own composition: a decision is taken
-        // in the expanded row now, where the numbers it is made against are.
-        cell: ({ row }) => (
-          <BoardDecisionPill
-            contribution={row.original}
-            decision={draft[row.original.key] ?? null}
-          />
-        ),
-        size: 110,
-        minSize: 100,
+        // A PILL, AND (D14) an Undo beside a saved one. The three verbs used to live here,
+        // which is why the column was 210px wide and still truncated its own composition: a
+        // decision is taken in the expanded row now, where the numbers it is made against
+        // are - Undo is the one exception, because there is nothing left to look at once a
+        // line is saved, only the choice to unsave it.
+        cell: ({ row }) => {
+          const key = row.original.key;
+          const drafted = Boolean(draft[key]);
+          return (
+            <div className="flex min-w-0 items-center gap-1">
+              <BoardDecisionPill contribution={row.original} decision={draft[key] ?? null} />
+              {drafted ? (
+                <Button
+                  type="button"
+                  mode="icon"
+                  variant="ghost"
+                  size="sm"
+                  aria-label={`Undo ${row.original.so_number} line ${row.original.line_no}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onDecide(key, null);
+                  }}
+                >
+                  <Undo2 className="size-3.5" aria-hidden />
+                </Button>
+              ) : null}
+            </div>
+          );
+        },
+        size: 140,
+        minSize: 120,
         enableSorting: false,
         meta: { headerTitle: 'Decision' },
       },
@@ -911,19 +1055,31 @@ export function BoardCellBreakdownDialog({
                               location: source.location,
                             }
                           : undefined;
+                      // The captain's own complaint (3 Sep 2026, SO418869
+                      // SRTWCX7405-RL-S-PJ): the chip only ever jumped the table below, and
+                      // there was no way OUT of the dialog onto the document itself.
+                      const documentHref = sourceDocument
+                        ? spoDetailHref(
+                            spoNumberFromLabel(source.supply_document as string),
+                          )
+                        : undefined;
                       return (
                         <p
                           key={`${source.kind}-${index}`}
                           className="text-sm text-muted-foreground"
                         >
-                          {annotateReason(source, {
-                            onDonorClick: () =>
-                              stockTableRef.current?.jumpToDonor(sourceDonor),
-                            onDocumentClick: () =>
-                              stockTableRef.current?.jumpToDocument(
-                                sourceDocument,
-                              ),
-                          })}
+                          {annotateReason(
+                            source,
+                            {
+                              onDonorClick: () =>
+                                stockTableRef.current?.jumpToDonor(sourceDonor),
+                              onDocumentClick: () =>
+                                stockTableRef.current?.jumpToDocument(
+                                  sourceDocument,
+                                ),
+                            },
+                            documentHref,
+                          )}
                         </p>
                       );
                     })}
@@ -991,6 +1147,7 @@ export function BoardCellBreakdownDialog({
                 locations={shownLocations}
                 groupNote={cell.location_group_note}
                 taken={taken}
+                takenKinds={takenKinds}
                 lineIds={askingLineIds}
                 forLine={
                   cell.contributions.length > 1 && shownContribution
@@ -1001,6 +1158,7 @@ export function BoardCellBreakdownDialog({
                 documentInfo={documentMatch}
                 filterText={stockSearch.debouncedValue}
                 landOnMount
+                poolSharePct={poolSharePct}
               />
             </TabsContent>
 
@@ -1023,10 +1181,10 @@ export function BoardCellBreakdownDialog({
                 onRowSelectionChange={setRowSelection}
                 // A covered row is not selectable either: the bulk verbs are Approve and Reject,
                 // and a bulk Reject sweeping up a confirmed line would silently un-decide it,
-                // which is the very defect the covered state exists to stop.
-                enableRowSelection={(row) =>
-                  !row.original.unplannable && !row.original.covered
-                }
+                // which is the very defect the covered state exists to stop. Nor is a row that
+                // already carries a draft - a bulk verb would overwrite an amended composition
+                // with the engine's own, which is the list view's rule too.
+                enableRowSelection={(row) => canQuickSave(row.original, draft)}
                 toolbar={
                   <div className="flex flex-wrap items-center gap-2">
                     <ListSearchInput
@@ -1040,6 +1198,18 @@ export function BoardCellBreakdownDialog({
                       placeholder="Search SO number, customer, agent"
                       className="w-full sm:w-72"
                     />
+                    {/* D14: the cell's own "nothing here needs a second look" button - every
+                    still-outstanding, not-yet-drafted line in the cell, with no selection to
+                    make first. Reversible with the per-line Undo below, so no confirmation. */}
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={suggestibleContributions.length === 0}
+                      onClick={saveAllSuggested}
+                    >
+                      Save all suggested
+                    </Button>
                     {selectedKeys.length > 0 ? (
                       <>
                         {/* Says exactly how many rows the verbs will act on. With a paginated cell
@@ -1054,9 +1224,7 @@ export function BoardCellBreakdownDialog({
                         <Button
                           type="button"
                           size="sm"
-                          onClick={() =>
-                            decideSelected({ verdict: 'approved' })
-                          }
+                          onClick={approveSelected}
                         >
                           <Check className="size-4" aria-hidden />
                           Approve selected
@@ -1217,6 +1385,14 @@ function present(value: string | null | undefined): boolean {
  * Ladder v6: the line was not planned alone. The captain, 28 August 2026, on SO381895 lines
  * 31 and 32 (10 borrowed, 20 bought): "this is 1 order as a whole ... for the same delivery
  * date". Said only when there IS another line in the unit; the ordinary line says nothing.
+ *
+ * S2 (R-E) walks the unit's lines ONE AT A TIME, smallest quantity first, each sharing the
+ * piles the one before it left - so two lines of one unit can (and on SO419208's 135-then-
+ * 1305 shape, do) end with DIFFERENT compositions. The row above already prints THIS line's
+ * own `sources`; this sentence used to say "covered or bought as one" and that read as
+ * "identically", which R-E ended. It now says only what is still true: the UNIT's total, not
+ * how the lines inside it got there - that is what the Sourced-from cell of every other line
+ * of this unit is for.
  */
 function unitNote(contribution: BoardContribution): string | null {
   const count = contribution.unit_line_count ?? 1;
@@ -1225,7 +1401,7 @@ function unitNote(contribution: BoardContribution): string | null {
   const when = contribution.required_date
     ? ` for ${formatDateInMalaysia(contribution.required_date)}`
     : '';
-  return `Planned with ${others} other ${others === 1 ? 'line' : 'lines'} of this order${when}: ${contribution.unit_qty} in all, covered or bought as one.`;
+  return `Planned with ${others} other ${others === 1 ? 'line' : 'lines'} of this order${when}: ${contribution.unit_qty} in all. Each line's own composition is shown on its own row.`;
 }
 
 function shareNote(contribution: BoardContribution): string | null {
@@ -1316,6 +1492,36 @@ export function sourceAt(source: BoardContribution['sources'][number]): string {
 }
 
 /**
+ * The option row a source's pill "came from", for the Sourced-from popover (S3b, R-J: "the
+ * option row it came from").
+ *
+ * `source.rung` is the ENGINE'S OWN RUNG CONSTANT (`rowOf`'s vocabulary: `group_take`,
+ * `order_borrow`, `pool`, ...) and `options[].step` is the FIVE-ROW LADDER v8 vocabulary
+ * (`BoardLadderStep`); the two predate each other and do not share every spelling, so this is
+ * a best-effort match rather than a lookup - `group_take` reads as the `use` step (both
+ * halves of it), a `pool` rung reads as `pool_share` (falling back to the legacy `pool` step a
+ * frozen v7.1 trail may still carry), and everything else already spells the same word in
+ * both vocabularies. A rung with no matching step (the retired `cross_group_borrow` /
+ * `group_borrow`, frozen-snapshot only) returns nothing rather than a wrong guess.
+ */
+function optionForRung(
+  rung: string | null | undefined,
+  options: BoardLadderOption[],
+): BoardLadderOption | undefined {
+  if (!rung) return undefined;
+  const step =
+    rung === 'group_take'
+      ? 'use'
+      : rung === 'pool'
+        ? 'pool_share'
+        : rung;
+  const found = options.find((option) => option.step === step);
+  if (found) return found;
+  if (step === 'pool_share') return options.find((option) => option.step === 'pool');
+  return undefined;
+}
+
+/**
  * Whether a `supply_document` value could ever BE a row `StockDocumentsPanel` shows (review
  * round, S3). An SPO is one; a historical PO snapshot (`PO 202607-P0031 line 3`, the ladder
  * v7.1 step-3 spelling for a project PO) is not - a PO reaches a project line through its own
@@ -1338,10 +1544,17 @@ function isJumpableDocument(value: string | null | undefined): boolean {
  * `supply_document`) rather than re-parsing the prose: the two markers are known values, so
  * a plain search-and-wrap is the whole job, and a regex over free text would be guessing at
  * a grammar the server never promised to keep stable.
+ *
+ * `documentHref`, when the source names a document, adds a SECOND, tiny control right after
+ * the chip: an external-link icon that opens the SPO itself. The chip keeps its own job -
+ * jumping the table below to the matching row (AC-3.4) - because the captain's own screenshot
+ * (3 Sep 2026, SO418869 SRTWCX7405-RL-S-PJ) shows that working; there was simply no way OUT
+ * of the dialog onto the document, so this adds one rather than repurposing the other.
  */
 function annotateReason(
   source: BoardSource,
   handlers: { onDonorClick: () => void; onDocumentClick: () => void },
+  documentHref?: string,
 ): React.ReactNode {
   const markers = [
     source.donor_so_number
@@ -1390,6 +1603,20 @@ function annotateReason(
         {marker.value}
       </button>,
     );
+    if (marker.testId === 'suggestion-document-link' && documentHref) {
+      nodes.push(
+        <Link
+          key={`suggestion-document-open-${position}`}
+          href={documentHref}
+          onClick={(event) => event.stopPropagation()}
+          className="ms-1 inline-flex align-middle text-muted-foreground hover:text-primary"
+          aria-label={`Open ${marker.value}`}
+          data-testid="suggestion-document-open-link"
+        >
+          <ExternalLink className="size-3.5" aria-hidden />
+        </Link>,
+      );
+    }
     cursor = marker.index + marker.value.length;
   });
   nodes.push(source.reason.slice(cursor));

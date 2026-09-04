@@ -783,15 +783,21 @@ def test_a_partly_held_document_lends_the_donors_share_and_takes_its_free_share(
 # --------------------------------------------------------------------------- AC-S4-4
 
 
-def test_a_document_that_covers_the_unit_stops_the_walk_before_the_pool():
-    """AC-S4-4 (R13): incoming borrow is walked BEFORE the pool, so a pool holding plenty is
-    never reached once a document covers the unit."""
+def test_a_document_that_covers_the_unit_answers_when_the_pool_has_nothing_to_spare():
+    """AC-S4-4 (R13), RE-BLESSED BY LADDER V8 (R-A): the pool is asked FIRST now, so the
+    order this case pinned is reversed - a pool with 500 free would answer before any
+    document.
+
+    What survives, and is what the case is really about, is that a single document covering
+    the unit is a whole-unit answer: the pool here holds nothing to spare, so step 3 is
+    reached and takes the document whole.
+    """
     with blank_session() as db:
         company_id, _eling, project, product = _world(db)
         _group, sites = _group_sites(db)
         own, pool = sites["BRW"]
         other = _warehouse(db, f"ZZTDC1-IR{_uid()[:3]}")
-        _stock(db, product, pool, on_hand=500)
+        _stock(db, product, pool, on_hand=0)
         _lead_time(db, product, LEAD_DAYS)
         _policy(db)
 
@@ -811,7 +817,7 @@ def test_a_document_that_covers_the_unit_stops_the_walk_before_the_pool():
     ]
     assert [option["step"] for option in options if option["chosen"]] == ["supply_borrow"]
     assert not any(c["rung"] == "pool" for c in components), (
-        "the pool is step 4 and the walk never reached it"
+        "the pool had nothing to spare, so it gave nothing"
     )
 
 

@@ -29,7 +29,13 @@ from app.api.v1.projects._common import permission_slugs
 from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
-from app.schemas.project_board import PileQueue, PlanningBoard, StockDetail
+from app.schemas.project_board import (
+    BoardLineDraft,
+    BoardLineDraftBody,
+    PileQueue,
+    PlanningBoard,
+    StockDetail,
+)
 from app.schemas.project_so_reconciliation import (
     AdoptSalesOrderBody,
     AdoptSalesOrderResult,
@@ -48,6 +54,7 @@ from app.schemas.project_supply import (
 from app.services import project_service as projects
 from app.services.error_handler import AppException, handle_internal_error
 from app.services.project_classification_evidence import classification_evidence
+from app.services import project_line_draft_service
 from app.services.project_fulfilment_board_service import FulfilmentBoardService
 from app.services.project_so_adoption_service import ProjectSOAdoptionService
 from app.services.project_so_draft_service import ProjectSODraftService
@@ -293,6 +300,84 @@ def get_planning_board(
         )
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.put(
+    "/fulfilment-planning/lines/{contribution_key:path}/draft",
+    response_model=BoardLineDraft,
+)
+def save_line_draft(
+    contribution_key: str,
+    payload: BoardLineDraftBody,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Save decision on one board line (S4, R-F, AC-4.1).
+
+    An upsert: one row per contribution key, re-stamped with whoever saved it last. Drafts
+    are SHARED rather than per user (one planning team), so this is what a second planner
+    opening the same board sees, named after the newer saver (AC-4.5).
+
+    The EDIT permission is the whole gate, and deliberately: the per-PROJECT check Confirm
+    runs (`_assert_can_act_on`) refuses a planner who is not the project's own salesperson,
+    and drafts are SHARED across the planning team by ruling. A draft claims no stock and
+    promises nothing - Confirm still applies the full check to the composition it posts -
+    so gating the save on project ownership would only stop the second planner AC-4.5 is
+    about from correcting the first one's line.
+
+    `{contribution_key}` is the board's own `contributions[].key` -
+    `${sales_order_id}|${line_no}|${item_code}|${bucket_key}` - URL-encoded by the client
+    because it embeds characters a path segment may not carry raw. Declared `:path` so an
+    item code holding a slash still addresses its own line rather than 404ing on a route
+    that never matched.
+    """
+    try:
+        body = project_line_draft_service.save_draft(
+            db,
+            contribution_key,
+            decision=payload.decision,
+            # D12 (#573): dumped here, not left as pydantic models, so the JSONB column
+            # stores exactly what a board GET already serialises a live `BoardSource` as.
+            proposed=(
+                [item.model_dump(mode="json") for item in payload.proposed]
+                if payload.proposed is not None
+                else None
+            ),
+            actor_user_id=current_user["id"],
+        )
+        db.commit()
+        return body
+    except Exception as exc:
+        db.rollback()
+        # S3, code review round 3: an `AppException` (the 422s above) states its own
+        # message and propagates untouched; anything else is a genuine server defect and
+        # gets the FIXED message - never `str(exc)`, which echoed raw DB/constraint text
+        # (table and column names, the SQL fragment) straight into the response body.
+        raise exc if hasattr(exc, "status_code") else handle_internal_error()
+
+
+@router.delete(
+    "/fulfilment-planning/lines/{contribution_key:path}/draft", status_code=204
+)
+def delete_line_draft(
+    contribution_key: str,
+    current_user: dict = Depends(require_permission(EDIT)),
+    db: Session = Depends(get_db),
+):
+    """Undo on a saved line (S4, AC-4.3): the draft goes and the pill returns to Suggested.
+
+    A line nobody has saved is a 404 rather than a quiet 204 - it says plainly that there
+    was nothing there - and the client treats it as "already gone", which is what Undo
+    asked for either way.
+    """
+    try:
+        project_line_draft_service.remove_draft(db, contribution_key)
+        db.commit()
+        return None
+    except Exception as exc:
+        db.rollback()
+        # S3, code review round 3: see `save_line_draft`'s own note - never `str(exc)`.
+        raise exc if hasattr(exc, "status_code") else handle_internal_error()
 
 
 @router.post("/fulfilment-planning/confirm-all", response_model=ConfirmManyResult)
