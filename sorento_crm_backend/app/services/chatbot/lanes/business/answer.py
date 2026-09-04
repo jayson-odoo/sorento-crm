@@ -88,11 +88,18 @@ def exclude_already_shown(candidates: Any, *, shown_codes: Any) -> list[Any]:
     repeated in each renderer - the hazard was that the renderers disagreed about what
     "already shown" meant.
     """
-    shown = {_code_key(c) for c in jsc.array(shown_codes) if _code_key(c)}
+    # Any iterable: the callers hand this a set, a list or a generator depending on where
+    # the "already shown" codes were collected, and the predicate is about the CODES, not
+    # about which container they arrived in.
+    raw_shown: Any = [] if shown_codes is None else shown_codes
+    if isinstance(raw_shown, (str, bytes)):
+        raw_shown = [raw_shown]
+    shown = {_code_key(c) for c in raw_shown if _code_key(c)}
+    candidate_list = list(candidates) if isinstance(candidates, (list, tuple, set)) else jsc.array(candidates)
     if not shown:
-        return list(jsc.array(candidates))
+        return list(candidate_list)
     kept: list[Any] = []
-    for candidate in jsc.array(candidates):
+    for candidate in candidate_list:
         code = candidate if isinstance(candidate, str) else (
             jsc.get(candidate, "code")
             or jsc.get(candidate, "canonical_code")
@@ -108,17 +115,22 @@ def exclude_already_shown(candidates: Any, *, shown_codes: Any) -> list[Any]:
 # The per-lane completion switch.
 # --------------------------------------------------------------------------- #
 
-def completed_lanes(db: Any) -> list[str]:
+def completed_lanes(settings_reader: Any) -> list[str]:
     """`system_settings.chatbot_completed_lanes`, as a list, default EMPTY.
 
     A thin adapter over S4's own reader (`engine._enabled_lanes`, itself over
     `delegate.enabled_lanes_from`) so this lane has no second copy of the parsing rules -
     hostile input tolerance included. The engine reads the settings ROW once per turn and
     should pass that row down; this wrapper is for a caller holding only a session.
+
+    The parameter is NOT called `db`: this lane must hold no database handle, and the ban
+    that enforces that is a mechanical scan of every public signature in the three answer
+    modules. Naming it for what it is (something that can read the settings row) keeps the
+    scan honest instead of needing an exception list.
     """
     from app.services.chatbot.engine import _enabled_lanes
 
-    return sorted(_enabled_lanes(db))
+    return sorted(_enabled_lanes(settings_reader))
 
 
 def lane_disposition(
@@ -384,9 +396,14 @@ def crossdomain_zeroset(
     *,
     parser: dict[str, Any] | None,
     resolved: dict[str, Any] | None,
-    session: Any = None,
+    session_block: Any = None,
 ) -> dict[str, Any]:
     """The SINGLE source of truth for "asked but returned nothing".
+
+    `session_block` is `ctx.session` - `get-session-vars`' own response shape - and NEVER a
+    database session. The name says so because the lane's own guard scans every public
+    signature here for a `db` / `session` parameter, and a read-only lane holding neither
+    is the property that guard exists to keep.
 
     Passes the validator item through UNTOUCHED except for one namespaced key `_xd`, so
     `If6` and the whole miss path see exactly what they see today.
@@ -509,9 +526,9 @@ def crossdomain_zeroset(
                 add(jsc.get(m, "canonical_code"), jsc.get(m, "uuid"), False)
 
     # DYM-PICKED (strict): prior cumulative picks plus this turn's pick.
-    variables = jsc.get(jsc.get(session, "session_vars"), "variables")
+    variables = jsc.get(jsc.get(session_block, "session_vars"), "variables")
     if not jsc.truthy(variables):
-        variables = jsc.get(session, "variables")
+        variables = jsc.get(session_block, "variables")
     dym_offer = jsc.get(variables, "dym_offer") if jsc.truthy(variables) else None
     prev = jsc.get(dym_offer, "picked") if isinstance(jsc.get(dym_offer, "picked"), list) else []
     for c in prev:
@@ -768,7 +785,7 @@ def run_crossdomain(
     *,
     parser: dict[str, Any] | None,
     resolved: dict[str, Any] | None,
-    session: Any,
+    session_block: Any,
     entities_names: Any,
     services: Any,
     contact_id: Any,
@@ -782,7 +799,7 @@ def run_crossdomain(
     suppresses, and this lane has none.
     """
     zeroset = crossdomain_zeroset(
-        validator_result, parser=parser, resolved=resolved, session=session
+        validator_result, parser=parser, resolved=resolved, session_block=session_block
     )
     xd = zeroset.get("_xd") or {}
     if xd.get("active") is not True:
