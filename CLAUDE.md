@@ -281,7 +281,7 @@ spawn a build "for handoff" on your own initiative.
 
 ## Lessons learned
 
-**Full log: `LESSONS-LEARNT.md` (88 entries).** Read it when a bug's cause is not obvious, before
+**Full log: `LESSONS-LEARNT.md` (79 entries).** Read it when a bug's cause is not obvious, before
 touching the worker, migrations, tests-in-CI, or anything Respond.io / Outline / storage related.
 When a lesson's cause is fixed in code, retire the entry rather than leaving it to accumulate.
 
@@ -304,7 +304,7 @@ Reference docs this file defers to, so nothing is stated twice:
 | Doc | Holds |
 | --- | --- |
 | `PRINCIPLES.md` | The binding contract: methodology, DoD gate, design mandates, layering, hard-fail rules. **Governs on conflict.** |
-| `LESSONS-LEARNT.md` | 88 gotchas. Read before debugging anything non-obvious. |
+| `LESSONS-LEARNT.md` | 79 gotchas. Read before debugging anything non-obvious. |
 | `documentation/agents/browser-verification.md` | Full agent-browser policy + command table. |
 | `documentation/reference/ADR-PRODUCT-STANDARDS.md` | CRUD/UX standard in full. |
 | `documentation/reference/DESIGN-LANGUAGE.md` | Tokens, motion presets, primitives roster, external-skill precedence. |
