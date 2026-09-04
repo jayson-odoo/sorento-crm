@@ -8,6 +8,15 @@ trip. A disagreement fails unless `divergences.py` registers it with a hazard id
 Two parametrisations per node: the vendored subset (always) and the full corpus (skips
 with a message when the sibling n8n checkout is absent). Nothing here touches a database,
 the network, or an LLM - these are pure functions over captured JSON.
+
+**Only a real capture grades the port.** `source.expected_from == "runData"` means the
+`expected` block is what the node actually emitted in a real execution; `"reasoned"` means
+somebody wrote it by hand, and the escalation-routing lane hand-revised 31 `reasoned`
+`output_exchange` fixtures - same filenames - to encode the UNPROMOTED B-TEAM-1' behaviour.
+Grading against those would make an unpromoted lane change a merge gate for this port. So
+`runData` fixtures fail the suite on a mismatch and `reasoned` ones are replayed, counted
+and reported by `test_reasoned_fixture_agreement_is_reported` without ever failing. See
+`_corpus.py`'s docstring for the measured split.
 """
 from __future__ import annotations
 
@@ -272,17 +281,10 @@ PORTED_NODES = sorted(RUNNERS)
 
 
 def _replay(fixture: _corpus.Fixture) -> None:
-    if not _corpus.is_graded(fixture):
-        # A `reasoned` fixture is a claim about intended behaviour, not a record of a
-        # real execution. Replaying the port against it grades the port against whoever
-        # wrote the claim, and a mismatch is an argument, not a defect. It is still RUN,
-        # so a crash in the port shows up; only the comparison is withheld.
-        RUNNERS[fixture.node](fixture)
-        pytest.skip(
-            f"{fixture.node}/{fixture.name}: expected_from="
-            f"{(fixture.data.get('source') or {}).get('expected_from')!r}, informational "
-            "(gate 0 counts real captures only)"
-        )
+    # No provenance check here: `_corpus.graded` filters at PARAMETRISATION, so a
+    # `reasoned` fixture never reaches this function, and
+    # `test_reasoned_fixture_agreement_is_reported` is what reports on those. One
+    # declaration of that rule, not two.
     actual = _corpus.json_round_trip(RUNNERS[fixture.node](fixture))
     expected = _corpus.json_round_trip(fixture.expected)
     registered = divergences.find(fixture.node, fixture.name.split("/")[-1])
@@ -355,7 +357,7 @@ def test_vendored_subset_is_present(node: str) -> None:
 
 @pytest.mark.parametrize(
     "fixture",
-    [f for node in PORTED_NODES for f in _corpus.vendored(node)],
+    _corpus.graded([f for node in PORTED_NODES for f in _corpus.vendored(node)]),
     ids=lambda f: f"{f.node}/{f.name}",
 )
 def test_vendored_replay(fixture: _corpus.Fixture) -> None:
@@ -364,10 +366,39 @@ def test_vendored_replay(fixture: _corpus.Fixture) -> None:
 
 @pytest.mark.parametrize(
     "fixture",
-    [f for node in PORTED_NODES for f in _corpus.full_corpus(node)] or [None],
+    _corpus.graded([f for node in PORTED_NODES for f in _corpus.full_corpus(node)]) or [None],
     ids=lambda f: f"{f.node}/{f.name}" if f is not None else "corpus-absent",
 )
 def test_full_corpus_replay(fixture) -> None:
     if fixture is None:
         pytest.skip(_corpus.corpus_skip_reason())
     _replay(fixture)
+
+
+def test_reasoned_fixture_agreement_is_reported(capsys) -> None:
+    """Replay every hand-written fixture and REPORT, never gate (see the module docstring).
+
+    A `reasoned` expectation can describe a body that has never run in production, so it
+    cannot be a merge gate. It is still worth replaying: the count is how the owner sees,
+    in one line, how far the port sits from whatever the lane is proposing, and it is the
+    number that should go to ZERO disagreements on the commit that re-ports B-TEAM-1'.
+    """
+    rows = _corpus.reasoned(
+        [f for node in PORTED_NODES for f in _corpus.vendored(node)]
+        + [f for node in PORTED_NODES for f in _corpus.full_corpus(node)]
+    )
+    if not rows:
+        pytest.skip("no `reasoned` fixtures on this corpus")
+    agree: list[str] = []
+    differ: list[str] = []
+    for fixture in rows:
+        actual = _corpus.json_round_trip(RUNNERS[fixture.node](fixture))
+        expected = _corpus.json_round_trip(fixture.expected)
+        (agree if actual == expected else differ).append(f"{fixture.node}/{fixture.name}")
+    with capsys.disabled():
+        print(
+            f"\n  reasoned fixtures (informational, never a gate): {len(rows)} replayed, "
+            f"{len(agree)} agree, {len(differ)} differ"
+        )
+        for name in sorted(differ):
+            print(f"    differs: {name}")

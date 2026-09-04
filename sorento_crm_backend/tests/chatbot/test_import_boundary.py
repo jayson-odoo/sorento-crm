@@ -20,6 +20,14 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2]
 ALLOWED = {
     "app/api/v1/external/chat.py",
     "app/tasks/chat_turns.py",
+    # A developer tool, not core, and not on any request path: it sends real turns through
+    # BOTH prompt versions and diffs them (AC-153), which needs `head.parser` and
+    # `head.output_exchange` directly and has no meaningful route through `/chat/turn`.
+    # It is listed rather than exempted by directory: the rule this file protects is "core
+    # must never import the package", and the day the package moves behind an HTTP
+    # boundary this script is exactly the kind of file that has to be updated with it - so
+    # it belongs in the list that says so.
+    "scripts/chatbot_parser_parity.py",
 }
 ALLOWED_PREFIXES = (
     "app/services/chatbot/",

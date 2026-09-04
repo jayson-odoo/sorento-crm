@@ -259,9 +259,10 @@ clone or live. Each AC traces to a journey step (A1 to D1).
   derives **166 worlds** and **26 multi-turn chains** (114 turns) and
   `tests/chatbot/test_worlds.py` replays each through `run_turn` + `complete_turn` with
   the parser, the access check and the CS roster read stubbed from that execution's own
-  node outputs. 86 single-turn worlds and 6 chains grade today; the rest carry a NAMED
-  body difference or are spine-only captures whose resolver and entity gate ran inside a
-  sub the fixture never recorded.
+  node outputs. 102 single-turn worlds and 7 chains grade today (86 and 6 before S1b's
+  live-body re-port landed, which retired 16 of the head-side body-difference skips); the
+  rest carry a NAMED body difference or are spine-only captures whose resolver and entity
+  gate ran inside a sub the fixture never recorded.
 
   A world is either GRADED or SKIPPED BY NAME. Nothing is partly excused: the only two
   allowed value differences anywhere are the `pending` marker and `dym_offer.id`, which

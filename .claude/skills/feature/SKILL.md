@@ -37,15 +37,36 @@ process violation as skipping it. Deviations are recorded in the PR description.
   Planning is NEVER delegated for normal features: the `planner` agent exists
   only for module-sized work needing parallel exploration of independent
   sub-plans.
-- **`coder` agent** (Agent tool): steps 6 and 7 implementation. Spawn with
-  `isolation: "worktree"` - the user codes concurrently in the main checkout,
-  so the coder must never share the working tree. Its prompt is ONLY: the PLAN
-  path, the UAC path, the slice id, and the phase (1 or 2). The files are the
-  contract; do not paraphrase them into the prompt.
-- **`tester` agent** (sonnet): test authoring and running in step 7 when split
-  from the coder. Asserts against UAC ids.
-- **`reviewer` agent + `/code-review`**: step 8. Optionally follow with
-  `/codex-review` (OpenAI model family, second opinion) on risky or large diffs.
+- **`tester` agent** (sonnet): writes step 7's failing tests BEFORE the coder
+  sees the slice - from the UAC, the Phase 1 contract doc, and the captain's
+  test list (one line per UAC id: test name + the assertion in words) - with
+  no implementation to look at. Confirms each test fails for the right reason
+  (missing route/function, not an import typo), then commits the red tests.
+  Also runs the end-of-lane browser verification (agent-browser) once the
+  coder is green.
+- **`coder` agent** (sonnet): steps 6 and 7 implementation, ONE agent kept
+  alive for the whole lane - the captain continues it with a message for
+  later slices and fix rounds instead of respawning, so context and worktree
+  state carry over. Spawn with `isolation: "worktree"` - the user codes
+  concurrently in the main checkout, so the coder must never share the
+  working tree. Its prompt is ONLY: the PLAN path, the UAC path, the slice id,
+  and the phase (1 or 2). The files are the contract; do not paraphrase them
+  into the prompt. In Phase 2 the coder makes the tester's red tests green; it
+  does not author or delete a test, and a test it believes is wrong is
+  reported to the captain, not silently fixed.
+- **`reviewer` agent** (opus) + **`security-reviewer` agent** (opus) +
+  browser verification (`tester` agent): step 8, run in **parallel**, once per
+  lane, not once per slice. `reviewer` runs `/code-review`, optionally
+  followed by `/codex-review` (OpenAI model family, second opinion) on risky
+  or large diffs, plus a **kill test**: for 2-3 UAC lines, comment out the
+  implementing branch, run the test, confirm it goes red - a test that stays
+  green is a blocker ("test does not guard AC-x"). `security-reviewer` runs
+  only when the diff touches auth, RBAC/permission gating, external ingest,
+  file upload/storage, or multi-company scoping.
+- **`guide-writer` agent** (sonnet): after review passes, writes/updates the
+  Outline user guide for the feature (`documentation/user-guides/`) - the
+  repo rule "no feature explanations inside the UI" means the explanation
+  lives here, not in the diff.
 - Trivial one-file changes may run inline in the main session; say so instead
   of silently absorbing a real slice.
 
@@ -136,17 +157,26 @@ rules and must not become the shipped FE.
 Any new motion goes through the `animate` decision gate and uses only `lib/motion.ts` presets
 and `config.reui.css` tokens. The coder reads `DESIGN-LANGUAGE.md` before the first UI file.
 
-### Step 7 - Phase 2: backend wiring, test-FIRST
+### Step 7 - Phase 2: backend wiring, test-FIRST, tester before coder
 
+**Tester writes the red tests first.** Before the coder opens the slice, the
+`tester` agent gets the UAC, the Phase 1 contract doc, and the captain's test
+list (one line per UAC id: test name + the assertion in words), writes the
+failing tests with no implementation to look at, confirms each fails for the
+right reason (missing route/function, not an import typo), and commits them
+as `test(<slug>): red tests for <slice>`.
+
+**Then the coder makes them green**, ONE agent kept alive for the whole lane
+(the captain continues it via message for later slices, not a respawn).
 Models → migration → schema → service → route, matching the Phase 1 contract
 exactly. Then swap the mock for the real `api-client` call at the service
-boundary.
+boundary. The coder does not edit or delete a red test without reporting why
+to the captain first.
 
-**Red → green → refactor, not test-after.** Write the failing test, watch it fail
-for the right reason, implement the minimum, refactor green. Applies to every
-route (happy + auth-denial + validation), every service branch, and above all to
-deterministic engines, whose golden-set numbers are written as failing tests
-first.
+**Red → green → refactor, not test-after.** Implement the minimum to pass,
+then refactor green. Applies to every route (happy + auth-denial +
+validation), every service branch, and above all to deterministic engines,
+whose golden-set numbers are written as failing tests first.
 
 `/tdd` drives this loop. `/implement` may drive a ticket end-to-end **at this
 phase only**, and it calls `/tdd` internally.
@@ -158,17 +188,36 @@ Re-verify live against the running stack.
 
 Backend tests run on **Postgres only, never sqlite**.
 
-### Step 8 - Phase 3: review
+### Step 8 - Phase 3: review, in parallel
 
-`/code-review` (this repo's own - `ultra` for big diffs), then `/simplify` or
-`--fix` for the findings. The plugin ships its own `code-review`; prefer this
-repo's unless the user asks otherwise.
+Once the coder is green for the whole lane, run three agents **in parallel**,
+once per lane, not once per slice:
+
+- **`reviewer`** (opus): `/code-review` (this repo's own - `ultra` for big
+  diffs), plus a **kill test**: for 2-3 UAC lines, comment out the
+  implementing branch, run the test, confirm it goes red - a test that stays
+  green is a blocker finding ("test does not guard AC-x"). Follow with
+  `/simplify` or `--fix` for the findings.
+- **`security-reviewer`** (opus): only when the diff touches auth
+  (`app/dependencies.py`, NextAuth, JWT), RBAC/permission gating
+  (`app/modules/runtime/guards.py`, `app/rbac/permission_registry.py`,
+  permission slugs, role grants), external ingest (`app/api/v1/external/*`,
+  `app/api/v1/public/*`, webhooks, `X-API-Key`), file upload/presign/storage,
+  or multi-company scoping (`CompanyScopedMixin`, raw SQL). Uses the built-in
+  `/security-review` checklist. See `.claude/agents/security-reviewer.md` for
+  the full trigger list.
+- **browser verification** (`tester` agent, agent-browser): end-of-lane, once,
+  not per slice.
 
 Design pass: `emil-design-eng` review table (Before / After / Why) on every UI diff;
 `review-animations` only when the diff touches motion. Hard-fails listed in
 `DESIGN-LANGUAGE.md`.
 
-Reviewer runs `documentation/reference/PR-CHECKLIST.md` plus the DoD gate.
+`reviewer` runs `documentation/reference/PR-CHECKLIST.md` plus the DoD gate.
+Fix round: the SAME coder takes reviewer + security findings; the captain
+adjudicates only findings that add a layer (registry, abstraction, config
+surface) per PRINCIPLES "Simplest thing that works". After review passes, the
+`guide-writer` agent writes/updates the Outline user guide.
 
 ### Step 9 - Definition of Done gate
 
@@ -224,11 +273,15 @@ to also drop `node_modules` and `venv` from lanes you are done with.
 | 6 design options | `/prototype` (throwaway, before Phase 1) | main session |
 | 6 Phase 1 FE mock | - | `coder` agent, worktree |
 | 6 new motion | `animate` (decision gate) | `coder` agent, worktree |
-| 7 TDD | `/tdd`, or `/implement` scoped to Phase 2 | `coder` agent, worktree; tests may split to `tester` |
-| 8 review | `/code-review` (this repo's), then optional `/codex-review` | `reviewer` agent + main session |
+| 7 red tests | UAC + contract + captain's test list, no implementation | `tester` agent, before the coder |
+| 7 TDD | `/tdd`, or `/implement` scoped to Phase 2 | `coder` agent, worktree (same agent for the whole lane) |
+| 8 review | `/code-review` (this repo's) + kill test, then optional `/codex-review` | `reviewer` agent, parallel with security-reviewer + browser verification |
+| 8 security review | built-in `/security-review` checklist | `security-reviewer` agent, parallel with reviewer |
+| 8 browser verification | agent-browser, once per lane | `tester` agent, parallel with reviewer |
 | 8 review design | `emil-design-eng`, `review-animations` (motion diffs only) | `reviewer` agent |
+| 8 user guide | Outline sync (`documentation/user-guides/README.md`, `SYNC.md`) | `guide-writer` agent, after review |
 | new FE dependency | `pick-ui-library` | `coder` agent, worktree |
-| bugs | `/triage` then `/diagnosing-bugs` | main session |
+| bugs | `/triage` then `/diagnosing-bugs` | `triage` agent (inbound issues) + main session |
 | periodic | `/improve-codebase-architecture`, `/codebase-design`, `improve-animations` | main session |
 | context full mid-slice | `/handoff` then `/clear` then `/resume-handoff` | main session (user types `/clear`) |
 | context research | `/research` | main session |

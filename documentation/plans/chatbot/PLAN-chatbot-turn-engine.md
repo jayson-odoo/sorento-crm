@@ -1,8 +1,6 @@
 # PLAN - Chatbot Turn Engine: n8n business logic moves into the CRM
 
-Status: S0 + S1 IMPLEMENTED on lane feat/chatbot-turn-engine (4 Sep 2026); S2 (the tail)
-IMPLEMENTED on feat/chatbot-turn-engine-s2 (5 Sep 2026); approved "ok good to go", 6 review
-rounds, D1 to D16; S1b next
+Status: S0 + S1 IMPLEMENTED on lane feat/chatbot-turn-engine (4 Sep 2026); approved "ok good to go", 6 review rounds, D1 to D16; re-ported onto the LIVE n8n body 5 Sep (see S1 "pending re-port"); S1b DELIVERED 5 Sep (-40.0% prompt, published unlabelled, promote is the owner's call); S2 (the tail) IMPLEMENTED on feat/chatbot-turn-engine-s2 5 Sep
 UAC: `documentation/plans/chatbot/chatbot-turn-engine-acceptance-criteria.md`
 Classification: **MODULE** (`chatbot`), own Postgres schema `chatbot` (D12)
 Owner decisions: D1 to D13 in the UAC; rulings R1 to R6 in the UAC
@@ -252,6 +250,9 @@ inventoried during S1 and listed here with its disposition:
 | `route-turn.js` `tierRepick` | bare digit or exact menu word in the raw message | reproduced (owner's own Fix 6 rule; exact match, not fuzzy); candidate to move into the parser as `tier_pick` after parity |
 | `escalation-context.js` `_CO_ALIASES` company name / code match | company name or alias in `escalation.company_pick` | reproduced; the parser already emits `company_pick`, the alias table is a STOPGAP mirror, candidate to delete once the parser output is trusted |
 | `output_exchange.js` `domain_switched_by_keyword` and sibling keyword checks | domain keywords in the raw message | reproduced for parity; listed as divergence candidates for the parser prompt (backlog issue) |
+| `output_exchange.js` `_coCompanyPick` deterministic tier | the reply minus fillers, word-boundary matched against the offered company pool; refused by a negator or a product-code-like token | reproduced (5 Sep re-port): the LIVE body still has it. The export's rev 8 deletes it and hands the whole job to the prompt, but rev 8 is the unpromoted B-TEAM-1' change, so parity keeps the tier until the owner promotes it |
+| `output_exchange.js` member-offer `extract()` + `_ORD` | a bare number or an ordinal WORD in the raw reply | reproduced; the same shape as `route-turn.js` `tierRepick` and inventoried with it |
+| `output_exchange.js` `_statedTiers` / `_statedBrands` | tier and brand words in the raw message (English and Malay literals only) | reproduced. The prompt is what covers every other language, which is why the ACCESS LEVELS vocabulary cannot move out of it |
 
 Rule for new code in the package: no regex or substring match over `ctx.text` or over a
 previous reply. A reviewer finding one is a merge blocker.
@@ -395,6 +396,47 @@ Human-intervened check becomes an `update_contact_fields` action (AC-108). Audio
 becomes a failed turn (AC-107). R3 reader accepts both forms. R5 fail-loud.
 n8n: replace five spine nodes with one `httpRequest` + two re-emitters (AC-110).
 
+#### S1 pending re-port: B-TEAM-1' (added 5 Sep 2026)
+
+**The port was made from the working-tree EXPORT, and the export is not what production
+runs.** The n8n partner session fetched the LIVE `sub-semantic-parser` read-only and the
+two bodies differ:
+
+| | live | working-tree export |
+|---|---|---|
+| `output_exchange.js` | 1,881 lines, sha `a837333a13a2` | 2,043 lines, MANIFEST `locally_edited` |
+| system message | 46,942 chars, sha256 `90c0741997...bdf87b66` | 49,318 chars |
+
+The extra material is one unpromoted lane change, **B-TEAM-1'** (+241/-83 over 10 hunks):
+`routing.team_source`, a 4-rank team ladder replacing the `?? 'customer_service'` default,
+a `resource_attachment` row in `deriveRouting`, a pending `team_clarify` completion block,
+and a state-only company-pick resolver with the deterministic word-match tier deleted.
+
+`head/output_exchange.py`, `head/parser.py`'s `ParseOutput` schema and
+`chatbot_parser_prompt.py` are now faithful to the LIVE body. Evidence, both directions:
+
+* the five `parser-*` fixtures that sat in `STALE_FIXTURES` because the port emitted a null
+  team where they expect `purchasing` / `marketing_product` / `warehouse` now replay EQUAL,
+  and their entries are retired. They were live-faithful captures graded against the wrong
+  body, which is what a stale-fixture list looks like when the port is the stale side;
+* the 19 hand-built fixtures that now fail are reproduced EXACTLY by the pre-re-port Python
+  and by nothing else (19 of 19, no residue). They pin the unpromoted body, so they take
+  those entries instead. **Every real capture in the corpus is graded; not one `parser-*` or
+  `exec-*` fixture is excluded.**
+
+**Re-port B-TEAM-1' when the owner promotes the escalation-routing lane's B3 step**, and
+retire the 19 entries in the same change. Diffs:
+`output_exchange.LIVE-vs-WORKTREE.diff` and `output_exchange.HEAD-vs-LIVE.diff` in the n8n
+session scratchpad (`.../11a092cf-e08a-4fa0-b142-99499e993633/scratchpad/`), beside
+`output_exchange.live.js` and `sub-semantic-parser.systemMessage.live.txt`. Nothing goes in
+`divergences.py`: this is parity with production, not a deliberate hazard fix.
+
+One consequence worth stating, because it reads as a regression and is not: with the live
+body the LLM's own `suggested_team` is used ONLY on a `request_for_help` turn, and every
+other turn falls through `deriveRouting` -> prior state -> the hard `customer_service`
+default. This body therefore never emits a null team, and `resource_attachment` routes by
+the prior-state carry rather than to `marketing_product`.
+
 **The Switch on `duplicate` must sit BEFORE the `build-ctx` / `route-turn` re-emitters.**
 A duplicate delivery (D15) returns the FIRST turn's stored answer, and a duplicate of a
 turn that FAILED has no `ctx` to replay - the re-emitters read
@@ -406,15 +448,43 @@ Parity gate: AC-102, AC-103, AC-111.
 
 ### S1b - Parser prompt slim-down (same lane as S1, after parity, before promote)
 
-D16. Inventory the 48 KB system message section by section
+D16. Inventory the 46 KB system message section by section
 (`documentation/plans/chatbot/parser-prompt-inventory.md`): `understanding` stays;
-`rule` (the domain-to-team map, date maths, positional / ordinal resolution, carry and
-entity-op rules, quantity parsing) moves into `output_exchange.py` where most of it already
-has a deterministic twin; `example` survives only when it stands for a phrasing class the
-corpus shows; `dead` goes. Gate: parser fixtures still equal, live parity 99%+ on the
-regression guards plus a fresh 200-turn sample, at least 40% fewer characters, published as a
-registry version. AC-151 to AC-155. This is where the owner's "no overfitting, no bloat, LLM
-only for language" lands, and it is the first prompt change the corpus can prove safe.
+`rule` moves into `output_exchange.py` where it already has a deterministic twin; `example`
+survives only when it stands for a phrasing class the corpus shows; `dead` goes. AC-151 to
+AC-155. This is where the owner's "no overfitting, no bloat, LLM only for language" lands.
+
+**Delivered (5 Sep 2026), on the LIVE body after the re-port above.**
+
+* 46,906 -> 28,124 characters, **-40.04%** (AC-154). Published as registry version 2 with
+  NO label by migration `475_chatbot_parser_prompt_slim`; `production` stays on version 1,
+  so the promote is a label move and the rollback is the reverse move. The migration seeds
+  both on a fresh database.
+* Six `rule` sections deleted, all six with an existing twin in `output_exchange.py`
+  (domain-to-team map, the `business_query` force, the `attachment_type` drop on
+  `master_products`, the `broaden_axis` domain restore, the brand-plus-tier access-level
+  split, the legacy promotion-team suffix). Four `dead` sections deleted, including 700
+  characters of n8n JavaScript the registry cannot evaluate and hands to the model as
+  source code. **No new post-processor code**: `output_exchange.py` is untouched by S1b.
+  Unit cover in `tests/chatbot/test_output_exchange_rules.py`, every case feeding a
+  deliberately non-compliant emission.
+* Date maths, `demand_qty` and ordinal resolution were each investigated and REJECTED as
+  moves, on evidence, in the inventory. Two date gates were measured against the replay
+  corpus and would have rewritten fixtures the post-processor deliberately produces.
+
+**AC-153's 99% bar cannot be met by any prompt, and the measurement says why.** A control
+run sending the LIVE prompt down BOTH lanes agrees with itself on only 99.0% of key
+instances, and on the free-prose `user_goal` only 81.6%. The parser is not deterministic at
+temperature 0. Old vs new is 95.8% post-processed (97.5% excluding `user_goal`), i.e. 3.2
+points from the noise floor, with every disagreement triaged: 13 improvements, 11
+regressions, 20 "neither matches the capture", 38 noise, 1 ungraded, zero untriaged. The
+regressions are enumerated in the inventory and none is systematic. **Owner call at
+promote**, and the bar in AC-153 should be restated against the measured floor.
+
+**AC-155 could not be met as written**: the corpus contains no Malay capture at all (249
+real captures, zero). The parity script uses eight real corpus turns with the message
+translated and the real previous state kept, labelled `synthetic-from-corpus`; seven of the
+eight agree on every key. Capturing real Malay turns is a backlog item.
 
 ### S2 - Tail (2,400 lines)
 

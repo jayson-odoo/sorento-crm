@@ -560,10 +560,11 @@ def body_difference(
             if parse_output.get(key) != captured_parse_output.get(key)
         )
         return (
-            "the exported parser post-processor disagrees with the body that produced this "
-            f"capture on {', '.join(differing)} - the S1 routing-ladder difference already "
-            "registered in `_corpus.STALE_FIXTURES`. Grading the tail against a different "
-            "understanding of the turn would attribute an S1 body difference to S2"
+            "the parser post-processor disagrees with the body that produced this capture "
+            f"on {', '.join(differing)}. S1 was re-ported onto the LIVE `output_exchange` "
+            "body on 5 Sep, which retired most of this class; what is left is a capture "
+            "older than that body. Grading the TAIL against a different understanding of "
+            "the turn would attribute a head-side body difference to S2"
         )
     if "requested_attributes" not in world.expected_variables:
         return (

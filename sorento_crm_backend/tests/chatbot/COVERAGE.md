@@ -48,7 +48,7 @@ A WORLD is one whole captured turn replayed through `run_turn` + `complete_turn`
 | `crossdomain-compose` | 80 | 79 | 5 |
 | `cs-roster-plan` | 14 | 14 | 1 |
 | `escalate-catalog` | 130 | 130 | 5 |
-| `output_exchange` | 320 | 244 | 98 |
+| `output_exchange` | 325 | 249 | 98 |
 | `route-turn` | 116 | 116 | 14 |
 | `suggest-follow-up` | 242 | 242 | 16 |
 
@@ -99,11 +99,12 @@ A WORLD is one whole captured turn replayed through `run_turn` + `complete_turn`
 | `output_exchange` | `incoming` | 65 | 6 | met |
 | `output_exchange` | `inventory` | 119 | 9 | met |
 | `output_exchange` | `master_products` | 4 | 13 | exhausted (4) |
-| `output_exchange` | `no_domain` | 8 | 15 | met |
+| `output_exchange` | `no_domain` | 12 | 15 | met |
 | `output_exchange` | `order` | 28 | 8 | met |
 | `output_exchange` | `portal_link` | 0 | 1 | exhausted (0) |
 | `output_exchange` | `product_attachment` | 20 | 6 | met |
 | `output_exchange` | `promotion` | 0 | 18 | exhausted (0) |
+| `output_exchange` | `resource_attachment` | 1 | 0 | exhausted (1) |
 | `route-turn` | `access_denied` | 1 | 0 | exhausted (1) |
 | `route-turn` | `business_query` | 87 | 0 | met |
 | `route-turn` | `check_promotion` | 1 | 0 | exhausted (1) |
@@ -129,6 +130,6 @@ A WORLD is one whole captured turn replayed through `run_turn` + `complete_turn`
 
 **Not blocked.** Every cell is either met, exhausted in a fully-scanned pool, or dead by vocabulary.
 
-Exhausted (29), under the bar with no more traffic to capture: build-cs-member-offer/empty_roster (0), build-cs-member-offer/multi_company (0), build-outcome/access_choice (3), build-outcome/not_supported (3), compile-current-state/goods_receive (2), compile-current-state/ideate (3), compile-current-state/resource_attachment (0), compile-current-state/spo_allocation (4), crossdomain-compose/promotion (2), crossdomain-compose/spo_allocation (1), cs-roster-plan/empty_roster (0), cs-roster-plan/multi_company (0), escalate-catalog/access_choice (2), escalate-catalog/clarify_menu (3), escalate-catalog/not_supported (3), escalate-catalog/offer_hold (3), output_exchange/master_products (4), output_exchange/portal_link (0), output_exchange/promotion (0), route-turn/access_denied (1), route-turn/check_promotion (1), route-turn/clarify_menu (0), route-turn/escalate_offer (0), route-turn/escalation_declined (4), route-turn/ideate (0), route-turn/not_supported (1), route-turn/offer_hold (0), suggest-follow-up/master_products (4), suggest-follow-up/resource_attachment (1).
+Exhausted (30), under the bar with no more traffic to capture: build-cs-member-offer/empty_roster (0), build-cs-member-offer/multi_company (0), build-outcome/access_choice (3), build-outcome/not_supported (3), compile-current-state/goods_receive (2), compile-current-state/ideate (3), compile-current-state/resource_attachment (0), compile-current-state/spo_allocation (4), crossdomain-compose/promotion (2), crossdomain-compose/spo_allocation (1), cs-roster-plan/empty_roster (0), cs-roster-plan/multi_company (0), escalate-catalog/access_choice (2), escalate-catalog/clarify_menu (3), escalate-catalog/not_supported (3), escalate-catalog/offer_hold (3), output_exchange/master_products (4), output_exchange/portal_link (0), output_exchange/promotion (0), output_exchange/resource_attachment (1), route-turn/access_denied (1), route-turn/check_promotion (1), route-turn/clarify_menu (0), route-turn/escalate_offer (0), route-turn/escalation_declined (4), route-turn/ideate (0), route-turn/not_supported (1), route-turn/offer_hold (0), suggest-follow-up/master_products (4), suggest-follow-up/resource_attachment (1).
 
 Dead by vocabulary, 0 captures is the correct number: escalate-catalog/demand_qty, route-turn/demand_qty, route-turn/stock_denied. These are covered by unit tests behind `chatbot_stock_denial_enabled` (AC-306, R1), never by a capture.

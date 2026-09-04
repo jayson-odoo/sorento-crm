@@ -11,6 +11,21 @@ Two sources, always both:
   monorepo root). Absent = those tests skip with a message; present = every capture for
   a ported node replays.
 
+**Only a REAL CAPTURE grades the port.** ``source.expected_from`` says where a fixture's
+``expected`` came from: ``runData`` is what the node actually emitted in a real n8n
+execution, ``reasoned`` is a hand-written expectation. The escalation-routing lane
+hand-revised 31 ``reasoned`` ``output_exchange`` fixtures to encode the UNPROMOTED
+B-TEAM-1' behaviour, under the SAME filenames, so a ``reasoned`` expectation can describe a
+body that has never run in production. Grading against one would make an unpromoted lane
+change a merge gate.
+
+So: ``runData`` fixtures GRADE and a mismatch fails the suite; ``reasoned`` fixtures are
+still loaded and still replayed, and their agreement is REPORTED as a count, but they never
+fail. The same split applies to any worlds derivation. Measured on 5 Sep 2026 after the
+re-port onto the live body: 782 ``runData`` files, all graded and green, and 152
+``reasoned`` files of which 114 agree and 38 (19 distinct fixtures, vendored + full corpus)
+pin B-TEAM-1'.
+
 A fixture is the n8n harness's own shape::
 
     {source, ctx, input, expected, runIndex, execution, ran}
@@ -72,47 +87,37 @@ NODE_SLUGS: dict[str, tuple[str, ...]] = {
 }
 
 
-# Captures taken against a node body that is NOT the one the export ships. These are not
-# divergences - nothing about the port disagrees with what ships - and they do not belong
-# in `divergences.py`, which is reserved for deliberate hazard fixes. They are the
-# "fixture staleness" risk the plan names.
+# Fixtures pinned to a node body that is NOT the one production runs. They are not
+# divergences - nothing about the port disagrees with the live body - and they do not
+# belong in `divergences.py`, which is reserved for deliberate hazard fixes.
 #
-# **A version id is not sufficient evidence.** The five `parser-*` entries below carry the
-# SAME `source.workflow_version` as the export (`ab3ec985`), and still disagree; the
-# workflow is flagged `locally_edited` in its own MANIFEST, so a deployed edit reached the
-# running body without moving the id. The evidence used instead is direct and reproducible:
-# the exported `output_exchange.js` was run against each of these fixtures through the n8n
-# repo's own harness (`tests/harness/n8n-shim.js`), and IT produces what the Python port
-# produces, character for character, not what the fixture expects. The port is faithful to
-# the body that ships; the fixture grades a different one.
+# **What changed on 5 Sep 2026.** The port was made from the working-tree EXPORT of
+# `sub-semantic-parser`, whose MANIFEST is flagged `locally_edited`. The n8n partner
+# session then fetched the LIVE body read-only: 1,881 lines, sha `a837333a13a2`, saved at
+# `output_exchange.live.js` in that session's scratchpad with
+# `output_exchange.LIVE-vs-WORKTREE.diff` beside it. The export carries an UNPROMOTED lane
+# change (B-TEAM-1': `routing.team_source`, a 4-rank team ladder replacing the
+# `?? 'customer_service'` default, a `resource_attachment` routing row, a pending
+# `team_clarify` completion block, and a state-only company-pick resolver with the
+# deterministic word-match tier deleted; +241/-83 over 10 hunks). `head/output_exchange.py`
+# was re-ported onto the LIVE body, and the five `parser-*` entries that used to sit here
+# all replay EQUAL again - they were LIVE-faithful captures being graded against the wrong
+# body, which is exactly the tell.
 #
-# They are SKIPPED, not dropped: `test_replay.py` emits one skip per entry with its reason,
-# so `pytest -rs` and the summary count show exactly how much of the corpus is not being
-# graded. Re-capture against the current export retires an entry.
+# **The mirror-image set is NOT listed here.** The 19 hand-written fixtures that pin the
+# unpromoted body are handled structurally instead, by `expected_from` (see the module
+# docstring): they are `reasoned`, so they are replayed and reported and never graded. A
+# name list would have to be maintained by hand and would go stale the moment the lane adds
+# another; the field is already on every fixture and says exactly the right thing.
+#
+# What remains here is genuine capture staleness: a `runData` fixture recorded against an
+# older node body. Those are SKIPPED, not dropped - `test_replay.py` emits one skip per
+# entry with its reason, so `pytest -rs` and the summary count show how much is not graded.
 STALE_FIXTURES: dict[tuple[str, str], str] = {
     ("build-ctx", "rs2-01-notsupported"): "RS-2 capture, predates the RS-4 `media` key",
     ("build-ctx", "rs2-02-escalation"): "RS-2 capture, predates the RS-4 `media` key",
     ("build-ctx", "rs2-03-happy"): "RS-2 capture, predates the RS-4 `media` key",
     ("build-ctx", "rs2-04-access-denied"): "RS-2 capture, predates the RS-4 `media` key",
-    # Routing-ladder rank differences. The exported body agrees with the port (verified
-    # through the n8n harness), so the deployed body that produced these differed.
-    ("output_exchange", "parser-15024720"): (
-        "exported output_exchange.js emits suggested_team null, the fixture expects "
-        "'purchasing' (the LLM's own team with no team_source); verified against the "
-        "export via the n8n harness"
-    ),
-    ("output_exchange", "parser-15130185"): (
-        "exported body emits suggested_team null, fixture expects 'marketing_product'; "
-        "same routing-ladder rank difference as parser-15024720"
-    ),
-    ("output_exchange", "parser-15151918"): (
-        "exported body emits suggested_team null, fixture expects 'warehouse'; same "
-        "routing-ladder rank difference as parser-15024720"
-    ),
-    ("output_exchange", "parser-15158411"): (
-        "exported body emits suggested_team null, fixture expects 'warehouse'; same "
-        "routing-ladder rank difference as parser-15024720"
-    ),
     # S2, the tail. Six captures that predate the RS-9 "Fix 6" tier-menu block (owner
     # decision, 2026-09-01). The block is a pure ADDITION in the body the export ships -
     # visible as a `>`-only hunk in `diff live-spine.../compile-current-state.js
@@ -137,11 +142,6 @@ STALE_FIXTURES: dict[tuple[str, str], str] = {
     ("compile-current-state", "rs6-02-accesschoice"): (
         "clone capture at workflow version 15495426, before the tier_menu block landed"
     ),
-    ("output_exchange", "parser-15164413"): (
-        "exported body derives marketing_product/general_enquiries from the turn's own "
-        "resource_attachment domain, fixture expects the PRIOR turn's "
-        "purchasing/incoming_stock_enquiries carried forward"
-    ),
 }
 
 
@@ -150,29 +150,22 @@ def stale_entries() -> list[tuple[str, str, str]]:
     return sorted((node, name, reason) for (node, name), reason in STALE_FIXTURES.items())
 
 
-# `expected_from` says who authored the `expected` block. `runData` means a real
-# execution produced it and it GRADES; anything else - `reasoned` is the one in use, a
-# hand-derived expectation written to describe intended behaviour - is INFORMATIONAL and
-# is loaded but not graded.
-#
-# The distinction is not bureaucracy. A `reasoned` fixture is a claim about what the node
-# SHOULD do, so replaying the port against it grades the port against whoever wrote the
-# claim, and a mismatch is an argument rather than a defect. Gate 0 counts `runData` only
-# for the same reason, and `COVERAGE.md` reports the two separately so nobody can meet the
-# bar by writing fixtures.
-GRADED_PROVENANCE = "runData"
-
-
-def is_graded(fixture: "Fixture") -> bool:
-    return str((fixture.data.get("source") or {}).get("expected_from") or "") == GRADED_PROVENANCE
-
-
 @dataclass(frozen=True)
 class Fixture:
     node: str
     name: str
     path: Path
     data: dict
+
+    @property
+    def expected_from(self) -> str:
+        """`runData` (a real execution) or `reasoned` (hand written). See the module
+        docstring: only `runData` grades."""
+        return (self.data.get("source") or {}).get("expected_from") or "runData"
+
+    @property
+    def graded(self) -> bool:
+        return self.expected_from == "runData"
 
     @property
     def ctx(self) -> dict:
@@ -237,6 +230,16 @@ def _load_dir(node: str, directory: Path, prefix: str = "") -> list[Fixture]:
 def vendored(node: str) -> list[Fixture]:
     """The committed subset for one node. Always runs."""
     return _load_dir(node, VENDORED_ROOT / node)
+
+
+def graded(fixtures: list[Fixture]) -> list[Fixture]:
+    """The real captures. A mismatch on one of these fails the suite."""
+    return [f for f in fixtures if f.graded]
+
+
+def reasoned(fixtures: list[Fixture]) -> list[Fixture]:
+    """Hand-written expectations. Replayed and counted, never a gate."""
+    return [f for f in fixtures if not f.graded]
 
 
 def full_corpus(node: str) -> list[Fixture]:
