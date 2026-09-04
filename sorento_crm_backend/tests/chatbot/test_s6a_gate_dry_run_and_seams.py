@@ -506,3 +506,81 @@ class TestIsTimelineContainsSentinel:
         assert contracts.is_timeline(["__all__", "eta_delay_date"]) is True
         assert contracts.is_timeline(["eta_delay_date"]) is False
         assert contracts.is_timeline([]) is False
+
+
+# --------------------------------------------------------------------------- #
+# 8. Canary: the fixture DOES observe a deliberate write made mid-run_turn.
+# --------------------------------------------------------------------------- #
+
+
+class TestFixtureObservesADeliberateWriteMidTurn:
+    """A kill-test guard for the D14 tests above (this file's TestD14... and
+    test_engine.py::TestDryRun::test_a_test_envelope_writes_nothing_outside_chatbot_turns).
+
+    Both of those assert a NEGATIVE ("nothing was written"), which is only meaningful if
+    the fixture's `session_factory` (`tests/chatbot/conftest.py`, itself built on
+    `tests/_pg_fixture.py`'s `blank_schema_engine` + one shared connection with
+    `Session(bind=connection, join_transaction_mode="create_savepoint")`) reliably makes a
+    commit issued on the `db` object mid-`run_turn` visible to a FRESH session opened
+    later on the same connection. If it did not - if a savepoint release from one of the
+    several sessions `run_turn` opens and closes per turn were silently undone by a later
+    stage's own commit/rollback - every "wrote nothing" assertion in this suite would pass
+    vacuously no matter what the application code does.
+
+    Proven here by forcing a write nobody asked for (`check_access` boobytrapped to also
+    UPDATE `respond_contacts.session_vars`, using the exact `db` session `run_turn` itself
+    opened for the access/routed stage) and asserting it IS visible afterwards. Measured
+    twice while diagnosing a coordinator-reported concern (2026-09-05): forcing the
+    business lane's resolver seam to ignore `dry_run` made
+    `TestD14ZeroWritesWithTheLaneOnRealResolver` go red (`before=0 after=1`), and this same
+    mechanism made the head-level `TestDryRun` test go red too
+    (`before={'variables': {}} after={'poisoned': True, 'variables': {}}`) - so the
+    negative assertions are not vacuous. This test keeps that proof permanent rather than
+    a one-off manual check.
+    """
+
+    def test_a_forced_write_through_the_real_session_survives_to_a_fresh_read(
+        self, session_factory, seeded, stub_parser, stub_access, monkeypatch
+    ) -> None:
+        stub_parser()
+        stub_access()
+
+        def _boobytrap_check_access(db, *, agent_code, contact_id, space_id):
+            db.execute(
+                text(
+                    "UPDATE respond_contacts SET session_vars = jsonb_set("
+                    "COALESCE(session_vars, '{}'::jsonb), '{canary}', 'true'::jsonb) "
+                    "WHERE respond_io_id = :c"
+                ),
+                {"c": contact_id},
+            )
+            db.commit()
+            return {
+                "allowed": True,
+                "decision": "allow",
+                "agent_name": "General Enquiries",
+                "attributes": None,
+                "all_attributes_allowed": None,
+            }
+
+        monkeypatch.setattr(engine_mod, "check_access", _boobytrap_check_access)
+        monkeypatch.setattr(engine_mod, "default_space_id", lambda db: "364817")
+
+        db = session_factory()
+        before = db.execute(
+            text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"),
+            {"c": CONTACT_ID},
+        ).scalar()
+
+        engine_mod.run_turn(_envelope(test_run_id="ZZT-run-canary-1"), session_factory=session_factory)
+
+        after = session_factory().execute(
+            text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"),
+            {"c": CONTACT_ID},
+        ).scalar()
+
+        assert (before or {}).get("canary") is None
+        assert after.get("canary") is True, (
+            "the fixture did not observe a write made mid-run_turn on a fresh session - "
+            "every 'wrote nothing' D14 assertion in this suite would be vacuous"
+        )
