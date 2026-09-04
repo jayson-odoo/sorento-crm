@@ -222,6 +222,33 @@ Baseline measured on `origin/main` e1adad4d2, 2 Sep 2026.
   hard-coded ten-file list to a walk (same exclusions as `raw-table.inventory.test.ts`); proved
   red at 113 of 123 segments missing, green after adding the 113 (123 of 123 covered - the walk
   measured 123, not the plan's "roughly 123", so that is the number this test holds).
+  **Review fix (M5 run 2 review B1/S1):** the run-2 predicate counted a segment's own files OR
+  everything in its `components/` subdir, which false-positived on detail routes whose
+  `components/` folder holds an unrelated grid used by a sibling tab (`scm/purchase-orders/[id]`,
+  `project-sales/[projectId]`, `scm/sales-orders/[id]`, `scm/proforma-invoices/[id]`,
+  `project-sales/[projectId]/sales-orders/[psoId]` - 5 `loading.tsx` files deleted) and, on four
+  segments whose header comes from a parent `layout.tsx`, painted a second title/crumb bar under
+  the real one. Fixed: for a `[dynamic]`-named leaf segment, only its own `page.tsx` (and same-
+  directory imports) count - `components/` is never consulted for these. For every other
+  segment, the walk now follows relative/`@/` imports from `page.tsx` (bounded to
+  `app/(protected)`) instead of a single-hop directory scan, which found 12 real list routes the
+  run-2 walk missed (`procurement-management/sponsorship-forms`,
+  `workflow-forms-management/definitions`, `workflow-forms-management/submissions`,
+  `workflow-forms-management/forms/[definitionId]/submissions`, `project-sales/pipeline`,
+  `project-sales/reports`, `resource-management/trash`, `scm/market-signals`, plus 4 more the
+  walk turned up beyond the plan's own list: `procurement-management/packing-lists/[id]/lines`,
+  `procurement-management/packing-lists/[id]/spo`,
+  `project-sales/[projectId]/sales-orders/[psoId]/revisions`,
+  `user-management/contacts/[id]/access`). The predicate itself now measures 129 (not 123); a
+  manually curated `BODY_ONLY_SEGMENTS` map in the test adds a `bodyOnly` variant on 8 segments
+  (4 with a parent-layout header, 4 genuinely headerless) plus one exception the predicate does
+  not find at all - `user-management/contacts/[id]` keeps a `loading.tsx` even though it has no
+  `<DataGrid` of its own, the same "a record page under a list is held by the same shape"
+  reasoning `ListPageSkeleton`'s own doc comment gives - for 130 required segments total. Five
+  `dealer-kit` descendants (`design`, `design/summary`, `pages/[pageId]`, `bundles`,
+  `price-tag-requests/[id]/design`) that inherited `dealer-kit/loading.tsx`'s list skeleton by
+  Next.js's ancestor-fallback rule now carry their own `loading.tsx` rendering `SectionSkeleton`
+  instead.
 - **M5-02** `[vitest]` Zero non-demo files render the string `Loading...` or `Loading…`
   (baseline 50).
   **Shipped (M5 run 2):** `app/(protected)/loading-strings.inventory.test.ts`; proved red at 50,
