@@ -24,6 +24,7 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from app.services.chatbot import jsc
+from app.services.chatbot.tail.compile_state import EM_DASH
 from app.services.chatbot.contracts import CRM_COMPLETED_BRANCH_KINDS
 from app.services.chatbot.copy import CannedCopy
 
@@ -49,7 +50,7 @@ def access_denied_text(ctx: Mapping[str, Any], copy: CannedCopy) -> str:
     """
     routing = jsc.get(jsc.get(jsc.get(ctx, "parse"), "output") or {}, "routing") or {}
     agent = jsc.get(routing, "suggested_agent")
-    folded = jsc.js_string(agent if jsc.truthy(agent) else "").replace("—", "-")
+    folded = jsc.js_string(agent if jsc.truthy(agent) else "").replace(EM_DASH, "-")
     return copy.render("access_denied", team=folded)
 
 
