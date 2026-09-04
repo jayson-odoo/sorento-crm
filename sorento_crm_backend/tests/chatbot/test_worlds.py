@@ -140,9 +140,19 @@ class TestTheWorldCorpus:
     """The corpus itself is the gate-0 evidence, so its size is asserted, not reported."""
 
     def test_the_corpus_meets_the_hundred_world_floor(self) -> None:
-        if not WORLDS:
+        """The floor is on the FULL corpus, so it is graded where the full corpus is.
+
+        The vendored subset is a few hundred kilobytes of curated fixtures - it derives a
+        dozen worlds and is not meant to derive a hundred. Asserting the floor against it
+        would fail in CI for a reason that has nothing to do with the corpus the gate is
+        about, so the test skips there and says which corpus it needed.
+        """
+        from tests.chatbot import _corpus
+
+        if _corpus.corpus_root() is None:
             pytest.skip(
-                "no worlds: the vendored subset carries none and " + _skip_reason()
+                f"the world floor describes the FULL corpus ({len(WORLDS)} worlds derived "
+                f"from the vendored subset alone); {_skip_reason()}"
             )
         assert len(WORLDS) >= WORLD_FLOOR, (
             f"{len(WORLDS)} worlds, floor is {WORLD_FLOOR} (plan, cutover gate 0). "
