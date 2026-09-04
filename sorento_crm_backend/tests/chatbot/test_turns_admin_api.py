@@ -14,10 +14,20 @@ Contract this is built against:
     `system.chat_history.manage`, 409 unless `failed`, 200 `{turn_id, attempt}`.
   - AC-257 (list + retry), AC-255 (failed-contacts summary feeding the list's "Failed
     turns only" filter), AC-007/AC-003 (trace + response column shapes), R4 (manual
-    retry only, no auto-retry), the plan's "Retry from the trace screen re-posts the
-    envelope through the same ordering" (S2b lands before S7, so "the same ordering" is
-    the n8n dispatcher's redis lists, not the S7 HTTP re-post AC-705 describes for after
-    the spine goes thin).
+    retry only, no auto-retry), AC-705's retry re-injection.
+
+CORRECTED FACT (from the coordinator, superseding this file's original assumption 4):
+n8n's dispatcher redis is a SEPARATE instance on the n8n VPS and must not be touched from
+here. The real pre-S7 retry path is an outbound HTTP POST to n8n's existing inject
+webhook - `settings.chatbot_retry_ingress_url` (env `CHATBOT_RETRY_INGRESS_URL`,
+production `https://automate-sorento.foundryx.my/webhook/sorento-main-inject`) - with the
+ORIGINAL respond.io webhook body (`envelope.message`) and a shared
+`X-Chatbot-Retry-Key` header from `settings.chatbot_retry_ingress_key` (env
+`CHATBOT_RETRY_INGRESS_KEY`). `app/config.py` already carries both settings (added by the
+S2b coder ahead of this file's update) with the note that an unset URL must answer 409
+`retry_unavailable` and make NO call - a dev machine must never silently re-inject into
+production n8n. `test_retry_reinjects_at_ingress` and `test_retry_unavailable_without_url`
+below pin exactly that.
 
 ASSUMPTIONS made because the contract doc does not spell these out (flagged to the
 captain/coder, not settled unilaterally):
@@ -35,17 +45,15 @@ captain/coder, not settled unilaterally):
    last_failed_stage, last_failed_at, count}]}`. This is the single biggest ambiguity
    in this file - see the report back to the captain.
 3. Retry's idempotency-per-attempt (AC-257, "409 unless failed") is tested behaviourally
-   only: call retry twice, first is 200, second is 409. No assumption is made about
-   *how* the row stops being retryable a second time (the model has no dedicated
-   column for it - flipping `status` away from `failed`, e.g. to `queued`, would reuse
-   the existing enum with no new column, but that is the coder's call).
-4. The retry redis re-injection (AC-257, plan "Retry... re-posts the envelope through
-   the same ordering") is asserted against `app.services.queue_service.redis_conn`, the
-   one redis connection already shared by the whole backend - reusing it is the
-   simplest thing that works, a fresh connection for one write path would be
-   unjustified machinery. If n8n's dispatcher is actually on a DIFFERENT redis
-   instance in production, this assumption is wrong and the coder needs a new env var
-   instead; flagged in the test's docstring, not silently assumed correct.
+   only: call retry twice, first is 200, second is 409. The model DOES now carry a
+   dedicated column for this (`chatbot.turns.retry_requested_at`, migration 474, added by
+   the S2b coder): the row stays `failed` and a second click 409s because
+   `retry_requested_at` is already set, not because `status` changed.
+4. The outbound retry POST is mocked at `httpx.post` (module attribute) - the most direct
+   patch target for a single fire-and-forget call. If the coder's endpoint imports
+   `from httpx import post` instead of `import httpx; httpx.post(...)`, or reuses
+   `app.services.webhook_service.WebhookService.send_webhook`, this patch target needs a
+   one-line change to match - a coder implementation detail, not a fixture bug.
 """
 from __future__ import annotations
 
@@ -53,14 +61,19 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 import app.main  # noqa: F401  isort:skip - registers every model before any query
+from app.config import settings
 from app.main import app
 from app.dependencies import get_current_user, get_current_user_or_api_key, get_db
 from app.models.chatbot_turn import ChatbotTurn
 from app.services.user_service import UserPermissionService
+
+RETRY_INGRESS_URL = "https://automate-sorento.foundryx.my/webhook/sorento-main-inject"
+RETRY_INGRESS_KEY = "ZZT-retry-ingress-key"
 
 VIEW = "system.chat_history.view"
 MANAGE = "system.chat_history.manage"
@@ -113,13 +126,29 @@ def client(db):
 
 
 @pytest.fixture()
-def fake_redis(monkeypatch):
-    """See module docstring assumption 4: patched at the shared connection."""
-    import app.services.queue_service as queue_service
+def retry_ingress_configured(monkeypatch):
+    """The retry endpoint's outbound target, configured to a fake n8n inject webhook.
 
-    mock = MagicMock()
-    monkeypatch.setattr(queue_service, "redis_conn", mock)
-    return mock
+    See module docstring assumption 4: the outbound POST is patched at `httpx.post`.
+    """
+    monkeypatch.setattr(settings, "chatbot_retry_ingress_url", RETRY_INGRESS_URL, raising=False)
+    monkeypatch.setattr(settings, "chatbot_retry_ingress_key", RETRY_INGRESS_KEY, raising=False)
+    mock_post = MagicMock(
+        return_value=httpx.Response(200, request=httpx.Request("POST", RETRY_INGRESS_URL))
+    )
+    monkeypatch.setattr(httpx, "post", mock_post)
+    return mock_post
+
+
+@pytest.fixture()
+def retry_ingress_unconfigured(monkeypatch):
+    """The retry path with no n8n webhook configured (AC-705's 'unset locally on
+    purpose' - a dev machine must never silently re-inject into production n8n)."""
+    monkeypatch.setattr(settings, "chatbot_retry_ingress_url", None, raising=False)
+    monkeypatch.setattr(settings, "chatbot_retry_ingress_key", None, raising=False)
+    mock_post = MagicMock()
+    monkeypatch.setattr(httpx, "post", mock_post)
+    return mock_post
 
 
 # --------------------------------------------------------------------------- #
@@ -375,7 +404,7 @@ def test_retry_requires_manage_slug(client, db):
     assert MANAGE in resp.text
 
 
-def test_retry_only_failed(client, db):
+def test_retry_only_failed(client, db, retry_ingress_configured):
     _GRANTS.add(MANAGE)
     contact = _contact("retry-guard")
 
@@ -395,48 +424,78 @@ def test_retry_only_failed(client, db):
     assert body["attempt"] == 2
 
 
-def test_retry_reinjects_at_ingress(client, db, fake_redis):
-    """The plan (pre-S7): 'Retry from the trace screen re-posts the envelope through the
-    same ordering' - the n8n dispatcher's redis lists, since S7's per-contact ticket
-    system does not exist yet at S2b. The row itself is NOT re-run in-process."""
+def test_retry_reinjects_at_ingress(client, db, retry_ingress_configured):
+    """AC-705, corrected: n8n's dispatcher redis is a separate instance on the n8n VPS
+    and must not be touched from here. Retry re-posts the ORIGINAL respond.io webhook
+    body to n8n's inject webhook (`CHATBOT_RETRY_INGRESS_URL`) with the shared
+    `X-Chatbot-Retry-Key` header, so the turn re-enters at the SAME ingress a live
+    message uses. The row itself is NOT re-run in-process - it stays `failed`, and
+    `retry_requested_at` records that a retry was requested."""
     _GRANTS.add(MANAGE)
-    contact = _contact("retry-redis")
+    contact = _contact("retry-webhook")
+    original_message = {
+        "messageId": "wamid.ZZT-retry-webhook",
+        "contactId": contact,
+        "channelId": "whatsapp",
+        "traffic": "incoming",
+        "message": {"type": "text", "text": "price for SRTWC8517"},
+    }
     turn = _seed_turn(
         db,
         contact_respond_id=contact,
         status="failed",
         stage="understood",
-        message_id="wamid.ZZT-retry-redis",
+        message_id="wamid.ZZT-retry-webhook",
         error="parser timed out",
     )
+    turn.envelope = {"message": original_message, "contact": {"id": contact}}
+    db.commit()
 
     resp = client.post(f"{BASE}/{turn.id}/retry")
     assert resp.status_code == 200, resp.text
 
-    all_calls = [str(call) for call in fake_redis.mock_calls]
-    assert any(f"q:{contact}" in call for call in all_calls), (
-        f"expected a write naming q:{contact}, got: {all_calls}"
+    retry_ingress_configured.assert_called_once()
+    call = retry_ingress_configured.call_args
+    called_url = call.args[0] if call.args else call.kwargs.get("url")
+    assert called_url == RETRY_INGRESS_URL
+
+    sent_body = call.kwargs.get("json")
+    assert sent_body == original_message, (
+        f"expected the ORIGINAL respond.io webhook body re-posted verbatim, got: {sent_body}"
     )
-    assert any("ready-contacts" in call for call in all_calls), (
-        f"expected a write naming ready-contacts, got: {all_calls}"
-    )
+
+    sent_headers = call.kwargs.get("headers") or {}
+    assert sent_headers.get("X-Chatbot-Retry-Key") == RETRY_INGRESS_KEY
 
     db.expire_all()
     reread = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn.id).one()
-    # The ORIGINAL row is a record, not re-run: whatever the coder uses to mark "a
-    # retry is in flight", `failed` is not still the value the SECOND click sees
-    # (see test_retry_is_idempotent_per_attempt) - but this specific row must not
-    # silently become `done` or `delegated` in-process, since no turn ran here.
-    assert reread.status != "done"
-    assert reread.status != "delegated"
-
-    trace = reread.trace or []
-    assert any("retry" in ((r.get("summary") or "") + (r.get("why") or "")).lower() for r in trace), (
-        f"expected an appended 'retry requested' trace record, got: {trace}"
-    )
+    # The row is a RECORD, not re-run: no turn happened in-process, so it stays `failed`,
+    # and `retry_requested_at` is the marker (migration 474) that a retry went out.
+    assert reread.status == "failed"
+    assert reread.retry_requested_at is not None
 
 
-def test_retry_is_idempotent_per_attempt(client, db):
+def test_retry_unavailable_without_url(client, db, retry_ingress_unconfigured):
+    """AC-705's own note: unset locally on purpose. With no
+    `CHATBOT_RETRY_INGRESS_URL`, the endpoint must refuse with 409 `retry_unavailable`
+    and make NO outbound call - a dev machine must never silently re-inject into
+    production n8n."""
+    _GRANTS.add(MANAGE)
+    contact = _contact("retry-no-url")
+    turn = _seed_turn(db, contact_respond_id=contact, status="failed", stage="access")
+
+    resp = client.post(f"{BASE}/{turn.id}/retry")
+    assert resp.status_code == 409, resp.text
+    assert resp.json().get("code") == "retry_unavailable" or "retry_unavailable" in resp.text
+
+    retry_ingress_unconfigured.assert_not_called()
+
+    db.expire_all()
+    reread = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn.id).one()
+    assert reread.retry_requested_at is None
+
+
+def test_retry_is_idempotent_per_attempt(client, db, retry_ingress_configured):
     """A second retry click before the retried turn has arrived must not double-inject."""
     _GRANTS.add(MANAGE)
     contact = _contact("retry-idempotent")
@@ -447,3 +506,4 @@ def test_retry_is_idempotent_per_attempt(client, db):
 
     second = client.post(f"{BASE}/{turn.id}/retry")
     assert second.status_code == 409, second.text
+    retry_ingress_configured.assert_called_once()  # the second click made no new call
