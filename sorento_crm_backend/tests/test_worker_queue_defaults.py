@@ -173,11 +173,30 @@ def test_notifications_is_drained_by_default():
 @pytest.mark.parametrize(
     "queue",
     ["imports", "respond_io", "catalogue_render", "media", "project_docs", "flyer_read",
-     "notifications"],
+     "notifications", "chat"],
 )
 def test_every_known_queue_is_drained_by_default(queue):
-    """Each queue the codebase enqueues to, named individually so a drop is legible."""
+    """Each queue the codebase enqueues to, named individually so a drop is legible.
+
+    `chat` (S7, AC-703): the chatbot turn engine's optional worker offload
+    (`CHATBOT_TURN_ON_WORKER`) enqueues `run_turn_job` on `chat` - a user is looking at
+    "typing..." the same way `respond_io` and `media` are request-latency-bound, so a
+    worker that does not drain it silently strands every offloaded turn exactly the way
+    `notifications` was silently stranded before this file existed (see the module
+    docstring). RED today: nothing enqueues to `chat` yet and it is not in
+    `worker.QUEUES`.
+    """
     assert queue in worker.resolve_queue_names()
+
+
+def test_chat_queue_is_classified_fast_not_batch():
+    """S7 / AC-703: `chat` is request-latency-bound, so it belongs with `respond_io` and
+    `media` under the `fast` role, never `batch` - a batch-classified `chat` queue would
+    sit behind a 39-minute import the same way #569's split exists to prevent for the
+    others. Membership only, not exact list equality, so this does not also pin the
+    relative order of the other fast queues."""
+    assert "chat" in worker.queues_for_role("fast")
+    assert "chat" not in worker.queues_for_role("batch")
 
 
 def test_worker_queues_env_still_overrides(monkeypatch):
