@@ -519,10 +519,21 @@ def test_conversation_already_assigned_skips_assign() -> None:
 def test_dry_run_never_reaches_next_assignee(session_factory) -> None:
     """D14 evaluated FIRST (H37: n8n called next-assignee and guarded afterwards - live's
     own `test-guard` If sits before `sorento-sub-respond-sendmsg-respond-routed-to-pic2` and
-    everything after it, which is exactly this ordering). Row counts on the real (blank)
-    Postgres schema are the second net: even if the coder's `run()` bypassed the injected
-    `services` and called a real production function directly, that would show up here as a
-    nonzero count, where a call-count assertion on the mock alone would not catch it."""
+    everything after it, which is exactly this ordering).
+
+    Ruling (5 Sep 2026, AC-503/AC-507): a dry run still RETURNS all four would-be actions,
+    in order, with `dry_run: true` and PREVIEW placeholders in place of whatever only a real
+    `next_assignee`/`sla_create` call could produce - `assign_conversation.respond_user_id`
+    is `null` (no draw happened) with `preview: true`; `add_comment.mention_user_ids` is `[]`
+    (nobody to mention) with `preview: true`, and the comment text carries the literal
+    `<preview>` marker in place of the SLA timestamps (no `conversation-sla-tracking-create`
+    row exists to read them from). This is what lets a dry-run turn's trace/preview UI show
+    the customer AND the CRM exactly what would happen, not just that something would.
+
+    Row counts on the real (blank) Postgres schema are the second net for H37 itself: even
+    if the coder's `run()` bypassed the injected `services` and called a real production
+    function directly, that would show up here as a nonzero count, where a call-count
+    assertion on the mock alone would not catch it."""
     from app.models.access import AgentTeamRoundRobinCursor
     from app.models.sla import ConversationSLATracking
     from app.services.chatbot.lanes.escalation import run
@@ -532,10 +543,19 @@ def test_dry_run_never_reaches_next_assignee(session_factory) -> None:
 
     result = run(ctx, item, services=services, dry_run=True)
 
+    kinds = [a["kind"] for a in result["actions"]]
+    assert kinds == ["send_message", "assign_conversation", "add_comment", "send_message"]
+    assert all(a.get("dry_run") is True for a in result["actions"])
+
+    _first_send, assign, comment, _second_send = result["actions"]
+    assert assign["respond_user_id"] is None
+    assert assign.get("preview") is True
+    assert comment["mention_user_ids"] == []
+    assert comment.get("preview") is True
+    assert "<preview>" in comment["text"]
+
     services.next_assignee.assert_not_called()
     services.sla_create.assert_not_called()
-    assert result["actions"]
-    assert all(a.get("dry_run") is True for a in result["actions"])
 
     db = session_factory()
     assert db.query(AgentTeamRoundRobinCursor).count() == 0
@@ -1018,10 +1038,23 @@ def test_out_of_scope_dry_run_carries_session_patch_and_writes_nothing(
     )
     monkeypatch.setattr(engine_mod, "default_space_id", lambda db: "364817")
 
+    # Ruling (5 Sep 2026, AC-503/AC-507): the same preview-placeholder shape
+    # test_dry_run_never_reaches_next_assignee pins at the lane level - `assign_conversation`
+    # has no real draw (`respond_user_id: null`) and `add_comment` has nobody to mention
+    # (`mention_user_ids: []`), both flagged `preview: true`, and the comment text carries
+    # the literal `<preview>` marker in place of SLA timestamps no `sla_create` call ever
+    # produced. This engine test fakes the lane entirely, so it is reproduced here for the
+    # stub to be a faithful preview of what the real lane returns.
     dry_lane_actions = [
         {"kind": "send_message", "text": "Your request is out of scope...", "dry_run": True},
-        {"kind": "assign_conversation", "respond_user_id": "respond-usr-1", "dry_run": True},
-        {"kind": "add_comment", "text": "Team: customer_service", "mention_user_ids": ["respond-usr-1"], "dry_run": True},
+        {"kind": "assign_conversation", "respond_user_id": None, "dry_run": True, "preview": True},
+        {
+            "kind": "add_comment",
+            "text": "Team: customer_service\n<preview> SLA times are not computed on a dry run.",
+            "mention_user_ids": [],
+            "dry_run": True,
+            "preview": True,
+        },
         {"kind": "send_message", "text": "This inquiry has been routed...", "dry_run": True},
     ]
 
@@ -1052,7 +1085,11 @@ def test_out_of_scope_dry_run_carries_session_patch_and_writes_nothing(
 
     assert result.status == "done"
     assert result.delegate is None
+    assert [a["kind"] for a in result.actions] == ["send_message", "assign_conversation", "add_comment", "send_message"]
     assert all(a.get("dry_run") is True for a in result.actions)
+    _first_send, assign, comment, _second_send = result.actions
+    assert assign["respond_user_id"] is None
+    assert comment["mention_user_ids"] == []
     assert result.session_patch is not None and isinstance(result.session_patch, dict)
 
     after_session_vars = session_factory().execute(
