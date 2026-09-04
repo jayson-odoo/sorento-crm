@@ -27,7 +27,9 @@ from app.services.chatbot import jsc
 BRANDS = ("sorento", "cabana", "mocha")
 TIER_ORDER = ("dealer", "office", "end_user")
 
-_COMPOUND_RE = re.compile(r"^(sorento|cabana|mocha) (dealer|office)$")
+# `\Z`, not `$`: Python's `$` also matches before a trailing newline and JavaScript's does
+# not, so a level name ending in "\n" would parse here and not in n8n.
+_COMPOUND_RE = re.compile(r"^(sorento|cabana|mocha) (dealer|office)\Z")
 _WHITESPACE_RUN = re.compile(r"\s+")
 
 

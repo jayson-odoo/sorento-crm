@@ -381,8 +381,12 @@ def _user_prompt(
         f"intent_hint: {jsc.js_string(parser.get('intent_hint'))}  \n"
         f"domain_hint: {jsc.js_string(parser.get('domain_hint'))}  \n"
         f"user_goal: {jsc.js_string(parser.get('user_goal'))}  \n"
-        f"entities: {_json.dumps(entities, separators=(',', ':'))} \n"
-        f"access level: {_json.dumps(access_levels, separators=(',', ':'))} \n"
+        # `ensure_ascii=False`: `JSON.stringify` emits the character, Python's default
+        # emits a `\uXXXX` escape, and a customer name with an accent in it would reach the
+        # probe's prompt as escaped gibberish where n8n sent the letter.
+        f"entities: {_json.dumps(entities, separators=(',', ':'), ensure_ascii=False)} \n"
+        f"access level: "
+        f"{_json.dumps(access_levels, separators=(',', ':'), ensure_ascii=False)} \n"
         f"contact_id: {jsc.js_string(contact_id)} \n"
         f"space_id: {jsc.js_string(space_id)}\n"
         f"date_mode: {jsc.js_string(parser.get('date_mode'))} \n"

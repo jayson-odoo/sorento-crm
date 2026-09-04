@@ -9,16 +9,15 @@ makes the 254-fixture replay a pure function over JSON (AC-602).
 | --- | --- | --- |
 | `get-access-types` (httpRequest) | `access_types` | `ContactAccessTypeService.resolve_active_access_levels_for_contact` |
 | `resolve-entity` (httpRequest) | `resolve_entity` | the function behind `POST /api/v1/system/references/resolve` |
-| `probe-incoming` / `probe-customer-orders` (executeWorkflow) | `probe` | `MCPRuntimeClient` (D10) |
+| `probe-incoming` / `probe-customer-orders` (executeWorkflow) | `probe` | S6b's fetch, over `MCPRuntimeClient` (D10) |
 
 `space_id` is the default respond workspace's, not n8n's hard-coded `364817` (D5).
 """
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
 from sqlalchemy.orm import Session
 
@@ -59,7 +58,7 @@ class ResolveGateServices:
 # --------------------------------------------------------------------------- #
 
 
-def _access_types(db: Session) -> AccessTypesFn:
+def _access_types(db: Session, *, default_space_id: str | None = None) -> AccessTypesFn:
     def call(*, contact_id: str, space_id: str | None) -> list[dict[str, Any]]:
         """`GET /external/contact-access-types/active` - `[{name, keywords}]`.
 
@@ -70,8 +69,9 @@ def _access_types(db: Session) -> AccessTypesFn:
         """
         from app.services.contact_access_type_service import ContactAccessTypeService
 
+        workspace = space_id if space_id else default_space_id
         return ContactAccessTypeService(db).resolve_active_access_levels_for_contact(
-            str(contact_id or "").strip(), str(space_id or "").strip()
+            str(contact_id or "").strip(), str(workspace or "").strip()
         )
 
     return call
@@ -102,7 +102,9 @@ def _resolve_entity(db: Session) -> ResolveEntityFn:
     return call
 
 
-def _probe(db: Session) -> ProbeFn:
+def _probe() -> ProbeFn:
+    """No session parameter: the probe is an MCP call, not a database one (D10)."""
+
     def call(
         *,
         tool: str,
@@ -135,29 +137,15 @@ def _probe(db: Session) -> ProbeFn:
 
 
 def production_services(db: Session, *, space_id: str | None = None) -> ResolveGateServices:
-    """The bundle the engine uses. One session, bound at the call site."""
-    return ResolveGateServices(
-        access_types=_access_types(db),
-        resolve_entity=_resolve_entity(db),
-        probe=_probe(db),
-    )
+    """The bundle the engine uses. One session, bound at the call site.
 
-
-def mcp_probe(base_url: str, *, timeout_seconds: int = 20) -> Callable[..., Any]:
-    """`MCPRuntimeClient.call_tool` wrapped so S6b can drop its transformers in front.
-
-    Kept out of `production_services` deliberately: wiring a client whose arguments cannot
-    be built yet would be a mock in production, and a mock that ships is debt, not done.
+    `space_id` is the bundle's DEFAULT workspace, used when the caller does not name one
+    per call. `resolve_gate.run()` passes its own (the default respond workspace's, D5) on
+    every production turn, so this only matters to a caller that builds the bundle with a
+    workspace already in hand.
     """
-    from app.services.ai_assistant_service import MCPRuntimeClient
-
-    client = MCPRuntimeClient(base_url, timeout_seconds=timeout_seconds)
-
-    def call(*, tool: str, args: dict[str, Any]) -> Any:
-        raw = client.call_tool(tool, args)
-        try:
-            return json.loads(raw)
-        except (TypeError, ValueError):
-            return raw
-
-    return call
+    return ResolveGateServices(
+        access_types=_access_types(db, default_space_id=space_id),
+        resolve_entity=_resolve_entity(db),
+        probe=_probe(),
+    )

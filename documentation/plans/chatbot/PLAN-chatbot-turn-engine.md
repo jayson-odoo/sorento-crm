@@ -305,6 +305,19 @@ suite on the shared DB.
 - **Rule: never hold a DB session across LLM or MCP I/O.** The engine closes the session before
   the parser / clarifier / MCP calls and reopens after (the 96/100 connection incident is the
   evidence). Guardrail test asserts no open transaction during the parser call.
+  - **ONE named exemption, S6a's resolver seam** (5 Sep 2026). The business lane runs inside
+    the session opened for access / routed, so that session is held across the resolver's
+    OPTIONAL spec-search model call (2 to 3 s, only when `understand_phrase` fires and the
+    normal probes missed). It is an exemption rather than a bug because the resolver is a
+    database service - it cannot be called without a session at all - and because the
+    connection count is unchanged from today: n8n makes the same call over HTTP while its own
+    request holds a pool connection for the whole turn. What is different is only WHERE the
+    connection is held. **Trigger to remove it: S6b**, which adds the MCP fetch call and
+    splits `looked_up` into its own stage; the session closes before that stage and reopens
+    after, exactly as the parser call already does. Pinned by
+    `tests/chatbot/test_s6a_gate_dry_run_and_seams.py::TestCapacityRuleDuringResolverSeam`,
+    an `xfail(strict=True)` that goes red the day the split lands and the exemption should
+    be deleted.
 - Timeouts: n8n HTTP node 60 s explicit; parser 8 s **(bound not enforced until #656)**; each
   MCP call 10 s; over = failed stage. The parser bound is not wired because
   `llm_provider.LLMProvider.chat` takes no timeout at all - each provider builds its own
@@ -469,6 +482,14 @@ two subs unpublished; the outbound executes assign / comment (AC-506).
      `sub-resolve-and-gate` itself, so an unflagged CRM would run the resolver twice on
      every business turn, spec-search model call included. The flag is the shadow window's
      switch and the rollback. See `n8n-changes.md` S6a.
+  1b. **n8n retries `resolve-entity`; the port does not.** The httpRequest node carries
+     `retryOnFail` and the in-process call has no equivalent, so a transient resolver
+     failure that n8n would have survived becomes a shadow-lane failure here (recorded at
+     `looked_up`, turn still delegated). Deliberately not added: an in-process call to a
+     local service has none of the failure modes a network hop does, and a retry around a
+     database call that has already opened a transaction is its own hazard. Revisit if the
+     shadow window shows any resolver failures at all; that is the same evidence gate the
+     cutover already has.
   2. **The pickers' probes need S6b.** `probe-incoming` / `probe-customer-orders` call
      `sub-get-results`, whose `entity-ids-transformer` and `output-structurer` are S6b, so
      the S6a probe seam raises and both annotators take their own documented UNPROBED arm
@@ -488,7 +509,12 @@ two subs unpublished; the outbound executes assign / comment (AC-506).
      new keys (`specific_options`, `tier_pick_domain`). They are excluded from the replay
      comparison and carry unit tests instead - see `tests/chatbot/_corpus.py`
      `CAPTURE_BODY_ADDITIONS` for the evidence. With them excluded, 212 of 212 gate
-     captures, 7 of 7 tier-gate captures and 10 of 10 whole-sub replays are byte-equal.
+     captures, 6 of 6 tier-gate captures and 10 of 10 whole-sub replays are byte-equal.
+     **Superseded 5 Sep** by a capture run against the LIVE sub (`tKeQUkZK5cFK9BFa`,
+     version `4f367b1c`, pool 682/682): 84 files whose bodies ARE the shipping ones, so
+     both keys are graded on them and nothing is excluded. The exclusion is now applied per
+     FIXTURE, derived from whether that capture's own `expected` carries the key, so it
+     cannot outlive the captures that need it.
 - **S6b fetch (700):** tool search in-process (H53), `tool-filter` (59, zero tools = `not_found`
   outcome, H11), tier probe plan / collect, `entity-ids-transformer` (145), `MCPRuntimeClient`
   call at the configured URL (H52), `output-structurer` (482), `fetch-result` (48). Verify the

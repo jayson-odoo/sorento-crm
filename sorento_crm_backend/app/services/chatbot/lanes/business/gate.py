@@ -224,6 +224,10 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     compatible_entities: list[dict[str, Any]] = entities
 
     if allowed is None:
+        # `${domain}` in a JS template literal, where `domain` is `parser.domain_hint ??
+        # null`. Template interpolation of `null` is the string "null", NOT "" - so a turn
+        # with no domain reads `domain 'null' not in matrix`, which is what the captures
+        # show and what the port must reproduce.
         gate_reason = f"domain '{jsc.js_string(domain)}' not in matrix; passing through unscoped"
     else:
         compatible_entities = [e for e in entities if e["entity_type"] in allowed]

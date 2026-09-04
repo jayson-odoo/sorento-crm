@@ -645,6 +645,7 @@ def _run_stages(  # noqa: PLR0915
         # yet make.
         delegate = delegate_for(branch_kind)
         delegate_payload: dict[str, Any] | None = None
+        lane_error_text: str | None = None
         if business.handles(branch_kind) and _business_lane_enabled():
             stage[0] = "looked_up"
             try:
@@ -665,13 +666,14 @@ def _run_stages(  # noqa: PLR0915
                 # loudly instead: the n8n cutover's own precondition is a shadow window
                 # with zero of these (n8n-changes.md, S6a).
                 logger.exception("chatbot turn %s: business lane failed", turn_id)
+                lane_error_text = f"{type(lane_error).__name__}: {lane_error}"
                 turn_trace.record(
                     "looked_up",
                     status="failed",
                     summary="Could not resolve what the customer named.",
                     why="The lookup the business lane depends on did not answer.",
                     facts={"lane": "business", "branch_kind": branch_kind},
-                    error=f"{type(lane_error).__name__}: {lane_error}",
+                    error=lane_error_text,
                     raw=None,
                 )
             else:
@@ -698,11 +700,19 @@ def _run_stages(  # noqa: PLR0915
                 )
             stage[0] = "routed"
 
+        # S6a review S1: a SHADOW lane failure must be findable without reading the trace
+        # JSON. `error` and `status` stay as they are - the TURN did not fail, n8n still
+        # answers it, and claiming otherwise would make every shadow blip look like a
+        # customer-visible outage on the trace screen. What changes is `stage`, which
+        # records how far the turn got: it stops at `looked_up` instead of reaching
+        # `routed`, so `WHERE stage = 'looked_up' AND status IN ('delegated','done')` is
+        # the operator's query, and `response.delegate_error` beside it carries the reason
+        # (`ENTITY_PIN_MISMATCH` included, which arrives here as an AppException).
         _close_turn(
             db,
             turn_id,
             status="delegated" if delegate else "done",
-            stage="routed",
+            stage="looked_up" if lane_error_text else "routed",
             branch_kind=branch_kind,
             error=None,
             records=turn_trace.records,
@@ -715,6 +725,7 @@ def _run_stages(  # noqa: PLR0915
                 "item": item,
                 "actions": actions,
                 "delegate_payload": delegate_payload,
+                "delegate_error": lane_error_text,
             },
         )
 
@@ -731,7 +742,7 @@ def _run_stages(  # noqa: PLR0915
         # null for every turn in S1; the tail (S2) is what fills it.
         session_patch=None,
         status="delegated" if delegate else "done",
-        stage="routed",
+        stage="looked_up" if lane_error_text else "routed",
     )
 
 

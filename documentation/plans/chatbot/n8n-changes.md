@@ -161,3 +161,11 @@ the workflow JSON from before step 2; that is the actual rollback artefact.
   matters to the owner before S6b, S6a stays in shadow until S6b lands.
 - The `resolve-exit-access-ask` arm has zero captured executions, in any slug (see
   `tests/chatbot/COVERAGE.md`). It is covered by unit tests, not by replay.
+- **For S6b, one detail that will look like a port bug and is not:** `probe-incoming`'s
+  `contact_id` parameter is `={{ $('build-ctx').first().json.ctx.contact.id }} ` with a
+  TRAILING SPACE, and `probe-customer-orders`' is not. Whatever S6b builds the tool
+  arguments with has to decide whether to reproduce that or normalise it, and say which;
+  today it reaches `sub-get-results` as a string with a space on the end.
+- **`resolve-entity` carries `retryOnFail` in n8n and the port has no retry.** A transient
+  resolver failure that n8n survived is a shadow-lane failure here. Named in the plan's S6a
+  section; the shadow window is what says whether it matters.
