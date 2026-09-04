@@ -36,11 +36,23 @@ lane covers exactly those three:
 | `route` output | node it feeds | `entry` stamped | CRM `branch_kind` |
 | --- | --- | --- | --- |
 | 8 `check_promotion` | `tag-entry-access-check` | `access_check` | `check_promotion` |
-| 11 `stock_denied` | `Edit Fields2` -> `tag-entry-resolve` | `resolve` | `stock_denied` |
+| 11 `stock_denied` | the SPINE's `Edit Fields2` -> `tag-entry-resolve` | `resolve` | `stock_denied` |
 | fallback `business_query` | `tag-entry-resolve` | `resolve` | `business_query` |
 
-`Edit Fields2`' single field (`not_allowed_check_stock: true`) is stamped by the CRM on the
-`stock_denied` arm, so the item `sub-main-processing` receives is unchanged.
+**There are TWO nodes called `Edit Fields2`**, one in the spine (row 11 above, which sets
+`not_allowed_check_stock` before the tag) and one inside `sub-main-processing` (fed by
+`ef2-gate`, which re-sets it from the trigger). Everything below is about
+**`sub-main-processing`'s**. It stamps `not_allowed_check_stock: true` and it **STAYS**. `validator` reads it by
+name and by node, not off the flowing item:
+
+```js
+if ($('Edit Fields2').isExecuted && $('Edit Fields2').first().json.not_allowed_check_stock) {
+```
+
+`$('Edit Fields2')` on a node that does not exist THROWS, so deleting it takes the whole
+`stock_denied` answer path down. The CRM therefore does NOT stamp the field: nothing
+downstream of the sub reads the item for it, and a CRM-side copy would be a second writer
+of a value n8n still owns.
 
 ### Step 1 - shadow window (no wiring change)
 
@@ -100,10 +112,18 @@ After:
    `$('<name>').first()` throw, and the turn dies with a node-not-executed error rather
    than a wrong answer.
 
-4. **Delete** `Call 'sub-resolve-and-gate'` (executeWorkflow), `ef2-gate` (If),
-   `Edit Fields2` (Set) and `item-restore` (Code). Wire `build-ctx[0] -> resolve-gate`
-   so the stand-in chain still runs and still dominates its readers (LESSONS 91: a sibling
-   has no ordering relation, so the chain cannot become a branch).
+4. **Delete ONLY** `Call 'sub-resolve-and-gate'` (executeWorkflow) and `item-restore`
+   (Code). Wire `Edit Fields2[0] -> resolve-gate` and `ef2-gate[1] -> resolve-gate`, so the
+   stand-in chain still runs and still dominates its readers (LESSONS 91: a sibling has no
+   ordering relation, so the chain cannot become a branch).
+
+   **`ef2-gate` and `Edit Fields2` STAY.** `validator` reads `$('Edit Fields2').isExecuted`
+   and `$('Edit Fields2').first().json.not_allowed_check_stock`, and `$('<name>')` on a
+   node that does not exist throws - deleting the Set node takes the `stock_denied` answer
+   path down with it, several nodes away from the edit, which is the worst shape a mistake
+   here can have. `ef2-gate` is what decides whether it runs, so it stays for the same
+   reason. Both are deleted at S6c with the rest of the lane (AC-610), when `validator`
+   goes too.
 
 ### Step 3 - the caller, in `sorento-consume-main` (`S4N1LiisAqA4hpMC`)
 

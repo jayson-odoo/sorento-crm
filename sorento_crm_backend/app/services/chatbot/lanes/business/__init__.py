@@ -55,13 +55,17 @@ def run_until_exit(
 ) -> dict[str, Any]:
     """Run resolve + gate for one turn and return the `{delegate, payload}` fragment.
 
-    `item` is the router's own item, unchanged - `Edit Fields2`' `not_allowed_check_stock`
-    is stamped HERE for the `stock_denied` arm rather than by the caller, because that Set
-    node sits between the Switch and the tag on exactly that one edge and nowhere else.
+    `item` is the router's own item, forwarded UNCHANGED.
+
+    An earlier version stamped `not_allowed_check_stock: true` here for the `stock_denied`
+    arm, mirroring the spine's `Edit Fields2`. It was dead and is gone: inside the sub the
+    item reaches only `tier-gate`'s `$('item')` read, which is on the `access_check` path
+    that `stock_denied` never takes, and the node that actually consumes the field -
+    `sub-main-processing`'s `validator` - reads it off `$('Edit Fields2')` BY NAME, not off
+    the flowing item. That Set node stays in n8n and keeps owning the value; a CRM copy
+    would have been a second writer of something it cannot be read from.
     """
     entry = ENTRY_BY_BRANCH_KIND[branch_kind]
-    if branch_kind == "stock_denied":
-        item = {**item, "not_allowed_check_stock": True}
     payload = resolve_gate.run(
         ctx,
         entry,

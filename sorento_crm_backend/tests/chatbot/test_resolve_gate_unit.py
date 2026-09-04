@@ -314,24 +314,57 @@ class TestDelegateSeam:
         assert business.ENTRY_BY_BRANCH_KIND["stock_denied"] == "resolve"
         assert business.ENTRY_BY_BRANCH_KIND["business_query"] == "resolve"
 
-    def test_the_stock_denied_edge_carries_edit_fields2s_one_field(self) -> None:
-        seen: dict[str, Any] = {}
+    def test_the_routers_item_is_forwarded_unchanged_on_every_arm(self) -> None:
+        """No CRM-side `not_allowed_check_stock` stamp, and no mutation of the caller.
 
-        def _resolve(_body: dict[str, Any]) -> dict[str, Any]:
+        The stamp used to be applied here for `stock_denied`, mirroring the spine's
+        `Edit Fields2`. It reached nothing: inside the sub the item is read only by
+        `tier-gate`'s `$('item')`, which is on the `access_check` path `stock_denied` never
+        takes, and the node that consumes the field - `sub-main-processing`'s `validator` -
+        reads `$('Edit Fields2')` BY NAME. That Set node stays in n8n and keeps owning the
+        value (`n8n-changes.md` S6a step 2 item 4), so this asserts the CRM adds nothing.
+        """
+        seen_bodies: list[dict[str, Any]] = []
+
+        def _resolve(body: dict[str, Any]) -> dict[str, Any]:
+            seen_bodies.append(body)
             return {"tokens": [], "resolutions": [], "unresolved_tokens": []}
 
         services = ResolveGateServices(
             access_types=lambda **_: [], resolve_entity=_resolve, probe=lambda **_: None
         )
         ctx = {"contact": {"id": "c1"}, "parse": {"output": {"entities": []}}, "session": {}}
-        original = {"branch_kind": "stock_denied"}
-        fragment = business.run_until_exit(
-            ctx, original, branch_kind="stock_denied", services=services
+        for branch_kind in ("stock_denied", "business_query"):
+            original = {"branch_kind": branch_kind, "allowed": True}
+            fragment = business.run_until_exit(
+                ctx, original, branch_kind=branch_kind, services=services
+            )
+            assert fragment["delegate"] == "business_query"
+            assert fragment["payload"]["_exit_kind"] in contracts.EXIT_KINDS
+            assert original == {"branch_kind": branch_kind, "allowed": True}, (
+                "the router's item must reach the lane unmutated"
+            )
+        assert len(seen_bodies) == 2
+
+    def test_a_dry_run_turn_asks_the_resolver_not_to_write_its_usage_row(self) -> None:
+        """D14, at the seam the breach was measured on. The key is OMITTED when live, so a
+        live body stays byte-equal to the one n8n sends."""
+        bodies: list[dict[str, Any]] = []
+
+        def _resolve(body: dict[str, Any]) -> dict[str, Any]:
+            bodies.append(body)
+            return {"tokens": [], "resolutions": [], "unresolved_tokens": []}
+
+        services = ResolveGateServices(
+            access_types=lambda **_: [], resolve_entity=_resolve, probe=lambda **_: None
         )
-        assert fragment["delegate"] == "business_query"
-        assert fragment["payload"]["_exit_kind"] in contracts.EXIT_KINDS
-        assert original == {"branch_kind": "stock_denied"}, "the router's item is not mutated"
-        assert seen == {}
+        ctx = {"contact": {"id": "c1"}, "parse": {"output": {"entities": []}}, "session": {}}
+        business.run_until_exit(ctx, {}, branch_kind="business_query", services=services)
+        business.run_until_exit(
+            ctx, {}, branch_kind="business_query", services=services, dry_run=True
+        )
+        assert "dry_run" not in bodies[0]
+        assert bodies[1]["dry_run"] is True
 
     def test_every_exit_carries_the_six_contract_fields_and_a_declared_kind(self) -> None:
         """`sub-main-processing`'s presence gates read these SIX keys by name.
