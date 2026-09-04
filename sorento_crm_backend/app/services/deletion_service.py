@@ -40,7 +40,7 @@ from sqlalchemy.orm import Session
 
 from app.models.inventory import Warehouse
 from app.models.order import Customer
-from app.models.procurement import Supplier
+from app.models.procurement import SPOAllocation, Supplier
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.sales_agent import SalesAgent
 from app.services.dependent_probe import is_referenced, referrers_of, relation_name
@@ -49,6 +49,10 @@ from app.services.integration_reference_service import IntegrationReferenceServi
 from app.services.master_ingest_service import (
     UnsupportedIngestEntity,
     _is_company_scoped,
+)
+from app.services.shipping_order_ingest_service import (
+    LINE_CLOSED,
+    SHIPPING_ORDERS_ENTITY,
 )
 
 logger = logging.getLogger(__name__)
@@ -160,10 +164,26 @@ class DeletionService:
         rolled back. Simulating it instead would produce a preview that can
         disagree with the run it predicts, which is worse than no preview.
         """
+        # Shipping orders (D3, S3) resolve to MANY rows by `source_doc_ref`,
+        # never to one `entity_id` via `IntegrationReferenceService` - a
+        # wholly separate path, sharing only the batch loop and the dry-run
+        # rollback below. `ENTITY_MODELS` / `_has_dependents` / `_hard_delete`
+        # / `_deactivate` stay untouched; this entity never reaches them.
+        if entity_type == SHIPPING_ORDERS_ENTITY:
+            result = DeletionResult(dry_run=dry_run)
+            try:
+                for source_ref in source_refs:
+                    result.records.append(self._delete_shipping_order(source_ref))
+            finally:
+                if dry_run:
+                    self.db.rollback()
+            return result
+
         if entity_type not in ENTITY_MODELS:
             raise UnsupportedIngestEntity(
                 f"Unsupported deletion entity {entity_type!r}. "
-                f"Expected one of: {', '.join(sorted(ENTITY_MODELS))}"
+                f"Expected one of: {', '.join(sorted(ENTITY_MODELS))}, "
+                f"{SHIPPING_ORDERS_ENTITY}"
             )
 
         result = DeletionResult(dry_run=dry_run)
@@ -177,6 +197,60 @@ class DeletionService:
                 # next.
                 self.db.rollback()
         return result
+
+    # ------------------------------------------------------ shipping orders
+    def _delete_shipping_order(self, source_ref: Any) -> DeletionRecordResult:
+        """Every row this document's DocKey names, closed or removed in place.
+
+        No `entity_id` to resolve through (D3) - the rows are found directly by
+        `source_doc_ref`, scoped to the anchor company the same way every other
+        deletion is. A row something still references (a GRN pick, an
+        order-link claim) is closed rather than removed, exactly as
+        `ShippingOrderIngestService` closes a leftover line on a re-push - the
+        verdict is `deactivated` if ANY row in the group was referenced, `deleted`
+        only when none were.
+        """
+        ref = source_ref if isinstance(source_ref, str) else str(source_ref)
+
+        savepoint = self.db.begin_nested()
+        try:
+            rows = (
+                self.db.query(SPOAllocation)
+                .filter(
+                    SPOAllocation.company_id == self.company_id,
+                    SPOAllocation.source_doc_ref == ref,
+                )
+                .all()
+            )
+            if not rows:
+                savepoint.commit()
+                return DeletionRecordResult(source_ref=ref, outcome=DeletionOutcome.NOT_FOUND)
+
+            any_referenced = False
+            for row in rows:
+                if is_referenced(self.db, "spo_allocations", row.id):
+                    row.line_status = LINE_CLOSED
+                    any_referenced = True
+                else:
+                    self.db.delete(row)
+            self.db.flush()
+            savepoint.commit()
+            outcome = (
+                DeletionOutcome.DEACTIVATED if any_referenced else DeletionOutcome.DELETED
+            )
+            return DeletionRecordResult(source_ref=ref, outcome=outcome)
+        except Exception as exc:  # noqa: BLE001 - one record's failure, not the batch's
+            if savepoint.is_active:
+                savepoint.rollback()
+            logger.warning(
+                "deletion.record_failed entity=%s source_ref=%s error=%s",
+                SHIPPING_ORDERS_ENTITY,
+                ref,
+                exc,
+            )
+            return DeletionRecordResult(
+                source_ref=ref, outcome=DeletionOutcome.FAILED, errors={"_": str(exc)}
+            )
 
     # ------------------------------------------------------------- one record
     def _delete_one(self, entity_type: str, source_ref: Any) -> DeletionRecordResult:

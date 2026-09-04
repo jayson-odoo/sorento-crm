@@ -166,3 +166,33 @@ class CanonicalPurchaseOrder(_CanonicalDocument):
     expected_date: Optional[date] = None
     currency: Optional[str] = Field(None, max_length=3)
     lines: list[CanonicalPurchaseOrderLine] = Field(default_factory=list)
+
+
+class CanonicalShippingOrderLine(_CanonicalLine):
+    """A shipping-order line - one `spo_allocations` row (D3, S3)."""
+
+    qty_received: Optional[Decimal] = Field(Decimal("0"), ge=0)
+    unit_cost: Optional[Decimal] = None
+    expected_date: Optional[date] = None
+
+
+class CanonicalShippingOrder(_CanonicalDocument):
+    """`source_ref` is AutoCount's DocKey; `spo_number` its DocNo.
+
+    Unlike a sales or purchase order, this shape addresses no header table -
+    `spo_number` and `spo_line_number` together ARE the identity of the rows
+    it writes (D3). `from_so_numbers` is deliberately absent here: claiming a
+    sales order against a shipping-order line is S4 work.
+    """
+
+    spo_number: str = Field(..., min_length=1, max_length=100)
+    supplier_ref: Optional[str] = Field(None, max_length=255)
+    supplier_code: Optional[str] = Field(None, max_length=100)
+    supplier_name: Optional[str] = Field(None, max_length=255)
+    # Accepted for symmetry with the other two documents but IGNORED here -
+    # same reason as `CanonicalPurchaseOrder.agent_code`.
+    agent_code: Optional[str] = Field(None, max_length=100)
+    issue_date: Optional[date] = None
+    expected_date: Optional[date] = None
+    currency: Optional[str] = Field(None, max_length=3)
+    lines: list[CanonicalShippingOrderLine] = Field(default_factory=list)

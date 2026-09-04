@@ -1,5 +1,5 @@
 """Procurement models."""
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Integer, Numeric, Index, Date, Computed, UniqueConstraint
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Integer, Numeric, Index, Date, Computed, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -482,6 +482,16 @@ class SPOAllocation(Base, CompanyScopedMixin):
     #: `open` / `closed`, the same word the purchase-order line carries. History lands
     #: closed, so it can never read as supply however its receipt status is later edited.
     line_status = Column(String(50), nullable=False, server_default="open", default="open")
+    # --- AutoCount ingest v2 (S3, D3) -------------------------------------------------
+    #: AutoCount's DtlKey - the LINE's own identity across re-pushes. NULL on every
+    #: pre-existing (xlsx-era) row; D11 adoption is what claims those without ever
+    #: writing a ref onto them retroactively.
+    source_ref = Column(String(255), nullable=True)
+    #: AutoCount's DocKey - names the DOCUMENT this line belongs to (the group of rows
+    #: sharing one `spo_number`), since a shipping order has no header table of its own
+    #: (D3). A push finds its rows by this column, falling back to `spo_number` alone
+    #: for a document's first sync.
+    source_doc_ref = Column(String(255), nullable=True)
 
     inbound_shipment = relationship("InboundShipment", back_populates="spo_allocations")
     supplier = relationship("Supplier", foreign_keys=[supplier_id])
@@ -506,6 +516,16 @@ class SPOAllocation(Base, CompanyScopedMixin):
         # What the triple key was also doing, kept as a plain lookup: every reader that
         # asks "what is coming for this product, here" hits these three columns.
         Index("ix_spo_allocations_spo_product_warehouse", "spo_number", "product_id", "warehouse_id"),
+        # AutoCount ingest v2 (S3): a push finds its document's rows by DocKey.
+        Index("ix_spo_allocations_company_source_doc_ref", "company_id", "source_doc_ref"),
+        # One DtlKey can adopt at most one line, company-wide - partial so the
+        # countless ref-less xlsx-era rows never collide with each other or with it.
+        Index(
+            "uq_spo_allocations_company_source_ref",
+            "company_id", "source_ref",
+            unique=True,
+            postgresql_where=text("source_ref IS NOT NULL"),
+        ),
     )
 
 

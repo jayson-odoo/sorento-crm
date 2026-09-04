@@ -53,6 +53,11 @@ from app.services.master_ingest_service import (
     UnsupportedIngestEntity,
 )
 from app.services.master_read_service import MasterReadService
+from app.services.shipping_order_ingest_service import (
+    SHIPPING_ORDER_ENTITIES,
+    ShippingOrderIngestService,
+    ShippingOrderReadService,
+)
 
 ingest_router = APIRouter()
 read_router = APIRouter()
@@ -72,6 +77,8 @@ INGEST_PERMISSIONS = {
     # editing one on the SCM screen, so it is the same slug.
     "sales_orders": "scm.sales_orders.edit",
     "purchase_orders": "scm.purchase_orders.edit",
+    # Shipping orders (S3) - no header table, but the same slug shape.
+    "shipping_orders": "scm.shipping_orders.edit",
 }
 READ_PERMISSIONS = {
     "product_categories": "master_data.product_categories.view",
@@ -83,6 +90,7 @@ READ_PERMISSIONS = {
     "sales_agents": "master_data.sales_agents.view",
     "sales_orders": "scm.sales_orders.view",
     "purchase_orders": "scm.purchase_orders.view",
+    "shipping_orders": "scm.shipping_orders.view",
 }
 # Deleting through the ESB is its own act, so it takes its own slug on top of the
 # ingest guard the router already carries (group A4 mounts the route). Declared
@@ -99,6 +107,7 @@ DELETE_PERMISSIONS = {
     "sales_agents": "master_data.sales_agents.delete",
     "sales_orders": "scm.sales_orders.delete",
     "purchase_orders": "scm.purchase_orders.delete",
+    "shipping_orders": "scm.shipping_orders.delete",
 }
 
 # A batch cap the ESB can design against. Exceeding it errors rather than
@@ -107,10 +116,10 @@ DELETE_PERMISSIONS = {
 MAX_BATCH = 1000
 
 
-# Masters and documents on one surface. The set is built from both registries
-# rather than written out, so an entity that exists in only one of them cannot
-# become reachable here by being spelled correctly in this file.
-SUPPORTED_ENTITIES = set(ENTITY_SPECS) | set(DOCUMENT_ENTITIES)
+# Masters, documents and shipping orders on one surface. The set is built from
+# every registry rather than written out, so an entity that exists in none of
+# them cannot become reachable here by being spelled correctly in this file.
+SUPPORTED_ENTITIES = set(ENTITY_SPECS) | set(DOCUMENT_ENTITIES) | set(SHIPPING_ORDER_ENTITIES)
 
 # Bumped whenever the wire shape of an entity changes in a way the ESB must gate
 # on (a new required field, a changed enum). Read by `GET /external/contract`
@@ -180,11 +189,17 @@ async def ingest_masters(
 
     company_id = resolve_company_anchor(db, payload, current_user)
 
-    # One endpoint, two services. A document owns its lines and points at five
-    # masters, which is a different write shape from a master row - but the
-    # envelope, the batch cap, the verdicts and the dry-run rollback are the
-    # caller's contract and must not fork, so the branch is here and nowhere else.
-    ingester = DocumentIngestService if entity in DOCUMENT_ENTITIES else MasterIngestService
+    # One endpoint, three services. A document owns its lines and points at
+    # five masters, and a shipping order owns lines with no header at all -
+    # both different write shapes from a master row - but the envelope, the
+    # batch cap, the verdicts and the dry-run rollback are the caller's
+    # contract and must not fork, so the branch is here and nowhere else.
+    if entity in SHIPPING_ORDER_ENTITIES:
+        ingester = ShippingOrderIngestService
+    elif entity in DOCUMENT_ENTITIES:
+        ingester = DocumentIngestService
+    else:
+        ingester = MasterIngestService
     service = ingester(
         db,
         integration_id=current_user.get("integration_id"),
@@ -339,5 +354,10 @@ async def read_current_state(
 
     company_id = resolve_company_anchor(db, payload, current_user)
 
-    reader = DocumentReadService if entity in DOCUMENT_ENTITIES else MasterReadService
+    if entity in SHIPPING_ORDER_ENTITIES:
+        reader = ShippingOrderReadService
+    elif entity in DOCUMENT_ENTITIES:
+        reader = DocumentReadService
+    else:
+        reader = MasterReadService
     return reader(db, company_id=company_id).current_state(entity, source_refs)

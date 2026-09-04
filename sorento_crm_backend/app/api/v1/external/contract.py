@@ -18,14 +18,11 @@ from app.api.v1.external.ingest import CONTRACT_VERSION, SUPPORTED_ENTITIES
 
 router = APIRouter()
 
-# `shipping_orders` ingest lands in slice S3, but the ESB needs to see it in
-# the contract today to plan its own rollout against - it is not a
-# `DOCUMENT_SPECS` entry (there is no header table for it, see plan section
-# 0), so it cannot be derived from `ingest.SUPPORTED_ENTITIES` and is added
-# here as a literal instead of faked into one.
-_UPCOMING_ENTITIES = ("shipping_orders",)
-
-CONTRACT_ENTITIES = SUPPORTED_ENTITIES | set(_UPCOMING_ENTITIES)
+# `shipping_orders` (S3) is a real member of `ingest.SUPPORTED_ENTITIES` now -
+# it has no `DOCUMENT_SPECS` entry (there is no header table for it, see plan
+# section 0), but `SHIPPING_ORDER_ENTITIES` folds it in there, so nothing is
+# added on top here any more.
+CONTRACT_ENTITIES = SUPPORTED_ENTITIES
 
 
 @router.get("")
