@@ -28,6 +28,7 @@ import app.main  # noqa: F401  isort:skip - registers every model before any que
 from app.models.chatbot_turn import ChatbotTurn
 from app.models.user import SystemSetting
 from app.services.chatbot import engine as engine_mod
+from app.api.v1.external.chat import TAIL_ERROR_REPLY
 from app.services.chatbot.lanes import canned as canned_lanes
 from tests.chatbot.test_chat_turn_endpoint import api_key, client  # noqa: F401 - fixtures
 from tests.chatbot.test_engine import (  # noqa: F401 - fixtures reused by name
@@ -366,6 +367,207 @@ class TestCompleteByBody:
 
         assert resp.status_code == 200, resp.text
         assert resp.json()["turn_id"] == delegated_turn.turn_id
+
+    def test_a_finished_turn_replays_instead_of_409(
+        self, client, api_key, session_factory, monkeypatch, delegated_turn
+    ):
+        """B3: `done` with a stored response is the REPLAY, not a refusal.
+
+        `complete_turn` answers a duplicate delivery with the answer it already composed
+        (D15) - and the guard on this route used to 409 every status that was not
+        `delegated`, which made that branch unreachable from the route n8n actually calls.
+        A duplicate `sub-output` call must get the same answer back, not an error.
+        """
+        monkeypatch.setattr("app.api.v1.external.chat.SessionLocal", session_factory)
+
+        first = self._post(client, api_key, self._body(delegated_turn))
+        assert first.status_code == 200, first.text
+
+        again = self._post(client, api_key, self._body(delegated_turn))
+
+        assert again.status_code == 200, again.text
+        assert again.json()["reply"] == first.json()["reply"]
+        assert again.json()["turn_id"] == delegated_turn.turn_id
+
+    def test_a_processing_turn_is_still_a_409(
+        self, client, api_key, session_factory, monkeypatch, delegated_turn
+    ):
+        """The replay exception is `done` WITH a response, and nothing wider: a turn still
+        running has no lane result to fold in and no answer to replay."""
+        monkeypatch.setattr("app.api.v1.external.chat.SessionLocal", session_factory)
+        db = session_factory()
+        row = db.query(ChatbotTurn).filter(ChatbotTurn.id == delegated_turn.turn_id).one()
+        row.status = "processing"
+        db.commit()
+
+        resp = self._post(client, api_key, self._body(delegated_turn))
+
+        assert resp.status_code == 409, resp.text
+        assert "CHATBOT_TURN_NOT_DELEGATED" in json.dumps(resp.json())
+
+    def test_a_done_turn_with_nothing_stored_is_still_a_409(
+        self, client, api_key, session_factory, monkeypatch, delegated_turn
+    ):
+        monkeypatch.setattr("app.api.v1.external.chat.SessionLocal", session_factory)
+        db = session_factory()
+        row = db.query(ChatbotTurn).filter(ChatbotTurn.id == delegated_turn.turn_id).one()
+        row.status = "done"
+        row.response = None
+        db.commit()
+
+        resp = self._post(client, api_key, self._body(delegated_turn))
+
+        assert resp.status_code == 409, resp.text
+
+    @pytest.mark.parametrize(
+        "message_id,expected_status",
+        [("ZZT-msg-nobody", 404), (MESSAGE_ID, 409)],
+    )
+    def test_a_refusal_is_logged_like_every_other_call(
+        self,
+        client,
+        api_key,
+        session_factory,
+        monkeypatch,
+        seeded,
+        stub_parser,
+        stub_access,
+        message_id,
+        expected_status,
+    ):
+        """Every call to this endpoint writes an `integration_log`, refusals included.
+
+        A 404 / 409 here is the call an operator goes looking for when n8n reports a turn
+        that was never finished, and it is decided BEFORE the tail runs - so without its
+        own log line it was the one call that left no trace at all.
+        """
+        monkeypatch.setattr("app.api.v1.external.chat.SessionLocal", session_factory)
+        from app.models.integration import IntegrationLog
+        from app.services.chatbot.head import parser as parser_mod
+
+        _set_completed_lanes(session_factory, [])
+        stub_parser(error=parser_mod.ParserError("boom"))
+        stub_access()
+        engine_mod.run_turn(_envelope(), session_factory=session_factory)
+
+        class _Fake:
+            ctx = {
+                "contact": {"id": CONTACT_ID},
+                "text": {"message": {"messageId": message_id}},
+            }
+
+        before = (
+            session_factory()
+            .query(IntegrationLog)
+            .filter(IntegrationLog.endpoint == _BY_BODY_URL)
+            .count()
+        )
+
+        resp = self._post(client, api_key, self._body(_Fake()))
+
+        assert resp.status_code == expected_status, resp.text
+        logs = (
+            session_factory()
+            .query(IntegrationLog)
+            .filter(IntegrationLog.endpoint == _BY_BODY_URL)
+            .all()
+        )
+        assert len(logs) == before + 1, "the refusal wrote no integration_log"
+        written = logs[-1]
+        assert written.status_code == expected_status
+        assert written.status == "failed"
+        assert written.error_message, "a refusal with no reason is a log nobody can use"
+
+    def test_the_row_is_test_flag_travels_on_both_routes(
+        self, client, api_key, session_factory, monkeypatch, seeded, stub_parser, stub_access
+    ):
+        """F2: n8n's test-guard reads `is_test` off the completion, not off its memory of
+        what `/turn` said two calls ago."""
+        monkeypatch.setattr("app.api.v1.external.chat.SessionLocal", session_factory)
+        _set_completed_lanes(session_factory, [])
+        stub_parser(_parser_output(message_type="business_query", domain_hint="master_products"))
+        stub_access()
+
+        live = engine_mod.run_turn(_envelope(), session_factory=session_factory)
+        resp = client.post(
+            f"/api/v1/external/chat/turn/{live.turn_id}/complete",
+            json=self._body(live),
+            headers={"X-API-Key": api_key},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["is_test"] is False
+
+        dry = engine_mod.run_turn(
+            _envelope(
+                test_run_id="ZZT-run-is-test",
+                message={
+                    **_envelope().message,
+                    "message": {
+                        **_envelope().message["message"],
+                        "messageId": "ZZT-msg-dry",
+                    },
+                },
+            ),
+            session_factory=session_factory,
+        )
+        resp = self._post(client, api_key, self._body(dry))
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["is_test"] is True
+
+    @pytest.mark.parametrize("dry_run", [False, True])
+    def test_a_failed_tail_answers_with_the_error_reply_and_its_action(
+        self,
+        client,
+        api_key,
+        session_factory,
+        monkeypatch,
+        seeded,
+        stub_parser,
+        stub_access,
+        dry_run,
+    ):
+        """F5: a tail that raises is an ANSWERED call, never a null reply.
+
+        The caller executes `actions` and nothing else, so an answer whose words live only
+        on `reply.text` is a customer left in silence. The row is still `failed` at
+        `remembered` with the reason on it - the failure is recorded, not swallowed.
+        """
+        monkeypatch.setattr("app.api.v1.external.chat.SessionLocal", session_factory)
+        _set_completed_lanes(session_factory, [])
+        stub_parser(_parser_output(message_type="business_query", domain_hint="master_products"))
+        stub_access()
+        overrides: dict[str, Any] = {"test_run_id": "ZZT-run-tail-fail"} if dry_run else {}
+        turn = engine_mod.run_turn(_envelope(**overrides), session_factory=session_factory)
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("the tail could not finish")
+
+        monkeypatch.setattr(engine_mod, "run_tail", _boom)
+
+        resp = self._post(client, api_key, self._body(turn))
+
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["reply"] == {
+            "text": TAIL_ERROR_REPLY,
+            "quick_replies": None,
+            "result_set": None,
+            "attachments_src": None,
+        }
+        assert body["actions"] == [
+            {
+                "kind": "send_message",
+                "text": TAIL_ERROR_REPLY,
+                "quick_replies": None,
+                "result_set": None,
+                "dry_run": dry_run,
+            }
+        ]
+        assert body["is_test"] is dry_run
+        row = session_factory().query(ChatbotTurn).filter(ChatbotTurn.id == turn.turn_id).one()
+        assert (row.status, row.stage) == ("failed", "remembered")
+        assert "the tail could not finish" in (row.error or "")
 
 
 class TestSendActionShape:

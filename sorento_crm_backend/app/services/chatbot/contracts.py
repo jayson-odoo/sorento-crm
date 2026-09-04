@@ -492,6 +492,11 @@ class CompleteResponse(BaseModel):
     # D14: populated on a dry run only, so a console or clone turn can be inspected
     # without anything having been written.
     session_patch: dict[str, Any] | None = None
+    # The ROW's `is_test`, decided on the envelope at `/turn` and repeated here so n8n's
+    # `test-guard` can log what it recorded instead of sent without carrying the head's
+    # answer across two calls. Not a second switch: every action already carries the same
+    # value on `dry_run`.
+    is_test: bool = False
 
 
 # Which branch kinds still hand back to an n8n lane. After S1 that is all of them: the

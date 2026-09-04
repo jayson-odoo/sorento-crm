@@ -37,10 +37,13 @@ from sqlalchemy.orm import Session
 # The engine's session seam. See the module docstring: module-level on purpose, and
 # the single point every test patches to keep the engine off the shared database.
 from app.database import SessionLocal, get_db
+from app.models.chatbot_turn import ChatbotTurn
 from app.dependencies import get_external_api_user
 from app.schemas.integration import IntegrationLogCreate
-from app.models.chatbot_turn import ChatbotTurn
 from app.services.chatbot import complete_turn, run_turn
+# The head's OWN lookup for "which row is this message's turn" (D15), so the id-less
+# complete route and the duplicate-delivery check can never pick different rows.
+from app.services.chatbot.engine import find_turn_for_message
 from app.services.chatbot_reply_copy import CHATBOT_TURN_ERROR_REPLY
 from app.services.chatbot.contracts import (
     CompleteRequest,
@@ -131,6 +134,68 @@ def chat_turn(
     return response_payload
 
 
+def _turn_row(db: Session, turn_id: str) -> ChatbotTurn | None:
+    """The turn row, read through the REQUEST session, for the two facts the route needs
+    that the engine's answer cannot carry: `is_test` on a tail that raised.
+
+    Kept to one query and one place. `turn_id` comes off the path (or the resolver) and a
+    malformed one is a miss, not a 500 - the caller already has its 404 for that.
+    """
+    try:
+        return db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).first()
+    except Exception:  # noqa: BLE001 - a bad id is a miss, and the answer is already decided
+        db.rollback()
+        return None
+
+
+def _log_complete_call(
+    db: Session,
+    *,
+    request: Request,
+    payload: CompleteRequest,
+    business_id: str,
+    external_reference: str,
+    status_code: int,
+    error_message: str | None,
+) -> None:
+    """The `integration_log` row every `/complete` call writes, answered or refused.
+
+    ONE writer for both complete routes and for both outcomes, because the module contract
+    is that no call to this endpoint is invisible - a 404 or a 409 on the id-less form is
+    exactly the call an operator reading an n8n run needs to find, and it used to be the
+    only one that left no trace.
+
+    Best-effort, like every other post-response side effect here: the answer has already
+    been decided and failing to describe it must not change it.
+    """
+    try:
+        request_headers = dict(request.headers)
+        if "x-api-key" in request_headers:
+            request_headers["x-api-key"] = "***"
+        IntegrationLogService(db).create_integration_log(
+            IntegrationLogCreate(
+                integration_channel="n8n",
+                business_table="chatbot.turns",
+                business_id=business_id,
+                external_reference=external_reference,
+                direction="inbound",
+                endpoint=str(request.url.path),
+                http_method=request.method,
+                request_headers=json.dumps(request_headers),
+                request_payload=payload.model_dump_json(),
+                status_code=status_code,
+                status="success" if status_code < 400 else "failed",
+                error_message=error_message,
+            )
+        )
+    except Exception as log_error:  # noqa: BLE001
+        logger.warning(
+            "Failed to create integration log for chatbot turn completion: %s",
+            log_error,
+            exc_info=True,
+        )
+
+
 @router.post(
     "/turn/{turn_id}/complete",
     response_model=CompleteResponse,
@@ -189,38 +254,47 @@ def chat_turn_complete(
         # is not lost, it is on `chatbot.turns` and in the integration log below.
         logger.exception("chatbot turn %s failed to complete: %s", turn_id, exc)
         error_message = f"{type(exc).__name__}: {exc}"
+        # The row's own `is_test`, read back rather than assumed: a clone turn's failure
+        # reply must carry `dry_run` too, or the one action this answer has is the one
+        # action a test envelope could actually send. A row that has gone (pruned mid
+        # turn) reads as a live turn, which is the safe direction for a `dry_run` FLAG and
+        # the wrong direction for nothing else here.
+        row = _turn_row(db, turn_id)
+        dry_run = bool(getattr(row, "is_test", False))
+        reply = {
+            "text": TAIL_ERROR_REPLY,
+            "quick_replies": None,
+            "result_set": None,
+            "attachments_src": None,
+        }
         response_payload = CompleteResponse(
             turn_id=turn_id,
-            reply={"text": TAIL_ERROR_REPLY, "quick_replies": None, "result_set": [], "attachments_src": None},
-            actions=[{"kind": "send_message", "text": TAIL_ERROR_REPLY, "quick_replies": None}],
+            reply=reply,
+            # NEVER a null reply and never an empty `actions`: the caller executes
+            # `actions` and nothing else (the executor ruling, 5 Sep), so an answer whose
+            # words are only on `reply.text` is a customer left in silence. Same four keys
+            # `_send_actions` emits, so the sender reads one shape on every turn.
+            actions=[
+                {
+                    "kind": "send_message",
+                    "text": TAIL_ERROR_REPLY,
+                    "quick_replies": None,
+                    "result_set": None,
+                    "dry_run": dry_run,
+                }
+            ],
+            is_test=dry_run,
         )
 
-    try:
-        request_headers = dict(request.headers)
-        if "x-api-key" in request_headers:
-            request_headers["x-api-key"] = "***"
-        IntegrationLogService(db).create_integration_log(
-            IntegrationLogCreate(
-                integration_channel="n8n",
-                business_table="chatbot.turns",
-                business_id=turn_id,
-                external_reference=turn_id,
-                direction="inbound",
-                endpoint=str(request.url.path),
-                http_method=request.method,
-                request_headers=json.dumps(request_headers),
-                request_payload=payload.model_dump_json(),
-                status_code=response_status,
-                status="success" if response_status < 400 else "failed",
-                error_message=error_message,
-            )
-        )
-    except Exception as log_error:  # noqa: BLE001
-        logger.warning(
-            "Failed to create integration log for chatbot turn completion: %s",
-            log_error,
-            exc_info=True,
-        )
+    _log_complete_call(
+        db,
+        request=request,
+        payload=payload,
+        business_id=turn_id,
+        external_reference=turn_id,
+        status_code=response_status,
+        error_message=error_message,
+    )
 
     if to_reraise is not None:
         raise to_reraise
@@ -239,10 +313,13 @@ def _resolve_turn_for_complete(db: Session, payload: CompleteRequest) -> str:
     identifies the turn - it is the same pair `chatbot.turns` is UNIQUE on (D15) - so the
     body it already sends is enough.
 
-    **The HIGHEST attempt wins.** A retry from the trace screen (R4) inserts another row
-    for the same message, and completing the first one would fold the lane's result into
-    the attempt nobody is watching. Ordered by `attempt` then `created_at` so a row
-    written before `attempt` was populated still resolves deterministically.
+    **The HIGHEST attempt wins, and it is the SAME row the engine calls "this turn".**
+    `find_turn_for_message` is the head's own duplicate lookup (D15), reused here rather
+    than re-implemented: a retry from the trace screen (R4, S2b) inserts another row for
+    the same message, and completing the first one would fold the lane's result into the
+    attempt nobody is watching. Two readers of one pair that ordered their rows differently
+    would disagree about which row IS the turn the moment a second one existed, so there is
+    one helper and one answer.
     """
     ctx = payload.ctx or {}
     contact_id = ((ctx.get("contact") or {}).get("id"))
@@ -263,14 +340,8 @@ def _resolve_turn_for_complete(db: Session, payload: CompleteRequest) -> str:
             code="CHATBOT_TURN_NOT_IDENTIFIED",
         )
 
-    row = (
-        db.query(ChatbotTurn)
-        .filter(
-            ChatbotTurn.contact_respond_id == str(contact_id),
-            ChatbotTurn.message_id == str(message_id),
-        )
-        .order_by(ChatbotTurn.attempt.desc(), ChatbotTurn.created_at.desc())
-        .first()
+    row = find_turn_for_message(
+        db, contact_respond_id=str(contact_id), message_id=str(message_id)
     )
     if row is None:
         raise AppException(
@@ -282,17 +353,23 @@ def _resolve_turn_for_complete(db: Session, payload: CompleteRequest) -> str:
             ),
             code="CHATBOT_TURN_NOT_FOUND",
         )
-    if row.status != "delegated":
-        # The SAME refusal `/turn/{id}/complete` makes, made here BEFORE the tail runs -
-        # a `failed` turn has no lane result to fold in, and completing it would compose
-        # an answer out of the caller's fragments and erase the failure record.
+    # `done` WITH a stored response is not a refusal: it is the replay `complete_turn`
+    # already answers a duplicate delivery with (the tail ran, the caller has its answer
+    # and must not send it twice), and refusing it here would have made that branch
+    # unreachable from the route n8n actually calls. Everything else - `processing`,
+    # `failed`, or a `done` row with nothing stored - has no lane result to fold in and no
+    # answer to replay, so it is refused BEFORE the tail runs: completing it would compose
+    # an answer out of the caller's fragments and erase the failure record.
+    replayable = row.status == "done" and isinstance(row.response, dict)
+    if row.status != "delegated" and not replayable:
         raise AppException(
             status_code=409,
             message="This turn cannot be completed.",
             detail=(
-                f"chatbot turn {row.id} is {row.status!r} at stage {row.stage!r}, not "
-                "'delegated', so it has no lane result to fold in. A failed turn is "
-                "retried from the trace screen, never completed."
+                f"chatbot turn {row.id} is {row.status!r} at stage {row.stage!r}: it is "
+                "neither 'delegated' (a lane result to fold in) nor a finished turn with a "
+                "stored answer to replay. A failed turn is retried from the trace screen, "
+                "never completed."
             ),
             code="CHATBOT_TURN_NOT_DELEGATED",
         )
@@ -312,5 +389,23 @@ def chat_turn_complete_by_body(
     turn is found, and the reason is the n8n side's: `sub-output` holds the `ctx` and not
     the id, so this keeps their cut inside one workflow.
     """
-    turn_id = _resolve_turn_for_complete(db, payload)
+    try:
+        turn_id = _resolve_turn_for_complete(db, payload)
+    except AppException as refused:
+        # A refusal is a call too. Logged here because the answer is decided BEFORE
+        # `chat_turn_complete` runs, so its own log would never be reached, and a 404 /
+        # 409 that leaves no `integration_log` row is the one call an operator cannot
+        # find when n8n reports a turn that was never finished.
+        detail = refused.detail if isinstance(refused.detail, dict) else {}
+        ctx = payload.ctx or {}
+        _log_complete_call(
+            db,
+            request=request,
+            payload=payload,
+            business_id=str(uuid.uuid4()),
+            external_reference=str((ctx.get("contact") or {}).get("id") or ""),
+            status_code=refused.status_code,
+            error_message=str(detail.get("detail") or detail.get("message") or refused.detail),
+        )
+        raise
     return chat_turn_complete(turn_id, payload, request, current_user, db)

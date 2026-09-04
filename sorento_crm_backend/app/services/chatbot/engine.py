@@ -298,7 +298,16 @@ def _select_turn(db: Session, *, contact_respond_id: str, message_id: str | None
     """The raw lookup. Kept separate from `_existing_turn` so the post-collision retry
     below can re-read WITHOUT going through whatever a test has wrapped around the public
     helper - the forced-TOCTOU test synchronises on `_existing_turn`, and a second trip
-    through that barrier would deadlock the very path being fixed."""
+    through that barrier would deadlock the very path being fixed.
+
+    The ORDER BY is the ONE place the "which row" question is answered, for the head and
+    for the id-less `/turn/complete` alike (`find_turn_for_message`). The HIGHEST attempt
+    wins, agreed with the n8n side: when S2b's retry puts a second row on a message, the
+    retry is the row being watched, and completing (or replaying) the older one would fold
+    a lane's result into a row nobody is looking at and leave the live one delegated
+    forever. `(contact_respond_id, message_id)` is UNIQUE today, so there is exactly one
+    row to order and this is the shape of the answer rather than a change to it;
+    `created_at` breaks a tie for a row written before `attempt` was populated."""
     if message_id is None:
         return None
     return (
@@ -307,9 +316,24 @@ def _select_turn(db: Session, *, contact_respond_id: str, message_id: str | None
             ChatbotTurn.contact_respond_id == contact_respond_id,
             ChatbotTurn.message_id == message_id,
         )
-        .order_by(ChatbotTurn.created_at.asc())
+        .order_by(ChatbotTurn.attempt.desc(), ChatbotTurn.created_at.desc())
         .first()
     )
+
+
+def find_turn_for_message(db: Session, *, contact_respond_id: str, message_id: str | None):
+    """Which row is this message's turn? Asked by the ENDPOINT as well as by the head.
+
+    The id-less `/turn/complete` identifies a turn from `(contact, respond message id)`,
+    which is the same question `_existing_turn` asks on arrival, so it asks it through the
+    same lookup instead of writing a second `ORDER BY`: the HIGHEST attempt, once for both
+    readers. Two orderings over one pair would disagree about which row IS the turn the
+    moment a second row for a message existed (S2b's retry), and the disagreement would
+    surface as a lane result folded into a row nobody is watching. Public because
+    `app/api/v1/external/chat.py` is a doorway file; the package still EXPORTS only
+    `run_turn` / `complete_turn` (D3).
+    """
+    return _select_turn(db, contact_respond_id=contact_respond_id, message_id=message_id)
 
 
 def _existing_turn(db: Session, *, contact_respond_id: str, message_id: str | None):
@@ -1314,13 +1338,23 @@ FRAGMENT_FIELDS: tuple[str, ...] = (
 class CompleteResult:
     """What the `/complete` endpoint serialises."""
 
-    __slots__ = ("turn_id", "reply", "actions", "session_patch", "status", "stage", "error")
+    __slots__ = (
+        "turn_id",
+        "reply",
+        "actions",
+        "session_patch",
+        "status",
+        "stage",
+        "error",
+        "is_test",
+    )
 
     def __init__(self, **kwargs: Any) -> None:
         for slot in self.__slots__:
             setattr(self, slot, kwargs.get(slot))
         if self.actions is None:
             self.actions = []
+        self.is_test = bool(self.is_test)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -1328,6 +1362,9 @@ class CompleteResult:
             "reply": self.reply,
             "actions": self.actions,
             "session_patch": self.session_patch,
+            # The ROW's `is_test`, so the caller's test-guard reads one field here instead
+            # of remembering what `/turn` said about this turn two calls ago.
+            "is_test": self.is_test,
         }
 
 
@@ -1665,6 +1702,7 @@ def complete_turn(  # noqa: PLR0915 - one linear pipeline, and the order IS the 
                 session_patch=None,
                 status=row.status,
                 stage=row.stage,
+                is_test=bool(row.is_test),
             )
         if row.status != "delegated":
             # ONLY a delegated turn has a tail to run, and the guard is not tidiness.
@@ -1771,6 +1809,7 @@ def complete_turn(  # noqa: PLR0915 - one linear pipeline, and the order IS the 
         session_patch=session_patch if dry_run else None,
         status="done",
         stage="remembered",
+        is_test=dry_run,
     )
 
 
