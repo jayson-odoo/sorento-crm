@@ -337,11 +337,21 @@ class TestCannedBranchesFinishInTurn:
         )
         assert result.reply is not None, f"{kind}: no reply composed"
         assert result.reply["text"] == expected_text
+        # `send_message`'s `quick_replies` / `result_set` are the SEALED
+        # compile-current-state values (n8n's comma-joined string or None;
+        # `last_result_set` as sealed) - not a bare `[]`. A canned lane seals no
+        # quick replies and no result set, so both pin down to None / [] here;
+        # asserting the action equals the reply's OWN sealed values (rather than
+        # a hardcoded literal) is what proves the action carries what the reply
+        # carries, not a coincidence of two empty lists.
+        assert result.reply.get("quick_replies") is None, f"{kind}: expected no sealed quick replies"
+        assert result.reply.get("result_set") == [], f"{kind}: expected an empty sealed result set"
         assert result.actions == [
             {
                 "kind": "send_message",
                 "text": expected_text,
-                "quick_replies": [],
+                "quick_replies": result.reply.get("quick_replies"),
+                "result_set": result.reply.get("result_set"),
                 "dry_run": False,
             }
         ]
@@ -384,11 +394,17 @@ class TestAccessDeniedNoSessionWrite:
         assert result.delegate is None
         assert result.branch_kind == "access_denied"
         assert result.reply["text"] == "Sorry, you are not allowed to access general-enquiries"
+        # See TestCannedBranchesFinishInTurn's comment: quick_replies / result_set are
+        # the sealed compile-current-state values, not a bare `[]` - access_denied
+        # seals no quick replies and no result set the same way the canned lanes do.
+        assert result.reply.get("quick_replies") is None, "expected no sealed quick replies"
+        assert result.reply.get("result_set") == [], "expected an empty sealed result set"
         assert result.actions == [
             {
                 "kind": "send_message",
                 "text": "Sorry, you are not allowed to access general-enquiries",
-                "quick_replies": [],
+                "quick_replies": result.reply.get("quick_replies"),
+                "result_set": result.reply.get("result_set"),
                 "dry_run": False,
             }
         ]
