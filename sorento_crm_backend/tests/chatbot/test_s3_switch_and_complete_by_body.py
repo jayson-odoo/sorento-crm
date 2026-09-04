@@ -366,3 +366,80 @@ class TestCompleteByBody:
 
         assert resp.status_code == 200, resp.text
         assert resp.json()["turn_id"] == delegated_turn.turn_id
+
+
+class TestSendActionShape:
+    """The action fields the CALLER executes, agreed with the n8n executor.
+
+    The rule is that an action carries the SEALED reply's own values verbatim. That is not
+    a style choice: `quick_replies` is `compile-current-state`'s `quick_reply`, which is
+    n8n's comma-joined STRING or null, and `sub-sendmsg`'s `quick_reply` input has never
+    been handed a list. Normalising it here would break the half of the send path that did
+    not move into the CRM.
+
+    **Measured, and it is why the quick-reply case below is a unit test:** no canned lane
+    can produce quick replies today. `compile-current-state` sets `quickReply` from
+    `access-level-choice-message` or `build-suggest-offer` only, and a canned lane supplies
+    neither fragment - checked across `escalate_offer`, `clarify_menu` and `offer_hold`,
+    all three seal no `quick_replies` at all. So the lane test below asserts the
+    PASS-THROUGH (the action carries whatever the reply sealed, absent included) and the
+    unit test asserts the shape when there IS something to carry.
+    """
+
+    def test_a_canned_lane_action_carries_the_sealed_values_not_a_normalised_copy(
+        self, session_factory, seeded, stub_parser, stub_access
+    ):
+        _set_completed_lanes(session_factory, ["escalate_offer"])
+        stub_parser(
+            _parser_output(
+                message_type="unknown",
+                domain_hint=None,
+                correction=True,
+                escalation={"is_escalation_confirmation": False, "company_pick": None},
+            )
+        )
+        stub_access()
+
+        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
+
+        assert result.branch_kind == "escalate_offer"
+        send = result.actions[-1]
+        assert send["kind"] == "send_message"
+        assert send["text"] == result.reply["text"]
+        # IDENTITY with the sealed value, not `[]`: this lane seals no quick replies, and
+        # an action that invented an empty list would be hiding that from the sender.
+        assert send["quick_replies"] == result.reply.get("quick_replies")
+        assert send["result_set"] == result.reply.get("result_set")
+        assert send["dry_run"] is False
+        # Nothing to attach, so there is no second action.
+        assert [a["kind"] for a in result.actions] == ["send_message"]
+
+    def test_quick_replies_and_attachments_pass_through_untouched(self):
+        """The shape when the reply DOES carry both. `send_attachments` comes second, for
+        the reason n8n wires it that way: the text explains the files."""
+        reply = {
+            "text": "Here are the closest matches:",
+            "quick_replies": "IBKS7245-NG-BL,Yes escalate,No it's okay",
+            "result_set": [{"idx": 1, "label": "IBKS7245-NG-BL"}],
+            "attachments_src": [{"url": "s3://spec.pdf"}],
+        }
+
+        actions = engine_mod._send_actions(reply, dry_run=False)
+
+        assert [a["kind"] for a in actions] == ["send_message", "send_attachments"]
+        send, attach = actions
+        assert send["quick_replies"] == "IBKS7245-NG-BL,Yes escalate,No it's okay", (
+            "the comma-joined string is what `sub-sendmsg`'s own input takes"
+        )
+        assert send["result_set"] == reply["result_set"]
+        assert attach["attachments_src"] == reply["attachments_src"]
+        assert attach["reply"] == reply, "`sub-send-attachments` reads more than one field"
+        assert send["dry_run"] is False and attach["dry_run"] is False
+
+    def test_a_dry_run_flags_every_action(self):
+        actions = engine_mod._send_actions(
+            {"text": "x", "quick_replies": None, "result_set": [], "attachments_src": [{"u": 1}]},
+            dry_run=True,
+        )
+        assert len(actions) == 2
+        assert all(a["dry_run"] is True for a in actions)

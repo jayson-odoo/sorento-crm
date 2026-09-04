@@ -1494,6 +1494,44 @@ def run_tail(
     return reply, session_patch
 
 
+def _send_actions(reply: Mapping[str, Any], *, dry_run: bool) -> list[dict[str, Any]]:
+    """The actions the CALLER executes for a finished turn, in order (D9).
+
+    Shape agreed with the n8n executor, and it is the SEALED reply's own values verbatim,
+    not a normalised copy of them:
+
+    * `quick_replies` is `compile-current-state`'s `quick_reply` as it stands - n8n's
+      comma-joined string, or null when the turn offered none. Coercing it to a list
+      would hand `sub-sendmsg` a type its `quick_reply` input has never been given, and
+      the sender is the half of this that did NOT move into the CRM.
+    * `result_set` is `variables.last_result_set`, which is what the send node passes on
+      so a numbered reply's rows travel with the message that numbered them.
+    * `send_attachments` is a SECOND action and only when there is something to send.
+      It carries the whole `reply` because `sub-send-attachments` reads more than one
+      field off it, and it comes AFTER the message for the same reason n8n wires it that
+      way: the text explains the files.
+    """
+    send: dict[str, Any] = {
+        "kind": "send_message",
+        "text": reply.get("text"),
+        "quick_replies": reply.get("quick_replies"),
+        "result_set": reply.get("result_set"),
+        "dry_run": dry_run,
+    }
+    actions = [send]
+    attachments = reply.get("attachments_src")
+    if attachments is not None:
+        actions.append(
+            {
+                "kind": "send_attachments",
+                "attachments_src": attachments,
+                "reply": dict(reply),
+                "dry_run": dry_run,
+            }
+        )
+    return actions
+
+
 def _complete_canned_lane(
     db: Session,
     *,
@@ -1574,18 +1612,7 @@ def _complete_canned_lane(
         )
         reply = {**reply, **reply_extras}
 
-    # D9: the CALLER sends. `quick_replies` is a LIST on the action because that is what
-    # the action vocabulary declares, while the reply's own field carries n8n's
-    # comma-joined string - one shape for the sender, one for the wire it came off.
-    quick = reply.get("quick_replies")
-    actions = [
-        {
-            "kind": "send_message",
-            "text": reply.get("text"),
-            "quick_replies": quick if isinstance(quick, list) else ([quick] if quick else []),
-            "dry_run": dry_run,
-        }
-    ]
+    actions = _send_actions(reply, dry_run=dry_run)
     turn_trace.record(
         "sent",
         summary="Handed the reply to the caller to send.",

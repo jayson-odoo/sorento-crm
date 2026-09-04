@@ -145,6 +145,26 @@ result_set}`, `send_attachments {attachments_src, reply}`, `assign_conversation
 Every action carries `dry_run` (true on test envelopes, D14) so the clone's `test-guard`
 records instead of sends, exactly as today.
 
+**Implemented verbatim at S3** (5 Sep 2026, field shapes agreed with the n8n executor), so
+this line needs no amendment - but two properties of it are worth stating because an
+implementation could satisfy the field NAMES and still break the sender:
+
+- `quick_replies` is the SEALED `compile-current-state` value, unchanged: n8n's own
+  comma-joined string, or null when the turn offered none. `sub-sendmsg`'s `quick_reply`
+  input has never been given a list, and the sender is the half that did NOT move into the
+  CRM, so an action that normalised the type would break it. `result_set` is likewise
+  `variables.last_result_set` as sealed.
+- `send_attachments` is emitted ONLY when `reply.attachments_src` is non-null, and it comes
+  AFTER `send_message` for the reason n8n wires it that way: the text explains the files.
+  It carries the whole `reply` object because `sub-send-attachments` reads more than one
+  field off it.
+
+Measured while implementing: no canned lane can produce quick replies today.
+`compile-current-state` sets `quickReply` from `access-level-choice-message` or
+`build-suggest-offer` only, and no canned lane supplies either fragment, so every one of
+the eight seals a null. That is why the pass-through is what S3's own test asserts on a
+lane and the populated shape is asserted as a unit.
+
 **D14's input half (O2, AC-112).** A dry-run envelope may also carry three optional harness
 keys, and the engine honours them ONLY on a dry run: `mock_reformulator_output` replaces the
 parser call (no provider is asked; the mock goes through the same `post_process` +
