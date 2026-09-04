@@ -19,6 +19,7 @@ import {
   DataGridTableRowSpacer,
   headerRowSpan,
   useBodySkeleton,
+  skeletonRowCount,
   skipMergedLeafHeader,
 } from '@/components/ui/data-grid-table';
 import {
@@ -191,7 +192,7 @@ function DataGridTableDnd<TData>({
 
           <DataGridTableBody>
             {showBodySkeleton ? (
-              Array.from({ length: pagination.pageSize }).map((_, rowIndex) => (
+              Array.from({ length: skeletonRowCount(pagination.pageSize) }).map((_, rowIndex) => (
                 <DataGridTableBodyRowSkeleton key={rowIndex}>
                   {/* LEAF columns, as in DataGridTable: the flat list includes a group
                       PARENT, which is not a cell. */}

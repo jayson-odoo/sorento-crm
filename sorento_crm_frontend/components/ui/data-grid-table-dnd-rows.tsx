@@ -15,6 +15,7 @@ import {
   DataGridTableHeadRowCellResize,
   DataGridTableRowSpacer,
   useBodySkeleton,
+  skeletonRowCount,
   useReturnedRowId,
 } from '@/components/ui/data-grid-table';
 import {
@@ -158,7 +159,7 @@ function DataGridTableDndRows<TData>({
 
           <DataGridTableBody>
             {showBodySkeleton ? (
-              Array.from({ length: pagination.pageSize }).map((_, rowIndex) => (
+              Array.from({ length: skeletonRowCount(pagination.pageSize) }).map((_, rowIndex) => (
                 <DataGridTableBodyRowSkeleton key={rowIndex}>
                   {table.getVisibleFlatColumns().map((column, colIndex) => {
                     return (

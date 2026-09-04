@@ -160,9 +160,7 @@ export function PanelDataGrid<TRow extends object>({
 }) {
   const [pagination, setPagination] = React.useState<PaginationState>({
     pageIndex: 0,
-    // `Number.MAX_SAFE_INTEGER`: TanStack's pagination row model slices by index,
-    // so an oversized page size is just "every row", not a real second page.
-    pageSize: paginate ? pageSize : Number.MAX_SAFE_INTEGER,
+    pageSize,
   });
   const [search, setSearch] = React.useState('');
   const [sorting, setSorting] = React.useState<SortingState>([]);
@@ -176,7 +174,7 @@ export function PanelDataGrid<TRow extends object>({
   const table = useReactTable({
     columns: columns as ColumnDef<TRow, unknown>[],
     data: filtered,
-    pageCount: Math.ceil(filtered.length / pagination.pageSize) || 0,
+    pageCount: paginate ? Math.ceil(filtered.length / pagination.pageSize) || 0 : 1,
     getRowId,
     state: {
       pagination,
@@ -198,7 +196,14 @@ export function PanelDataGrid<TRow extends object>({
       ? {}
       : { onExpandedChange, getExpandedRowModel: getExpandedRowModel() }),
     getCoreRowModel: getCoreRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
+    // `paginate={false}` renders EVERY row by leaving the pagination row model
+    // off entirely: without it TanStack's `getRowModel()` is the pre-pagination
+    // model, so nothing is sliced and the page size is never read. This used to
+    // be an oversized `pageSize` instead, and that is exactly what made the
+    // shared loading skeleton - which draws `pageSize` rows - throw
+    // `RangeError: Invalid array length` on every mount that still had
+    // preferences resolving.
+    ...(paginate ? { getPaginationRowModel: getPaginationRowModel() } : {}),
     columnResizeMode: 'onChange',
   });
 

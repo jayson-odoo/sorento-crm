@@ -426,8 +426,10 @@ function DataGridTableBody({ children }: { children: ReactNode }) {
  * (plain, column-drag, row-drag, and the drive's own list body) and every grid
  * built on them behave the same.
  *
- * The `pageSize` clause is what makes those render paths safe to write
- * `Array.from({ length: pagination.pageSize })` without re-testing it.
+ * The `pageSize` clause only ever ruled out `0`/`undefined`; it does NOT make
+ * `Array.from({ length: pagination.pageSize })` safe on its own, and a caller
+ * that handed the table an oversized page size proved it - see
+ * `skeletonRowCount`, which every body render path uses instead.
  */
 function useBodySkeleton(): boolean {
   const { table, isLoading, isColumnPreferencesLoading, props } = useDataGrid();
@@ -439,6 +441,30 @@ function useBodySkeleton(): boolean {
       table.getState().pagination?.pageSize &&
       (!hasRows || isColumnPreferencesLoading),
   );
+}
+
+/**
+ * The most skeleton rows any grid draws, whatever its page size is.
+ *
+ * It is the DataGrid's own default page (`DEFAULT_PAGE_SIZES[0]` in
+ * `data-grid-pagination.tsx`): ten grey bars already read as "rows are coming",
+ * and a hundred read as the same thing more slowly.
+ */
+export const SKELETON_ROWS_MAX = 10;
+
+/**
+ * How many skeleton rows to draw for a given page size.
+ *
+ * `Array.from({ length: n })` throws `RangeError: Invalid array length` for
+ * anything that is not a valid array length, and a grid that renders every row
+ * has no meaningful page size to draw a placeholder for. A skeleton is a
+ * placeholder for what is arriving, not a faithful copy of it, so the count is
+ * capped here - in ONE place, read by all three body render paths (plain,
+ * column-drag, row-drag).
+ */
+export function skeletonRowCount(pageSize: number | undefined): number {
+  if (!pageSize || !Number.isFinite(pageSize) || pageSize < 1) return SKELETON_ROWS_MAX;
+  return Math.min(Math.floor(pageSize), SKELETON_ROWS_MAX);
 }
 
 function DataGridTableBodyRowSkeleton({ children }: { children: ReactNode }) {
@@ -1281,7 +1307,7 @@ function DataGridTable<TData>() {
 
         <DataGridTableBody>
           {showBodySkeleton ? (
-            Array.from({ length: pagination.pageSize }).map((_, rowIndex) => (
+            Array.from({ length: skeletonRowCount(pagination.pageSize) }).map((_, rowIndex) => (
               <DataGridTableBodyRowSkeleton key={rowIndex}>
                 {/* LEAF columns: the flat list includes a group PARENT, which is not a
                     cell, so every skeleton row came out one td wider than the table. */}
