@@ -98,6 +98,30 @@ CAPTURE_REPORT: dict[str, dict] = {
     # (not_found) 1, `customer-picker` 2, `resource_attachment` 2, `promotion` 3,
     # `tier-gate` 3. `build-ctx` is deliberately NOT listed: it already has a pool under
     # `spine-rs-1a`, and the one capture of it here only adds to that count.
+    "sub-fetch-results-live": {
+        "version": "live-5sep",
+        "version_pool": 772,
+        "scanned": 772,
+        "all_versions": 772,
+        "captured_on": "2026-09-05",
+        "nodes": ("tool-filter", "tier-probe-plan", "tier-probe-collect", "fetch-result"),
+    },
+    "sub-get-results": {
+        "version": "125e5c32",
+        "version_pool": 365,
+        "scanned": 365,
+        "all_versions": 365,
+        "captured_on": "2026-09-05",
+        "nodes": ("entity-ids-transformer", "output-structurer"),
+    },
+    "sub-get-rag-live": {
+        "version": "live-5sep",
+        "version_pool": 862,
+        "scanned": 862,
+        "all_versions": 1050,
+        "captured_on": "2026-09-05",
+        "nodes": ("Code_in_JavaScript", "Code_in_JavaScript1"),
+    },
     "sub-resolve-and-gate-rs": {
         "version": "4f367b1c",
         "version_pool": 682,
@@ -186,6 +210,13 @@ def _expected_branch_kind(fixture: _corpus.Fixture) -> str | None:
 # turns on: `ALLOWED` / `ALLOWS_EMPTY` / `REQUIRED_TYPES` / `REQUIRE_SPECIFIC_DOMAINS` are
 # all keyed by domain, so "five captures of `incoming`" says something and "five captures"
 # says nothing.
+# `fetch-result` is cut by the ARM it took, the vocabulary its own `_fetch_arm` declares.
+_FETCH_ARM_CUT_NODES = frozenset({"fetch-result"})
+
+# The tool the turn selected: what actually varies `entity-ids-transformer`'s date/order
+# params and `output-structurer`'s presenter shape, and the axis H49 is written in.
+_TOOL_CUT_NODES = frozenset({"tool-filter", "entity-ids-transformer", "output-structurer"})
+
 _DOMAIN_CUT_NODES = frozenset(
     {
         "disallowed-entity-gate",
@@ -270,6 +301,18 @@ def _roster_cell(fixture: _corpus.Fixture) -> str:
     return "multi_company" if len(body.get("routing_companies") or []) > 1 else "single_company"
 
 
+def _expected_tool(fixture: _corpus.Fixture) -> str | None:
+    """Which MCP tool this capture selected, wherever the node records it."""
+    for item in fixture.expected:
+        body = item.get("json") or {}
+        name = body.get("name") or (body.get("_tool_pick") or {}).get("chosen")
+        if name:
+            return str(name)
+    trigger = (fixture.ctx.get("When Executed by Another Workflow") or [{}])[0].get("json") or {}
+    tool = trigger.get("tool")
+    return str(tool).strip() if tool else None
+
+
 def _branch_of(fixture: _corpus.Fixture) -> str:
     """A coverage CELL for one fixture."""
     if fixture.node in _ROSTER_NODES:
@@ -305,6 +348,14 @@ def _branch_of(fixture: _corpus.Fixture) -> str:
         for item in fixture.expected:
             return "tier_ask" if (item.get("json") or {}).get("tier_ask") else "tier_proceed"
         return "unknown"
+    if fixture.node in _FETCH_ARM_CUT_NODES:
+        for item in fixture.expected:
+            arm = (item.get("json") or {}).get("_fetch_arm")
+            if arm:
+                return str(arm)
+        return "unknown"
+    if fixture.node in _TOOL_CUT_NODES:
+        return _expected_tool(fixture) or "no_tool"
     if fixture.node in _DOMAIN_CUT_NODES:
         return _expected_domain(fixture) or "no_domain"
     return "all"

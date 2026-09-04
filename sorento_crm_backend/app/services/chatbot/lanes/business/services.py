@@ -10,6 +10,8 @@ makes the 254-fixture replay a pure function over JSON (AC-602).
 | `get-access-types` (httpRequest) | `access_types` | `ContactAccessTypeService.resolve_active_access_levels_for_contact` |
 | `resolve-entity` (httpRequest) | `resolve_entity` | the function behind `POST /api/v1/system/references/resolve` |
 | `probe-incoming` / `probe-customer-orders` (executeWorkflow) | `probe` | S6b's fetch, over `MCPRuntimeClient` (D10) |
+| `Execute 'sub-get-rag'` (executeWorkflow -> pgvector SQL) | `embed` + `tool_search` | `EmbeddingReadService.search_tool_chunks` (H53) |
+| `MCP Client1` (mcpClient, raw IP) | `mcp_call` | `MCPRuntimeClient` at `settings.ai_assistant_mcp_url` (H52) |
 
 `space_id` is the default respond workspace's, not n8n's hard-coded `364817` (D5).
 """
@@ -42,6 +44,34 @@ class ProbeFn(Protocol):
         semantic_input: dict[str, Any],
         user_prompt: str,
     ) -> Any: ...
+
+
+class EmbedFn(Protocol):
+    def __call__(self, query: str) -> list[float]: ...
+
+
+class ToolSearchFn(Protocol):
+    def __call__(
+        self, embedding: list[float], *, query: str, domain: str | None
+    ) -> list[dict[str, Any]]: ...
+
+
+class McpCallFn(Protocol):
+    def __call__(self, name: str, args: dict[str, Any]) -> Any: ...
+
+
+@dataclass(frozen=True)
+class FetchServices:
+    """S6b's three seams, same shape as `ResolveGateServices` for the same reason.
+
+    `embed` and `tool_search` are two halves of what `sub-get-rag` was (embed the prompt,
+    then search) and they are separate because only the first is provider I/O: a test that
+    wants a deterministic ranking stubs `tool_search` and leaves the embedding alone.
+    """
+
+    embed: EmbedFn
+    tool_search: ToolSearchFn
+    mcp_call: McpCallFn
 
 
 @dataclass(frozen=True)
@@ -134,6 +164,101 @@ def _probe() -> ProbeFn:
         )
 
     return call
+
+
+class EmbeddingUnavailable(RuntimeError):
+    """No embedding provider is configured, so no tool can be chosen this turn."""
+
+
+def _embed(db: Session) -> EmbedFn:
+    def call(query: str) -> list[float]:
+        """`text-embedding-3-small`, through the shared LLM provider.
+
+        NOT `app.api.v1.external.rag._embed_query`: that is a router private, and it raises
+        `HTTPException` - a web-layer failure shape that would surface from inside a turn as
+        a status code nobody asked for. The provider is the same model the RAG endpoint
+        uses, so the vector is identical; only the failure semantics change, to a lane
+        error the engine already knows how to record.
+        """
+        from app.config import settings
+        from app.services.llm_provider import get_provider
+
+        if not settings.openai_api_key:
+            raise EmbeddingUnavailable(
+                "no embedding provider is configured, so no MCP tool can be selected"
+            )
+        provider = get_provider("openai", settings.openai_api_key)
+        vector = provider.embed(query)
+        if not vector:
+            raise EmbeddingUnavailable("the embedding provider returned an empty vector")
+        return list(vector)
+
+    return call
+
+
+def _tool_search(db: Session) -> ToolSearchFn:
+    def call(
+        embedding: list[float], *, query: str, domain: str | None
+    ) -> list[dict[str, Any]]:
+        """`sub-get-rag`'s SQL plus both of its Code nodes, in one service call (H53).
+
+        The two Code nodes did the interesting half: the second collapses `source_id` to
+        the tool name after `implemented::` and SUMS the similarities per name, which is
+        why `tool-filter` cannot simply take the first row. The fold itself is
+        `fetch.collapse_tool_rows` (a ported node with its own 38 captures); this seam is
+        the half that must not leave the service layer - the query.
+        """
+        from app.services.embedding_service import EmbeddingReadService
+
+        from app.services.chatbot.lanes.business.fetch import collapse_tool_rows
+
+        rows = EmbeddingReadService(db).search_tool_chunks(
+            embedding, source_type="mcp_tool", limit=5, domain=domain
+        )
+        return collapse_tool_rows(rows)
+
+    return call
+
+
+def _mcp_call(db: Session) -> McpCallFn:
+    def call(name: str, args: dict[str, Any]) -> Any:
+        """One MCP tool call at the CONFIGURED url (H52, D10).
+
+        n8n bakes `http://<raw ip>:8765/mcp` into two nodes. This reads
+        `settings.ai_assistant_mcp_url`, the same setting the AI assistant already uses, so
+        an environment moves the endpoint without a deploy of anything but config.
+        """
+        from app.config import settings
+        from app.services.ai_assistant_service import MCPRuntimeClient
+
+        # The plan's capacity section bounds each MCP call at 10 s, and the AI assistant's
+        # own 20 is a different budget for a different surface (a user watching a screen,
+        # not a customer waiting on WhatsApp inside a whole turn's latency target).
+        # `CHATBOT_MCP_TIMEOUT_SECONDS` overrides it per environment.
+        timeout = int(getattr(settings, "chatbot_mcp_timeout_seconds", 0) or 10)
+        client = MCPRuntimeClient(settings.ai_assistant_mcp_url, timeout_seconds=timeout)
+        return client.call_tool(name, args)
+
+    return call
+
+
+def fetch_services(db: Session) -> FetchServices:
+    """S6b's bundle. One session, bound at the call site, held across no provider I/O."""
+    return FetchServices(embed=_embed(db), tool_search=_tool_search(db), mcp_call=_mcp_call(db))
+
+
+def fetch_space_id(db: Session) -> str | None:
+    """The default respond workspace's `space_id` (D5), for the fetch step's tool args.
+
+    n8n hard-codes `364817` in `entity-ids-transformer` and overrides `semantic_input` with
+    it. D5 reassigns the VALUE, not a list of call sites, so the fetch step reads the
+    workspace row like every other producer of it. Falls back to n8n's literal inside
+    `entity_ids_transformer` when there is no workspace row, which keeps this install
+    byte-identical and any other install correct.
+    """
+    from app.services.chatbot.head.access import default_space_id
+
+    return default_space_id(db)
 
 
 def production_services(db: Session, *, space_id: str | None = None) -> ResolveGateServices:
