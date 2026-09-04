@@ -1,7 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import { getStockDashboard, getStockBalance, getStockAlerts, bulkDeleteStock } from '../services/stockService';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export function useStockDashboard() {
   return useQuery({
@@ -14,10 +15,10 @@ export function useStockDashboard() {
 
 export function useStockBalance(params: DataGridApiFetchParams & { warehouse_id?: string; product_id?: string; category_id?: string; status?: string }) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['stock-balance', params.pageIndex, params.pageSize, params.sorting, params.searchQuery, params.warehouse_id, params.product_id, params.category_id, params.status],
     queryFn: () => getStockBalance(params),
     staleTime: 1000 * 60 * 5,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

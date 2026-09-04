@@ -360,6 +360,7 @@ export function PipelineClient() {
           total={total}
           isLoading={projects.isLoading}
           isFetching={projects.isFetching}
+          isPlaceholderData={projects.isPlaceholderData}
           pagination={pagination}
           onPaginationChange={setPagination}
           sorting={sorting}

@@ -1,7 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { fmtQty } from '../lib/qtyPrecision';
 import { confirmDecisions } from '../services/decisionService';
 import {
@@ -39,7 +39,6 @@ export function useOrderSummary(q: OrderSummaryQuery = {}, enabled = true) {
     queryFn: () => getOrderSummary(q),
     enabled,
     staleTime: 5 * 60_000,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -61,7 +60,6 @@ export function useOrderSummaryDemand(
     queryFn: () => getOrderSummaryDemand(productCode as string, kind, runId),
     enabled: enabled && !!productCode,
     staleTime: 5 * 60_000,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -82,7 +80,6 @@ export function useOrderSummaryLocations(
     queryFn: () => getOrderSummaryLocations(productCode as string, runId),
     enabled: enabled && !!productCode,
     staleTime: 5 * 60_000,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -94,7 +91,6 @@ export function useOrderSummarySuppliers(productCode: string | null, enabled: bo
     queryFn: () => getOrderSummarySuppliers(productCode as string),
     enabled: enabled && !!productCode,
     staleTime: 5 * 60_000,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

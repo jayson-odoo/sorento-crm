@@ -1,0 +1,19 @@
+{
+  "method": "hard reload of Products with a runtime-registered init script (agent-browser --init-script) that patched window.fetch to delay /api/v1/master-data/products and /api/v1/list-query/column-config by 900-1300ms, then polled every 20ms from t=0 for 4000ms, recording totalSkeletons, tableSkeletons and whether the real 'Go to next page' pager button was present",
+  "summary": {
+    "t0_to_t679ms": "no skeletons anywhere (page shell still assembling)",
+    "t85_to_t299ms": "a brief unrelated totalSkeletons=22 blip (tableSkeletons=0) from other chrome (sidebar/quick-access widgets), not the pager or the table",
+    "t1049_to_t2589ms": "tableSkeletons=700 (14 cols x 50 rows), hasPagerButtons=false the entire time (pager itself shows only skeleton bars, not the real Next/Prev/rows-per-page controls)",
+    "t2819ms_onward": "hasPagerButtons flips true, totalSkeletons drops to 0, and stays that way through t=4007ms (end of observation window) - no reversion to skeleton"
+  },
+  "key_samples": [
+    { "t": 0, "totalSkeletons": 0, "tableSkeletons": 0, "hasPagerButtons": false },
+    { "t": 679, "totalSkeletons": 0, "tableSkeletons": 0, "hasPagerButtons": false },
+    { "t": 1049, "totalSkeletons": 702, "tableSkeletons": 700, "hasPagerButtons": false },
+    { "t": 2589, "totalSkeletons": 702, "tableSkeletons": 700, "hasPagerButtons": false },
+    { "t": 2682, "totalSkeletons": 702, "tableSkeletons": 700, "hasPagerButtons": false },
+    { "t": 2819, "totalSkeletons": 0, "tableSkeletons": 0, "hasPagerButtons": true },
+    { "t": 4007, "totalSkeletons": 0, "tableSkeletons": 0, "hasPagerButtons": true }
+  ],
+  "conclusion": "PASS - the pager shows skeleton bars only until first paint (t~2819ms), then the real pager, and never reverts to skeleton for the rest of the observation window. Combined with the M4-02 Next/sort/filter/search checks (which independently confirm maxSkeleton=0 during every subsequent paging action), this satisfies 'never skeleton again during paging.'"
+}

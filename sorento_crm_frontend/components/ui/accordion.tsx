@@ -34,7 +34,9 @@ const accordionItemVariants = cva('', {
 });
 
 const accordionTriggerVariants = cva(
-  'flex flex-1 items-center justify-between py-4 gap-2.5 text-foreground font-medium transition-all [&[data-state=open]>svg]:rotate-180 cursor-pointer',
+  // The chevron/plus SVGs carry their own transition-transform (below); the
+  // trigger itself has nothing that needs to transition, so no class here.
+  'flex flex-1 items-center justify-between py-4 gap-2.5 text-foreground font-medium [&[data-state=open]>svg]:rotate-180 cursor-pointer',
   {
     variants: {
       variant: {
@@ -44,7 +46,7 @@ const accordionTriggerVariants = cva(
       },
       indicator: {
         arrow: '',
-        plus: '[&>svg>path:last-child]:origin-center [&>svg>path:last-child]:transition-all [&>svg>path:last-child]:duration-(--duration-base) [&[data-state=open]>svg>path:last-child]:rotate-90 [&[data-state=open]>svg>path:last-child]:opacity-0 [&[data-state=open]>svg]:rotate-180',
+        plus: '[&>svg>path:last-child]:origin-center [&>svg>path:last-child]:transition-[transform,opacity] [&>svg>path:last-child]:duration-(--duration-base) [&[data-state=open]>svg>path:last-child]:rotate-90 [&[data-state=open]>svg>path:last-child]:opacity-0 [&[data-state=open]>svg]:rotate-180',
         none: '',
       },
     },
@@ -56,7 +58,8 @@ const accordionTriggerVariants = cva(
 );
 
 const accordionContentVariants = cva(
-  'overflow-hidden text-sm text-accent-foreground transition-all data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down',
+  // Height is keyframe-driven (animate-accordion-up/-down), not a transition.
+  'overflow-hidden text-sm text-accent-foreground data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down',
   {
     variants: {
       variant: {

@@ -59,15 +59,20 @@ function ProductPhotoBody({
     if (data.url && !broken) {
       return (
         <div className="space-y-2">
-          {/* A plain <img>: the src is a signed, expiring S3/R2 URL, so next/image would
-              need every storage host whitelisted and would re-proxy a link that is
-              already thumbnail-sized and short-lived. */}
-          <img
-            src={data.url}
-            alt={productName || sku}
-            onError={() => setBroken(true)}
-            className="mx-auto max-h-[320px] w-auto max-w-full rounded object-contain"
-          />
+          {/* M6-07: a fixed aspect-[4/3] box, the same one the loading
+              Skeleton below reserves, so the popover does not resize the
+              instant the photo finishes loading. */}
+          <div className="aspect-[4/3] w-full overflow-hidden rounded bg-muted/20">
+            {/* A plain <img>: the src is a signed, expiring S3/R2 URL, so next/image would
+                need every storage host whitelisted and would re-proxy a link that is
+                already thumbnail-sized and short-lived. */}
+            <img
+              src={data.url}
+              alt={productName || sku}
+              onError={() => setBroken(true)}
+              className="size-full object-contain"
+            />
+          </div>
           {/* Most products have never been nominated, so this is the picture the catalogue
               falls back to. Saying where the choice is made keeps the loop open. */}
           {data.is_primary ? null : (
@@ -103,7 +108,9 @@ function ProductPhotoBody({
   if (isError) {
     return <p className="text-2xs text-muted-foreground">Failed to load the photo.</p>;
   }
-  return <Skeleton className="h-40 w-full" data-testid="product-photo-skeleton" />;
+  return (
+    <Skeleton className="aspect-[4/3] w-full" data-testid="product-photo-skeleton" />
+  );
 }
 
 export function ProductPhotoPopover({

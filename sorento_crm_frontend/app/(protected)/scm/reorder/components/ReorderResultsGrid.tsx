@@ -285,7 +285,7 @@ export function ReorderResultsGrid({
   // The row-click explanation popup - deterministic derivation from frozen inputs.
   const [explainRec, setExplainRec] = useState<ReorderRecommendation | null>(null);
 
-  const { data, isLoading, isFetching, refetch } = useReorderRecommendations(
+  const { data, isLoading, isFetching, isPlaceholderData, refetch } = useReorderRecommendations(
     runId,
     {
       pageIndex: pagination.pageIndex,
@@ -526,6 +526,7 @@ export function ReorderResultsGrid({
         table={table}
         recordCount={data?.pagination.total || 0}
         isLoading={isLoading}
+        isPlaceholderData={isPlaceholderData}
         tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
         emptyMessage="No recommendations for this run."
         onRowClick={(row) => {

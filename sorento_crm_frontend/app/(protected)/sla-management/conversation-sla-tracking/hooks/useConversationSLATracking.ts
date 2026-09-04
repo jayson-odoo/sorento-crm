@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 import type { ConversationSLATrackingDetail } from '../types/conversationSLATracking.types';
 import {
@@ -21,6 +21,7 @@ import {
 } from '../services/conversationSLATrackingService';
 import type { ConversationSLAEventLogsParams } from '../services/conversationSLATrackingService';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 
 /**
@@ -76,11 +77,11 @@ export const conversationSlaPagerQuery = {
 
 export function useConversationSLATracking(params: ConversationSLATrackingListParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: conversationSlaListQueryKey(params),
     queryFn: () => getConversationSLATracking(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -99,6 +100,7 @@ export function useConversationSLATrackingDetail(id: string | null) {
 
 export function useConversationSLAEventLogs(trackingId: string | null, params: Omit<ConversationSLAEventLogsParams, 'tracking_id'>) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['conversation-sla-event-logs', trackingId, params.page, params.limit, params.sort, params.dir, params.event_type, params.date_from, params.date_to, params.assigned_to_id],
     queryFn: () => getConversationSLAEventLogs({ ...params, tracking_id: trackingId! }),
     enabled: !!trackingId,
@@ -112,7 +114,6 @@ export function useSLATrackingDashboardMetrics() {
     queryFn: () => getSLATrackingDashboardMetrics(),
     staleTime: 1000 * 60 * 5, // 5 minutes
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -172,6 +173,7 @@ export function useSlaTrackingConversation(
   options?: { limit?: number; cursor?: string; enabled?: boolean; refetchIntervalMs?: number },
 ) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['sla-tracking-conversation', trackingId, options?.limit, options?.cursor],
     queryFn: () =>
       getSlaTrackingConversation(trackingId!, {

@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
 import {
@@ -18,6 +18,7 @@ import { postListQuerySearch } from '@/lib/list-query/listQueryService';
 import type { ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
 import { decodeAdvancedFilter } from '@/lib/listNavQuery';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 /** Everything the orders list filters by. */
 export type OrdersListParams = DataGridApiFetchParams & {
@@ -103,11 +104,10 @@ export const ordersPagerQuery = {
 
 export function useOrders(params: OrdersListParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ordersListQueryKey(params),
     queryFn: () => fetchOrdersPage(params),
-    staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

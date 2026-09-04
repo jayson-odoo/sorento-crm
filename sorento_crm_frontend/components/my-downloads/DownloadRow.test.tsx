@@ -2,7 +2,7 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock('@/services/myDownloadsService', () => ({
   fetchDownloadUrl: vi.fn(),
   downloadFilePath: (id: string) => `/api/v1/downloads/${id}/file`,
@@ -20,7 +20,7 @@ vi.mock('@/components/ui/carousel', () => ({
   CarouselPrevious: () => <button type="button">prev</button>,
 }));
 
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { fetchDownloadUrl, type MyDownload } from '@/services/myDownloadsService';
 import { DownloadRow } from './DownloadRow';
 

@@ -51,7 +51,7 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => currentSearchParams,
 }));
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: {
     success: vi.fn(),
     error: vi.fn(),

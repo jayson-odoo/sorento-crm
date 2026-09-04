@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   Send,
   Link2,
@@ -50,8 +50,27 @@ interface SharedConversationComposerProps {
   onGetViewLink?: () => Promise<string>;
   /** When `key` changes, replaces the compose field with `text` (e.g. after "Update & Reply"). */
   replyComposePrefill?: { key: number; text: string } | null;
-  /** Called after a successful send so the parent can refetch the chat list. */
-  onSent?: () => void;
+  /**
+   * Called after a successful send so the parent can refetch the chat list.
+   * When it returns a promise, the optimistic bubble (`pendingBubble`) waits
+   * for it to settle before coming down, so the real row and the placeholder
+   * are never both missing on screen at once.
+   */
+  onSent?: () => void | Promise<unknown>;
+  /**
+   * Optimistic-send bubble (M6-01 / PLAN-optimistic-send AC-B1). `add` is
+   * called right before the request goes out and must return a key; `remove`
+   * takes it back down once `onSent` has settled (or immediately on
+   * failure). The caller renders `pendingItems` from the SAME
+   * `usePendingThreadItems()` hook (directly, or through
+   * `useConversationThread`) merged into what it feeds `RespondChatList` -
+   * this only owns the timing, not the rendering. Absent = no bubble
+   * (unchanged legacy behaviour).
+   */
+  pendingBubble?: {
+    add: (input: { text: string; files: { name: string }[] }) => string;
+    remove: (key: string) => void;
+  };
   /** Shown when !canReply. Entity-specific copy; defaults to a generic message. */
   notAvailableMessage?: string;
   /**
@@ -140,6 +159,7 @@ export default function SharedConversationComposer({
   onGetViewLink,
   replyComposePrefill,
   onSent,
+  pendingBubble,
   notAvailableMessage = 'Reply is only available when a Respond.io conversation is linked to this record.',
   attachmentsEnabled = false,
   sendAdapter,
@@ -381,8 +401,12 @@ export default function SharedConversationComposer({
     stagedPreviewItems.findIndex((entry) => entry.fileIndex === previewFileIndex),
   );
 
+  // M6-01: staging a file is NOT one of the controls a send freezes - the
+  // buttons read enabled, so a file added or pasted mid-send has to actually
+  // stage, not silently vanish. It lands after whatever THIS send is
+  // carrying; the post-send restage below is additive against it rather than
+  // overwriting the array outright.
   const addFiles = (picked: FileList | File[] | null | undefined) => {
-    if (sending) return;
     if (!picked?.length) return;
     setFiles((prev) => [...prev, ...Array.from(picked)]);
     if (fileInputRef.current) fileInputRef.current.value = '';
@@ -421,6 +445,13 @@ export default function SharedConversationComposer({
     setSending(true);
     setSendError(null);
     setFailedFileName(null);
+    // Optimistic bubble (M6-01): up before the request goes out, taken down
+    // once `onSent`'s refetch has landed (or immediately below, on failure) -
+    // the real row and the placeholder are never both missing at once.
+    const pendingKey = pendingBubble?.add({
+      text,
+      files: sentFiles.map((file) => ({ name: file.name })),
+    });
     try {
       const result = sendAdapter
         ? await sendAdapter({ text, files: sentFiles })
@@ -438,7 +469,14 @@ export default function SharedConversationComposer({
       // long. The text itself did go out, so only the files stay staged.
       const attachmentsDropped = sentFiles.length > 0 && !failed && deliveredCount === 0;
       setReplyText('');
-      setFiles(failed ? sentFiles.slice(deliveredCount) : attachmentsDropped ? sentFiles : []);
+      // Additive, not a replace: `addFiles` stays live during the send (M6-01),
+      // so anything staged after `sentFiles` was captured is still sitting in
+      // state past that index and must survive this restage, not be clobbered
+      // by it.
+      setFiles((cur) => [
+        ...(failed ? sentFiles.slice(deliveredCount) : attachmentsDropped ? sentFiles : []),
+        ...cur.slice(sentFiles.length),
+      ]);
       setFailedFileName(failed?.filename ?? null);
       if (attachmentsDropped) {
         toast.error(
@@ -454,9 +492,13 @@ export default function SharedConversationComposer({
           result.sent_as === 'template' ? 'Delivered as a template message' : 'Message sent',
         );
       }
-      // Pulse a few more refetches so the outgoing message's delivery status
-      // (clock → sent/delivered/read ticks) catches up as Respond posts receipts.
-      onSent?.();
+      // The first refetch is what the optimistic bubble waits for below; the
+      // two later pulses are only chasing delivery ticks (clock -> sent ->
+      // delivered -> read) as Respond posts receipts, so they stay fire-and-forget.
+      const settled = onSent?.();
+      if (settled && typeof (settled as PromiseLike<unknown>)?.then === 'function') {
+        await settled;
+      }
       [6000, 15000].forEach((delay) => window.setTimeout(() => onSent?.(), delay));
     } catch (err) {
       if (err instanceof NoChatTemplateError) {
@@ -465,7 +507,15 @@ export default function SharedConversationComposer({
         toast.error(err instanceof Error ? err.message : 'Failed to send message');
       }
     } finally {
+      if (pendingKey) pendingBubble?.remove(pendingKey);
       setSending(false);
+      // Every control stayed enabled through the send (M6-01); the caret is
+      // what a mid-thread refetch or a re-render can still steal, so it is put
+      // back explicitly rather than assumed. A microtask, not a sync call:
+      // the textarea can be mid-re-render (the template/plain-textbox branch
+      // swap, a state update from `onSent`) and focusing a node about to be
+      // replaced is a silent no-op.
+      queueMicrotask(() => replyTextareaRef.current?.focus());
     }
   };
 
@@ -508,7 +558,7 @@ export default function SharedConversationComposer({
    * Text pastes are untouched: the handler only intervenes when there are files.
    */
   const handlePaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    if (!attachmentsEnabled || sending) return;
+    if (!attachmentsEnabled) return;
     const pasted = Array.from(event.clipboardData?.files ?? []);
     if (pasted.length === 0) return;
     event.preventDefault();
@@ -556,6 +606,9 @@ export default function SharedConversationComposer({
                   variant="ghost"
                   className="size-4 shrink-0"
                   aria-label={`Remove ${file.name}`}
+                  // M6-01 exception: every OTHER control stays enabled during
+                  // a send, but this one stays frozen - see the comment on the
+                  // plain-file chip's remove button below for why.
                   disabled={sending}
                   onClick={() => removeStagedFile(idx, notSent)}
                 >
@@ -593,6 +646,7 @@ export default function SharedConversationComposer({
                   variant="ghost"
                   className="absolute end-0 top-0 size-5 rounded-none bg-background/80"
                   aria-label={`Remove ${file.name}`}
+                  // M6-01 exception: see the plain-file chip's remove button below.
                   disabled={sending}
                   onClick={() => removeStagedFile(idx, notSent)}
                 >
@@ -647,7 +701,6 @@ export default function SharedConversationComposer({
         type="button"
         variant="outline"
         size="sm"
-        disabled={sending}
         onClick={() => fileInputRef.current?.click()}
       >
         <Paperclip className="size-4 mr-1" />
@@ -701,7 +754,7 @@ export default function SharedConversationComposer({
         data-testid="voice-record"
         aria-label="Record voice message"
         title={voice.reason ?? undefined}
-        disabled={sending || !voice.available}
+        disabled={!voice.available}
         onClick={async () => {
           const problem = await voice.start();
           if (problem) toast.error(problem);
@@ -734,7 +787,6 @@ export default function SharedConversationComposer({
             onPaste={handlePaste}
             onKeyDown={(e) => onSnippetKeyDown(e)}
             rows={2}
-            disabled={sending}
             className="my-1 block w-full resize-none bg-background"
           />
         );
@@ -822,7 +874,6 @@ export default function SharedConversationComposer({
               }
             }}
             rows={3}
-            disabled={sending}
             className="resize-none flex-1 min-w-0"
           />
           {sendButton}
@@ -842,7 +893,6 @@ export default function SharedConversationComposer({
             type="button"
             variant="outline"
             size="sm"
-            disabled={sending}
             aria-label="Insert snippet"
             data-testid="snippet-button"
             onClick={() => {
@@ -860,7 +910,7 @@ export default function SharedConversationComposer({
         )}
 
         {emojiEnabled && (
-          <EmojiPickerButton disabled={sending} onSelect={(emoji) => insertAtCaret(emoji)} />
+          <EmojiPickerButton onSelect={(emoji) => insertAtCaret(emoji)} />
         )}
 
         {onAiAssist && (
@@ -868,7 +918,7 @@ export default function SharedConversationComposer({
             type="button"
             variant="outline"
             size="sm"
-            disabled={sending || aiDrafting}
+            disabled={aiDrafting}
             data-testid="ai-assist-button"
             title="Draft a reply from this conversation"
             onClick={() => void runAiAssist()}

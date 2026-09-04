@@ -76,7 +76,7 @@ vi.mock('next/navigation', () => ({
 // The WHOLE surface the components under test call. `ConfirmDeleteDialog` reports through
 // `toast.custom`, and a mock without it threw inside react-query's own error path - which
 // surfaced as an unhandled rejection that failed no test and hid any real one behind it.
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: {
     success: vi.fn(),
     error: vi.fn(),

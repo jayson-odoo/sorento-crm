@@ -1,11 +1,12 @@
 import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { useCompany } from '@/app/providers/CompanyProvider';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 import { getAccessAgents, getAccessAgent, createAccessAgent, updateAccessAgent, getContactAccessAgents, createContactAgentAccess, updateContactAgentAccess, deleteContactAgentAccess, getAgentTeams, setAgentTeams, getTeams, getAgentFieldAccess, setAgentFieldAccess } from '../services/accessAgentService';
 import type { AccessAgentFormData, ContactAgentAccessFormData } from '../types/accessAgent.types';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 
 export type AccessAgentsListParams = DataGridApiFetchParams & { status?: string };
@@ -48,11 +49,11 @@ export const accessAgentsPagerQuery = {
 
 export function useAccessAgents(params: AccessAgentsListParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: accessAgentsListQueryKey(params),
     queryFn: () => getAccessAgents(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

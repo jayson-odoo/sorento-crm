@@ -4,12 +4,7 @@ import { useState } from 'react';
 import { X } from 'lucide-react';
 import { toAbsoluteUrl } from '@/lib/helpers';
 import { Button } from '@/components/ui/button';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { ImageInput, ImageInputFile } from '@/components/image-input';
 
 export function AvatarInput() {
@@ -27,24 +22,22 @@ export function AvatarInput() {
           className="size-16 relative cursor-pointer"
           onClick={onImageUpload}
         >
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="outline"
-                  mode="icon"
-                  className="shadow-xs text-secondary-foreground/80 hover:text-foreground absolute z-1 size-5 -top-0.5 -end-0.5 rounded-full"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setAvatar([]);
-                  }}
-                >
-                  <X className="size-3.25!" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Click to remove or revert</TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                mode="icon"
+                className="shadow-xs text-secondary-foreground/80 hover:text-foreground absolute z-1 size-5 -top-0.5 -end-0.5 rounded-full"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setAvatar([]);
+                }}
+              >
+                <X className="size-3.25!" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Click to remove or revert</TooltipContent>
+          </Tooltip>
           <div
             className="relative border-2 border-green-500 rounded-full overflow-hidden"
             style={{

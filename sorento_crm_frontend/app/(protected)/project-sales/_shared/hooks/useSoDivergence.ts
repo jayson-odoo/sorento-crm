@@ -1,7 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   getDivergence,
   ingestSalesOrderFile,
@@ -12,6 +12,7 @@ import type {
   DivergenceListParams,
   DivergenceResolution,
 } from '../types/soDivergence.types';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export const DIVERGENCE_LIST_KEY = 'project-so-divergences';
 export const DIVERGENCE_KEY = 'project-so-divergence';
@@ -25,6 +26,7 @@ export const divergenceListKey = (params: DivergenceListParams) => [
 
 export function useDivergences(params: DivergenceListParams = {}) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: divergenceListKey(params),
     queryFn: () => listDivergences(params),
   });

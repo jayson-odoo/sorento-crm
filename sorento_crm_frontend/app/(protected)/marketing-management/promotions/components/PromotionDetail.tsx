@@ -31,7 +31,7 @@ import {
 import { useProducts } from '../../../master-data-management/products/hooks/useProducts';
 import type { GetProductsParams } from '../../../master-data-management/products/services/productService';
 import { formatDateInMalaysia } from '@/lib/helpers';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { LoaderCircleIcon } from 'lucide-react';
 import PromotionAttachmentsTab from './PromotionAttachmentsTab';
 import DetailActions from '@/components/common/DetailActions';
@@ -686,7 +686,7 @@ export default function PromotionDetail({ promotionId }: PromotionDetailProps) {
                               className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&[data-state=closed]_svg]:-rotate-90"
                               aria-label={`${group.group_name}: expand or collapse`}
                             >
-                              <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform duration-200" />
+                              <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform duration-(--duration-base)" />
                               <div className="flex min-w-0 flex-wrap items-baseline gap-2">
                                 <h3 className="font-semibold text-base">{group.group_name}</h3>
                                 {focTiersLabel ? (

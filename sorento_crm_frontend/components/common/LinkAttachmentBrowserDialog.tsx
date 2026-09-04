@@ -19,7 +19,7 @@ import { getDirectoryTree } from '@/app/(protected)/resource-management/attachme
 import { getAttachments } from '@/app/(protected)/resource-management/attachments/services/attachmentService';
 import type { AttachmentDirectoryTreeNode } from '@/app/(protected)/resource-management/attachments/services/directoryService';
 import type { Attachment } from '@/app/(protected)/resource-management/attachments/types/attachment.types';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
 
@@ -254,7 +254,6 @@ export default function LinkAttachmentBrowserDialog({
     enabled: open,
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
   const attachments = attachmentsData?.data ?? [];

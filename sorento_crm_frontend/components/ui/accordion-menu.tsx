@@ -351,7 +351,8 @@ function AccordionMenuSubContent({
       data-slot="accordion-menu-sub-content"
       className={cn(
         'ps-5',
-        'overflow-hidden transition-all data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down',
+        // Height is keyframe-driven (animate-accordion-up/-down), not a transition.
+        'overflow-hidden data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down',
         classNames?.subContent,
         className,
       )}

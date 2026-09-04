@@ -248,6 +248,7 @@ export function PlanningChangesListClient() {
         table={table}
         recordCount={total}
         isLoading={list.isLoading}
+        isPlaceholderData={list.isPlaceholderData}
         listingKey="projects.projects.view::project-planning-changes"
         tableLayout={{ width: 'fixed', columnsResizable: true }}
         onRowClick={(row) => router.push(planningChangeBoardHref(row))}

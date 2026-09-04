@@ -88,7 +88,7 @@ export default function ContactAccessAgentsGroupedList() {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
   }, [searchQuery]);
 
-  const { data, isLoading, refetch, isFetching } = useContactAccessAgents({
+  const { data, isLoading, isPlaceholderData, refetch, isFetching } = useContactAccessAgents({
     pageIndex: 0,
     pageSize: 10000, // Get all for grouping
     sorting: [],
@@ -290,6 +290,7 @@ export default function ContactAccessAgentsGroupedList() {
         tableLayout={{ columnsVisibility: true }}
         recordCount={groupedData.length}
         isLoading={isLoading}
+        isPlaceholderData={isPlaceholderData}
         onRefresh={() => void refetch()}
         isRefreshing={isFetching && !isLoading}
       >

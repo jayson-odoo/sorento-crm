@@ -5,7 +5,7 @@
  */
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 
@@ -26,12 +26,14 @@ import {
   type ProductBulkUpdates,
 } from '../services/productService';
 import type { ProductFormData } from '../types/product.types';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 /**
  * Hook for fetching products list with pagination, sorting, and filtering
  */
 export function useProducts(params: GetProductsParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [
       'products',
       params.pageIndex,
@@ -48,9 +50,7 @@ export function useProducts(params: GetProductsParams) {
       params.discontinued_batch_id,
     ],
     queryFn: () => getProducts(params),
-    staleTime: Infinity,
     gcTime: 1000 * 60 * 60, // 60 minutes
-    refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: 1,
   });

@@ -29,7 +29,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: {
     success: vi.fn(),
     error: vi.fn(),
@@ -176,7 +176,7 @@ vi.mock('@/services/stockVisibilityService', async (importOriginal) => {
   return { ...actual, ...service };
 });
 
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { StockVisibilitySection } from './StockVisibilitySection';
 import type {
   StockVisibilityMode,

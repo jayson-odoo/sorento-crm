@@ -142,7 +142,7 @@ function ActionCard({
       disabled={disabled}
       aria-pressed={selected}
       className={cn(
-        'w-full rounded-lg border p-3 text-start transition',
+        'w-full rounded-lg border p-3 text-start transition-colors',
         selected ? 'border-primary bg-primary/5' : 'hover:bg-muted/50',
         disabled && 'cursor-not-allowed opacity-60',
       )}

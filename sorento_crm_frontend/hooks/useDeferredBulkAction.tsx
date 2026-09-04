@@ -2,7 +2,7 @@
 
 import { useCallback, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 import { deferredToast, dismissDeferredToast } from '@/components/common/deferredToast';
 import { pendingEntityStore } from '@/lib/pending-entity-store';

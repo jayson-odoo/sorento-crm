@@ -109,7 +109,7 @@ export default function PromotionsList() {
    * so the pager's rebuilt key never matched: every promotion opened fired a
    * second request and paged whatever THAT returned.
    */
-  const { data, isLoading, refetch, isFetching } = usePromotions({
+  const { data, isLoading, isPlaceholderData, refetch, isFetching } = usePromotions({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -379,6 +379,7 @@ export default function PromotionsList() {
       tableLayout={{ columnsVisibility: true }}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       rowHref={rowHref}
       standardToolbar={false}
       emptyAction={listPrimaryAction}

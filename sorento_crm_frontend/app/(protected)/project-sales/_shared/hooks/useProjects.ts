@@ -5,7 +5,7 @@ import * as React from 'react';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { QueryKey } from '@tanstack/react-query';
 import type { ListPagerPage, ListPagerParams } from '@/hooks/useListPager';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   addStakeholder,
   changeProjectStatus,
@@ -135,6 +135,7 @@ import type {
 import { importJobPhase } from '../types/project.types';
 // Keys only, and the document hooks import nothing from here, so the two files do not circle.
 import { quotationDocumentsKey } from './useQuotationDocuments';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export const PROJECTS_KEY = 'projects';
 export const PARTIES_KEY = 'project-parties';
@@ -180,6 +181,7 @@ export const projectsPagerQuery = {
 
 export function useProjects(params: ProjectListParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: projectsListKey(params),
     queryFn: () => listProjects(params),
   });
@@ -211,7 +213,11 @@ export function useProjectParties(params: {
   limit?: number;
   include_inactive?: boolean;
 }) {
-  return useQuery({ queryKey: [PARTIES_KEY, params], queryFn: () => listParties(params) });
+  return useQuery({
+    ...LIST_QUERY_OPTIONS,
+    queryKey: [PARTIES_KEY, params],
+    queryFn: () => listParties(params),
+  });
 }
 
 export function useStakeholders(projectId: string | undefined) {
@@ -244,7 +250,7 @@ export function useTakeoverRequests(projectId: string | undefined) {
  * `enabled` on a minimum length, because two characters match half the pipeline and
  * a warning that fires on every keystroke is noise the user learns to ignore.
  *
- * `placeholderData` keeps the previous answer on screen while the NEXT one loads, so the
+ * `LIST_QUERY_OPTIONS`'s `placeholderData` keeps the previous answer on screen while the NEXT one loads, so the
  * panel does not flicker mid-typing - but only while the title is still long enough to ask
  * about. Returning it unconditionally left the candidate list on screen after the field was
  * cleared: an empty title showing "Similar projects" for a name nobody had typed.
@@ -471,6 +477,7 @@ export function useMyTasks(params: {
   limit?: number;
 }) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [MY_TASKS_KEY, params],
     queryFn: () => listMyTasks(params),
   });
@@ -688,7 +695,11 @@ export const customerPortfolioKey = (customerId: string) => [
 ];
 
 export function useLeads(params: LeadListParams) {
-  return useQuery({ queryKey: leadsListKey(params), queryFn: () => listLeads(params) });
+  return useQuery({
+    ...LIST_QUERY_OPTIONS,
+    queryKey: leadsListKey(params),
+    queryFn: () => listLeads(params),
+  });
 }
 
 /** The leads list a detail URL describes, in the shape `LeadsClient` passes. */
@@ -755,6 +766,7 @@ export function useQualifyPreview(
 ) {
   const title = (params.title ?? '').trim();
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [LEADS_KEY, 'qualify-preview', leadId ?? '', title.toLowerCase(), params.developerPartyId ?? null],
     queryFn: () =>
       previewQualify(leadId as string, {
@@ -762,7 +774,6 @@ export function useQualifyPreview(
         developer_party_id: params.developerPartyId ?? null,
       }),
     enabled: Boolean(leadId) && params.enabled !== false,
-    placeholderData: (previous) => previous,
   });
 }
 
@@ -1274,7 +1285,7 @@ export function useImportJobStatus(jobId: string | null) {
  * the API for answers about prices nobody has finished typing. The debounce lives HERE,
  * on the queried value, so every caller gets the same behaviour for free.
  *
- * `placeholderData` keeps the previous verdict on screen while the next loads - a badge
+ * `LIST_QUERY_OPTIONS`'s `placeholderData` keeps the previous verdict on screen while the next loads - a badge
  * that blinks off and on with every keystroke reads as the system changing its mind.
  *
  * Verdicts are judged by the server (the same `is_in_series` / `resolve_floor` the save
@@ -1303,6 +1314,7 @@ export function useLineVerdict(
     (settled.unit_price ?? '') === (draft.unit_price ?? '');
 
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [
       'quotation-line-verdict',
       quotationId,
@@ -1315,7 +1327,6 @@ export function useLineVerdict(
         unit_price: settled.unit_price,
       }),
     enabled: enabled && caughtUp,
-    placeholderData: (previous) => previous,
     // The same draft judged twice in 30s gets the cached answer - typing a price, deleting
     // it, and retyping it should not be three requests.
     staleTime: 30_000,

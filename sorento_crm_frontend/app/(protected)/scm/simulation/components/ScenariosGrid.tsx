@@ -350,7 +350,7 @@ export function ScenariosGrid({
               key={opt.value}
               type="button"
               onClick={() => setStatusFilter(opt.value)}
-              className={`rounded-full px-2.5 py-1 text-2xs font-medium transition ${
+              className={`rounded-full px-2.5 py-1 text-2xs font-medium transition-colors ${
                 statusFilter === opt.value
                   ? 'bg-primary text-primary-foreground'
                   : 'bg-muted text-muted-foreground hover:bg-muted/70'

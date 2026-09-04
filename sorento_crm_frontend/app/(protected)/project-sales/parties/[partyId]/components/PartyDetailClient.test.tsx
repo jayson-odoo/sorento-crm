@@ -53,7 +53,7 @@ vi.mock('../../../_shared/services/projectService', async (importOriginal) => {
   };
 });
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), custom: vi.fn() },
 }));
 

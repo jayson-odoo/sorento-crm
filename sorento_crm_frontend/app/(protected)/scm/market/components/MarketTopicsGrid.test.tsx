@@ -13,7 +13,7 @@ const createPendingAction = vi.fn().mockResolvedValue({
   commit_at: '2026-08-30T10:00:10',
   window_seconds: 10,
 });
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   // `dismiss` is load-bearing: the countdown's toast is dismissed when the row
   // unmounts, and a stub without it throws out of an effect no assertion catches.
   toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn(), dismiss: vi.fn() },

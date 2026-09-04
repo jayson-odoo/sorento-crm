@@ -22,7 +22,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -32,7 +33,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   GATED_LANDING_KINDS,
   LANDING_LABELS,
@@ -192,7 +193,12 @@ export function PortalLanding({ slug }: { slug?: string }) {
     useState<Record<PortalLandingKind, PortalSubmissionSummary[]>>(EMPTY_LISTS);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
+  const {
+    value: search,
+    setValue: setSearch,
+    debouncedValue: debouncedSearch,
+    isSettling: searchSettling,
+  } = useDebouncedSearch();
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const initialTabFromUrl = (() => {
     const t = searchParams?.get('type');
@@ -366,18 +372,13 @@ export function PortalLanding({ slug }: { slug?: string }) {
     void loadAll();
   }, [loadAll]);
 
-  // Debounced refetch when the user types in the search box; backend now does
-  // the field-spanning search so the result reflects every column (product,
+  // Debounced refetch when the user types in the search box (M6-06:
+  // useDebouncedSearch, the shared 200ms standard); backend now does the
+  // field-spanning search so the result reflects every column (product,
   // metadata, doc number, etc.).
   useEffect(() => {
-    const handle = window.setTimeout(() => {
-      void loadAll(search);
-    }, 300);
-    return () => window.clearTimeout(handle);
-    // loadAll is stable via useCallback; we intentionally exclude it from deps
-    // so the debounce timer isn't reset on every render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search]);
+    void loadAll(debouncedSearch);
+  }, [debouncedSearch, loadAll]);
 
   const totals = useMemo(() => {
     const out: Record<PortalLandingKind, number> = {
@@ -464,14 +465,14 @@ export function PortalLanding({ slug }: { slug?: string }) {
           vertical space. The button gets a primary outline when a non-default
           filter is active. */}
       <div className="flex items-stretch gap-2">
-        <Input
-          variant="lg"
-          type="search"
-          placeholder="Search..."
+        <ListSearchInput
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="h-12 text-base flex-1"
+          onChange={setSearch}
+          isSettling={searchSettling}
+          placeholder="Search..."
           aria-label="Search submissions"
+          className="flex-1"
+          inputClassName="h-12 text-base"
         />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -730,7 +731,7 @@ function SubmissionCard({
       onMouseDown={startPress}
       onMouseUp={clearPress}
       onMouseLeave={clearPress}
-      className={`relative block rounded-lg border ${tintClass} px-3.5 py-3 pr-3 hover:brightness-95 active:brightness-90 transition select-none cursor-pointer`}
+      className={`relative block rounded-lg border ${tintClass} px-3.5 py-3 pr-3 hover:brightness-95 active:brightness-90 transition-[filter] select-none cursor-pointer`}
     >
       {/* Status badge anchored top-right; allows multi-word status to wrap
           onto two lines without colliding with the primary text. */}

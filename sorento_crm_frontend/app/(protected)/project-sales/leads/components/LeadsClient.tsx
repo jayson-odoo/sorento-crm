@@ -180,6 +180,7 @@ export function LeadsClient() {
           total={total}
           isLoading={leads.isLoading}
           isFetching={leads.isFetching}
+          isPlaceholderData={leads.isPlaceholderData}
           pagination={pagination}
           onPaginationChange={setPagination}
           sorting={sorting}

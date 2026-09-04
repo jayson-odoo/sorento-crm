@@ -68,7 +68,7 @@ export default function ProductSetsList() {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
   }, [debouncedSearch, sorting]);
 
-  const { data, isLoading, isError, error, refetch, isFetching } = useProductSets({
+  const { data, isLoading, isPlaceholderData, isError, error, refetch, isFetching } = useProductSets({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -279,6 +279,7 @@ export default function ProductSetsList() {
           table={table}
           recordCount={total}
           isLoading={isLoading}
+          isPlaceholderData={isPlaceholderData}
           rowHref={rowHref}
           rowPending={rowPending}
           listingKey="master_data.product_sets.view"

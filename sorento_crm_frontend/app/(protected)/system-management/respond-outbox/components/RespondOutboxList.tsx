@@ -63,7 +63,7 @@ export default function RespondOutboxList() {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
   }, [query]);
 
-  const { data, isLoading, isFetching, refetch } = useRespondOutbox({
+  const { data, isLoading, isPlaceholderData, isFetching, refetch } = useRespondOutbox({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     status: status === '__all__' ? undefined : status,
@@ -203,6 +203,7 @@ export default function RespondOutboxList() {
         table={table}
         recordCount={total}
         isLoading={isLoading || isFetching}
+        isPlaceholderData={isPlaceholderData}
         tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
         tableClassNames={{ edgeCell: 'px-4' }}
       >

@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import {
   getComplaintResolutions,
@@ -10,9 +10,11 @@ import {
   deleteComplaintResolution,
 } from '../services/complaintResolutionService';
 import type { ComplaintResolutionFormData } from '../types/complaintResolution.types';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export function useComplaintResolutions(params: DataGridApiFetchParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [
       'complaint-resolutions',
       params.pageIndex,
@@ -23,7 +25,6 @@ export function useComplaintResolutions(params: DataGridApiFetchParams) {
     queryFn: () => getComplaintResolutions(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -45,7 +46,6 @@ export function useComplaintResolutionsSelect(query?: string) {
     queryKey: ['complaint-resolutions-select', query ?? ''],
     queryFn: () => getComplaintResolutionsSelect(query),
     staleTime: 1000 * 60 * 5,
-    refetchOnWindowFocus: false,
   });
 }
 

@@ -65,7 +65,7 @@ export default function FormsList() {
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
   }, [statusFilter, searchQuery]);
 
-  const { data, isLoading, refetch, isFetching } = useForms({
+  const { data, isLoading, isPlaceholderData, refetch, isFetching } = useForms({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -243,6 +243,7 @@ export default function FormsList() {
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       rowHref={rowHref}
       standardToolbar={false}
       tableLayout={{ columnsVisibility: true, columnsResizable: true }}

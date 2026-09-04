@@ -1,13 +1,14 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   approveBoardTransfer,
   approveBoardTransfers,
   listBoardTransfers,
 } from '../services/boardTransfersService';
 import { STOCK_TRANSFERS_KEY } from '@/app/(protected)/inventory-management/stock-transfers/hooks/useStockTransfers';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export const BOARD_TRANSFERS_KEY = 'board-stock-transfers';
 
@@ -23,10 +24,10 @@ export const BOARD_TRANSFERS_KEY = 'board-stock-transfers';
 export function useBoardTransfers(soNumbers: string[], enabled = true) {
   const key = [...soNumbers].sort();
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [BOARD_TRANSFERS_KEY, key],
     queryFn: () => listBoardTransfers(key),
     enabled: enabled && key.length > 0,
-    placeholderData: (previous) => previous,
   });
 }
 

@@ -1,7 +1,9 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
+
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 import {
   createMessageSnippet,
@@ -32,9 +34,9 @@ function invalidateSnippets(queryClient: ReturnType<typeof useQueryClient>) {
 
 export function useMessageSnippets(query: MessageSnippetListQuery) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [...LIST_KEY, query],
     queryFn: () => listMessageSnippets(query),
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

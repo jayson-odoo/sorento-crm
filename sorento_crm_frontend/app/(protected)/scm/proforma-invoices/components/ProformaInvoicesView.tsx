@@ -10,7 +10,7 @@ import {
   getCoreRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   Boxes,
   ChevronDown,
@@ -192,7 +192,7 @@ export function ProformaInvoicesView() {
     setRowSelection({});
   }, [searchQuery, supplierId, placement]);
 
-  const { data, isLoading, isFetching } = useProformaInvoices(supplierId, {
+  const { data, isLoading, isPlaceholderData, isFetching } = useProformaInvoices(supplierId, {
     limit: pagination.pageSize,
     offset: pagination.pageIndex * pagination.pageSize,
     placement,
@@ -550,6 +550,7 @@ export function ProformaInvoicesView() {
         table={table}
         recordCount={total}
         isLoading={isLoading}
+        isPlaceholderData={isPlaceholderData}
         tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
         emptyMessage={emptyMessage}
         listingKey={LISTING_KEY}

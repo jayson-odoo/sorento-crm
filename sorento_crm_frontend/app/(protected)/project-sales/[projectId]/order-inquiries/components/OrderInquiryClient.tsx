@@ -12,7 +12,7 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import { Ban, CheckCheck, Download, Info, RotateCcw } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -465,6 +465,7 @@ export function OrderInquiryClient({ projectId }: { projectId: string }) {
         table={table}
         recordCount={total}
         isLoading={inquiry.isLoading}
+        isPlaceholderData={inquiry.isPlaceholderData}
         // Pinned, never the pathname default: the fallback keys column preferences on
         // the current URL, and this route carries a project id, so it would write one
         // preferences row per project.

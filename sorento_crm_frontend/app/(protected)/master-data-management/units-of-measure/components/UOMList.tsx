@@ -66,7 +66,7 @@ export default function UOMList() {
   });
   const rowPending = useRowPending<UnitOfMeasure>('uom');
 
-  const { data, isLoading, refetch, isFetching } = useUOMs({
+  const { data, isLoading, isPlaceholderData, refetch, isFetching } = useUOMs({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -199,6 +199,7 @@ export default function UOMList() {
 
   return (
     <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       rowHref={rowHref}
       rowPending={rowPending}
       tableLayout={{ columnsVisibility: true }}

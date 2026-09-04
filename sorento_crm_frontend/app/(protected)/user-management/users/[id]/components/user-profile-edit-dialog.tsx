@@ -6,7 +6,7 @@ import { RiCheckboxCircleFill, RiErrorWarningFill } from '@remixicon/react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm, type Resolver } from 'react-hook-form';
 import { useSession } from 'next-auth/react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
 import { isSuperadminUser } from '@/lib/is-superadmin';

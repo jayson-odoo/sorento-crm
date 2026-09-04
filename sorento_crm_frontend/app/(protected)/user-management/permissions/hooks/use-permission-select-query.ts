@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { apiFetch } from '@/lib/api';
 
 // Custom hook to use roles for selection
@@ -24,6 +24,5 @@ export const usePermissionSelectQuery = () => {
     queryKey: ['user-permission-select'],
     queryFn: fetchPermissionList,
     staleTime: Infinity,
-    refetchOnWindowFocus: false,
   });
 };

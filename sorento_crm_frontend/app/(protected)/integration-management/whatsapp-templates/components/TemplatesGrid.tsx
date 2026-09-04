@@ -31,6 +31,7 @@ import {
 } from '@/services/whatsappTemplateService';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 const STATUS_BADGE_VARIANT: Record<TemplateStatus, 'success' | 'warning' | 'destructive'> = {
   approved: 'success',
@@ -50,7 +51,8 @@ export default function TemplatesGrid() {
   const [statusFilter, setStatusFilter] = useState<TemplateStatus | 'all'>('all');
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
-  const { data, isLoading, isFetching, refetch, isRefetching } = useQuery({
+  const { data, isLoading, isPlaceholderData, isFetching, refetch, isRefetching } = useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [
       'whatsapp-templates',
       pagination.pageIndex,
@@ -177,6 +179,7 @@ export default function TemplatesGrid() {
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       tableLayout={{
         width: 'fixed',
         columnsResizable: true,

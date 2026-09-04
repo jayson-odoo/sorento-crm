@@ -14,7 +14,7 @@ import {
 } from '@/components/ui/dialog';
 import { parseExcelSheets } from '@/lib/excel-utils';
 import { useExcelAccept } from '@/hooks/use-excel-accept';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { Progress } from '@/components/ui/progress';
 import { FileDropzone } from '@/components/common/FileDropzone';
 import type { ValidateImportResult } from '../services/orderService';

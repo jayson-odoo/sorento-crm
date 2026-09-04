@@ -246,7 +246,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
     queryFn: fetchSettings,
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60, // 60 minutes
-    refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: 1,
   });

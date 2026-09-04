@@ -10,7 +10,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 vi.mock('@/app/(protected)/resource-management/attachments/services/attachmentService', () => ({
@@ -32,7 +32,7 @@ vi.mock('../services/promotionService', () => ({
   compilePromotionsPdf: vi.fn(),
 }));
 
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { resubmitAttachmentWebhook } from '@/app/(protected)/resource-management/attachments/services/attachmentService';
 import { useResubmitPromotionFlyers } from './usePromotions';
 

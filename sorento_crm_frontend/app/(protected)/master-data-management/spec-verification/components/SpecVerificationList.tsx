@@ -339,7 +339,7 @@ export default function SpecVerificationList() {
     selectedParam,
   ]);
 
-  const { data, isLoading, isError, error, refetch, isFetching } =
+  const { data, isLoading, isPlaceholderData, isError, error, refetch, isFetching } =
     useSpecVerificationWorklist({
       pageIndex: pagination.pageIndex,
       pageSize: pagination.pageSize,
@@ -817,6 +817,7 @@ export default function SpecVerificationList() {
         table={table}
         recordCount={data?.pagination.total ?? 0}
         isLoading={isLoading}
+        isPlaceholderData={isPlaceholderData}
         onRowClick={(row) => openProduct(row)}
         rowPending={rowUnverifyPending}
         listingKey="master_data.products.view::spec-verification"

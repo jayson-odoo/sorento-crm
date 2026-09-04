@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { apiFetch } from '@/lib/api';
 import type { Supplier } from '../types/supplier.types';
 
@@ -25,7 +25,6 @@ export const useSupplierSelectQuery = () => {
     queryFn: fetchSupplierList,
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60, // 60 minutes
-    refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: 1,
   });

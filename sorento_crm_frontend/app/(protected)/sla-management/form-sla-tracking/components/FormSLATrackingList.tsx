@@ -59,7 +59,7 @@ export default function FormSLATrackingList() {
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
   }, [searchQuery]);
 
-  const { data, isLoading, isFetching } = useFormSLATracking({
+  const { data, isLoading, isPlaceholderData, isFetching } = useFormSLATracking({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -401,6 +401,7 @@ export default function FormSLATrackingList() {
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       onRowClick={handleRowClick}
     >
       <Card>

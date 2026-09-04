@@ -194,17 +194,28 @@ function order(over: Partial<SalesOrder> = {}): SalesOrder {
   } as SalesOrder;
 }
 
+/**
+ * Answers only while the query is ENABLED, the way React Query does (mirrors
+ * `StockInquiriesList.viewMemory.test.tsx`'s own `mockList`). A held query has no
+ * data, so the grid has nothing to paint until the stored view resolves and the
+ * fetch fires - which is what makes `findByText` below a real synchronisation
+ * point. Answering unconditionally would paint the row on the very first render,
+ * before the stored view has resolved, and the assertions below would run before
+ * any enabled fetch went out.
+ */
 function mockList(rows: SalesOrder[]) {
-  hooks.useSalesOrders.mockReturnValue({
-    data: {
-      data: rows,
-      pagination: { total: rows.length, page: 1, limit: 25 },
-      empty: rows.length === 0,
-    },
+  hooks.useSalesOrders.mockImplementation((params: ListParams) => ({
+    data: params?.enabled
+      ? {
+          data: rows,
+          pagination: { total: rows.length, page: 1, limit: 25 },
+          empty: rows.length === 0,
+        }
+      : undefined,
     isLoading: false,
     isFetching: false,
     refetch: vi.fn(),
-  });
+  }));
 }
 
 function renderGrid(props: { salesAgentId?: string } = {}) {

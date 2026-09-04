@@ -76,7 +76,7 @@ export default function GRNList() {
     setStatusFilter(state.filters.picking_status ?? 'all');
   });
 
-  const { data, isLoading, isFetching } = useGRNs({
+  const { data, isLoading, isPlaceholderData, isFetching } = useGRNs({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -209,6 +209,7 @@ export default function GRNList() {
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       rowHref={rowHref}
       tableLayout={{ columnsVisibility: true }}
       standardToolbar={false}

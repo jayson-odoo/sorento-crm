@@ -35,12 +35,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 
 /** Which pointer tool is active (D35). */
@@ -94,27 +89,30 @@ function ToolbarButton({
   active?: boolean;
 }) {
   return (
-    <TooltipProvider delayDuration={300}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="sm"
-            className={cn('h-8 w-8 p-0', active && 'bg-accent text-accent-foreground')}
-            onClick={onClick}
-            disabled={disabled}
-            aria-pressed={active}
-          >
-            <Icon className="size-4" />
-            <span className="sr-only">{label}</span>
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent side="bottom" className="text-xs">
-          {label}
-          {shortcut && <span className="ml-2 text-muted-foreground">{shortcut}</span>}
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+    // 300ms rather than the app-wide 700ms (M2-07): this toolbar is 15 unlabelled
+    // icons in a row, so the label IS the affordance and waiting most of a second
+    // for it turns a sweep along the row into a stall. A per-instance
+    // `delayDuration` on the Root overrides the shared provider without mounting
+    // a second one, so the 300ms skip window still groups the sweep.
+    <Tooltip delayDuration={300}>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          size="sm"
+          className={cn('h-8 w-8 p-0', active && 'bg-accent text-accent-foreground')}
+          onClick={onClick}
+          disabled={disabled}
+          aria-pressed={active}
+        >
+          <Icon className="size-4" />
+          <span className="sr-only">{label}</span>
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" className="text-xs">
+        {label}
+        {shortcut && <span className="ml-2 text-muted-foreground">{shortcut}</span>}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 

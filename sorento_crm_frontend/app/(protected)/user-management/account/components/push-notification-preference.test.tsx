@@ -8,9 +8,9 @@ vi.mock('@/services/pushService', () => ({
   subscribeToPush: vi.fn(),
   unsubscribeFromPush: vi.fn(),
 }));
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 import {
   isPushSupported,

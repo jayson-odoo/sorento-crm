@@ -1,16 +1,17 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import { getOrderStatuses, getOrderStatus, createOrderStatus, updateOrderStatus, deleteOrderStatus } from '../services/orderStatusService';
 import type { OrderStatusFormData } from '../types/orderStatus.types';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export function useOrderStatuses(params: DataGridApiFetchParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['order-statuses', params.pageIndex, params.pageSize, params.sorting, params.searchQuery],
     queryFn: () => getOrderStatuses(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

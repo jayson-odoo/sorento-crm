@@ -25,7 +25,7 @@ interface ContactAccessAgentsTableProps {
 }
 
 export default function ContactAccessAgentsTable({ accessAgentId }: ContactAccessAgentsTableProps) {
-  const { data: contactAccesses, isLoading } = useContactAccessAgents(accessAgentId);
+  const { data: contactAccesses, isLoading, isPlaceholderData } = useContactAccessAgents(accessAgentId);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingContactAccess, setEditingContactAccess] = useState<ContactAgentAccess | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -151,6 +151,7 @@ export default function ContactAccessAgentsTable({ accessAgentId }: ContactAcces
             table={table}
             recordCount={contactAccesses?.length || 0}
             isLoading={isLoading}
+            isPlaceholderData={isPlaceholderData}
             onRowClick={handleEdit}
             emptyMessage={
               <div className="text-center py-8 text-muted-foreground">

@@ -59,7 +59,7 @@ import {
 import EventLogTable from '@/app/(protected)/sla-management/conversation-sla-tracking/components/EventLogTable';
 import { getUsersSelect } from '@/services/userSelectService';
 import { escalateFormTracking } from './formSLAService';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 const SLA_TEST_OVERRIDE_PERMISSION =
   'sla_management.conversation_sla_tracking.test_override';

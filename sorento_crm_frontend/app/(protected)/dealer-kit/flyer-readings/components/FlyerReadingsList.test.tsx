@@ -11,7 +11,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   // `dismiss` too: the countdown's toast is dismissed when the row unmounts, and a
   // stub without it throws out of an effect where no assertion can catch it.
   toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn(), dismiss: vi.fn() },

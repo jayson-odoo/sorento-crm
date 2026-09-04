@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import {
   bulkCancelEmailOutbox,
   bulkRetryEmailOutbox,
@@ -25,10 +26,10 @@ export function useEmailOutbox(
   params: DataGridApiFetchParams & { status?: string; event_key?: string; query?: string },
 ) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['email-outbox', params.pageIndex, params.pageSize, params.status, params.event_key, params.query],
     queryFn: () => getEmailOutbox(params),
     staleTime: 1000 * 15,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

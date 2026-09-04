@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Clipboard, Paperclip, Upload, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 interface ResponseAttachmentDropzoneProps {
   /** Staged files, not yet uploaded - committed only when the parent saves the response. */
@@ -161,7 +161,7 @@ export function ResponseAttachmentDropzone({
         }}
         onDragLeave={() => setDragOver(false)}
         onDrop={handleDrop}
-        className={`flex flex-col items-center justify-center gap-2 rounded-md border-2 border-dashed p-4 text-center transition ${
+        className={`flex flex-col items-center justify-center gap-2 rounded-md border-2 border-dashed p-4 text-center transition-colors ${
           dragOver ? 'border-primary bg-primary/5' : 'border-border'
         } ${disabled ? 'opacity-50 pointer-events-none' : ''}`}
       >

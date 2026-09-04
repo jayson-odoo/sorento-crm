@@ -25,6 +25,7 @@ import {
   DataGridTableHeadRowCell,
   DataGridTableHeadRowCellResize,
   DataGridTableRowSpacer,
+  useBodySkeleton,
 } from '@/components/ui/data-grid-table';
 import { isFolderItem, type DriveItem } from '../../attachments/services/driveService';
 
@@ -218,8 +219,13 @@ export default function DriveListView({
   /** Builds the right-click / long-press context-menu items per row. */
   renderRowContextMenu?: (item: DriveItem) => ReactNode;
 }) {
-  const { props, table, isLoading } = useDataGrid();
+  const { props, table } = useDataGrid();
   const pagination = table.getState().pagination;
+  // The library's gate, not a fourth copy of it: this body is the drive's own
+  // render path, and a hand-written condition here missed the
+  // column-preferences clause, so the drive flashed its default layout on
+  // every load while every other grid waited.
+  const showSkeleton = useBodySkeleton();
 
   return (
     <div className="relative">
@@ -249,7 +255,7 @@ export default function DriveListView({
         )}
 
         <DataGridTableBody>
-          {props.loadingMode === 'skeleton' && isLoading && pagination?.pageSize ? (
+          {showSkeleton && pagination?.pageSize ? (
             Array.from({ length: pagination.pageSize }).map((_, rowIndex) => (
               <DataGridTableBodyRowSkeleton key={rowIndex}>
                 {table.getVisibleFlatColumns().map((column, colIndex) => (

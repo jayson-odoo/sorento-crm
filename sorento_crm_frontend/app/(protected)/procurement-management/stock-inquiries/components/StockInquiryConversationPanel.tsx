@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -9,6 +10,7 @@ import { useStockInquiryConversation } from '../hooks/useStockInquiries';
 import RespondChatList from '@/components/common/RespondChatList';
 import SharedConversationComposer from '@/components/common/conversation/SharedConversationComposer';
 import { invalidateConversationWindow } from '@/components/common/conversation/useConversationWindowState';
+import { usePendingThreadItems } from '@/components/common/conversation/usePendingThreadItems';
 
 interface StockInquiryConversationPanelProps {
   inquiryId: string;
@@ -44,19 +46,32 @@ export default function StockInquiryConversationPanel({
 }: StockInquiryConversationPanelProps) {
   const { data, isLoading, refetch, isRefetching } = useStockInquiryConversation(inquiryId, { limit: 50 });
   const queryClient = useQueryClient();
+  const pending = usePendingThreadItems();
+  const { clearPending } = pending;
 
-  const items = data?.items ?? [];
+  // A different inquiry is a different draft: never leave a stranger's
+  // in-flight send dimmed in a thread that just mounted under a new id.
+  // `clearPending` is `useCallback`-stable (empty deps in the hook), so
+  // listing it here does not re-run this on every render.
+  useEffect(() => {
+    clearPending();
+  }, [inquiryId, clearPending]);
+
+  const items = [...(data?.items ?? []), ...pending.pendingItems];
 
   const handleRefresh = () => {
     void refetch();
     invalidateConversationWindow(queryClient, 'stock_inquiry', inquiryId);
   };
 
+  // Returned so the composer's optimistic bubble (M6-01) waits for THIS
+  // refetch before it comes down; the 1.6s pulse only chases delivery ticks.
   const refetchSoon = () => {
-    void refetch();
+    const refetched = refetch();
     window.setTimeout(() => {
       void refetch();
     }, 1600);
+    return refetched;
   };
 
   const headerTitle = showAsPopup ? 'Chat Records' : 'Conversation (Respond.io)';
@@ -127,6 +142,7 @@ export default function StockInquiryConversationPanel({
           onGetViewLink={onGetViewLink}
           replyComposePrefill={replyComposePrefill}
           onSent={refetchSoon}
+          pendingBubble={{ add: pending.addPending, remove: pending.removePending }}
           notAvailableMessage="Reply is only available when the inquiry is pending purchasing review or responded."
         />
       </CardContent>

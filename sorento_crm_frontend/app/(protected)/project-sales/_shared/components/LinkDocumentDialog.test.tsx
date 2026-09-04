@@ -10,7 +10,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { OrderInquiryPoCandidate } from '../types/orderInquiry.types';
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
@@ -130,8 +130,10 @@ describe('LinkDocumentDialog: the cascade preview', () => {
     await screen.findByTestId('po-candidates-table');
     const earlyInput = screen.getByLabelText('Take off ZZT-PO-0001') as HTMLInputElement;
     const laterInput = screen.getByLabelText('Take off ZZT-PO-0002') as HTMLInputElement;
-    expect(earlyInput.value).toBe('15');
-    expect(laterInput.value).toBe('10');
+    // The pre-fill lands in a post-commit effect, so the values arrive a tick after
+    // the table itself does; a synchronous read raced it and read '' on CI.
+    await waitFor(() => expect(earlyInput.value).toBe('15'));
+    await waitFor(() => expect(laterInput.value).toBe('10'));
     expect(screen.getByTestId('po-allocation-summary')).toHaveTextContent('25 of 25 linked');
     expect(screen.getByRole('button', { name: 'Link' })).toBeEnabled();
   });

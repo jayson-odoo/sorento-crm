@@ -13,7 +13,7 @@ import {
   useDndMonitor,
   type DragEndEvent,
 } from '@dnd-kit/core';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { FileText, Folder, PanelLeftOpen } from 'lucide-react';
 import type { ImperativePanelHandle } from 'react-resizable-panels';
 import { Button } from '@/components/ui/button';

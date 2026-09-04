@@ -16,7 +16,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { BellRing, Smartphone, X } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 import { Button } from '@/components/ui/button';
 import { Container } from '@/components/common/container';

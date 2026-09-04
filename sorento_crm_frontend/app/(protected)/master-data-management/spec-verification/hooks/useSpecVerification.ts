@@ -1,7 +1,8 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 import {
   getSpecVerificationWorklist,
@@ -25,6 +26,7 @@ export function useSpecVerificationWorklist(
   params: SpecVerificationWorklistParams,
 ) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [
       WORKLIST_KEY,
       params.pageIndex,
@@ -38,7 +40,6 @@ export function useSpecVerificationWorklist(
     queryFn: () => getSpecVerificationWorklist(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

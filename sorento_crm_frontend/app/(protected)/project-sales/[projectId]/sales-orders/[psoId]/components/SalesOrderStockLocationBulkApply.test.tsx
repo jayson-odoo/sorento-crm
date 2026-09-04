@@ -18,7 +18,7 @@ vi.mock('../../../../_shared/services/projectSalesOrderService', () => ({
   bulkSetLinesStockLocation: (...args: unknown[]) => bulkSetLinesStockLocation(...args),
 }));
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { success: (...args: unknown[]) => toastSuccess(...args), error: vi.fn() },
 }));
 

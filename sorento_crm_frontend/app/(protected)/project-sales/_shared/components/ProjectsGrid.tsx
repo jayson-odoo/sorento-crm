@@ -42,6 +42,7 @@ export function ProjectsGrid({
   total,
   isLoading,
   isFetching,
+  isPlaceholderData,
   pagination,
   onPaginationChange,
   sorting,
@@ -57,6 +58,12 @@ export function ProjectsGrid({
   total: number;
   isLoading?: boolean;
   isFetching?: boolean;
+  /**
+   * True while the list query is answering from the PREVIOUS page. The grid dims
+   * its body on it, so a page turn keeps the rows the reader was looking at
+   * instead of replacing them with skeletons.
+   */
+  isPlaceholderData?: boolean;
   pagination: PaginationState;
   onPaginationChange: (next: PaginationState) => void;
   sorting: SortingState;
@@ -293,6 +300,7 @@ export function ProjectsGrid({
       onRowClick={rowHref ? undefined : (row) => router.push(`/project-sales/${row.id}`)}
       recordCount={total}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       listingKey={listingKey}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       emptyMessage={emptyMessage}

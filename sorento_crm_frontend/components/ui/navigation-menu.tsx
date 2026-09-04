@@ -60,7 +60,7 @@ function NavigationMenuTrigger({
     >
       {children}{' '}
       <ChevronDownIcon
-        className="relative top-[1px] ms-1 size-3.5 opacity-60 transition duration-(--duration-slow) ease-(--ease-standard) group-data-[state=open]:rotate-180"
+        className="relative top-[1px] ms-1 size-3.5 opacity-60 transition-transform duration-(--duration-fast) ease-(--ease-standard) group-data-[state=open]:rotate-180"
         aria-hidden="true"
       />
     </NavigationMenuPrimitive.Trigger>
@@ -90,7 +90,7 @@ function NavigationMenuViewport({
       <NavigationMenuPrimitive.Viewport
         data-slot="navigation-menu-viewport"
         className={cn(
-          'shadow-md shadow-black/5 rounded-md border border-border bg-popover text-popover-foreground p-1.5 origin-top-center data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-90 relative mt-1.5 h-[var(--radix-navigation-menu-viewport-height)] w-full overflow-hidden md:w-[var(--radix-navigation-menu-viewport-width)]',
+          'shadow-md shadow-black/5 rounded-md border border-border bg-popover text-popover-foreground p-1.5 origin-top data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-90 relative mt-1.5 h-[var(--radix-navigation-menu-viewport-height)] w-full overflow-hidden md:w-[var(--radix-navigation-menu-viewport-width)]',
           className,
         )}
         {...props}

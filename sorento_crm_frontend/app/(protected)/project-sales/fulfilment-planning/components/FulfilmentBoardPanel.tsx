@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   ArrowLeft,
   LayoutGrid,
@@ -1355,7 +1355,7 @@ export function FulfilmentBoardPanel({
               `usePlanningBoard`. */}
           <div
             data-testid="board-content"
-            className={`space-y-4 transition-opacity duration-150 ${
+            className={`space-y-4 transition-opacity ${
               boardRefreshing ? 'opacity-60' : 'opacity-100'
             }`}
           >

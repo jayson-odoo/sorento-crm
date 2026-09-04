@@ -26,7 +26,7 @@ import {
 } from '../hooks/useIntegrationLogs';
 import { RefreshCw } from 'lucide-react';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { useForm } from 'react-hook-form';
 
 const formatJsonPayload = (payload?: string | null) => {

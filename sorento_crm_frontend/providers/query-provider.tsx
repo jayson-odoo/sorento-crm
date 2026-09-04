@@ -7,7 +7,7 @@ import {
   QueryClient,
   QueryClientProvider,
 } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { registerRevisionStaleHandler } from '@/lib/revision-fence';
 import { pendingEntityStore } from '@/lib/pending-entity-store';
@@ -16,6 +16,21 @@ const QueryProvider = ({ children }: { children: ReactNode }) => {
   const [queryClient] = useState(
     () =>
       new QueryClient({
+        // The shared default every query gets unless a hook names a reason
+        // not to (M4 list latency): retry once, treat data as fresh for 30s,
+        // and do not refetch merely because the tab regained focus - on
+        // origin/main, 173 hooks set it to false themselves and roughly 410
+        // did not (so they refetched on focus); this default replaces both.
+        // A hook with a genuinely different staleTime or refetchInterval
+        // (the conversation surfaces' polling, a pager's Infinity) still
+        // sets its own - this is only the floor every OTHER hook inherits.
+        defaultOptions: {
+          queries: {
+            retry: 1,
+            staleTime: 30_000,
+            refetchOnWindowFocus: false,
+          },
+        },
         queryCache: new QueryCache({
           onError: (error, query) => {
             // A query may opt out of the shared toast with `meta: { silent: true }`.
@@ -52,8 +67,8 @@ const QueryProvider = ({ children }: { children: ReactNode }) => {
 
             if (isPermissionError) {
               toast.custom(
-                () => (
-                  <Alert variant="mono" icon="destructive" close={false}>
+                (id) => (
+                  <Alert variant="mono" icon="destructive" close onClose={() => toast.dismiss(id)}>
                     <AlertIcon>
                       <RiErrorWarningFill />
                     </AlertIcon>
@@ -62,26 +77,21 @@ const QueryProvider = ({ children }: { children: ReactNode }) => {
                     </AlertTitle>
                   </Alert>
                 ),
-                {
-                  id: 'permission-denied',
-                  position: 'top-center',
-                },
+                { id: 'permission-denied', duration: Infinity },
               );
               return;
             }
 
             toast.custom(
-              () => (
-                <Alert variant="mono" icon="destructive" close={false}>
+              (id) => (
+                <Alert variant="mono" icon="destructive" close onClose={() => toast.dismiss(id)}>
                   <AlertIcon>
                     <RiErrorWarningFill />
                   </AlertIcon>
                   <AlertTitle>{message}</AlertTitle>
                 </Alert>
               ),
-              {
-                position: 'top-center',
-              },
+              { duration: Infinity },
             );
           },
         }),

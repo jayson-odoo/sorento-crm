@@ -48,7 +48,7 @@ vi.mock('./components/settings-context', () => ({
   useSettings: () => ({ settings: mockSettings, roles: [] }),
 }));
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn() },
 }));
 

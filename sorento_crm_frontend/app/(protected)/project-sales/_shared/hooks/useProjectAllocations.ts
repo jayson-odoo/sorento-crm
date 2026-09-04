@@ -7,6 +7,7 @@ import {
   listSalesOrderAllocations,
 } from '../services/projectAllocationService';
 import type { AllocationClaimListParams } from '../types/projectAllocation.types';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 /**
  * Allocation reads only. The supply a line is held by is composed and confirmed in
@@ -49,6 +50,7 @@ export function useAllocationCandidates(lineId: string | undefined, enabled = tr
 /** The Borrows that were written, as audit history (AC-H4). */
 export function useAllocationClaims(params: AllocationClaimListParams = {}) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [ALLOCATION_CLAIMS_KEY, params],
     queryFn: () => listAllocationClaims(params),
   });

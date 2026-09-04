@@ -29,7 +29,6 @@ export function useCurrencyFormat(): string {
       return typeof fmt === 'string' && fmt.trim() ? fmt : DEFAULT_CURRENCY_FORMAT;
     },
     staleTime: Infinity,
-    refetchOnWindowFocus: false,
     refetchOnReconnect: false,
   });
   return data ?? DEFAULT_CURRENCY_FORMAT;

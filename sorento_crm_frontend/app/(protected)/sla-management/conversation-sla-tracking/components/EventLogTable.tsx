@@ -33,7 +33,7 @@ import {
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { useConversationSLAEventLogs, useDeleteConversationSLAEventLog } from '../hooks/useConversationSLATracking';
 import { formatDateTime, formatDuration, parseDateTimeAsUTC } from '@/lib/helpers';
 import type { ConversationSLAEventLog } from '../types/conversationSLATracking.types';
@@ -120,7 +120,7 @@ export default function EventLogTable({ trackingId, agentCode, teamSetCode }: Ev
   const [rowSelection, setRowSelection] = useState<Record<string, boolean>>({});
   const deleteMutation = useDeleteConversationSLAEventLog();
 
-  const { data: eventLogsResponse, isLoading } = useConversationSLAEventLogs(trackingId, {
+  const { data: eventLogsResponse, isLoading, isPlaceholderData } = useConversationSLAEventLogs(trackingId, {
     page: pagination.pageIndex + 1,
     limit: pagination.pageSize,
     sort: sorting?.[0]?.id || 'event_at',
@@ -159,7 +159,6 @@ export default function EventLogTable({ trackingId, agentCode, teamSetCode }: Ev
     },
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
   });
 
   const isAdmin = currentUser?.role === 'admin';
@@ -327,8 +326,14 @@ export default function EventLogTable({ trackingId, agentCode, teamSetCode }: Ev
 
   return (
     <>
-      <DataGrid table={table} recordCount={totalCount} isLoading={isLoading} tableLayout={{ columnsVisibility: true }}
-      standardToolbar={false}>
+      <DataGrid
+        table={table}
+        recordCount={totalCount}
+        isLoading={isLoading}
+        isPlaceholderData={isPlaceholderData}
+        tableLayout={{ columnsVisibility: true }}
+        standardToolbar={false}
+      >
         <Card>
           <CardHeader className="block space-y-3">
             <CardTitle>Event Log</CardTitle>

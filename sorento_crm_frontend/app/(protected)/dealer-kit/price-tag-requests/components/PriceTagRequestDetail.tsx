@@ -38,7 +38,7 @@ import {
   UserPlus,
   XCircle,
 } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -623,7 +623,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                         setPreviewIndex(idx);
                         setPreviewOpen(true);
                       }}
-                      className="flex w-full items-center justify-between text-sm px-2 py-1.5 bg-muted rounded hover:bg-muted/70 transition text-left"
+                      className="flex w-full items-center justify-between text-sm px-2 py-1.5 bg-muted rounded hover:bg-muted/70 transition-colors text-left"
                     >
                       <div className="flex items-center min-w-0">
                         <FileText className="size-4 mr-2 text-muted-foreground shrink-0" />

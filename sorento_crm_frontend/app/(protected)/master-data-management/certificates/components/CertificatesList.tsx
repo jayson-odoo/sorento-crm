@@ -121,7 +121,7 @@ export default function CertificatesList() {
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
   }, [validityFilter, expiringWithin, schemeFilter, statusFilter, needsReviewFilter, searchQuery]);
 
-  const { data, isLoading, refetch, isFetching } = useCertificates({
+  const { data, isLoading, isPlaceholderData, refetch, isFetching } = useCertificates({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -341,6 +341,7 @@ export default function CertificatesList() {
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       rowPending={rowPending}
       rowHref={(row: Certificate) => {
         const search = buildDetailSearch(

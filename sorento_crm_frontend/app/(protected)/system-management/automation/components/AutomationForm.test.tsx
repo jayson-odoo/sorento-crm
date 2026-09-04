@@ -70,7 +70,7 @@ vi.mock('../../email-templates/hooks/useEmailTemplates', () => ({
   }),
 }));
 
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 
 // Stub RecipientPicker: seed one external email on mount so validation passes,
 // and keep the test focused on the grouping toggle.

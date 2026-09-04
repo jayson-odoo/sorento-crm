@@ -8,7 +8,7 @@ import ContactAttachmentTypesSection from './ContactAttachmentTypesSection';
 const apiFetch = vi.fn();
 
 vi.mock('@/lib/api', () => ({ apiFetch: (...a: unknown[]) => apiFetch(...a) }));
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 const CATALOG = {
   data: [

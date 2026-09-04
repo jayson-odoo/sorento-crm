@@ -6,7 +6,7 @@ import { RiCheckboxCircleFill, RiErrorWarningFill } from '@remixicon/react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSession } from 'next-auth/react';
 import { ControllerRenderProps, useForm } from 'react-hook-form';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { apiFetch } from '@/lib/api';
 import { getInitials } from '@/lib/helpers';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';

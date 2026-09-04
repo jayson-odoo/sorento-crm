@@ -81,12 +81,13 @@ describe('PlanningModePanel', () => {
     await waitFor(() => expect(mutateAsync).toHaveBeenCalledWith({ mode: 'manual' }));
   });
 
-  it('cancelling the dialog leaves the mode unchanged', () => {
+  it('cancelling the dialog leaves the mode unchanged', async () => {
     hooks.usePlanningMode.mockReturnValue({ data: { mode: 'auto' }, isLoading: false, isError: false });
     render(<PlanningModePanel />);
     fireEvent.click(screen.getByRole('radio', { name: /Manual/i }));
     fireEvent.click(screen.getByRole('button', { name: /Cancel/i }));
-    expect(screen.queryByText(/Switch to manual planning\?/i)).not.toBeInTheDocument();
+    // The AlertDialog spring's exit (M2-05) unmounts it a tick after the click.
+    await waitFor(() => expect(screen.queryByText(/Switch to manual planning\?/i)).not.toBeInTheDocument());
     expect(mutateAsync).not.toHaveBeenCalled();
   });
 
@@ -108,11 +109,14 @@ describe('PlanningModePanel', () => {
     );
   });
 
-  it('the radio reverts to the server value once the dialog is cancelled', () => {
+  it('the radio reverts to the server value once the dialog is cancelled', async () => {
     hooks.usePlanningMode.mockReturnValue({ data: { mode: 'auto' }, isLoading: false, isError: false });
     render(<PlanningModePanel />);
     fireEvent.click(screen.getByRole('radio', { name: /Manual/i }));
     fireEvent.click(screen.getByRole('button', { name: /Cancel/i }));
+    // The AlertDialog spring's exit (M2-05) inerts the radios for one extra
+    // tick beyond the click.
+    await waitFor(() => expect(screen.queryByText(/Switch to manual planning\?/i)).not.toBeInTheDocument());
 
     expect(screen.getByRole('radio', { name: /Auto/i })).toHaveAttribute('data-state', 'checked');
     expect(screen.getByRole('radio', { name: /Manual/i })).toHaveAttribute('data-state', 'unchecked');

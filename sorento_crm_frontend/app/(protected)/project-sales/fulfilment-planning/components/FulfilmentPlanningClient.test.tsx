@@ -58,7 +58,7 @@ vi.mock('../../_shared/services/fulfilmentPlanningService', () => ({
   ConfirmSupplyError: class extends Error {},
 }));
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), warning: vi.fn(), error: vi.fn() },
 }));
 

@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { useDrainingScaleXFill } from '@/hooks/useDrainingScaleXFill';
 import type { PendingAction } from '@/services/pendingActionService';
 
 /** Treat a timezone-less ISO timestamp (naive UTC from the backend) as UTC. */
@@ -43,23 +44,44 @@ export function DeferredCountdown({
   className,
 }: DeferredCountdownProps) {
   const target = pending ? Date.parse(asUtc(pending.commit_at)) : 0;
-  const windowMs = Math.max(1000, (pending?.window_seconds ?? 0) * 1000);
   const [now, setNow] = useState(() => Date.now());
-  // The window is short (5-10s), so the bar has to move visibly, not step.
-  const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     if (!pending) return;
-    tickRef.current = setInterval(() => setNow(Date.now()), 100);
+    // The fill itself no longer needs a fast tick (the CSS transition drains
+    // it, M3-01) - this one only redraws the `role="timer"` label, so once a
+    // second is plenty.
+    const tick = setInterval(() => setNow(Date.now()), 1000);
+    // A window almost never ends on one of those 1s boundaries, and until it
+    // is redrawn the bar sits empty beside a label still reading "in 1s". This
+    // lands the flip on the millisecond the window actually closes. Clamped to
+    // `target`, not the raw clock read: a browser timer can fire a few ms
+    // early, and `Date.now()` at that instant is still short of `target`, so
+    // `now` would read as not-yet-lapsed and the label would sit on "in 1s"
+    // until the next 1s tick caught up.
+    const lapse = setTimeout(
+      () => setNow(Math.max(Date.now(), target)),
+      Math.max(0, target - Date.now()),
+    );
     return () => {
-      if (tickRef.current) clearInterval(tickRef.current);
+      clearInterval(tick);
+      clearTimeout(lapse);
     };
-  }, [pending]);
+  }, [pending, target]);
+
+  const remainingMs = Math.max(0, target - now);
+  const windowMs = (pending?.window_seconds ?? 0) * 1000;
+  // Under full motion the fill parks fresh and full and the ONE shared draining
+  // mechanism (`hooks/useDrainingScaleXFill`, M3-01) transitions it to 0 by the
+  // server's `commit_at`, reading this fraction once. Under reduced motion there
+  // is no transition to read it once - the hook renders this value every time,
+  // so it has to be the LIVE fraction, and the 1s tick above is what steps the
+  // bar down with the label.
+  const fraction = windowMs > 0 ? Math.max(0, Math.min(1, remainingMs / windowMs)) : 1;
+  const fillStyle = useDrainingScaleXFill(target, fraction);
 
   if (!pending) return null;
 
-  const remainingMs = Math.max(0, target - now);
-  const pct = Math.max(0, Math.min(100, (remainingMs / windowMs) * 100));
   const lapsed = remainingMs <= 0;
   const label = lapsed ? `${verb}…` : `${verb} in ${Math.ceil(remainingMs / 1000)}s`;
 
@@ -81,7 +103,14 @@ export function DeferredCountdown({
           variant="ghost"
           size="sm"
           className="ms-auto h-7 px-2"
-          onClick={onCancel}
+          // Guarded on the CLOCK, not only on the last render: a click can land
+          // after the window closed, and by then the server has committed - so
+          // the cancel would ask for something that no longer exists, and the
+          // caller would report a failure the user cannot act on.
+          onClick={() => {
+            if (Date.now() >= target) return;
+            onCancel();
+          }}
           disabled={cancelling || lapsed}
         >
           Cancel
@@ -96,10 +125,13 @@ export function DeferredCountdown({
         <div
           data-testid="deferred-countdown-bar"
           className={cn(
-            'h-full rounded-full transition-[width] duration-100 ease-linear motion-reduce:transition-none',
+            'h-full origin-left rounded-full motion-reduce:transition-none',
             lapsed ? 'bg-muted-foreground/40' : 'bg-destructive',
           )}
-          style={{ width: lapsed ? '100%' : `${pct}%` }}
+          // Lapsed flatlines the bar full (matches the pre-M3 behaviour) rather
+          // than letting the transition's own end value (scaleX(0), empty) show:
+          // "the window is over" reads as a full grey bar, not a vanished one.
+          style={lapsed ? { transform: 'scaleX(1)' } : fillStyle}
         />
       </div>
     </div>

@@ -43,7 +43,7 @@ vi.mock('next/navigation', () => ({
 }));
 
 vi.mock('@/hooks/usePermissions', () => ({ useHasPermission: () => false }));
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock('./EventLogTable', () => ({ default: () => <div data-testid="event-log" /> }));
 vi.mock('./SlaTrackingChatRecords', () => ({
   default: () => <div data-testid="chat-records" />,

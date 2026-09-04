@@ -31,7 +31,6 @@ export function useContainerRequestDrill(
       ),
     enabled: Boolean(supplierId && productId && kind),
     staleTime: 15_000,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

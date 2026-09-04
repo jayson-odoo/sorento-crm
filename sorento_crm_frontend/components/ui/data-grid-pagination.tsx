@@ -1,6 +1,7 @@
 import { ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { useDataGrid } from '@/components/ui/data-grid';
+import { useBodySkeleton } from '@/components/ui/data-grid-table';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ChevronLeftIcon, ChevronRightIcon } from 'lucide-react';
@@ -35,7 +36,7 @@ interface DataGridPaginationProps {
 export const DEFAULT_PAGE_SIZES = [25, 50, 100];
 
 function DataGridPagination(props: DataGridPaginationProps) {
-  const { table, recordCount, isLoading } = useDataGrid();
+  const { table, recordCount } = useDataGrid();
 
   const defaultProps: Partial<DataGridPaginationProps> = {
     sizes: DEFAULT_PAGE_SIZES,
@@ -49,6 +50,13 @@ function DataGridPagination(props: DataGridPaginationProps) {
   };
 
   const mergedProps: DataGridPaginationProps = { ...defaultProps, ...props };
+
+  // The same gate the body uses, from the same hook, so the pager and the rows
+  // can never disagree about whether this is a first load: a placeholder page
+  // (M4 list latency) keeps its OWN rows on screen while the next one loads, so
+  // the pager has something real to show and stays interactive - Rows-per-page
+  // and Next both work, and the second press wins.
+  const showSkeleton = useBodySkeleton();
 
   const btnBaseClasses = 'size-7 p-0 text-sm';
   const btnArrowClasses = btnBaseClasses + ' rtl:transform rtl:rotate-180';
@@ -147,7 +155,7 @@ function DataGridPagination(props: DataGridPaginationProps) {
       )}
     >
       <div className="flex flex-wrap items-center space-x-2.5 pb-2.5 sm:pb-0 order-2 sm:order-1">
-        {isLoading ? (
+        {showSkeleton ? (
           mergedProps?.sizesSkeleton
         ) : (
           <>
@@ -177,7 +185,7 @@ function DataGridPagination(props: DataGridPaginationProps) {
         )}
       </div>
       <div className="flex flex-col sm:flex-row justify-center sm:justify-end items-center gap-2.5 pt-2.5 sm:pt-0 order-1 sm:order-2">
-        {isLoading ? (
+        {showSkeleton ? (
           mergedProps?.infoSkeleton
         ) : (
           <>

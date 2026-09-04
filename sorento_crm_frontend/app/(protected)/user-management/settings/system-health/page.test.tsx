@@ -45,7 +45,7 @@ vi.mock('@/lib/api', () => ({ apiFetch: (...args: unknown[]) => apiFetch(...args
 vi.mock('@/lib/api-client', () => ({
   extractApiError: vi.fn(async () => 'Failed to save'),
 }));
-vi.mock('sonner', () => ({ toast: { custom: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({ toast: { custom: vi.fn() } }));
 
 /** The settings POST, located by URL.
  *

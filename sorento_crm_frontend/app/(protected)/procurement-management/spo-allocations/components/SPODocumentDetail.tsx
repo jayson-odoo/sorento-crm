@@ -10,7 +10,7 @@ import {
   getPaginationRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   Columns3,
   FileText,

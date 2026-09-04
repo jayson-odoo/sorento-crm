@@ -1,7 +1,7 @@
 'use client';
 
 import { RiCheckboxCircleFill, RiErrorWarningFill } from '@remixicon/react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {

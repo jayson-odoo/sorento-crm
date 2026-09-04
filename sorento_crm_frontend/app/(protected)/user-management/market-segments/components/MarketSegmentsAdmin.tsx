@@ -27,7 +27,7 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { useMarketSegments, useMarketSegmentMutations } from '../hooks/useMarketSegments';
 import { type MarketSegment } from '../services/marketSegmentService';

@@ -25,7 +25,7 @@ vi.mock('@/services/userSelectService', () => ({
   getUsersSelect: (...args: unknown[]) => getUsersSelect(...args),
 }));
 
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 vi.mock('@/components/common/SearchableSelect', () => ({
   SearchableSelect: ({

@@ -1,7 +1,8 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 import {
   approveEdition,
@@ -20,6 +21,7 @@ export const EDITIONS_QUERY_KEY = 'dealer-kit-editions';
 
 export function useEditionsQuery(pageId?: string) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [EDITIONS_QUERY_KEY, pageId ?? 'all'],
     queryFn: () => listEditions(pageId),
   });

@@ -10,7 +10,7 @@ vi.mock('@/hooks/use-excel-accept', () => ({
   useExcelAccept: () => '.xlsx,.xls',
 }));
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
 }));
 

@@ -47,6 +47,7 @@ export function LeadsGrid({
   total,
   isLoading,
   isFetching,
+  isPlaceholderData,
   pagination,
   onPaginationChange,
   sorting,
@@ -63,6 +64,12 @@ export function LeadsGrid({
   total: number;
   isLoading?: boolean;
   isFetching?: boolean;
+  /**
+   * True while the list query is answering from the PREVIOUS page. The grid dims
+   * its body on it, so a page turn keeps the rows the reader was looking at
+   * instead of replacing them with skeletons.
+   */
+  isPlaceholderData?: boolean;
   pagination: PaginationState;
   onPaginationChange: (next: PaginationState) => void;
   sorting: SortingState;
@@ -368,6 +375,7 @@ export function LeadsGrid({
       onRowClick={rowHref ? undefined : (row) => router.push(`/project-sales/leads/${row.id}`)}
       recordCount={total}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       // Pinned, never the pathname default: the fallback keys column preferences on the
       // current URL, so any route carrying an id would write one preferences row per
       // record. This is the leads listing, and it has exactly one key.

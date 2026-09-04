@@ -16,6 +16,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   BoardCell,
   BoardContribution,
+  BoardSource,
   ConfirmSupplyBody,
   PlanningBoard,
   ReconciliationSummary,
@@ -47,7 +48,7 @@ vi.mock('../services/fulfilmentPlanningService', () => ({
 const toastSuccess = vi.fn();
 const toastWarning = vi.fn();
 const toastError = vi.fn();
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: {
     success: (...args: unknown[]) => toastSuccess(...args),
     warning: (...args: unknown[]) => toastWarning(...args),
@@ -699,7 +700,7 @@ describe('useLineDraftMutation', () => {
       saved_at: '2026-09-03T01:00:00',
       stale: false,
     });
-    const proposed = [
+    const proposed: BoardSource[] = [
       { kind: 'reserve', qty: '3', location: 'BRW', reason: 'Reserve from BRW' },
     ];
 

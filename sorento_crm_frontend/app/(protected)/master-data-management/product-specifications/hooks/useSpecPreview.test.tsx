@@ -8,7 +8,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { renderHook, waitFor, act } from '@testing-library/react';
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 vi.mock('../services/productSpecService', () => ({
@@ -16,7 +16,7 @@ vi.mock('../services/productSpecService', () => ({
   getSpecPreview: vi.fn(),
 }));
 
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   previewSpecRules,
   getSpecPreview,

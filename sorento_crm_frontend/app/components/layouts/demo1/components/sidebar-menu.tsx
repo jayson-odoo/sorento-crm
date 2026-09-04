@@ -14,6 +14,7 @@ import { collectMenuPaths, matchesMenuPath } from '@/lib/menu-path-match';
 import { usePermissions, useHasAnyPermission } from '@/hooks/usePermissions';
 import { WORKFLOW_PUBLISHED_FOR_SUBMISSION_PERMISSIONS } from '@/config/workflow-forms-dynamic-menu';
 import { useTenantModules } from '@/hooks/useTenantModules';
+import { usePrefetchOnce } from '@/hooks/usePrefetchOnce';
 import {
   AccordionMenu,
   AccordionMenuClassNames,
@@ -25,6 +26,7 @@ import {
   AccordionMenuSubTrigger,
 } from '@/components/ui/accordion-menu';
 import { Badge } from '@/components/ui/badge';
+import { PRESSED_CLASS } from '@/components/ui/primitive-classes';
 import { QuickAccessBlock } from './quick-access-block';
 import { MenuItemPinButton } from './menu-item-pin-button';
 
@@ -108,6 +110,9 @@ export function SidebarMenu() {
   const isSuperadmin = status === 'loading' ? null : isSuperadminUser(session?.user);
   const { permissionSet, isLoading } = usePermissions();
   const { enabledModuleKeys, isLoading: modulesLoading } = useTenantModules();
+  // A viewport prefetch of ~100 sidebar links is why every menu item carried
+  // `prefetch={false}`; hover is the middle ground (M4 list latency).
+  const prefetchOnce = usePrefetchOnce();
   const wfModuleEnabled = enabledModuleKeys?.has('workflow_forms') ?? false;
   /** Avoid calling published-for-submission without RBAC - global QueryCache onError would toast 403 on every page. */
   const canFetchPublishedWorkflowForms = useHasAnyPermission(
@@ -153,10 +158,15 @@ export function SidebarMenu() {
     label:
       'uppercase text-xs font-medium text-muted-foreground/70 pt-2.25 pb-px',
     separator: '',
-    item: 'h-8 text-accent-foreground hover:bg-accent hover:text-primary active:scale-[0.98] transition-transform duration-75 data-[selected=true]:text-primary data-[selected=true]:bg-muted data-[selected=true]:font-medium',
+    item: cn(
+      'h-8 text-accent-foreground hover:bg-accent hover:text-primary data-[selected=true]:text-primary data-[selected=true]:bg-muted data-[selected=true]:font-medium',
+      PRESSED_CLASS,
+    ),
     sub: '',
-    subTrigger:
-      'h-8 text-accent-foreground hover:bg-accent hover:text-primary active:scale-[0.98] transition-transform duration-75 data-[selected=true]:text-primary data-[selected=true]:bg-muted data-[selected=true]:font-medium',
+    subTrigger: cn(
+      'h-8 text-accent-foreground hover:bg-accent hover:text-primary data-[selected=true]:text-primary data-[selected=true]:bg-muted data-[selected=true]:font-medium',
+      PRESSED_CLASS,
+    ),
     subContent: 'py-0',
     indicator: '',
   };
@@ -203,6 +213,7 @@ export function SidebarMenu() {
           <Link
             href={item.path || '#'}
             prefetch={false}
+            onPointerEnter={() => item.path && prefetchOnce(item.path)}
             className="flex items-center grow gap-2 min-w-0"
           >
             {item.icon && <item.icon data-slot="accordion-menu-icon" className="shrink-0" />}
@@ -300,7 +311,12 @@ export function SidebarMenu() {
           className="text-[13px] group"
         >
           <div className="flex items-center gap-1 min-w-0 w-full">
-            <Link href={item.path || '#'} prefetch={false} className="flex-1 min-w-0 truncate">
+            <Link
+              href={item.path || '#'}
+              prefetch={false}
+              onPointerEnter={() => item.path && prefetchOnce(item.path)}
+              className="flex-1 min-w-0 truncate"
+            >
               {item.title}
             </Link>
             {item.path && (
@@ -346,7 +362,9 @@ export function SidebarMenu() {
   const menuAfter = useMemo(() => effectiveMenu.slice(indexToSplit), [effectiveMenu, indexToSplit]);
 
   return (
-    <div className="kt-scrollable-y-hover flex grow shrink-0 py-5 px-5 lg:max-h-[calc(100vh-5.5rem)]">
+    // M6-02: dvh - this IS the shipped shell (demo1), so its sidebar scroll cap
+    // must not sit under mobile Safari's dynamic toolbar the way vh does.
+    <div className="kt-scrollable-y-hover flex grow shrink-0 py-5 px-5 lg:max-h-[calc(100dvh-5.5rem)]">
       <AccordionMenu
         selectedValue={pathname}
         matchPath={matchPath}

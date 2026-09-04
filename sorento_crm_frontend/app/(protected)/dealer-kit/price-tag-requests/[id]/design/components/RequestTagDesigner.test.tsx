@@ -17,8 +17,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PRODUCT_BLOCK_SIZE } from '@/lib/dealer-kit/product-block';
 import type { TagLayer, TagTemplateDoc } from '@/lib/dealer-kit/tag-template-types';
 
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
-import { toast } from 'sonner';
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+import { toast } from '@/lib/toast';
 const mockToastSuccess = vi.mocked(toast.success);
 
 const push = vi.fn();
@@ -251,6 +251,7 @@ function lineTagData(overrides: Partial<LineTagData> = {}): LineTagData {
     show_promo_price: false,
     included_accessories: '',
     quantity: 1,
+    barcode: null,
     ...overrides,
   };
 }

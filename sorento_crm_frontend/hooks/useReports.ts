@@ -1,7 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { MY_DOWNLOADS_QUERY_KEY } from '@/services/myDownloadsService';
 import {
   createReportView,
@@ -22,6 +22,7 @@ import {
   type ReportViewConfig,
   type ReportViews,
 } from '@/services/reportService';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 /**
  * Report hooks (PLAN-reporting-foundation). The report KEY is a parameter throughout:
@@ -43,12 +44,12 @@ export function useReportRun(
   view: ReportViewConfig | null,
 ) {
   return useQuery<ReportResult, Error>({
+    ...LIST_QUERY_OPTIONS,
     // The pivot shape is part of the request, so reconfiguring the summary refetches
     // rather than re-deriving on the client (the engine owns every total).
     queryKey: [REPORT_RUN_KEY, reportKey, params, view?.pivot],
     queryFn: () => runReport(reportKey, params, view!),
     enabled: Boolean(view),
-    placeholderData: (previous) => previous,
     retry: 0,
   });
 }

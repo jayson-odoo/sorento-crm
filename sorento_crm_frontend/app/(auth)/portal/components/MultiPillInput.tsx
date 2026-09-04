@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 
 export interface MultiPillOption {
   value: string;
@@ -46,8 +47,10 @@ export function MultiPillInput({
   const [activeIndex, setActiveIndex] = useState(-1);
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastQueryRef = useRef('');
+  // M6-06: the shared debounce standard, not a hand-rolled 250ms timer.
+  const { setValue: seedDebounce, debouncedValue: debouncedText, isSettling } =
+    useDebouncedSearch();
 
   useEffect(() => {
     setPills(parsePills(value));
@@ -86,32 +89,32 @@ export function MultiPillInput({
     [onChange],
   );
 
+  // Keep the debounce hook's own value in step with `text`.
+  useEffect(() => {
+    seedDebounce(text);
+  }, [text, seedDebounce]);
+
+  // Fetch once `text` has settled, while open (M6-06).
   useEffect(() => {
     if (!open || !fetchOptions) return;
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => {
-      const q = text;
-      lastQueryRef.current = q;
-      setLoading(true);
-      void (async () => {
-        try {
-          const opts = await fetchOptions(q);
-          if (lastQueryRef.current !== q) return;
-          setOptions(opts);
-          setActiveIndex(opts.length > 0 ? 0 : -1);
-        } catch {
-          if (lastQueryRef.current !== q) return;
-          setOptions([]);
-          setActiveIndex(-1);
-        } finally {
-          if (lastQueryRef.current === q) setLoading(false);
-        }
-      })();
-    }, 250);
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
-  }, [text, open, fetchOptions]);
+    const q = debouncedText;
+    lastQueryRef.current = q;
+    setLoading(true);
+    void (async () => {
+      try {
+        const opts = await fetchOptions(q);
+        if (lastQueryRef.current !== q) return;
+        setOptions(opts);
+        setActiveIndex(opts.length > 0 ? 0 : -1);
+      } catch {
+        if (lastQueryRef.current !== q) return;
+        setOptions([]);
+        setActiveIndex(-1);
+      } finally {
+        if (lastQueryRef.current === q) setLoading(false);
+      }
+    })();
+  }, [debouncedText, open, fetchOptions]);
 
   useEffect(() => {
     if (!open) return;
@@ -228,13 +231,16 @@ export function MultiPillInput({
           className="absolute z-50 mt-1 left-0 right-0 max-h-[200px] overflow-auto border rounded-md bg-background shadow"
           role="listbox"
         >
-          {loading && (
+          {/* M6-06: `isSettling` covers the debounce window, `loading` the
+              network request after it - both read as "still searching". */}
+          {(loading || isSettling) && (
             <div className="px-3 py-2 text-sm text-muted-foreground">Searching...</div>
           )}
-          {!loading && options.length === 0 && (
+          {!loading && !isSettling && options.length === 0 && (
             <div className="px-3 py-2 text-sm text-muted-foreground">No matches</div>
           )}
           {!loading &&
+            !isSettling &&
             options.map((opt, i) => {
               const isActive = i === activeIndex;
               return (
@@ -244,7 +250,7 @@ export function MultiPillInput({
                   role="option"
                   aria-selected={isActive}
                   className={
-                    'block w-full text-left px-3 py-2 text-sm transition ' +
+                    'block w-full text-left px-3 py-2 text-sm transition-colors ' +
                     (isActive
                       ? 'bg-accent text-accent-foreground'
                       : 'hover:bg-accent/60')

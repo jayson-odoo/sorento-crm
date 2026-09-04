@@ -23,7 +23,7 @@ import {
   Upload,
   Wand2,
   } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   Alert,
   AlertContent,
@@ -957,6 +957,7 @@ export function OrderInquiriesClient() {
           table={table}
           recordCount={total}
           isLoading={list.isLoading}
+          isPlaceholderData={list.isPlaceholderData}
           listingKey="projects.projects.view::order-inquiry-worklist"
           tableLayout={{
             width: 'fixed',

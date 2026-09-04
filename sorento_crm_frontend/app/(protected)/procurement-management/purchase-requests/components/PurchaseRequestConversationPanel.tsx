@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -9,6 +10,7 @@ import { usePurchaseRequestConversation } from '../hooks/usePurchaseRequests';
 import RespondChatList from '@/components/common/RespondChatList';
 import SharedConversationComposer from '@/components/common/conversation/SharedConversationComposer';
 import { invalidateConversationWindow } from '@/components/common/conversation/useConversationWindowState';
+import { usePendingThreadItems } from '@/components/common/conversation/usePendingThreadItems';
 
 interface PurchaseRequestConversationPanelProps {
   requestId: string;
@@ -41,19 +43,32 @@ export default function PurchaseRequestConversationPanel({
 }: PurchaseRequestConversationPanelProps) {
   const { data, isLoading, refetch, isRefetching } = usePurchaseRequestConversation(requestId, { limit: 50 });
   const queryClient = useQueryClient();
+  const pending = usePendingThreadItems();
+  const { clearPending } = pending;
 
-  const items = data?.items ?? [];
+  // A different request is a different draft: never leave a stranger's
+  // in-flight send dimmed in a thread that just mounted under a new id.
+  // `clearPending` is `useCallback`-stable (empty deps in the hook), so
+  // listing it here does not re-run this on every render.
+  useEffect(() => {
+    clearPending();
+  }, [requestId, clearPending]);
+
+  const items = [...(data?.items ?? []), ...pending.pendingItems];
 
   const handleRefresh = () => {
     void refetch();
     invalidateConversationWindow(queryClient, 'purchase_request', requestId);
   };
 
+  // Returned so the composer's optimistic bubble (M6-01) waits for THIS
+  // refetch before it comes down; the 1.6s pulse only chases delivery ticks.
   const refetchSoon = () => {
-    void refetch();
+    const refetched = refetch();
     window.setTimeout(() => {
       void refetch();
     }, 1600);
+    return refetched;
   };
 
   const headerTitle = showAsPopup ? 'Chat Records' : 'Conversation (Respond.io)';
@@ -122,6 +137,7 @@ export default function PurchaseRequestConversationPanel({
           onGetViewLink={onGetViewLink}
           replyComposePrefill={replyComposePrefill}
           onSent={refetchSoon}
+          pendingBubble={{ add: pending.addPending, remove: pending.removePending }}
         />
       </CardContent>
     </Card>

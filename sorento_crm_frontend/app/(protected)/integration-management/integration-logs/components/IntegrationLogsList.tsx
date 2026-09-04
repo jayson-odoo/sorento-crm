@@ -28,7 +28,7 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useIntegrationLogs, useRetryIntegrationLog } from '../hooks/useIntegrationLogs';
 import type { IntegrationLog } from '../types/integrationLog.types';
 import { formatDistanceToNow } from 'date-fns';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { formatDateTimeInMalaysia, parseDateTimeAsUTC } from '@/lib/helpers';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
@@ -88,7 +88,7 @@ export default function IntegrationLogsList() {
   );
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
-  const { data, isLoading, isFetching, refetch, isRefetching } = useIntegrationLogs({
+  const { data, isLoading, isPlaceholderData, isFetching, refetch, isRefetching } = useIntegrationLogs({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -291,6 +291,7 @@ export default function IntegrationLogsList() {
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       rowHref={(row) => {
         // Carries the list query so the detail pager walks the same page.

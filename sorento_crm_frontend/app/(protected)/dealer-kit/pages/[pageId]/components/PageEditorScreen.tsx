@@ -13,7 +13,7 @@ import {
   History,
   Save,
 } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -33,6 +33,7 @@ import { PagePromotionControl } from './PagePromotionControl';
 import { PageTileDesignControl } from './PageTileDesignControl';
 import { VersionHistory } from './VersionHistory';
 import type { PageDoc, PageVersion } from '@/lib/dealer-kit/types';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 /**
  * Editor screen. Owns the working document, which is deliberately NOT the saved
@@ -42,6 +43,7 @@ import type { PageDoc, PageVersion } from '@/lib/dealer-kit/types';
  */
 export function PageEditorScreen({ pageId }: { pageId: string }) {
   const { data: page, isLoading, isError, error } = useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['dealer-kit', 'page', pageId],
     queryFn: () => getPage(pageId),
     retry: false,

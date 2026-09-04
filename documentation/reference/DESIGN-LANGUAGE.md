@@ -46,30 +46,86 @@ arrives - see the file's own "Materials" comment for the precedent.
 
 ## 3. Motion (`sorento_crm_frontend/lib/motion.ts`)
 
-- `SURFACE_SPRING`: `{ type: 'spring', bounce: 0, visualDuration: 0.3 }`. Critically damped
-  (`bounce: 0`) because these are not driven by a flick or drag; `visualDuration` is tuned to
-  `--duration-slow` so a JS spring and a CSS transition read at the same pace. A spring
-  re-targets from wherever the value currently sits, so re-opening a surface mid-close
-  continues live instead of jumping back to 0 (interruptible).
+- `SURFACE_SPRING`: `{ type: 'spring', bounce: 0, visualDuration: 0.3 }`. The lightbox family's
+  entry (Dialog, Sheet, AlertDialog). Critically damped (`bounce: 0`) because these are not
+  driven by a flick or drag; `visualDuration` is tuned to `--duration-slow` so a JS spring and a
+  CSS transition read at the same pace. A spring re-targets from wherever the value currently
+  sits, so re-opening a surface mid-close continues live instead of jumping back to 0
+  (interruptible).
+- `MENU_SPRING`: `{ type: 'spring', bounce: 0, visualDuration: 0.2 }` (M2-03). The menu family's
+  entry (Popover, DropdownMenu, ContextMenu, HoverCard, Menubar) - tuned to `--duration-base`
+  since a menu is a quick lookup next to its trigger, not a surface that takes over the screen.
+- `SURFACE_SPRING_EXIT`: `{ type: 'spring', bounce: 0, visualDuration: 0.2 }` (M2-03). What
+  EVERY surface exits on, lightbox or menu alike - a close only has to get out of the way, not
+  announce itself, so there is no reason to hold a lightbox's slower entry on the way out.
 - `REDUCED_MOTION_TRANSITION`: `{ duration: 0.01 }` - a same-frame opacity change, no scale,
   no travel, no overshoot.
-- `surfaceTransition(prefersReducedMotion)`: picks between the two above.
+- `surfaceTransition(prefersReducedMotion, kind?: 'lightbox' | 'menu')`: `kind` defaults to
+  `'lightbox'` (`SURFACE_SPRING`); pass `'menu'` for `MENU_SPRING`. Reduced motion collapses
+  either kind to `REDUCED_MOTION_TRANSITION`.
+- `surfaceExitTransition(prefersReducedMotion)`: `SURFACE_SPRING_EXIT`, or
+  `REDUCED_MOTION_TRANSITION` under reduced motion. A caller passes it as the `exit` variant's
+  own `transition` (motion's `TargetAndTransition.transition` override, e.g.
+  `exit={{ ...variants.exit, transition: exitTransition }}`) so entry and exit can run different
+  responses under the ONE shared `transition` prop that otherwise governs both.
 - `surfaceVariants(prefersReducedMotion)`: fade + scale 0.96 -> 1 in (never scale 0); reduced
   motion drops the scale and keeps only the fade.
 - `useOpenState()`: mirrors a Radix root's open state into plain React state so a sibling
   `Content` can gate an `<AnimatePresence>` - Radix's own Presence unmounts on a CSS animation
-  it can detect, which a JS spring is not.
-- Origin anchoring: the inner `motion.div` uses
-  `origin-(--radix-popper-content-transform-origin)` (Radix sets it to the trigger side) or a
-  fixed `origin-*` utility for a surface with no Radix popper. Modals stay centered.
+  it can detect, which a JS spring is not. A primitive with no controlled `open` prop of its own
+  (ContextMenu's Root, MenubarMenu) tracks the same signal off `onOpenChange` alone, or - for
+  MenubarMenu, which exposes neither - is not gated at all (see the Menubar row below).
+- Portalling a gated surface: `PopoverPortal` no longer renders Radix's `Portal` itself, it is a
+  context signal, and `PopoverContent` renders `<PopoverPrimitive.Portal forceMount>` from INSIDE
+  its own `AnimatePresence` (M2-04) - a Portal wrapped around the content from the outside drops
+  the whole subtree the instant the root's `open` flips false, taking the exit spring with it.
+- Origin anchoring: the inner `motion.div` uses the primitive's own Radix transform-origin
+  variable (`--radix-popover-content-transform-origin`,
+  `--radix-dropdown-menu-content-transform-origin` (shared by its `SubContent`),
+  `--radix-context-menu-content-transform-origin` (shared by its `SubContent`),
+  `--radix-hover-card-content-transform-origin`, `--radix-menubar-content-transform-origin`
+  (shared by its `SubContent`)) or a fixed `origin-*` utility for a surface with no Radix popper.
+  Modals stay centered.
+- **Keyboard-triggered surfaces never animate (M2-01).** `DialogContent` takes `motion?: boolean`
+  (default `true`); `motion={false}` marks the content `data-motion="off"` and drops the scale:
+  `initial` and `animate` both sit at `opacity: 1` (the panel is simply THERE on the frame after
+  the keydown), and `exit` is a real `{ opacity: 0 }` on a `{ duration: 0 }` transition. Exit is
+  NOT a copy of `animate`: identical variants give `AnimatePresence` nothing to run, so the
+  fragment stays mounted at full opacity for as long as the scrim beside it takes to fade, then
+  pops (the tester measured content alive ~150-185ms at opacity 1). Zero duration removes the
+  panel on the closing frame instead. `CommandDialog` forwards the prop; `search-dialog.tsx`
+  (Cmd/Ctrl+Shift+K) passes `motion={false}`. The scrim is the one carve-out: it still fades, on
+  a plain 150ms (`--duration-fast`) tween rather than the shared spring, because a scrim is not
+  what the shortcut asked to see and reads worse snapping on and off than the panel does - and
+  under `prefers-reduced-motion` even the scrim collapses to `REDUCED_MOTION_TRANSITION`, the
+  same same-frame change every other surface takes.
+- **One `TooltipProvider`, app-wide (M2-07).** `Tooltip` (`components/ui/tooltip.tsx`) is a bare
+  `Root` with no provider of its own; exactly one `<TooltipProvider delayDuration={700}
+  skipDelayDuration={300}>` mounts in `components/ClientProviders.tsx`. A second one anywhere
+  below it shadows the shared rhythm for its own subtree - which is what several toolbar buttons
+  did before this shipped, each with its own `delayDuration={300}` or `{0}`, so the
+  skipDelayDuration grouping never applied across siblings. A single dense toolbar may still
+  pass `delayDuration` on its own `Tooltip` Root (Radix reads it per instance, no second
+  provider) - `CanvasToolbar` does, at 300ms, because 15 unlabelled icons in a row make the
+  label the affordance.
+- **A tooltip is instant in AND out (M2-07).** `TooltipContent` carries no transition and no
+  keyframe: it is simply there after the delay, and gone on the closing frame. The
+  fade-on-`data-state` it used to carry could not run in either direction, so it was removed
+  rather than left as decoration - Radix mounts the content already carrying
+  `delayed-open`/`instant-open` (`stateAttribute` is only `closed` while the content is
+  unmounted), so an entry fade has no starting value to travel from, and Radix's Presence waits
+  on `animationend` alone, so a transition-only style unmounts before an exit fade can run.
+  Hover sits in the frequency table's "none or `--duration-fast` opacity only" band, so none is
+  a legitimate answer; resurrecting the fade would mean a keyframe animation, which is not worth
+  it for a surface this small.
 
 ### Rulings (2 Sep 2026)
 
 | Topic | Ruling |
 | --- | --- |
 | Easing curve | `--ease-standard` stays. It is already a custom curve; do not introduce a second one. A stronger ease-out is an ADR, not a PR. |
-| Duration per surface | Lightboxes (Dialog, Sheet, AlertDialog) = `--duration-slow` 300ms. Menus and popovers (DropdownMenu, Popover, Select, Tooltip) = `--duration-base` 200ms. Pressed feedback = `--duration-fast` 150ms. `lib/motion.ts` currently runs one 300ms spring for all surfaces; the 200ms menu preset is follow-up work, not part of this docs slice. |
-| Frequency gate | Adopt the emil-design-eng frequency table verbatim: 100+ times/day (keyboard shortcuts, command palette toggle) = no animation; tens/day (hover, list navigation, row expand/collapse, tab switch) = none or `--duration-fast` opacity only; occasional (lightboxes, toasts, drawers) = standard surface spring; rare (onboarding, celebration) = may add delight. Keyboard-initiated actions never animate. |
+| Duration per surface | Lightboxes (Dialog, Sheet, AlertDialog) = `--duration-slow` 300ms in, 200ms out (`SURFACE_SPRING` / `SURFACE_SPRING_EXIT`). Menus and popovers (DropdownMenu, Popover, ContextMenu, HoverCard, Menubar) = `--duration-base` 200ms in and out (`MENU_SPRING` / `SURFACE_SPRING_EXIT`). Tooltip = instant in and out (see the tooltip bullet above: the 150ms CSS fade this table used to claim could not run in either direction). Pressed feedback = `--duration-fast` 150ms. Shipped M2-03/M2-06/M2-07. |
+| Frequency gate | Adopt the emil-design-eng frequency table verbatim: 100+ times/day (keyboard shortcuts, command palette toggle) = no animation; tens/day (hover, list navigation, row expand/collapse, tab switch) = none or `--duration-fast` opacity only; occasional (lightboxes, toasts, drawers) = standard surface spring; rare (onboarding, celebration) = may add delight. Keyboard-initiated actions never animate - with the one carve-out named in the M2-01 bullet above, the dialog scrim, which keeps a 150ms fade behind a static panel. |
 
 ### Hard-fails in review
 
@@ -95,7 +151,7 @@ arrives - see the file's own "Materials" comment for the precedent.
 | `ListSearchInput` | `components/common/ListSearchInput.tsx` | Every list search box |
 | `FileDropzone` | `components/common/FileDropzone.tsx` | File upload surfaces |
 | `DeferredActionButton` / `useDeferredAction` | `components/common/DeferredActionButton.tsx`, `hooks/useDeferredAction.tsx` (list rows: `hooks/useDeferredRowAction.tsx`, `components/common/deferredToast.tsx`) | Destructive + detach actions (delete, archive-as-delete, unlink) - see ADR section 2. `ConfirmDeleteDialog` (`components/common/ConfirmDeleteDialog.tsx`) is retired; a new importer of it, or of a destructive `AlertDialog`, is a defect outside the named carve-outs |
-| `sonner` toast | `components/ui/sonner.tsx`, `Toaster` mounted in `components/ClientProviders.tsx` | Success/error feedback, deferred-action toasts on list rows |
+| `sonner` toast | `lib/toast.ts` for EVERY call site (`success`/`error` default duration + close button per M6-04; import `toast` from here, never `'sonner'` directly); `components/ui/sonner.tsx` + `ClientProviders.tsx` mount the one `<Toaster>` and are the only files allowed to import `sonner` itself | Success/error feedback, deferred-action toasts on list rows |
 
 Pressed + touch: `PRESSED_CLASS` and `COARSE_HIT_TARGET_CLASS` from
 `components/ui/primitive-classes.ts` on every pressable. Button sizes do not change - the

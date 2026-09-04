@@ -9,7 +9,7 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import { Download, X } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
@@ -91,7 +91,7 @@ export function ImportJobRowsCard({
     query: search || undefined,
   };
 
-  const { data, isLoading, isFetching, isError, error } = useImportJobRows(jobId, query);
+  const { data, isLoading, isPlaceholderData, isFetching, isError, error } = useImportJobRows(jobId, query);
 
   // A search brings the reader back to page 0 to see the matches.
   const searchMounted = useRef(false);
@@ -243,6 +243,7 @@ export function ImportJobRowsCard({
       table={table}
       recordCount={total}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       tableLayout={{ width: 'fixed', columnsResizable: true }}
     >
       <Card>

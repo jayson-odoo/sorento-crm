@@ -1,11 +1,12 @@
 import { useCallback, useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 // The flag is product master data, so the write lives with the products
 // feature and this screen is its second caller, not its second implementation.
 import { setBrochureImage } from '@/app/(protected)/master-data-management/products/services/productBrochureImageService';
 import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 import {
   adoptSingleBrochureImages,
@@ -19,6 +20,7 @@ export const BROCHURE_IMAGES_QUERY_KEY = 'dealer-kit-brochure-images';
 
 export function useBrochureImagesQuery(params: BrochureImageListParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [
       BROCHURE_IMAGES_QUERY_KEY,
       params.promotionId ?? '',
@@ -31,7 +33,6 @@ export function useBrochureImagesQuery(params: BrochureImageListParams) {
     // The list is a worklist somebody works down; a stale page would show a
     // product they have already dealt with as still needing a photo.
     staleTime: 0,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

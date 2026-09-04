@@ -18,6 +18,13 @@ export interface ListSearchInputProps {
   /** Called on Enter, for a list that wants to skip the wait. */
   onSubmit?: () => void;
   className?: string;
+  /**
+   * Extra classes on the `<Input>` itself, additive to the shared
+   * `ps-9 pe-9 w-full` (M6-06). For the one caller whose search box is the
+   * page's primary control rather than a toolbar filter (the portal landing
+   * page) and needs a size the shared 13px default under-serves.
+   */
+  inputClassName?: string;
   'aria-label'?: string;
   /**
    * A one-line hint on the box itself, for the single thing about THIS search a
@@ -50,6 +57,7 @@ export function ListSearchInput({
   isSettling = false,
   onSubmit,
   className,
+  inputClassName,
   'aria-label': ariaLabel,
   title,
 }: ListSearchInputProps) {
@@ -80,7 +88,7 @@ export function ListSearchInput({
             onSubmit();
           }
         }}
-        className="ps-9 pe-9 w-full"
+        className={cn('ps-9 pe-9 w-full', inputClassName)}
       />
       {/* Announced politely so a screen reader is told the wait, not shown a spinner. */}
       <span className="sr-only" role="status" aria-live="polite">

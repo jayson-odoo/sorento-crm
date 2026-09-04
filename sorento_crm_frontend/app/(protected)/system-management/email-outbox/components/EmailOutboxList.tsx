@@ -80,7 +80,7 @@ export default function EmailOutboxList() {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
   }, [query]);
 
-  const { data, isLoading, refetch, isFetching } = useEmailOutbox({
+  const { data, isLoading, isPlaceholderData, refetch, isFetching } = useEmailOutbox({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     status: status === '__all__' ? undefined : status,
@@ -260,6 +260,7 @@ export default function EmailOutboxList() {
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       tableLayout={{ columnsVisibility: true, width: 'fixed', columnsResizable: true }}
     >
       <Card>

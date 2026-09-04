@@ -22,8 +22,9 @@ import { useCancelImportJob, useImportJobStatus } from '../hooks/useImportJobs';
 import { OutcomeBreakdownCard } from '../components/OutcomeBreakdownCard';
 import { ImportJobRowsCard } from '../components/ImportJobRowsCard';
 import { PlanningChangeOutcomeCard } from '../components/PlanningChangeOutcomeCard';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import type { OutstandingPlanningChangeBatch } from '../../../scm/reorder/services/outstandingImportService';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 const JOB_TYPE_LABELS: Record<string, string> = {
   order_import: 'Order Import',
@@ -85,6 +86,7 @@ export default function ImportJobDetailPage({ params }: ImportJobDetailPageProps
   });
 
   const { data: jobsListData } = useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['import-jobs', pageIndex ?? 0, pageSize],
     queryFn: () => getImportJobs({ pageIndex: pageIndex ?? 0, pageSize, sorting: [] }),
     enabled: pageIndex !== null && !!job,

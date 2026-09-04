@@ -13,7 +13,7 @@ const decideCoveredRow = vi.fn().mockResolvedValue({ choice: 'buy', rec_type: 'b
 vi.mock('../services/reorderRunService', () => ({
   decideCoveredRow: (...a: unknown[]) => decideCoveredRow(...a),
 }));
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 import type { ReorderRecommendation } from '../types/reorder.types';
 import { CoveredByStockView as Raw } from './CoveredByStockView';
 

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import type { SortingState } from '@tanstack/react-table';
 import {
   createDoFromSalesOrder,
@@ -13,6 +13,7 @@ import {
 } from '../services/salesOrderService';
 import type { SalesOrderFormData } from '../types/scm.types';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export interface UseSalesOrdersParams {
   pageIndex: number;
@@ -99,6 +100,7 @@ export const salesOrdersPagerQuery = {
 export function useSalesOrders(params: UseSalesOrdersParams & { enabled?: boolean }) {
   const { enabled = true, ...listParams } = params;
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: salesOrdersListQueryKey(listParams),
     queryFn: () =>
       getSalesOrders({
@@ -119,7 +121,6 @@ export function useSalesOrders(params: UseSalesOrdersParams & { enabled?: boolea
       }),
     enabled,
     staleTime: 10_000,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -131,7 +132,6 @@ export function useSalesOrder(id: string | null) {
     queryFn: () => getSalesOrder(id as string),
     enabled: !!id,
     staleTime: 5_000,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -142,7 +142,6 @@ export function useSalesOrderAgents() {
     queryKey: ['scm', 'sales-order-agents'],
     queryFn: getSalesOrderAgents,
     staleTime: 5 * 60_000,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

@@ -94,7 +94,7 @@ vi.mock('../../_shared/services/planningChangeService', () => ({
   applyPlanningChanges: vi.fn(),
 }));
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), warning: vi.fn(), error: vi.fn() },
 }));
 
@@ -155,7 +155,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
   ),
 }));
 
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 // The mocked module's own `putLineDraft` / `deleteLineDraft` (B1): imported here, rather
 // than only referenced inside the factory above, so a test can control ONE call's outcome
 // (`mockImplementationOnce`) without touching every other test's default resolved value.

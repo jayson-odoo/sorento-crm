@@ -14,7 +14,7 @@
  */
 
 import { Copy, KeyRound, Link2Off, Trash2 } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
 
 import { useDeferredAction } from '@/hooks/useDeferredAction';

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   ColumnDef,
   PaginationState,
@@ -55,7 +55,7 @@ export function ReorderRunsGrid({ autoOpenRun = false }: { autoOpenRun?: boolean
   const [modalOpen, setModalOpen] = useState(autoOpenRun);
   const [starting, setStarting] = useState(false);
 
-  const { data, isLoading, isFetching, refetch } = useReorderRuns({
+  const { data, isLoading, isPlaceholderData, isFetching, refetch } = useReorderRuns({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -314,6 +314,7 @@ export function ReorderRunsGrid({ autoOpenRun = false }: { autoOpenRun?: boolean
         table={table}
         recordCount={data?.pagination.total ?? 0}
         isLoading={isLoading}
+        isPlaceholderData={isPlaceholderData}
         emptyMessage="No plans yet. Start Plan builds one from the order book you last uploaded."
         // The whole row opens the plan (A3) - there is nothing else to do with a run.
         onRowClick={(row) => router.push(`/scm/reorder/${row.run_id}`)}

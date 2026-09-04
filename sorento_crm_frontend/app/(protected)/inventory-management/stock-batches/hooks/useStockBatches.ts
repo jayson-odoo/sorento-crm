@@ -1,16 +1,17 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import { getStockBatches, getStockBatch, createStockBatch, updateStockBatch, deleteStockBatch, bulkAddSerialNumbers } from '../services/batchService';
 import type { BatchFormData } from '../types/batch.types';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export function useStockBatches(params: DataGridApiFetchParams & { warehouse_id?: string; product_id?: string; status?: string }) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['stock-batches', params.pageIndex, params.pageSize, params.sorting, params.searchQuery, params.warehouse_id, params.product_id, params.status],
     queryFn: () => getStockBatches(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

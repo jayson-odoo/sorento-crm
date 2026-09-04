@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   ColumnDef,
   PaginationState,
@@ -112,7 +112,7 @@ export default function AttachmentBrowser() {
   const { grants: companyGrants } = useCompany();
   const isTrashView = directoryId === '__trash__';
 
-  const { data, isLoading, isFetching } = useAttachments({
+  const { data, isLoading, isPlaceholderData, isFetching } = useAttachments({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -421,6 +421,7 @@ export default function AttachmentBrowser() {
         table={table}
         recordCount={data?.pagination.total || 0}
         isLoading={isLoading}
+        isPlaceholderData={isPlaceholderData}
         rowHref={(row) =>
           `/resource-management/attachments/${row.id}${detailSearch ? `?${detailSearch}` : ''}`
         }

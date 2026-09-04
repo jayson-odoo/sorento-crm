@@ -1,7 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   acceptCoverageTransfer,
   getCoverageTimeline,
@@ -38,7 +38,6 @@ export function useCoverageTimeline(q: Partial<CoverageQuery>, enabled: boolean)
       }),
     enabled: enabled && ready,
     staleTime: 30_000,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

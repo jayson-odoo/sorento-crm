@@ -3,7 +3,7 @@
 import { use, useEffect, useRef, useState } from 'react';
 import { sanitizedHtml } from '@/lib/sanitize';
 import { useRouter } from 'next/navigation';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';

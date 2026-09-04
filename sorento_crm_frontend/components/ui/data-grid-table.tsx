@@ -14,6 +14,7 @@ import { mergeColumnOrderWithLeafColumns } from '@/lib/listing-column-preference
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { toAbsoluteUrl } from '@/lib/helpers';
 import { useHorizontalOverflow } from '@/hooks/use-horizontal-overflow';
+import { usePrefetchOnce } from '@/hooks/usePrefetchOnce';
 import { cn } from '@/lib/utils';
 
 /**
@@ -310,18 +311,67 @@ function DataGridTableRowSpacer() {
 }
 
 function DataGridTableBody({ children }: { children: ReactNode }) {
-  const { props } = useDataGrid();
+  const { props, table, isLoading } = useDataGrid();
+  const showSkeleton = useBodySkeleton();
+
+  // The rows on screen are the PREVIOUS page's while the next one loads
+  // (M4 list latency) - dimmed rather than replaced by a skeleton.
+  //
+  // `isPlaceholderData` is the load-bearing clause: TanStack reports a
+  // `keepPreviousData` window as `isLoading: false, isFetching: true`, so a
+  // list that does not forward the flag never dims, however many rows it is
+  // holding. `lib/list-query/options.inventory.test.ts` is what keeps every
+  // list forwarding it. The `isLoading`-with-rows clause stays for the grids
+  // whose call site feeds `isLoading || isFetching` instead.
+  const holdingRows = Boolean(
+    !showSkeleton && (props.isPlaceholderData || (isLoading && table.getRowModel().rows.length > 0)),
+  );
 
   return (
     <tbody
       className={cn(
         '[&_tr:last-child]:border-0',
         props.tableLayout?.rowRounded && '[&_td:first-child]:rounded-s-lg [&_td:last-child]:rounded-e-lg',
+        holdingRows && 'opacity-60 transition-opacity duration-(--duration-fast) ease-(--ease-standard)',
         props.tableClassNames?.body,
       )}
     >
       {children}
     </tbody>
+  );
+}
+
+/**
+ * True while the body should draw skeleton rows, i.e. while it has nothing
+ * worth showing. Two ways for that to be true:
+ *
+ * - no rows yet - a FIRST load; or
+ * - column preferences still resolving, which is why `DataGridProvider` merges
+ *   `isColumnPreferencesLoading` into `isLoading` at all: painting the rows
+ *   under the DEFAULT column layout and re-laying them out a tick later is a
+ *   flash, and a reader who saw the wrong columns first does not trust the
+ *   second answer either.
+ *
+ * With both settled, a reload holds the rows it has - dimmed by
+ * `DataGridTableBody` - rather than throwing them away. `DataGridPagination`
+ * calls this same hook to decide whether to draw its own two skeleton bars, so
+ * the pager and the rows cannot disagree about what a first load is (M4-02,
+ * M4-03). It lives here, not at the call sites, so all four body render paths
+ * (plain, column-drag, row-drag, and the drive's own list body) and every grid
+ * built on them behave the same.
+ *
+ * The `pageSize` clause is what makes those render paths safe to write
+ * `Array.from({ length: pagination.pageSize })` without re-testing it.
+ */
+function useBodySkeleton(): boolean {
+  const { table, isLoading, isColumnPreferencesLoading, props } = useDataGrid();
+  const hasRows = table.getRowModel().rows.length > 0;
+
+  return Boolean(
+    props.loadingMode === 'skeleton' &&
+      isLoading &&
+      table.getState().pagination?.pageSize &&
+      (!hasRows || isColumnPreferencesLoading),
   );
 }
 
@@ -469,6 +519,7 @@ function LinkableBodyRow({
   children: ReactNode;
 }) {
   const router = useRouter();
+  const prefetchOnce = usePrefetchOnce();
 
   const openRecord = (newTab = false) => {
     if (newTab) {
@@ -480,11 +531,28 @@ function LinkableBodyRow({
     }
   };
 
+  // Hover is the signal, not the viewport: 151 lists render up to 100 rows, and
+  // a viewport-triggered prefetch would fetch a page's worth of detail chunks
+  // the reader never opens (M4 list latency).
+  //
+  // Taken OUT of the spread and composed rather than written after it: a
+  // draggable row carries its own `onPointerEnter`, and the last one written
+  // wins. Same rule as `rowOpenProps` below - nothing here silently replaces a
+  // handler the caller passed.
+  const { onPointerEnter: rowPointerEnter, ...restRowProps } = rowProps;
+
   return (
     // `rowOpenProps` BEFORE the dnd listeners `rowProps` carries: a future
     // list that is both draggable and openable would otherwise have its
     // keyboard-drag onKeyDown replaced by this one, silently.
-    <tr {...rowOpenProps({ opensUrl: true, open: openRecord })} {...rowProps}>
+    <tr
+      {...rowOpenProps({ opensUrl: true, open: openRecord })}
+      onPointerEnter={(event) => {
+        prefetchOnce(href);
+        rowPointerEnter?.(event);
+      }}
+      {...restRowProps}
+    >
       {children}
     </tr>
   );
@@ -532,6 +600,11 @@ function DataGridTableBodyRow<TData>({
       isPending && 'opacity-50',
       extraClassName,
       (href || props.onRowClick) && 'cursor-pointer',
+      // The press cue belongs to the rows that take a press. It is not on the
+      // skeleton row (nothing to open yet), and not on a stripped grid, where
+      // the odd row already paints itself bg-muted/90 - darker than the /60 the
+      // press would set, so the press would read as a lift, not a push.
+      (href || props.onRowClick) && !props.tableLayout?.stripped && 'active:bg-muted/60',
       !props.tableLayout?.stripped &&
         props.tableLayout?.rowBorder &&
         'border-b border-border [&:not(:last-child)>td]:border-b',
@@ -788,12 +861,14 @@ function DataGridTableRowSelect<TData>({ row, size }: { row: Row<TData>; size?: 
 }
 
 function DataGridTableRowSelectAll({ size }: { size?: 'sm' | 'md' | 'lg' }) {
-  const { table, recordCount, isLoading } = useDataGrid();
+  const { table, recordCount } = useDataGrid();
 
   return (
     <Checkbox
       checked={table.getIsAllPageRowsSelected() || (table.getIsSomePageRowsSelected() && 'indeterminate')}
-      disabled={isLoading || recordCount === 0}
+      // Not `isLoading`: a refetch with rows on screen is not a reason to take
+      // the control away (M4-05). An empty list still has nothing to select.
+      disabled={recordCount === 0}
       onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
       aria-label="Select all"
       size={size}
@@ -889,8 +964,9 @@ function DataGridScroller({ children }: { children: ReactNode }) {
 }
 
 function DataGridTable<TData>() {
-  const { table, isLoading, props } = useDataGrid();
+  const { table, props } = useDataGrid();
   const pagination = table.getState().pagination;
+  const showBodySkeleton = useBodySkeleton();
   // A phone does NOT pin the identifier column. S1 pinned it under `sm` so the
   // row stayed labelled while the grid scrolled sideways; the user tried it and
   // found a column that refuses to move with the rest weirder than losing sight
@@ -965,7 +1041,7 @@ function DataGridTable<TData>() {
         {(props.tableLayout?.stripped || !props.tableLayout?.rowBorder) && <DataGridTableRowSpacer />}
 
         <DataGridTableBody>
-          {props.loadingMode === 'skeleton' && isLoading && pagination?.pageSize ? (
+          {showBodySkeleton ? (
             Array.from({ length: pagination.pageSize }).map((_, rowIndex) => (
               <DataGridTableBodyRowSkeleton key={rowIndex}>
                 {/* LEAF columns: the flat list includes a group PARENT, which is not a
@@ -1070,4 +1146,5 @@ export {
   DataGridTableRowSelect,
   DataGridTableRowSelectAll,
   DataGridTableRowSpacer,
+  useBodySkeleton,
 };

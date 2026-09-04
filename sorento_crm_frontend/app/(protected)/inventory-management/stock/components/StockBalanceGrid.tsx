@@ -35,7 +35,7 @@ import { replaceLatestStockList, getCurrentStockListAttachment } from '@/app/(pr
 import { useImportJobDrawer } from '@/components/upload-activity';
 import StockBulkDeleteDialog from './StockBulkDeleteDialog';
 import { useQueryClient, useQuery } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { generateExcelFile, type ColumnOption } from '@/lib/excel-utils';
 import { useRouter } from 'next/navigation';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
@@ -98,7 +98,7 @@ export default function StockBalanceGrid() {
   });
   const warehouses: Warehouse[] = warehousesData?.data ?? [];
 
-  const { data, isLoading, isFetching } = useStockBalance({
+  const { data, isLoading, isPlaceholderData, isFetching } = useStockBalance({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -265,6 +265,7 @@ export default function StockBalanceGrid() {
       table={table}
       recordCount={total}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       onRowClick={handleRowClick}
       standardToolbar={false}
       tableLayout={{ columnsVisibility: true }}

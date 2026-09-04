@@ -2,7 +2,7 @@
 
 import * as Popover from '@radix-ui/react-popover';
 import { RiErrorWarningFill } from '@remixicon/react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { useRecaptchaV2 } from '@/hooks/use-recaptcha-v2';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';

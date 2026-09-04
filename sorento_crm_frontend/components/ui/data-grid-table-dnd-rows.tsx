@@ -14,6 +14,7 @@ import {
   DataGridTableHeadRowCell,
   DataGridTableHeadRowCellResize,
   DataGridTableRowSpacer,
+  useBodySkeleton,
 } from '@/components/ui/data-grid-table';
 import {
   closestCenter,
@@ -79,8 +80,9 @@ function DataGridTableDndRows<TData>({
   handleDragEnd: (event: DragEndEvent) => void;
   dataIds: UniqueIdentifier[];
 }) {
-  const { table, isLoading, props } = useDataGrid();
+  const { table, props } = useDataGrid();
   const pagination = table.getState().pagination;
+  const showBodySkeleton = useBodySkeleton();
   const [activeRow, setActiveRow] = useState<Row<TData> | null>(null);
 
   // Same activation constraint as the column reorderer (data-grid-table-dnd.tsx,
@@ -138,7 +140,7 @@ function DataGridTableDndRows<TData>({
           {(props.tableLayout?.stripped || !props.tableLayout?.rowBorder) && <DataGridTableRowSpacer />}
 
           <DataGridTableBody>
-            {props.loadingMode === 'skeleton' && isLoading && pagination?.pageSize ? (
+            {showBodySkeleton ? (
               Array.from({ length: pagination.pageSize }).map((_, rowIndex) => (
                 <DataGridTableBodyRowSkeleton key={rowIndex}>
                   {table.getVisibleFlatColumns().map((column, colIndex) => {

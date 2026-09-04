@@ -22,7 +22,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
 }));
 
@@ -55,7 +55,7 @@ vi.mock('@/app/(protected)/scm/services/fulfilmentService', () => ({
   downloadSpoWorksheet: (...args: unknown[]) => state.worksheet(...args),
 }));
 
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { NO_SPO_TO_POOL } from '@/app/(protected)/scm/components/PlanRowDialog';
 import { SpoPlannerTable } from './SpoPlannerTable';
 

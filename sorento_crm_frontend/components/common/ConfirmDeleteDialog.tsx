@@ -1,7 +1,7 @@
 'use client';
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { LoaderCircleIcon } from 'lucide-react';
 import { RiCheckboxCircleFill, RiErrorWarningFill } from '@remixicon/react';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';

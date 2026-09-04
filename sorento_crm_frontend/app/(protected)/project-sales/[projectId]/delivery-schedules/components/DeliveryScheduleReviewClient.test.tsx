@@ -10,7 +10,7 @@
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   DeliveryScheduleVersion,
@@ -95,7 +95,7 @@ vi.mock('../../../_shared/services/deliveryScheduleService', () => ({
   rejectRevisionProposal: (...args: unknown[]) => rejectRevisionProposal(...args),
 }));
 
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 const getProject = vi.fn();
 vi.mock('../../../_shared/services/projectService', async (importOriginal) => {

@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import {
   listLookupSets, getLookupSet, createLookupSet, updateLookupSet,
@@ -8,11 +8,13 @@ import {
   listEligibility, resolveLookup,
 } from '../services/lookupSetService';
 import type { LookupSetFormData, LookupOptionFormData } from '../types/lookup.types';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 const KEY = 'lookup-sets';
 
 export function useLookupSets(params: DataGridApiFetchParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [KEY, params.pageIndex, params.pageSize, params.sorting, params.searchQuery],
     queryFn: () => listLookupSets(params),
     staleTime: 30_000,

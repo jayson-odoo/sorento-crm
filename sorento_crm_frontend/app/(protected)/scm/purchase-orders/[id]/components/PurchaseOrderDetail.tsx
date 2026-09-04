@@ -270,7 +270,6 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
     queryKey: ['scm', 'sales-order-uoms'],
     queryFn: getSalesOrderUoms,
     staleTime: 5 * 60_000,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
   const uomSelectOptions = useMemo<SearchableSelectOption[]>(

@@ -13,7 +13,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Loader2, Search, Upload } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,

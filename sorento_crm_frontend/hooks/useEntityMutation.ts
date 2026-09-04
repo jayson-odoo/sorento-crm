@@ -6,7 +6,7 @@ import {
   type QueryKey,
   type UseMutationResult,
 } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 /**
  * One write against one row, applied to the cache before the server answers (S7-01).

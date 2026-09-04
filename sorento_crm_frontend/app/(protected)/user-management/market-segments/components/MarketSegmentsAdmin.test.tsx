@@ -21,7 +21,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import MarketSegmentsAdmin from './MarketSegmentsAdmin';
 import type { MarketSegment } from '../services/marketSegmentService';
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   // `dismiss` is load-bearing: the countdown's toast is dismissed when the row
   // unmounts, and a stub without it throws out of an effect no assertion catches.
   toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn(), dismiss: vi.fn() },

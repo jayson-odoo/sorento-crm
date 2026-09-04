@@ -26,7 +26,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -45,12 +45,7 @@ import {
   DataGridTableRowSelectAll,
 } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 interface IColumnFilterProps<TData, TValue> {
   column: Column<TData, TValue>;
@@ -588,23 +583,21 @@ const Device = () => {
         id: 'added',
         accessorFn: (row) => row.added,
         header: ({ column }) => (
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <div className="flex items-center gap-2">
-                  <Info className="h-4 w-4" />
-                  <DataGridColumnHeader
-                    title="Added"
-                    visibility={true}
-                    column={column}
-                  />
-                </div>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>Time is based on your local timezone.</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="flex items-center gap-2">
+                <Info className="h-4 w-4" />
+                <DataGridColumnHeader
+                  title="Added"
+                  visibility={true}
+                  column={column}
+                />
+              </div>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Time is based on your local timezone.</p>
+            </TooltipContent>
+          </Tooltip>
         ),
         cell: (info) => (
           <span className="text-sm text-foreground font-normal">

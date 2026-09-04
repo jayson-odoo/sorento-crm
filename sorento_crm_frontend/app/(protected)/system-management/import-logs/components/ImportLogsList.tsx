@@ -85,7 +85,7 @@ export default function ImportLogsList() {
     return `${uniqueCodes.slice(0, 5).join(', ')}... (+${uniqueCodes.length - 5} more)`;
   };
 
-  const { data, isLoading, refetch, isFetching } = useImportLogs({
+  const { data, isLoading, isPlaceholderData, refetch, isFetching } = useImportLogs({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     entity_type: entityType || undefined,
@@ -201,6 +201,7 @@ export default function ImportLogsList() {
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       onRowClick={(row) => handleRowClick(row.id)}
       tableLayout={{ columnsVisibility: true }}
     >

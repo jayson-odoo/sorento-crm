@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   addCertificateProduct,
   bulkDeleteCertificates,
@@ -13,6 +13,7 @@ import {
 import type { CertificatesListParams } from '../services/certificateService';
 import type { CertificateFormData } from '../types/certificate.types';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 /**
  * Certificate register hooks.
@@ -72,11 +73,11 @@ export const certificatesPagerQuery = {
 
 export function useCertificates(params: CertificatesListParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: certificatesListQueryKey(params),
     queryFn: () => getCertificates(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

@@ -16,7 +16,7 @@ import {
   getPaginationRowModel,
 } from '@tanstack/react-table';
 import { Download, Eye, Plus, RefreshCw, Trash2, Upload } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { getLatestContainerStatusDocument } from '../services/packingListService';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -117,7 +117,7 @@ export default function PackingListsList() {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewItem, setPreviewItem] = useState<AttachmentPreviewItem | null>(null);
 
-  const { data, isLoading, refetch, isFetching } = usePackingLists({
+  const { data, isLoading, isPlaceholderData, refetch, isFetching } = usePackingLists({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -384,6 +384,7 @@ export default function PackingListsList() {
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       rowHref={rowHref}
       standardToolbar={false}
       tableLayout={{ width: 'fixed', columnsVisibility: true, columnsResizable: true }}

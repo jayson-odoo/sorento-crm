@@ -13,7 +13,7 @@ import {
   getPaginationRowModel,
 } from '@tanstack/react-table';
 import { Plus, Upload, Trash2 } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { useQueryClient } from '@tanstack/react-query';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -80,7 +80,7 @@ export default function WarehousesList() {
     queryClient.invalidateQueries({ queryKey: ['warehouses'] });
   };
 
-  const { data, isLoading, refetch, isFetching } = useWarehouses({
+  const { data, isLoading, isPlaceholderData, refetch, isFetching } = useWarehouses({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -174,6 +174,7 @@ export default function WarehousesList() {
 
   return (
     <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       rowHref={rowHref}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       standardToolbar={false}

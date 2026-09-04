@@ -12,7 +12,7 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import type { ProformaInvoiceListRow } from '../../services/proformaInvoiceService';
 
 if (!window.matchMedia) {
@@ -34,7 +34,7 @@ if (!window.ResizeObserver) {
 }
 Element.prototype.scrollIntoView = Element.prototype.scrollIntoView ?? (() => {});
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: {
     success: vi.fn(),
     error: vi.fn(),

@@ -1,7 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 import {
   addFlyerSpecProposalRow,
@@ -41,7 +41,6 @@ export function useFlyerSpecBatchesQuery() {
       (query.state.data ?? []).some((row) => row.status === 'proposing')
         ? PROPOSING_POLL_MS
         : false,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -74,7 +73,6 @@ export function useFlyerSpecProposalsQuery(
     refetchInterval: (query) =>
       query.state.data?.status === 'proposing' ? PROPOSING_POLL_MS : false,
     staleTime: 0,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

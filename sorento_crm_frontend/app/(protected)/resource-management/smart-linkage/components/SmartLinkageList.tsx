@@ -27,7 +27,7 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useIntegrationLogs, useRetryIntegrationLog } from '@/app/(protected)/integration-management/integration-logs/hooks/useIntegrationLogs';
 import type { IntegrationLog } from '@/app/(protected)/integration-management/integration-logs/types/integrationLog.types';
 import { formatDistanceToNow } from 'date-fns';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 
@@ -46,7 +46,7 @@ export default function SmartLinkageList() {
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   // Always filter by business_table = 'attachments'
-  const { data, isLoading, isFetching, refetch } = useIntegrationLogs({
+  const { data, isLoading, isPlaceholderData, isFetching, refetch } = useIntegrationLogs({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -186,6 +186,7 @@ export default function SmartLinkageList() {
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       tableLayout={{ columnsVisibility: true }}
       onRowClick={(row) => {
         router.push(`/integration-management/integration-logs/${row.id}`);

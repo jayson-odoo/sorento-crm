@@ -7,7 +7,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 vi.mock('../../product-specifications/services/productSpecService', () => ({
@@ -15,7 +15,7 @@ vi.mock('../../product-specifications/services/productSpecService', () => ({
   applySpecProposals: vi.fn(),
 }));
 
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   applySpecProposals,
   extractSpecProposals,

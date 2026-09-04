@@ -14,11 +14,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { useEntityMutation } from './useEntityMutation';
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { error: vi.fn(), success: vi.fn() },
 }));
 
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 type Row = { id: string; active: boolean };
 

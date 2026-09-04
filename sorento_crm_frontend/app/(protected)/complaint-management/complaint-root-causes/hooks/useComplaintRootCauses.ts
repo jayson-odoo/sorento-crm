@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import {
   getComplaintRootCauses,
@@ -10,9 +10,11 @@ import {
   deleteComplaintRootCause,
 } from '../services/complaintRootCauseService';
 import type { ComplaintRootCauseFormData } from '../types/complaintRootCause.types';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export function useComplaintRootCauses(params: DataGridApiFetchParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [
       'complaint-root-causes',
       params.pageIndex,
@@ -23,7 +25,6 @@ export function useComplaintRootCauses(params: DataGridApiFetchParams) {
     queryFn: () => getComplaintRootCauses(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -45,7 +46,6 @@ export function useComplaintRootCausesSelect(query?: string) {
     queryKey: ['complaint-root-causes-select', query ?? ''],
     queryFn: () => getComplaintRootCausesSelect(query),
     staleTime: 1000 * 60 * 5,
-    refetchOnWindowFocus: false,
   });
 }
 

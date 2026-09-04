@@ -64,7 +64,7 @@ export default function WorkflowSubmissionsList({
   const [quickStateCode, setQuickStateCode] = useState('');
 
   const { data: pubDefs } = usePublishedWorkflowDefinitionsForSubmissionQuery();
-  const { data, isLoading, isError, error, refetch, isFetching } = useWorkflowSubmissionsGridQuery({
+  const { data, isLoading, isPlaceholderData, isError, error, refetch, isFetching } = useWorkflowSubmissionsGridQuery({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -235,6 +235,7 @@ export default function WorkflowSubmissionsList({
         table={table}
         recordCount={data?.pagination.total ?? 0}
         isLoading={isLoading}
+        isPlaceholderData={isPlaceholderData}
         listingKey={wfDefForPayload ? `${pathname}::${wfDefForPayload}` : pathname}
         onRowClick={(row) => router.push(`/workflow-forms-management/submissions/${row.id}`)}
         tableLayout={{ columnsVisibility: true }}

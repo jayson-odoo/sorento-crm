@@ -26,7 +26,7 @@ import {
 } from '@/components/ui/carousel';
 import { Button } from '@/components/ui/button';
 import { apiFetch } from '@/lib/api';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 /**
  * Fetch attachment bytes for the Download button and the Excel inline preview.
@@ -161,8 +161,18 @@ export default function AttachmentPreviewModal({
 
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
-      if (e.key === 'ArrowRight') api?.scrollNext();
-      else if (e.key === 'ArrowLeft') api?.scrollPrev();
+      // Arrow-key navigation jumps straight to the slide (M2-02, no
+      // animation) - only drag and the dot/arrow-button navigation still
+      // play Embla's own scroll (carousel.tsx, duration 20).
+      //
+      // Kept even though carousel.tsx now jumps on the same keys: its handler
+      // is a capture listener on the carousel region, so it only sees a key
+      // pressed with focus INSIDE that region - and there it wins and stops
+      // propagation, so this handler does not also run. Focus anywhere else in
+      // the dialog (the panel itself, a header button) never reaches the
+      // capture listener, and this is what moves the slide.
+      if (e.key === 'ArrowRight') api?.scrollNext(true);
+      else if (e.key === 'ArrowLeft') api?.scrollPrev(true);
       else if (e.key === '+' || e.key === '=') zoomBy(1.25);
       else if (e.key === '-') zoomBy(0.8);
     },

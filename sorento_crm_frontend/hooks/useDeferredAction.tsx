@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 import { DeferredCountdown } from '@/components/common/DeferredActionButton';
 import { deferredToast, dismissDeferredToast } from '@/components/common/deferredToast';

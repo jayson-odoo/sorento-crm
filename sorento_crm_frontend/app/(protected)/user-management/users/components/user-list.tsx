@@ -55,9 +55,10 @@ import { useEntityMutation } from '@/hooks/useEntityMutation';
 import { useRoleSelectQuery } from '../../roles/hooks/use-role-select-query';
 import { getUserStatusProps, UserStatusProps } from '../constants/status';
 import UserInviteDialog from './user-add-dialog';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import type { Table as ReactTable } from '@tanstack/react-table';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 type UserFilterField = 'role' | 'status' | 'trashed';
 type UserFilterCondition = { id: string; field: UserFilterField; value: string };
@@ -82,7 +83,6 @@ interface UsersToolbarProps {
     action: 'delete' | 'activate' | 'deactivate' | 'permanent_delete' | 'resend_invite',
   ) => void;
   roleList: UserRoleSimple[] | undefined;
-  isLoading: boolean;
   addUserButton: React.ReactNode;
 }
 
@@ -111,7 +111,6 @@ const UsersToolbar = ({
   bulkActionPending,
   runBulkAction,
   roleList,
-  isLoading,
   addUserButton,
 }: UsersToolbarProps) => {
   const initialConditionsFromApplied = (): UserFilterCondition[] => {
@@ -248,7 +247,6 @@ const UsersToolbar = ({
                       <SearchableSelect
                         value={cond.value}
                         onChange={(v) => updateCondition(cond.id, { value: v })}
-                        disabled={isLoading}
                         options={[
                           { value: 'all', label: 'All roles' },
                           ...(roleList ?? []).map((role) => ({
@@ -261,7 +259,6 @@ const UsersToolbar = ({
                       <SearchableSelect
                         value={cond.value}
                         onChange={(v) => updateCondition(cond.id, { value: v })}
-                        disabled={isLoading}
                         options={[
                           { value: 'all', label: 'All users' },
                           ...Object.entries(UserStatusProps).map(([status, { label }]) => ({
@@ -274,7 +271,6 @@ const UsersToolbar = ({
                       <SearchableSelect
                         value={cond.value}
                         onChange={(v) => updateCondition(cond.id, { value: v })}
-                        disabled={isLoading}
                         options={[
                           { value: 'exclude', label: 'Active only' },
                           { value: 'only', label: 'Trashed only' },
@@ -408,12 +404,12 @@ const UserList = () => {
     [pagination, sorting, searchQuery, selectedRole, selectedStatus, selectedTrashed],
   );
 
-  const { data, isLoading, isFetching } = useQuery({
+  const { data, isLoading, isPlaceholderData, isFetching } = useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: usersListQueryKey(listParams),
     queryFn: () => fetchUsersListPage(listParams),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60, // 60 minutes
-    refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: 1,
   });
@@ -750,7 +746,6 @@ const UserList = () => {
   // and the empty state's next step (S5-06).
   const addUserButton = (
     <Button
-      disabled={isLoading && true}
       onClick={() => {
         setInviteDialogOpen(true);
       }}
@@ -767,6 +762,7 @@ const UserList = () => {
         emptyAction={addUserButton}
         recordCount={data?.pagination.total || 0}
         isLoading={isLoading}
+        isPlaceholderData={isPlaceholderData}
         rowHref={rowHref}
         rowPending={rowPending}
         standardToolbar={false}
@@ -799,7 +795,6 @@ const UserList = () => {
             bulkActionPending={bulkActionPending}
             runBulkAction={runBulkAction}
             roleList={roleList}
-            isLoading={isLoading}
             addUserButton={addUserButton}
           />
           <CardTable>

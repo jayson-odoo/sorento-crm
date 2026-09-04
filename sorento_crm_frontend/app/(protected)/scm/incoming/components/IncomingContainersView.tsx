@@ -42,7 +42,6 @@ export function IncomingContainersView() {
   const shipments = useQuery({
     queryKey: ['scm', 'fulfilment', 'incoming', supplierId],
     queryFn: () => getIncomingShipments(supplierId),
-    refetchOnWindowFocus: false,
   });
   const imported = shipments.data ?? [];
 

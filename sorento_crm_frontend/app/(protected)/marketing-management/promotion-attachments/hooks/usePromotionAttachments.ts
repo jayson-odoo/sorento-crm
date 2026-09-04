@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import {
   getPromotionAttachments,
@@ -10,14 +10,15 @@ import {
   getPromotionAttachmentsByPromotion,
 } from '../services/promotionAttachmentService';
 import type { PromotionAttachment, PromotionAttachmentFormData } from '../types/promotionAttachment.types';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export function usePromotionAttachments(params: DataGridApiFetchParams & { promotion_id?: string; attachment_id?: string }) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['promotion-attachments', params.pageIndex, params.pageSize, params.sorting, params.searchQuery, params.promotion_id, params.attachment_id],
     queryFn: () => getPromotionAttachments(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -29,7 +30,6 @@ export function usePromotionAttachment(id: string | null) {
     enabled: !!id,
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -87,7 +87,6 @@ export function usePromotionAttachmentsByPromotion(promotionId: string | null) {
     enabled: !!promotionId,
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

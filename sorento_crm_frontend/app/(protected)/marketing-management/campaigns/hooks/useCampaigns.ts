@@ -1,9 +1,10 @@
 import { useQuery, useMutation, useQueryClient, type QueryKey } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import type { ListPagerPage, ListPagerParams } from '@/hooks/useListPager';
 import { getCampaigns, getCampaign, getCampaignTypes, createCampaign, updateCampaign } from '../services/campaignService';
 import type { CampaignFormData } from '../types/campaign.types';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 type CampaignsListParams = DataGridApiFetchParams & {
   campaign_type_id?: string;
@@ -55,11 +56,11 @@ export const campaignsPagerQuery = {
 
 export function useCampaigns(params: CampaignsListParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: campaignsListQueryKey(params),
     queryFn: () => getCampaigns(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }
@@ -82,7 +83,6 @@ export function useCampaignTypes() {
     queryFn: getCampaignTypes,
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

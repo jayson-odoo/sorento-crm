@@ -22,7 +22,7 @@ import {
   Sparkles,
   Trash2,
 } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -1905,7 +1905,9 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   ) : null;
 
   return (
-    <div className="min-h-screen max-w-7xl mx-auto px-4 py-6 space-y-4">
+    // M6-02: dvh - phone-facing portal form, so a `vh` shell that sits under
+    // mobile Safari's dynamic toolbar clips the form the reader is filling in.
+    <div className="min-h-dvh max-w-7xl mx-auto px-4 py-6 space-y-4">
       <div className="flex items-center justify-between">
         <Button variant="ghost" size="sm" asChild>
           <Link href={portalHomePath({ type: kind })}>
@@ -2086,7 +2088,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
             )
           }
           aria-label="Previous submission"
-          className="fixed left-1 top-1/2 z-30 flex size-8 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background/80 opacity-60 shadow-sm backdrop-blur transition hover:opacity-100 sm:left-3 sm:size-10"
+          className="fixed left-1 top-1/2 z-30 flex size-8 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background/80 opacity-60 shadow-sm backdrop-blur transition-opacity hover:opacity-100 sm:left-3 sm:size-10"
         >
           <ChevronLeft className="h-4 w-4 sm:h-5 sm:w-5" />
         </button>
@@ -2100,7 +2102,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
             )
           }
           aria-label="Next submission"
-          className="fixed right-1 top-1/2 z-30 flex size-8 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background/80 opacity-60 shadow-sm backdrop-blur transition hover:opacity-100 sm:right-3 sm:size-10"
+          className="fixed right-1 top-1/2 z-30 flex size-8 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-background/80 opacity-60 shadow-sm backdrop-blur transition-opacity hover:opacity-100 sm:right-3 sm:size-10"
         >
           <ChevronRight className="h-4 w-4 sm:h-5 sm:w-5" />
         </button>

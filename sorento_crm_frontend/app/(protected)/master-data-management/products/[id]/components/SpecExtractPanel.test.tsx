@@ -20,7 +20,7 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
 }));
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
@@ -32,7 +32,7 @@ vi.mock(
   }),
 );
 
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   applySpecProposals,
   extractSpecProposals,

@@ -10,7 +10,7 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import { ChevronRight, Pencil, Play, Plus, Trash2 } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -102,7 +102,7 @@ export default function AutomationsList() {
     [pagination, query],
   );
 
-  const { data, isLoading, isFetching, refetch } = useAutomations(params);
+  const { data, isLoading, isPlaceholderData, isFetching, refetch } = useAutomations(params);
   const rows = data?.data ?? [];
   const total = data?.pagination?.total ?? 0;
   // Delete asks nothing (D7): the row dims and a toast counts down with Cancel.
@@ -278,6 +278,7 @@ export default function AutomationsList() {
       table={table}
       recordCount={total}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       onRowClick={(t) => t?.id && router.push(`/system-management/automation/${t.id}`)}
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
       rowPending={rowPending}

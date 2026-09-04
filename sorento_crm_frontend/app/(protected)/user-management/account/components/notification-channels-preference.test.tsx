@@ -3,10 +3,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 
 vi.mock('@/lib/api', () => ({ apiFetch: vi.fn() }));
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 import { apiFetch } from '@/lib/api';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import NotificationChannelsPreference from './notification-channels-preference';
 
 const res = (ok: boolean, body: unknown = {}) => ({ ok, json: async () => body }) as Response;

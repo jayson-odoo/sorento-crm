@@ -31,7 +31,7 @@ const { toastError, downloadPriceTagPdf } = vi.hoisted(() => ({
   downloadPriceTagPdf: vi.fn(),
 }));
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { error: toastError, success: vi.fn(), info: vi.fn() },
 }));
 

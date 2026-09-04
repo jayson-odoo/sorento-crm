@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useSession } from 'next-auth/react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { apiFetch } from '@/lib/api';
 
 export interface OrderStatusSelectOption {
@@ -68,7 +68,6 @@ export const useOrderStatusSelectQuery = () => {
     enabled: sessionStatus === 'authenticated',
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60, // 60 minutes
-    refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: 2,
   });

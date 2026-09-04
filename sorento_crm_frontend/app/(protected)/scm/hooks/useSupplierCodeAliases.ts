@@ -1,7 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   dismissSupplierCode,
   forgetSupplierCodeMatch,
@@ -18,7 +18,6 @@ export function useSupplierCodeAliases(supplierId: string | null) {
     queryKey: [...KEY, 'list', supplierId],
     queryFn: () => listSupplierCodeAliases(supplierId as string),
     enabled: !!supplierId,
-    refetchOnWindowFocus: false,
   });
 }
 
@@ -35,7 +34,6 @@ export function useUnmatchedSupplierCodes(planId: string | null) {
     queryKey: [...KEY, 'unmatched', planId],
     queryFn: () => listUnmatchedSupplierCodes(planId as string),
     enabled: !!planId,
-    refetchOnWindowFocus: false,
   });
 }
 

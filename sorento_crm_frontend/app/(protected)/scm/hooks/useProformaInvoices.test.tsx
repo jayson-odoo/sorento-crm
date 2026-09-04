@@ -12,7 +12,7 @@ const errorToast = vi.fn();
 const listProformaInvoices = vi.fn();
 const getProformaInvoice = vi.fn();
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { success: (...a: unknown[]) => success(...a), error: (...a: unknown[]) => errorToast(...a) },
 }));
 

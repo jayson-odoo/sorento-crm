@@ -8,7 +8,7 @@ import {
   getWarehouseOptions,
 } from '../services/scmOptionsService';
 
-const opts = { staleTime: 5 * 60_000, refetchOnWindowFocus: false, retry: 1 } as const;
+const opts = { staleTime: 5 * 60_000, retry: 1 } as const;
 
 export function useWarehouseOptions() {
   return useQuery({ queryKey: ['scm', 'opts', 'warehouses'], queryFn: getWarehouseOptions, ...opts });

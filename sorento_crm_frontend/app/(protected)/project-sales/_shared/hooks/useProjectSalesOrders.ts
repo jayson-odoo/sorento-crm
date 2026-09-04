@@ -1,7 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { saveBlobAs } from '../services/fileDownload';
 import { projectKey } from './useProjects';
 import { allocationsKey } from './useProjectAllocations';
@@ -20,6 +20,7 @@ import type {
   SalesOrderSplitBy,
 } from '../types/projectSalesOrder.types';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export const SALES_ORDERS_KEY = 'project-sales-orders';
 export const SALES_ORDER_KEY = 'project-sales-order';
@@ -71,6 +72,7 @@ export function useProjectSalesOrders(
   params: ProjectSalesOrderListParams = {},
 ) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: salesOrdersKey(projectId ?? '', params),
     queryFn: () => listProjectSalesOrders(projectId as string, params),
     enabled: Boolean(projectId),

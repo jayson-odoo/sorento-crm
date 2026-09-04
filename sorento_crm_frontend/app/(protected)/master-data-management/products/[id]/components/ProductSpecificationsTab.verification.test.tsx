@@ -8,13 +8,13 @@
  */
 import type { ReactNode } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 
 import ProductSpecificationsTab from './ProductSpecificationsTab';
 import type { ProductSpecDetail } from '../../../product-specifications/types/productSpec.types';
 import type { VerificationBlock } from '../../../spec-verification/types/specVerification.types';
 
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 vi.mock('next/link', () => ({
   default: ({ href, children }: { href: string; children: ReactNode }) => (
@@ -291,14 +291,16 @@ describe('Unverify confirmation', () => {
     expect(unverify).toHaveBeenCalledTimes(1);
   });
 
-  it('cancel dismisses the dialog without calling unverify()', () => {
+  it('cancel dismisses the dialog without calling unverify()', async () => {
     mockHook(baseDetail(VERIFIED));
     render(<ProductSpecificationsTab productId="p-1" />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Unverify' }));
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
-    expect(screen.queryByText('Confirm unverify')).not.toBeInTheDocument();
+    // The AlertDialog spring's exit (M2-05) unmounts it a tick after the
+    // click, not synchronously with it.
+    await waitFor(() => expect(screen.queryByText('Confirm unverify')).not.toBeInTheDocument());
     expect(unverify).not.toHaveBeenCalled();
   });
 });

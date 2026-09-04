@@ -20,7 +20,7 @@
 
 import { useState } from 'react';
 import { Download, Eye, FileText, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,

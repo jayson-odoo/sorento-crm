@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, LoaderCircle } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader } from '@/components/ui/card';
@@ -40,7 +40,6 @@ export function AllocationPanel({ shipmentId }: { shipmentId: string }) {
   const suggestion = useQuery({
     queryKey: ['scm', 'fulfilment', 'allocation', shipmentId],
     queryFn: () => getAllocationSuggestion(shipmentId),
-    refetchOnWindowFocus: false,
   });
 
   /** Which option each line is pointed at, keyed by shipment line. */

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   ColumnDef,
   PaginationState,
@@ -93,7 +93,7 @@ export default function SuppliersList() {
     setPagination((p) => ({ ...p, pageIndex: 0 }));
   }, [advancedFilter, searchQuery]);
 
-  const { data, isLoading, isFetching, isError, error } = useSuppliers({
+  const { data, isLoading, isPlaceholderData, isFetching, isError, error } = useSuppliers({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -224,6 +224,7 @@ export default function SuppliersList() {
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       rowHref={rowHref}
       standardToolbar={false}
       tableLayout={{ columnsVisibility: true }}

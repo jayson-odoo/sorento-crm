@@ -17,7 +17,7 @@ import { usePromotion } from '../hooks/usePromotions';
 import { useDownloadAttachment, useAttachments, useUploadAttachment, useDirectoryTree } from '@/app/(protected)/resource-management/attachments/hooks/useAttachments';
 import { useUploadConflict } from '@/hooks/use-upload-conflict';
 import { FileDropzone } from '@/components/common/FileDropzone';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import type { PromotionAttachment } from '../../promotion-attachments/types/promotionAttachment.types';
 import { formatDate } from '@/lib/helpers';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';

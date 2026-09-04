@@ -1,8 +1,8 @@
 @layer components {
   /* Variables */
   .demo1 {
-    --sidebar-transition-duration: 0.3s;
-    --sidebar-transition-timing: ease;
+    --sidebar-transition-duration: var(--duration-base);
+    --sidebar-transition-timing: var(--ease-standard);
     --sidebar-width: 280px;
     --sidebar-width-collapse: 80px;
     --sidebar-default-width: 280px;
@@ -31,6 +31,27 @@
 
   /* Desktop mode */
   @media (min-width: theme(--breakpoint-lg)) {
+    /*
+     * M3-06 (`ui-motion-round2`, UAC): this collapse still animates `width`
+     * (and, below, `.wrapper`'s `padding-inline-start` / `.header`'s
+     * `inset-inline-start`) rather than a `transform` - a transform-only
+     * rewrite of this mechanism was tried and reverted (S8-03, see this
+     * file's git history: it distorted both end states). M3 does not retry
+     * that rewrite; it measured it instead.
+     *
+     * MEASURED, and it does drop frames. One collapse + expand cycle on the
+     * Orders list (50 rows, 1280x800) traced 34 layouts and 34 style recalcs,
+     * with 19 of 54 sampled frames over 16.7ms and 2 over 33ms - roughly one
+     * dropped frame per direction. Raw trace:
+     * `documentation/plans/design-system/evidence/M3/M3-06-sidebar-collapse-trace.json`
+     * (6636 events), method and numbers in that directory's README.
+     *
+     * So the UAC's first branch applies: the transform rewrite gets a
+     * follow-up ticket - #559, "Sidebar collapse: transform-only rewrite" -
+     * and the transition is NOT made instant here. Instant would trade a
+     * measured 2-frame cost for the loss of the one cue that tells the user
+     * the rail collapsed rather than the page reloading.
+     */
     .demo1 .sidebar {
       width: var(--sidebar-width);
       transition: width var(--sidebar-transition-duration)
@@ -74,8 +95,24 @@
         var(--sidebar-transition-timing);
     }
 
-    .demo1.sidebar-collapse .sidebar:hover {
-      width: var(--sidebar-default-width);
+    /*
+     * M3-05 (`ui-motion-round2`): a coarse-pointer device has no `:hover` a
+     * user can hold - a tap fires it and then leaves it "stuck" open until
+     * something else steals focus, which reads as a mis-tap on a collapsed
+     * sidebar rather than the peek-to-expand a mouse user gets. Gated to a
+     * device that can genuinely hover a pointer over the sidebar without
+     * touching it.
+     *
+     * The width transition itself is not ALSO wrapped in
+     * `@media (prefers-reduced-motion: no-preference)` here: `css/styles.css`
+     * already turns `.demo1 .sidebar` transitions off under
+     * `prefers-reduced-motion: reduce` (M3-04), and gating the same rule in
+     * two places would be two things to keep in sync for one behaviour.
+     */
+    @media (hover: hover) and (pointer: fine) {
+      .demo1.sidebar-collapse .sidebar:hover {
+        width: var(--sidebar-default-width);
+      }
     }
 
     .demo1.sidebar-collapse .sidebar:not(:hover) .default-logo {
@@ -128,6 +165,71 @@
       margin-inline-start: -0.15rem;
       top: 0.25rem;
       transform: translateX(100%);
+    }
+
+    /*
+     * M3-05 (`ui-motion-round2`): the same eight rules again, without
+     * `:not(:hover)`, for a device that cannot hover.
+     *
+     * Gating the hover-EXPAND above stops the rail growing on a tap. It does
+     * not stop `:hover` MATCHING: a tap on a touch screen leaves a sticky
+     * hover on the element until something else takes it, and every rule that
+     * paints the collapsed rail is written as `:not(:hover)`. The rail would
+     * hold at 80px while the labels, badges and submenu indicators inside it
+     * came back - a rail that looks broken rather than one that peeked.
+     *
+     * These carry one class less specificity than the `:not(:hover)` rules
+     * they mirror, which is fine: where both apply they say the same thing,
+     * and where only these apply nothing else is competing for the property.
+     */
+    @media (hover: none), (pointer: coarse) {
+      .demo1.sidebar-collapse .sidebar .default-logo {
+        display: none;
+      }
+
+      .demo1.sidebar-collapse .sidebar .small-logo {
+        display: flex;
+      }
+
+      .demo1.sidebar-collapse .sidebar [data-slot='accordion-menu-title'],
+      .demo1.sidebar-collapse .sidebar [data-slot='badge'],
+      .demo1.sidebar-collapse
+        .sidebar
+        [data-slot='accordion-menu-sub-indicator'] {
+        display: none !important;
+        transition: none !important;
+        animation: none !important;
+      }
+
+      .demo1.sidebar-collapse
+        .sidebar
+        [data-slot='accordion-menu-sub-content'] {
+        visibility: hidden;
+        position: absolute;
+        height: 0;
+        width: 0;
+      }
+
+      .demo1.sidebar-collapse .sidebar [data-slot='accordion-menu-label'] {
+        visibility: hidden;
+        position: relative;
+      }
+
+      .demo1.sidebar-collapse
+        .sidebar
+        [data-slot='accordion-menu-label']::before {
+        content: '...';
+        color: currentColor;
+        font-size: inherit;
+        position: absolute;
+        visibility: visible;
+        display: inline-block;
+        bottom: 50%;
+        inset-inline-start: 0;
+        margin-inline-start: -0.15rem;
+        top: 0.25rem;
+        transform: translateX(100%);
+      }
     }
   }
 

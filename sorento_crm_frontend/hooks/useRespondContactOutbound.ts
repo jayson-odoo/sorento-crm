@@ -1,7 +1,7 @@
 'use client';
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { useEntityMutation } from '@/hooks/useEntityMutation';
 import type { RespondContactOutboundRow } from '@/app/(protected)/system-management/respond-contacts/types/respondContactOutbound.types';
 import {

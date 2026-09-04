@@ -41,7 +41,7 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => ({ get: () => null }),
 }));
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
 }));
 
@@ -73,7 +73,7 @@ vi.mock('../../reorder/services/outstandingImportService', () => ({
   getOutstandingUploadConfig: async () => ({ allowed_extensions: ['.xlsx'] }),
 }));
 
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 import { PlanContainerDialog } from './PlanContainerDialog';
 

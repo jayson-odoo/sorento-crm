@@ -21,7 +21,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { Badge, BadgeDot } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -50,12 +50,7 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover';
 import { Switch } from '@/components/ui/switch';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 interface IData {
   id: string;
@@ -451,23 +446,21 @@ const IPAddresses = () => {
         id: 'method',
         accessorFn: (row) => row.method,
         header: ({ column }) => (
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <div className="flex items-center gap-2">
-                  <Info className="h-4 w-4" />
-                  <DataGridColumnHeader
-                    title="Method"
-                    visibility={true}
-                    column={column}
-                  />
-                </div>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>Verify the identity of a user trying to access a resource</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="flex items-center gap-2">
+                <Info className="h-4 w-4" />
+                <DataGridColumnHeader
+                  title="Method"
+                  visibility={true}
+                  column={column}
+                />
+              </div>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Verify the identity of a user trying to access a resource</p>
+            </TooltipContent>
+          </Tooltip>
         ),
         cell: ({ row }) => (
           <span className="text-secondary-foreground font-normal">

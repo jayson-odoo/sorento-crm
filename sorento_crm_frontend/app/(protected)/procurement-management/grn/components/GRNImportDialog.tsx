@@ -12,7 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { FileDropzone } from '@/components/common/FileDropzone';
 import { useExcelAccept } from '@/hooks/use-excel-accept';
 import type { GRNImportResult, ValidateImportResult } from '../services/grnService';

@@ -9,6 +9,7 @@ import {
   runScheduledTaskNow,
 } from '../services/scheduledTaskService';
 import type { ScheduledTaskUpdateBody } from '../types/scheduledTask.types';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export function useScheduledTasks() {
   return useQuery({
@@ -29,6 +30,7 @@ export function useScheduledTask(taskId: string | null) {
 
 export function useScheduledTaskRuns(taskId: string | null, page: number = 1, limit: number = 50) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['scheduled-task-runs', taskId, page, limit],
     queryFn: () => getScheduledTaskRuns(taskId!, page, limit),
     enabled: !!taskId,

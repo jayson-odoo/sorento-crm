@@ -9,7 +9,7 @@ import type { Team } from '../types/team.types';
 
 const updateTeam = vi.fn();
 vi.mock('../services/teamService', () => ({ updateTeam: (...a: unknown[]) => updateTeam(...a) }));
-vi.mock('sonner', () => ({ toast: { custom: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({ toast: { custom: vi.fn() } }));
 
 function render(ui: React.ReactElement) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });

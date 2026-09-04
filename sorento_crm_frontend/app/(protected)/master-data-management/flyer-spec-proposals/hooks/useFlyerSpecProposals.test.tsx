@@ -16,7 +16,7 @@ import { renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 vi.mock('../services/flyerSpecProposalService', () => ({
   listFlyerSpecBatches: vi.fn(),
@@ -28,7 +28,7 @@ vi.mock('../services/flyerSpecProposalService', () => ({
   dismissFlyerSpecProposal: vi.fn(),
 }));
 
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   addFlyerSpecProposalRow,
   applyFlyerSpecProposals,

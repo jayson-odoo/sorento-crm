@@ -17,7 +17,7 @@ vi.mock('../services/productSpecService', () => ({
   rereadCatalogue: vi.fn(),
 }));
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn(), warning: vi.fn() },
 }));
 

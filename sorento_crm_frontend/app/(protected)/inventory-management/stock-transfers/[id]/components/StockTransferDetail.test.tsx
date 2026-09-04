@@ -29,7 +29,7 @@ vi.mock('next/navigation', () => ({
     new URLSearchParams('page=1&limit=25&state=proposed&from_warehouse_id=w-brw'),
 }));
 
-vi.mock('sonner', () => ({
+vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
 }));
 

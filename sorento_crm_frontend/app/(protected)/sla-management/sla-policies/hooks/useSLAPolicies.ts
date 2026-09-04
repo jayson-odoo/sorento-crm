@@ -1,16 +1,17 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import type { DataGridApiFetchParams } from '@/components/ui/data-grid';
 import { getSLAPolicies, getSLAPolicy, createSLAPolicy, updateSLAPolicy, deleteSLAPolicy, getSLAPolicyTiers, createSLAPolicyTier, updateSLAPolicyTier, deleteSLAPolicyTier } from '../services/slaPolicyService';
 import type { SLAPolicyFormData, SLAPolicyTierFormData } from '../types/slaPolicy.types';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
 export function useSLAPolicies(params: DataGridApiFetchParams & { status?: string }) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: ['sla-policies', params.pageIndex, params.pageSize, params.sorting, params.searchQuery, params.status],
     queryFn: () => getSLAPolicies(params),
     staleTime: Infinity,
     gcTime: 1000 * 60 * 60,
-    refetchOnWindowFocus: false,
     retry: 1,
   });
 }

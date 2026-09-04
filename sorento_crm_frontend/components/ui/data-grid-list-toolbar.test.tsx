@@ -16,6 +16,7 @@ import {
 } from '@tanstack/react-table';
 import { DataGridListToolbar } from './data-grid-list-toolbar';
 import { buildSelectColumn } from './data-grid-select-column';
+import { TooltipProvider } from './tooltip';
 
 type Row = { id: string; name: string };
 const DATA: Row[] = [
@@ -42,7 +43,14 @@ function Harness(props: {
     onRowSelectionChange: setRowSelection,
     getCoreRowModel: getCoreRowModel(),
   });
-  return <DataGridListToolbar table={table} {...props.toolbarProps} />;
+  // data-grid-list-toolbar.tsx no longer mounts its own TooltipProvider
+  // (M2-07, one root TooltipProvider in ClientProviders.tsx) - Tooltip
+  // throws without an ancestor provider, so the harness supplies one.
+  return (
+    <TooltipProvider>
+      <DataGridListToolbar table={table} {...props.toolbarProps} />
+    </TooltipProvider>
+  );
 }
 
 describe('DataGridListToolbar', () => {

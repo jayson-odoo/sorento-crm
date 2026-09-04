@@ -13,7 +13,7 @@ import { getProductSuppliersByProductId, createProductSupplier, updateProductSup
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { useSupplierSelectQuery } from '../../../procurement-management/suppliers/hooks/useSupplierSelectQuery';
 import { getCurrencyRates } from '../../../scm/services/currencyRateService';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   ProductSupplierTermsRow,
   draftToPatch,

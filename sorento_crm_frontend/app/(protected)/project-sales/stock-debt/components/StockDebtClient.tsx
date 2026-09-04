@@ -303,6 +303,7 @@ export function StockDebtClient() {
         table={table}
         recordCount={total}
         isLoading={list.isLoading}
+        isPlaceholderData={list.isPlaceholderData}
         listingKey={null}
         // `listingKey={null}`: the columns ARE the months, so a stored order or visibility
         // would pin an axis that moves on the first of every month. Nothing to persist -

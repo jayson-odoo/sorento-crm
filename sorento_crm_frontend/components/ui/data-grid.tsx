@@ -92,6 +92,24 @@ export interface DataGridProps<TData extends object> {
    */
   rowAttributes?: (row: TData) => Record<string, string | undefined>;
   isLoading?: boolean;
+  /**
+   * True while the rows on screen are the PREVIOUS page's, kept visible by
+   * `LIST_QUERY_OPTIONS` while the next one loads (M4 list latency).
+   *
+   * **Every list MUST forward it from its own list query** -
+   * `const { data, isLoading, isPlaceholderData } = useOrders(params)` - because
+   * this is the only signal that window emits: TanStack reports it as
+   * `isLoading: false, isFetching: true, isPlaceholderData: true`, so a grid
+   * left to infer the state from `isLoading` never dims at all.
+   * `lib/list-query/options.inventory.test.ts` inventories the hooks that
+   * spread `LIST_QUERY_OPTIONS`, walks to the files that render their grids and
+   * fails on any `<DataGrid>` that does not pass this prop.
+   *
+   * `DataGridTable` dims the body while this is true instead of swapping it
+   * for a skeleton, and `DataGridPagination` keeps its own controls live -
+   * a placeholder page is not "loading" in the sense that hides the pager.
+   */
+  isPlaceholderData?: boolean;
   loadingMode?: 'skeleton' | 'spinner';
   loadingMessage?: ReactNode | string;
   emptyMessage?: ReactNode | string;

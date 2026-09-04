@@ -26,7 +26,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from '@/components/common/AttachmentPreviewModal';
@@ -330,7 +330,7 @@ export function AIExtractDialog({
                 }}
                 onDragLeave={() => setDragOver(false)}
                 onDrop={handleDrop}
-                className={`flex flex-col items-center justify-center gap-2 rounded-md border-2 border-dashed p-6 text-center transition ${
+                className={`flex flex-col items-center justify-center gap-2 rounded-md border-2 border-dashed p-6 text-center transition-colors ${
                   dragOver ? 'border-primary bg-primary/5' : 'border-border'
                 }`}
                 data-testid="ai-extract-dropzone"
@@ -654,7 +654,7 @@ function FileThumb({ label, interactive }: { label: string; interactive?: boolea
   return (
     <div
       className={`h-12 w-12 rounded bg-muted flex items-center justify-center text-xs text-muted-foreground border border-border ${
-        interactive ? 'cursor-pointer hover:bg-muted/70 transition' : ''
+        interactive ? 'cursor-pointer hover:bg-muted/70 transition-colors' : ''
       }`}
     >
       {label}

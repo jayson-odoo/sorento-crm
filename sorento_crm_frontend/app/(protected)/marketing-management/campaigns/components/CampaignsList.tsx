@@ -70,7 +70,7 @@ export default function CampaignsList() {
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
   }, [statusFilter, searchQuery]);
 
-  const { data, isLoading, refetch, isFetching } = useCampaigns({
+  const { data, isLoading, isPlaceholderData, refetch, isFetching } = useCampaigns({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
@@ -208,6 +208,7 @@ export default function CampaignsList() {
       table={table}
       recordCount={data?.pagination.total || 0}
       isLoading={isLoading}
+      isPlaceholderData={isPlaceholderData}
       rowHref={rowHref}
       standardToolbar={false}
       tableLayout={{ columnsVisibility: true }}

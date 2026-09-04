@@ -27,7 +27,7 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import {
   useCreateAccessAgent,
   useUpdateAccessAgent,
