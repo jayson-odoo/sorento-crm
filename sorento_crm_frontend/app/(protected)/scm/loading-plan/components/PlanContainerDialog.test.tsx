@@ -73,7 +73,7 @@ vi.mock('../../reorder/services/outstandingImportService', () => ({
   getOutstandingUploadConfig: async () => ({ allowed_extensions: ['.xlsx'] }),
 }));
 
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 
 import { PlanContainerDialog } from './PlanContainerDialog';
 

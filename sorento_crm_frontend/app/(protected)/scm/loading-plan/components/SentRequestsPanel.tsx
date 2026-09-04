@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Check, Download, LoaderCircle, Link2, Mail, MessageCircle, Send } from 'lucide-react';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';

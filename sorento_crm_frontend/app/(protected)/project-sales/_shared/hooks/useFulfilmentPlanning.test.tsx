@@ -16,6 +16,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   BoardCell,
   BoardContribution,
+  BoardSource,
   ConfirmSupplyBody,
   PlanningBoard,
   ReconciliationSummary,
@@ -699,7 +700,7 @@ describe('useLineDraftMutation', () => {
       saved_at: '2026-09-03T01:00:00',
       stale: false,
     });
-    const proposed = [
+    const proposed: BoardSource[] = [
       { kind: 'reserve', qty: '3', location: 'BRW', reason: 'Reserve from BRW' },
     ];
 

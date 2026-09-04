@@ -256,13 +256,13 @@ describe('fixed viewport-height sweep (M6-02 / M6-03)', () => {
     }
   });
 
-  it('the allowlist matches its baseline (225 lines, 150 files)', () => {
+  it('the allowlist matches its baseline (226 lines, 150 files)', () => {
     let matchingLines = 0;
     for (const file of ALLOWLIST.keys()) {
       const lines = fs.readFileSync(file, 'utf8').split('\n');
       matchingLines += lines.filter((line) => PATTERN.test(line)).length;
     }
     expect(ALLOWLIST.size).toBe(150);
-    expect(matchingLines).toBe(225);
+    expect(matchingLines).toBe(226);
   });
 });

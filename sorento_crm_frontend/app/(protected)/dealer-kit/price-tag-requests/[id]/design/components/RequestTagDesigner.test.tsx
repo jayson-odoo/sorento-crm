@@ -251,6 +251,7 @@ function lineTagData(overrides: Partial<LineTagData> = {}): LineTagData {
     show_promo_price: false,
     included_accessories: '',
     quantity: 1,
+    barcode: null,
     ...overrides,
   };
 }

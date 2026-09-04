@@ -1355,7 +1355,7 @@ export function FulfilmentBoardPanel({
               `usePlanningBoard`. */}
           <div
             data-testid="board-content"
-            className={`space-y-4 transition-opacity duration-150 ${
+            className={`space-y-4 transition-opacity ${
               boardRefreshing ? 'opacity-60' : 'opacity-100'
             }`}
           >

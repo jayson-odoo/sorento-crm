@@ -34,7 +34,6 @@ export function useUnmatchedSupplierCodes(planId: string | null) {
     queryKey: [...KEY, 'unmatched', planId],
     queryFn: () => listUnmatchedSupplierCodes(planId as string),
     enabled: !!planId,
-    refetchOnWindowFocus: false,
   });
 }
 
