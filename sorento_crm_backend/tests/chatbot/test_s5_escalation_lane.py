@@ -6,44 +6,97 @@ Everything below fails today with `ModuleNotFoundError: No module named
 `monkeypatch.setattr` naming an attribute `engine.py` does not have yet) - the right reason,
 per the brief.
 
-Ported nodes (source: `sorento_crm_n8n/n8n-workflows-init/export/sub-escalation-live/` and
-`export/live-sub-human-intervention/`, read-only): `escalation-input` (item carrier, folded
-into the `item` parameter below - trivial, not separately ported), `fresh-entity-gate`,
-`escalation-context` (89-line six-rank precedence ladder), `clarify-team-gate` /
-`clarify-team-reply`, `clarify-company-gate` / `clarify-company-reply`, `escalation-result`,
-and the assignment path inside `sub-human-intervention` (`get-round-robin-assignee` ->
-`if-conversation-unassigned` -> `Assign or unassign a Conversation1` ->
-`conversation-sla-tracking-create` -> `Call 'sub-add-comment-respond'` ->
-`sorento-sub-respond-sendmsg-respond-routed-to-pic`, with
-`sorento-sub-respond-sendmsg-respond-routed-to-pic2` sent FIRST, before the round-robin call).
+**Correction (5 Sep 2026, live captures + live node bodies).** The FIRST pass at this file
+was ported from the `sub-escalation-live` EXPORT, which carries uncommitted edits from
+another lane. The live workflow (`fr2u3e6FKg52cPvK` @ version `bac9613b`, 10 nodes,
+confirmed by 66 fresh captures) is SIMPLER:
+
+    escalation-input -> escalation-context -> clarify-company-gate (If)
+        -> [true]  clarify-company-reply -> escalation-result {arm: clarify}
+        -> [false] Call 'sub-human-intervention'  -> escalation-result {arm: human-intervention}
+
+There is NO `fresh-entity-gate`, NO `clarify-team-gate` / `clarify-team-reply`, NO
+`restore-item` on live - those are stale riders from an unpromoted build (B-TEAM-1' /
+B-HB-1, still in the plan's hazard table as "port the fix S5", not yet promoted). Consequences
+for this file, verified against the live node bodies (shas recorded in the scratchpad
+`live-bodies/INDEX.txt` this correction was built from):
+
+* `escalation-context.live.js`'s ladder has FIVE outcomes, no `gate` parameter anywhere:
+  `picked_member` -> `company_pick` -> `sameTeam` (three sub-arms: `prior_state` /
+  `prior_state_no_company` / `multi_company_unpicked`, the last from `routing_roster_plan`
+  or `routing_companies` holding more than one row) -> `stated_brand` -> `none`. It computes
+  `team = (o.routing || {}).suggested_team || null` with NO team default at this layer.
+* `escalation-context` never calls a resolver: `resolve_and_gate` is a service the lane
+  keeps in its seam for the day B-HB-1 promotes, but on live it is NEVER invoked (H26 stays
+  open - noted, not fixed, by this slice).
+* A null `routing.suggested_team` is not actually reachable through the real pipeline today:
+  the ALREADY-PORTED parser (`head/output_exchange.py`'s `derive_routing` nullish chain)
+  hard-defaults `suggested_team` to `"customer_service"` before escalation-context ever sees
+  it ("Both chains end in a HARD default, which is why this body never emits a null team" -
+  `output_exchange.py`'s own comment). That is the live mechanism the correction calls "the
+  LIVE default applies" - it lives in the parser, not in this lane, and it is why H27
+  (no hard default) stays open on live: nothing here asks a clarifying question, a team
+  simply never arrives null in practice. Feeding the lane a null team directly (as the tests
+  below still do, to test the LANE'S OWN behaviour at its input boundary) is therefore
+  testing state the real pipeline does not produce today - which is exactly why the
+  "would ask" tests are `xfail(strict=True)`, not deleted: B-TEAM-1' promoting adds
+  `clarify-team-gate` for real, and `strict=True` makes that promotion NOTICEABLE (an
+  unexpected pass fails the suite until the `xfail` marker is removed).
+* `clarify-company-reply.live.js` has no `gate`/no-roster branch either - one clarify-text
+  shape, not two.
+* `escalation-result.live.js` checks `clarify-company-reply` only - no `clarify-team-reply`
+  branch to fall through to.
+* The assignment path (`live-sub-human-intervention@ae310ea1`, the same `test-guard` / `get-
+  round-robin-assignee` / `if-conversation-unassigned` / `Assign or unassign a Conversation1`
+  / `conversation-sla-tracking-create` / `Call 'sub-add-comment-respond'` /
+  `sorento-sub-respond-sendmsg-respond-routed-to-pic{,2}` bodies) is IDENTICAL to what the
+  first pass already encoded - it has no Code nodes to differ. `test_assignment_actions_in_order`
+  and its siblings are unchanged. `test-guard` sits before `sorento-sub-respond-sendmsg-
+  respond-routed-to-pic2` and everything after it, which is the H37 gate D14 reproduces:
+  nothing side-effecting runs before the dry-run check.
+
+Ported nodes, source read-only from
+`sorento_crm_n8n/n8n-workflows-init/export/sub-escalation-live/` (topology only - the Code
+node BODIES there are the stale export and are NOT used to derive expectations) and the
+live bodies fetched separately: `escalation-input`, `escalation-context`, `clarify-company-
+gate` (an `If`, no Code body), `clarify-company-reply`, `escalation-result`, and the
+assignment path inside `sub-human-intervention`.
 
 **This file PINS a contract the plan states only at the `run()` level. The exact function
 names below are this tester's design decision, made explicit here so the coder implements
 against them rather than guessing:**
 
     app/services/chatbot/lanes/escalation.py
-        escalation_context(item, *, ctx, gate) -> dict         # port of escalation-context.js
-        clarify_team_reply(item) -> dict                       # port of clarify-team-reply.js
-        clarify_company_reply(item, *, ctx, gate) -> dict       # port of clarify-company-reply.js
-        escalation_result(*, clarify_team, clarify_company) -> dict   # port of escalation-result.js
+        escalation_input(trigger) -> dict                     # port of escalation-input.js
+        escalation_context(item, *, ctx) -> dict               # port of escalation-context.js (live)
+        clarify_company_reply(item, *, ctx) -> dict            # port of clarify-company-reply.js (live)
+        escalation_result(*, clarify_team=None, clarify_company=None) -> dict
+                                                                # port of escalation-result.js;
+                                                                # `clarify_team` is always None on
+                                                                # live (kept for B-TEAM-1' promotion)
         run(ctx, item, *, services, dry_run=False) -> dict
             -> {"arm": "clarify" | "human-intervention", "clarify": dict | None,
                 "actions": list[dict], "pending": dict | None}
 
     `services` is a duck-typed namespace (see `_services()` below) with four callables:
     `resolve_and_gate(ctx, item)`, `next_assignee(body)`, `sla_create(body)`, `team_members(...)`.
-    None of them is called when `dry_run` is True (H37: the dry-run check runs BEFORE any of
-    them, never after).
+    On live, `run()` NEVER calls `resolve_and_gate` (no fresh-entity-gate to trigger it) and
+    NEVER calls anything side-effecting when `dry_run` is True (H37: the dry-run check runs
+    BEFORE any of them, never after - the live `test-guard` If is itself first).
 
     `app/services/chatbot/engine.py` imports `run` under the name `run_escalation_lane`
     (the same "import the function by name into engine's namespace so a test can monkeypatch
     `engine_mod.<name>`" pattern the file already uses for `check_access` / `default_space_id` /
-    `post_process` / `suggest_follow_up`) and calls it when `branch_kind == "out_of_scope"`,
-    after adding `"out_of_scope"` to `contracts.CRM_COMPLETED_BRANCH_KINDS`.
+    `post_process` / `suggest_follow_up`) and calls it when `branch_kind == "out_of_scope"`
+    AND `"out_of_scope"` is in `system_settings.chatbot_completed_lanes` (contract addition,
+    5 Sep 2026: a JSON list column, default `[]`). With the lane's name absent from that list
+    (the default), the turn keeps pre-S5 behaviour - delegated to n8n, `run_escalation_lane`
+    never called - even though `"out_of_scope"` is (or will be) in
+    `contracts.CRM_COMPLETED_BRANCH_KINDS`; the branch-kind set says the CRM CAN finish the
+    lane, the settings list says whether it currently DOES, per tenant. `system_settings_row`
+    (`tests/chatbot/conftest.py`) is the seeding seam for all three engine tests below.
 
-`pending` is a plain dict, not yet required to validate against `contracts.Pending` (that
-model gains whatever fields S5 needs - e.g. a `companies` list for the company-clarify case -
-as part of the implementation; this suite only pins `pending["kind"]`).
+`pending` is a plain dict, not yet required to validate against `contracts.Pending`.
 
 Nothing here reaches an LLM, n8n, respond.io, or a real MCP server.
 """
@@ -120,7 +173,10 @@ def _services(
     sla: dict | None = None,
     members: list | None = None,
 ):
-    """A `services` seam with recorded calls, never touching a database or the network."""
+    """A `services` seam with recorded calls, never touching a database or the network.
+
+    `resolve_and_gate` stays in the seam for the day B-HB-1 / B-TEAM-1' promotes (see the
+    module docstring); on live it is asserted NEVER called."""
     default_assignee = {
         "assignee_id": "usr-pic-1",
         "assignee_email": "pic@sorento.example",
@@ -150,12 +206,13 @@ def _services(
 
 
 # --------------------------------------------------------------------------- #
-# AC-501: escalation-context's six-rank precedence ladder (H26, H27)
+# AC-501: escalation-context's live precedence ladder (H26, H27)
 # --------------------------------------------------------------------------- #
 
 
 def _rank_case(case_id: str):
-    """`(item, ctx_kwargs, gate, expected)` for one rung of the ladder."""
+    """`(ctx_kwargs, expected)` for one rung of the LIVE ladder (no `gate` rank - see the
+    module docstring; `resolved_entity` was never live and is dropped)."""
     if case_id == "picked_member":
         prev = {
             "last_result_set": [
@@ -164,7 +221,6 @@ def _rank_case(case_id: str):
         }
         escalation = {"is_escalation_confirmation": True, "preferred_assignee_id": "member-9", "company_pick": None}
         ctx_kwargs = dict(prev_variables=prev, escalation=escalation, routing={"suggested_team": "customer_service"})
-        gate = None
         expected = {"brand_code": "sorento", "company_id": "c-sorento", "company_name": "Sorento", "routing_source": "picked_member"}
     elif case_id == "company_pick_name":
         prev = {
@@ -175,46 +231,46 @@ def _rank_case(case_id: str):
         }
         escalation = {"is_escalation_confirmation": True, "company_pick": "Mocha"}
         ctx_kwargs = dict(prev_variables=prev, escalation=escalation, routing={"suggested_team": "customer_service"})
-        gate = None
         expected = {"brand_code": "mch", "company_id": "c-mocha", "company_name": "Mocha", "routing_source": "company_pick"}
     elif case_id == "company_pick_id":
         prev = {"routing_companies": [{"company_id": "c-cabana", "company_name": "Cabana", "brand_code": "cbn"}]}
         escalation = {"is_escalation_confirmation": True, "company_pick": "C-CABANA"}
         ctx_kwargs = dict(prev_variables=prev, escalation=escalation, routing={"suggested_team": "customer_service"})
-        gate = None
         expected = {"brand_code": "cbn", "company_id": "c-cabana", "company_name": "Cabana", "routing_source": "company_pick"}
     elif case_id == "company_pick_code":
         prev = {"routing_companies": [{"company_id": "c-mocha", "company_name": "Mocha", "brand_code": "mch", "company_code": "MCH2"}]}
         escalation = {"is_escalation_confirmation": True, "company_pick": "mch2"}
         ctx_kwargs = dict(prev_variables=prev, escalation=escalation, routing={"suggested_team": "customer_service"})
-        gate = None
         expected = {"brand_code": "mch", "company_id": "c-mocha", "company_name": "Mocha", "routing_source": "company_pick"}
     elif case_id == "company_pick_alias":
         prev = {"routing_companies": [{"company_id": "c-sorento", "company_name": "Sorento", "brand_code": "sorento"}]}
         escalation = {"is_escalation_confirmation": True, "company_pick": "srt"}
         ctx_kwargs = dict(prev_variables=prev, escalation=escalation, routing={"suggested_team": "customer_service"})
-        gate = None
         expected = {"brand_code": "sorento", "company_id": "c-sorento", "company_name": "Sorento", "routing_source": "company_pick"}
-    elif case_id == "resolved_entity":
-        gate = {"routing_companies": [{"company_id": "c-cabana", "company_name": "Cabana"}], "routing_company": "c-cabana", "routing_brand": "cbn"}
-        ctx_kwargs = dict(entities=[{"raw": "widget", "hint": "product", "current_message": True}], routing={"suggested_team": "customer_service"})
-        expected = {"brand_code": "cbn", "company_id": "c-cabana", "company_name": "Cabana", "routing_source": "resolved_entity"}
     elif case_id == "multi_company_unpicked":
-        gate = {"routing_companies": [{"company_id": "c-a", "company_name": "A"}, {"company_id": "c-b", "company_name": "B"}]}
-        ctx_kwargs = dict(entities=[{"raw": "widget", "hint": "product", "current_message": True}], routing={"suggested_team": "customer_service"})
+        # LIVE: no `gate` rank at all - this is `sameTeam`'s `rp.length > 1` sub-arm.
+        prev = {
+            "routing": {"suggested_team": "purchasing_certification"},
+            "routing_roster_plan": [
+                {"company_id": "c-a", "company_name": "A"},
+                {"company_id": "c-b", "company_name": "B"},
+            ],
+        }
+        ctx_kwargs = dict(prev_variables=prev, routing={"suggested_team": "purchasing_certification"})
         expected = {"brand_code": None, "company_id": None, "company_name": None, "routing_source": "multi_company_unpicked"}
     elif case_id == "sameTeam_prior_state":
         prev = {"routing": {"suggested_team": "marketing_product"}, "routing_roster_plan": [{"company_id": "c-zeta", "company_name": "Zeta", "brand_code": "z"}]}
         ctx_kwargs = dict(prev_variables=prev, routing={"suggested_team": "marketing_product"})
-        gate = None
         expected = {"brand_code": "z", "company_id": "c-zeta", "company_name": "Zeta", "routing_source": "prior_state"}
+    elif case_id == "stated_brand":
+        ctx_kwargs = dict(routing={"suggested_team": "customer_service"}, query_brands=["mocha"])
+        expected = {"brand_code": "mocha", "company_id": None, "company_name": None, "routing_source": "stated_brand"}
     elif case_id == "none":
         ctx_kwargs = dict(routing={"suggested_team": "customer_service"}, query_brands=[])
-        gate = None
         expected = {"brand_code": None, "company_id": None, "company_name": None, "routing_source": "none"}
     else:  # pragma: no cover - guarded by the parametrize ids below
         raise ValueError(case_id)
-    return ctx_kwargs, gate, expected
+    return ctx_kwargs, expected
 
 
 RANK_IDS = [
@@ -223,25 +279,25 @@ RANK_IDS = [
     "company_pick_id",
     "company_pick_code",
     "company_pick_alias",
-    "resolved_entity",
     "multi_company_unpicked",
     "sameTeam_prior_state",
+    "stated_brand",
     "none",
 ]
 
 
 @pytest.mark.parametrize("case_id", RANK_IDS)
 def test_escalation_context_ladder(case_id: str) -> None:
-    """AC-501: `brand_code` / `company_id` / `company_name` / `routing_source` match
-    `escalation-context.js`'s six-rank precedence exactly, over the pool-identity variants
-    (company_pick by name / id / code / alias) that rank shares."""
+    """AC-501: `brand_code` / `company_id` / `company_name` / `routing_source` match the
+    LIVE `escalation-context.js`'s precedence exactly - five outcomes plus `none`, no `gate`
+    rank (over the pool-identity variants company_pick shares: name / id / code / alias)."""
     from app.services.chatbot.lanes.escalation import escalation_context
 
-    ctx_kwargs, gate, expected = _rank_case(case_id)
+    ctx_kwargs, expected = _rank_case(case_id)
     ctx = _ctx(**ctx_kwargs)
     item = _item()
 
-    out = escalation_context(item, ctx=ctx, gate=gate)
+    out = escalation_context(item, ctx=ctx)
 
     for key, value in expected.items():
         assert out[key] == value, f"{case_id}: {key} = {out.get(key)!r}, expected {value!r}"
@@ -250,9 +306,12 @@ def test_escalation_context_ladder(case_id: str) -> None:
     assert out["allowed"] is True
 
 
+@pytest.mark.xfail(strict=True, reason="pending B-TEAM re-port; not live at bac9613b")
 def test_no_hard_default_team() -> None:
-    """AC-501 / H27: with no explicit team, no prior offer and no inference, the LANE asks -
-    it never falls back to a hard-coded team (the deleted `?? 'customer_service'` literal)."""
+    """FUTURE (B-TEAM-1'): once `clarify-team-gate` promotes, a null team asks instead of
+    silently defaulting. NOT live today - see `test_no_team_clarify_on_live` for what
+    `bac9613b` actually does with the same input. `strict=True` so the promotion itself
+    flips this test green and forces the marker's removal."""
     from app.services.chatbot.lanes.escalation import run
 
     ctx = _ctx(routing={"suggested_team": None, "suggested_agent": None})
@@ -264,10 +323,35 @@ def test_no_hard_default_team() -> None:
     assert result["arm"] == "clarify"
     assert result["pending"] is not None
     assert result["pending"]["kind"] == "team_clarify"
-    assert result["clarify"]["clarify_team"] is True
-    assert "customer_service" not in str(result["clarify"].get("team", ""))
     services.next_assignee.assert_not_called()
     services.team_members.assert_not_called()
+
+
+def test_no_team_clarify_on_live_team_flows_through_unguarded() -> None:
+    """H27 stays open on LIVE (`bac9613b`, 10 nodes): `escalation-context.live.js` applies
+    no default (`team = o.routing.suggested_team || null` - null stays null) and there is no
+    `clarify-team-gate` in the live graph to catch it, so a null team proceeds straight into
+    the human-intervention arm, unguarded - never asking, never defaulting AT THIS LAYER.
+
+    This input is synthetic at the lane's own boundary: in the real pipeline `routing.
+    suggested_team` is never actually null by the time it gets here, because the ALREADY-
+    PORTED parser (`head/output_exchange.py`'s nullish chain) hard-defaults it to
+    `"customer_service"` first - "the LIVE default" the correction names lives one layer up,
+    not in this lane. Both facts matter: the lane itself has no guard (H27 unfixed) AND the
+    parser's own hard default is what actually prevents the gap from biting in practice."""
+    from app.services.chatbot.lanes.escalation import run
+
+    ctx = _ctx(routing={"suggested_team": None, "suggested_agent": "general_enquiries"})
+    item = _item(brand_code=None, company_id=None, company_name=None, routing_source="none")
+    services = _services()
+
+    result = run(ctx, item, services=services)
+
+    assert result["arm"] == "human-intervention"
+    assert result["pending"] is None
+    services.next_assignee.assert_called_once()
+    body = services.next_assignee.call_args[0][0]
+    assert body.get("team_code") in (None, "")
 
 
 def test_clarify_company_ask_always_in_reply() -> None:
@@ -303,7 +387,8 @@ def test_clarify_company_ask_always_in_reply() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# AC-502: the assignment path, in order
+# AC-502: the assignment path, in order (unchanged - `sub-human-intervention` has no
+# Code nodes, so the live bodies are byte-identical to the first pass)
 # --------------------------------------------------------------------------- #
 
 
@@ -381,16 +466,17 @@ def test_conversation_already_assigned_skips_assign() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# AC-503 / H37: dry run never reaches a side-effecting seam
+# AC-503 / H37: dry run never reaches a side-effecting seam ("test-guard" on live)
 # --------------------------------------------------------------------------- #
 
 
 def test_dry_run_never_reaches_next_assignee(session_factory) -> None:
-    """D14 evaluated FIRST (H37: n8n called next-assignee and guarded afterwards). Row
-    counts on the real (blank) Postgres schema are the second net: even if the coder's
-    `run()` bypassed the injected `services` and called a real production function
-    directly, that would show up here as a nonzero count, where a call-count assertion on
-    the mock alone would not catch it."""
+    """D14 evaluated FIRST (H37: n8n called next-assignee and guarded afterwards - live's
+    own `test-guard` If sits before `sorento-sub-respond-sendmsg-respond-routed-to-pic2` and
+    everything after it, which is exactly this ordering). Row counts on the real (blank)
+    Postgres schema are the second net: even if the coder's `run()` bypassed the injected
+    `services` and called a real production function directly, that would show up here as a
+    nonzero count, where a call-count assertion on the mock alone would not catch it."""
     from app.models.access import AgentTeamRoundRobinCursor
     from app.models.sla import ConversationSLATracking
     from app.services.chatbot.lanes.escalation import run
@@ -411,19 +497,20 @@ def test_dry_run_never_reaches_next_assignee(session_factory) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# AC-504: node replay against the captured n8n executions
+# AC-504: node replay against the LIVE captures (workflow fr2u3e6FKg52cPvK @ bac9613b)
 # --------------------------------------------------------------------------- #
 
-_corpus.NODE_SLUGS.setdefault("escalation-context", ("sub-escalation", "sub-escalation-rs"))
-_corpus.NODE_SLUGS.setdefault("clarify-team-reply", ("sub-escalation", "sub-escalation-rs"))
-_corpus.NODE_SLUGS.setdefault("clarify-company-reply", ("sub-escalation", "sub-escalation-rs"))
-_corpus.NODE_SLUGS.setdefault("escalation-result", ("sub-escalation", "sub-escalation-rs"))
+_corpus.NODE_SLUGS.setdefault("escalation-input", ("sub-escalation-live",))
+_corpus.NODE_SLUGS.setdefault("escalation-context", ("sub-escalation-live",))
+_corpus.NODE_SLUGS.setdefault("clarify-company-reply", ("sub-escalation-live",))
+_corpus.NODE_SLUGS.setdefault("escalation-result", ("sub-escalation-live",))
 
 
-def _fixture_gate(fixture: _corpus.Fixture) -> dict | None:
-    if fixture.upstream("Call 'sub-resolve-and-gate'"):
-        return (fixture.first("Call 'sub-resolve-and-gate'") or {}).get("gate")
-    return None
+def _run_escalation_input(fixture: _corpus.Fixture) -> list:
+    from app.services.chatbot.lanes.escalation import escalation_input
+
+    trigger = fixture.first("When Executed by Another Workflow")
+    return [{"json": escalation_input(trigger)}]
 
 
 def _run_escalation_context(fixture: _corpus.Fixture) -> list:
@@ -431,14 +518,7 @@ def _run_escalation_context(fixture: _corpus.Fixture) -> list:
 
     item = (fixture.input[0] or {}).get("json") or {}
     ctx = fixture.first("build-ctx")["ctx"]
-    return [{"json": escalation_context(item, ctx=ctx, gate=_fixture_gate(fixture))}]
-
-
-def _run_clarify_team_reply(fixture: _corpus.Fixture) -> list:
-    from app.services.chatbot.lanes.escalation import clarify_team_reply
-
-    item = (fixture.input[0] or {}).get("json") or {}
-    return [{"json": clarify_team_reply(item)}]
+    return [{"json": escalation_context(item, ctx=ctx)}]
 
 
 def _run_clarify_company_reply(fixture: _corpus.Fixture) -> list:
@@ -446,20 +526,22 @@ def _run_clarify_company_reply(fixture: _corpus.Fixture) -> list:
 
     item = (fixture.input[0] or {}).get("json") or {}
     ctx = fixture.first("build-ctx")["ctx"]
-    return [{"json": clarify_company_reply(item, ctx=ctx, gate=_fixture_gate(fixture))}]
+    return [{"json": clarify_company_reply(item, ctx=ctx)}]
 
 
 def _run_escalation_result(fixture: _corpus.Fixture) -> list:
     from app.services.chatbot.lanes.escalation import escalation_result
 
+    # `clarify-team-reply` never runs on live (no such node); this stays wired for the day
+    # B-TEAM-1' promotes and the node reappears in a capture.
     clarify_team = fixture.first("clarify-team-reply") if fixture.upstream("clarify-team-reply") else None
     clarify_company = fixture.first("clarify-company-reply") if fixture.upstream("clarify-company-reply") else None
     return [{"json": escalation_result(clarify_team=clarify_team, clarify_company=clarify_company)}]
 
 
 _S5_RUNNERS = {
+    "escalation-input": _run_escalation_input,
     "escalation-context": _run_escalation_context,
-    "clarify-team-reply": _run_clarify_team_reply,
     "clarify-company-reply": _run_clarify_company_reply,
     "escalation-result": _run_escalation_result,
 }
@@ -477,9 +559,10 @@ def _s5_fixtures() -> list[_corpus.Fixture]:
     "fixture", _corpus.graded(_s5_fixtures()), ids=lambda f: f"{f.node}/{f.name}"
 )
 def test_replay(fixture: _corpus.Fixture) -> None:
-    """AC-504: every real capture for the four S5 nodes, byte-equal after a JSON round
-    trip - the same grading rule `test_replay.py` uses (only `runData` fails the suite;
-    `reasoned` fixtures are exercised separately below, never as a gate)."""
+    """AC-504: every real capture for the four live S5 nodes, byte-equal after a JSON round
+    trip. `clarify-company-reply` has zero real captures in this batch (the clarify arm was
+    never exercised in the capture window - honestly reported, not fabricated); its
+    parametrize list is simply empty until a capture exists."""
     actual = _corpus.json_round_trip(_S5_RUNNERS[fixture.node](fixture))
     expected = _corpus.json_round_trip(fixture.expected)
     assert actual == expected, (
@@ -502,14 +585,16 @@ def test_reasoned_fixtures_are_replayed_and_reported(capsys) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# fresh-entity-gate (H26 port)
+# fresh-entity-gate (H26 - NOT live at bac9613b; kept for the B-HB-1 promotion)
 # --------------------------------------------------------------------------- #
 
 
+@pytest.mark.xfail(strict=True, reason="pending B-TEAM re-port; not live at bac9613b")
 def test_fresh_entity_gate_calls_resolve() -> None:
-    """AC-501: `fresh-entity-gate`'s own predicate, `entities.some(e => e.current_message
-    === true)`. A fresh entity on THIS turn resolves and gates before the ladder runs; a
-    bare confirmation (no fresh entity) never calls the resolver at all."""
+    """FUTURE (B-HB-1): once `fresh-entity-gate` promotes, a fresh entity on this turn
+    resolves and gates before the ladder runs. NOT live today - see
+    `test_no_resolve_call_on_live_escalation_lane` for what `bac9613b` actually does.
+    `strict=True` so the promotion flips this test green and forces the marker's removal."""
     from app.services.chatbot.lanes.escalation import run
 
     ctx_with_entity = _ctx(
@@ -520,10 +605,26 @@ def test_fresh_entity_gate_calls_resolve() -> None:
     run(ctx_with_entity, _item(), services=services)
     services.resolve_and_gate.assert_called_once()
 
-    ctx_without_entity = _ctx(routing={"suggested_team": "customer_service"}, entities=[])
-    services2 = _services(gate=None)
-    run(ctx_without_entity, _item(), services=services2)
-    services2.resolve_and_gate.assert_not_called()
+
+def test_no_resolve_call_on_live_escalation_lane() -> None:
+    """H26 stays open on live: `bac9613b` has no `fresh-entity-gate` / `Call 'sub-resolve-
+    and-gate'` anywhere in the graph, so the escalation lane never calls the resolver -
+    brand-blind routing is not fixed by this slice, it is reproduced and noted. A fresh
+    entity on the turn changes nothing about this: `resolve_and_gate` is never called
+    either way."""
+    from app.services.chatbot.lanes.escalation import run
+
+    with_entity = _services(gate=None)
+    run(
+        _ctx(routing={"suggested_team": "customer_service"}, entities=[{"raw": "widget", "hint": "product", "current_message": True}]),
+        _item(),
+        services=with_entity,
+    )
+    with_entity.resolve_and_gate.assert_not_called()
+
+    without_entity = _services(gate=None)
+    run(_ctx(routing={"suggested_team": "customer_service"}, entities=[]), _item(), services=without_entity)
+    without_entity.resolve_and_gate.assert_not_called()
 
 
 # --------------------------------------------------------------------------- #
@@ -531,14 +632,21 @@ def test_fresh_entity_gate_calls_resolve() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_pending_marker_written_for_clarify_kinds() -> None:
+@pytest.mark.xfail(strict=True, reason="pending B-TEAM re-port; not live at bac9613b")
+def test_pending_marker_written_for_team_clarify() -> None:
+    """FUTURE (B-TEAM-1'): a `team_clarify` pending marker. NOT live - see
+    `test_no_team_clarify_on_live_team_flows_through_unguarded`."""
     from app.services.chatbot.lanes.escalation import run
 
     team_ctx = _ctx(routing={"suggested_team": None, "suggested_agent": None})
     team_result = run(team_ctx, _item(), services=_services())
-    assert team_result["pending"] == {"kind": "team_clarify"} or (
-        isinstance(team_result["pending"], dict) and team_result["pending"]["kind"] == "team_clarify"
-    )
+    assert team_result["pending"]["kind"] == "team_clarify"
+
+
+def test_pending_marker_written_for_company_clarify_and_none_for_assignment() -> None:
+    """R3, the live half: `company_clarify` lands in `pending`; a plain assignment writes
+    none."""
+    from app.services.chatbot.lanes.escalation import run
 
     company_ctx = _ctx(
         routing={"suggested_team": "customer_service"},
@@ -590,11 +698,14 @@ def test_no_raw_text_regex_in_lane() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_out_of_scope_finishes_in_turn(session_factory, monkeypatch) -> None:
+def test_out_of_scope_finishes_in_turn(session_factory, system_settings_row, monkeypatch) -> None:
     """`out_of_scope` moves from `DELEGATED_BRANCH_KINDS` to `CRM_COMPLETED_BRANCH_KINDS`
-    (S5's whole point): the head's own stages (received/understood/access/routed) are
-    unchanged, then the engine calls the lane at `looked_up` and composes the reply at
-    `replied`; delegate becomes null and the row closes `done`.
+    (S5's whole point) ONLY when `"out_of_scope"` is in `system_settings.
+    chatbot_completed_lanes` (JSON list, default `[]`) - see
+    `test_out_of_scope_delegates_when_completed_lanes_is_default_empty` for the off case.
+    Seeded here: the head's own stages (received/understood/access/routed) are unchanged,
+    then the engine calls the lane at `looked_up` and composes the reply at `replied`;
+    delegate becomes null and the row closes `done`.
 
     A seam failure fails the turn at `looked_up` with today's generic error reply and NO
     partial assignment - the lane's actions are either the complete set (assign + SLA
@@ -612,6 +723,7 @@ def test_out_of_scope_finishes_in_turn(session_factory, monkeypatch) -> None:
     from sqlalchemy import text
 
     from app.models.chatbot_turn import ChatbotTurn
+    from app.models.user import SystemSetting
     from app.services.chatbot import engine as engine_mod
     from app.services.chatbot.contracts import Envelope
     from app.services.chatbot.head import parser as parser_mod
@@ -625,6 +737,10 @@ def test_out_of_scope_finishes_in_turn(session_factory, monkeypatch) -> None:
         ),
         {"cid": contact_id, "phone": "+60000000099", "sv": _json.dumps({"variables": {}})},
     )
+    db.commit()
+
+    setting = db.query(SystemSetting).filter(SystemSetting.id == system_settings_row.id).one()
+    setting.chatbot_completed_lanes = ["out_of_scope"]
     db.commit()
 
     def fake_resolve_config(db, *, current_date):
@@ -722,13 +838,17 @@ def test_out_of_scope_finishes_in_turn(session_factory, monkeypatch) -> None:
 
 
 def test_out_of_scope_seam_failure_fails_at_looked_up_with_no_partial_assignment(
-    session_factory, monkeypatch
+    session_factory, system_settings_row, monkeypatch
 ) -> None:
+    """Same `chatbot_completed_lanes` seed as the happy path - without it the turn would
+    just delegate (today's behaviour) and never reach the lane at all, which would make
+    this test pass for the wrong reason."""
     import json as _json
 
     from sqlalchemy import text
 
     from app.models.chatbot_turn import ChatbotTurn
+    from app.models.user import SystemSetting
     from app.services.chatbot import engine as engine_mod
     from app.services.chatbot.contracts import Envelope
     from app.services.chatbot.head import parser as parser_mod
@@ -742,6 +862,10 @@ def test_out_of_scope_seam_failure_fails_at_looked_up_with_no_partial_assignment
         ),
         {"cid": contact_id, "phone": "+60000000098", "sv": _json.dumps({"variables": {}})},
     )
+    db.commit()
+
+    setting = db.query(SystemSetting).filter(SystemSetting.id == system_settings_row.id).one()
+    setting.chatbot_completed_lanes = ["out_of_scope"]
     db.commit()
 
     def fake_resolve_config(db, *, current_date):
@@ -827,3 +951,120 @@ def test_out_of_scope_seam_failure_fails_at_looked_up_with_no_partial_assignment
     assert row.status == "failed"
     assert row.stage == "looked_up"
     assert "next-assignee is unreachable" in row.error
+
+
+def test_out_of_scope_delegates_when_completed_lanes_is_default_empty(
+    session_factory, system_settings_row, monkeypatch
+) -> None:
+    """`system_settings.chatbot_completed_lanes` defaults to `[]` (contract addition, 5 Sep
+    2026): with `"out_of_scope"` absent from it, the turn keeps TODAY's behaviour - it
+    delegates to n8n exactly as before S5, and the escalation lane is never called at all.
+    `system_settings_row` is used UNMODIFIED (the default row a fresh install has), so this
+    is a regression guard for the gate itself, not just a coincidence of `out_of_scope`
+    already being delegated pre-S5: `run_escalation_lane` is monkeypatched with a spy so a
+    coder who wires the gate backwards (or skips it) is caught here, not just in production."""
+    import json as _json
+
+    from sqlalchemy import text
+
+    from app.models.chatbot_turn import ChatbotTurn
+    from app.services.chatbot import engine as engine_mod
+    from app.services.chatbot.contracts import Envelope
+    from app.services.chatbot.head import parser as parser_mod
+
+    contact_id = "ZZT-esc-engine-default-1"
+    db = session_factory()
+    db.execute(
+        text(
+            "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars) "
+            "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb))"
+        ),
+        {"cid": contact_id, "phone": "+60000000097", "sv": _json.dumps({"variables": {}})},
+    )
+    db.commit()
+
+    def fake_resolve_config(db, *, current_date):
+        return parser_mod.ParserConfig(
+            system_prompt="stub", prompt_version=1, provider="openai", model="gpt-test", api_key="sk-test"
+        )
+
+    escalation_qf = {
+        "message_type": "request_for_help",
+        "intent_hint": "check_product",
+        "domain_hint": "master_products",
+        "scope_intent": "specific",
+        "is_affirmative": None,
+        "user_goal": "wants a human",
+        "access_levels": [],
+        "broaden_axis": None,
+        "date_mode": None,
+        "date_filter_start": None,
+        "date_filter_end": None,
+        "match_mode": "and",
+        "demand_qty": None,
+        "entities": [],
+        "entity_op": "replace_combine",
+        "scope_exclusive": False,
+        "requested_attributes": [],
+        "contains_flyer": False,
+        "reference_positions": [],
+        "reference_target": None,
+        "person_mention": None,
+        "is_active": None,
+        "order_status": None,
+        "correction": False,
+        "routing": {"suggested_team": "customer_service", "suggested_agent": "general_enquiries", "team_source": "inferred"},
+        "escalation": {"is_escalation_confirmation": True, "company_pick": None},
+    }
+
+    def fake_parse(config, user_block):
+        return escalation_qf
+
+    monkeypatch.setattr(parser_mod, "resolve_config", fake_resolve_config)
+    monkeypatch.setattr(parser_mod, "parse", fake_parse)
+    monkeypatch.setattr(
+        engine_mod,
+        "check_access",
+        lambda db, *, agent_code, contact_id, space_id: {
+            "allowed": True,
+            "decision": "allow",
+            "agent_name": "General Enquiries",
+            "attributes": None,
+            "all_attributes_allowed": None,
+        },
+    )
+    monkeypatch.setattr(engine_mod, "default_space_id", lambda db: "364817")
+
+    lane_calls: list[tuple] = []
+
+    def spy_run_escalation_lane(ctx, item, *, dry_run=False):  # pragma: no cover - must not run
+        lane_calls.append((ctx, item))
+        raise AssertionError("run_escalation_lane must not be called when chatbot_completed_lanes is []")
+
+    monkeypatch.setattr(engine_mod, "run_escalation_lane", spy_run_escalation_lane)
+
+    envelope = Envelope(
+        contact={"id": contact_id, "phone": "+60000000097", "custom_fields": []},
+        message={
+            "event_type": "message.received",
+            "contact": {"id": contact_id},
+            "message": {
+                "messageId": "ZZT-esc-engine-default-msg-1",
+                "contactId": contact_id,
+                "channelId": "whatsapp",
+                "traffic": "incoming",
+                "message": {"type": "text", "text": "I need to speak to a human"},
+            },
+        },
+    )
+
+    result = engine_mod.run_turn(envelope, session_factory=session_factory)
+
+    assert lane_calls == []
+    assert result.branch_kind == "out_of_scope"
+    assert result.delegate == "out_of_scope"
+    assert result.status == "delegated"
+
+    row = session_factory().query(ChatbotTurn).filter(ChatbotTurn.id == result.turn_id).first()
+    assert row.status == "delegated"
+    assert row.stage == "routed"
