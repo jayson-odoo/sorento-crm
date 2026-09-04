@@ -239,6 +239,71 @@ reads those sessions correctly and simply ignores the extra key.
   would be inventing behaviour; they land with their lanes at S3 and S5.
 
 ---
+
+## S2b - Retry re-enters through n8n's ingress (no n8n logic moves)
+
+**This slice moves nothing out of n8n.** It is here because it is the one place the CRM
+calls n8n rather than the other way round, and because two of its parts are owner items
+that have to be done by hand on the n8n side.
+
+### Retry posts the ORIGINAL respond.io body at the inject webhook
+
+`POST /api/v1/system/chatbot/turns/{id}/retry` does NOT re-run the turn and does NOT send
+anything to the customer. It takes the respond.io webhook body the CRM stored on the turn
+row (`envelope.message`, verbatim, not a rebuilt envelope) and POSTs it to n8n's inject
+webhook - the same front door the failover poller uses - so the retried message re-enters
+with the same ordering, the same lanes and the same sending path a live message gets. The
+turn then arrives back the ordinary way, as its own row with the next `attempt`.
+
+| what | value |
+| --- | --- |
+| target | `CHATBOT_RETRY_INGRESS_URL` (the inject webhook; from S7 the thin spine's own webhook) |
+| method / body | `POST`, `application/json`, the stored respond.io webhook body unchanged |
+| header | `X-Chatbot-Retry-Key: <CHATBOT_RETRY_INGRESS_KEY>`, sent only when the key is set |
+| timeout | 10 s - the call being answered means "n8n accepted the message", not "the turn finished" |
+| unset URL | 409 `retry_unavailable`, nothing posted, `retry_requested_at` left NULL |
+
+**Owner items, both by hand:**
+
+1. **n8n checks `X-Chatbot-Retry-Key` on the inject webhook before S7.** The CRM sends the
+   header today; nothing on the n8n side reads it yet, so the webhook is currently as open
+   as it was before. The check belongs on the webhook node itself (compare against the same
+   secret, reject otherwise), and it has to be in place before S7 moves the ingress, because
+   after that the URL is the spine's own and the retry path is the only caller that is not a
+   respond.io delivery.
+2. **Both env values are set at deploy.** `CHATBOT_RETRY_INGRESS_URL` and
+   `CHATBOT_RETRY_INGRESS_KEY` are UNSET locally on purpose: a dev machine that silently
+   injected into production n8n would answer a real customer from a developer's click, and
+   the failure would read as a bug in the customer's conversation rather than in somebody's
+   `.env`. Production therefore has to set them explicitly - deploying the code alone leaves
+   Retry disabled, which the list response says out loud (`retry_available: false` plus
+   `retry_unavailable_reason`) so the button is greyed rather than offering a 409.
+
+Precondition for turning it on: a retry of a known-failed test turn arrives back as a NEW
+turn row with `attempt` 2 for the same `message_id`, and the original row is still `failed`
+with `retry_requested_at` set.
+
+### The delegated sweep is what explains a ghost
+
+A turn the CRM handed to an n8n lane is `delegated` until that lane calls `/complete`. When
+the lane dies mid-turn - workflow error, worker redeploy, execution deleted - the call never
+comes. Without a sweep the row sits `delegated` forever: the trace list fills with ghosts
+that read as work still in progress, and Retry cannot touch any of them, because R4 makes a
+manual retry possible on a FAILED turn only.
+
+So an APScheduler tick (every minute, `app/scheduler/task_scheduler.py`) fails every
+`delegated` row older than `CHATBOT_DELEGATED_TTL_MINUTES` (default 10, measured from
+`started_at` and falling back to `created_at`), with `stage = "delegated"`, `error = "n8n
+lane did not complete within N minutes"` and a trace note that says the lane never reported
+back. It is idempotent, it settles at most 200 rows a tick, and it includes test turns - a
+clone turn that hangs is exactly as misleading on the trace screen as a live one.
+
+**What this means for the n8n side:** a batch of swept turns is a signal, not noise. Several
+at once with the same lane means that workflow died or was redeployed mid-turn; the TTL is
+the window in which an n8n execution is still expected to finish, so raise it rather than
+the sweep if a lane legitimately takes longer than ten minutes.
+
+---
 ## S4 - the `low_signal` lane moves into the CRM
 
 **CRM side (shipped, and inert until switched on).** S4 puts `low_signal` in

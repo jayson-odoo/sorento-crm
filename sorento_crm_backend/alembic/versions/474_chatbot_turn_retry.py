@@ -143,11 +143,13 @@ def downgrade():
     """Reversible, and it DELETES retried turns to get there. Read this before running it.
 
     The two-column unique key cannot be recreated while a retried message has more than
-    one row - that is the whole reason the third column exists. So the downgrade drops
-    every attempt above the first for each `(contact, message_id)`, which throws away the
-    trace of those turns. That is data loss, it is the only way back, and it is why this
-    is spelled out rather than left for the operator to discover from a constraint
-    violation at 2 a.m.
+    one row - that is the whole reason the third column exists. So the downgrade keeps the
+    LATEST attempt for each `(contact, message_id)` (`max(attempt)`, which is the SQL
+    below) and deletes every earlier one, throwing away the trace of those turns. Keeping
+    the latest is the deliberate choice: the last attempt is the one whose outcome the
+    operator acted on, and the earlier ones are the failures it was retrying. That is data
+    loss either way, it is the only way back, and it is why this is spelled out rather than
+    left for the operator to discover from a constraint violation at 2 a.m.
 
     On production, prefer rolling FORWARD.
     """

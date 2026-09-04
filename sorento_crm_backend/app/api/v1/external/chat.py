@@ -57,11 +57,19 @@ router = APIRouter()
 # of magnitude of headroom AND a bound on what one caller can push into `chatbot.turns`,
 # which is written once per customer message and never pruned.
 #
-# Checked from `content-length`, which is what a body this size actually has: Starlette has
-# already buffered the body by the time a route function runs, so this is a guard on what
-# gets PARSED, VALIDATED and STORED, not on what gets read off the socket. Bounding the
-# read is a server-level concern (`client_max_body_size`), and stating that here is better
-# than implying a protection this cannot give.
+# Measured on the PARSED payload, not on `content-length`. Two reasons, and both were
+# defects in the first version:
+#
+# * a chunked request carries no `content-length` at all, so a header check is skippable
+#   by the caller - exactly the caller a size guard exists for;
+# * by the time this route function runs FastAPI has already read, parsed and validated
+#   the body into `TurnRequest` (that is what resolving the `payload` parameter does), so
+#   the guard cannot protect the parse however it is measured. What it CAN bound is the
+#   write: `chatbot.turns` keeps the envelope, is written once per customer message and is
+#   never pruned, and the integration log copies it. STORED is the honest claim.
+#
+# Bounding the socket read is a server-level concern (`client_max_body_size`), and saying
+# so is better than implying a protection this cannot give.
 MAX_TURN_BODY_BYTES = 256 * 1024
 
 # The integration log records the CALL. A payload that was rejected for its size must not
@@ -113,12 +121,14 @@ def chat_turn(
     to_reraise: HTTPException | None = None
 
     try:
-        declared_bytes = int(request.headers.get("content-length") or 0)
-        if declared_bytes > MAX_TURN_BODY_BYTES:
+        # The serialised payload, so a chunked request with no `content-length` is bounded
+        # too. See MAX_TURN_BODY_BYTES: this is a bound on what gets STORED.
+        body_bytes = len(payload.model_dump_json().encode("utf-8"))
+        if body_bytes > MAX_TURN_BODY_BYTES:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=(
-                    f"The turn body is {declared_bytes} bytes, over the "
+                    f"The turn body is {body_bytes} bytes, over the "
                     f"{MAX_TURN_BODY_BYTES} byte limit. A turn carries one message and the "
                     "session state, not an attachment - send media by reference."
                 ),

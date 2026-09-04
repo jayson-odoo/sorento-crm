@@ -9,6 +9,19 @@ separable from the assistant's own rows.
 but attributing it to the customer's usage would make every rehearsal look like traffic.
 D14 says a test envelope writes nothing outside `chatbot.turns`, and this obeys that.
 
+**`was_answered` is about the CALL, not about the turn.** The engine passes True as soon
+as the parser returns a usable emission, even though access, routing, the lane and the
+tail all still lie ahead and any of them can fail the turn. That is deliberate and it is
+what every other producer on this table does (`ai_assistant_service`, the spec
+understanding runs): the row describes one LLM call - its provider, its model, its tokens,
+its latency - and the honest question about that call is whether the model answered it. A
+turn that dies two stages later still bought and consumed this answer, so flipping the
+flag would make the bill stop matching the spend. Whether the CUSTOMER got an answer is a
+different question with its own record: `chatbot.turns.status` plus the trace, which is
+where the trace screen reads it. Rewriting this row when the turn ends would also mean
+holding it open across the rest of the turn, on a session the engine deliberately opens
+and closes per stage.
+
 Never raises. A telemetry write that can fail a customer's turn is worse than a missing
 row, and the row it would have written is a number, not the answer.
 """

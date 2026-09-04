@@ -66,6 +66,22 @@ FAILED_CONTACTS_LIMIT = 200
 FAILED_CONTACTS_DEFAULT_DAYS = 7
 
 
+RETRY_IN_FLIGHT_DETAIL = (
+    "A retry for this turn is already on its way. Wait for it to arrive as a new turn "
+    "before asking again."
+)
+
+
+def _stale_before(now: datetime) -> datetime:
+    """The instant a `retry_requested_at` marker stops counting as in flight.
+
+    One definition, read by the friendly pre-check AND by the conditional claim below, so
+    the answer the operator is given and the row the database will actually let them take
+    can never disagree.
+    """
+    return now - timedelta(minutes=max(1, int(settings.chatbot_retry_stale_minutes)))
+
+
 def _retry_in_flight(row: ChatbotTurn) -> bool:
     """Is a requested retry still expected to arrive?
 
@@ -79,8 +95,7 @@ def _retry_in_flight(row: ChatbotTurn) -> bool:
     requested_at = row.retry_requested_at
     if requested_at.tzinfo is None:
         requested_at = requested_at.replace(tzinfo=timezone.utc)
-    window = timedelta(minutes=max(1, int(settings.chatbot_retry_stale_minutes)))
-    return datetime.now(timezone.utc) - requested_at < window
+    return requested_at >= _stale_before(datetime.now(timezone.utc))
 
 
 def _encode_cursor(row: ChatbotTurn) -> str:
@@ -269,18 +284,32 @@ def retry_turn(
         )
     if _retry_in_flight(row):
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                "A retry for this turn is already on its way. Wait for it to arrive as a "
-                "new turn before asking again."
-            ),
+            status_code=status.HTTP_409_CONFLICT, detail=RETRY_IN_FLIGHT_DETAIL
         )
 
     now = datetime.now(timezone.utc)
     actor_id = str(current_user.get("id") or "")
 
-    # Claim FIRST, then send. See the docstring.
-    row.retry_requested_at = now
+    # Claim FIRST, then send. See the docstring - and the claim is the conditional UPDATE
+    # itself, not the read above. The read can only ever tell an operator what WAS true;
+    # two POSTs a few milliseconds apart both pass it, and the customer is answered twice.
+    # This UPDATE matches only a row still free to be claimed, so Postgres serialises the
+    # two on the row lock and the loser gets zero rows and the same 409 the pre-check gives.
+    # A STALE marker is still claimable, which is why the condition is not just IS NULL.
+    claimed = (
+        db.query(ChatbotTurn)
+        .filter(
+            ChatbotTurn.id == turn_id,
+            (ChatbotTurn.retry_requested_at.is_(None))
+            | (ChatbotTurn.retry_requested_at < _stale_before(now)),
+        )
+        .update({ChatbotTurn.retry_requested_at: now}, synchronize_session="fetch")
+    )
+    if not claimed:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=RETRY_IN_FLIGHT_DETAIL
+        )
     trace = list(row.trace or [])
     trace.append(
         {

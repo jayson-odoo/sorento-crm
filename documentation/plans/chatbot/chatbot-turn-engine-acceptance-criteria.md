@@ -475,7 +475,14 @@ endpoint over `chatbot.turns.trace`. Lands after S2 so the head and tail both wr
   Backed by `GET /api/v1/system/chatbot/turns/failed-contacts?from=&to=` ->
   `{items: [{contact_respond_id, last_failed_stage, last_failed_at, count}]}`: the question is
   "which contacts are worth opening", which is an aggregate over tens of rows, not a page of
-  every turn grouped in the browser. (D1)
+  every turn grouped in the browser.
+
+  The list then asks `GET /api/v1/system/chat-history` for those contacts' messages by
+  REPEATING `contact_id`, one value per contact named by the aggregate: several ids narrow
+  to those ids, one id narrows to it, an explicit blank value matches NOBODY (an empty
+  filter is a filter, not an absent one) and an absent param filters nothing. The page and
+  its total are therefore the filtered ones - narrowing in the browser instead left the
+  pager counting rows it had just hidden. (D1)
 - AC-256 `[FE]` Usable and non-clipped at 375px and 1280px; the timeline stacks, the drawer
   scrolls, no horizontal page scroll. (D2)
 - AC-257 `[BE]` Given `GET /api/v1/system/chatbot/turns?contact_respond_id=&from=&to=&status=`,
@@ -484,9 +491,20 @@ endpoint over `chatbot.turns.trace`. Lands after S2 so the head and tail both wr
   `cursor` echoed back as `next_cursor` (null on the last page); an unknown `status` is 422,
   not an empty page. `POST /api/v1/system/chatbot/turns/{id}/retry` re-injects a `failed` turn
   (403 without `system.chat_history.manage`; 409 unless `failed`; 409 `retry_unavailable` when
-  no ingress is configured, having sent nothing; 409 when `chatbot.turns.retry_requested_at` is
-  already set, so a double click cannot answer the customer twice; 502 when the ingress refuses,
-  leaving the row unchanged). On success the row STAYS `failed` and gains
+  no ingress is configured, having sent nothing; 409 when a retry is IN FLIGHT, meaning
+  `chatbot.turns.retry_requested_at` is set AND younger than `chatbot_retry_stale_minutes`
+  (setting, default 5), so a double click cannot answer the customer twice; 502 when the
+  ingress refuses, leaving the row unchanged). A marker OLDER than that window is stale and
+  the turn may be retried again: the marker is cleared by the re-injected turn arriving, and
+  one that never arrives (n8n dropped it, the contact was deleted, the workflow was
+  mid-deploy) must not leave the row un-retryable forever. The claim is a conditional
+  `UPDATE ... WHERE retry_requested_at IS NULL OR retry_requested_at < <stale cutoff>` whose
+  rowcount decides, so two simultaneous POSTs cannot both pass the check and both inject.
+
+  `GET .../turns` carries `retry_available` and `retry_unavailable_reason` on the LIST
+  response, not per row: whether this environment has an ingress at all is a property of the
+  deployment, and the screen needs it to disable the button rather than offer a 409 the
+  operator only discovers by pressing it. On success the row STAYS `failed` and gains
   `retry_requested_at`; the response is `{turn_id, attempt}` where `attempt` is what the
   re-injected turn will carry. (D1, D3)
 - AC-258 `[T]` vitest for the timeline (happy, failed, delegated, retry disabled) and the
