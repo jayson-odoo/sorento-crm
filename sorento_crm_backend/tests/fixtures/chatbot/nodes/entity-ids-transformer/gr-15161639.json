@@ -1,0 +1,207 @@
+{
+  "source": {
+    "execution_id": "15161639",
+    "workflow_id": "Fss5aAaXthJSWpZCgKiKR",
+    "workflow_version": "125e5c32-baac-4ca0-9682-f52031f8b11d",
+    "node": "entity-ids-transformer",
+    "captured_at": "2026-09-04T20:01:05+00:00",
+    "expected_from": "runData",
+    "dedupe_sig": "2de99f76ad048634dd0b3bdba319002e7b35820e37ec1f37ebfd6cb5a36bb378"
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "tool": "crm_inventory_stock_balance_list",
+          "contact_id": 900000011,
+          "user_prompt": "cross-domain probe (incoming -> crm_inventory_stock_balance_list) for: SRTWT8262-FRG",
+          "entities": [
+            {
+              "uuid": "272376e1-2604-46d5-b997-36c6ac487366",
+              "entity_type": "product",
+              "code": "SRTWT8262-FRG"
+            }
+          ],
+          "semantic_input": {
+            "message_type": "business_query",
+            "intent_hint": "check_incoming",
+            "domain_hint": "incoming",
+            "user_goal": "trying to check the ETA for SRTWT8262-FRG",
+            "access_levels": [],
+            "contact_id": "900000011",
+            "space_id": "364817",
+            "is_active": null
+          }
+        }
+      }
+    ],
+    "entity-ids-transformer": [
+      {
+        "json": {
+          "product_ids": [
+            "272376e1-2604-46d5-b997-36c6ac487366"
+          ],
+          "_diagnostics": {
+            "entities_in": 1,
+            "total_uuids_passed": 1,
+            "scalar_truncated": [],
+            "skipped": [],
+            "unmapped_types": []
+          },
+          "view": "render",
+          "contact_id": "900000011",
+          "space_id": "364817",
+          "access_levels": [],
+          "is_active": null
+        }
+      }
+    ],
+    "MCP Client1": [
+      {
+        "json": {
+          "content": [
+            {
+              "type": "text",
+              "text": {
+                "result_type": "stock",
+                "intro": "No matching results found.",
+                "items": [],
+                "attachments": [],
+                "action_links": [],
+                "last_updated_at": "2026-09-04T17:30:59.549278",
+                "has_result": false,
+                "alternatives": [
+                  {
+                    "value": "SRTWT8266-FRG",
+                    "display": "SRTWT8266-FRG",
+                    "id": "2446daf3-3f86-498d-b46a-5d13fe4e4867",
+                    "sim": 0.625,
+                    "is_variant": false
+                  },
+                  {
+                    "value": "SRTWT8268-FRG",
+                    "display": "SRTWT8268-FRG",
+                    "id": "f209a336-8579-4599-bfb1-ee3b0326b662",
+                    "sim": 0.625,
+                    "is_variant": false
+                  },
+                  {
+                    "value": "SRTWT8235-FRG",
+                    "display": "SRTWT8235-FRG",
+                    "id": "723b08b0-5576-4a4f-a18b-38f2a463aaea",
+                    "sim": 0.529,
+                    "is_variant": false
+                  }
+                ],
+                "relaxed_axis": "entity",
+                "stock_visibility": {
+                  "mode": "detailed",
+                  "source": "default",
+                  "hide_zero_locations": false,
+                  "warehouse_codes": null
+                }
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "output-structurer": [
+      {
+        "json": {
+          "response": "No matching results found.\n\n_Data last updated: 04/09/2026 17:30:59_",
+          "response_intro": "No matching results found.",
+          "answers": [],
+          "attachments": [],
+          "action_links": [],
+          "last_updated_at": "2026-09-04T17:30:59.549278",
+          "has_result": false,
+          "alternatives": [
+            {
+              "value": "SRTWT8266-FRG",
+              "display": "SRTWT8266-FRG",
+              "id": "2446daf3-3f86-498d-b46a-5d13fe4e4867",
+              "sim": 0.625,
+              "is_variant": false
+            },
+            {
+              "value": "SRTWT8268-FRG",
+              "display": "SRTWT8268-FRG",
+              "id": "f209a336-8579-4599-bfb1-ee3b0326b662",
+              "sim": 0.625,
+              "is_variant": false
+            },
+            {
+              "value": "SRTWT8235-FRG",
+              "display": "SRTWT8235-FRG",
+              "id": "723b08b0-5576-4a4f-a18b-38f2a463aaea",
+              "sim": 0.529,
+              "is_variant": false
+            }
+          ],
+          "relaxed_axis": "entity",
+          "field_access": null,
+          "requested_attributes": [],
+          "keys_served": false
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "tool": "crm_inventory_stock_balance_list",
+        "contact_id": 900000011,
+        "user_prompt": "cross-domain probe (incoming -> crm_inventory_stock_balance_list) for: SRTWT8262-FRG",
+        "entities": [
+          {
+            "uuid": "272376e1-2604-46d5-b997-36c6ac487366",
+            "entity_type": "product",
+            "code": "SRTWT8262-FRG"
+          }
+        ],
+        "semantic_input": {
+          "message_type": "business_query",
+          "intent_hint": "check_incoming",
+          "domain_hint": "incoming",
+          "user_goal": "trying to check the ETA for SRTWT8262-FRG",
+          "access_levels": [],
+          "contact_id": "900000011",
+          "space_id": "364817",
+          "is_active": null
+        }
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "product_ids": [
+          "272376e1-2604-46d5-b997-36c6ac487366"
+        ],
+        "_diagnostics": {
+          "entities_in": 1,
+          "total_uuids_passed": 1,
+          "scalar_truncated": [],
+          "skipped": [],
+          "unmapped_types": []
+        },
+        "view": "render",
+        "contact_id": "900000011",
+        "space_id": "364817",
+        "access_levels": [],
+        "is_active": null
+      }
+    }
+  ],
+  "runIndex": 0,
+  "execution": {
+    "id": "15161639"
+  },
+  "ran": [
+    "When Executed by Another Workflow",
+    "entity-ids-transformer",
+    "MCP Client1",
+    "output-structurer"
+  ]
+}

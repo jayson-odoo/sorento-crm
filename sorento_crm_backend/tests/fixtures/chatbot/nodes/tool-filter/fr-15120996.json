@@ -1,0 +1,1768 @@
+{
+  "source": {
+    "execution_id": "15120996",
+    "workflow_id": "WfZ8UCTO9bsrvilO",
+    "workflow_version": "aad2e709-e3e3-4b07-9dcb-85225d022daa",
+    "node": "tool-filter",
+    "captured_at": "2026-09-04T20:05:49+00:00",
+    "expected_from": "runData",
+    "dedupe_sig": "9d2e51804d629f991250df583d03585ec59cd5feb7c08ea3d5da8c7a112c5d5f"
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "ctx_resolved": {
+            "match_mode": "and",
+            "tokens": [
+              "CSA303"
+            ],
+            "elapsed_ms": 75,
+            "intersection": [
+              {
+                "entity_type": "product",
+                "canonical_code": "CSA303-DIY",
+                "uuid": "2082aa05-de00-4a8f-aa2c-ba5a86014c5f",
+                "match_field": "product_code",
+                "match_tier": "and",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "product_name": "CSA303-DIY",
+                  "is_active": true,
+                  "brand": {
+                    "brand_id": "9f1277f0-42fa-442c-978f-ab5f41e72a20",
+                    "brand_code": "CABANA",
+                    "brand_name": "CABANA"
+                  }
+                }
+              }
+            ],
+            "by_entity_type": {
+              "product": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "CSA303-DIY",
+                  "uuid": "2082aa05-de00-4a8f-aa2c-ba5a86014c5f",
+                  "match_field": "product_code",
+                  "match_tier": "and",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "product_name": "CSA303-DIY",
+                    "is_active": true,
+                    "brand": {
+                      "brand_id": "9f1277f0-42fa-442c-978f-ab5f41e72a20",
+                      "brand_code": "CABANA",
+                      "brand_name": "CABANA"
+                    }
+                  }
+                }
+              ]
+            },
+            "empty": false,
+            "unresolved_tokens": [],
+            "alternatives": [],
+            "token_coverage": [
+              {
+                "token": "CSA303",
+                "match_semantics": "max_coverage",
+                "coverage": [
+                  {
+                    "entity_type": "product",
+                    "matched_words": [
+                      "CSA303"
+                    ],
+                    "unmatched_words": [],
+                    "truncated": false
+                  }
+                ]
+              }
+            ],
+            "gate_passed": true,
+            "require_specific": false,
+            "specific_options": [],
+            "resolved_company": "cabana",
+            "company_team": null,
+            "resolved_companies": [
+              "cabana"
+            ],
+            "routing_brand": "cabana",
+            "routing_brand_source": "resolved",
+            "routing_companies": [
+              {
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "brand_code": "cabana",
+                "codes": [
+                  "CSA303-DIY"
+                ],
+                "labels": [
+                  "CSA303-DIY"
+                ]
+              }
+            ],
+            "routing_company": "00000000-0000-0000-0000-000000000001",
+            "access_denied_levels": [],
+            "access_notice": "",
+            "brand_gate_empty": false,
+            "brand_unheld": false,
+            "gate_reason": "ok",
+            "gate_clarification": "",
+            "compatible_entities": [
+              {
+                "uuid": "2082aa05-de00-4a8f-aa2c-ba5a86014c5f",
+                "entity_type": "product",
+                "code": "CSA303-DIY"
+              }
+            ],
+            "gate_debug": {
+              "domain": "master_products",
+              "allowed_lookup": [
+                "product",
+                "category",
+                "brand"
+              ],
+              "entities_count": 1
+            },
+            "ctx": {
+              "contact": {
+                "id": 900000013,
+                "firstName": "Person 21",
+                "lastName": null,
+                "phone": "+60100000006",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "locale": null,
+                "countryCode": "MY",
+                "status": "open",
+                "isBlocked": false,
+                "custom_fields": [
+                  {
+                    "name": "enquiry_type",
+                    "value": null
+                  },
+                  {
+                    "name": "user_type",
+                    "value": null
+                  },
+                  {
+                    "name": "complaint_id",
+                    "value": null
+                  },
+                  {
+                    "name": "is_allowed_stock",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_human_intervened",
+                    "value": "false"
+                  },
+                  {
+                    "name": "backend_id",
+                    "value": "https://fe-sorento.foundryx.my/user-management/contacts/6476f662-187a-4e9e-98f2-eadb6bbd86e5"
+                  },
+                  {
+                    "name": "is_allowed_ai",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_allowed_voice",
+                    "value": null
+                  }
+                ],
+                "tags": [
+                  "imported_20260510_200514",
+                  "imported_20260627_150636"
+                ],
+                "assignee": null,
+                "lifecycle": null,
+                "created_at": 1778415977
+              },
+              "text": {
+                "event_type": "message.received",
+                "event_id": "bb1a3c4c-7e88-4655-90b9-5d96505ca860",
+                "contact": {
+                  "id": 900000013,
+                  "firstName": "Person 21",
+                  "lastName": "",
+                  "phone": "+60100000006",
+                  "email": null,
+                  "language": null,
+                  "profilePic": null,
+                  "countryCode": "MY",
+                  "status": "open",
+                  "assignee": {
+                    "id": null,
+                    "firstName": null,
+                    "lastName": null,
+                    "email": null
+                  },
+                  "created_at": 1778415977
+                },
+                "message": {
+                  "messageId": 1788492363000000,
+                  "channelMessageId": "wamid.HBgLNjAxNjI4NjExNzgVAgASGBYzRUIwNDM0MkYwRjNEQkI3RkYyQUM3AA==",
+                  "contactId": 900000013,
+                  "channelId": 453209,
+                  "traffic": "incoming",
+                  "timestamp": 1788492363000,
+                  "message": {
+                    "type": "text",
+                    "text": "CSA303"
+                  }
+                },
+                "channel": {
+                  "id": 453209,
+                  "name": "Internal (+60 11-1673 1179)",
+                  "source": "whatsapp_business",
+                  "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 23\"},\"wa_id\":\"60100000006\",\"user_id\":\"MY.900000014\",\"firstName\":\"Person 21\",\"lastName\":\"Person 22\"}}",
+                  "created_at": 1767682908
+                },
+                "sender": {
+                  "source": "contact",
+                  "userId": null,
+                  "teamId": null,
+                  "workflowId": null,
+                  "broadcastHistoryId": null
+                }
+              },
+              "session": {
+                "respond_io_id": "900000013",
+                "session_vars": {
+                  "variables": {
+                    "routing": {
+                      "suggested_team": "purchasing",
+                      "suggested_agent": "incoming_stock_enquiries"
+                    },
+                    "entities": [
+                      {
+                        "raw": "SRTBK7003HP",
+                        "hint": "product",
+                        "confident": true,
+                        "canonical_code": "SRTBK7003HP",
+                        "current_message": false
+                      }
+                    ],
+                    "ideation": null,
+                    "response": "Here's what you want:\n\u2022 product: SRTBK7003HP\n\nBut no incoming matched these. Would you like me to escalate to purchasing team?",
+                    "date_mode": null,
+                    "dym_offer": null,
+                    "user_goal": "trying to check incoming stock",
+                    "escalation": {
+                      "is_escalation_confirmation": false
+                    },
+                    "match_mode": "and",
+                    "domain_hint": "incoming",
+                    "intent_hint": "check_incoming",
+                    "message_type": "business_query",
+                    "query_brands": [],
+                    "access_levels": [],
+                    "routing_brand": "sorento",
+                    "contains_flyer": false,
+                    "dym_candidates": [],
+                    "date_filter_end": null,
+                    "last_result_set": [],
+                    "routing_company": "00000000-0000-0000-0000-000000000001",
+                    "date_filter_start": null,
+                    "routing_companies": [
+                      {
+                        "codes": [
+                          "SRTBK7003HP"
+                        ],
+                        "labels": [
+                          "SRTBK7003HP"
+                        ],
+                        "brand_code": "sorento",
+                        "company_id": "00000000-0000-0000-0000-000000000001",
+                        "company_name": "Sorento"
+                      }
+                    ],
+                    "selection_context": null,
+                    "routing_roster_plan": null,
+                    "requested_attributes": [],
+                    "routing_brand_source": "resolved"
+                  },
+                  "user_response": "Here's what you want:\n\u2022 product: SRTBK7003HP\n\nBut no incoming matched these. Would you like me to escalate to purchasing team?"
+                }
+              },
+              "parse": {
+                "output": {
+                  "message_type": "business_query",
+                  "intent_hint": "check_product",
+                  "domain_hint": "master_products",
+                  "scope_intent": "specific",
+                  "is_affirmative": null,
+                  "user_goal": "trying to check the product details for CSA303",
+                  "access_levels": [],
+                  "broaden_axis": null,
+                  "date_mode": null,
+                  "date_filter_start": null,
+                  "date_filter_end": null,
+                  "match_mode": "and",
+                  "demand_qty": null,
+                  "entities": [
+                    {
+                      "raw": "CSA303",
+                      "hint": "product",
+                      "canonical_code": null,
+                      "current_message": true,
+                      "confident": true
+                    }
+                  ],
+                  "entity_op": "replace_combine",
+                  "scope_exclusive": false,
+                  "requested_attributes": [],
+                  "contains_flyer": false,
+                  "reference_positions": [],
+                  "reference_target": null,
+                  "person_mention": null,
+                  "is_active": null,
+                  "order_status": null,
+                  "correction": false,
+                  "routing": {
+                    "suggested_team": "purchasing",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "domain_signal_source": "intent_explicit",
+                  "scope_exclusive_applied": false,
+                  "entity_op_applied": "replace_combine",
+                  "query_brands": [],
+                  "entities_filtered": false,
+                  "entities_emptied_by_filter": false
+                },
+                "_parser_raw": {
+                  "message_type": "business_query",
+                  "intent_hint": "check_product",
+                  "domain_hint": "master_products",
+                  "scope_intent": "specific",
+                  "is_affirmative": null,
+                  "user_goal": "trying to check the product details for CSA303",
+                  "access_levels": [],
+                  "broaden_axis": null,
+                  "date_mode": null,
+                  "date_filter_start": null,
+                  "date_filter_end": null,
+                  "match_mode": "and",
+                  "demand_qty": null,
+                  "entities": [
+                    {
+                      "raw": "CSA303",
+                      "hint": "product",
+                      "canonical_code": null,
+                      "current_message": true,
+                      "confident": true
+                    }
+                  ],
+                  "entity_op": "replace_combine",
+                  "scope_exclusive": false,
+                  "requested_attributes": [],
+                  "contains_flyer": false,
+                  "reference_positions": [],
+                  "reference_target": null,
+                  "person_mention": null,
+                  "is_active": null,
+                  "order_status": null,
+                  "correction": false,
+                  "routing": {
+                    "suggested_team": "purchasing",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "escalation": {
+                    "is_escalation_confirmation": false,
+                    "company_pick": null
+                  }
+                }
+              },
+              "access": {
+                "allowed": true,
+                "decision": "allow",
+                "agent_name": "General Enquiries",
+                "attributes": null,
+                "all_attributes_allowed": null
+              },
+              "media": null,
+              "resolved": {
+                "match_mode": "and",
+                "tokens": [
+                  "CSA303"
+                ],
+                "elapsed_ms": 75,
+                "intersection": [
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "CSA303-DIY",
+                    "uuid": "2082aa05-de00-4a8f-aa2c-ba5a86014c5f",
+                    "match_field": "product_code",
+                    "match_tier": "and",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento",
+                    "display": {
+                      "product_name": "CSA303-DIY",
+                      "is_active": true,
+                      "brand": {
+                        "brand_id": "9f1277f0-42fa-442c-978f-ab5f41e72a20",
+                        "brand_code": "CABANA",
+                        "brand_name": "CABANA"
+                      }
+                    }
+                  }
+                ],
+                "by_entity_type": {
+                  "product": [
+                    {
+                      "entity_type": "product",
+                      "canonical_code": "CSA303-DIY",
+                      "uuid": "2082aa05-de00-4a8f-aa2c-ba5a86014c5f",
+                      "match_field": "product_code",
+                      "match_tier": "and",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento",
+                      "display": {
+                        "product_name": "CSA303-DIY",
+                        "is_active": true,
+                        "brand": {
+                          "brand_id": "9f1277f0-42fa-442c-978f-ab5f41e72a20",
+                          "brand_code": "CABANA",
+                          "brand_name": "CABANA"
+                        }
+                      }
+                    }
+                  ]
+                },
+                "empty": false,
+                "unresolved_tokens": [],
+                "alternatives": [],
+                "token_coverage": [
+                  {
+                    "token": "CSA303",
+                    "match_semantics": "max_coverage",
+                    "coverage": [
+                      {
+                        "entity_type": "product",
+                        "matched_words": [
+                          "CSA303"
+                        ],
+                        "unmatched_words": [],
+                        "truncated": false
+                      }
+                    ]
+                  }
+                ]
+              },
+              "entities": null,
+              "gate": {
+                "match_mode": "and",
+                "tokens": [
+                  "CSA303"
+                ],
+                "elapsed_ms": 75,
+                "intersection": [
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "CSA303-DIY",
+                    "uuid": "2082aa05-de00-4a8f-aa2c-ba5a86014c5f",
+                    "match_field": "product_code",
+                    "match_tier": "and",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento",
+                    "display": {
+                      "product_name": "CSA303-DIY",
+                      "is_active": true,
+                      "brand": {
+                        "brand_id": "9f1277f0-42fa-442c-978f-ab5f41e72a20",
+                        "brand_code": "CABANA",
+                        "brand_name": "CABANA"
+                      }
+                    }
+                  }
+                ],
+                "by_entity_type": {
+                  "product": [
+                    {
+                      "entity_type": "product",
+                      "canonical_code": "CSA303-DIY",
+                      "uuid": "2082aa05-de00-4a8f-aa2c-ba5a86014c5f",
+                      "match_field": "product_code",
+                      "match_tier": "and",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento",
+                      "display": {
+                        "product_name": "CSA303-DIY",
+                        "is_active": true,
+                        "brand": {
+                          "brand_id": "9f1277f0-42fa-442c-978f-ab5f41e72a20",
+                          "brand_code": "CABANA",
+                          "brand_name": "CABANA"
+                        }
+                      }
+                    }
+                  ]
+                },
+                "empty": false,
+                "unresolved_tokens": [],
+                "alternatives": [],
+                "token_coverage": [
+                  {
+                    "token": "CSA303",
+                    "match_semantics": "max_coverage",
+                    "coverage": [
+                      {
+                        "entity_type": "product",
+                        "matched_words": [
+                          "CSA303"
+                        ],
+                        "unmatched_words": [],
+                        "truncated": false
+                      }
+                    ]
+                  }
+                ],
+                "gate_passed": true,
+                "require_specific": false,
+                "specific_options": [],
+                "resolved_company": "cabana",
+                "company_team": null,
+                "resolved_companies": [
+                  "cabana"
+                ],
+                "routing_brand": "cabana",
+                "routing_brand_source": "resolved",
+                "routing_companies": [
+                  {
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento",
+                    "brand_code": "cabana",
+                    "codes": [
+                      "CSA303-DIY"
+                    ],
+                    "labels": [
+                      "CSA303-DIY"
+                    ]
+                  }
+                ],
+                "routing_company": "00000000-0000-0000-0000-000000000001",
+                "access_denied_levels": [],
+                "access_notice": "",
+                "brand_gate_empty": false,
+                "brand_unheld": false,
+                "gate_reason": "ok",
+                "gate_clarification": "",
+                "compatible_entities": [
+                  {
+                    "uuid": "2082aa05-de00-4a8f-aa2c-ba5a86014c5f",
+                    "entity_type": "product",
+                    "code": "CSA303-DIY"
+                  }
+                ],
+                "gate_debug": {
+                  "domain": "master_products",
+                  "allowed_lookup": [
+                    "product",
+                    "category",
+                    "brand"
+                  ],
+                  "entities_count": 1
+                }
+              }
+            }
+          },
+          "is_test": false
+        }
+      }
+    ],
+    "tier-gate-gate": [],
+    "build-ctx-resolved": [
+      {
+        "json": {
+          "match_mode": "and",
+          "tokens": [
+            "CSA303"
+          ],
+          "elapsed_ms": 75,
+          "intersection": [
+            {
+              "entity_type": "product",
+              "canonical_code": "CSA303-DIY",
+              "uuid": "2082aa05-de00-4a8f-aa2c-ba5a86014c5f",
+              "match_field": "product_code",
+              "match_tier": "and",
+              "company_id": "00000000-0000-0000-0000-000000000001",
+              "company_name": "Sorento",
+              "display": {
+                "product_name": "CSA303-DIY",
+                "is_active": true,
+                "brand": {
+                  "brand_id": "9f1277f0-42fa-442c-978f-ab5f41e72a20",
+                  "brand_code": "CABANA",
+                  "brand_name": "CABANA"
+                }
+              }
+            }
+          ],
+          "by_entity_type": {
+            "product": [
+              {
+                "entity_type": "product",
+                "canonical_code": "CSA303-DIY",
+                "uuid": "2082aa05-de00-4a8f-aa2c-ba5a86014c5f",
+                "match_field": "product_code",
+                "match_tier": "and",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "product_name": "CSA303-DIY",
+                  "is_active": true,
+                  "brand": {
+                    "brand_id": "9f1277f0-42fa-442c-978f-ab5f41e72a20",
+                    "brand_code": "CABANA",
+                    "brand_name": "CABANA"
+                  }
+                }
+              }
+            ]
+          },
+          "empty": false,
+          "unresolved_tokens": [],
+          "alternatives": [],
+          "token_coverage": [
+            {
+              "token": "CSA303",
+              "match_semantics": "max_coverage",
+              "coverage": [
+                {
+                  "entity_type": "product",
+                  "matched_words": [
+                    "CSA303"
+                  ],
+                  "unmatched_words": [],
+                  "truncated": false
+                }
+              ]
+            }
+          ],
+          "gate_passed": true,
+          "require_specific": false,
+          "specific_options": [],
+          "resolved_company": "cabana",
+          "company_team": null,
+          "resolved_companies": [
+            "cabana"
+          ],
+          "routing_brand": "cabana",
+          "routing_brand_source": "resolved",
+          "routing_companies": [
+            {
+              "company_id": "00000000-0000-0000-0000-000000000001",
+              "company_name": "Sorento",
+              "brand_code": "cabana",
+              "codes": [
+                "CSA303-DIY"
+              ],
+              "labels": [
+                "CSA303-DIY"
+              ]
+            }
+          ],
+          "routing_company": "00000000-0000-0000-0000-000000000001",
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "ok",
+          "gate_clarification": "",
+          "compatible_entities": [
+            {
+              "uuid": "2082aa05-de00-4a8f-aa2c-ba5a86014c5f",
+              "entity_type": "product",
+              "code": "CSA303-DIY"
+            }
+          ],
+          "gate_debug": {
+            "domain": "master_products",
+            "allowed_lookup": [
+              "product",
+              "category",
+              "brand"
+            ],
+            "entities_count": 1
+          },
+          "ctx": {
+            "contact": {
+              "id": 900000013,
+              "firstName": "Person 21",
+              "lastName": null,
+              "phone": "+60100000006",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/6476f662-187a-4e9e-98f2-eadb6bbd86e5"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260510_200514",
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": null,
+              "created_at": 1778415977
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "bb1a3c4c-7e88-4655-90b9-5d96505ca860",
+              "contact": {
+                "id": 900000013,
+                "firstName": "Person 21",
+                "lastName": "",
+                "phone": "+60100000006",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1778415977
+              },
+              "message": {
+                "messageId": 1788492363000000,
+                "channelMessageId": "wamid.HBgLNjAxNjI4NjExNzgVAgASGBYzRUIwNDM0MkYwRjNEQkI3RkYyQUM3AA==",
+                "contactId": 900000013,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788492363000,
+                "message": {
+                  "type": "text",
+                  "text": "CSA303"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 23\"},\"wa_id\":\"60100000006\",\"user_id\":\"MY.900000014\",\"firstName\":\"Person 21\",\"lastName\":\"Person 22\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000013",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "purchasing",
+                    "suggested_agent": "incoming_stock_enquiries"
+                  },
+                  "entities": [
+                    {
+                      "raw": "SRTBK7003HP",
+                      "hint": "product",
+                      "confident": true,
+                      "canonical_code": "SRTBK7003HP",
+                      "current_message": false
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Here's what you want:\n\u2022 product: SRTBK7003HP\n\nBut no incoming matched these. Would you like me to escalate to purchasing team?",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to check incoming stock",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "incoming",
+                  "intent_hint": "check_incoming",
+                  "message_type": "business_query",
+                  "query_brands": [],
+                  "access_levels": [],
+                  "routing_brand": "sorento",
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [],
+                  "routing_company": "00000000-0000-0000-0000-000000000001",
+                  "date_filter_start": null,
+                  "routing_companies": [
+                    {
+                      "codes": [
+                        "SRTBK7003HP"
+                      ],
+                      "labels": [
+                        "SRTBK7003HP"
+                      ],
+                      "brand_code": "sorento",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "selection_context": null,
+                  "routing_roster_plan": null,
+                  "requested_attributes": [],
+                  "routing_brand_source": "resolved"
+                },
+                "user_response": "Here's what you want:\n\u2022 product: SRTBK7003HP\n\nBut no incoming matched these. Would you like me to escalate to purchasing team?"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "check_product",
+                "domain_hint": "master_products",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check the product details for CSA303",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "CSA303",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "purchasing",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_explicit",
+                "scope_exclusive_applied": false,
+                "entity_op_applied": "replace_combine",
+                "query_brands": [],
+                "entities_filtered": false,
+                "entities_emptied_by_filter": false
+              },
+              "_parser_raw": {
+                "message_type": "business_query",
+                "intent_hint": "check_product",
+                "domain_hint": "master_products",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check the product details for CSA303",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "CSA303",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "purchasing",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "General Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null,
+            "resolved": {
+              "match_mode": "and",
+              "tokens": [
+                "CSA303"
+              ],
+              "elapsed_ms": 75,
+              "intersection": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "CSA303-DIY",
+                  "uuid": "2082aa05-de00-4a8f-aa2c-ba5a86014c5f",
+                  "match_field": "product_code",
+                  "match_tier": "and",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "product_name": "CSA303-DIY",
+                    "is_active": true,
+                    "brand": {
+                      "brand_id": "9f1277f0-42fa-442c-978f-ab5f41e72a20",
+                      "brand_code": "CABANA",
+                      "brand_name": "CABANA"
+                    }
+                  }
+                }
+              ],
+              "by_entity_type": {
+                "product": [
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "CSA303-DIY",
+                    "uuid": "2082aa05-de00-4a8f-aa2c-ba5a86014c5f",
+                    "match_field": "product_code",
+                    "match_tier": "and",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento",
+                    "display": {
+                      "product_name": "CSA303-DIY",
+                      "is_active": true,
+                      "brand": {
+                        "brand_id": "9f1277f0-42fa-442c-978f-ab5f41e72a20",
+                        "brand_code": "CABANA",
+                        "brand_name": "CABANA"
+                      }
+                    }
+                  }
+                ]
+              },
+              "empty": false,
+              "unresolved_tokens": [],
+              "alternatives": [],
+              "token_coverage": [
+                {
+                  "token": "CSA303",
+                  "match_semantics": "max_coverage",
+                  "coverage": [
+                    {
+                      "entity_type": "product",
+                      "matched_words": [
+                        "CSA303"
+                      ],
+                      "unmatched_words": [],
+                      "truncated": false
+                    }
+                  ]
+                }
+              ]
+            },
+            "entities": null,
+            "gate": {
+              "match_mode": "and",
+              "tokens": [
+                "CSA303"
+              ],
+              "elapsed_ms": 75,
+              "intersection": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "CSA303-DIY",
+                  "uuid": "2082aa05-de00-4a8f-aa2c-ba5a86014c5f",
+                  "match_field": "product_code",
+                  "match_tier": "and",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "product_name": "CSA303-DIY",
+                    "is_active": true,
+                    "brand": {
+                      "brand_id": "9f1277f0-42fa-442c-978f-ab5f41e72a20",
+                      "brand_code": "CABANA",
+                      "brand_name": "CABANA"
+                    }
+                  }
+                }
+              ],
+              "by_entity_type": {
+                "product": [
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "CSA303-DIY",
+                    "uuid": "2082aa05-de00-4a8f-aa2c-ba5a86014c5f",
+                    "match_field": "product_code",
+                    "match_tier": "and",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento",
+                    "display": {
+                      "product_name": "CSA303-DIY",
+                      "is_active": true,
+                      "brand": {
+                        "brand_id": "9f1277f0-42fa-442c-978f-ab5f41e72a20",
+                        "brand_code": "CABANA",
+                        "brand_name": "CABANA"
+                      }
+                    }
+                  }
+                ]
+              },
+              "empty": false,
+              "unresolved_tokens": [],
+              "alternatives": [],
+              "token_coverage": [
+                {
+                  "token": "CSA303",
+                  "match_semantics": "max_coverage",
+                  "coverage": [
+                    {
+                      "entity_type": "product",
+                      "matched_words": [
+                        "CSA303"
+                      ],
+                      "unmatched_words": [],
+                      "truncated": false
+                    }
+                  ]
+                }
+              ],
+              "gate_passed": true,
+              "require_specific": false,
+              "specific_options": [],
+              "resolved_company": "cabana",
+              "company_team": null,
+              "resolved_companies": [
+                "cabana"
+              ],
+              "routing_brand": "cabana",
+              "routing_brand_source": "resolved",
+              "routing_companies": [
+                {
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "brand_code": "cabana",
+                  "codes": [
+                    "CSA303-DIY"
+                  ],
+                  "labels": [
+                    "CSA303-DIY"
+                  ]
+                }
+              ],
+              "routing_company": "00000000-0000-0000-0000-000000000001",
+              "access_denied_levels": [],
+              "access_notice": "",
+              "brand_gate_empty": false,
+              "brand_unheld": false,
+              "gate_reason": "ok",
+              "gate_clarification": "",
+              "compatible_entities": [
+                {
+                  "uuid": "2082aa05-de00-4a8f-aa2c-ba5a86014c5f",
+                  "entity_type": "product",
+                  "code": "CSA303-DIY"
+                }
+              ],
+              "gate_debug": {
+                "domain": "master_products",
+                "allowed_lookup": [
+                  "product",
+                  "category",
+                  "brand"
+                ],
+                "entities_count": 1
+              }
+            }
+          }
+        }
+      }
+    ],
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 900000013,
+              "firstName": "Person 21",
+              "lastName": null,
+              "phone": "+60100000006",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/6476f662-187a-4e9e-98f2-eadb6bbd86e5"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260510_200514",
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": null,
+              "created_at": 1778415977
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "bb1a3c4c-7e88-4655-90b9-5d96505ca860",
+              "contact": {
+                "id": 900000013,
+                "firstName": "Person 21",
+                "lastName": "",
+                "phone": "+60100000006",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1778415977
+              },
+              "message": {
+                "messageId": 1788492363000000,
+                "channelMessageId": "wamid.HBgLNjAxNjI4NjExNzgVAgASGBYzRUIwNDM0MkYwRjNEQkI3RkYyQUM3AA==",
+                "contactId": 900000013,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788492363000,
+                "message": {
+                  "type": "text",
+                  "text": "CSA303"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 23\"},\"wa_id\":\"60100000006\",\"user_id\":\"MY.900000014\",\"firstName\":\"Person 21\",\"lastName\":\"Person 22\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000013",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "purchasing",
+                    "suggested_agent": "incoming_stock_enquiries"
+                  },
+                  "entities": [
+                    {
+                      "raw": "SRTBK7003HP",
+                      "hint": "product",
+                      "confident": true,
+                      "canonical_code": "SRTBK7003HP",
+                      "current_message": false
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Here's what you want:\n\u2022 product: SRTBK7003HP\n\nBut no incoming matched these. Would you like me to escalate to purchasing team?",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to check incoming stock",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "incoming",
+                  "intent_hint": "check_incoming",
+                  "message_type": "business_query",
+                  "query_brands": [],
+                  "access_levels": [],
+                  "routing_brand": "sorento",
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [],
+                  "routing_company": "00000000-0000-0000-0000-000000000001",
+                  "date_filter_start": null,
+                  "routing_companies": [
+                    {
+                      "codes": [
+                        "SRTBK7003HP"
+                      ],
+                      "labels": [
+                        "SRTBK7003HP"
+                      ],
+                      "brand_code": "sorento",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "selection_context": null,
+                  "routing_roster_plan": null,
+                  "requested_attributes": [],
+                  "routing_brand_source": "resolved"
+                },
+                "user_response": "Here's what you want:\n\u2022 product: SRTBK7003HP\n\nBut no incoming matched these. Would you like me to escalate to purchasing team?"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "check_product",
+                "domain_hint": "master_products",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check the product details for CSA303",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "CSA303",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "purchasing",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_explicit",
+                "scope_exclusive_applied": false,
+                "entity_op_applied": "replace_combine",
+                "query_brands": [],
+                "entities_filtered": false,
+                "entities_emptied_by_filter": false
+              },
+              "_parser_raw": {
+                "message_type": "business_query",
+                "intent_hint": "check_product",
+                "domain_hint": "master_products",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check the product details for CSA303",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "CSA303",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "purchasing",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "General Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null,
+            "resolved": {
+              "match_mode": "and",
+              "tokens": [
+                "CSA303"
+              ],
+              "elapsed_ms": 75,
+              "intersection": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "CSA303-DIY",
+                  "uuid": "2082aa05-de00-4a8f-aa2c-ba5a86014c5f",
+                  "match_field": "product_code",
+                  "match_tier": "and",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "product_name": "CSA303-DIY",
+                    "is_active": true,
+                    "brand": {
+                      "brand_id": "9f1277f0-42fa-442c-978f-ab5f41e72a20",
+                      "brand_code": "CABANA",
+                      "brand_name": "CABANA"
+                    }
+                  }
+                }
+              ],
+              "by_entity_type": {
+                "product": [
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "CSA303-DIY",
+                    "uuid": "2082aa05-de00-4a8f-aa2c-ba5a86014c5f",
+                    "match_field": "product_code",
+                    "match_tier": "and",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento",
+                    "display": {
+                      "product_name": "CSA303-DIY",
+                      "is_active": true,
+                      "brand": {
+                        "brand_id": "9f1277f0-42fa-442c-978f-ab5f41e72a20",
+                        "brand_code": "CABANA",
+                        "brand_name": "CABANA"
+                      }
+                    }
+                  }
+                ]
+              },
+              "empty": false,
+              "unresolved_tokens": [],
+              "alternatives": [],
+              "token_coverage": [
+                {
+                  "token": "CSA303",
+                  "match_semantics": "max_coverage",
+                  "coverage": [
+                    {
+                      "entity_type": "product",
+                      "matched_words": [
+                        "CSA303"
+                      ],
+                      "unmatched_words": [],
+                      "truncated": false
+                    }
+                  ]
+                }
+              ]
+            },
+            "entities": null,
+            "gate": {
+              "match_mode": "and",
+              "tokens": [
+                "CSA303"
+              ],
+              "elapsed_ms": 75,
+              "intersection": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "CSA303-DIY",
+                  "uuid": "2082aa05-de00-4a8f-aa2c-ba5a86014c5f",
+                  "match_field": "product_code",
+                  "match_tier": "and",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "product_name": "CSA303-DIY",
+                    "is_active": true,
+                    "brand": {
+                      "brand_id": "9f1277f0-42fa-442c-978f-ab5f41e72a20",
+                      "brand_code": "CABANA",
+                      "brand_name": "CABANA"
+                    }
+                  }
+                }
+              ],
+              "by_entity_type": {
+                "product": [
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "CSA303-DIY",
+                    "uuid": "2082aa05-de00-4a8f-aa2c-ba5a86014c5f",
+                    "match_field": "product_code",
+                    "match_tier": "and",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento",
+                    "display": {
+                      "product_name": "CSA303-DIY",
+                      "is_active": true,
+                      "brand": {
+                        "brand_id": "9f1277f0-42fa-442c-978f-ab5f41e72a20",
+                        "brand_code": "CABANA",
+                        "brand_name": "CABANA"
+                      }
+                    }
+                  }
+                ]
+              },
+              "empty": false,
+              "unresolved_tokens": [],
+              "alternatives": [],
+              "token_coverage": [
+                {
+                  "token": "CSA303",
+                  "match_semantics": "max_coverage",
+                  "coverage": [
+                    {
+                      "entity_type": "product",
+                      "matched_words": [
+                        "CSA303"
+                      ],
+                      "unmatched_words": [],
+                      "truncated": false
+                    }
+                  ]
+                }
+              ],
+              "gate_passed": true,
+              "require_specific": false,
+              "specific_options": [],
+              "resolved_company": "cabana",
+              "company_team": null,
+              "resolved_companies": [
+                "cabana"
+              ],
+              "routing_brand": "cabana",
+              "routing_brand_source": "resolved",
+              "routing_companies": [
+                {
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "brand_code": "cabana",
+                  "codes": [
+                    "CSA303-DIY"
+                  ],
+                  "labels": [
+                    "CSA303-DIY"
+                  ]
+                }
+              ],
+              "routing_company": "00000000-0000-0000-0000-000000000001",
+              "access_denied_levels": [],
+              "access_notice": "",
+              "brand_gate_empty": false,
+              "brand_unheld": false,
+              "gate_reason": "ok",
+              "gate_clarification": "",
+              "compatible_entities": [
+                {
+                  "uuid": "2082aa05-de00-4a8f-aa2c-ba5a86014c5f",
+                  "entity_type": "product",
+                  "code": "CSA303-DIY"
+                }
+              ],
+              "gate_debug": {
+                "domain": "master_products",
+                "allowed_lookup": [
+                  "product",
+                  "category",
+                  "brand"
+                ],
+                "entities_count": 1
+              }
+            }
+          }
+        }
+      }
+    ],
+    "Execute 'sub-get-rag'": [
+      {
+        "json": {
+          "tools": [
+            {
+              "name": "crm_master_products_list",
+              "similarity": 0.4918629420543792
+            }
+          ]
+        }
+      }
+    ],
+    "tool-filter": [
+      {
+        "json": {
+          "name": "crm_master_products_list",
+          "similarity": 0.4918629420543792,
+          "_tool_pick": {
+            "chosen": "crm_master_products_list",
+            "rejected": [],
+            "count": 1,
+            "has_product": true
+          }
+        }
+      }
+    ],
+    "if-tier-ask": [],
+    "Call 'sub-get-results'": [
+      {
+        "json": {
+          "response": "Here are the matching products.\n\n1. *Product Code:* CSA303-DIY\n*Description:* CABANA S/STEEL ARM 300MM CSA302 (MATT)  CSA303-DIY\n*List Price:* MYR 28.00\n*Dimensions:* Not defined\n\n_Data last updated: 28/08/2026 19:21:05_",
+          "response_intro": "Here are the matching products.",
+          "answers": [
+            {
+              "title": "CSA303-DIY",
+              "fields": [
+                {
+                  "label": "Product Code",
+                  "value": "CSA303-DIY"
+                },
+                {
+                  "label": "Description",
+                  "value": "CABANA S/STEEL ARM 300MM CSA302 (MATT)  CSA303-DIY"
+                },
+                {
+                  "label": "List Price",
+                  "value": "MYR 28.00"
+                },
+                {
+                  "label": "Dimensions",
+                  "value": "Not defined"
+                }
+              ],
+              "flags": {
+                "discontinued": false,
+                "expired": false,
+                "expiring_soon": false,
+                "unallocated": false,
+                "partially_allocated": false
+              }
+            }
+          ],
+          "attachments": [],
+          "action_links": [],
+          "last_updated_at": "2026-08-28T19:21:05.653548",
+          "has_result": true,
+          "alternatives": [],
+          "relaxed_axis": null,
+          "field_access": null,
+          "requested_attributes": [],
+          "keys_served": false
+        }
+      }
+    ],
+    "fetch-result": [
+      {
+        "json": {
+          "response": "Here are the matching products.\n\n1. *Product Code:* CSA303-DIY\n*Description:* CABANA S/STEEL ARM 300MM CSA302 (MATT)  CSA303-DIY\n*List Price:* MYR 28.00\n*Dimensions:* Not defined\n\n_Data last updated: 28/08/2026 19:21:05_",
+          "response_intro": "Here are the matching products.",
+          "answers": [
+            {
+              "title": "CSA303-DIY",
+              "fields": [
+                {
+                  "label": "Product Code",
+                  "value": "CSA303-DIY"
+                },
+                {
+                  "label": "Description",
+                  "value": "CABANA S/STEEL ARM 300MM CSA302 (MATT)  CSA303-DIY"
+                },
+                {
+                  "label": "List Price",
+                  "value": "MYR 28.00"
+                },
+                {
+                  "label": "Dimensions",
+                  "value": "Not defined"
+                }
+              ],
+              "flags": {
+                "discontinued": false,
+                "expired": false,
+                "expiring_soon": false,
+                "unallocated": false,
+                "partially_allocated": false
+              }
+            }
+          ],
+          "attachments": [],
+          "action_links": [],
+          "last_updated_at": "2026-08-28T19:21:05.653548",
+          "has_result": true,
+          "alternatives": [],
+          "relaxed_axis": null,
+          "field_access": null,
+          "requested_attributes": [],
+          "keys_served": false,
+          "tool": {
+            "name": "crm_master_products_list",
+            "similarity": 0.4918629420543792,
+            "_tool_pick": {
+              "chosen": "crm_master_products_list",
+              "rejected": [],
+              "count": 1,
+              "has_product": true
+            }
+          },
+          "tier_probe": null,
+          "_fetch_arm": "result"
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "tools": [
+          {
+            "name": "crm_master_products_list",
+            "similarity": 0.4918629420543792
+          }
+        ]
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "name": "crm_master_products_list",
+        "similarity": 0.4918629420543792,
+        "_tool_pick": {
+          "chosen": "crm_master_products_list",
+          "rejected": [],
+          "count": 1,
+          "has_product": true
+        }
+      }
+    }
+  ],
+  "runIndex": 0,
+  "execution": {
+    "id": "15120996"
+  },
+  "ran": [
+    "When Executed by Another Workflow",
+    "tier-gate-gate",
+    "build-ctx-resolved",
+    "build-ctx",
+    "Execute 'sub-get-rag'",
+    "tool-filter",
+    "if-tier-ask",
+    "Call 'sub-get-results'",
+    "fetch-result"
+  ]
+}

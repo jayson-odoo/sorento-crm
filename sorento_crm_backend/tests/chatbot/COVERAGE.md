@@ -15,6 +15,9 @@ A branch under the bar is `exhausted` - not short - only when EVERY execution on
 | workflow | version | scanned | version pool | all versions | exhausted | captured | nodes |
 | --- | --- | ---: | ---: | ---: | --- | --- | --- |
 | `spine-rs-1a` | `51f7b0d2` | 567 | 567 | 946 | yes | 2026-09-04 | `route-turn`, `build-ctx` |
+| `sub-fetch-results-live` | `live-5sep` | 772 | 772 | 772 | yes | 2026-09-05 | `tool-filter`, `tier-probe-plan`, `tier-probe-collect`, `fetch-result` |
+| `sub-get-rag-live` | `live-5sep` | 862 | 862 | 1050 | yes | 2026-09-05 | `Code_in_JavaScript`, `Code_in_JavaScript1` |
+| `sub-get-results` | `125e5c32` | 365 | 365 | 365 | yes | 2026-09-05 | `entity-ids-transformer`, `output-structurer` |
 | `sub-resolve-and-gate-rs` | `4f367b1c` | 682 | 682 | 852 | yes | 2026-09-05 | `disallowed-entity-gate`, `tier-gate`, `build-ctx-resolved`, `annotate-incoming-picker`, `annotate-customer-picker`, `resolve-exit-continue`, `resolve-exit-offer`, `resolve-exit-not-found`, `item`, `sub-resolve-and-gate` |
 | `sub-semantic-parser` | `ab3ec985` | 239 | 239 | 3901 | yes | 2026-09-04 | `output_exchange`, `suggest-follow-up` |
 
@@ -22,12 +25,17 @@ A branch under the bar is `exhausted` - not short - only when EVERY execution on
 
 | node | fixtures | real captures | vendored (always run) |
 | --- | ---: | ---: | ---: |
+| `Code_in_JavaScript` | 38 | 38 | 1 |
+| `Code_in_JavaScript1` | 38 | 38 | 1 |
 | `annotate-customer-picker` | 4 | 4 | 1 |
 | `annotate-incoming-picker` | 8 | 5 | 2 |
 | `build-ctx` | 114 | 114 | 6 |
 | `build-ctx-resolved` | 41 | 41 | 2 |
 | `disallowed-entity-gate` | 242 | 177 | 6 |
+| `entity-ids-transformer` | 20 | 20 | 2 |
+| `fetch-result` | 43 | 43 | 2 |
 | `item` | 11 | 11 | 1 |
+| `output-structurer` | 20 | 20 | 2 |
 | `output_exchange` | 325 | 249 | 98 |
 | `resolve-exit-continue` | 6 | 6 | 1 |
 | `resolve-exit-not-found` | 11 | 11 | 2 |
@@ -36,11 +44,16 @@ A branch under the bar is `exhausted` - not short - only when EVERY execution on
 | `sub-resolve-and-gate` | 28 | 28 | 4 |
 | `suggest-follow-up` | 242 | 242 | 16 |
 | `tier-gate` | 9 | 9 | 2 |
+| `tier-probe-collect` | 6 | 6 | 1 |
+| `tier-probe-plan` | 6 | 6 | 1 |
+| `tool-filter` | 41 | 41 | 2 |
 
 ## Per branch
 
 | node | branch | real captures | other | gate 0 |
 | --- | --- | ---: | ---: | --- |
+| `Code_in_JavaScript` | `all` | 38 | 0 | met |
+| `Code_in_JavaScript1` | `all` | 38 | 0 | met |
 | `annotate-customer-picker` | `order` | 4 | 0 | exhausted (4) |
 | `annotate-incoming-picker` | `incoming` | 5 | 3 | met |
 | `build-ctx` | `all` | 114 | 0 | met |
@@ -63,7 +76,16 @@ A branch under the bar is `exhausted` - not short - only when EVERY execution on
 | `disallowed-entity-gate` | `product_attachment` | 14 | 14 | met |
 | `disallowed-entity-gate` | `promotion` | 19 | 11 | met |
 | `disallowed-entity-gate` | `resource_attachment` | 4 | 0 | exhausted (4) |
+| `entity-ids-transformer` | `crm_incoming_stock_list` | 5 | 0 | met |
+| `entity-ids-transformer` | `crm_inventory_stock_balance_list` | 10 | 0 | met |
+| `entity-ids-transformer` | `crm_master_product_attachments_list` | 5 | 0 | met |
+| `fetch-result` | `error` | 1 | 0 | exhausted (1) |
+| `fetch-result` | `result` | 37 | 0 | met |
+| `fetch-result` | `tier-ask` | 5 | 0 | met |
 | `item` | `no_domain` | 11 | 0 | met |
+| `output-structurer` | `crm_incoming_stock_list` | 5 | 0 | met |
+| `output-structurer` | `crm_inventory_stock_balance_list` | 10 | 0 | met |
+| `output-structurer` | `crm_master_product_attachments_list` | 5 | 0 | met |
 | `output_exchange` | `incoming` | 65 | 6 | met |
 | `output_exchange` | `inventory` | 119 | 9 | met |
 | `output_exchange` | `master_products` | 4 | 13 | exhausted (4) |
@@ -102,11 +124,22 @@ A branch under the bar is `exhausted` - not short - only when EVERY execution on
 | `suggest-follow-up` | `resource_attachment` | 1 | 0 | exhausted (1) |
 | `tier-gate` | `tier_ask` | 8 | 0 | met |
 | `tier-gate` | `tier_proceed` | 1 | 0 | exhausted (1) |
+| `tier-probe-collect` | `all` | 6 | 0 | met |
+| `tier-probe-plan` | `all` | 6 | 0 | met |
+| `tool-filter` | `crm_forms_management_forms_list` | 1 | 0 | exhausted (1) |
+| `tool-filter` | `crm_incoming_stock_list` | 6 | 0 | met |
+| `tool-filter` | `crm_inventory_stock_balance_list` | 5 | 0 | met |
+| `tool-filter` | `crm_marketing_promotions_list` | 10 | 0 | met |
+| `tool-filter` | `crm_master_product_attachments_list` | 5 | 0 | met |
+| `tool-filter` | `crm_master_products_list` | 6 | 0 | met |
+| `tool-filter` | `crm_order_management_orders_list` | 5 | 0 | met |
+| `tool-filter` | `crm_portal_link_get` | 1 | 0 | exhausted (1) |
+| `tool-filter` | `crm_resource_attachments_list` | 2 | 0 | exhausted (2) |
 
 ## Gate 0 status
 
 **Not blocked.** Every cell is either met, exhausted in a fully-scanned pool, or dead by vocabulary.
 
-Exhausted (25), under the bar with no more traffic to capture: annotate-customer-picker/order (4), build-ctx-resolved/forms (1), build-ctx-resolved/portal_link (1), build-ctx-resolved/product_attachment (2), build-ctx-resolved/resource_attachment (2), disallowed-entity-gate/forms (3), disallowed-entity-gate/no_domain (0), disallowed-entity-gate/portal_link (1), disallowed-entity-gate/resource_attachment (4), output_exchange/master_products (4), output_exchange/portal_link (0), output_exchange/promotion (0), output_exchange/resource_attachment (1), route-turn/access_denied (1), route-turn/check_promotion (1), route-turn/clarify_menu (0), route-turn/escalate_offer (0), route-turn/escalation_declined (4), route-turn/ideate (0), route-turn/not_supported (1), route-turn/offer_hold (0), sub-resolve-and-gate/access_ask (0), suggest-follow-up/master_products (4), suggest-follow-up/resource_attachment (1), tier-gate/tier_proceed (1).
+Exhausted (29), under the bar with no more traffic to capture: annotate-customer-picker/order (4), build-ctx-resolved/forms (1), build-ctx-resolved/portal_link (1), build-ctx-resolved/product_attachment (2), build-ctx-resolved/resource_attachment (2), disallowed-entity-gate/forms (3), disallowed-entity-gate/no_domain (0), disallowed-entity-gate/portal_link (1), disallowed-entity-gate/resource_attachment (4), fetch-result/error (1), output_exchange/master_products (4), output_exchange/portal_link (0), output_exchange/promotion (0), output_exchange/resource_attachment (1), route-turn/access_denied (1), route-turn/check_promotion (1), route-turn/clarify_menu (0), route-turn/escalate_offer (0), route-turn/escalation_declined (4), route-turn/ideate (0), route-turn/not_supported (1), route-turn/offer_hold (0), sub-resolve-and-gate/access_ask (0), suggest-follow-up/master_products (4), suggest-follow-up/resource_attachment (1), tier-gate/tier_proceed (1), tool-filter/crm_forms_management_forms_list (1), tool-filter/crm_portal_link_get (1), tool-filter/crm_resource_attachments_list (2).
 
 Dead by vocabulary, 0 captures is the correct number: route-turn/demand_qty, route-turn/stock_denied. These are covered by unit tests behind `chatbot_stock_denial_enabled` (AC-306, R1), never by a capture.

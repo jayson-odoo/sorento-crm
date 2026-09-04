@@ -319,6 +319,113 @@ SUB_REPLAY_SPACE_ID = "364817"
 SUB_REPLAY_PROBE_START = "2026-06-01"
 
 
+
+
+# --------------------------------------------------------------------------- #
+# S6b - the business lane's fetch step (AC-604 to AC-606).
+# --------------------------------------------------------------------------- #
+
+
+def _s6b_has_product(fixture: _corpus.Fixture) -> bool | None:
+    """`tool-filter`'s own tolerant read of the gate, including its catch-all.
+
+    The previous body threw when `compatible_entities` was undefined; the throw was
+    deliberately removed and the value RECORDED as null instead, so `None` here means
+    "could not tell", never `False`.
+    """
+    items = fixture.upstream("build-ctx-resolved")
+    if not items:
+        return None
+    entities = (((items[0].get("json") or {}).get("ctx") or {}).get("gate") or {}).get(
+        "compatible_entities"
+    )
+    if not isinstance(entities, list):
+        return None
+    return any(isinstance(e, dict) and e.get("entity_type") == "product" for e in entities)
+
+
+def _run_tool_filter(fixture: _corpus.Fixture) -> list:
+    from app.services.chatbot.lanes.business.fetch import tool_filter
+
+    rag = fixture.first("Execute 'sub-get-rag'")
+    return tool_filter(rag.get("tools"), has_product=_s6b_has_product(fixture)).items
+
+
+def _run_tier_probe_plan(fixture: _corpus.Fixture) -> list:
+    from app.services.chatbot.lanes.business.fetch import tier_probe_plan
+
+    return tier_probe_plan(fixture.first("tier-gate"))
+
+
+def _run_tier_probe_collect(fixture: _corpus.Fixture) -> list:
+    from app.services.chatbot.lanes.business.fetch import tier_probe_collect
+
+    return [
+        {
+            "json": tier_probe_collect(
+                fixture.first("tier-gate"),
+                plan_items=[i.get("json") for i in fixture.upstream("tier-probe-plan")],
+                probe_results=[i.get("json") for i in fixture.upstream("tier-probe")],
+            )
+        }
+    ]
+
+
+def _run_fetch_result(fixture: _corpus.Fixture) -> list:
+    from app.services.chatbot.lanes.business.fetch import fetch_result
+
+    item = (fixture.input[0] or {}).get("json") or {} if fixture.input else {}
+    tool = fixture.first("tool-filter") if fixture.upstream("tool-filter") else None
+    tier_probe = (
+        fixture.first("tier-probe-collect") if fixture.upstream("tier-probe-collect") else None
+    )
+    return [{"json": fetch_result(item, tool=tool, tier_probe=tier_probe)}]
+
+
+def _run_entity_ids_transformer(fixture: _corpus.Fixture) -> list:
+    from app.services.chatbot.lanes.business.fetch import entity_ids_transformer
+
+    # The node reads BOTH the trigger (by name) and its own input; in `sub-get-results` they
+    # are the same item, which is why the port takes one dict.
+    return [{"json": entity_ids_transformer(fixture.first("When Executed by Another Workflow"))}]
+
+
+def _run_output_structurer(fixture: _corpus.Fixture) -> list:
+    from app.services.chatbot.lanes.business.fetch import output_structurer
+
+    return [
+        {
+            "json": output_structurer(
+                fixture.first("MCP Client1"),
+                fixture.first("When Executed by Another Workflow"),
+            )
+        }
+    ]
+
+
+def _run_rag_query_params(fixture: _corpus.Fixture) -> list:
+    from app.services.chatbot.lanes.business.fetch import rag_query_params
+
+    embedding = ((fixture.input[0] or {}).get("json") or {}).get("data") or []
+    trigger = fixture.first("When Executed by Another Workflow")
+    return [
+        {
+            "json": rag_query_params(
+                (embedding[0] or {}).get("embedding") if embedding else [],
+                source_type=trigger.get("source_type"),
+                limit=trigger.get("limit"),
+                domain=trigger.get("domain"),
+            )
+        }
+    ]
+
+
+def _run_collapse_tool_rows(fixture: _corpus.Fixture) -> list:
+    from app.services.chatbot.lanes.business.fetch import collapse_tool_rows
+
+    return [{"json": {"tools": collapse_tool_rows([i.get("json") for i in fixture.input])}}]
+
+
 RUNNERS = {
     "build-ctx": _run_build_ctx,
     "route-turn": _run_route_turn,
@@ -334,6 +441,14 @@ RUNNERS = {
     "resolve-exit-offer": _run_resolve_exit,
     "item": _run_item,
     "sub-resolve-and-gate": _run_whole_sub,
+    "tool-filter": _run_tool_filter,
+    "tier-probe-plan": _run_tier_probe_plan,
+    "tier-probe-collect": _run_tier_probe_collect,
+    "fetch-result": _run_fetch_result,
+    "entity-ids-transformer": _run_entity_ids_transformer,
+    "output-structurer": _run_output_structurer,
+    "Code_in_JavaScript": _run_rag_query_params,
+    "Code_in_JavaScript1": _run_collapse_tool_rows,
 }
 
 # `sub-resolve-and-gate` is the SYNTHETIC whole-sub replay: it has no fixture directory of

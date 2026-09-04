@@ -1,0 +1,239 @@
+{
+  "source": {
+    "execution_id": "15158334",
+    "workflow_id": "Fss5aAaXthJSWpZCgKiKR",
+    "workflow_version": "125e5c32-baac-4ca0-9682-f52031f8b11d",
+    "node": "output-structurer",
+    "captured_at": "2026-09-04T20:01:07+00:00",
+    "expected_from": "runData",
+    "dedupe_sig": "2de99f76ad048634dd0b3bdba319002e7b35820e37ec1f37ebfd6cb5a36bb378",
+    "dev_contact": true
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "tool": "crm_inventory_stock_balance_list",
+          "contact_id": "900000015 ",
+          "user_prompt": "message_type: business_query  \nintent_hint: check_stock  \ndomain_hint: inventory  \nuser_goal: trying to check stock for SRTWC8349-RL, SRT86-MBT, and Sorento  \nentities: [{\"uuid\":\"f2a7e8d2-b2c8-4f99-9da0-4182071f0ce9\",\"entity_type\":\"product\",\"code\":\"SORENTO CATALOGUE\"}] \naccess level: [] \ncontact_id: 900000015 \nspace_id: 364817\ndate_mode:  \ndate_filter_start:   \ndate_filter_end:   \nis_active:   \norder_status:   ",
+          "entities": [
+            {
+              "uuid": "f2a7e8d2-b2c8-4f99-9da0-4182071f0ce9",
+              "entity_type": "product",
+              "code": "SORENTO CATALOGUE"
+            }
+          ],
+          "semantic_input": {
+            "message_type": "business_query",
+            "intent_hint": "check_stock",
+            "domain_hint": "inventory",
+            "user_goal": "trying to check stock for SRTWC8349-RL, SRT86-MBT, and Sorento",
+            "access_levels": [],
+            "contact_id": "900000015",
+            "space_id": "364817",
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "is_active": null,
+            "order_status": null,
+            "requested_attributes": []
+          }
+        }
+      }
+    ],
+    "entity-ids-transformer": [
+      {
+        "json": {
+          "product_ids": [
+            "f2a7e8d2-b2c8-4f99-9da0-4182071f0ce9"
+          ],
+          "_diagnostics": {
+            "entities_in": 1,
+            "total_uuids_passed": 1,
+            "scalar_truncated": [],
+            "skipped": [],
+            "unmapped_types": []
+          },
+          "view": "render",
+          "date_mode": null,
+          "contact_id": "900000015",
+          "space_id": "364817",
+          "access_levels": [],
+          "is_active": null
+        }
+      }
+    ],
+    "MCP Client1": [
+      {
+        "json": {
+          "content": [
+            {
+              "type": "text",
+              "text": {
+                "result_type": "stock_compact",
+                "intro": "Stock summary for the requested products.",
+                "items": [
+                  {
+                    "title": "SORENTO CATALOGUE",
+                    "fields": [
+                      {
+                        "key": "product_code",
+                        "label": "Product Code",
+                        "value": "SORENTO CATALOGUE"
+                      },
+                      {
+                        "label": "Total",
+                        "value": 0
+                      }
+                    ],
+                    "flags": {
+                      "discontinued": false
+                    }
+                  }
+                ],
+                "attachments": [],
+                "action_links": [],
+                "last_updated_at": "2026-09-04T17:30:59.549278",
+                "has_result": true,
+                "fallback_used": false,
+                "stock_visibility": {
+                  "mode": "compact",
+                  "warehouse_codes": null,
+                  "hide_zero_locations": true,
+                  "source": "contact"
+                }
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "output-structurer": [
+      {
+        "json": {
+          "response": "Stock summary for the requested products.\n\n1. *Product Code:* SORENTO CATALOGUE\n*Total:* 0\n\n_Data last updated: 04/09/2026 17:30:59_",
+          "response_intro": "Stock summary for the requested products.",
+          "answers": [
+            {
+              "title": "SORENTO CATALOGUE",
+              "fields": [
+                {
+                  "key": "product_code",
+                  "label": "Product Code",
+                  "value": "SORENTO CATALOGUE"
+                },
+                {
+                  "label": "Total",
+                  "value": 0
+                }
+              ],
+              "flags": {
+                "discontinued": false
+              }
+            }
+          ],
+          "attachments": [],
+          "action_links": [],
+          "last_updated_at": "2026-09-04T17:30:59.549278",
+          "has_result": true,
+          "alternatives": [],
+          "relaxed_axis": null,
+          "field_access": null,
+          "requested_attributes": [],
+          "keys_served": false
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "result_type": "stock_compact",
+              "intro": "Stock summary for the requested products.",
+              "items": [
+                {
+                  "title": "SORENTO CATALOGUE",
+                  "fields": [
+                    {
+                      "key": "product_code",
+                      "label": "Product Code",
+                      "value": "SORENTO CATALOGUE"
+                    },
+                    {
+                      "label": "Total",
+                      "value": 0
+                    }
+                  ],
+                  "flags": {
+                    "discontinued": false
+                  }
+                }
+              ],
+              "attachments": [],
+              "action_links": [],
+              "last_updated_at": "2026-09-04T17:30:59.549278",
+              "has_result": true,
+              "fallback_used": false,
+              "stock_visibility": {
+                "mode": "compact",
+                "warehouse_codes": null,
+                "hide_zero_locations": true,
+                "source": "contact"
+              }
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "response": "Stock summary for the requested products.\n\n1. *Product Code:* SORENTO CATALOGUE\n*Total:* 0\n\n_Data last updated: 04/09/2026 17:30:59_",
+        "response_intro": "Stock summary for the requested products.",
+        "answers": [
+          {
+            "title": "SORENTO CATALOGUE",
+            "fields": [
+              {
+                "key": "product_code",
+                "label": "Product Code",
+                "value": "SORENTO CATALOGUE"
+              },
+              {
+                "label": "Total",
+                "value": 0
+              }
+            ],
+            "flags": {
+              "discontinued": false
+            }
+          }
+        ],
+        "attachments": [],
+        "action_links": [],
+        "last_updated_at": "2026-09-04T17:30:59.549278",
+        "has_result": true,
+        "alternatives": [],
+        "relaxed_axis": null,
+        "field_access": null,
+        "requested_attributes": [],
+        "keys_served": false
+      }
+    }
+  ],
+  "runIndex": 0,
+  "execution": {
+    "id": "15158334"
+  },
+  "ran": [
+    "When Executed by Another Workflow",
+    "entity-ids-transformer",
+    "MCP Client1",
+    "output-structurer"
+  ]
+}
