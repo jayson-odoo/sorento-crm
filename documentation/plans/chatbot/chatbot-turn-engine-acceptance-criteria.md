@@ -130,6 +130,16 @@ Derived, never asked: nothing to configure. The trace is written by the engine o
   SLA row, no chat-history ingest. The response carries the would-be `session_patch` and every
   action flagged `dry_run: true`. Console and clone turns are safe by construction, not by
   which URL they hit.
+  **A dry run is also an INPUT surface (O2, agreed with the n8n side 5 Sep 2026).** Zero
+  writes is only half of what a harness needs; the other half is being able to say what the
+  turn should start from. So a dry-run envelope may carry three optional keys and the engine
+  honours them: `mock_reformulator_output` replaces the parser call entirely (post-processed
+  through the same `output_exchange` path, so the harness exercises the code rather than
+  bypassing it), and `previous_conversation_state` / `referenced_result_set` replace the
+  stored memory for that turn only. On a LIVE envelope all three are ignored and named in the
+  `received` record's `harness_keys_ignored`, because a harness envelope reaching a real
+  customer must not answer them from a mock in silence. AC-112; the tests are named after the
+  n8n guards they replace (G6, G8).
 - D10 **MCP reads stay MCP-shaped.** The business lane calls the MCP server through the existing
   in-process `MCPRuntimeClient` (precedent: `ai_assistant_service`), so tool output keeps the
   presenter shape `output-structurer` was written against. No re-shaping.
@@ -307,6 +317,25 @@ clone or live. Each AC traces to a journey step (A1 to D1).
 - AC-111 `[E2E]` Given the fail-closed test clone, when the 15-turn smoke set
   (`tests/uac/RS.md` clone smoke) runs against the S1 build, then every turn reaches the same
   lane and the same reply text as the pre-S1 run. (A2 to A4)
+- AC-112 `[BE][T]` (O2, agreed with the n8n side 5 Sep 2026) Given a DRY-RUN envelope
+  (`is_test`, a `test_run_id`, or `mode != live`), when it carries any of the three harness
+  keys, then the engine honours them:
+  - `mock_reformulator_output` (an object) REPLACES the parser call entirely - no provider
+    is asked, `ctx.parse` becomes `{output: <the mock, post-processed>, _parser_raw: <the
+    mock>}` through the SAME `output_exchange` post-processing a real parse takes, and the
+    `understood` trace record reads "Parser bypassed by harness." with
+    `facts.parser_bypassed = true`. A mock that is not a parser emission takes the
+    malformed-answer path: a failed turn at `understood` (R5 / H44), never a soft default;
+  - `previous_conversation_state` (the variables dict) and `referenced_result_set` REPLACE
+    what the session read returned, for that turn only. Never written back - D14's
+    zero-writes rule is unchanged and is what the test asserts.
+
+  And given a LIVE envelope, when it carries any of the three, then all three are IGNORED
+  and the `received` record carries `facts.harness_keys_ignored` naming them in the declared
+  order (an empty list when there are none, so absent is never confusable with unreported).
+  A harness envelope that reaches a real customer must not answer them from a mock in
+  silence. Named after the n8n guards they replace: **G6** the reformulator bypass, **G8**
+  the session injection. (A5, D14)
 
 ### S1b - Parser prompt slim-down (journey A2, C1; D11, D16)
 
