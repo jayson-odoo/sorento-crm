@@ -1,8 +1,9 @@
 # PLAN: AutoCount document ingest, contract v2 (xlsx-import parity)
 
 **Status:** APPROVED 2026-09-05. Grilled via Lavish; the captain took the recommended option
-on every decision (D1, D2, D3, D4, D6a, D7, D10, and D5/D8/D9 as written). Slices S0-S6 in
-progress on `feat/autocount-document-ingest-v2`. **UAC:** `autocount-document-ingest-v2-acceptance-criteria.md` alongside.
+on every decision (D1, D2, D3, D4, D6a, D7, D10, and D5/D8/D9 as written). Slices S0-S5 BUILT and reviewed
+(reviewer + security-reviewer, 2026-09-05); S6 fix round + PR in progress on
+`feat/autocount-document-ingest-v2` (issues #661-#668). **UAC:** `autocount-document-ingest-v2-acceptance-criteria.md` alongside.
 **Requested by:** foundryx-shared-service session, addendum
 `foundryx-shared-service/documentation/plans/sprint-5/02-autocount-document-mapping-sorento-addendum.md`.
 The ESB gates every new key behind `sorento_contract_version = 2` on its consumer connection.
@@ -289,3 +290,15 @@ makes them green, in the worktree. Tests on Postgres only; seed every chain
 
 S0 -> S1 -> S2 -> S3 -> S4 -> S5 -> S6. S2 and S3 could run in parallel lanes once S1 is
 merged; S4 and S5 are sequential on S3.
+
+## 7. S6 review outcome (2026-09-05)
+
+Reviewer: two blockers (B1 `warehouse_unresolved` fired when no warehouse was sent; B2 the
+cross-repo contract doc lacked the v2 deviations), nine should-fix (SPO line numbering across
+DocKeys, second-DocKey conflict guard, half-up rounding, cancelled rows excluded from adoption,
+cancelled SPO read-back, one plan-exception snapshot per batch, claims-writer dedupe, explicit
+company filter in customer back-create, migration 473 test). Security reviewer: no blockers;
+opaque error bodies for non-domain exceptions, 50-char code caps + `DataError` handling,
+`lines` <= 2000 and `from_so_numbers` <= 50 caps, hook actor = the principal, conflict wording.
+All applied in the S6 fix round except BL-050 / BL-051 (backlog with triggers). Contract doc:
+`PLAN-autocount-cross-repo-contract.md` section 9.

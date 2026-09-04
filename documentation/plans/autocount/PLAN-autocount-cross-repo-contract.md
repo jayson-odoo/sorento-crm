@@ -309,3 +309,69 @@ designer's barcode layer (issue #480):
   result table.
 - `products.barcode` is nullable and indexed, never unique: a placeholder product may carry none,
   and two products sharing one (or none) must not block either from syncing.
+
+## 9. Contract version 2 (5 Sep 2026, `PLAN-autocount-document-ingest-v2.md`)
+
+`GET /api/v1/external/contract` -> `{"version": 2, "entities": [...]}` (slug
+`integration.contract.read`). The ESB gates every v2 key behind its own consumer-connection
+setting; the endpoint is advisory. Every v2 key is optional and `extra="forbid"` stays, so a v1
+payload still validates. Deviations from the v1 behaviour above, all deliberate:
+
+1. **Master fallbacks on documents.** Headers accept `customer_code`/`customer_name`/`agent_code`
+   (SO) and `supplier_code`/`supplier_name`/`agent_code` (PO, SPO; `agent_code` accepted and
+   ignored there); every line accepts `product_code`/`product_name`/`warehouse_code` and
+   `product_ref` becomes optional when `product_code` is sent. Resolution: ref -> code (upper/trim,
+   anchor company) -> name (suppliers only, `(RMB)`-style suffix stripped) -> back-create for
+   suppliers, sales agents (shared row) and customers (only when BOTH code and name are sent, pair
+   keyed). Products and warehouses are never created. A SENT ref that does not resolve no longer
+   fails the record when a code/name is also sent: the ladder falls through and the created or
+   matched row is registered under that ref. `sales_orders.debtor_code` is always written from
+   `customer_code`. Caps: `customer_code`/`supplier_code` 50 chars.
+2. **Warnings.** A record verdict carries `warnings: [..]` when non-empty, fixed vocabulary:
+   `customer_created`, `customer_unresolved`, `supplier_created`, `agent_created`,
+   `unclassified_demand`, `warehouse_unresolved`. A back-create is reported, never silent.
+3. **Unresolvable warehouse (D10).** A SENT `warehouse_ref`/`warehouse_code` that resolves to
+   nothing lands the line with `warehouse_id = NULL` (SPO rows keep `location_code`) plus
+   `warehouse_unresolved`, replacing the v1 `retryable`. Products stay `retryable`.
+4. **`partial` sales orders (D6a).** Canonical `partial` on a SALES order is stored as `open`
+   and reads back as `open` (the per-line `qty_delivered` carries the partial fact; every SCM
+   reader keys on `open`). Purchase orders keep `partial -> partial`.
+5. **Demand classification (D4).** SO header accepts optional `order_type` (fill-only, never
+   restated). `demand_class` is derived: stored `order_type` -> payload `order_type` -> the agent's
+   class -> the customer's market segment; never blanked or downgraded; when nothing classifies the
+   record still lands with `unclassified_demand`. `demand_class` itself is rejected as a key.
+6. **Line adoption at cutover (D11).** For a header adopted by number whose lines carry no
+   `source_ref`, incoming lines adopt existing rows in three passes: (product, warehouse-or-NULL,
+   outstanding) with position tie-break; (product, warehouse-or-NULL) when exactly one remains;
+   position when counts agree. Adopted rows keep their id and get `source_ref`/`source_system`.
+   Optional `line_number` (int) on every line is position only, never stored. Every document verdict
+   carries `lines: {adopted, created, updated, deleted, cancelled}` (dry run too). A push names
+   the WHOLE document: lines not in the payload are deleted, or cancelled in place when referenced.
+7. **`shipping_orders` entity.** `POST /ingest|read/shipping_orders`, `/ingest/shipping_orders/deletions`
+   (slugs `scm.shipping_orders.edit|view|delete`). There is no header table: rows land in
+   `spo_allocations` with `source_ref` (DtlKey) and `source_doc_ref` (DocKey); header `entity_id`
+   is `null`; read-back is keyed by the DocKey. Line identity by DtlKey; xlsx-era rows adopted by
+   (product, location) with the D11 passes; a leftover row on a re-push is CLOSED in place, never
+   deleted (hard delete only through the deletions call, and only when unreferenced). A second
+   DocKey claiming an `spo_number` with open rows is `failed`. Quantities are rounded half-up to the
+   integer columns. `spo_number` max 50 chars.
+8. **`SPO-` numbers under `purchase_orders` are `failed`** (`errors.po_number`), never written.
+9. **`from_so_numbers: [str]`** on purchase-order and shipping-order lines -> one
+   `scm.order_link_claim` per (so_number, po_number, product_code) with `source='autocount'`
+   and the line/row id, then `resolve()`; unknown SO numbers stay claimed until the SO arrives.
+   Max 50 entries per line; `lines` max 2000 per document.
+10. **Post-write hooks, non-dry only, best-effort:** SO -> plan-exception snapshot + batch;
+    PO -> CRM-raised recommendation POs superseded and order inquiries relinked
+    (`trigger="autocount_ingest"`). `planning_change` batches are NOT produced by ingest (backlog).
+11. **Error bodies.** Non-domain failures return `errors: {"_": "internal error; see server logs"}`;
+    cross-company conflicts are filed under the field (`errors.customer_ref`, ...) with the wording
+    "already claimed outside this company anchor".
+12. **Document-level line hard delete stays behind `.edit`** (a push with fewer lines removes
+    unreferenced lines), while `/deletions` needs `.delete` on top. Stated choice: the push is the
+    book of record. Shipping-order rows are the exception (always closed).
+13. **Permission consequence of back-create (recorded):** a document `.edit` slug can mint
+    suppliers/customers/agents. Accepted for the single trusted ESB; gating on the master's own
+    `.edit` slug is backlog BL-051 with the trigger "a narrowly-scoped integration".
+14. **`integration_references` is global** (no company column). Refs are minted
+    `{DatabaseName}:{AutoKey}` on the ESB side, so two AutoCount books cannot collide; a second
+    book connecting is the trigger for BL-050.

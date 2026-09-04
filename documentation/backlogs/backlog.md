@@ -124,3 +124,23 @@ removed copy, for whoever restores a UI for them:
   query + `line_cbm` over every line) whose result is discarded; the update recomputes it at the
   end and the delete never needs it. Wasted queries only. Split the read into a bare loader and a
   `with_capacity` wrapper.
+- **BL-050** (2026-09-05, security review of `PLAN-autocount-document-ingest-v2`): `integration_references`
+  has no `company_id`, and the v2 document ladder now writes master mappings (customers, suppliers,
+  agents, products, warehouses) whenever a sent ref misses and a code/name resolves. Two AutoCount
+  books minting the same raw key would let company A's push squat a ref company B needs, and B's
+  record then fails on every retry. Not reachable today: refs are `{DatabaseName}:{AutoKey}` and
+  one book is connected. **Trigger:** a second AutoCount database connects. Fix: add `company_id`
+  to `integration_references` and include it in `resolve`/`link`, or skip the auto-link when the
+  local row was found by code rather than back-created. | `plans/autocount/PLAN-autocount-document-ingest-v2.md` | Medium | Open |
+- **BL-051** (2026-09-05, same review): a document `.edit` slug (`scm.sales_orders.edit`,
+  `scm.purchase_orders.edit`, `scm.shipping_orders.edit`) can back-create suppliers, customers and
+  shared sales agents through the ladder, while those masters have their own `.edit` slugs on the
+  external surface. Accepted for the single trusted ESB. **Trigger:** a narrowly-scoped
+  integration key is issued for document ingest. Fix: pass the caller's held slugs into
+  `MasterRefResolver` and downgrade a would-be back-create to the unresolved-plus-warning path
+  when the master's `.edit` slug is absent. | same plan | Medium | Open |
+- **BL-052** (2026-09-05, plan D7): `planning_change_service.build_batch` is not produced by the
+  ESB document ingest (it needs the upload's `Diff` of `Line`s). **Trigger:** the captain asks why
+  an ingested sales order changed the plan and there is no change batch to show. Fix: synthesise a
+  `Diff` from the before/after line sets in `DocumentIngestService._sync_lines` and call
+  `build_batch` from the route hook. | same plan | Low | Open |
