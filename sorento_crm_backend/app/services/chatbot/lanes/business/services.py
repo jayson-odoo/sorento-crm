@@ -60,6 +60,37 @@ class McpCallFn(Protocol):
     def __call__(self, name: str, args: dict[str, Any]) -> Any: ...
 
 
+class McpProbeFn(Protocol):
+    """One MCP tool call, by name, with arguments already built (D10).
+
+    No `db` / `session` parameter, deliberately: this is a NETWORK call, and threading a
+    session in is the hold-a-connection-across-I/O hazard the plan's 96/100-connection
+    incident is the evidence against. The production binding opens nothing.
+    """
+
+    def __call__(self, name: str, args: dict[str, Any]) -> Any: ...
+
+
+class FamilyFetchFn(Protocol):
+    """The product-family read the miss lane makes before offering a sibling.
+
+    n8n does this as an HTTP call to a raw host; in process it is the products service.
+    The seam takes a QUERY STRING and nothing else - no url, no session. Its production
+    binding opens its own short session, which is why the caller (the answer lane) can
+    stay session-free.
+    """
+
+    def __call__(self, query: str) -> Any: ...
+
+
+@dataclass(frozen=True)
+class AnswerServices:
+    """S6c's two seams: the did-you-mean / sibling probes, and the family fetch."""
+
+    mcp_probe: McpProbeFn
+    family_fetch: FamilyFetchFn
+
+
 @dataclass(frozen=True)
 class FetchServices:
     """S6b's three seams, same shape as `ResolveGateServices` for the same reason.
@@ -222,6 +253,32 @@ def _mcp_call(db: Session) -> McpCallFn:
         return client.call_tool(name, args)
 
     return call
+
+
+def _family_fetch(db: Session) -> FamilyFetchFn:
+    def call(query: str) -> Any:
+        """`family-fetch`: the sibling/family lookup, through the products service.
+
+        n8n calls a raw host over HTTP for this (the same class of hazard as H52's MCP
+        endpoint). In process it is a service call, so there is no url to go stale and no
+        credential in the workflow.
+        """
+        from app.services.product_service import ProductService
+
+        # n8n's `family-fetch` is
+        # `GET https://<raw ip>/api/v1/master-data/products?query=..&variant_filter=all&limit=5000`.
+        # Same read, same three parameters, no host and no credential (the H52 class of
+        # hazard, on a second node).
+        return ProductService(db).list_products(
+            query=query, variant_filter="all", limit=5000, page=1
+        )
+
+    return call
+
+
+def production_answer_services(db: Session) -> AnswerServices:
+    """S6c's bundle. The probe is the SAME MCP client the fetch step uses (H52, D10)."""
+    return AnswerServices(mcp_probe=_mcp_call(db), family_fetch=_family_fetch(db))
 
 
 def fetch_services(db: Session) -> FetchServices:
