@@ -1,18 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
+import type { ColumnDef, RowSelectionState } from '@tanstack/react-table';
 import { useQueryClient } from '@tanstack/react-query';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
+import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import {
   Dialog,
   DialogContent,
@@ -25,7 +20,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { FileDropzone } from '@/components/common/FileDropzone';
 import { Trash2, Plus, Upload } from 'lucide-react';
-import { Checkbox } from '@/components/ui/checkbox';
 import { useBulkDeleteOrderLines, useCreateOrderLine } from '../hooks/useOrders';
 import { importDeliveryOrderDetail } from '../services/orderService';
 import type { OrderLine } from '../types/order.types';
@@ -44,7 +38,7 @@ export default function OrderLinesCard({ orderId, lines }: OrderLinesCardProps) 
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importing, setImporting] = useState(false);
   const [deleteLine, setDeleteLine] = useState<OrderLine | null>(null);
-  const [selectedLineIds, setSelectedLineIds] = useState<Set<string>>(new Set());
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const createLineMutation = useCreateOrderLine();
   const bulkDeleteLinesMutation = useBulkDeleteOrderLines();
@@ -127,39 +121,151 @@ export default function OrderLinesCard({ orderId, lines }: OrderLinesCardProps) 
     return line.product_id;
   };
 
-  const allSelected = lines.length > 0 && selectedLineIds.size === lines.length;
+  const selectedCount = Object.keys(rowSelection).length;
 
-  const toggleSelectAll = (checked: boolean) => {
-    if (checked) {
-      setSelectedLineIds(new Set(lines.map((l) => l.id)));
-    } else {
-      setSelectedLineIds(new Set());
-    }
-  };
-
-  const toggleSelectOne = (lineId: string, checked: boolean) => {
-    setSelectedLineIds((prev) => {
-      const next = new Set(prev);
-      if (checked) next.add(lineId);
-      else next.delete(lineId);
-      return next;
-    });
-  };
+  const columns = useMemo<ColumnDef<OrderLine>[]>(
+    () => [
+      buildSelectColumn<OrderLine>({
+        rowLabel: (row) => `Select line ${row.original.id}`,
+      }),
+      {
+        id: 'product',
+        accessorFn: (row) => productLineLabel(row),
+        header: ({ column }) => <DataGridColumnHeader title="Product" column={column} />,
+        cell: ({ row }) => {
+          const productId = row.original.product?.id ?? row.original.product_id;
+          return productId ? (
+            <Link
+              href={`/master-data-management/products/${productId}`}
+              className="text-primary font-medium hover:underline underline-offset-2"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {productLineLabel(row.original)}
+            </Link>
+          ) : (
+            <span className="text-muted-foreground"> - </span>
+          );
+        },
+        size: 220,
+        meta: { headerTitle: 'Product' },
+      },
+      {
+        id: 'warehouse',
+        accessorFn: (row) =>
+          row.warehouse
+            ? `${row.warehouse.warehouse_code ?? ''} - ${row.warehouse.warehouse_name ?? ''}`
+            : row.warehouse_id,
+        header: ({ column }) => <DataGridColumnHeader title="Warehouse" column={column} />,
+        cell: ({ row }) =>
+          row.original.warehouse
+            ? `${row.original.warehouse.warehouse_code ?? ''} - ${row.original.warehouse.warehouse_name ?? ''}`
+            : row.original.warehouse_id,
+        size: 160,
+        meta: { headerTitle: 'Warehouse' },
+      },
+      {
+        id: 'quantity',
+        accessorFn: (row) => row.quantity ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Qty" column={column} />,
+        cell: ({ row }) => <span className="block text-right">{formatNum(row.original.quantity)}</span>,
+        size: 90,
+        meta: { headerTitle: 'Qty' },
+      },
+      {
+        id: 'unit_price',
+        accessorFn: (row) => row.unit_price ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Unit price" column={column} />,
+        cell: ({ row }) => (
+          <span className="block text-right">{formatNum(row.original.unit_price)}</span>
+        ),
+        size: 110,
+        meta: { headerTitle: 'Unit price' },
+      },
+      {
+        id: 'discount',
+        accessorFn: (row) => row.discount ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Discount" column={column} />,
+        cell: ({ row }) => (
+          <span className="block text-right">{formatNum(row.original.discount)}</span>
+        ),
+        size: 100,
+        meta: { headerTitle: 'Discount' },
+      },
+      {
+        id: 'total',
+        accessorFn: (row) => row.total ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Total" column={column} />,
+        cell: ({ row }) => <span className="block text-right">{formatNum(row.original.total)}</span>,
+        size: 110,
+        meta: { headerTitle: 'Total' },
+      },
+      {
+        id: 'tax',
+        accessorFn: (row) => row.tax ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Tax" column={column} />,
+        cell: ({ row }) => <span className="block text-right">{formatNum(row.original.tax)}</span>,
+        size: 90,
+        meta: { headerTitle: 'Tax' },
+      },
+      {
+        id: 'total_excluding_tax',
+        accessorFn: (row) => row.total_excluding_tax ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Total (excl)" column={column} />,
+        cell: ({ row }) => (
+          <span className="block text-right">{formatNum(row.original.total_excluding_tax)}</span>
+        ),
+        size: 120,
+        meta: { headerTitle: 'Total (excl)' },
+      },
+      {
+        id: 'total_including_tax',
+        accessorFn: (row) => row.total_including_tax ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Total (incl)" column={column} />,
+        cell: ({ row }) => (
+          <span className="block text-right">{formatNum(row.original.total_including_tax)}</span>
+        ),
+        size: 120,
+        meta: { headerTitle: 'Total (incl)' },
+      },
+      {
+        id: 'actions',
+        header: () => <span className="sr-only">Actions</span>,
+        cell: ({ row }) => (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="text-destructive hover:text-destructive"
+            onClick={(e) => {
+              e.stopPropagation();
+              setDeleteLine(row.original);
+            }}
+            aria-label="Delete line"
+          >
+            <Trash2 className="size-4" />
+          </Button>
+        ),
+        size: 60,
+        enableResizing: false,
+        meta: { headerTitle: 'Actions' },
+      },
+    ],
+    [],
+  );
 
   return (
     <>
-      <Card>
-        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between gap-4">
-          <CardTitle>Delivery Order Lines</CardTitle>
-          <div className="flex gap-2">
+      <PanelDataGrid<OrderLine>
+        title="Delivery Order Lines"
+        toolbar={
+          <>
             <Button
               variant="destructive"
               size="sm"
-              disabled={selectedLineIds.size === 0 || bulkDeleteLinesMutation.isPending}
+              disabled={selectedCount === 0 || bulkDeleteLinesMutation.isPending}
               onClick={() => setBulkDeleteDialogOpen(true)}
             >
               <Trash2 className="size-4 mr-1" />
-              Delete selected ({selectedLineIds.size})
+              Delete selected ({selectedCount})
             </Button>
             <Button variant="outline" size="sm" onClick={() => setImportDialogOpen(true)}>
               <Upload className="size-4 mr-1" />
@@ -169,89 +275,17 @@ export default function OrderLinesCard({ orderId, lines }: OrderLinesCardProps) 
               <Plus className="size-4 mr-1" />
               Add line
             </Button>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {lines.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-4">No delivery order lines. Import from Excel or add manually.</p>
-          ) : (
-            <div className="overflow-x-auto rounded-md border">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-10">
-                      <Checkbox
-                        checked={allSelected}
-                        onCheckedChange={(v) => toggleSelectAll(v === true)}
-                        aria-label="Select all lines"
-                      />
-                    </TableHead>
-                    <TableHead>Product</TableHead>
-                    <TableHead>Warehouse</TableHead>
-                    <TableHead className="text-right">Qty</TableHead>
-                    <TableHead className="text-right">Unit price</TableHead>
-                    <TableHead className="text-right">Discount</TableHead>
-                    <TableHead className="text-right">Total</TableHead>
-                    <TableHead className="text-right">Tax</TableHead>
-                    <TableHead className="text-right">Total (excl)</TableHead>
-                    <TableHead className="text-right">Total (incl)</TableHead>
-                    <TableHead className="w-12" />
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {lines.map((line) => {
-                    const productId = line.product?.id ?? line.product_id;
-                    return (
-                    <TableRow key={line.id}>
-                      <TableCell>
-                        <Checkbox
-                          checked={selectedLineIds.has(line.id)}
-                          onCheckedChange={(v) => toggleSelectOne(line.id, v === true)}
-                          aria-label={`Select line ${line.id}`}
-                        />
-                      </TableCell>
-                      <TableCell>
-                        {productId ? (
-                          <Link
-                            href={`/master-data-management/products/${productId}`}
-                            className="text-primary font-medium hover:underline underline-offset-2"
-                          >
-                            {productLineLabel(line)}
-                          </Link>
-                        ) : (
-                          <span className="text-muted-foreground"> - </span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {line.warehouse ? `${line.warehouse.warehouse_code ?? ''} - ${line.warehouse.warehouse_name ?? ''}` : line.warehouse_id}
-                      </TableCell>
-                      <TableCell className="text-right">{formatNum(line.quantity)}</TableCell>
-                      <TableCell className="text-right">{formatNum(line.unit_price)}</TableCell>
-                      <TableCell className="text-right">{formatNum(line.discount)}</TableCell>
-                      <TableCell className="text-right">{formatNum(line.total)}</TableCell>
-                      <TableCell className="text-right">{formatNum(line.tax)}</TableCell>
-                      <TableCell className="text-right">{formatNum(line.total_excluding_tax)}</TableCell>
-                      <TableCell className="text-right">{formatNum(line.total_including_tax)}</TableCell>
-                      <TableCell>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="text-destructive hover:text-destructive"
-                          onClick={() => setDeleteLine(line)}
-                          aria-label="Delete line"
-                        >
-                          <Trash2 className="size-4" />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+          </>
+        }
+        columns={columns}
+        rows={lines}
+        getRowId={(row) => row.id}
+        listingKey="order_management.orders.view::lines"
+        rowSelection={rowSelection}
+        onRowSelectionChange={setRowSelection}
+        emptyTitle="No delivery order lines."
+        emptyBody="Import from Excel or add manually."
+      />
 
       <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
         <DialogContent className="sm:max-w-md">
@@ -349,7 +383,7 @@ export default function OrderLinesCard({ orderId, lines }: OrderLinesCardProps) 
           <DialogHeader>
             <DialogTitle>Delete selected delivery order lines?</DialogTitle>
             <DialogDescription>
-              This will permanently delete {selectedLineIds.size} selected line(s).
+              This will permanently delete {selectedCount} selected line(s).
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -358,14 +392,14 @@ export default function OrderLinesCard({ orderId, lines }: OrderLinesCardProps) 
             </Button>
             <Button
               variant="destructive"
-              disabled={selectedLineIds.size === 0 || bulkDeleteLinesMutation.isPending}
+              disabled={selectedCount === 0 || bulkDeleteLinesMutation.isPending}
               onClick={async () => {
                 try {
                   await bulkDeleteLinesMutation.mutateAsync({
                     orderId,
-                    ids: Array.from(selectedLineIds),
+                    ids: Object.keys(rowSelection),
                   });
-                  setSelectedLineIds(new Set());
+                  setRowSelection({});
                   setBulkDeleteDialogOpen(false);
                 } catch {
                   // toast from mutation

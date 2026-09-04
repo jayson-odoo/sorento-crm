@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm, useFieldArray } from "react-hook-form";
+import type { FieldArrayWithId } from "react-hook-form";
 import { useRouter } from "next/navigation";
 import {
   LoaderCircleIcon,
@@ -35,14 +36,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { SearchableSelect } from "@/components/common/SearchableSelect";
 import { searchProjectsForLink } from "../services/purchaseRequestService";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import type { ColumnDef } from "@tanstack/react-table";
+import { useReactTable, getCoreRowModel } from "@tanstack/react-table";
+import { DataGrid } from "@/components/ui/data-grid";
+import { DataGridColumnHeader } from "@/components/ui/data-grid-column-header";
+import { DataGridTable } from "@/components/ui/data-grid-table";
 import {
   useCreatePurchaseRequest,
   useUpdatePurchaseRequest,
@@ -180,6 +178,207 @@ export default function PurchaseRequestForm({
   const { fields, append, remove } = useFieldArray({
     control: form.control,
     name: "products",
+  });
+
+  const createModeLineColumns = useMemo<
+    ColumnDef<FieldArrayWithId<PurchaseRequestSchemaType, "products", "id">>[]
+  >(() => {
+    const base: ColumnDef<FieldArrayWithId<PurchaseRequestSchemaType, "products", "id">>[] = [
+      {
+        id: "index",
+        header: ({ column }) => (
+          <DataGridColumnHeader title={isSponsorship ? "NO." : "#"} column={column} />
+        ),
+        cell: ({ row }) => (
+          <span className="text-muted-foreground text-sm">{row.index + 1}</span>
+        ),
+        size: 56,
+        enableResizing: false,
+        meta: { headerTitle: isSponsorship ? "NO." : "#" },
+      },
+      {
+        id: "item_code",
+        header: ({ column }) => <DataGridColumnHeader title="Item Code" column={column} />,
+        cell: ({ row }) => (
+          <FormField
+            control={form.control}
+            name={`products.${row.index}.item_code`}
+            render={({ field: f }) => (
+              <FormItem>
+                <FormControl>
+                  <Input placeholder="Item code" {...f} value={f.value ?? ""} className="h-8" />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        ),
+        size: 180,
+        meta: { headerTitle: "Item Code" },
+      },
+      {
+        id: "quantity",
+        header: ({ column }) => <DataGridColumnHeader title="Qty" column={column} />,
+        cell: ({ row }) => (
+          <FormField
+            control={form.control}
+            name={`products.${row.index}.quantity`}
+            render={({ field: f }) => (
+              <FormItem>
+                <FormControl>
+                  <Input
+                    type="number"
+                    step="any"
+                    placeholder="0"
+                    {...f}
+                    value={f.value ?? ""}
+                    onChange={(e) => {
+                      const v = e.target.value ? parseFloat(e.target.value) : null;
+                      f.onChange(v);
+                      if (isSponsorship) {
+                        const up = form.getValues(`products.${row.index}.unit_price`);
+                        if (up != null && up !== "") {
+                          form.setValue(`products.${row.index}.total`, (v ?? 0) * Number(up));
+                        }
+                      }
+                    }}
+                    className="h-8 w-24"
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        ),
+        size: isSponsorship ? 110 : 130,
+        meta: { headerTitle: "Qty" },
+      },
+    ];
+
+    const pricing: ColumnDef<FieldArrayWithId<PurchaseRequestSchemaType, "products", "id">>[] =
+      isSponsorship
+        ? [
+            {
+              id: "unit_price",
+              header: ({ column }) => <DataGridColumnHeader title="U/P" column={column} />,
+              cell: ({ row }) => (
+                <FormField
+                  control={form.control}
+                  name={`products.${row.index}.unit_price`}
+                  render={({ field: f }) => (
+                    <FormItem>
+                      <FormControl>
+                        <Input
+                          type="number"
+                          step="any"
+                          placeholder="0"
+                          {...f}
+                          value={f.value ?? ""}
+                          onChange={(e) => {
+                            const v = e.target.value ? parseFloat(e.target.value) : null;
+                            f.onChange(v);
+                            const qty = form.getValues(`products.${row.index}.quantity`);
+                            if (qty != null && qty !== "") {
+                              form.setValue(`products.${row.index}.total`, (v ?? 0) * Number(qty));
+                            }
+                          }}
+                          className="h-8 w-24"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              ),
+              size: 120,
+              meta: { headerTitle: "U/P" },
+            },
+            {
+              id: "total",
+              header: ({ column }) => <DataGridColumnHeader title="Total" column={column} />,
+              cell: ({ row }) => (
+                <FormField
+                  control={form.control}
+                  name={`products.${row.index}.total`}
+                  render={({ field: f }) => (
+                    <FormItem>
+                      <FormControl>
+                        <Input
+                          type="number"
+                          step="any"
+                          placeholder="0"
+                          {...f}
+                          value={f.value ?? ""}
+                          onChange={(e) => {
+                            const v = e.target.value ? parseFloat(e.target.value) : null;
+                            f.onChange(v);
+                          }}
+                          className="h-8 w-28"
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              ),
+              size: 130,
+              meta: { headerTitle: "Total" },
+            },
+          ]
+        : [];
+
+    const tail: ColumnDef<FieldArrayWithId<PurchaseRequestSchemaType, "products", "id">>[] = [
+      {
+        id: "remark",
+        header: ({ column }) => <DataGridColumnHeader title="Remark" column={column} />,
+        cell: ({ row }) => (
+          <FormField
+            control={form.control}
+            name={`products.${row.index}.remark`}
+            render={({ field: f }) => (
+              <FormItem>
+                <FormControl>
+                  <Input placeholder="Remark" {...f} value={f.value ?? ""} className="h-8" />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        ),
+        size: 200,
+        meta: { headerTitle: "Remark" },
+      },
+      {
+        id: "actions",
+        header: () => <span className="sr-only">Delete</span>,
+        cell: ({ row }) => (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            onClick={() => remove(row.index)}
+            disabled={fields.length <= 1}
+            aria-label="Delete"
+          >
+            <Trash2 className="size-4 text-destructive" />
+          </Button>
+        ),
+        size: 56,
+        enableResizing: false,
+        meta: { headerTitle: "Delete" },
+      },
+    ];
+
+    return [...base, ...pricing, ...tail];
+  }, [form, isSponsorship, remove, fields.length]);
+
+  const createModeLinesTable = useReactTable({
+    columns: createModeLineColumns,
+    data: fields,
+    getRowId: (row) => row.id,
+    getCoreRowModel: getCoreRowModel(),
+    columnResizeMode: "onChange",
   });
 
   const [formInitialized, setFormInitialized] = useState(false);
@@ -748,188 +947,14 @@ export default function PurchaseRequestForm({
                 </Button>
               </CardHeader>
               <CardContent>
-                <Table className="w-full">
-                  <TableHeader>
-                    <TableRow>
-                      {isSponsorship ? (
-                        <TableHead className="w-10">NO.</TableHead>
-                      ) : (
-                        <TableHead className="w-10">#</TableHead>
-                      )}
-                      <TableHead className="min-w-[140px]">Item Code</TableHead>
-                      <TableHead className="min-w-[80px]">Qty</TableHead>
-                      {isSponsorship && <TableHead>U/P</TableHead>}
-                      {isSponsorship && <TableHead>Total</TableHead>}
-                      <TableHead>Remark</TableHead>
-                      <TableHead className="w-12" />
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {fields.map((field, index) => (
-                      <TableRow key={field.id}>
-                        <TableCell className="text-muted-foreground text-sm align-middle">
-                          {index + 1}
-                        </TableCell>
-                        <TableCell>
-                          <FormField
-                            control={form.control}
-                            name={`products.${index}.item_code`}
-                            render={({ field: f }) => (
-                              <FormItem>
-                                <FormControl>
-                                  <Input
-                                    placeholder="Item code"
-                                    {...f}
-                                    value={f.value ?? ""}
-                                    className="h-8"
-                                  />
-                                </FormControl>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <FormField
-                            control={form.control}
-                            name={`products.${index}.quantity`}
-                            render={({ field: f }) => (
-                              <FormItem>
-                                <FormControl>
-                                  <Input
-                                    type="number"
-                                    step="any"
-                                    placeholder="0"
-                                    {...f}
-                                    value={f.value ?? ""}
-                                    onChange={(e) => {
-                                      const v = e.target.value
-                                        ? parseFloat(e.target.value)
-                                        : null;
-                                      f.onChange(v);
-                                      if (isSponsorship) {
-                                        const up = form.getValues(
-                                          `products.${index}.unit_price`,
-                                        );
-                                        if (up != null && up !== "") {
-                                          form.setValue(
-                                            `products.${index}.total`,
-                                            (v ?? 0) * Number(up),
-                                          );
-                                        }
-                                      }
-                                    }}
-                                    className="h-8 w-24"
-                                  />
-                                </FormControl>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                        </TableCell>
-                        {isSponsorship && (
-                          <TableCell>
-                            <FormField
-                              control={form.control}
-                              name={`products.${index}.unit_price`}
-                              render={({ field: f }) => (
-                                <FormItem>
-                                  <FormControl>
-                                    <Input
-                                      type="number"
-                                      step="any"
-                                      placeholder="0"
-                                      {...f}
-                                      value={f.value ?? ""}
-                                      onChange={(e) => {
-                                        const v = e.target.value
-                                          ? parseFloat(e.target.value)
-                                          : null;
-                                        f.onChange(v);
-                                        const qty = form.getValues(
-                                          `products.${index}.quantity`,
-                                        );
-                                        if (qty != null && qty !== "") {
-                                          form.setValue(
-                                            `products.${index}.total`,
-                                            (v ?? 0) * Number(qty),
-                                          );
-                                        }
-                                      }}
-                                      className="h-8 w-24"
-                                    />
-                                  </FormControl>
-                                  <FormMessage />
-                                </FormItem>
-                              )}
-                            />
-                          </TableCell>
-                        )}
-                        {isSponsorship && (
-                          <TableCell>
-                            <FormField
-                              control={form.control}
-                              name={`products.${index}.total`}
-                              render={({ field: f }) => (
-                                <FormItem>
-                                  <FormControl>
-                                    <Input
-                                      type="number"
-                                      step="any"
-                                      placeholder="0"
-                                      {...f}
-                                      value={f.value ?? ""}
-                                      onChange={(e) => {
-                                        const v = e.target.value
-                                          ? parseFloat(e.target.value)
-                                          : null;
-                                        f.onChange(v);
-                                      }}
-                                      className="h-8 w-28"
-                                    />
-                                  </FormControl>
-                                  <FormMessage />
-                                </FormItem>
-                              )}
-                            />
-                          </TableCell>
-                        )}
-                        <TableCell>
-                          <FormField
-                            control={form.control}
-                            name={`products.${index}.remark`}
-                            render={({ field: f }) => (
-                              <FormItem>
-                                <FormControl>
-                                  <Input
-                                    placeholder="Remark"
-                                    {...f}
-                                    value={f.value ?? ""}
-                                    className="h-8"
-                                  />
-                                </FormControl>
-                                <FormMessage />
-                              </FormItem>
-                            )}
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8"
-                            onClick={() => remove(index)}
-                            disabled={fields.length <= 1}
-                            aria-label="Delete"
-                          >
-                            <Trash2 className="size-4 text-destructive" />
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                <DataGrid
+                  table={createModeLinesTable}
+                  recordCount={fields.length}
+                  listingKey="procurement.purchase_requests.view::create-lines"
+                  tableLayout={{ width: "fixed", columnsResizable: true }}
+                >
+                  <DataGridTable />
+                </DataGrid>
                 {isSponsorship && (
                   <div className="mt-3 flex justify-end border-t border-border pt-3">
                     <p className="text-sm font-semibold tabular-nums">
