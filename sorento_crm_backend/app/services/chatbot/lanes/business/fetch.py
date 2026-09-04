@@ -187,7 +187,8 @@ def tier_probe_plan(tier_gate: dict[str, Any] | None) -> list[dict[str, Any]]:
     instead of a degraded ask.
     """
     tg = tier_gate if isinstance(tier_gate, dict) else {}
-    plan = tg.get("tier_probe_plan") if isinstance(tg.get("tier_probe_plan"), list) else []
+    raw_plan = tg.get("tier_probe_plan")
+    plan: list[Any] = raw_plan if isinstance(raw_plan, list) else []
     if len(plan) == 0:
         return [
             {
@@ -325,11 +326,11 @@ SPACE_ID = "364817"
 def entity_ids_transformer(trigger: dict[str, Any] | None) -> dict[str, Any]:
     """The MCP tool's arguments, built from the gate's already-resolved entities."""
     trig = trigger if isinstance(trigger, dict) else {}
-    semantic_input = trig.get("semantic_input")
-    entities = trig.get("entities")
+    semantic_input: Any = trig.get("semantic_input")
+    entities: Any = trig.get("entities")
 
-    params: dict[str, list[str]] = {}
-    seen_uuids: set[str] = set()
+    params: dict[str, list[Any]] = {}
+    seen_uuids: set[Any] = set()
     unmapped_types: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
 
@@ -632,11 +633,11 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     # The CRM dumps every clearance field the caller may see, by design: it prevents the
     # LEAK, this prevents the DUMP. KEY-based, never label-based: a label table here was
     # drift by construction and silently broke a sort when a label was renamed.
-    semantic_input = ctx.get("semantic_input")
+    semantic_input: Any = ctx.get("semantic_input")
     if isinstance(semantic_input, str):
         semantic_input = _safe_json(semantic_input)
     semantic_input = semantic_input if isinstance(semantic_input, dict) else {}
-    req_attrs = (
+    req_attrs: list[Any] = (
         semantic_input.get("requested_attributes")
         if isinstance(semantic_input.get("requested_attributes"), list)
         else []
@@ -742,7 +743,8 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         for f in (jsc.get(it, "fields") or []) if jsc.truthy(it) else []:
             if _has_key(f) and jsc.truthy(f.get("label")) and jsc.js_string(f["key"]) not in label_by_key:
                 label_by_key[jsc.js_string(f["key"])] = f["label"]
-    vocab = e.get("field_vocabulary") if isinstance(e.get("field_vocabulary"), dict) else {}
+    raw_vocab = e.get("field_vocabulary")
+    vocab: dict[str, Any] = raw_vocab if isinstance(raw_vocab, dict) else {}
 
     def _label_for(k: str, d: Any) -> str:
         return jsc.js_string(
@@ -862,7 +864,8 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     # -- multi-company: name the companies that came back EMPTY --------------- #
     # A FOUND row already says which company it belongs to. What the customer cannot see is
     # the company that WAS searched and returned nothing.
-    lookup_cos = e.get("lookup_companies") if isinstance(e.get("lookup_companies"), list) else []
+    raw_lookup_cos = e.get("lookup_companies")
+    lookup_cos: list[Any] = raw_lookup_cos if isinstance(raw_lookup_cos, list) else []
     if len(lookup_cos) > 1:
 
         def _co_of_row(it: Any) -> str:

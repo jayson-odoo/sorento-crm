@@ -107,13 +107,15 @@ def run_fetch(
     nothing about production, and this lane writes nothing either way - the only write on
     the whole turn is `chatbot.turns`, which the engine owns.
     """
-    gate = payload.get("gate") if isinstance(payload.get("gate"), dict) else {}
-    tier_gate = payload.get("tier_gate") if isinstance(payload.get("tier_gate"), dict) else None
+    raw_gate = payload.get("gate")
+    gate: dict[str, Any] = raw_gate if isinstance(raw_gate, dict) else {}
+    raw_tier_gate = payload.get("tier_gate")
+    tier_gate: dict[str, Any] = raw_tier_gate if isinstance(raw_tier_gate, dict) else {}
 
     # The tier ask short-circuits BEFORE any tool is chosen: `if-tier-ask` sits upstream of
     # the rag call in n8n for the same reason - there is nothing to fetch until the customer
     # has said which tier they mean.
-    if payload.get("tier_ask") is True or (tier_gate or {}).get("tier_ask") is True:
+    if payload.get("tier_ask") is True or tier_gate.get("tier_ask") is True:
         item = fetch_mod.fetch_result(
             {**payload, "tier_any_available": bool(payload.get("tier_any_available", True))}
         )
@@ -125,7 +127,7 @@ def run_fetch(
         f"domain_hint: {parse_output.get('domain_hint')}\n"
         f"user_goal: {parse_output.get('user_goal')}"
     )
-    domain = parse_output.get("domain_hint") or (tier_gate or {}).get("tier_pick_domain")
+    domain = parse_output.get("domain_hint") or tier_gate.get("tier_pick_domain")
 
     candidates = fetch_mod.select_tool(None, query=query, domain=domain, services=services)
     entities = gate.get("compatible_entities") or []
