@@ -5,7 +5,9 @@ arm's text correctly, given a `CannedCopy`. It never touches `app.services.chatb
 `resolve(db)` (the function that actually builds that object from the database) or the
 migration's seed - so nothing today proves the three pieces AC-302 depends on actually
 agree: the fallback text `resolve()` falls back to, a published override winning after
-`bust_cache`, and the migration 473 seed being safe to run twice.
+`bust_cache`, and the copy-seed migration being safe to run twice. (Docstring only: the
+migration was renumbered 473 -> 476 when the S1b chain merged, and a number in prose goes
+stale the next time it moves.)
 
 Pattern follows `tests/test_ai_prompt_registry.py` (the generic registry's own suite) -
 `blank_session()`, not a hand-rolled sqlite shim (`LESSONS-LEARNT.md`: Postgres only).

@@ -13,15 +13,15 @@ back to the same hardcoded strings when a row is missing or the DB is unreachabl
 is why this migration is a convenience rather than a prerequisite: the bot answers with
 its shipped copy either way.
 
-Revision ID: 473_chatbot_reply_copy
-Revises: 472_chatbot_turns
+Revision ID: 476_chatbot_reply_copy
+Revises: 475_chatbot_prompt_slim
 """
 from alembic import op
 
 from app.services.ai_prompt_seed import seed_prompt_registry
 
-revision = "473_chatbot_reply_copy"
-down_revision = "472_chatbot_turns"
+revision = "476_chatbot_reply_copy"
+down_revision = "475_chatbot_prompt_slim"
 branch_labels = None
 depends_on = None
 

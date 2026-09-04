@@ -463,7 +463,7 @@ endpoint over `chatbot.turns.trace`. Lands after S2 so the head and tail both wr
   - `{{companies}}` is not used by any catalog template: the multi-company sentence is
     built by `build-cs-member-offer` from the roster plan, not interpolated into canned
     copy. Only `{{team}}` and `{{user_goal}}` are declared.
-  - Migration `473_chatbot_reply_copy` seeds them; the engine falls back to the same
+  - Migration `476_chatbot_reply_copy` seeds them; the engine falls back to the same
     strings when a row is missing or the DB is unreachable, so the bot answers either way.
 - AC-303 `[BE][T]` Given `domain_hint == 'ideate'`, when the head runs, then the engine calls
   MCP tool `crm_ideation_turn` (via `MCPRuntimeClient`) with the same arguments
