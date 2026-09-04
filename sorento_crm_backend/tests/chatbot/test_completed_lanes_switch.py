@@ -165,7 +165,10 @@ class TestEndToEndThroughRunTurn:
 
         row = _turn_row(session_factory, result.turn_id)
         assert row.status == "done", row.error
-        assert row.stage == "casual_llm"
+        # `remembered`, not `casual_llm`: a SUCCESSFUL low_signal turn runs the same tail
+        # every other lane runs and ends where they end. `casual_llm` is the FAILURE
+        # stage - the clarifier is the only thing that can fail after routing (AC-403).
+        assert row.stage == "remembered"
 
     def test_an_unknown_kind_in_the_row_does_not_enable_anything(
         self, session_factory, seeded, system_settings_row, stub_parser, stub_access, caplog

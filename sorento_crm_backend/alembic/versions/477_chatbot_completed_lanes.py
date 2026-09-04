@@ -15,15 +15,19 @@ JSONB, not a column per lane: thirteen branch kinds, one decision repeated. `[]`
 NULL so the engine never has to tell "off" from "unset", and NOT NULL so it cannot become
 one later.
 
-Revision ID: 476_chatbot_lanes
-Revises: 475_chatbot_prompt_slim
+Re-chained onto S2's `476_chatbot_reply_copy` rather than merged with it: both were written
+against 475 on separate lanes, and one linear chain is cheaper to read than a merge revision
+for two migrations that touch different tables.
+
+Revision ID: 477_chatbot_lanes
+Revises: 476_chatbot_reply_copy
 """
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision = "476_chatbot_lanes"
-down_revision = "475_chatbot_prompt_slim"
+revision = "477_chatbot_lanes"
+down_revision = "476_chatbot_reply_copy"
 branch_labels = None
 depends_on = None
 
