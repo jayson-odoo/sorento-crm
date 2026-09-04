@@ -112,12 +112,15 @@ S6C_NODE_SLUGS: dict[str, tuple[str, ...]] = {
     "miss-roster-plan": ("live-spine-sorento-consume-main", "sub-answer-live"),
     "build-miss-member-offer": ("live-spine-sorento-consume-main", "sub-answer-live"),
     "dym-annotate-partial": ("live-spine-sorento-consume-main", "sub-answer-live"),
+    # `sub-send-attachments` / `-rs` are EXCLUDED (same class as S6a's
+    # `disallowed-entity-gate` exclusions): that sub's own `central-exchange.js` is a
+    # name-preserving STUB re-emitting `trigger.attachments_src` (12 lines), not the
+    # real 28-line node this port replicates (`output.output`/markdown-fence unwrap).
+    # Measured: `cat export/sub-send-attachments-rs/nodes/central-exchange.js`.
     "central-exchange": (
         "live-spine-sorento-consume-main",
         "sub-answer-rs",
         "sub-answer-live",
-        "sub-send-attachments",
-        "sub-send-attachments-rs",
     ),
     "miss-roster-check": (
         "clone-spine-RS",
@@ -157,12 +160,15 @@ S6C_NODE_SLUGS: dict[str, tuple[str, ...]] = {
     # only ever captured under `sub-miss-suggest-live` (38 files), never on the spine
     # (the spine inlines everything and has no sub-workflow boundary to carry across).
     "miss-suggest-result": ("sub-miss-suggest-live",),
+    # `sub-answer-rs` / `sub-answer-live` are EXCLUDED, same class: `sub-answer`'s own
+    # `build-result.js` is a NAMED-VALUE carrier (`return [{json:
+    # trigger.result ?? {}}]`, 12 lines) re-emitting the contract's `result` value
+    # verbatim - not `sub-main-processing`'s real 88-line node this port replicates.
+    # Measured: `cat export/sub-answer-rs/nodes/build-result.js`.
     "build-result": (
         "clone-sub-main-processing",
         "clone-spine-RS",
         "live-spine-sorento-consume-main",
-        "sub-answer-rs",
-        "sub-answer-live",
     ),
 }
 
