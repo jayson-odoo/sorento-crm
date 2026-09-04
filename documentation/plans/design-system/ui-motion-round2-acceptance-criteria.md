@@ -279,6 +279,19 @@ Baseline measured on `origin/main` e1adad4d2, 2 Sep 2026.
   `grep -rn` for an existing `app/(protected)/**/error.tsx` or `not-found.tsx` found none before
   this - every detail page still falls through to these two. The `[browser]` half (shell
   survives a forced throw, Reset recovers, 404 renders inside the shell) is still open.
+  **Review fix (M5 run 2 review B2/S3):** `error.tsx` rendered raw `error.message` - in
+  production that is Next's own developer boilerplate (server-component throw), a generic
+  client-throw string, or a rethrown API message that can carry a record id (a UUID-in-the-UI
+  violation). Now fixed copy ("Something went wrong on this page.") plus a `Reference:
+  <digest>` line when `error.digest` is present - the one token that correlates with the
+  server log; `console.error(error)` unchanged. `error.test.tsx` asserts the fixed copy, the
+  digest line, and that the raw message is never rendered. `not-found.tsx` is a scaffold, not
+  yet adopted: zero protected pages call `notFound()` today (the only callers are the four
+  portal routes under `app/(auth)/portal`); its own comment previously implied otherwise and
+  is corrected. The adoption trigger is a detail page that today hand-rolls inline "X not
+  found" copy calling `notFound()` instead - `user-management/contacts/[id]/layout.tsx` (its
+  inline `<p>Contact not found</p>` branch) is the first candidate. No `notFound()` calls are
+  added in this fix; that is separate follow-up work.
 - **M5-05** `[UX] [vitest] [browser]` **Sticky header, absolute rule.** `DataGrid` defaults
   `headerSticky` to true with a bounded scroller; on Products, Orders and Stock at 1280 and 375
   the column header stays visible when scrolled to row 40. `columnsResizable` and

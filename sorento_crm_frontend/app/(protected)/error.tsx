@@ -38,7 +38,19 @@ export default function ProtectedError({
           <CardTitle>Something went wrong</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <p className="text-sm text-muted-foreground">{error.message}</p>
+          {/*
+           * Fixed copy, never `error.message` (M5-04 review B2): in production a
+           * server-component throw yields Next's own developer boilerplate, a client
+           * throw yields something like "Cannot read properties of undefined", and a
+           * rethrown API error can carry a record id - none of those are a message
+           * meant for a reader, and the last one is a UUID-in-the-UI violation.
+           * `error.digest` is the one token that correlates with the server log, so
+           * that is what gets shown, not the message itself.
+           */}
+          <p className="text-sm text-muted-foreground">Something went wrong on this page.</p>
+          {error.digest ? (
+            <p className="font-mono text-xs text-muted-foreground">Reference: {error.digest}</p>
+          ) : null}
           <div className="flex flex-wrap items-center gap-2">
             <Button onClick={reset}>Try again</Button>
             <Button asChild variant="outline">
