@@ -61,6 +61,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from pydantic import BaseModel, ValidationError
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.inventory import Warehouse
@@ -84,6 +85,17 @@ from app.services.master_ingest_service import (
     _is_company_scoped,
     _value_changed,
 )
+from app.services.scm import customer_back_create, sales_agent_service
+from app.services.scm.customer_label import normalize_debtor_code
+# `_clean_supplier_name` and `DEFAULT_PO_CURRENCY` are the upload's own rules
+# (D9's "cleaned name" match, D1's CNY fill) - imported rather than restated so
+# the two channels that read a purchase book from AutoCount cannot drift on
+# either.
+from app.services.scm.outstanding_import_service import (
+    DEFAULT_PO_CURRENCY,
+    _clean_supplier_name,
+)
+from app.services.scm.supplier_back_create import back_create_supplier, supplier_slug
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +126,27 @@ PURCHASE_ORDER_STATUS_MAP = {
 
 CANCELLED = "cancelled"
 
+# Fixed verdict-warning vocabulary (D9). Module constants rather than literals
+# at each call site, for the same reason the status maps are: this IS the
+# cross-repo contract, and the ESB's log renders these strings verbatim.
+WARN_CUSTOMER_CREATED = "customer_created"
+WARN_CUSTOMER_UNRESOLVED = "customer_unresolved"
+WARN_SUPPLIER_CREATED = "supplier_created"
+WARN_AGENT_CREATED = "agent_created"
+WARN_WAREHOUSE_UNRESOLVED = "warehouse_unresolved"
+#: Reserved for S2 (`classify_document`); not yet emitted.
+WARN_UNCLASSIFIED_DEMAND = "unclassified_demand"
+
+# The exact-match code column per master the ref/code ladder resolves through.
+# `sales_agents` is absent on purpose: it is shared (no company scope) and
+# matched through `sales_agent_service`, which owns its own normalisation.
+_CODE_COLUMNS: dict[type, Any] = {
+    Customer: Customer.customer_code,
+    Supplier: Supplier.supplier_code,
+    Product: Product.product_code,
+    Warehouse: Warehouse.warehouse_code,
+}
+
 
 @dataclass(frozen=True)
 class DocumentSpec:
@@ -131,12 +164,16 @@ class DocumentSpec:
     # Only sales_orders carries `source_doc_no`; purchase_orders has no such
     # column, and writing one would be an AttributeError per record.
     doc_no_column: Optional[str]
-    # (column, payload field, master MODEL) for the header's FKs and the line's.
-    # The model is what the ref resolves through - its `__tablename__` is the
-    # entity type - and it is also how the resolved row's company is read, which
-    # is a table the ORM names rather than one `search_path` chooses.
-    header_refs: tuple[tuple[str, str, type], ...]
-    line_refs: tuple[tuple[str, str, type], ...]
+    # (column, ref field, master MODEL, code field or None, name field or None)
+    # for the header's FKs and the line's. The model is what the ref resolves
+    # through - its `__tablename__` is the entity type - and it is also how the
+    # resolved row's company is read, which is a table the ORM names rather
+    # than one `search_path` chooses. `code field`/`name field` name the v2
+    # fallback siblings on the SAME payload object (D1) - `None` where a model
+    # has no such field (`sales_agent_ref` has no name step; `product`/
+    # `warehouse` have no name step either).
+    header_refs: tuple[tuple[str, str, type, Optional[str], Optional[str]], ...]
+    line_refs: tuple[tuple[str, str, type, Optional[str], Optional[str]], ...]
     # (column, payload field) for the plain values.
     header_fields: tuple[tuple[str, str], ...]
     line_fields: tuple[tuple[str, str], ...]
@@ -166,19 +203,23 @@ DOCUMENT_SPECS: dict[str, DocumentSpec] = {
         status_map=SALES_ORDER_STATUS_MAP,
         doc_no_column="source_doc_no",
         header_refs=(
-            ("customer_id", "customer_ref", Customer),
-            ("sales_agent_id", "sales_agent_ref", SalesAgent),
+            ("customer_id", "customer_ref", Customer, "customer_code", "customer_name"),
+            ("sales_agent_id", "sales_agent_ref", SalesAgent, "agent_code", None),
         ),
         line_refs=(
-            ("product_id", "product_ref", Product),
-            ("warehouse_id", "warehouse_ref", Warehouse),
+            ("product_id", "product_ref", Product, "product_code", None),
+            ("warehouse_id", "warehouse_ref", Warehouse, "warehouse_code", None),
         ),
-        # `debtor_code`, `demand_class`, `demand_origin`, `priority` and
+        # `demand_class`, `demand_origin`, `priority` and
         # `order_type` are absent on purpose, the same way the agent master's
         # annotations are: they are set by the importers and by CS, AutoCount
         # holds no opinion about any of them, and a weekly re-sync that restated
         # them from a payload which never carried them would blank the captain's
         # classification. Absent from the written set, they cannot be touched.
+        # `debtor_code` is the one exception (v2, D9): it is written from
+        # `customer_code` in `_header_values`, not through this generic list,
+        # because it fires on the payload field being SENT rather than on a
+        # fixed column mapping.
         header_fields=(
             ("so_number", "so_number"),
             ("order_date", "doc_date"),
@@ -204,10 +245,12 @@ DOCUMENT_SPECS: dict[str, DocumentSpec] = {
         number_field="po_number",
         status_map=PURCHASE_ORDER_STATUS_MAP,
         doc_no_column=None,
-        header_refs=(("supplier_id", "supplier_ref", Supplier),),
+        header_refs=(
+            ("supplier_id", "supplier_ref", Supplier, "supplier_code", "supplier_name"),
+        ),
         line_refs=(
-            ("product_id", "product_ref", Product),
-            ("warehouse_id", "warehouse_ref", Warehouse),
+            ("product_id", "product_ref", Product, "product_code", None),
+            ("warehouse_id", "warehouse_ref", Warehouse, "warehouse_code", None),
         ),
         header_fields=(
             ("po_number", "po_number"),
@@ -324,10 +367,14 @@ class DocumentIngestService:
         # session and every later record in the file fails too.
         savepoint = self.db.begin_nested()
         try:
-            outcome, entity_id, diff = self._apply(spec, payload)
+            outcome, entity_id, diff, warnings = self._apply(spec, payload)
             savepoint.commit()
             return RecordResult(
-                source_ref=payload.source_ref, outcome=outcome, entity_id=entity_id, diff=diff
+                source_ref=payload.source_ref,
+                outcome=outcome,
+                entity_id=entity_id,
+                diff=diff,
+                warnings=warnings,
             )
         except MissingReference as exc:
             savepoint.rollback()
@@ -341,7 +388,7 @@ class DocumentIngestService:
             return RecordResult(
                 source_ref=payload.source_ref,
                 outcome=IngestOutcome.FAILED,
-                errors={"source_ref": str(exc)},
+                errors={exc.field_name: str(exc)},
             )
         except _UnknownStatus as exc:
             savepoint.rollback()
@@ -367,16 +414,21 @@ class DocumentIngestService:
     # ------------------------------------------------------------ one document
     def _apply(
         self, spec: DocumentSpec, payload: Any
-    ) -> tuple[IngestOutcome, str, Optional[dict[str, dict[str, Any]]]]:
+    ) -> tuple[IngestOutcome, str, Optional[dict[str, dict[str, Any]]], list[str]]:
         # EVERYTHING is resolved before ANYTHING is written. An unresolved
         # reference has to leave the database exactly as it found it, and a
         # header inserted before the line that fails would only be taken back by
         # the savepoint - which is a guarantee about this transaction, not about
         # the order the work happens in.
+        #
+        # Shared across the header and every line: a back-create triggered by
+        # line 3 belongs on the SAME record verdict as one triggered by the
+        # header, not a per-line list nothing reads (D9).
+        warnings: list[str] = []
         status = self._status(spec, payload.status)
-        header_values = self._header_values(spec, payload, status)
+        header_values = self._header_values(spec, payload, status, warnings)
         line_values = [
-            self._line_values(spec, line, index, status)
+            self._line_values(spec, line, index, status, warnings)
             for index, line in enumerate(payload.lines)
         ]
 
@@ -399,7 +451,7 @@ class DocumentIngestService:
             source_doc_no=payload.source_doc_no,
             integration_id=self.integration_id,
         )
-        return outcome, str(header.id), diff
+        return outcome, str(header.id), diff, warnings
 
     def _status(self, spec: DocumentSpec, canonical: str) -> str:
         """The stored status for a canonical word.
@@ -472,13 +524,36 @@ class DocumentIngestService:
             )
         return header
 
-    def _header_values(self, spec: DocumentSpec, payload: Any, status: str) -> dict[str, Any]:
+    def _header_values(
+        self, spec: DocumentSpec, payload: Any, status: str, warnings: list[str]
+    ) -> dict[str, Any]:
         values: dict[str, Any] = {
             column: getattr(payload, field) for column, field in spec.header_fields
         }
         values["status"] = status
-        for column, field, model in spec.header_refs:
-            values[column] = self._resolve_ref(field, getattr(payload, field), model)
+        for column, ref_field, model, code_field, name_field in spec.header_refs:
+            values[column] = self._resolve_master(
+                model=model,
+                ref_field=ref_field,
+                ref=getattr(payload, ref_field),
+                code_field=code_field,
+                code=getattr(payload, code_field) if code_field else None,
+                name=getattr(payload, name_field) if name_field else None,
+                warnings=warnings,
+            )
+        # `debtor_code` (v2, D9): written from `customer_code` whenever it is
+        # SENT, independent of whether the customer itself resolved - an
+        # order whose debtor Sorento does not (yet) hold still carries the
+        # code it was pushed with. Absent on `CanonicalPurchaseOrder`, so the
+        # attribute simply is not there and this is a no-op for a PO.
+        customer_code = getattr(payload, "customer_code", None)
+        if customer_code:
+            values["debtor_code"] = normalize_debtor_code(customer_code)
+        # PO currency default (D1): only a spec that carries a `currency`
+        # header column reaches this, which today is `purchase_orders` alone -
+        # so the fill is shape-driven rather than a hardcoded entity check.
+        if "currency" in values and not values["currency"]:
+            values["currency"] = DEFAULT_PO_CURRENCY
         # Adoption takes ownership: from here on the row is AutoCount's, and the
         # next push has to find it by reference rather than by number again.
         values["source_system"] = SOURCE_SYSTEM
@@ -488,15 +563,25 @@ class DocumentIngestService:
         return values
 
     def _line_values(
-        self, spec: DocumentSpec, line: Any, index: int, status: str
+        self, spec: DocumentSpec, line: Any, index: int, status: str, warnings: list[str]
     ) -> dict[str, Any]:
         values: dict[str, Any] = {
             column: getattr(line, field) for column, field in spec.line_fields
         }
-        for column, field, model in spec.line_refs:
-            values[column] = self._resolve_ref(
-                f"lines.{index}.{field}", getattr(line, field), model
+        for column, ref_field, model, code_field, name_field in spec.line_refs:
+            values[column] = self._resolve_master(
+                model=model,
+                ref_field=f"lines.{index}.{ref_field}",
+                ref=getattr(line, ref_field),
+                code_field=f"lines.{index}.{code_field}" if code_field else None,
+                code=getattr(line, code_field) if code_field else None,
+                name=getattr(line, name_field) if name_field else None,
+                warnings=warnings,
             )
+        # Same shape-driven PO currency fill as the header, for the per-line
+        # `currency` column purchase-order lines alone carry.
+        if "currency" in values and not values["currency"]:
+            values["currency"] = DEFAULT_PO_CURRENCY
         # NOT NULL on both line tables, and an absent figure means none delivered.
         for column in ("qty_ordered", spec.line_delivered_field):
             if values.get(column) is None:
@@ -526,10 +611,14 @@ class DocumentIngestService:
         )
         if entity_id is None:
             raise MissingReference(field, source_ref)
-        self._require_same_company(model, entity_id, f"{field} {source_ref!r}")
+        self._require_same_company(
+            model, entity_id, f"{field} {source_ref!r}", field_name=field
+        )
         return entity_id
 
-    def _require_same_company(self, model: type, entity_id: str, subject: str) -> None:
+    def _require_same_company(
+        self, model: type, entity_id: str, subject: str, *, field_name: str = "source_ref"
+    ) -> None:
         """Refuse a reference that resolves into another company.
 
         `integration_references` is global, so a ref finds its row whatever
@@ -537,6 +626,12 @@ class DocumentIngestService:
         updating it - would be a cross-company write wearing the clothes of an
         ordinary re-sync. Shared masters (`sales_agents`) carry no company at all
         and are visible from either anchor, so they are exempt.
+
+        `field_name` (AC-V1-8) is the verdict-error key the conflict is filed
+        under: the document's own `source_ref` for the header's own adoption
+        check (the default, unchanged), or the specific master field (e.g.
+        `"customer_ref"`) when this guards a v2 ladder resolution - so the ESB
+        sees WHICH reference conflicted, not just that the record failed.
         """
         if not _is_company_scoped(model.__tablename__):
             return
@@ -546,7 +641,168 @@ class DocumentIngestService:
             .first()
         )
         if mine is None:
-            raise ReferenceConflict(f"{subject} is linked to a record in another company")
+            raise ReferenceConflict(
+                f"{subject} is linked to a record in another company",
+                field_name=field_name,
+            )
+
+    # -------------------------------------------------------- v2 resolution
+    def _resolve_master(
+        self,
+        *,
+        model: type,
+        ref_field: str,
+        ref: Optional[str],
+        code_field: Optional[str],
+        code: Optional[str],
+        name: Optional[str],
+        warnings: list[str],
+    ) -> Optional[str]:
+        """Ref, then code, then (supplier only) name, then back-create (D1/D2/D10).
+
+        A SENT ref that does not resolve is `MissingReference` on its own -
+        unchanged from v1 - but ONLY when there is nothing else to try: the
+        moment `code` or `name` is also present, an unresolved ref falls
+        through to them rather than failing the whole record, because sending
+        MORE identifying information must never make a push worse off than
+        sending the ref alone (AC-V1-3, AC-V1-5). `warehouse` is the one
+        exception end to end (D10): it never raises, a miss is always a NULL
+        FK plus a warning, ref or code alike.
+        """
+        ref = (ref or "").strip() or None
+        code = (code or "").strip() or None
+        name = (name or "").strip() or None
+
+        if ref:
+            try:
+                return self._resolve_ref(ref_field, ref, model)
+            except MissingReference:
+                if model is Warehouse:
+                    warnings.append(WARN_WAREHOUSE_UNRESOLVED)
+                    return None
+                if not code and not name:
+                    raise
+
+        entity_id = self._resolve_by_fallback(model, code, name, warnings)
+        if entity_id is not None:
+            if ref:
+                # The ref did not resolve above, but the row it names now
+                # exists (or was just found by code/name) - register it so
+                # the NEXT push is a step-1 ref match (D1).
+                self.refs.link(
+                    entity_type=model.__tablename__,
+                    entity_id=entity_id,
+                    source_ref=ref,
+                    integration_id=self.integration_id,
+                )
+            return entity_id
+
+        if model is Warehouse:
+            warnings.append(WARN_WAREHOUSE_UNRESOLVED)
+            return None
+        if model is Product:
+            raise MissingReference(code_field if code else ref_field, code or ref)
+        if model is Customer:
+            if code:
+                warnings.append(WARN_CUSTOMER_UNRESOLVED)
+                return None
+            if ref:
+                raise MissingReference(ref_field, ref)
+            return None
+        if ref:
+            # Supplier / sales agent: nothing was sent to fall back on, so this
+            # is exactly the v1 shape - a sent ref that never resolved.
+            raise MissingReference(ref_field, ref)
+        return None
+
+    def _resolve_by_fallback(
+        self, model: type, code: Optional[str], name: Optional[str], warnings: list[str]
+    ) -> Optional[str]:
+        """Code, then (supplier only) name, then back-create. Never touches ref."""
+        if model in (Product, Warehouse):
+            return self._resolve_by_code(model, code) if code else None
+
+        if model is SalesAgent:
+            if not code:
+                return None
+            agent = sales_agent_service.resolve(self.db, code)
+            if agent is None:
+                agent = sales_agent_service.resolve_or_create(self.db, code)
+                if agent is not None:
+                    warnings.append(WARN_AGENT_CREATED)
+            return str(agent.id) if agent is not None else None
+
+        if model is Supplier:
+            entity_id = self._resolve_by_code(model, code) if code else None
+            if entity_id is None and name:
+                entity_id = self._resolve_supplier_by_name(name)
+            if entity_id is not None:
+                return entity_id
+            if code or name:
+                supplier = back_create_supplier(
+                    self.db,
+                    code=code or supplier_slug(self.db, name),
+                    name=name or code,
+                )
+                if supplier is not None:
+                    warnings.append(WARN_SUPPLIER_CREATED)
+                    return str(supplier.id)
+            return None
+
+        if model is Customer:
+            entity_id = self._resolve_by_code(model, code) if code else None
+            if entity_id is not None:
+                return entity_id
+            # D2: only when BOTH are sent - the unique index is on the pair,
+            # and a code-only row would collide with a later named one.
+            if code and name:
+                customer = customer_back_create.get_or_create(self.db, code=code, name=name)
+                if customer is not None:
+                    warnings.append(WARN_CUSTOMER_CREATED)
+                    return str(customer.id)
+            return None
+
+        return None
+
+    def _resolve_by_code(self, model: type, code: str) -> Optional[str]:
+        """Exact match on the model's code column, case/whitespace-insensitive.
+
+        `order_by(id.desc())` rather than an unqualified `.scalar()`: a code is
+        unique per company for every model here EXCEPT `customers` (D2 - one
+        debtor code routinely carries more than one legal name), and a query
+        that raises on more than one row would turn that into a 500 instead of
+        a deterministic pick.
+        """
+        column = _CODE_COLUMNS[model]
+        query = (
+            self.db.query(model.id)
+            .filter(func.upper(func.btrim(column)) == code.upper())
+            .order_by(model.id.desc())
+        )
+        if _is_company_scoped(model.__tablename__):
+            query = query.filter(model.company_id == self.company_id)
+        row = query.first()
+        return str(row[0]) if row else None
+
+    def _resolve_supplier_by_name(self, name: str) -> Optional[str]:
+        """The upload's own name-fallback rule: cleaned name, order by id desc.
+
+        `supplier_name` carries no uniqueness constraint, so more than one row
+        can share one - ordered so the pick is deterministic rather than
+        whatever order Postgres happens to return (`outstanding_import_service
+        ._resolve_parties_by_name`, which this mirrors).
+        """
+        cleaned = _clean_supplier_name(name)
+        if not cleaned:
+            return None
+        row = (
+            self.db.query(Supplier.id)
+            .filter(func.upper(Supplier.supplier_name) == cleaned.upper())
+            .filter(Supplier.company_id == self.company_id)
+            .order_by(Supplier.id.desc())
+            .first()
+        )
+        return str(row[0]) if row else None
 
     def _sync_lines(
         self, spec: DocumentSpec, header: Any, line_values: list[dict[str, Any]]
@@ -690,7 +946,7 @@ class DocumentReadService:
         for column, field in spec.header_fields:
             record[field] = getattr(header, column)
         record["status"] = _canonical_status(spec, header.status)
-        for column, field, model in spec.header_refs:
+        for column, field, model, _code_field, _name_field in spec.header_refs:
             record[field] = self._ref_of(model, getattr(header, column))
         record["lines"] = [
             self._line(spec, line) for line in self._lines(spec, header)
@@ -713,7 +969,7 @@ class DocumentReadService:
             "source_ref": line.source_ref,
             "entity_id": str(line.id),
         }
-        for column, field, model in spec.line_refs:
+        for column, field, model, _code_field, _name_field in spec.line_refs:
             record[field] = self._ref_of(model, getattr(line, column))
         for column, field in spec.line_fields:
             record[field] = getattr(line, column)

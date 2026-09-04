@@ -45,15 +45,31 @@ class _CanonicalLine(BaseModel):
     # a line keep its Sorento id - and therefore its allocations - across syncs.
     source_ref: str = Field(..., min_length=1, max_length=255)
     # Integration reference of the product, never a code: a code is unique per
-    # company only, while the ref already names one row. REQUIRED, because
-    # `product_id` is NOT NULL on both line tables - a line without it is not a
-    # line that can exist.
-    product_ref: str = Field(..., min_length=1, max_length=255)
+    # company only, while the ref already names one row. Optional ONLY in the
+    # sense that `product_code` may stand in for it (v2, D1) - the validator
+    # below still requires one of the two, because `product_id` is NOT NULL on
+    # both line tables and a line without either is not a line that can exist.
+    product_ref: Optional[str] = Field(None, max_length=255)
+    # v2 code/name fallback (D1). Products are never back-created - a code the
+    # catalogue does not hold stays retryable, the same as an unresolved ref -
+    # so `product_name` is accepted and never used: a typo must never become a
+    # SKU. `warehouse_code` follows the same ref-then-code ladder as the ref,
+    # but an unresolved SENT code lands NULL with a warning rather than
+    # retryable (D10) - a warehouse is optional, a product is not.
+    product_code: Optional[str] = Field(None, max_length=100)
+    product_name: Optional[str] = Field(None, max_length=255)
     warehouse_ref: Optional[str] = Field(None, max_length=255)
+    warehouse_code: Optional[str] = Field(None, max_length=100)
     qty_ordered: Decimal = Field(..., ge=0)
     discount: Optional[Decimal] = None
     line_total: Optional[Decimal] = None
     uom: Optional[str] = Field(None, max_length=100)
+
+    @model_validator(mode="after")
+    def _product_ref_or_code(self):
+        if not self.product_ref and not self.product_code:
+            raise ValueError("product_ref or product_code is required")
+        return self
 
 
 class CanonicalSalesOrderLine(_CanonicalLine):
@@ -113,7 +129,14 @@ class CanonicalSalesOrder(_CanonicalDocument):
 
     so_number: str = Field(..., min_length=1, max_length=100)
     customer_ref: Optional[str] = Field(None, max_length=255)
+    # v2 code/name fallback (D1/D2). `customer_code` is written to
+    # `sales_orders.debtor_code` whenever sent, ref or no ref (D9); a customer
+    # is back-created only when BOTH are present (D2) - the unique index is on
+    # the pair, and a code-only row would collide with a later named one.
+    customer_code: Optional[str] = Field(None, max_length=100)
+    customer_name: Optional[str] = Field(None, max_length=255)
     sales_agent_ref: Optional[str] = Field(None, max_length=255)
+    agent_code: Optional[str] = Field(None, max_length=100)
     doc_date: Optional[date] = None
     requested_delivery_date: Optional[date] = None
     internal_note: Optional[str] = None
@@ -123,6 +146,12 @@ class CanonicalSalesOrder(_CanonicalDocument):
 class CanonicalPurchaseOrder(_CanonicalDocument):
     po_number: str = Field(..., min_length=1, max_length=100)
     supplier_ref: Optional[str] = Field(None, max_length=255)
+    # v2 code/name fallback (D1). `agent_code` is accepted for symmetry with
+    # the sales-order shape but IGNORED here: a purchase order has no agent FK,
+    # and there is nowhere on `purchase_orders` for it to land.
+    supplier_code: Optional[str] = Field(None, max_length=100)
+    supplier_name: Optional[str] = Field(None, max_length=255)
+    agent_code: Optional[str] = Field(None, max_length=100)
     issue_date: Optional[date] = None
     expected_date: Optional[date] = None
     currency: Optional[str] = Field(None, max_length=3)

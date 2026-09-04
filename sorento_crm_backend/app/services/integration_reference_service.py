@@ -38,7 +38,18 @@ class ReferenceConflict(ValueError):
     Surfaced rather than silently ignored: the caller believes it linked its
     record, and returning the pre-existing mapping would leave it pointing
     somewhere else entirely while reporting success.
+
+    `field_name` names the verdict-error key a catching `_ingest_one` should
+    file this under - defaults to `"source_ref"`, the document/master's own
+    identity field, which is what every pre-v2 raise site means. A caller
+    naming a SPECIFIC field instead (v2's per-master ladder, e.g.
+    `"customer_ref"`) passes it explicitly so the verdict names which
+    reference conflicted, not just that the record failed.
     """
+
+    def __init__(self, message: str, *, field_name: str = "source_ref"):
+        super().__init__(message)
+        self.field_name = field_name
 
 
 # The tables the ESB writes. Values are real table names and are only ever

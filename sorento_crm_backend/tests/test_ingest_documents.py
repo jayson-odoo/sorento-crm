@@ -822,16 +822,24 @@ class TestUnresolvedReferences:
         assert any("product_ref" in k for k in entry["errors"]), entry
         assert env.counts() == before
 
-    def test_an_unknown_warehouse_ref_is_retryable_too(self, env):
-        before = env.counts()
+    def test_an_unknown_warehouse_ref_lands_null_with_a_warning(self, env):
+        """v2 deviation (D10, AC-V1-7b): superseded 2026-09-05. A warehouse is
+        optional and an unlocated line is a supported state, so an unresolved
+        SENT `warehouse_ref` is no longer retryable - the line lands with a
+        NULL `warehouse_id` and a `warehouse_unresolved` warning instead. See
+        `tests/test_ingest_documents_v2_resolution.py::TestWarehouseUnresolvedIsAWarningNotARetry`.
+        """
         record = _so_record(
             env, lines=[_so_line(env, warehouse_ref="LOC:NOT-SYNCED-YET")]
         )
 
         res = env.post(INGEST_SO, [record])
 
-        assert res.json()["records"][0]["outcome"] == "retryable", res.text
-        assert env.counts() == before
+        entry = res.json()["records"][0]
+        assert entry["outcome"] == "created", res.text
+        assert "warehouse_unresolved" in entry.get("warnings", [])
+        header = env.header("sales_orders", record["source_ref"])
+        assert env.so_lines(header["id"])[0]["warehouse_id"] is None
 
     def test_an_absent_customer_ref_leaves_the_fk_null(self, env):
         """AC-A3-5. An order whose debtor Sorento does not hold is still an order;
