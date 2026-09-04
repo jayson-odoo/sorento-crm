@@ -249,6 +249,14 @@ Baseline measured on `origin/main` e1adad4d2, 2 Sep 2026.
   `price-tag-requests/[id]/design`) that inherited `dealer-kit/loading.tsx`'s list skeleton by
   Next.js's ancestor-fallback rule now carry their own `loading.tsx` rendering `SectionSkeleton`
   instead.
+  **Evidence run 1, scope note (`project-sales/pipeline`):** the route's `loading.tsx` correctly
+  imports and returns `ListPageSkeleton` per the predicate above, but the route DEFAULTS to a
+  kanban/card view (a "grid card" vs "table" toggle, card view selected), so `ListPageSkeleton`'s
+  row-bar shape is the wrong shape for what actually paints once the client component mounts -
+  the evidence run's browser check caught a genuine card-shaped skeleton mid-load, not this
+  file's `ListPageSkeleton`. Ruling: keep `ListPageSkeleton` here - the route has a real list
+  view behind the toggle and the skeleton is content-shaped enough for either - rather than
+  building a per-view skeleton for one route; noted, no code change.
 - **M5-02** `[vitest]` Zero non-demo files render the string `Loading...` or `Loading…`
   (baseline 50).
   **Shipped (M5 run 2):** `app/(protected)/loading-strings.inventory.test.ts`; proved red at 50,
@@ -311,6 +319,31 @@ Baseline measured on `origin/main` e1adad4d2, 2 Sep 2026.
   whenever the menu is wired up - wiring `headerControls` into the render tree (a settings icon
   and dropdown on every column header across roughly 200 grids) is a separate design call, not
   part of M5.
+  **Evidence run 1, pinned-column check scope note:** no in-app list has a pinned column by
+  default and no sidebar/topbar/in-app link reaches one - the ONLY grid with
+  `initialState.columnPinning` set is `project-sales/stock-debt/components/StockDebtClient.tsx`,
+  and that route has no navigation entry anywhere in the app. The evidence run reached it by a
+  one-off deep URL (explicitly allowed for exactly this kind of unreachable-otherwise case), not
+  a sidebar walk. Verified there: a pinned header cell is `z-index:6` and a pinned body cell is
+  `z-index:5`, so the header wins the stacking order through a scroll with no visual collision -
+  M5-05 holds. Whether Stock Debt needs a nav entry is a separate captain's call, out of M5.
+  **Evidence run 1, Finding 2 (review B2, `BoardCellBreakdownDialog.tsx`):** four
+  simultaneously-scrollable `overflow-y:auto` regions were found nested inside the Fulfilment
+  Planning board cell breakdown dialog: (1) `DialogBody` itself
+  (`app/(protected)/project-sales/fulfilment-planning/components/BoardCellBreakdownDialog.tsx:947`),
+  (2) `CellStockTable.tsx:375` (`max-h-[50vh]` table wrapper), (3) `StockDocumentsPanel.tsx:745`
+  (`max-h-[35vh]` nested panel), (4) the Contributing lines tab's own `PanelDataGrid` scroller.
+  Checked against main (`b9150f493`): (1), (2) and (3) all predate M5 unchanged - PRE-EXISTING,
+  out of M5 scope, left as found. Only (4) is M5's: `scrollerMaxHeight={false}` (890ac2622,
+  M5 review run 1 B2) opted the grid's own bounded scroller OUT so it does not nest a second
+  scrollport inside `DialogBody`'s. This fix (evidence run 1 fix, commit 2) adds a test proving
+  the prop actually reaches the rendered scroller (`data-slot="data-grid-scroller"` carries no
+  `max-h-` class) - `BoardCellBreakdownDialog.test.tsx`, plus the same check on
+  `scm/components/PlanRowDialog.tsx`'s `DrillTable` (via `ProjectRetailTabs`) and
+  `scm/reorder/components/PlanRowDialogs.tsx`'s own file-local `DrillTable` (via
+  `PlanRowDialog`'s `project`/`retail` kind), the two other families the brief named as unreached
+  by the evidence run. All three pass: none of the three families' grid scrollers carries a
+  bounding `max-h-` inside its own dialog body today.
 - **M5-06** `[UX] [vitest]` No product file imports `@/components/ui/table` (baseline 24). Any
   file that cannot migrate sits on an allowlist in the test with a one-line reason, and the PR
   lists them.

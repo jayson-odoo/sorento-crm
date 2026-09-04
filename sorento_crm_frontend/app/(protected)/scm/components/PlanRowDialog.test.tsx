@@ -392,6 +392,20 @@ describe('ProjectRetailTabs', () => {
     );
     expect(screen.getByText('Mar 26')).toBeTruthy();
   });
+
+  /**
+   * M5 evidence run 1, B2: every `DrillTable` this file renders is inside `PlanRowDialog`'s
+   * own `DialogBody` (`overflow-y-auto`), so `scrollerMaxHeight={false}` is passed at every
+   * call site (890ac2622) to keep the grid's own bounded scroller from nesting a second
+   * scrollport inside it. This pins that the prop reaches the rendered scroller element.
+   */
+  it('DrillTable inside it carries no bounding max-h- on its own scroller (B2)', () => {
+    renderWithClient(<ProjectRetailTabs channel="project" lines={LINES} history={HISTORY} />);
+
+    const scroller = document.querySelector('[data-slot="data-grid-scroller"]');
+    expect(scroller).not.toBeNull();
+    expect(scroller!.className).not.toMatch(/\bmax-h-/);
+  });
 });
 
 // ---------------------------------------------------------------------------
