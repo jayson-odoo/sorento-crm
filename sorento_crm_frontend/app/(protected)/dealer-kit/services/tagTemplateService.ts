@@ -11,6 +11,15 @@
  *   GET    /tag-templates/{id}/versions                          -> TagTemplateVersion[] (newest first)
  *   GET    /tag-templates/{id}/versions/{versionId}               -> TagTemplateVersionDetail
  *   POST   /tag-templates/{id}/versions/{versionId}/restore       -> TagTemplate (draft <- version doc)
+ *
+ * S4 (D1, D9, AC-S4-6/7/8/9):
+ *   POST   /tag-templates/from-tag
+ *     { name, family, doc, print_size } -> TagTemplate, 201
+ *     Creates the template AND publishes it as v1 in ONE transaction - the
+ *     designer's "Save as template" never leaves a draft nobody sees, because
+ *     nothing reads a draft template's doc anywhere but its own editor.
+ *     `published_version_no` on the response is always 1. Declared before
+ *     `/{template_id}` on the backend, same reason `/resolve-preview` is.
  */
 
 import { apiFetch } from '@/lib/api';
@@ -175,6 +184,35 @@ export async function restoreTemplateVersion(
   );
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to restore version'));
+  }
+  return response.json();
+}
+
+// ---------------------------------------------------------------------------
+// Save as template (S4)
+// ---------------------------------------------------------------------------
+
+export interface CreateTemplateFromTagInput {
+  name: string;
+  family: TagTemplateFamily;
+  doc: TagTemplateDoc;
+  print_size: { width_mm: number; height_mm: number };
+}
+
+/**
+ * Creates AND publishes v1 in one call (AC-S4-7). Declared before
+ * `/{template_id}` on the backend, same reason `/resolve-preview` is.
+ */
+export async function createTemplateFromTag(
+  input: CreateTemplateFromTagInput,
+): Promise<TagTemplate> {
+  const response = await apiFetch(`${BASE}/from-tag`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to save this template'));
   }
   return response.json();
 }

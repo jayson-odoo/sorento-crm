@@ -41,23 +41,15 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   ChevronLeft,
   Check,
+  Copy,
   LayoutTemplate,
   Loader2,
   Eye,
   Save,
   RefreshCw,
+  X,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -74,12 +66,15 @@ import type {
   TagSheetDoc,
   TagTemplate,
   TagTemplateDoc,
+  TagTemplateFamily,
 } from '@/lib/dealer-kit/tag-template-types';
 import { IMPOSITION_PRESETS, familyLabel } from '@/lib/dealer-kit/tag-template-types';
 import { lineFamily } from '@/lib/dealer-kit/line-family';
 import {
+  applyDesignToAllLines,
   autoArrange,
   defaultTemplateFor,
+  normaliseImpositionPreset,
   pinKeyForPlacement,
   pinnedFromDoc,
   resizeAllTags,
@@ -100,6 +95,7 @@ import { useKitLibrary } from '@/app/(protected)/dealer-kit/tag-templates/compon
 import { useAutosave } from '@/hooks/useAutosave';
 import { ArrangeSheetView } from './ArrangeSheetView';
 import { TemplatePickDialog } from './TemplatePickDialog';
+import { SaveAsTemplateDialog } from './SaveAsTemplateDialog';
 import {
   resolveRequestLines,
   transitionPriceTagRequest,
@@ -110,6 +106,11 @@ import {
 import { listPublishedTemplates } from '../../../../services/tagTemplateService';
 import { FocusShell, FocusToggle } from '../../../../components/FocusMode';
 import { AutosaveIndicator } from '../../../../components/AutosaveIndicator';
+import { SaveAsSizeDialog } from './SaveAsSizeDialog';
+import {
+  useDeleteTagSizePreset,
+  useTagSizesQuery,
+} from '../../../../tag-sizes/hooks/useTagSizes';
 
 let idSeq = 0;
 function newTagId(): string {
@@ -158,8 +159,14 @@ export function RequestTagDesigner({
   const [pinned, setPinned] = useState<Record<string, PinnedPlacement>>(() =>
     pinnedFromDoc(initialDoc),
   );
+  // A pre-S6 doc's `a4_3up`/`a4_2x2` preset migrates to 'auto' on load (S3,
+  // AC-S6-4) - the layout has been identical since S6, this just gets the
+  // saved value to catch up so the next autosave writes 'auto' instead of
+  // perpetuating history.
   const [imposition, setImposition] = useState<ImpositionConfig>(
-    initialDoc?.imposition ?? { preset: 'a4_3up', ...IMPOSITION_PRESETS.a4_3up },
+    initialDoc?.imposition
+      ? normaliseImpositionPreset(initialDoc.imposition)
+      : { preset: 'auto', ...IMPOSITION_PRESETS.auto },
   );
   /**
    * The size "Apply to all lines" (D24, S9) last set, persisted in the doc
@@ -179,9 +186,20 @@ export function RequestTagDesigner({
   const [selectedTagId, setSelectedTagId] = useState<string | null>(null);
 
   const [pickerLineId, setPickerLineId] = useState<string | null>(null);
-  const [replaceAsk, setReplaceAsk] = useState<{ lineId: string; templateId: string } | null>(
-    null,
-  );
+  /** "Save as template" (S4, D1): the currently designed tag, published in one go. */
+  const [saveTemplateOpen, setSaveTemplateOpen] = useState(false);
+
+  /**
+   * The one bulk apply worth undoing (S5, AC-S5-3): "Apply this design to all
+   * lines", or the template picker's "Apply to all lines" checkbox, or a
+   * single-line template replace (D11 - the confirm dialog that used to guard
+   * an edited tag is gone; this is the safety net instead). A ref, not state:
+   * nothing on screen reads it directly, the toast's own "Undo" action and the
+   * Cmd/Ctrl+Z handler below are the only two callers, and it is deliberately
+   * ONE slot rather than a stack - the next tags edit of any kind retires it,
+   * the same way a single `Ctrl+Z` only ever means "undo the last thing".
+   */
+  const bulkUndoRef = useRef<Record<string, PlacedTag> | null>(null);
 
   const [saving, setSaving] = useState(false);
   const [transitioning, setTransitioning] = useState(false);
@@ -365,6 +383,7 @@ export function RequestTagDesigner({
     (width_mm: number, height_mm: number) => {
       const lineId = selectedLineId;
       if (!lineId) return;
+      bulkUndoRef.current = null;
       setTags((prev) => {
         const tag = prev[lineId];
         if (!tag) return prev;
@@ -378,6 +397,7 @@ export function RequestTagDesigner({
   // request's default (S9 review B2) so a line opened later clones at this
   // size too, via `applyTemplate` above - not the template's own print size.
   const handleResizeAllTags = useCallback((width_mm: number, height_mm: number) => {
+    bulkUndoRef.current = null;
     setTags((prev) => resizeAllTags(prev, width_mm, height_mm));
     setDefaultTagSize({ width_mm, height_mm });
   }, []);
@@ -389,6 +409,7 @@ export function RequestTagDesigner({
       setTags((prev) => {
         const tag = prev[lineId];
         if (!tag || tag.layers === layers) return prev;
+        bulkUndoRef.current = null;
         return { ...prev, [lineId]: { ...tag, layers } };
       });
     },
@@ -396,52 +417,125 @@ export function RequestTagDesigner({
   );
 
   /**
-   * Whether re-cloning this line's tag would lose work.
-   *
-   * Measured against the tag's own TEMPLATE rather than against what it was
-   * opened with, so a design that was saved a week ago still counts as work.
+   * Undoes the one pending bulk apply (S5, AC-S5-3): the toast's own "Undo"
+   * action and the Cmd/Ctrl+Z handler below are the only two callers. A
+   * second press once the slot is empty is a no-op, same as pressing Undo
+   * on a toast that already dismissed itself.
    */
-  const isEdited = useCallback(
-    (lineId: string) => {
-      const tag = tags[lineId];
-      const line = request.lines.find((l) => l.id === lineId);
-      const template = templates.find((t) => t.id === tag?.template_id);
-      if (!tag || !line) return false;
-      // A template that is no longer there cannot be compared against, so ask.
-      if (!template) return true;
-      const pristine = tagForLine(line, template, tag.id).layers;
-      return JSON.stringify(tag.layers) !== JSON.stringify(pristine);
-    },
-    [tags, templates, request.lines],
-  );
+  const undoBulkApply = useCallback(() => {
+    const snapshot = bulkUndoRef.current;
+    if (!snapshot) return;
+    bulkUndoRef.current = null;
+    setTags(snapshot);
+  }, []);
 
+  /**
+   * A single line's tag is replaced with `template`, immediately - the
+   * "Replace this tag with the template?" confirm is gone (D11, AC-S5-7);
+   * Undo is the safety net instead, same toast + Cmd/Ctrl+Z as the two bulk
+   * paths below.
+   */
   const chooseTemplate = useCallback(
     (lineId: string, templateId: string) => {
       const line = request.lines.find((l) => l.id === lineId);
       const template = templates.find((t) => t.id === templateId);
       if (!line || !template) return;
+      bulkUndoRef.current = tags;
       applyTemplate(line, template);
+      toast.success('Template applied', {
+        action: { label: 'Undo', onClick: undoBulkApply },
+      });
       setPickerLineId(null);
-      setReplaceAsk(null);
       setSelectedLineId(lineId);
     },
-    [request.lines, templates, applyTemplate],
+    [request.lines, templates, tags, applyTemplate, undoBulkApply],
+  );
+
+  /**
+   * The picker's "Apply to all lines" checkbox (AC-S5-4): every line gets a
+   * PRISTINE clone of the chosen template via `tagForLine` - the same clone a
+   * line gets when it is opened for the first time, not the design that is
+   * currently on `focusLineId`'s canvas. That is the whole difference from
+   * `handleApplyDesignToAll` below: this spreads a TEMPLATE, that spreads a
+   * DESIGN.
+   */
+  const chooseTemplateForAllLines = useCallback(
+    (templateId: string, focusLineId: string) => {
+      const template = templates.find((t) => t.id === templateId);
+      if (!template) return;
+      bulkUndoRef.current = tags;
+      const next: Record<string, PlacedTag> = { ...tags };
+      for (const line of request.lines) {
+        let tag = tagForLine(line, template, newTagId());
+        if (defaultTagSize) {
+          tag = resizeTag(tag, defaultTagSize.width_mm, defaultTagSize.height_mm);
+        }
+        next[line.id] = tag;
+      }
+      setTags(next);
+      toast.success(`Applied to ${request.lines.length} line${request.lines.length === 1 ? '' : 's'}`, {
+        action: { label: 'Undo', onClick: undoBulkApply },
+      });
+      setPickerLineId(null);
+      setSelectedLineId(focusLineId);
+    },
+    [templates, tags, request.lines, defaultTagSize, undoBulkApply],
   );
 
   const handleTemplateChosen = useCallback(
-    (templateId: string) => {
+    (templateId: string, applyToAll: boolean) => {
       const lineId = pickerLineId;
       if (!lineId) return;
-      // Re-cloning throws the edits away, so it asks first (D51).
-      if (isEdited(lineId)) {
-        setPickerLineId(null);
-        setReplaceAsk({ lineId, templateId });
-        return;
+      if (applyToAll) {
+        chooseTemplateForAllLines(templateId, lineId);
+      } else {
+        chooseTemplate(lineId, templateId);
       }
-      chooseTemplate(lineId, templateId);
     },
-    [pickerLineId, isEdited, chooseTemplate],
+    [pickerLineId, chooseTemplate, chooseTemplateForAllLines],
   );
+
+  /**
+   * The Lines rail's "Apply this design to all lines" (AC-S5-1/2/3): the
+   * SELECTED line's tag, edits included, cloned onto every other line -
+   * `applyDesignToAllLines` does the rebinding and the fresh ids, this is
+   * only the undo snapshot + toast plumbing shared with the two paths above.
+   */
+  const handleApplyDesignToAll = useCallback(() => {
+    if (!selectedLineId || !tags[selectedLineId]) return;
+    const count = request.lines.length - 1;
+    if (count <= 0) return;
+    bulkUndoRef.current = tags;
+    setTags(applyDesignToAllLines(tags, request.lines, selectedLineId, newTagId));
+    toast.success(`Applied to ${count} line${count === 1 ? '' : 's'}`, {
+      action: { label: 'Undo', onClick: undoBulkApply },
+    });
+  }, [selectedLineId, tags, request.lines, undoBulkApply]);
+
+  // Cmd/Ctrl+Z restores the one pending bulk apply (AC-S5-3) - only while
+  // there is one: with nothing armed, the key falls through untouched to
+  // whatever else on the page wants it (the canvas's own layer-history
+  // undo). Captured on `window`'s CAPTURE phase, ahead of that handler,
+  // so this can `stopPropagation()` and be the only one of the two that
+  // fires - the alternative, both firing, would undo a canvas edit AND
+  // restore every other line's tag off one keystroke.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const isInput =
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement ||
+        e.target instanceof HTMLSelectElement;
+      if (isInput) return;
+      if (!bulkUndoRef.current) return;
+      const modifier = e.ctrlKey || e.metaKey;
+      if (!modifier || e.key.toLowerCase() !== 'z' || e.shiftKey) return;
+      e.preventDefault();
+      e.stopPropagation();
+      undoBulkApply();
+    };
+    window.addEventListener('keydown', handler, true);
+    return () => window.removeEventListener('keydown', handler, true);
+  }, [undoBulkApply]);
 
   // -- The document ----------------------------------------------------------
 
@@ -452,6 +546,18 @@ export function RequestTagDesigner({
         .filter((item): item is ArrangeItem => Boolean(item.tag)),
     [request.lines, tags],
   );
+
+  // The size Arrange's fit line and empty state are computed off (S6): the
+  // largest tag REQUESTED across every line, not what `autoArrange` managed
+  // to place - a page too small for the tag places nothing, and that is
+  // exactly when the "0 per sheet" message most needs a size to quote.
+  const tagDims = useMemo(() => {
+    if (arrangeItems.length === 0) return null;
+    return {
+      width_mm: Math.max(...arrangeItems.map((item) => item.tag.width_mm)),
+      height_mm: Math.max(...arrangeItems.map((item) => item.tag.height_mm)),
+    };
+  }, [arrangeItems]);
 
   const doc: TagSheetDoc = useMemo(
     () => ({
@@ -643,6 +749,33 @@ export function RequestTagDesigner({
     router.push(`/dealer-kit/price-tag-requests/${request.id}`);
   }, [flush, router, request.id]);
 
+  // -- Save as template (S4, D1) -----------------------------------------------
+
+  const selectedLine = selectedLineId
+    ? request.lines.find((l) => l.id === selectedLineId) ?? null
+    : null;
+  const selectedLineCode = selectedLineId ? resolved.get(selectedLineId)?.code ?? '' : '';
+  const saveTemplateDefaultName = selectedLineCode ? `${selectedLineCode} tag` : 'New tag';
+  const saveTemplateDefaultFamily = (
+    selectedLine ? lineFamily(selectedLine, selectedLineCode) : 'ala_carte'
+  ) as TagTemplateFamily;
+
+  const handleTemplateCreated = useCallback(
+    (created: TagTemplate) => {
+      // A real refetch, not a local splice: the picker's source is the
+      // backend's own published list (AC-S4-8), and this is what keeps it
+      // agreeing with what a reload would show.
+      loadTemplates();
+      toast.success(`Template "${created.name}" published`, {
+        action: {
+          label: 'Open',
+          onClick: () => router.push(`/dealer-kit/tag-templates/${created.id}`),
+        },
+      });
+    },
+    [router, loadTemplates],
+  );
+
   // -- Render ----------------------------------------------------------------
 
   const rail = (
@@ -655,6 +788,8 @@ export function RequestTagDesigner({
         selectedLineId={selectedLineId}
         onSelect={handleSelectLine}
         onUseTemplate={setPickerLineId}
+        canApplyToAll={Boolean(selectedTag) && request.lines.length > 1}
+        onApplyToAll={handleApplyDesignToAll}
       />
       <TagSizeControl
         tag={selectedTag}
@@ -716,6 +851,19 @@ export function RequestTagDesigner({
           className="h-7 text-xs"
           iconClassName="size-3.5"
         />
+
+        {mode === 'design' && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs"
+            onClick={() => setSaveTemplateOpen(true)}
+            disabled={!selectedTag}
+          >
+            <LayoutTemplate className="mr-1 size-3.5" />
+            Save as template
+          </Button>
+        )}
 
         <Button
           variant="outline"
@@ -804,6 +952,7 @@ export function RequestTagDesigner({
             onMoveTag={handleMoveTag}
             onPrintSheet={handlePrintSheet}
             printing={printing}
+            tagDims={tagDims}
           />
         )}
       </div>
@@ -828,31 +977,14 @@ export function RequestTagDesigner({
         onConfirm={handleTemplateChosen}
       />
 
-      <AlertDialog
-        open={replaceAsk !== null}
-        onOpenChange={(open) => !open && setReplaceAsk(null)}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Replace this tag with the template?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This tag has been edited. Using another template starts it again from
-              that template and the edits are lost.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              onClick={() =>
-                replaceAsk && chooseTemplate(replaceAsk.lineId, replaceAsk.templateId)
-              }
-            >
-              Replace
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <SaveAsTemplateDialog
+        open={saveTemplateOpen}
+        onOpenChange={setSaveTemplateOpen}
+        tag={selectedTag}
+        defaultName={saveTemplateDefaultName}
+        defaultFamily={saveTemplateDefaultFamily}
+        onCreated={handleTemplateCreated}
+      />
     </div>
     </FocusShell>
   );
@@ -891,6 +1023,8 @@ function LinesRail({
   selectedLineId,
   onSelect,
   onUseTemplate,
+  canApplyToAll,
+  onApplyToAll,
 }: {
   lines: PriceTagRequestLine[];
   resolved: Map<string, LineTagData>;
@@ -899,13 +1033,26 @@ function LinesRail({
   selectedLineId: string | null;
   onSelect: (lineId: string) => void;
   onUseTemplate: (lineId: string) => void;
+  /** Something is selected AND there is more than one line to spread it to (AC-S5-1). */
+  canApplyToAll: boolean;
+  onApplyToAll: () => void;
 }) {
   return (
     <div className="flex max-h-[45%] shrink-0 flex-col border-b border-r">
-      <div className="flex h-10 shrink-0 items-center border-b px-3">
+      <div className="flex h-10 shrink-0 items-center justify-between gap-1 border-b px-3">
         <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
           Lines
         </span>
+        <button
+          type="button"
+          className="flex shrink-0 items-center gap-1 rounded p-1 text-2xs text-muted-foreground hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+          title="Apply this design to all lines"
+          disabled={!canApplyToAll}
+          onClick={onApplyToAll}
+        >
+          <Copy className="size-3" />
+          Apply to all
+        </button>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {lines.length === 0 ? (
@@ -1041,6 +1188,14 @@ function TagSizeControl({
   const [hDraft, setHDraft] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Saved sizes (S4, D2): a second group in the dropdown, deletable - unlike
+  // the "Template sizes" group above, which is derived from published
+  // templates and stays read-only here.
+  const savedSizesQuery = useTagSizesQuery();
+  const savedSizes = savedSizesQuery.data ?? [];
+  const deleteSavedSize = useDeleteTagSizePreset();
+  const [saveSizeOpen, setSaveSizeOpen] = useState(false);
+
   if (!tag) {
     return (
       <div className="shrink-0 border-b border-r p-3">
@@ -1084,13 +1239,39 @@ function TagSizeControl({
     if (e.key === 'Enter') e.currentTarget.blur();
   };
 
-  const options: SearchableSelectOption[] = presets.map((p) => ({
-    value: sizeKey(p.width_mm, p.height_mm),
-    label: p.label,
-  }));
-  const matchingPreset = presets.find(
+  // Every size choice, template-derived AND saved, keyed the same way
+  // (D2/AC-S4-4): "Template sizes" first (not deletable here), then "Saved
+  // sizes" (each with an `x`). `savedByKey` is what lets `renderOption` find
+  // the RECORD behind a saved row - the option itself only carries the size.
+  const savedByKey = new Map(
+    savedSizes.map((s) => [sizeKey(s.width_mm, s.height_mm), s] as const),
+  );
+  const options: SearchableSelectOption[] = [
+    ...presets.map((p) => ({
+      value: sizeKey(p.width_mm, p.height_mm),
+      label: p.label,
+      group: 'Template sizes',
+    })),
+    ...savedSizes.map((s) => ({
+      value: sizeKey(s.width_mm, s.height_mm),
+      label: `${s.name} (${s.width_mm} x ${s.height_mm} mm)`,
+      group: 'Saved sizes',
+    })),
+  ];
+  const allSizes = [...presets, ...savedSizes];
+  const matchingPreset = allSizes.find(
     (p) => p.width_mm === tag.width_mm && p.height_mm === tag.height_mm,
   );
+
+  const applySize = (width_mm: number, height_mm: number) => {
+    const result = resolveTagSize(width_mm, height_mm, bounds);
+    if (!result.ok) {
+      setError(result.reason);
+      return;
+    }
+    setError(null);
+    onResize(result.width_mm, result.height_mm);
+  };
 
   return (
     <div className="flex shrink-0 flex-col gap-2 border-b border-r p-3">
@@ -1100,18 +1281,50 @@ function TagSizeControl({
       <SearchableSelect
         value={matchingPreset ? sizeKey(matchingPreset.width_mm, matchingPreset.height_mm) : CUSTOM_SIZE_VALUE}
         onChange={(value) => {
-          const preset = presets.find((p) => sizeKey(p.width_mm, p.height_mm) === value);
-          if (!preset) return;
-          const result = resolveTagSize(preset.width_mm, preset.height_mm, bounds);
-          if (!result.ok) {
-            setError(result.reason);
-            return;
-          }
-          setError(null);
-          onResize(result.width_mm, result.height_mm);
+          const found = allSizes.find((p) => sizeKey(p.width_mm, p.height_mm) === value);
+          if (!found) return;
+          applySize(found.width_mm, found.height_mm);
         }}
         options={options}
         placeholder="Custom"
+        renderOption={(opt) => {
+          const saved = savedByKey.get(opt.value);
+          return (
+            <div className="flex min-w-0 flex-1 items-center justify-between gap-2">
+              <span className="truncate break-words">{opt.label}</span>
+              {saved &&
+                (() => {
+                  // Matches the listing rows' own `rowPending` dim (N4) - this
+                  // dropdown has no DataGrid row to dim, so the `x` itself
+                  // carries the same signal while ITS OWN delete counts down.
+                  const pending =
+                    deleteSavedSize.isPending && deleteSavedSize.targetId === saved.id;
+                  return (
+                    <button
+                      type="button"
+                      aria-label={`Delete saved size ${saved.name}`}
+                      disabled={pending}
+                      className={cn(
+                        'shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-destructive',
+                        pending && 'pointer-events-none opacity-50',
+                      )}
+                      onPointerDown={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                      }}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        deleteSavedSize.run({ id: saved.id, subject: saved.name });
+                      }}
+                    >
+                      <X className="size-3.5" />
+                    </button>
+                  );
+                })()}
+            </div>
+          );
+        }}
       />
       <div className="grid grid-cols-2 gap-2">
         <div className="flex flex-col gap-1">
@@ -1142,15 +1355,35 @@ function TagSizeControl({
         </div>
       </div>
       {error && <p className="text-2xs text-destructive">{error}</p>}
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className="h-7 text-xs"
-        onClick={() => onResizeAll(tag.width_mm, tag.height_mm)}
-      >
-        Apply to all lines
-      </Button>
+      <div className="flex gap-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-7 flex-1 text-xs"
+          onClick={() => onResizeAll(tag.width_mm, tag.height_mm)}
+        >
+          Apply to all lines
+        </Button>
+        {!matchingPreset && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 flex-1 text-xs"
+            onClick={() => setSaveSizeOpen(true)}
+          >
+            Save as size
+          </Button>
+        )}
+      </div>
+
+      <SaveAsSizeDialog
+        open={saveSizeOpen}
+        onOpenChange={setSaveSizeOpen}
+        width_mm={tag.width_mm}
+        height_mm={tag.height_mm}
+      />
     </div>
   );
 }

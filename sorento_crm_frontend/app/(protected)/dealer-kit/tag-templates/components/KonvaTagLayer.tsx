@@ -224,7 +224,16 @@ function LayerContent({
           text={display?.text ?? props.text}
           fontFamily={props.fontFamily}
           fontSize={props.fontSize * scale * 0.35}
-          fontStyle={props.fontWeight >= 700 ? 'bold' : 'normal'}
+          fontStyle={
+            [props.italic && 'italic', props.fontWeight >= 600 && 'bold']
+              .filter(Boolean)
+              .join(' ') || 'normal'
+          }
+          textDecoration={
+            [props.underline && 'underline', props.strikethrough && 'line-through']
+              .filter(Boolean)
+              .join(' ')
+          }
           fill={props.color}
           align={props.align}
           lineHeight={props.lineHeight}

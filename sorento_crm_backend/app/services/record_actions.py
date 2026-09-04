@@ -1011,6 +1011,28 @@ for _key, _fn, _label in (
     )
 
 
+def _delete_tag_size_preset(db: Session, payload: dict):
+    """Both callers - the `/dealer-kit/tag-sizes` listing's row menu and the
+    request designer's Tag Size control (the saved-size `x`) - park through
+    this ONE key, same as `tag_template.delete`."""
+    from app.services.dealer_kit import tag_size_service
+
+    return tag_size_service.delete_preset(db, _entity_id(payload))
+
+
+register(
+    FormAction(
+        key="tag_size_preset.delete",
+        entity_types=("tag_size_preset",),
+        execute=_delete_tag_size_preset,
+        window=WINDOW_DESTRUCTIVE,
+        # D9: the tag template slugs, no new grant.
+        permission="dealer_kit.tag_templates.manage",
+        label="Delete tag size",
+    )
+)
+
+
 def _undo_flyer_code_adopt(db: Session, payload: dict):
     """"This printed code is NOT that product" - undoing an adoption (D7, S1).
 

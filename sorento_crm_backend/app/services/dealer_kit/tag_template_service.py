@@ -21,9 +21,11 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
+from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Query, Session
 
-from app.models.dealer_kit import TagTemplate
+from app.models.dealer_kit import TagTemplate, TagTemplateVersion
 from app.services.company_scope import build_company_predicate, get_company_scope
 from app.services.error_handler import AppException
 
@@ -121,3 +123,81 @@ def bulk_delete(
         db.delete(row)
     db.commit()
     return {"deleted": len(rows)}
+
+
+# ---------------------------------------------------------------------------
+# Publish (S5, PLAN D7, D15, D16; reused by S4's "Save as template", D1)
+# ---------------------------------------------------------------------------
+
+
+def publish(
+    db: Session,
+    template: TagTemplate,
+    *,
+    note: Optional[str] = None,
+    created_by: Optional[str] = None,
+) -> TagTemplate:
+    """Snapshot the draft into a new immutable version and move the pointer.
+
+    Shared by the publish route (`tag_templates.py`) and `create_and_publish`
+    below (S4's "Save as template") - the same act either way, so the two
+    cannot drift. Never rewrites an existing version - the next number is
+    always `max(version_no) + 1` for this template, so History is append-only
+    and View/Restore always have something permanent to point at.
+    """
+    next_version_no = (
+        db.query(func.coalesce(func.max(TagTemplateVersion.version_no), 0))
+        .filter(TagTemplateVersion.template_id == template.id)
+        .scalar()
+    ) + 1
+    version = TagTemplateVersion(
+        template_id=template.id,
+        version_no=next_version_no,
+        doc=template.doc,
+        print_size=template.print_size,
+        note=note,
+        created_by=created_by,
+    )
+    db.add(version)
+    try:
+        db.flush()
+        template.published_version_id = version.id
+        db.commit()
+    except IntegrityError as exc:
+        # Two publishes racing land on the same `next_version_no` - the
+        # `uq_dealer_kit_tag_template_version` unique index is the only thing
+        # left holding the line, and it fires as a 500 unless translated here.
+        db.rollback()
+        logger.warning(
+            "tag template publish hit a version conflict: %s", getattr(exc, "orig", exc)
+        )
+        raise AppException(
+            status_code=409,
+            message="Someone else just published this template. Reload and try again.",
+            code="tag_template_publish_conflict",
+        ) from exc
+    db.refresh(template)
+    return template
+
+
+def create_and_publish(
+    db: Session,
+    *,
+    name: str,
+    family: str,
+    doc: dict,
+    print_size: dict,
+    created_by: Optional[str] = None,
+) -> TagTemplate:
+    """"Save as template" (S4, D1, AC-S4-7): create AND publish v1 in ONE
+    transaction. The request designer's design becomes a template ready in
+    the "Use template..." picker right away - nothing here leaves a draft
+    nobody sees, because nothing reads a draft template's doc but its own
+    editor.
+    """
+    template = TagTemplate(
+        name=name, family=family, doc=doc, print_size=print_size, created_by=created_by
+    )
+    db.add(template)
+    db.flush()  # `template.id` has to exist before the version can reference it
+    return publish(db, template, created_by=created_by)
