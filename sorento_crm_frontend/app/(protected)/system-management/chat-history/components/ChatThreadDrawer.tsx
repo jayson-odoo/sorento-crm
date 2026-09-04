@@ -34,7 +34,9 @@ export function ChatThreadDrawer({ row, onOpenChange }: ChatThreadDrawerProps) {
 
   return (
     <Sheet open={Boolean(row)} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full sm:max-w-xl flex flex-col p-0">
+      {/* No description: the title is the contact, and Radix warns unless the absence is
+          stated. A sentence explaining the drawer would be an on-screen explanation. */}
+      <SheetContent className="w-full sm:max-w-xl flex flex-col p-0" aria-describedby={undefined}>
         <SheetHeader className="px-4 sm:px-6 py-4 border-b">
           <SheetTitle className="truncate">
             {data?.contact_display ?? row?.contact_display ?? 'Conversation'}
