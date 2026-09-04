@@ -17,7 +17,7 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Iterable, Optional
 
 import sqlalchemy as sa
 from sqlalchemy import func
@@ -1913,55 +1913,56 @@ def _record_rows_never_written(read: ReadResult, resolved: _Resolved,
                      value=issue.value or None)
 
 
-def _supersede_crm_raised_pos(db: Session, resolved: _Resolved,
-                              outcome: ImportOutcome,
-                              lines: Optional[list[Line]] = None) -> tuple[int, list[dict]]:
+def supersede_crm_raised_pos(
+    db: Session,
+    triples: Iterable[tuple[str, str, str]],
+    *,
+    outcome: Optional[ImportOutcome] = None,
+) -> tuple[int, list[dict]]:
     """Close the CRM's own recommendation once AutoCount confirms the same order.
+
+    The shared body behind BOTH callers that state a confirmed physical purchase:
+    the outstanding-PO upload (`_supersede_crm_raised_pos` below, a thin adapter that
+    builds `triples` from its own resolved `Line`s) and the AutoCount ingest route's
+    PO hook (D7, S5), which has no `_Resolved`/`Line` of its own - only the
+    `(product_id, supplier_id, po_number)` a just-written line already carries.
 
     The captain's ruling of 21 Aug: the CRM can raise its own purchase order from a
     reorder-plan confirm (`source_system == "scm_recommendation"`, active after
-    `bulk_confirm`). When Joey keys the SAME physical order into AutoCount and this
-    outstanding-PO book is uploaded, the two must not both count as on-order for the
-    same (product, supplier) - AutoCount is the book of record (the same doctrine the
+    `bulk_confirm`). When the SAME physical order is later keyed into AutoCount -
+    whichever channel states it - the two must not both count as on-order for the
+    same (product, supplier); AutoCount is the book of record (the same doctrine the
     `adopted` handover above and `_preload_closed_lines`' history guard already follow), so
-    ITS import is what retires the CRM's own draft-turned-order, never the reverse.
+    its statement is what retires the CRM's own draft-turned-order, never the reverse.
 
     Matched on (product, supplier), never on document number: the CRM's own number
     and AutoCount's number for the same physical order are never the same string, so
     a document-number match would never fire. Only an ACTIVE, OPEN CRM line
     qualifies - a `draft_recommendation` PO is not on-order at all yet (M4-D5) and has
     nothing to supersede, and an already-closed line is left alone, which is what
-    makes re-running the same upload a no-op rather than a second attempt at
-    something already done.
+    makes re-running the same upload (or re-pushing the same document) a no-op rather
+    than a second attempt at something already done.
 
     Any order-inquiry row PLACED on a line this closes is untagged FIRST, through
     `ProjectOrderInquiryService.unplace_rows` rather than reimplemented here, so it
-    reads `raised` again before this SAME import's own auto-place cascade (one of
-    its three triggers, PLAN-demo-followups-19aug-ladder-v2.md section G.4) runs
-    against the freshly-written AutoCount lines - untagging AFTER that pass would
-    miss the very cascade this upload is about to feed, and leave the row `placed`
-    on a line that is about to disappear.
+    reads `raised` again before this SAME import's own auto-place pass to pick them
+    up again.
 
-    Recorded through the SAME `LINE_CLOSED` code the diff's own closes use above -
-    this module invents no new outcome vocabulary - with the `message` naming which
-    AutoCount document is the reason, so the job detail is where an operator finds
-    out a CRM-raised PO disappeared either way.
+    `outcome` is optional (`None` for the ingest route, which keeps no `ImportOutcome`
+    of its own): when given, each close is recorded through the SAME `LINE_CLOSED`
+    code the diff's own closes use, with the `message` naming which AutoCount
+    document is the reason, so the job detail is where an operator finds out a
+    CRM-raised PO disappeared either way. The item code for that identity is read
+    off the matched line's own product, not passed in - a triple names the product
+    by id, and every caller already knows it means the same product it resolved.
 
     Never called from `preview()`: like every other write in this module, a
-    supersession only happens on `apply`.
-
-    `lines`, default `resolved.lines`: `apply` (S5 review round 1, B2/B3) calls this once
-    PER DOCUMENT BATCH now, passing only the lines that batch's documents named, so the
-    supersession runs inside that batch's own transaction, before its commit, rather than
-    once for the whole file after every batch has already committed - a defect here fails
-    only the batch it belongs to, and the caller's counts/documents accumulate across calls.
+    supersession only happens on `apply` (or, for the ingest route, a non-dry run).
     """
-    pairs: dict[tuple[str, str], tuple[str, str]] = {}
-    for l in (lines if lines is not None else resolved.lines):
-        supplier_id = resolved.party_by_doc.get(l.doc_number)
-        product_id = resolved.product_by_code.get(_norm(l.item_code))
-        if supplier_id and product_id:
-            pairs.setdefault((product_id, supplier_id), (l.doc_number, l.item_code))
+    pairs: dict[tuple[str, str], str] = {}
+    for product_id, supplier_id, po_number in triples:
+        if product_id and supplier_id:
+            pairs.setdefault((str(product_id), str(supplier_id)), po_number)
     if not pairs:
         return 0, []
 
@@ -1983,15 +1984,15 @@ def _supersede_crm_raised_pos(db: Session, resolved: _Resolved,
         supplier_id = str(header.supplier_id) if header.supplier_id else None
         if supplier_id is None:
             continue
-        match = pairs.get((str(line.product_id), supplier_id))
-        if match:
-            to_close.append((line, header, match[0], match[1]))
+        ac_number = pairs.get((str(line.product_id), supplier_id))
+        if ac_number:
+            to_close.append((line, header, ac_number))
     if not to_close:
         return 0, []
 
     # Untagged BEFORE the close, so the rows this frees are `raised` in time for
     # THIS SAME import's own auto-place pass to pick them up again.
-    line_ids = [str(line.id) for line, _h, _n, _c in to_close]
+    line_ids = [str(line.id) for line, _h, _n in to_close]
     from app.models.project_so import INQUIRY_PLACED, OrderInquiryRow
 
     placed_row_ids = [
@@ -2008,19 +2009,32 @@ def _supersede_crm_raised_pos(db: Session, resolved: _Resolved,
 
         ProjectOrderInquiryService(db).unplace_rows(placed_row_ids)
 
+    # For the outcome identity only (below) - one query for the whole batch of
+    # matched products, rather than one per closed line.
+    item_codes: dict[str, str] = {}
+    if outcome is not None:
+        item_codes = dict(
+            db.query(Product.id, Product.product_code)
+            .filter(Product.id.in_({str(line.product_id) for line, _h, _n in to_close}))
+            .all()
+        )
+
     touched_headers: dict[str, PurchaseOrder] = {}
     superseded_documents: list[dict] = []
-    for line, header, ac_number, item_code in to_close:
+    for line, header, ac_number in to_close:
         line.line_status = "closed"
         touched_headers[str(header.id)] = header
-        outcome.updated(
-            code=oc.LINE_CLOSED,
-            identity=_identity(header.po_number, item_code, ""),
-            value=header.po_number,
-            message=f"{header.po_number} superseded by AutoCount PO {ac_number}",
-            entity_type="order_line",
-            entity_id=line.id,
-        )
+        if outcome is not None:
+            outcome.updated(
+                code=oc.LINE_CLOSED,
+                identity=_identity(
+                    header.po_number, item_codes.get(str(line.product_id), ""), ""
+                ),
+                value=header.po_number,
+                message=f"{header.po_number} superseded by AutoCount PO {ac_number}",
+                entity_type="order_line",
+                entity_id=line.id,
+            )
         superseded_documents.append({
             "po_number": header.po_number,
             "superseded_by": ac_number,
@@ -2045,6 +2059,28 @@ def _supersede_crm_raised_pos(db: Session, resolved: _Resolved,
     db.flush()
 
     return len(to_close), superseded_documents
+
+
+def _supersede_crm_raised_pos(db: Session, resolved: _Resolved,
+                              outcome: ImportOutcome,
+                              lines: Optional[list[Line]] = None) -> tuple[int, list[dict]]:
+    """Thin adapter over `supersede_crm_raised_pos` (extracted, S5): builds the
+    `(product_id, supplier_id, po_number)` triples the shared function wants from
+    this upload's own `_Resolved` state.
+
+    `lines`, default `resolved.lines`: `apply` (S5 review round 1, B2/B3) calls this once
+    PER DOCUMENT BATCH now, passing only the lines that batch's documents named, so the
+    supersession runs inside that batch's own transaction, before its commit, rather than
+    once for the whole file after every batch has already committed - a defect here fails
+    only the batch it belongs to, and the caller's counts/documents accumulate across calls.
+    """
+    triples = []
+    for l in (lines if lines is not None else resolved.lines):
+        supplier_id = resolved.party_by_doc.get(l.doc_number)
+        product_id = resolved.product_by_code.get(_norm(l.item_code))
+        if supplier_id and product_id:
+            triples.append((product_id, supplier_id, l.doc_number))
+    return supersede_crm_raised_pos(db, triples, outcome=outcome)
 
 
 #: Documents `apply` commits together (S5). A worker killed mid-run keeps every batch

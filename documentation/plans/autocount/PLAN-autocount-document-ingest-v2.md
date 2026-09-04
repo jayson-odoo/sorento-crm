@@ -72,6 +72,10 @@ The ESB gates every new key behind `sorento_contract_version = 2` on its consume
   `live_statuses`, and audit every other `sales_orders.status = 'open'` reader. Recommendation:
   **(a)**, recorded as a v2 deviation (`partially_delivered` stays a valid stored status for
   the CS side, ingest just never writes it). The ESB then emits `partial` freely.
+  **As built (S5):** option (a). `SALES_ORDER_STATUS_MAP["partial"] = "open"`; the map is no
+  longer injective, so `_canonical_status` returns the FIRST canonical word whose mapping
+  matches the stored value (`open`, declared before `partial`) - a stored `open` row always
+  reads back `open`, never `partial`. `PURCHASE_ORDER_STATUS_MAP` untouched.
 - **D7. Hooks.** Run per batch after commit, best-effort, never on dry run: SO -> plan-exception
   snapshot/generate_batch over touched products; PO -> supersede CRM-raised POs (refactor
   `_supersede_crm_raised_pos` to take `(product_id, supplier_id, po_number)` triples so both

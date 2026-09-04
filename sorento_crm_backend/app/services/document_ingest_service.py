@@ -89,7 +89,7 @@ from app.services.master_ingest_service import (
     _field_errors,
     _value_changed,
 )
-from app.services.scm import order_link_service
+from app.services.scm import order_link_service, plan_exception_service
 from app.services.scm.customer_label import normalize_debtor_code
 from app.services.scm.demand_class import classify_document
 # `DEFAULT_PO_CURRENCY` is the upload's own rule (D1's CNY fill) - imported
@@ -114,7 +114,15 @@ SOURCE_SYSTEM = "autocount"
 # words, and section 7.2 of the plan records them.
 SALES_ORDER_STATUS_MAP = {
     "open": "open",
-    "partial": "partially_delivered",
+    # D6a (S5): a `partial` sales order is stored `open`, not `partially_delivered`.
+    # `qty_delivered` already carries the partial fact per line, and `open` is the
+    # one word `scm.committed_v` and every other SCM reader already admits as
+    # committed demand - mapping `partial` onto it needs zero view changes, where
+    # widening every one of those readers to also admit `partially_delivered`
+    # would (plan D6, option (a) over (b)). This makes the map NOT injective:
+    # `partial` and `open` both stored as `open`. `_canonical_status` below
+    # therefore reads back `open` for either - see its own docstring.
+    "partial": "open",
     "fulfilled": "fulfilled",
     "closed": "closed",
     "cancelled": "cancelled",
@@ -275,6 +283,13 @@ def _canonical_status(spec: DocumentSpec, stored: Optional[str]) -> Optional[str
     the contract vocabulary. Inventing a canonical word for it would tell the ESB
     the document is in a state it is not; handing back what is actually stored
     lets it see a value it does not own and leave the row alone.
+
+    D6a (S5) makes `SALES_ORDER_STATUS_MAP` NOT injective: `open` and `partial`
+    both store `open`. The FIRST canonical word whose mapping matches wins - dict
+    order is declaration order, and `open` is declared before `partial` - so a
+    stored `open` row always reads back `open` (AC-V5-3), never `partial`, which
+    is correct: once written, nothing on the row still says which canonical word
+    produced it, and `open` is the more general of the two.
     """
     if stored is None:
         return None
@@ -308,6 +323,28 @@ class DocumentIngestService(MasterRefResolver):
         # there silently.
         super().__init__(db, integration_id, company_id=company_id)
         self._dry_run = False
+        # D7/S5 (plan section 2.6): what the ROUTE's post-write hooks need, read
+        # off this instance after `ingest()` returns rather than threaded through
+        # `IngestResult` - plain attributes, no new classes, and `MasterIngestService`
+        # (which the route also constructs for masters) needs none of them.
+        # Populated only by a record that actually WROTE (the last lines of `_apply`,
+        # after everything else in it has already succeeded) - a savepoint rollback
+        # is a Python-level no-op here since execution never reaches that point.
+        self.touched_product_ids: set[str] = set()
+        self.so_numbers: set[str] = set()
+        self.written_header_ids: set[str] = set()
+        # (product_id, supplier_id, po_number) triples, purchase_orders only -
+        # what `supersede_crm_raised_pos` (the extracted shared function) wants.
+        self.po_supersede_triples: set[tuple[str, str, str]] = set()
+        # sales_orders only: the BEFORE half of the route's plan-exception hook
+        # (AC-V5-1), keyed by product id. Captured per record, the first time
+        # THIS BATCH touches a product and before anything is written for it
+        # (`_capture_plan_exception_before`) - the same "read the old position
+        # while it is still the one in the database" rule
+        # `outstanding_import_service.apply` follows for its own
+        # `before_positions`, generalised across a multi-record batch by never
+        # overwriting a product already captured.
+        self.plan_exception_before: dict[str, Any] = {}
 
     # --------------------------------------------------------------- the batch
     def ingest(
@@ -443,6 +480,13 @@ class DocumentIngestService(MasterRefResolver):
             self._line_values(spec, line, index, status, warnings)
             for index, line in enumerate(payload.lines)
         ]
+        # D7/S5: the BEFORE snapshot, taken here because this is the last point
+        # before ANY write for this record - `header` is not yet `db.add()`-ed
+        # (a CREATE) and `_sync_lines` has not run - and it must be per-product
+        # rather than per-record, since a busy batch names the same product on
+        # more than one line.
+        if spec.entity_type == "sales_orders":
+            self._capture_plan_exception_before(line_values)
 
         # Only an update overwrites anything, and only a dry run needs to say so.
         diff = (
@@ -465,7 +509,66 @@ class DocumentIngestService(MasterRefResolver):
             source_doc_no=payload.source_doc_no,
             integration_id=self.integration_id,
         )
+        # D7/S5: recorded LAST - everything above has already succeeded by here,
+        # so a record whose ladder or status word failed earlier never reaches
+        # this line and never pollutes the batch-level state the route's hooks
+        # read after `ingest()` returns.
+        self._record_hook_state(spec, header, payload, header_values, line_values)
         return outcome, str(header.id), diff, warnings, line_counts
+
+    def _capture_plan_exception_before(self, line_values: list[dict[str, Any]]) -> None:
+        """The BEFORE half of AC-V5-1, one snapshot per product, first-touch-wins.
+
+        Best-effort like the upload's own equivalent: a defect here must cost
+        the route's plan-exception hook (which simply has less to compare
+        against), never this record - a document ingest is not the operation
+        this diff is FOR.
+        """
+        new_ids = [
+            str(values["product_id"])
+            for values in line_values
+            if values.get("product_id")
+            and str(values["product_id"]) not in self.plan_exception_before
+        ]
+        if not new_ids:
+            return
+        try:
+            self.plan_exception_before.update(
+                plan_exception_service.snapshot(self.db, new_ids)
+            )
+        except Exception:  # noqa: BLE001 - best-effort, see docstring
+            logger.warning(
+                "ingest.plan_exception_before_snapshot_failed product_ids=%s",
+                new_ids,
+                exc_info=True,
+            )
+
+    def _record_hook_state(
+        self,
+        spec: DocumentSpec,
+        header: Any,
+        payload: Any,
+        header_values: dict[str, Any],
+        line_values: list[dict[str, Any]],
+    ) -> None:
+        """What the route's post-write hooks (D7) need, gathered per record."""
+        self.written_header_ids.add(str(header.id))
+        for values in line_values:
+            product_id = values.get("product_id")
+            if product_id:
+                self.touched_product_ids.add(str(product_id))
+
+        if spec.entity_type == "sales_orders":
+            self.so_numbers.add(payload.so_number)
+        elif spec.entity_type == "purchase_orders":
+            supplier_id = header_values.get("supplier_id")
+            if supplier_id:
+                for values in line_values:
+                    product_id = values.get("product_id")
+                    if product_id:
+                        self.po_supersede_triples.add(
+                            (str(product_id), str(supplier_id), payload.po_number)
+                        )
 
     def _write_order_link_claims(self, header: Any, payload: Any) -> None:
         """V4 (plan section 2.5): a PO line dedicating its purchase against

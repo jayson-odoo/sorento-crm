@@ -53,6 +53,9 @@ from app.services.master_ingest_service import (
     UnsupportedIngestEntity,
 )
 from app.services.master_read_service import MasterReadService
+from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+from app.services.scm import plan_exception_service, reorder_run_service
+from app.services.scm.outstanding_import_service import supersede_crm_raised_pos
 from app.services.shipping_order_ingest_service import (
     SHIPPING_ORDER_ENTITIES,
     ShippingOrderIngestService,
@@ -126,6 +129,97 @@ SUPPORTED_ENTITIES = set(ENTITY_SPECS) | set(DOCUMENT_ENTITIES) | set(SHIPPING_O
 # (D8) so the ESB can check compatibility without trial-and-error against this
 # router.
 CONTRACT_VERSION = 2
+
+
+def _run_document_hooks(db: Session, entity: str, service) -> None:
+    """D7/S5 (plan section 2.6): post-write reactions, non-dry only.
+
+    Runs AFTER the batch's own `db.commit()` - every hook here reacts to a
+    write that has already landed, never to one this call itself decides.
+    Each reaction is its OWN try/except -> `logger.warning` and its OWN
+    commit: a failed reaction must cost the operator only that reaction (the
+    next push produces it again), never the ingest that already succeeded,
+    and one reaction's failure must not roll back a sibling reaction that
+    already committed.
+
+    Only `sales_orders` and `purchase_orders` react here - a shipping order's
+    lines are closed-by-absence WITHIN the pushed document only (D7); the
+    book-wide reconciliation the upload does is the ESB's own deletion call,
+    not a hook on this route.
+    """
+    if entity == "sales_orders":
+        _run_plan_exception_hook(db, service)
+    elif entity == "purchase_orders":
+        _run_supersede_and_relink_hooks(db, service)
+
+
+def _run_plan_exception_hook(db: Session, service) -> None:
+    """AC-V5-1: a before/after plan-exception batch over this push's products.
+
+    `before` is `service.plan_exception_before` - captured INSIDE the service,
+    per product, the first time this batch touched it and before anything was
+    written for it (mirrors `outstanding_import_service.apply`'s own
+    `before_positions`, taken while the old position is still the one in the
+    database). `after` is read here, post-commit, over every product the
+    batch actually touched. Called through the MODULE attribute
+    (`plan_exception_service.generate_batch`, not a bound import) so a caller
+    that monkeypatches the module - the ESB's own smoke tests, this slice's
+    own failure-is-logged test - sees the same function this route runs.
+    """
+    if not service.touched_product_ids or not service.so_numbers:
+        return
+    try:
+        after = plan_exception_service.snapshot(db, list(service.touched_product_ids))
+        current = reorder_run_service.today_or_latest_run(db)
+        # A run still being built contradicts nothing yet (mirrors the upload's
+        # own guard) - only a completed plan can be contradicted.
+        if current and current["row"].get("status") != "completed":
+            current = None
+        plan_exception_service.generate_batch(
+            db,
+            run_id=str(current["row"]["id"]) if current else None,
+            before=service.plan_exception_before,
+            after=after,
+            # The ingest's own count of changed documents, the same role
+            # `diff.counts` plays for the upload (AC-D2b's rule, carried
+            # through unchanged rather than recounted from the exceptions).
+            delta_count=len(service.written_header_ids),
+            source_documents=sorted(service.so_numbers),
+            actor=None,
+        )
+        db.commit()
+    except Exception:  # noqa: BLE001 - best-effort, the ingest already succeeded
+        db.rollback()
+        logger.warning("ingest.plan_exception_hook_failed", exc_info=True)
+
+
+def _run_supersede_and_relink_hooks(db: Session, service) -> None:
+    """AC-V5-2: retire CRM-raised POs this push confirms, then relink placements.
+
+    Two hooks, two try/except blocks, two commits - not one wrapping both -
+    so a relink failure can never undo a supersession that already landed,
+    and vice versa.
+    """
+    if service.po_supersede_triples:
+        try:
+            supersede_crm_raised_pos(db, service.po_supersede_triples)
+            db.commit()
+        except Exception:  # noqa: BLE001 - best-effort, the ingest already succeeded
+            db.rollback()
+            logger.warning("ingest.supersede_crm_raised_pos_failed", exc_info=True)
+
+    if service.written_header_ids:
+        try:
+            with db.begin_nested():
+                ProjectOrderInquiryService(db).relink_to_matching_lines(
+                    list(service.written_header_ids),
+                    actor_user_id=None,
+                    trigger="autocount_ingest",
+                )
+            db.commit()
+        except Exception:  # noqa: BLE001 - best-effort, the ingest already succeeded
+            db.rollback()
+            logger.warning("ingest.relink_to_matching_lines_failed", exc_info=True)
 
 
 def _entity(entity: str) -> str:
@@ -219,6 +313,11 @@ async def ingest_masters(
         # Committed once for the batch. Each record already succeeded or rolled
         # back inside its own savepoint, so this persists exactly the good ones.
         db.commit()
+        # D7/S5: post-write hooks, non-dry only (AC-V5-4) - `MasterIngestService`
+        # and `ShippingOrderIngestService` carry none of the attributes these
+        # read, so only a `DocumentIngestService` batch reaches this.
+        if isinstance(service, DocumentIngestService):
+            _run_document_hooks(db, entity, service)
 
     logger.info(
         "ingest.batch entity=%s integration=%s company=%s dry_run=%s "
