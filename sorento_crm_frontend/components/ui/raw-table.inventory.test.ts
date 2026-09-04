@@ -1,0 +1,149 @@
+/**
+ * M5-06 - no product file imports `@/components/ui/table`.
+ *
+ * `DataGrid` is the primitive: sticky header, movable/resizable columns and a
+ * bounded scroller by default (M5-05), none of which a raw `<Table>` gets.
+ * This walk is what keeps a 27th (28th, ...) raw table from creeping back in
+ * while the 27 counted here migrate one module per commit (M5 run 3).
+ *
+ * Source scan, not a render test, for the same reason
+ * `data-grid-scroller.inventory.test.ts` is: what it asserts is a property of
+ * the whole tree, and a render test can only speak for the one page it
+ * mounted.
+ */
+import fs from 'node:fs';
+import path from 'node:path';
+import { describe, it, expect } from 'vitest';
+
+/** Roots scanned: everything a product page or component can live in. */
+const ROOTS = ['app', 'components'];
+
+/**
+ * Metronic template directories - the demo shell this app was built on top
+ * of, never wired to a real feature or a permission - excluded from the walk
+ * entirely rather than allowlisted file-by-file, so the allowlist stays a
+ * list of genuine product debt.
+ *
+ * `app/(protected)/dark-sidebar`, `app/(protected)/components`,
+ * `app/(protected)/store-admin`, `app/(protected)/store-client`,
+ * `app/(protected)/auth`, `app/(protected)/i18n-test` and
+ * `app/(protected)/ideas` are the same kind of template page, but none of
+ * them import `@/components/ui/table` today, so excluding them changes
+ * nothing observable - they are left OUT of this list (and therefore IN the
+ * walk) so a future raw-table import under one of them still fails here.
+ */
+const EXCLUDED_DIRS = [
+  'app/(protected)/public-profile',
+  'app/(protected)/account',
+  'app/(protected)/network',
+];
+
+/**
+ * Every current importer of `@/components/ui/table` outside `components/ui`
+ * itself, each with a one-line reason. For THIS run every product offender's
+ * reason is "pending migration, M5 run 3" (run 3 drains them one module per
+ * commit) unless it is one of the three the PR calls out for the captain's
+ * ruling on whether it is migratable at all.
+ */
+const ALLOWLIST: Record<string, string> = {
+  // Public portal pages with no DataGrid shell around them (no CardHeader,
+  // no toolbar, no pager) - candidate for "not migratable", captain's ruling.
+  'app/(auth)/approval/page.tsx': 'public portal page with no DataGrid shell around it',
+  'app/(auth)/view/request/page.tsx': 'public portal page with no DataGrid shell around it',
+
+  'app/(protected)/complaint-management/complaints/components/ComplaintFulfilmentOrdersSection.tsx':
+    'pending migration, M5 run 3',
+  'app/(protected)/complaint-management/complaints/components/ComplaintManualAttachmentsSection.tsx':
+    'pending migration, M5 run 3',
+  'app/(protected)/master-data-management/products/[id]/components/ProductPromotionsTab.tsx':
+    'pending migration, M5 run 3',
+  'app/(protected)/master-data-management/products/[id]/components/ProductPurchaseHistoryTab.tsx':
+    'pending migration, M5 run 3',
+  'app/(protected)/master-data-management/products/[id]/components/ProductStockTab.tsx':
+    'pending migration, M5 run 3',
+  'app/(protected)/order-management/orders/components/OrderLinesCard.tsx':
+    'pending migration, M5 run 3 (detail-page line table; inline editing may prove a real blocker)',
+  'app/(protected)/procurement-management/grn/components/GRNDetail.tsx':
+    'pending migration, M5 run 3',
+  'app/(protected)/procurement-management/packing-lists/components/SourceProformaInvoicesCard.tsx':
+    'pending migration, M5 run 3',
+  'app/(protected)/procurement-management/purchase-requests/components/PurchaseRequestAttachmentsSection.tsx':
+    'pending migration, M5 run 3',
+  'app/(protected)/procurement-management/purchase-requests/components/PurchaseRequestDetail.tsx':
+    'pending migration, M5 run 3',
+  'app/(protected)/procurement-management/purchase-requests/components/PurchaseRequestDocumentEditCard.tsx':
+    'pending migration, M5 run 3 (detail-page line table; inline editing may prove a real blocker)',
+  // Not in the plan's measured list (audit ran on origin/main before this
+  // file's last touch) - same module as the two rows above it, same run 3.
+  'app/(protected)/procurement-management/purchase-requests/components/PurchaseRequestForm.tsx':
+    'pending migration, M5 run 3 (found by this test, not in the M5 plan measurement - same module)',
+  'app/(protected)/procurement-management/stock-inquiries/components/StockInquiryAttachmentsSection.tsx':
+    'pending migration, M5 run 3',
+  'app/(protected)/resource-management/attachments/components/AttachmentDetail.tsx':
+    'pending migration, M5 run 3',
+  'app/(protected)/resource-management/attachments/components/AttachmentDetailModal.tsx':
+    'pending migration, M5 run 3',
+  'app/(protected)/sla-management/form-sla-config/components/FormSLAConfigList.tsx':
+    'pending migration, M5 run 3',
+  'app/(protected)/sla-management/sla-policies/components/SLAPolicyTiersTable.tsx':
+    'pending migration, M5 run 3',
+  'app/(protected)/system-management/app-store/components/ModuleBundlesAdmin.tsx':
+    'pending migration, M5 run 3',
+  'app/(protected)/system-management/email-event-configs/components/EmailEventConfigsTable.tsx':
+    'pending migration, M5 run 3',
+  'app/(protected)/system-management/health/components/HealthDashboard.tsx':
+    'pending migration, M5 run 3',
+  'app/(protected)/system-management/mcp-tools/components/McpToolsList.tsx':
+    'pending migration, M5 run 3',
+  'app/(protected)/ticket-management/tickets/components/TicketsList.tsx':
+    'pending migration, M5 run 3',
+  'app/(protected)/user-management/settings/notifications/page.tsx':
+    'pending migration, M5 run 3',
+  'app/(protected)/user-management/teams/[id]/components/team-members-list.tsx':
+    'pending migration, M5 run 3',
+  // Not a list: a pivot report reshapes rows into a matrix (rows x measures),
+  // which is not what a DataGrid's one-row-per-record model expresses.
+  // Candidate for "not migratable", captain's ruling.
+  'components/reports/ReportPivotTable.tsx': 'pivot report, not a list - matrix shape, not one row per record',
+};
+
+/** Every `.tsx` under the scanned roots, tests and `components/ui` excluded. */
+function sourceFiles(): string[] {
+  const out: string[] = [];
+  const walk = (dir: string) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      const rel = full.split(path.sep).join('/');
+      if (entry.isDirectory()) {
+        if (entry.name === 'node_modules' || entry.name === '.next') continue;
+        if (rel === 'components/ui') continue;
+        if (EXCLUDED_DIRS.includes(rel)) continue;
+        walk(full);
+      } else if (entry.name.endsWith('.tsx') && !/\.(test|spec)\./.test(entry.name)) {
+        out.push(rel);
+      }
+    }
+  };
+  for (const root of ROOTS) walk(root);
+  return out;
+}
+
+const TABLE_IMPORT = /from ['"]@\/components\/ui\/table['"]/;
+
+describe('No product file imports @/components/ui/table (M5-06)', () => {
+  it('every importer outside components/ui is allowlisted with a reason', () => {
+    const offenders = sourceFiles().filter((file) => TABLE_IMPORT.test(fs.readFileSync(file, 'utf8')));
+    const unlisted = offenders.filter((file) => !(file in ALLOWLIST));
+
+    expect(unlisted).toEqual([]);
+  });
+
+  it('every allowlist entry still exists and still imports the table', () => {
+    const stale = Object.keys(ALLOWLIST).filter((file) => {
+      if (!fs.existsSync(file)) return true;
+      return !TABLE_IMPORT.test(fs.readFileSync(file, 'utf8'));
+    });
+
+    expect(stale).toEqual([]);
+  });
+});
