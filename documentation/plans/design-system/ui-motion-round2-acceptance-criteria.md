@@ -231,18 +231,36 @@ Baseline measured on `origin/main` e1adad4d2, 2 Sep 2026.
   the column header stays visible when scrolled to row 40. `columnsResizable` and
   `columnsMovable` default true; a column can be dragged to a new position and resized on
   Products without any per-list prop.
+  **Shipped (M5 run 1, `[vitest]` done, `[browser]` open):**
+  `components/ui/data-grid.defaults.test.tsx`; `DataGridScroller`'s default max-height comes
+  from a new `--grid-max-h` token (`css/config.reui.css`), overridable per list with
+  `tableLayout.scrollerMaxHeight`. The `[browser]` sweep (Products/Orders/Stock at 1280 and
+  375, drag-to-reorder + resize on Products) is still open - the next browser-verification pass
+  covers it.
 - **M5-06** `[UX] [vitest]` No product file imports `@/components/ui/table` (baseline 24). Any
   file that cannot migrate sits on an allowlist in the test with a one-line reason, and the PR
   lists them.
+  **Shipped (M5 run 1, guardrail only - no migration yet, that is run 3):**
+  `components/ui/raw-table.inventory.test.ts`, proved red against an empty allowlist (27
+  offenders - the plan's 26 plus `PurchaseRequestForm.tsx`, found by this scan). All 27 land on
+  the allowlist as `pending migration, M5 run 3`; three are flagged for the captain's ruling on
+  whether they can migrate at all (`app/(auth)/approval/page.tsx`,
+  `app/(auth)/view/request/page.tsx`, `components/reports/ReportPivotTable.tsx`).
 - **M5-07** `[UX] [vitest] [browser]` **Back to list restores the row, absolute rule.** A row
   click appends `from=<row id>` to the detail href; Back, the post-delete push and Edit all
   carry it; on list mount the row with that id is scrolled into view (`block: 'center'`) and
   highlighted until the next pointer event. Browser: open row 38 on Products page 2, press Back,
   row 38 is centred and highlighted; the same after stepping prev/next three times on the
   detail pager.
+  **Shipped (M5 run 1, `[vitest]` done, `[browser]` open):**
+  `components/ui/data-grid-table.listState.test.tsx`, `lib/listNavQuery.test.ts` (reserved-key
+  case), `hooks/useListPager.test.ts` (`from=<landing id>` case). The `[browser]` row-38 walk is
+  still open.
 - **M5-08** `[review]` `DESIGN-LANGUAGE.md` sections 4 and 7 and
   `documentation/reference/PR-CHECKLIST.md` state both rules; a new list without them is a
   checklist failure.
+  **Shipped (M5 run 1):** `DESIGN-LANGUAGE.md` section 4 (`DataGrid` roster row) and section 7
+  (bounded scroller + the `from=` rule); `PR-CHECKLIST.md` gains both under Apple Alignment.
 
 ## M6 Composer, mobile, toasts, focus
 

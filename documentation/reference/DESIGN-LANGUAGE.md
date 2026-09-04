@@ -143,7 +143,7 @@ arrives - see the file's own "Materials" comment for the precedent.
 | --- | --- | --- |
 | `PageHeader` | `components/common/PageHeader.tsx` | Every page title + breadcrumb; crumbs derive from `MENU_SIDEBAR` unless overridden |
 | `DetailActions` + `ListPager` | `components/common/DetailActions.tsx`, `components/common/ListPager.tsx` | Record card: pager, gear LEFT of the single primary button, Delete last in the gear |
-| `DataGrid` / `DataGridTable` | `components/ui/data-grid.tsx`, `components/ui/data-grid-table.tsx` | EVERY tabular list; `tableLayout: { width: 'fixed', columnsResizable: true }`, explicit `size`, `truncate` + `title`; a deliberately pinned column keeps its pinned styles on a phone, nothing pins automatically |
+| `DataGrid` / `DataGridTable` | `components/ui/data-grid.tsx`, `components/ui/data-grid-table.tsx` | EVERY tabular list; `tableLayout: { width: 'fixed', columnsResizable: true }`, explicit `size`, `truncate` + `title`; a deliberately pinned column keeps its pinned styles on a phone, nothing pins automatically. **Absolute (user ruling, M5-05):** every list is a `DataGrid`, never a raw `<Table>` (`components/ui/table`) - `headerSticky`, `columnsResizable` and `columnsMovable` default true, and the grid's own scroller is bounded (`--grid-max-h`, `tableLayout.scrollerMaxHeight` to override per list) so the sticky header has something to stick inside. A list that opts a default off names why at the call site; a raw `<Table>` outside `components/ui` needs a reason in `components/ui/raw-table.inventory.test.ts`'s allowlist, and the PR states it. |
 | `Badge` pill | `components/ui/badge.tsx` | Status = rounded tinted pill with a dot (`status` prop, resolves via `getStatusBadgeVariant`) |
 | `Tabs` with `TabsList variant="line"` | `components/ui/tabs.tsx` | The default everywhere, dialogs/lightboxes included (S9, PLAN-scm-loading-plan-feedback-2sep.md section 3.9); pills (`variant="default"`) are reserved for a view TOGGLE that is not navigation - a Table/Schedule switch, never a set of tabbed panels |
 | `Dialog` / `Sheet` / `AlertDialog` | `components/ui/dialog.tsx`, `components/ui/sheet.tsx`, `components/ui/alert-dialog.tsx` | Lightbox surfaces, `modal ?? true`, shared `OVERLAY_CLASS` / `OVERLAY_CLASS_STATIC` from `components/ui/primitive-classes.ts` |
@@ -192,9 +192,18 @@ coarse-pointer `::after` hit area supplies the 44px target invisibly.
 ## 7. Responsive
 
 - Usable and non-clipped at 375px AND 1280px.
-- DataGrid scrolls sideways inside its own `overflow-x` container, `min-w-0` on the scroller.
+- DataGrid scrolls sideways inside its own `overflow-x` container, `min-w-0` on the scroller;
+  that same container (`data-grid-scroller`) is also the ONE vertical scrollport (M5-05),
+  bounded by `--grid-max-h` by default, so the sticky header is observable at both 375px and
+  1280px scrolled to a mid-page row.
 - Tab strips scroll, never wrap.
 - Toolbars use `flex-wrap`.
+- **Absolute (user ruling, M5-07): Back to list restores the exact row.** A row click appends
+  `from=<row id>` to its detail href (`appendListState`, `data-grid-table.tsx`); Back, the
+  post-delete push and the Edit button all carry it for free, since `useHrefWithListState`
+  (`components/common/BackToList.tsx`) already forwards the whole search string unchanged. On
+  the list's next mount, the row named by `from` scrolls into view (`block: 'center'`) and
+  highlights until the reader's next pointer event.
 
 ## 8. Where the external skills plug in
 

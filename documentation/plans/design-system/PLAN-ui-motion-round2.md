@@ -10,7 +10,12 @@
 (three read-only sweeps of `origin/main` e1adad4d2 with `review-animations`,
 `find-animation-opportunities`, `emil-design-eng`, `apple-design`); user
 approved all seven slices on the lavish review page 2 Sep 2026, order M4, M1+M2, M3, M5, M6, M7.
-Issues: M4 #512, M1 #513, M2 #514, M3 #515, M5 #516, M6 #517, M7 #518. M1-M3 and M5-M7 unbuilt.
+Issues: M4 #512, M1 #513, M2 #514, M3 #515, M5 #516, M6 #517, M7 #518. M1-M3 and M6-M7 unbuilt.
+M5 run 1 of 3 done (`feat/motion2-M5-shells-and-list-rules`): M5-05 (sticky header, movable
+columns, bounded scroller as `DataGrid` defaults), M5-06 (raw-table guardrail, red-proved with
+27 offenders, all allowlisted - no migration yet, that is run 3), M5-07 (Back to list restores
+the row, `from=`), M5-08 (docs). M5-01..M5-04 (loading/error/not-found shells) and the run-3
+raw-table migration are still open.
 **UAC:** `documentation/plans/design-system/ui-motion-round2-acceptance-criteria.md`
 **Audit reports:** session scratchpad `audit-A-existing-motion.md` (36 rows, `/review-animations`
 verdict Block, narrow), `audit-B-opportunities.md` (6 survivors, 10 rejects),
