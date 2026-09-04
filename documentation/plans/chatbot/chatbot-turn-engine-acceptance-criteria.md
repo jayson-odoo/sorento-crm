@@ -182,9 +182,14 @@ clone or live. Each AC traces to a journey step (A1 to D1).
   `MODULE_KEY = "chatbot"`, `MODULE_MANIFEST` carries the `chatbot` entry with its dependencies,
   and `app_modules_catalog` is seeded with it on first run. (C1)
 - AC-002 `[BE][T]` Given the package `app/services/chatbot/`, when any module outside
-  `app/api/v1/external/chat.py`, `app/tasks/chat_turns.py`, `app/modules/chatbot/` or
-  `tests/chatbot/` imports from it, then `tests/chatbot/test_import_boundary.py` fails naming the
-  importer. (C1)
+  `app/api/v1/external/chat.py`, `app/api/v1/system/chatbot.py`, `app/tasks/chat_turns.py`,
+  `app/modules/chatbot/` or `tests/chatbot/` imports from it, then
+  `tests/chatbot/test_import_boundary.py` fails naming the importer. (C1)
+
+  `app/api/v1/system/chatbot.py` was added to the list at S2b (5 Sep 2026): AC-257 names it
+  as where the trace endpoint lives, and its Retry calls the module's own retry seam. It is
+  a chatbot-module surface mounted in a shared router, not core reaching in - the asymmetry
+  the rule protects (core never imports the package) is unchanged.
 - AC-003 `[BE]` Given the `chatbot` migration, when applied, then schema `chatbot` exists and
   table `chatbot.turns` exists with `id, contact_respond_id, envelope (jsonb), status
   (queued|processing|delegated|done|failed), stage, branch_kind, error, attempt (int, default
@@ -375,8 +380,13 @@ endpoint over `chatbot.turns.trace`. Lands after S2 so the head and tail both wr
   destructive tone. (D1)
 - AC-252 `[FE]` Given the Turn line, when expanded, then a vertical stage timeline renders:
   Received, Understood, Access, Routed, Looked up, Replied, Remembered, Sent; each row has a
-  status icon, `summary` and `why` sentences, and duration; a stage that did not run for that
-  lane is omitted, not greyed. (D2)
+  status icon, `summary` and `why` sentences, and duration.
+
+  A stage a lane never runs (a clarify ask looks nothing up) is OMITTED, never greyed. A
+  stage a FAILURE stopped is different and collapses into ONE "not reached" row naming them
+  together, per the approved mockup (review page section 10): on a turn that failed at stage
+  two, "Routed, Looked up, Replied and Remembered did not run, memory unchanged" is the
+  operator's next question, and eight greyed placeholders would bury it. (D2)
 - AC-253 `[FE]` Given a failed stage, when rendered, then the row shows the reason sentence, a
   Retry button (enabled when the turn is `failed`; the only retry path, R4), and a "Technical
   details" collapsible using the existing `SearchableCode` viewer over `raw`. (D3)
@@ -384,13 +394,23 @@ endpoint over `chatbot.turns.trace`. Lands after S2 so the head and tail both wr
   memory keys in words (labels, not key names, with the raw key in a tooltip). (D4)
 - AC-255 `[FE]` Given the Chat History list, when the filter "Failed turns only" is on, then only
   contacts with a `failed` turn in the range are listed, and the row shows the last failed stage.
-  (D1)
+  Backed by `GET /api/v1/system/chatbot/turns/failed-contacts?from=&to=` ->
+  `{items: [{contact_respond_id, last_failed_stage, last_failed_at, count}]}`: the question is
+  "which contacts are worth opening", which is an aggregate over tens of rows, not a page of
+  every turn grouped in the browser. (D1)
 - AC-256 `[FE]` Usable and non-clipped at 375px and 1280px; the timeline stacks, the drawer
   scrolls, no horizontal page scroll. (D2)
 - AC-257 `[BE]` Given `GET /api/v1/system/chatbot/turns?contact_respond_id=&from=&to=&status=`,
-  when called with `system.chat_history.view`, then it returns the turn rows with `trace`,
-  paged, newest first; `POST /api/v1/system/chatbot/turns/{id}/retry` requeues a `failed` turn
-  (403 without `system.chat_history.manage`, 409 unless `failed`). (D1, D3)
+  when called with `system.chat_history.view`, then it returns the turn rows with `trace` and
+  `response`, newest first, paged by `limit` (default 50, max 200) and an opaque keyset
+  `cursor` echoed back as `next_cursor` (null on the last page); an unknown `status` is 422,
+  not an empty page. `POST /api/v1/system/chatbot/turns/{id}/retry` re-injects a `failed` turn
+  (403 without `system.chat_history.manage`; 409 unless `failed`; 409 `retry_unavailable` when
+  no ingress is configured, having sent nothing; 409 when `chatbot.turns.retry_requested_at` is
+  already set, so a double click cannot answer the customer twice; 502 when the ingress refuses,
+  leaving the row unchanged). On success the row STAYS `failed` and gains
+  `retry_requested_at`; the response is `{turn_id, attempt}` where `attempt` is what the
+  re-injected turn will carry. (D1, D3)
 - AC-258 `[T]` vitest for the timeline (happy, failed, delegated, retry disabled) and the
   Kept/New/Cleared derivation; pytest for the list filters and the retry guards. (D1 to D4)
 - AC-259 `[E2E]` agent-browser: from `/`, System > Chat History, open a thread, expand a turn,
@@ -537,8 +557,14 @@ contact inside the synchronous request. Different contacts run in parallel.
   `failed` with `stage` and `error`, an `integration_log` row is written, the response still
   carries the error reply as a `send_message` action, and NO automatic retry happens (R4). (A6)
 - AC-705 `[BE]` Given a `failed` turn, when Retry is pressed on the trace screen (AC-257), then
-  the CRM re-posts the original envelope to the n8n ingress webhook with `attempt + 1`, so the
-  normal path (ordering, engine, caller sends) runs; the CRM never sends itself. (D3, R4)
+  the CRM re-posts the ORIGINAL respond.io webhook body (`envelope.message` as stored on the
+  row) to the n8n inject webhook until S7, and to the thin-spine webhook after, so the normal
+  path (ordering, engine, caller sends) runs; the CRM never sends itself. The re-injected
+  message keeps its `message_id`, so the engine treats a `failed` row carrying
+  `retry_requested_at` as re-runnable rather than as a D15 duplicate: it inserts a NEW row with
+  `attempt + 1` and `ingress = retry` (the unique key is
+  `(contact_respond_id, message_id, attempt)`, migration 474) and clears the marker. Any other
+  existing row is still a duplicate. (D3, R4)
 - AC-706 `[N8N]` Given the n8n side, when S7 is promoted, then the ingress is webhook >
   `sub-media-intake` > `POST /chat/turn` > a Switch on `action.kind` feeding the existing
   `sub-sendmsg` / `send-attachments` / assign / comment / update-contact nodes; the

@@ -244,9 +244,22 @@ def _select_turn(db: Session, *, contact_respond_id: str, message_id: str | None
             ChatbotTurn.contact_respond_id == contact_respond_id,
             ChatbotTurn.message_id == message_id,
         )
-        .order_by(ChatbotTurn.created_at.asc())
+        # NEWEST first: with a retry there can be several rows for one message, and the
+        # one that matters is the last one - the earlier attempts are settled history.
+        .order_by(ChatbotTurn.created_at.desc(), ChatbotTurn.attempt.desc())
         .first()
     )
+
+
+def _awaiting_retry(row) -> bool:
+    """Is this row a FAILED turn an operator asked to re-run (S2b)?
+
+    D15 says a respond message already turned into a turn is a duplicate, and a retry
+    re-posts that same message - same `message_id` - so without this it would come back
+    as `duplicate: true` and Retry would be a no-op that reported success. The marker is
+    what tells the two apart: an operator asked for this one.
+    """
+    return row is not None and row.status == "failed" and row.retry_requested_at is not None
 
 
 def _existing_turn(db: Session, *, contact_respond_id: str, message_id: str | None):
@@ -260,21 +273,37 @@ def _existing_turn(db: Session, *, contact_respond_id: str, message_id: str | No
     return _select_turn(db, contact_respond_id=contact_respond_id, message_id=message_id)
 
 
-def _insert_turn(db: Session, *, envelope: Envelope, contact_respond_id: str) -> ChatbotTurn:
+def _insert_turn(
+    db: Session,
+    *,
+    envelope: Envelope,
+    contact_respond_id: str,
+    retrying: ChatbotTurn | None = None,
+) -> ChatbotTurn:
+    """The turn row. `retrying` is the failed row an operator asked to re-run (S2b).
+
+    A retry is a NEW turn, not an edit of the old one: same message, next attempt, ingress
+    `retry`. The old row keeps its trace and its failure - that is the record the operator
+    was reading - and only loses its retry marker, so a second failure can be retried too.
+    """
     row = ChatbotTurn(
         contact_respond_id=contact_respond_id,
         message_id=_message_id(envelope),
-        ingress=envelope.ingress,
+        ingress="retry" if retrying is not None else envelope.ingress,
         envelope=envelope.model_dump(mode="json"),
         is_test=envelope.dry_run,
         status="processing",
         stage="received",
-        attempt=1,
+        attempt=(retrying.attempt + 1) if retrying is not None else 1,
         trace=[],
         shadow_of=getattr(envelope, "shadow_of", None),
         started_at=_now(),
     )
     db.add(row)
+    if retrying is not None:
+        # Consumed. Leaving it set would make the NEXT delivery of this message look like
+        # another requested re-run rather than the duplicate it is.
+        retrying.retry_requested_at = None
     db.commit()
     db.refresh(row)
     return row
@@ -379,13 +408,19 @@ def run_turn(envelope: Envelope, *, session_factory: SessionFactory) -> TurnResu
         existing = _existing_turn(
             db, contact_respond_id=contact_respond_id, message_id=message_id
         )
-        if existing is not None:
+        retrying = existing if _awaiting_retry(existing) else None
+        if existing is not None and retrying is None:
             # D15: the two injectors delivered the same respond message. No second turn
             # runs, no second LLM call, and the caller's Switch on `duplicate` sends
             # nothing.
             return _duplicate_result(existing)
         try:
-            row = _insert_turn(db, envelope=envelope, contact_respond_id=contact_respond_id)
+            row = _insert_turn(
+                db,
+                envelope=envelope,
+                contact_respond_id=contact_respond_id,
+                retrying=retrying,
+            )
         except IntegrityError:
             # The SELECT above is a TOCTOU window, not a lock: a webhook delivery racing a
             # poller re-delivery can both miss and both insert. The unique index is the
@@ -394,7 +429,10 @@ def run_turn(envelope: Envelope, *, session_factory: SessionFactory) -> TurnResu
             winner = _select_turn(
                 db, contact_respond_id=contact_respond_id, message_id=message_id
             )
-            if winner is None:  # pragma: no cover - some OTHER constraint failed
+            if winner is None or _awaiting_retry(winner):
+                # Either some OTHER constraint failed, or two retries of one message
+                # raced - neither is a duplicate, and guessing would answer the customer
+                # from a turn that never ran.
                 raise
             return _duplicate_result(winner)
         turn_id = str(row.id)

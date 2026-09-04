@@ -17,8 +17,18 @@ from pathlib import Path
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 # The only files allowed to reach into the package.
+#
+# `app/api/v1/system/chatbot.py` joined at S2b, and the UAC's AC-002 was amended in the
+# same change rather than this list being widened quietly. The reason it belongs: the turn
+# trace screen is the chatbot module's own read surface, and its Retry calls the module's
+# retry seam (`dispatch.reinject_envelope`). AC-257 names this exact path as where that
+# endpoint lives, so the doorway is in the contract; AC-002 simply predated it.
+#
+# The asymmetry that matters is unchanged: core still never imports the package. Every
+# entry here is a chatbot-module surface that happens to be mounted in a shared router.
 ALLOWED = {
     "app/api/v1/external/chat.py",
+    "app/api/v1/system/chatbot.py",
     "app/tasks/chat_turns.py",
 }
 ALLOWED_PREFIXES = (

@@ -75,6 +75,18 @@ class Settings(BaseSettings):
     # call is skipped with a warning and the resolve is unaffected.
     n8n_close_convo_webhook_url: str | None = None
 
+    # S2b Retry (AC-705). The trace screen's Retry re-posts the ORIGINAL respond.io
+    # webhook body to n8n's inject webhook, so the turn re-enters at the SAME ingress a
+    # live message uses and gets the same ordering and the same lanes. The CRM never
+    # sends to the customer itself (D9).
+    #
+    # UNSET LOCALLY ON PURPOSE: with no URL the endpoint answers 409 `retry_unavailable`
+    # and makes no call. A dev machine that silently re-injected into production n8n
+    # would answer a real customer from a developer's click.
+    chatbot_retry_ingress_url: str | None = None  # CHATBOT_RETRY_INGRESS_URL
+    # Sent as `X-Chatbot-Retry-Key`. n8n checks it on its side (owner item).
+    chatbot_retry_ingress_key: str | None = None  # CHATBOT_RETRY_INGRESS_KEY
+
     # External API Access
     external_api_key: str | None = None  # API key for external parties to access endpoints
     # When set, X-API-Key auth resolves RBAC as this users row (required for MCP/n8n read tools).

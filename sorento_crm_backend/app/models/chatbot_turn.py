@@ -50,7 +50,16 @@ class ChatbotTurn(Base):
         # D15: idempotency per respond message. A NULL message_id (a console turn with no
         # respond message behind it) does not participate, which is Postgres's own
         # NULL-distinct behaviour and exactly what is wanted.
-        UniqueConstraint("contact_respond_id", "message_id", name="uq_chatbot_turns_contact_message"),
+        # Per ATTEMPT, not per message. D15's dedup is "this respond message was already
+        # turned into a turn"; a manual RETRY of that message is deliberately a second
+        # turn, attempt 2. On a two-column key the retried envelope collided with the row
+        # it was retrying, so Retry was a no-op that reported success.
+        UniqueConstraint(
+            "contact_respond_id",
+            "message_id",
+            "attempt",
+            name="uq_chatbot_turns_contact_message_attempt",
+        ),
         {"schema": "chatbot"},
     )
 
@@ -92,6 +101,14 @@ class ChatbotTurn(Base):
     # Gate 4 (shadow mode): the n8n turn id this row shadows, when the live spine also
     # called us with is_test and kept its own reply.
     shadow_of = Column(String(128), nullable=True)
+
+    # Set when an operator presses Retry (S2b) and the envelope has been re-posted to the
+    # n8n inject webhook. The row STAYS `failed` - it is a record of what happened, and
+    # the retry is a new turn, not an edit of this one. Two things read it: the second
+    # click (409, so one double-click does not answer the customer twice), and the engine,
+    # which treats `failed` + `retry_requested_at` as "re-runnable" rather than as a
+    # duplicate, then clears it.
+    retry_requested_at = Column(DateTime(timezone=True), nullable=True)
 
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     started_at = Column(DateTime(timezone=True), nullable=True)

@@ -357,6 +357,7 @@ PERMISSION_REGISTRY.extend([
     # outbox view, and export is its own slug because a CSV leaves the system entirely.
     {"slug": "system.chat_history.view", "name": "View Chat History", "description": "View stored WhatsApp/chat messages and round-trip latency. Message content is customer PII."},
     {"slug": "system.chat_history.export", "name": "Export Chat History", "description": "Export chat messages to CSV via My Downloads."},
+    {"slug": "system.chat_history.manage", "name": "Manage chatbot turns", "description": "Retry a failed chatbot turn from the turn trace, which re-posts the customer's original message at the chatbot ingress."},
     {"slug": "system.email_event_configs.view", "name": "View Email Event Configs", "description": "View per-event email kill switches and rate overrides."},
     {"slug": "system.email_event_configs.manage", "name": "Manage Email Event Configs", "description": "Toggle per-event email kill switches and adjust rate overrides."},
 ])

@@ -112,8 +112,10 @@ tests/chatbot/                   # replay + unit + endpoint + inbox + boundary
 tests/fixtures/chatbot/          # vendored golden subset (< 3 MB)
 ```
 
-Boundary rule (guardrail test): nothing outside `app/api/v1/external/chat.py`,
-`app/tasks/chat_turns.py`, `app/modules/chatbot/`, `tests/chatbot/` imports
+Boundary rule (guardrail test): nothing outside the module's own ROUTERS
+(`app/api/v1/external/chat.py`, the n8n-facing turn endpoint, and
+`app/api/v1/system/chatbot.py`, the admin turn-trace endpoint added at S2b),
+`app/tasks/chat_turns.py`, `app/modules/chatbot/` or `tests/chatbot/` imports
 `app.services.chatbot`. The package imports core services freely. That is the whole
 "liftable later" story: the day a measured trigger fires, the package moves behind an HTTP
 boundary with the same contracts. **Lift trigger (named, not built):** p95 turn latency above
