@@ -51,16 +51,42 @@ def js_string(value: Any) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, float):
-        if math.isnan(value):
-            return "NaN"
-        if value.is_integer():
-            return str(int(value))
-        return repr(value)
+        return _float_to_js_string(value)
     if isinstance(value, (int, str)):
         return str(value)
     if isinstance(value, list):
         return ",".join("" if v is None else js_string(v) for v in value)
     return "[object Object]"
+
+
+def _float_to_js_string(value: float) -> str:
+    """`String(n)` for a float, including WHERE JavaScript switches to exponent form.
+
+    Python and JavaScript pick the same DIGITS (both emit the shortest round-tripping
+    representation) and disagree about the NOTATION: Python goes exponential below 1e-4 and
+    at or above 1e16, JavaScript only below 1e-6 and at or above 1e21. So
+    `String(-8.505582809448242e-05)` is `-0.00008505582809448242` in n8n and
+    `-8.505582809448242e-05` in Python - measured on the `sub-get-rag` captures, where one
+    embedding component in that range made the whole 29 KB pgvector literal differ.
+    """
+    if math.isnan(value):
+        return "NaN"
+    if math.isinf(value):
+        return "Infinity" if value > 0 else "-Infinity"
+    if value.is_integer() and abs(value) < 1e21:
+        return str(int(value))
+    shortest = repr(value)
+    if "e" not in shortest and "E" not in shortest:
+        return shortest
+    from decimal import Decimal
+
+    decimal_value = Decimal(shortest)
+    if -7 < decimal_value.adjusted() < 21:
+        return format(decimal_value, "f")
+    # JS's own exponent form: a signed exponent with no zero padding (`1e+21`, `1e-7`).
+    mantissa, _, exponent = shortest.partition("e")
+    exponent_value = int(exponent)
+    return f"{mantissa}e{'+' if exponent_value >= 0 else '-'}{abs(exponent_value)}"
 
 
 # ASCII digits, like JavaScript's own numeric grammar. Python's `\d` matches every
