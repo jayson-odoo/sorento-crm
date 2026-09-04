@@ -14,10 +14,20 @@ Three changes, one migration, because the retry path needs all three to work:
    `duplicate: true` instead of running, which made Retry a no-op that looked like a
    success. The engine's duplicate query gains `attempt` to match.
 
-3. `system.chat_history.manage`, registered and granted to admin. `.view` reads the
-   trace; `.manage` re-injects a WhatsApp turn at the customer, which is a different
-   thing to hand out, so it is a different slug. A slug with no grant path is a
-   permanently 403ing feature (migration 298's lesson), hence the grant here.
+3. `system.chat_history.manage`, registered and granted to **admin ONLY**. `.view` reads
+   the trace; `.manage` re-injects a WhatsApp turn at a real customer, which is a
+   different thing to hand out, so it is a different slug and a different grant.
+
+   **Not derived from `.view` holders.** That was the first shape of this migration and it
+   was wrong: measured on the prod-copy database, `.view` is held by `admin`,
+   `integration_n8n` and `integration_foundryx_esb`, so deriving would have handed the
+   Retry button to two integration API keys - principals that exist to READ, and whose
+   keys travel in n8n workflows. Widening beyond admin is a deliberate act in the roles
+   UI, not a side effect of a migration (migration 292's precedent).
+
+4. An index on `(status, created_at)`. `GET /turns/failed-contacts` filters on exactly that
+   pair over a table that only grows, and it is the one query on this table that does not
+   start from a contact id.
 
 Revision ID: 474_chatbot_turn_retry
 Revises: 472_chatbot_turns
@@ -44,6 +54,15 @@ def upgrade():
     op.add_column(
         "turns",
         sa.Column("retry_requested_at", sa.DateTime(timezone=True), nullable=True),
+        schema="chatbot",
+    )
+
+    # `GET /turns/failed-contacts` filters `status = 'failed'` over a created_at window and
+    # is the only query here that does not start from a contact id.
+    op.create_index(
+        "ix_chatbot_turns_status_created",
+        "turns",
+        ["status", "created_at"],
         schema="chatbot",
     )
 
@@ -75,23 +94,16 @@ def _register_and_grant() -> None:
             raise RuntimeError(f"474: permission failed to register: {_MANAGE}")
         permission_id = row[0]
 
-        # Every role that already holds `.view` is looking at this screen; `.manage` is
-        # the button on it. Derived rather than typed out, so an install with a different
-        # role set gets its own right answer instead of this repo's production data.
+        # ADMIN ONLY. See the module docstring: `.view` is held by two integration roles
+        # on the production data, and this slug re-injects a message at a real customer.
         role_ids = [
             r[0]
             for r in session.execute(
-                sa.text(
-                    "SELECT DISTINCT urp.role_id FROM user_role_permissions urp "
-                    "JOIN user_permissions p ON p.id = urp.permission_id "
-                    "WHERE p.slug = 'system.chat_history.view' "
-                    "UNION "
-                    "SELECT id FROM user_roles WHERE slug = 'admin'"
-                )
+                sa.text("SELECT id FROM user_roles WHERE slug = 'admin'")
             )
         ]
         if not role_ids:
-            logger.warning("474: no admin or chat-history-view roles found; granted nothing")
+            logger.warning("474: no admin role found; granted nothing")
 
         granted = 0
         for role_id in role_ids:
@@ -122,6 +134,17 @@ def _register_and_grant() -> None:
 
 
 def downgrade():
+    """Reversible, and it DELETES retried turns to get there. Read this before running it.
+
+    The two-column unique key cannot be recreated while a retried message has more than
+    one row - that is the whole reason the third column exists. So the downgrade drops
+    every attempt above the first for each `(contact, message_id)`, which throws away the
+    trace of those turns. That is data loss, it is the only way back, and it is why this
+    is spelled out rather than left for the operator to discover from a constraint
+    violation at 2 a.m.
+
+    On production, prefer rolling FORWARD.
+    """
     bind = op.get_bind()
     bind.execute(
         sa.text(
@@ -131,8 +154,29 @@ def downgrade():
         {"s": _MANAGE},
     )
     bind.execute(sa.text("DELETE FROM user_permissions WHERE slug = :s"), {"s": _MANAGE})
+
+    doomed = bind.execute(
+        sa.text(
+            "DELETE FROM chatbot.turns t USING ("
+            "  SELECT contact_respond_id, message_id, max(attempt) AS keep"
+            "  FROM chatbot.turns WHERE message_id IS NOT NULL"
+            "  GROUP BY contact_respond_id, message_id HAVING count(*) > 1"
+            ") d "
+            "WHERE t.contact_respond_id = d.contact_respond_id "
+            "  AND t.message_id = d.message_id "
+            "  AND t.attempt <> d.keep"
+        )
+    ).rowcount
+    if doomed:
+        logger.warning(
+            "474 downgrade: deleted %d retried turn row(s) to restore the two-column "
+            "unique key; their traces are gone",
+            doomed,
+        )
+
     op.drop_constraint(_NEW_UQ, "turns", schema="chatbot", type_="unique")
     op.create_unique_constraint(
         _OLD_UQ, "turns", ["contact_respond_id", "message_id"], schema="chatbot"
     )
+    op.drop_index("ix_chatbot_turns_status_created", table_name="turns", schema="chatbot")
     op.drop_column("turns", "retry_requested_at", schema="chatbot")
