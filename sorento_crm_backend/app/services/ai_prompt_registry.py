@@ -716,6 +716,22 @@ def _chatbot_semantic_parser_fallback() -> str:
     return SEMANTIC_PARSER_PROMPT
 
 
+def _chatbot_clarifier_fallback() -> str:
+    """System prompt for the WhatsApp chatbot's clarifier (`chatbot_clarifier`).
+
+    The low_signal lane's answer: small talk and the one short clarifying question. The
+    fallback is the inline system message on `sub-casual-llm`'s `Basic LLM Chain` node,
+    verbatim (AC-401), vendored in `app/services/chatbot_clarifier_prompt.py` - outside
+    the module package, so this core module does not import it (AC-002).
+
+    No variables: the node's system message carries no n8n expression, so there is nothing
+    to substitute and `variables=[]`.
+    """
+    from app.services.chatbot_clarifier_prompt import CLARIFIER_PROMPT
+
+    return CLARIFIER_PROMPT
+
+
 @dataclass(frozen=True)
 class PromptKeySpec:
     name: str
@@ -755,6 +771,16 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
         activates_in=None,
         variables=["current_date"],
         fallback=_chatbot_semantic_parser_fallback,
+    ),
+    # --- The `low_signal` lane's own model call (S4). One per turn, only on a turn the
+    #     parser could not route: small talk, or a request too vague to answer. ---
+    "chatbot_clarifier": PromptKeySpec(
+        name="chatbot_clarifier",
+        role="Chatbot clarifier - small talk and ONE clarifying question (JSON)",
+        active=True,
+        activates_in=None,
+        variables=[],
+        fallback=_chatbot_clarifier_fallback,
     ),
     "ideate_extractor": PromptKeySpec(
         name="ideate_extractor",

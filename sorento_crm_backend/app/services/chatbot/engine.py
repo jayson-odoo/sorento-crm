@@ -42,6 +42,7 @@ from app.services.chatbot.head.output_exchange import (
     suggest_follow_up,
 )
 from app.services.chatbot.head.route import decide
+from app.services.chatbot.lanes import casual
 
 logger = logging.getLogger(__name__)
 
@@ -626,19 +627,42 @@ def _run_stages(  # noqa: PLR0915
         )
 
         delegate = delegate_for(branch_kind)
-        _close_turn(
-            db,
-            turn_id,
-            status="delegated" if delegate else "done",
-            stage="routed",
-            branch_kind=branch_kind,
-            error=None,
-            records=turn_trace.records,
-            # S2 / D15: a duplicate delivery replays THIS, so n8n's re-emitters never see
-            # a null `ctx` or `item`. `actions` rides along because the caller must not
-            # execute them twice either - it gets the original list and its own Switch on
-            # `duplicate` decides to send nothing.
-            response={"ctx": ctx, "item": item, "actions": actions},
+
+        if branch_kind == "low_signal":
+            # S4: the first lane that finishes inside the CRM. Everything it needs from
+            # the database is read HERE, while a session is already open, so the block
+            # below can run the model with none.
+            resolved = casual.resolve_for_prompt(db, ctx=ctx, dry_run=dry_run)
+            clarifier_prompt = casual.construct_user_prompt(ctx, resolved)
+            clarifier_config = casual.resolve_clarifier_config(db)
+        else:
+            _close_turn(
+                db,
+                turn_id,
+                status="delegated" if delegate else "done",
+                stage="routed",
+                branch_kind=branch_kind,
+                error=None,
+                records=turn_trace.records,
+                # S2 / D15: a duplicate delivery replays THIS, so n8n's re-emitters never
+                # see a null `ctx` or `item`. `actions` rides along because the caller must
+                # not execute them twice either - it gets the original list and its own
+                # Switch on `duplicate` decides to send nothing.
+                response={"ctx": ctx, "item": item, "actions": actions},
+            )
+
+    if branch_kind == "low_signal":
+        return _run_casual_lane(
+            turn_id=turn_id,
+            ctx=ctx,
+            item=item,
+            actions=actions,
+            dry_run=dry_run,
+            session_factory=session_factory,
+            turn_trace=turn_trace,
+            stage=stage,
+            clarifier_prompt=clarifier_prompt,
+            clarifier_config=clarifier_config,
         )
 
     return TurnResult(
@@ -654,6 +678,107 @@ def _run_stages(  # noqa: PLR0915
         session_patch=None,
         status="delegated" if delegate else "done",
         stage="routed",
+    )
+
+
+def _run_casual_lane(
+    *,
+    turn_id: str,
+    ctx: dict[str, Any],
+    item: dict[str, Any],
+    actions: list[dict[str, Any]],
+    dry_run: bool,
+    session_factory: SessionFactory,
+    turn_trace: Any,
+    stage: list[str],
+    clarifier_prompt: dict[str, Any],
+    clarifier_config: Any,
+) -> TurnResult:
+    """The `low_signal` lane, from the model call to the closed turn (AC-401, AC-403).
+
+    Split out of `_run_stages` so the "no DB session across LLM I/O" rule is visible in the
+    signature rather than in a comment: this function takes a `session_factory`, never a
+    `Session`, and opens one only after the provider has answered.
+
+    `ClarifierError` is caught HERE and not by `run_turn`'s outer handler. Routing already
+    succeeded, so the turn keeps `branch_kind = "low_signal"` and fails at
+    `stage = "casual_llm"`; the outer handler would null the branch kind and send the
+    generic parser-error reply, which is a different lane's text (AC-403).
+    """
+    stage[0] = "casual_llm"
+    user_message = casual.render_user_message(clarifier_prompt)
+
+    # -- NO DB SESSION IS OPEN HERE ---------------------------------------- #
+    failed: str | None = None
+    try:
+        raw = casual.call_clarifier(clarifier_config, user_message)
+        text = casual.reply_text(casual.central_exchange({"text": raw}))
+    except casual.ClarifierError as exc:
+        failed = str(exc)
+        text = casual.CLARIFIER_ERROR_PREFIX + failed
+    except Exception as exc:  # noqa: BLE001 - a malformed answer is the same failed stage
+        failed = str(exc)
+        text = casual.CLARIFIER_ERROR_PREFIX + failed
+
+    reply = {"text": text, "quick_replies": []}
+    actions = [
+        *actions,
+        {"kind": "send_message", "text": text, "quick_replies": [], "dry_run": dry_run},
+    ]
+
+    turn_trace.record(
+        "replied",
+        status="failed" if failed else "ok",
+        summary=(
+            "Could not reach the clarifier."
+            if failed
+            else "Answered with small talk or one clarifying question."
+        ),
+        why=(
+            "The turn carried no business question to look up, so the clarifier writes "
+            "the reply."
+        ),
+        facts={
+            "message_type": clarifier_prompt.get("message_type"),
+            "model": getattr(clarifier_config, "model", None),
+            "prompt_version": getattr(clarifier_config, "prompt_version", None),
+            "resolved_entities": len(clarifier_prompt.get("entities") or []),
+        },
+        error=failed,
+        raw={"user_prompt": user_message},
+    )
+
+    # TODO(S2-merge): the session write. S2's tail owns `compile_state` / `complete_turn`,
+    # and on this branch neither exists yet, so a completed low_signal turn currently
+    # remembers nothing. When S2 lands on the lane, this is the ONE call site to add it at,
+    # feeding `reply` and `ctx` through the tail's compose/persist path and returning its
+    # patch as `session_patch` below. Deliberately not faked: a stub that wrote a partial
+    # session would be worse than one that writes none, because the next turn would read it.
+    session_patch = None
+
+    with _session(session_factory) as db:
+        _close_turn(
+            db,
+            turn_id,
+            status="failed" if failed else "done",
+            stage="casual_llm",
+            branch_kind="low_signal",
+            error=failed,
+            records=turn_trace.records,
+            response={"ctx": ctx, "item": item, "actions": actions, "reply": reply},
+        )
+
+    return TurnResult(
+        turn_id=turn_id,
+        ctx=ctx,
+        item=item,
+        branch_kind="low_signal",
+        delegate=None,
+        reply=reply,
+        actions=actions,
+        session_patch=session_patch,
+        status="failed" if failed else "done",
+        stage="casual_llm",
     )
 
 
