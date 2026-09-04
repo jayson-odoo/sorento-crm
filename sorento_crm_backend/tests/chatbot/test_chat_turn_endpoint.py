@@ -1,0 +1,268 @@
+"""`POST /api/v1/external/chat/turn` through the real FastAPI app + a valid integration
+key - the seam `response_model` silently drops an undeclared field at
+(`LESSONS-LEARNT.md`: "response_model silently drops undeclared fields. Assert the field
+in a test"), and the seam D14/AC-702's "zero writes" claim actually has to be measured
+against, not just asserted from inside `run_turn` (`test_engine.py`'s `TestDryRun` proves
+the engine writes nothing outside `chatbot.turns`; this file proves the ENDPOINT - which
+also writes an `integration_log` on every call, dry run or not, per its own docstring -
+does not silently touch anything else either).
+
+Auth mirrors `test_module_and_endpoint.py`'s `key`/`db` fixtures (a real integration, a
+real issued `X-API-Key`, a role holding only `integration.chat_turn.submit`) but against
+the full `app.main` app and the blank-schema `session_factory` from `conftest.py`, so the
+whole router chain (module guard, permission guard, the route itself) runs for real.
+"""
+from __future__ import annotations
+
+import json
+from typing import Any
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import text
+
+import app.main  # noqa: F401  isort:skip - registers every model before any query
+from app.main import app
+from app.dependencies import get_db
+from app.models.chatbot_turn import ChatbotTurn
+from app.models.integration import Integration, IntegrationApiKey
+from app.models.user import (
+    User,
+    UserPermission,
+    UserRole,
+    UserRoleAssignment,
+    UserRolePermission,
+)
+from app.services.integration_key_service import IntegrationKeyService
+from tests.chatbot.test_engine import CONTACT_ID, _envelope, _parser_output
+from app.services.chatbot import engine as engine_mod
+from app.services.chatbot.head import parser as parser_mod
+
+SLUG = "integration.chat_turn.submit"
+_TURN_URL = "/api/v1/external/chat/turn"
+
+
+@pytest.fixture()
+def api_key(session_factory):
+    """A real integration whose role holds exactly `integration.chat_turn.submit`."""
+    db = session_factory()
+    user = User(
+        email="chatbot-endpoint@integrations.local",
+        name="Integration: chatbot endpoint test",
+        status="ACTIVE",
+        is_integration=True,
+    )
+    db.add(user)
+    db.flush()
+    role = UserRole(slug="integration_chatbot_endpoint_test", name="Integration: chatbot (test)")
+    db.add(role)
+    db.flush()
+    db.add(UserRoleAssignment(user_id=user.id, role_id=role.id))
+    permission = UserPermission(slug=SLUG, name="Submit chatbot turns")
+    db.add(permission)
+    db.flush()
+    db.add(UserRolePermission(role_id=role.id, permission_id=permission.id))
+    integration = Integration(
+        name="n8n-chatbot-endpoint-test", type="n8n", act_as_user_id=user.id, is_active=True
+    )
+    db.add(integration)
+    db.flush()
+    issued = IntegrationKeyService(db).issue_key(integration)
+    db.commit()
+    return issued
+
+
+@pytest.fixture()
+def client(session_factory):
+    def _override_db():
+        db = session_factory()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = _override_db
+    try:
+        yield TestClient(app, raise_server_exceptions=False)
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
+class TestResponseModelSurvival:
+    """`TurnResponse` (`response_model=TurnResponse`) must carry every field the caller
+    needs to execute the turn - a field present on `TurnResult.as_dict()` but absent from
+    the Pydantic model is silently dropped from the HTTP body, not an error."""
+
+    def test_every_response_field_survives_serialisation(self, client, api_key, monkeypatch):
+        canned = {
+            "turn_id": "11111111-1111-1111-1111-111111111111",
+            "ctx": {"contact": {"id": CONTACT_ID}, "text": {}, "session": {}, "parse": {}, "access": {}, "media": None},
+            "item": {"branch_kind": "business_query", "allowed": True, "decision": "allow"},
+            "branch_kind": "business_query",
+            "delegate": "business_query",
+            "reply": None,
+            "actions": [{"kind": "send_message", "text": "hi", "dry_run": True}],
+            "session_patch": {"variables": {"pending": None}},
+            "duplicate": True,
+        }
+
+        class _FakeResult:
+            def as_dict(self) -> dict[str, Any]:
+                return canned
+
+            status = "delegated"
+            error = None
+
+        monkeypatch.setattr("app.api.v1.external.chat.run_turn", lambda *a, **k: _FakeResult())
+
+        resp = client.post(
+            _TURN_URL,
+            json={"envelope": {"message": {}, "contact": {"id": CONTACT_ID}}},
+            headers={"X-API-Key": api_key},
+        )
+
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        for key in ("duplicate", "session_patch", "delegate", "branch_kind", "ctx", "item", "actions"):
+            assert key in body, f"{key!r} missing from the response body: {body}"
+        assert body["duplicate"] is True
+        assert body["session_patch"] == canned["session_patch"]
+        assert body["delegate"] == "business_query"
+        assert body["branch_kind"] == "business_query"
+        assert body["ctx"]["contact"]["id"] == CONTACT_ID
+        assert body["item"]["branch_kind"] == "business_query"
+        assert body["actions"] and body["actions"][0]["dry_run"] is True
+
+
+class TestDryRunEndpointZeroWrites:
+    """AC-702 measured through the whole request, not just `run_turn` (the endpoint's
+    OWN write - the integration log - is the one exception D14 does not forbid: the
+    docstring says every call logs, dry run or not)."""
+
+    @pytest.fixture()
+    def seeded_contact(self, session_factory):
+        db = session_factory()
+        db.execute(
+            text(
+                "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars) "
+                "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb))"
+            ),
+            {"cid": CONTACT_ID, "phone": "+60000000009", "sv": json.dumps({"variables": {}})},
+        )
+        db.commit()
+        return db
+
+    @pytest.fixture()
+    def stub_engine_seams(self, monkeypatch, session_factory):
+        """**Real-DB-write finding (tester):** `app/api/v1/external/chat.py` hardcodes
+        `SessionLocal` - the actual `DATABASE_URL` engine, not the request's `Depends(get_db)`
+        session - as the engine's own session factory (its own docstring: "which is why it
+        takes SessionLocal rather than this one"). `dry_run`/`is_test` only suppresses WRITES
+        inside the engine's business logic; it does not change which database the turn row
+        lands in. A first version of this test hit the real endpoint without patching this and
+        left a real, half-written `chatbot.turns` row (status `processing`, contact
+        `ZZT-contact-900000009`) in the shared dev database - found and deleted by hand. Any
+        FUTURE test that calls this endpoint through `TestClient` must patch
+        `app.api.v1.external.chat.SessionLocal` the same way, or it writes to the real DB too.
+        """
+        monkeypatch.setattr("app.api.v1.external.chat.SessionLocal", session_factory)
+
+        def fake_resolve_config(db, *, current_date):
+            return parser_mod.ParserConfig(
+                system_prompt="stub", prompt_version=1, provider="openai", model="gpt-test", api_key="sk-test",
+            )
+
+        monkeypatch.setattr(parser_mod, "resolve_config", fake_resolve_config)
+        monkeypatch.setattr(parser_mod, "parse", lambda config, user_block: _parser_output())
+        monkeypatch.setattr(
+            engine_mod,
+            "check_access",
+            lambda db, *, agent_code, contact_id, space_id: {
+                "allowed": True,
+                "decision": "allow",
+                "agent_name": "General Enquiries",
+                "attributes": None,
+                "all_attributes_allowed": None,
+            },
+        )
+        monkeypatch.setattr(engine_mod, "default_space_id", lambda db: "364817")
+
+    def _count(self, session_factory, table: str, *, where: str | None = None) -> int:
+        """Unqualified table name only - resolved via the isolated schema's `search_path`
+        (`SET LOCAL search_path` in `session_factory`). A schema-QUALIFIED name (e.g.
+        `chatbot.turns`) bypasses `search_path` entirely and Postgres resolves it against
+        the REAL `chatbot` schema instead of the translated scratch one - see
+        `_turns_count` below, which learned this the hard way (see its own docstring)."""
+        sql = f"SELECT COUNT(*) FROM {table}"
+        if where:
+            sql += f" WHERE {where}"
+        return session_factory().execute(text(sql)).scalar()
+
+    def _turns_count(self, session_factory) -> int:
+        """`chatbot.turns` via the ORM model, not raw SQL.
+
+        **Real-DB-read finding (tester):** a first version of this test counted with
+        raw SQL `SELECT COUNT(*) FROM chatbot.turns`. That schema-qualified name is NOT
+        rewritten by `blank_schema_engine()`'s `schema_translate_map` (which only rewrites
+        ORM/`Table` constructs) and is NOT resolved via `search_path` either (Postgres
+        skips `search_path` once the schema is named explicitly), so it silently counted
+        the REAL, shared `chatbot.turns` table - the same real-DB-write finding
+        `stub_engine_seams` documents, from the read side. `ChatbotTurn.__table__` carries
+        `schema="chatbot"` as an ORM construct, so querying through the model IS translated
+        correctly.
+        """
+        return (
+            session_factory()
+            .query(ChatbotTurn)
+            .filter(ChatbotTurn.contact_respond_id == CONTACT_ID)
+            .count()
+        )
+
+    def test_dry_run_touches_only_chatbot_turns_and_the_call_log(
+        self, client, api_key, session_factory, seeded_contact, stub_engine_seams
+    ):
+        before_session_vars = session_factory().execute(
+            text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"),
+            {"c": CONTACT_ID},
+        ).scalar()
+        before_sla = self._count(session_factory, "conversation_sla_tracking")
+        before_chat_history = self._count(session_factory, "chat_histories")
+        before_log = self._count(
+            session_factory, "integration_log", where=f"external_reference = '{CONTACT_ID}'"
+        )
+        before_turns = self._turns_count(session_factory)
+
+        envelope = _envelope()
+        envelope.message["message"]["messageId"] = "ZZT-msg-dry-run-endpoint"
+        payload = {"envelope": {**json.loads(envelope.model_dump_json()), "test_run_id": "ZZT-run-endpoint"}}
+
+        resp = client.post(_TURN_URL, json=payload, headers={"X-API-Key": api_key})
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["duplicate"] is False
+
+        after_session_vars = session_factory().execute(
+            text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"),
+            {"c": CONTACT_ID},
+        ).scalar()
+        after_sla = self._count(session_factory, "conversation_sla_tracking")
+        after_chat_history = self._count(session_factory, "chat_histories")
+        after_log = self._count(
+            session_factory, "integration_log", where=f"external_reference = '{CONTACT_ID}'"
+        )
+        after_turns = self._turns_count(session_factory)
+
+        assert after_session_vars == before_session_vars, "session_vars must be untouched on a dry run"
+        assert after_sla == before_sla == 0
+        assert after_chat_history == before_chat_history == 0
+        # The ONE write D14 does not forbid: the endpoint's own audit log of the call.
+        assert after_log == before_log + 1
+        # chatbot.turns gains exactly the one row for this turn, flagged is_test.
+        assert after_turns == before_turns + 1
+        row = (
+            session_factory()
+            .query(ChatbotTurn)
+            .filter(ChatbotTurn.id == body["turn_id"])
+            .first()
+        )
+        assert row.is_test is True
