@@ -174,7 +174,12 @@ class TestDuplicateReplaysTheAnswer:
         stub_access()
         result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
         stored = _row(session_factory, result.turn_id).response
-        assert set(stored) == {"ctx", "item", "actions"}
+        # S6a added `delegate_payload`: a duplicate delivery must replay the business
+        # lane's resolve+gate result too, or the caller re-enters `resolve-arm` with
+        # nothing and n8n's presence gates all take their FALSE arms. Null here because
+        # `CHATBOT_BUSINESS_LANE_ENABLED` is off by default; the KEY is the contract.
+        assert set(stored) == {"ctx", "item", "actions", "delegate_payload"}
+        assert stored["delegate_payload"] is None
         assert set(stored["ctx"]) == {"contact", "text", "session", "parse", "access", "media"}
         assert stored["item"]["branch_kind"] == result.branch_kind
 
