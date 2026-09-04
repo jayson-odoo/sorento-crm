@@ -31,11 +31,11 @@ from typing import Any, Literal
 
 from app.services.chatbot import jsc
 from app.services.chatbot.lanes.business.miss_suggest import (
+    _PRODUCT_CODE_RE as _PRODUCT_CODE_LABEL_RE,
     _cap3,
     _is_exact as _ms_is_exact,
     _is_uuid as _ms_is_uuid,
     _norm as _ms_norm,
-    _PRODUCT_CODE_RE as _PRODUCT_CODE_LABEL_RE,
     human_label as _ms_human_label,
     miss_resolutions as _ms_miss_resolutions,
 )
