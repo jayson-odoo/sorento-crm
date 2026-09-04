@@ -85,8 +85,6 @@ const ALLOWLIST: Record<string, string> = {
     'pending migration, M5 run 3',
   'app/(protected)/resource-management/attachments/components/AttachmentDetailModal.tsx':
     'pending migration, M5 run 3',
-  'app/(protected)/ticket-management/tickets/components/TicketsList.tsx':
-    'pending migration, M5 run 3',
   'app/(protected)/user-management/settings/notifications/page.tsx':
     'pending migration, M5 run 3',
   'app/(protected)/user-management/teams/[id]/components/team-members-list.tsx':
