@@ -83,6 +83,11 @@ class Settings(BaseSettings):
     # gather shadow evidence, confirm `delegate_payload` matches what n8n produced, then
     # make the n8n edit and leave it on. CHATBOT_BUSINESS_LANE_ENABLED.
     chatbot_business_lane_enabled: bool = False
+    # Per-MCP-call bound for the chatbot's fetch step. The plan's capacity section says 10
+    # seconds; the AI assistant's own 20 is a different budget for a different surface (a
+    # user watching a screen, not a customer waiting inside a whole WhatsApp turn's latency
+    # target). CHATBOT_MCP_TIMEOUT_SECONDS.
+    chatbot_mcp_timeout_seconds: int = 10
 
     # External API Access
     external_api_key: str | None = None  # API key for external parties to access endpoints

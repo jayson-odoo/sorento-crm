@@ -166,16 +166,32 @@ def _probe() -> ProbeFn:
     return call
 
 
+class EmbeddingUnavailable(RuntimeError):
+    """No embedding provider is configured, so no tool can be chosen this turn."""
+
+
 def _embed(db: Session) -> EmbedFn:
     def call(query: str) -> list[float]:
-        """The same embedding the RAG endpoint takes, through the same helper.
+        """`text-embedding-3-small`, through the shared LLM provider.
 
-        Holds no session of its own: `db` is bound only so the provider config is read from
-        the same place every other caller reads it.
+        NOT `app.api.v1.external.rag._embed_query`: that is a router private, and it raises
+        `HTTPException` - a web-layer failure shape that would surface from inside a turn as
+        a status code nobody asked for. The provider is the same model the RAG endpoint
+        uses, so the vector is identical; only the failure semantics change, to a lane
+        error the engine already knows how to record.
         """
-        from app.api.v1.external.rag import _embed_query
+        from app.config import settings
+        from app.services.llm_provider import get_provider
 
-        return _embed_query(query)
+        if not settings.openai_api_key:
+            raise EmbeddingUnavailable(
+                "no embedding provider is configured, so no MCP tool can be selected"
+            )
+        provider = get_provider("openai", settings.openai_api_key)
+        vector = provider.embed(query)
+        if not vector:
+            raise EmbeddingUnavailable("the embedding provider returned an empty vector")
+        return list(vector)
 
     return call
 
@@ -215,10 +231,12 @@ def _mcp_call(db: Session) -> McpCallFn:
         from app.config import settings
         from app.services.ai_assistant_service import MCPRuntimeClient
 
-        client = MCPRuntimeClient(
-            settings.ai_assistant_mcp_url,
-            timeout_seconds=settings.ai_assistant_mcp_timeout_seconds,
-        )
+        # The plan's capacity section bounds each MCP call at 10 s, and the AI assistant's
+        # own 20 is a different budget for a different surface (a user watching a screen,
+        # not a customer waiting on WhatsApp inside a whole turn's latency target).
+        # `CHATBOT_MCP_TIMEOUT_SECONDS` overrides it per environment.
+        timeout = int(getattr(settings, "chatbot_mcp_timeout_seconds", 0) or 10)
+        client = MCPRuntimeClient(settings.ai_assistant_mcp_url, timeout_seconds=timeout)
         return client.call_tool(name, args)
 
     return call
@@ -227,6 +245,20 @@ def _mcp_call(db: Session) -> McpCallFn:
 def fetch_services(db: Session) -> FetchServices:
     """S6b's bundle. One session, bound at the call site, held across no provider I/O."""
     return FetchServices(embed=_embed(db), tool_search=_tool_search(db), mcp_call=_mcp_call(db))
+
+
+def fetch_space_id(db: Session) -> str | None:
+    """The default respond workspace's `space_id` (D5), for the fetch step's tool args.
+
+    n8n hard-codes `364817` in `entity-ids-transformer` and overrides `semantic_input` with
+    it. D5 reassigns the VALUE, not a list of call sites, so the fetch step reads the
+    workspace row like every other producer of it. Falls back to n8n's literal inside
+    `entity_ids_transformer` when there is no workspace row, which keeps this install
+    byte-identical and any other install correct.
+    """
+    from app.services.chatbot.head.access import default_space_id
+
+    return default_space_id(db)
 
 
 def production_services(db: Session, *, space_id: str | None = None) -> ResolveGateServices:

@@ -66,8 +66,14 @@ class ToolPick:
 
 
 def _score(tool: Any) -> float:
-    """`Number.isFinite(Number(t?.similarity)) ? n : -Infinity`."""
-    n = jsc.js_number(jsc.get(tool, "similarity"))
+    """`Number.isFinite(Number(t?.similarity)) ? n : -Infinity`.
+
+    The default matters and it is NOT `None`: an ABSENT `similarity` is `undefined`, and
+    `Number(undefined)` is NaN, so the tool sorts LAST. An explicit `null` is
+    `Number(null) === 0`, which sorts above a negative score. Reading both as `None` would
+    collapse the two and quietly promote a tool that carries no score at all.
+    """
+    n = jsc.js_number(jsc.get(tool, "similarity", jsc.UNDEFINED))
     if isinstance(n, float) and (jsc.is_nan(n) or n in (float("inf"), float("-inf"))):
         return float("-inf")
     return float(n)
@@ -148,10 +154,18 @@ def collapse_tool_rows(rows: Any) -> list[dict[str, Any]]:
     for entry in jsc.array(rows):
         raw = jsc.get(entry, "source_id") or ""
         parts = jsc.js_string(raw).split("::")
-        name = parts[1] if len(parts) > 1 else jsc.js_string(raw)
+        # `raw.split('::')[1] || raw` - the `||` is load-bearing: a source id that ends in
+        # `::` splits to an EMPTY second segment, which is falsy, and the JS falls back to
+        # the whole id rather than keying every such row under "".
+        candidate = parts[1] if len(parts) > 1 else ""
+        name = candidate if jsc.truthy(candidate) else jsc.js_string(raw)
         if name not in summed:
             summed[name] = {"name": name, "similarity": 0}
-        summed[name]["similarity"] += jsc.get(entry, "similarity")
+        # `+= undefined` is NaN in JS, not a TypeError. A row with no similarity therefore
+        # poisons its tool's score to NaN, which `_score` then reads as -Infinity: last.
+        summed[name]["similarity"] += jsc.js_number(
+            jsc.get(entry, "similarity", jsc.UNDEFINED)
+        )
     return list(summed.values())
 
 
@@ -316,15 +330,28 @@ ORDER_TOOLS: frozenset[str] = frozenset(
     {"crm_order_management_orders_list", "crm_order_management_orders_by_product_list"}
 )
 
-# The ONE deliberate hard-code the JS keeps: Sorento is a single tenant, confirmed
-# 2026-08-24, and it OVERRIDES the `semantic_input` value (which carried the identical
-# string in all 24 sampled executions). NOT a D5 site: D5 reassigns `resolve-entity`,
-# `get-access-types` and the two pickers' probes, none of which is this node.
+# n8n hard-codes this and OVERRIDES the `semantic_input` value with it (which carried the
+# identical string in all 24 sampled executions). D5 says the respond.io space id comes
+# from the default respond workspace row, and it scopes to the VALUE, not to a list of
+# call sites - so the port takes it as a parameter with n8n's own literal as the default.
+# The replay pins the literal, so no fixture moves; production passes the workspace row's.
 SPACE_ID = "364817"
 
+# `tier-probe`'s own tool. The per-tier question is "are there any promotions at this tier
+# at all", so it is the promotions read, asked once per entitled tier - promotion rows carry
+# no access level, so there is no key a single batched answer could be matched back on.
+TIER_PROBE_TOOL = "crm_marketing_promotions_list"
 
-def entity_ids_transformer(trigger: dict[str, Any] | None) -> dict[str, Any]:
-    """The MCP tool's arguments, built from the gate's already-resolved entities."""
+
+def entity_ids_transformer(
+    trigger: dict[str, Any] | None, *, space_id: str | None = None
+) -> dict[str, Any]:
+    """The MCP tool's arguments, built from the gate's already-resolved entities.
+
+    `space_id` defaults to n8n's own literal so a replay is byte-equal; production passes
+    the default respond workspace's (D5), which is the same value on this install and the
+    right one on any other.
+    """
     trig = trigger if isinstance(trigger, dict) else {}
     semantic_input: Any = trig.get("semantic_input")
     entities: Any = trig.get("entities")
@@ -432,13 +459,36 @@ def entity_ids_transformer(trigger: dict[str, Any] | None) -> dict[str, Any]:
     if raw_contact is None:
         raw_contact = jsc.get(semantic_input, "contact_id")
     out["contact_id"] = jsc.nullish_str(raw_contact).strip()
-    out["space_id"] = SPACE_ID
+    out["space_id"] = space_id if space_id else SPACE_ID
     return out
 
 
 # --------------------------------------------------------------------------- #
 # The MCP call (H52)
 # --------------------------------------------------------------------------- #
+
+
+def parse_mcp_content(raw: Any) -> Any:
+    """The MCP client's `content[]` blocks, each parsed on its own.
+
+    `MCPRuntimeClient.call_tool` JOINS every text block with a newline, which turns two
+    JSON documents into one unparseable string. n8n's own `findPayload` walks the blocks
+    and takes the FIRST that carries a render envelope, so the port has to see them
+    separately too - joining is what would lose a tool that answers in two chunks.
+    """
+    if not isinstance(raw, str):
+        return raw
+    parsed = _safe_json(raw)
+    if parsed is not None:
+        return parsed
+    blocks = [_safe_json(chunk) for chunk in raw.split("\n") if chunk.strip()]
+    for block in blocks:
+        if isinstance(block, dict) and _find_payload(block) is not None:
+            return block
+    for block in blocks:
+        if isinstance(block, dict):
+            return block
+    return raw
 
 
 def call_tool(name: str, args: dict[str, Any], *, mcp: Any) -> Any:
@@ -826,7 +876,9 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
             if not isinstance(si, dict) or not isinstance(si.get("fields"), list):
                 continue  # a hostile entry is skipped, never thrown on
             summary_lines = "\n".join(
-                f"*{f.get('label')}:* {_fmt_value(f.get('value'))}"
+                # `${f.label}` on an absent key renders the WORD `undefined`, not "None"
+                # - and this string is sent to a customer.
+                f"*{jsc.js_string(f.get('label', jsc.UNDEFINED))}:* {_fmt_value(f.get('value'))}"
                 for f in si["fields"]
                 if isinstance(f, dict)
             )
@@ -835,7 +887,12 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
 
     action_links = e.get("action_links") or []
     for i, link in enumerate(action_links):
-        msg += f"{i + 1}. *{jsc.get(link, 'label') or 'Link'}:* {jsc.get(link, 'url')}\n"
+        label = jsc.get(link, "label")
+        url = jsc.get(link, "url", jsc.UNDEFINED)
+        msg += (
+            f"{i + 1}. *{jsc.js_string(label) if jsc.truthy(label) else 'Link'}:* "
+            f"{jsc.js_string(url)}\n"
+        )
     if len(action_links):
         msg += "\n"
 
@@ -846,7 +903,8 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     # multi-company note reads `e.items` for attribution and must keep seeing the real rows.
     for i, it in enumerate([] if qs_render else (e.get("items") or [])):
         field_lines = "\n".join(
-            f"*{jsc.get(f, 'label')}:* {_fmt_value(jsc.get(f, 'value'))}"
+            f"*{jsc.js_string(jsc.get(f, 'label', jsc.UNDEFINED))}:* "
+            f"{_fmt_value(jsc.get(f, 'value'))}"
             for f in (jsc.get(it, "fields") or [])
         )
         line = f"{i + 1}. {field_lines}"
