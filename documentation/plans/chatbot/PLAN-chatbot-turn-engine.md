@@ -428,7 +428,18 @@ Cleared memory rows; a "Failed turns only" filter on the list. Built against a m
 agent-browser from `/` via System > Chat History at 375 and 1280. **Phase 2:**
 `GET /api/v1/system/chatbot/turns` + `POST .../{id}/retry` (`app/api/v1/system/chatbot.py`,
 reads `chatbot.turns`, slugs `system.chat_history.view` / `.manage`), mock swapped at the
-service boundary. AC-251 to AC-259. Mockup: review page section 10.
+service boundary. AC-251 to AC-260. Mockup: review page section 10.
+
+**Delegated TTL (AC-260).** A turn handed to an n8n lane is `delegated` until that lane calls
+`/complete`. When the lane dies mid-turn the call never comes, so a minute-ly sweep
+(`app/services/chatbot_turn_sweep.py`, registered next to the existing ticks in
+`app/scheduler/task_scheduler.py`) fails every `delegated` row older than
+`CHATBOT_DELEGATED_TTL_MINUTES` (default 10) with a trace note. Two reasons it cannot wait for
+S7: the trace list otherwise fills with ghosts that read as work in progress, and R4 makes
+Retry available on FAILED turns only, so a stuck row is unrecoverable from the screen that
+exists to recover it. The sweep lives in core, not in `app/services/chatbot/`, because the
+scheduler is core and AC-002 forbids core importing the package - it settles a ROW, and the
+model is core.
 
 ### S3 - Canned lanes, offer-hold, ideation (150 lines + bridge)
 

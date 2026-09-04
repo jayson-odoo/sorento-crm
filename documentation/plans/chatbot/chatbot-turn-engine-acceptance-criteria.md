@@ -415,6 +415,16 @@ endpoint over `chatbot.turns.trace`. Lands after S2 so the head and tail both wr
   Kept/New/Cleared derivation; pytest for the list filters and the retry guards. (D1 to D4)
 - AC-259 `[E2E]` agent-browser: from `/`, System > Chat History, open a thread, expand a turn,
   read the Understood row, open Technical details; screenshot at 375 and 1280. (D1 to D3)
+- AC-260 `[BE]` Given a turn left `delegated` because the n8n lane that took it over never
+  called `/complete` (workflow error, worker redeploy, execution deleted), when the sweep runs
+  (every minute, from the existing APScheduler registration in
+  `app/scheduler/task_scheduler.py`), then every `delegated` row whose `started_at` is older
+  than `CHATBOT_DELEGATED_TTL_MINUTES` (setting, default 10) becomes `failed` with
+  `stage = "delegated"`, `error = "n8n lane did not complete within N minutes"` and a trace
+  note explaining it. Test turns included; running it twice changes nothing; a fresh
+  `delegated` row and any `done` / `failed` row are untouched. Without this the trace list
+  fills with ghosts that read as work in progress, and Retry cannot reach them at all because
+  R4 makes a manual retry possible on a FAILED turn only. (D1, D3)
 
 ### S3 - Canned lanes, ideation, offer-hold inside the head (journey A2, B2, D6)
 

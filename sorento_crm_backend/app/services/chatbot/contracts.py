@@ -158,10 +158,12 @@ TRACE_STATUSES = ("ok", "failed", "skipped")
 TraceStatus = Literal[TRACE_STATUSES]  # type: ignore[valid-type]
 
 # `chatbot.turns.stage` records WHERE a turn stopped. It is a superset of TURN_STAGES:
-# three failure points sit outside the trace timeline - `intake` is before the first
-# trace record exists (H5, AC-107), `queued` is the S7 per-contact wait (AC-710) and
-# `casual_llm` is the S4 clarifier call (AC-403).
-TURN_FAILURE_STAGES = TURN_STAGES + ("intake", "queued", "casual_llm")
+# four failure points sit outside the trace timeline - `intake` is before the first
+# trace record exists (H5, AC-107), `queued` is the S7 per-contact wait (AC-710),
+# `casual_llm` is the S4 clarifier call (AC-403), and `delegated` is a turn an n8n lane
+# took over and never finished, failed by the sweep (AC-260,
+# `app/services/chatbot_turn_sweep.py`).
+TURN_FAILURE_STAGES = TURN_STAGES + ("intake", "queued", "casual_llm", "delegated")
 TurnFailureStage = Literal[TURN_FAILURE_STAGES]  # type: ignore[valid-type]
 # Enforced where the column is written (`engine._close_turn`), so a typo'd stage fails
 # loudly instead of landing in the row and reading as an unknown state on the trace

@@ -34,6 +34,10 @@ const OFF_TIMELINE_STAGE_LABELS: Record<string, string> = {
   intake: 'Intake',
   queued: 'Queue',
   casual_llm: 'Small talk',
+  // The turn was handed to an n8n lane that never reported back, and the server's sweep
+  // gave up waiting. "Failed at Handover" is what an operator can act on; "delegated"
+  // would read as a state it is still in.
+  delegated: 'Handover',
 };
 
 export function stageLabel(stage: string): string {

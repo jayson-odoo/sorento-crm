@@ -91,6 +91,11 @@ class Settings(BaseSettings):
     # the contact was deleted) the row would otherwise be un-retryable forever, so an
     # older marker is treated as stale and the operator may try again.
     chatbot_retry_stale_minutes: int = 5  # CHATBOT_RETRY_STALE_MINUTES
+    # How long a turn may sit `delegated` before the sweep calls it failed. A delegated
+    # turn is one an n8n lane took over and is expected to finish by calling `/complete`;
+    # when that lane dies mid-turn the call never comes and the row would stay `delegated`
+    # forever - a ghost in the trace list that Retry (failed turns only, R4) cannot touch.
+    chatbot_delegated_ttl_minutes: int = 10  # CHATBOT_DELEGATED_TTL_MINUTES
 
     # External API Access
     external_api_key: str | None = None  # API key for external parties to access endpoints

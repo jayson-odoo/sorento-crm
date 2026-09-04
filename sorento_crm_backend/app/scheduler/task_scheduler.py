@@ -463,6 +463,18 @@ def _ai_trace_sweep_tick():
         logger.error("AI trace sweep tick failed: %s", e, exc_info=True)
 
 
+def _chatbot_delegated_sweep_tick():
+    """APScheduler tick: fail turns an n8n lane took over and never finished (AC-260).
+    Owns its own DB session; the sweep is best-effort and never raises."""
+    try:
+        from app.services.chatbot_turn_sweep import sweep_stalled_delegated_turns
+
+        with scheduler_session() as db:
+            sweep_stalled_delegated_turns(db)
+    except Exception as e:
+        logger.error("Chatbot delegated sweep tick failed: %s", e, exc_info=True)
+
+
 def _run_queue_jobs_impl(queue_name: str, max_jobs_per_run: int) -> dict:
     """Generic queue processor used by scheduled task heartbeat."""
     return run_sync_rq_jobs(queue_name, max_jobs_per_run)
@@ -576,10 +588,21 @@ def start_scheduler():
         replace_existing=True,
     )
 
+    # Chatbot delegated sweep (AC-260): every minute. A turn an n8n lane took over and
+    # never finished stays `delegated` for ever - a ghost on the trace screen that Retry
+    # cannot touch, because a manual retry needs a FAILED turn (R4).
+    scheduler.add_job(
+        _chatbot_delegated_sweep_tick,
+        trigger=IntervalTrigger(minutes=1),
+        id="chatbot_delegated_sweep",
+        name="Chatbot delegated turn sweep",
+        replace_existing=True,
+    )
+
     scheduler.start()
     logger.info(
         "Scheduler started: scheduled tasks heartbeat (every 10s), email outbox drainer "
-        "(every %ds), AI trace sweep (daily)",
+        "(every %ds), AI trace sweep (daily), chatbot delegated sweep (every minute)",
         max(1, drain_seconds),
     )
     return scheduler
