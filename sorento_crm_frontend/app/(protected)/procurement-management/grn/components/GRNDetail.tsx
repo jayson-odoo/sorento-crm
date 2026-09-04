@@ -2,6 +2,8 @@
 
 import { useMemo } from 'react';
 import { useRouter } from 'next/navigation';
+import type { ColumnDef } from '@tanstack/react-table';
+import { useReactTable, getCoreRowModel } from '@tanstack/react-table';
 import { Edit } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useBackToListHref } from '@/components/common/BackToList';
@@ -9,15 +11,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { DataGrid } from '@/components/ui/data-grid';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridTable } from '@/components/ui/data-grid-table';
 import { useGRN, grnPagerQuery } from '../hooks/useGRN';
+import type { PickingLine } from '../types/grn.types';
 import { formatDate } from '@/lib/helpers';
 import { formatStatusLabel } from '@/lib/status-badge';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
@@ -67,6 +65,65 @@ export default function GRNDetail({ grnId }: GRNDetailProps) {
       return haystack.includes(q);
     });
   }, [allLines, lineSearch]);
+
+  const columns = useMemo<ColumnDef<PickingLine>[]>(
+    () => [
+      {
+        id: 'spo_allocation',
+        header: ({ column }) => <DataGridColumnHeader title="SPO Allocation" column={column} />,
+        cell: ({ row }) => (
+          <SpoAllocationCell
+            allocation={row.original.spo_allocation}
+            statedSpoNumber={row.original.spo_number_raw}
+          />
+        ),
+        size: 200,
+        meta: { headerTitle: 'SPO Allocation' },
+      },
+      {
+        id: 'product',
+        accessorFn: (row) => row.product?.product_code ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Product" column={column} />,
+        cell: ({ row }) => row.original.product?.product_code || '-',
+        size: 160,
+        meta: { headerTitle: 'Product' },
+      },
+      {
+        id: 'location',
+        accessorFn: (row) =>
+          row.source_warehouse?.warehouse_code ?? row.destination_warehouse?.warehouse_code ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Location" column={column} />,
+        cell: ({ row }) =>
+          row.original.source_warehouse?.warehouse_code ??
+          row.original.destination_warehouse?.warehouse_code ??
+          '-',
+        size: 140,
+        meta: { headerTitle: 'Location' },
+      },
+      {
+        accessorKey: 'quantity_expected',
+        header: ({ column }) => <DataGridColumnHeader title="Expected" column={column} />,
+        size: 110,
+        meta: { headerTitle: 'Expected' },
+      },
+      {
+        accessorKey: 'quantity_picked',
+        header: ({ column }) => <DataGridColumnHeader title="Picked" column={column} />,
+        size: 110,
+        meta: { headerTitle: 'Picked' },
+      },
+    ],
+    [],
+  );
+
+  const linesTable = useReactTable({
+    columns,
+    data: filteredLines,
+    getRowId: (row) => row.id,
+    getCoreRowModel: getCoreRowModel(),
+    columnResizeMode: 'onChange',
+  });
+
   if (isLoading) {
     return (
       <div className="space-y-6">
@@ -234,39 +291,14 @@ export default function GRNDetail({ grnId }: GRNDetailProps) {
               No lines match &quot;{lineSearch}&quot;.
             </p>
           ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>SPO Allocation</TableHead>
-                    <TableHead>Product</TableHead>
-                    <TableHead>Location</TableHead>
-                    <TableHead>Expected</TableHead>
-                    <TableHead>Picked</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredLines.map((line) => (
-                    <TableRow key={line.id}>
-                      <TableCell>
-                        <SpoAllocationCell
-                          allocation={line.spo_allocation}
-                          statedSpoNumber={line.spo_number_raw}
-                        />
-                      </TableCell>
-                      <TableCell>
-                        {line.product?.product_code || '-'}
-                      </TableCell>
-                      <TableCell>
-                        {line.source_warehouse?.warehouse_code ?? line.destination_warehouse?.warehouse_code ?? '-'}
-                      </TableCell>
-                      <TableCell>{line.quantity_expected}</TableCell>
-                      <TableCell>{line.quantity_picked}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+            <DataGrid
+              table={linesTable}
+              recordCount={filteredLines.length}
+              listingKey="procurement.grn.view::picking-lines"
+              tableLayout={{ width: 'fixed', columnsResizable: true }}
+            >
+              <DataGridTable />
+            </DataGrid>
           )}
         </CardContent>
       </Card>

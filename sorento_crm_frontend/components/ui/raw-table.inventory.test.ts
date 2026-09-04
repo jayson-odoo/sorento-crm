@@ -55,22 +55,12 @@ const ALLOWLIST: Record<string, string> = {
 
   'app/(protected)/order-management/orders/components/OrderLinesCard.tsx':
     'pending migration, M5 run 3 (detail-page line table; inline editing may prove a real blocker)',
-  'app/(protected)/procurement-management/grn/components/GRNDetail.tsx':
-    'pending migration, M5 run 3',
-  'app/(protected)/procurement-management/packing-lists/components/SourceProformaInvoicesCard.tsx':
-    'pending migration, M5 run 3',
-  'app/(protected)/procurement-management/purchase-requests/components/PurchaseRequestAttachmentsSection.tsx':
-    'pending migration, M5 run 3',
-  'app/(protected)/procurement-management/purchase-requests/components/PurchaseRequestDetail.tsx':
-    'pending migration, M5 run 3',
   'app/(protected)/procurement-management/purchase-requests/components/PurchaseRequestDocumentEditCard.tsx':
     'pending migration, M5 run 3 (detail-page line table; inline editing may prove a real blocker)',
   // Not in the plan's measured list (audit ran on origin/main before this
   // file's last touch) - same module as the two rows above it, same run 3.
   'app/(protected)/procurement-management/purchase-requests/components/PurchaseRequestForm.tsx':
     'pending migration, M5 run 3 (found by this test, not in the M5 plan measurement - same module)',
-  'app/(protected)/procurement-management/stock-inquiries/components/StockInquiryAttachmentsSection.tsx':
-    'pending migration, M5 run 3',
   // Not a list: a pivot report reshapes rows into a matrix (rows x measures),
   // which is not what a DataGrid's one-row-per-record model expresses.
   // Permanently exempt (captain's ruling, M5 review run 1).

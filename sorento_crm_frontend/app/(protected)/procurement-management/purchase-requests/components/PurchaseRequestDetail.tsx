@@ -9,14 +9,10 @@ import { Button } from '@/components/ui/button';
 import { useBackToListHref } from '@/components/common/BackToList';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import type { ColumnDef } from '@tanstack/react-table';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { PanelDataGrid } from '@/components/common/PanelDataGrid';
+import type { PurchaseRequestLine } from '../types/purchaseRequest.types';
 import {
   Dialog,
   DialogContent,
@@ -107,6 +103,105 @@ interface PurchaseRequestDetailProps {
   requestId: string;
   /** Base path for list and edit links (e.g. /procurement-management/sponsorship-forms). */
   basePath?: string;
+}
+
+/**
+ * The read-only "Line items" table on the printable-style detail card.
+ *
+ * Two shapes: a purchase request's lines carry no price (`showPricing=false`,
+ * header "#"), a sponsorship form's carry unit price + total (`showPricing=true`,
+ * header "NO.") - the same difference the two raw tables this replaces had.
+ */
+function PurchaseRequestLineItemsGrid({
+  lines,
+  numberHeader,
+  showPricing,
+  currencyFormat,
+}: {
+  lines: PurchaseRequestLine[];
+  numberHeader: string;
+  showPricing: boolean;
+  currencyFormat: Parameters<typeof formatCurrency>[1];
+}) {
+  const columns = useMemo<ColumnDef<PurchaseRequestLine>[]>(() => {
+    const base: ColumnDef<PurchaseRequestLine>[] = [
+      {
+        id: 'index',
+        header: ({ column }) => <DataGridColumnHeader title={numberHeader} column={column} />,
+        cell: ({ row }) => row.index + 1,
+        size: 60,
+        enableResizing: false,
+        meta: { headerTitle: numberHeader },
+      },
+      {
+        id: 'item_code',
+        accessorFn: (row) => row.item_code ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Item Code" column={column} />,
+        cell: ({ row }) => row.original.item_code ?? ' - ',
+        size: 160,
+        meta: { headerTitle: 'Item Code' },
+      },
+      {
+        id: 'quantity',
+        accessorFn: (row) => row.quantity ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Qty" column={column} />,
+        cell: ({ row }) => row.original.quantity ?? ' - ',
+        size: 100,
+        meta: { headerTitle: 'Qty' },
+      },
+    ];
+    const pricing: ColumnDef<PurchaseRequestLine>[] = showPricing
+      ? [
+          {
+            id: 'unit_price',
+            accessorFn: (row) => row.unit_price ?? 0,
+            header: ({ column }) => <DataGridColumnHeader title="U/P" column={column} />,
+            cell: ({ row }) => (
+              <span className="block text-right">
+                {row.original.unit_price != null
+                  ? formatCurrency(row.original.unit_price, currencyFormat)
+                  : ' - '}
+              </span>
+            ),
+            size: 120,
+            meta: { headerTitle: 'U/P' },
+          },
+          {
+            id: 'total',
+            accessorFn: (row) => row.total ?? 0,
+            header: ({ column }) => <DataGridColumnHeader title="Total" column={column} />,
+            cell: ({ row }) => (
+              <span className="block text-right">
+                {row.original.total != null
+                  ? formatCurrency(row.original.total, currencyFormat)
+                  : ' - '}
+              </span>
+            ),
+            size: 130,
+            meta: { headerTitle: 'Total' },
+          },
+        ]
+      : [];
+    const remark: ColumnDef<PurchaseRequestLine> = {
+      id: 'remark',
+      accessorFn: (row) => row.remark ?? '',
+      header: ({ column }) => <DataGridColumnHeader title="Remark" column={column} />,
+      cell: ({ row }) => row.original.remark ?? ' - ',
+      size: 220,
+      meta: { headerTitle: 'Remark' },
+    };
+    return [...base, ...pricing, remark];
+  }, [numberHeader, showPricing, currencyFormat]);
+
+  return (
+    <PanelDataGrid<PurchaseRequestLine>
+      columns={columns}
+      rows={lines}
+      getRowId={(row) => row.id}
+      listingKey={`procurement.purchase_requests.view::lines-${showPricing ? 'sponsorship' : 'purchase-request'}`}
+      emptyTitle="No line items."
+    />
+  );
 }
 
 export default function PurchaseRequestDetail({
@@ -1231,26 +1326,12 @@ export default function PurchaseRequestDetail({
                 <div className="mt-8">
                   <p className="text-sm font-medium mb-3">Line items</p>
                   {request.lines && request.lines.length > 0 ? (
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead className="w-12">#</TableHead>
-                          <TableHead>Item Code</TableHead>
-                          <TableHead className="w-28">Qty</TableHead>
-                          <TableHead>Remark</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {request.lines.map((line, idx) => (
-                          <TableRow key={line.id}>
-                            <TableCell>{idx + 1}</TableCell>
-                            <TableCell>{line.item_code ?? ' - '}</TableCell>
-                            <TableCell>{line.quantity ?? ' - '}</TableCell>
-                            <TableCell>{line.remark ?? ' - '}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
+                    <PurchaseRequestLineItemsGrid
+                      lines={request.lines}
+                      numberHeader="#"
+                      showPricing={false}
+                      currencyFormat={currencyFormat}
+                    />
                   ) : (
                     <p className="text-sm text-muted-foreground">No line items.</p>
                   )}
@@ -1393,34 +1474,12 @@ export default function PurchaseRequestDetail({
                   <p className="text-sm font-medium mb-3">Line items</p>
                   {request.lines && request.lines.length > 0 ? (
                     <>
-                      <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead className="w-12">NO.</TableHead>
-                            <TableHead>Item Code</TableHead>
-                            <TableHead className="w-24">Qty</TableHead>
-                            <TableHead className="w-28 text-right">U/P</TableHead>
-                            <TableHead className="w-28 text-right">Total</TableHead>
-                            <TableHead>Remark</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                          {request.lines.map((line, idx) => (
-                            <TableRow key={line.id}>
-                              <TableCell>{idx + 1}</TableCell>
-                              <TableCell>{line.item_code ?? ' - '}</TableCell>
-                              <TableCell>{line.quantity ?? ' - '}</TableCell>
-                              <TableCell className="text-right">
-                                {line.unit_price != null ? formatCurrency(line.unit_price, currencyFormat) : ' - '}
-                              </TableCell>
-                              <TableCell className="text-right">
-                                {line.total != null ? formatCurrency(line.total, currencyFormat) : ' - '}
-                              </TableCell>
-                              <TableCell>{line.remark ?? ' - '}</TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
+                      <PurchaseRequestLineItemsGrid
+                        lines={request.lines}
+                        numberHeader="NO."
+                        showPricing
+                        currencyFormat={currencyFormat}
+                      />
                       {request.grand_total != null && (
                         <div className="mt-4 flex justify-end">
                           <p className="text-sm font-semibold">
