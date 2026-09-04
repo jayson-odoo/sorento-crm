@@ -1,20 +1,16 @@
 'use client';
 
+import { useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
+import type { ColumnDef } from '@tanstack/react-table';
 import { Eye } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { getPromotionsByProductId } from '@/app/(protected)/marketing-management/promotions/services/promotionService';
 import type { PromotionProduct } from '@/app/(protected)/marketing-management/promotions/types/promotion.types';
 
@@ -54,6 +50,99 @@ export default function ProductPromotionsTab({ productId, listPrice }: ProductPr
 
   const lines = data ?? [];
 
+  const columns = useMemo<ColumnDef<PromotionProduct>[]>(
+    () => [
+      {
+        id: 'promotion_code',
+        // Faithful to the original: this column has always shown the
+        // promotion's description too, not a code - it is not fixed here.
+        accessorFn: (row) => row.promotion?.description?.trim() || '-',
+        header: ({ column }) => <DataGridColumnHeader title="Promotion Code" column={column} />,
+        cell: ({ row }) => {
+          const promo = row.original.promotion;
+          const desc = promo?.description?.trim() || '-';
+          return (
+            <div className="flex items-center gap-2">
+              <span className="font-medium">{desc}</span>
+              {promo?.is_active === false && <Badge variant="secondary">Inactive</Badge>}
+            </div>
+          );
+        },
+        size: 200,
+        meta: { headerTitle: 'Promotion Code' },
+      },
+      {
+        id: 'description',
+        accessorFn: (row) => row.promotion?.description?.trim() || '-',
+        header: ({ column }) => <DataGridColumnHeader title="Description" column={column} />,
+        cell: ({ row }) => {
+          const desc = row.original.promotion?.description?.trim() || '-';
+          return (
+            <span className="block truncate" title={desc}>
+              {desc}
+            </span>
+          );
+        },
+        size: 280,
+        meta: { headerTitle: 'Description' },
+      },
+      {
+        id: 'list_price',
+        header: ({ column }) => <DataGridColumnHeader title="List Price" column={column} />,
+        cell: () => <span className="block text-right">{fmtMyr(listPrice)}</span>,
+        size: 130,
+        meta: { headerTitle: 'List Price' },
+      },
+      {
+        id: 'discount',
+        header: ({ column }) => <DataGridColumnHeader title="Discount" column={column} />,
+        cell: ({ row }) => (
+          <span className="block text-right">{formatDiscount(row.original, listPrice)}</span>
+        ),
+        size: 110,
+        meta: { headerTitle: 'Discount' },
+      },
+      {
+        id: 'selling_price',
+        header: ({ column }) => <DataGridColumnHeader title="Selling Price" column={column} />,
+        cell: ({ row }) => {
+          const sell =
+            row.original.promotion_price != null ? Number(row.original.promotion_price) : null;
+          return <span className="block text-right">{fmtMyr(sell)}</span>;
+        },
+        size: 150,
+        meta: { headerTitle: 'Selling Price' },
+      },
+      {
+        id: 'actions',
+        header: () => <span className="sr-only">Action</span>,
+        cell: ({ row }) => {
+          const promo = row.original.promotion;
+          return (
+            <div className="flex justify-end">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!promo?.id}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (promo?.id) router.push(`/marketing-management/promotions/${promo.id}`);
+                }}
+              >
+                <Eye className="size-4" />
+                View
+              </Button>
+            </div>
+          );
+        },
+        size: 100,
+        enableResizing: false,
+        meta: { headerTitle: 'Action' },
+      },
+    ],
+    [listPrice, router],
+  );
+
   if (isLoading) {
     return (
       <Card>
@@ -72,74 +161,21 @@ export default function ProductPromotionsTab({ productId, listPrice }: ProductPr
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Promotions</CardTitle>
-        <p className="text-sm text-muted-foreground">
-          Promotions that include this product.
-        </p>
-      </CardHeader>
-      <CardContent className="p-0">
-        {lines.length === 0 ? (
-          <div className="text-center py-8 text-muted-foreground">
-            <p>No promotions linked to this product.</p>
-            <p className="text-sm mt-2">Add this product to a promotion from Marketing → Promotions.</p>
-          </div>
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-[140px]">Promotion Code</TableHead>
-                <TableHead>Description</TableHead>
-                <TableHead className="w-[120px] text-right">List Price</TableHead>
-                <TableHead className="w-[100px] text-right">Discount</TableHead>
-                <TableHead className="w-[140px] text-right">Selling Price</TableHead>
-                <TableHead className="w-[90px] text-right">Action</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {lines.map((line) => {
-                const promo = line.promotion;
-                const desc = promo?.description?.trim() || '-';
-                const sell = line.promotion_price != null ? Number(line.promotion_price) : null;
-                return (
-                  <TableRow key={line.id}>
-                    <TableCell className="font-medium">
-                      <div className="flex items-center gap-2">
-                        <span>{desc}</span>
-                        {promo?.is_active === false && (
-                          <Badge variant="secondary">
-                            Inactive
-                          </Badge>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell className="max-w-[360px] truncate" title={desc}>
-                      {desc}
-                    </TableCell>
-                    <TableCell className="text-right">{fmtMyr(listPrice)}</TableCell>
-                    <TableCell className="text-right">{formatDiscount(line, listPrice)}</TableCell>
-                    <TableCell className="text-right">{fmtMyr(sell)}</TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={!promo?.id}
-                        onClick={() =>
-                          promo?.id && router.push(`/marketing-management/promotions/${promo.id}`)
-                        }
-                      >
-                        <Eye className="size-4" />
-                        View
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-        )}
-      </CardContent>
-    </Card>
+    <PanelDataGrid<PromotionProduct>
+      title={
+        <div className="space-y-0.5">
+          <div>Promotions</div>
+          <p className="text-sm font-normal text-muted-foreground">
+            Promotions that include this product.
+          </p>
+        </div>
+      }
+      columns={columns}
+      rows={lines}
+      getRowId={(row) => row.id}
+      listingKey="master_data.products.view::promotions"
+      emptyTitle="No promotions linked to this product."
+      emptyBody="Add this product to a promotion from Marketing → Promotions."
+    />
   );
 }

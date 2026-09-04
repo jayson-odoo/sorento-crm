@@ -57,12 +57,6 @@ const ALLOWLIST: Record<string, string> = {
     'pending migration, M5 run 3',
   'app/(protected)/complaint-management/complaints/components/ComplaintManualAttachmentsSection.tsx':
     'pending migration, M5 run 3',
-  'app/(protected)/master-data-management/products/[id]/components/ProductPromotionsTab.tsx':
-    'pending migration, M5 run 3',
-  'app/(protected)/master-data-management/products/[id]/components/ProductPurchaseHistoryTab.tsx':
-    'pending migration, M5 run 3',
-  'app/(protected)/master-data-management/products/[id]/components/ProductStockTab.tsx':
-    'pending migration, M5 run 3',
   'app/(protected)/order-management/orders/components/OrderLinesCard.tsx':
     'pending migration, M5 run 3 (detail-page line table; inline editing may prove a real blocker)',
   'app/(protected)/procurement-management/grn/components/GRNDetail.tsx':

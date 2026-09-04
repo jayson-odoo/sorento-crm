@@ -1,19 +1,16 @@
 'use client';
 
+import { useMemo } from 'react';
 import { useRouter } from 'next/navigation';
+import type { ColumnDef } from '@tanstack/react-table';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { formatDateSafe } from '@/lib/helpers';
 import { useProductPurchaseHistory } from '../../hooks/useProducts';
 import { NO_CURRENCY_NOTE, formatUnitCost } from '../lib/cost';
+import type { ProductPurchaseLine } from '../../services/productService';
 
 interface ProductPurchaseHistoryTabProps {
   productId: string;
@@ -28,6 +25,78 @@ export default function ProductPurchaseHistoryTab({
 }: ProductPurchaseHistoryTabProps) {
   const router = useRouter();
   const { data, isLoading, isError, error } = useProductPurchaseHistory(productId);
+
+  const columns = useMemo<ColumnDef<ProductPurchaseLine>[]>(
+    () => [
+      {
+        id: 'issue_date',
+        accessorFn: (row) => row.issue_date ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Date" column={column} />,
+        cell: ({ row }) => (
+          <span className="whitespace-nowrap">{formatDateSafe(row.original.issue_date)}</span>
+        ),
+        size: 130,
+        meta: { headerTitle: 'Date' },
+      },
+      {
+        accessorKey: 'po_number',
+        header: ({ column }) => <DataGridColumnHeader title="PO Number" column={column} />,
+        cell: ({ row }) => <span className="font-medium">{row.original.po_number}</span>,
+        size: 150,
+        meta: { headerTitle: 'PO Number' },
+      },
+      {
+        id: 'supplier_name',
+        accessorFn: (row) => row.supplier_name ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Supplier" column={column} />,
+        cell: ({ row }) => (
+          <span className="block truncate" title={row.original.supplier_name ?? undefined}>
+            {row.original.supplier_name ?? 'No supplier on the order'}
+          </span>
+        ),
+        size: 220,
+        meta: { headerTitle: 'Supplier' },
+      },
+      {
+        accessorKey: 'qty_ordered',
+        header: ({ column }) => <DataGridColumnHeader title="Quantity" column={column} />,
+        cell: ({ row }) => (
+          <span className="block text-end">{row.original.qty_ordered ?? '-'}</span>
+        ),
+        size: 110,
+        meta: { headerTitle: 'Quantity' },
+      },
+      {
+        accessorKey: 'qty_received',
+        header: ({ column }) => <DataGridColumnHeader title="Received" column={column} />,
+        cell: ({ row }) => (
+          <span className="block text-end">{row.original.qty_received ?? '-'}</span>
+        ),
+        size: 110,
+        meta: { headerTitle: 'Received' },
+      },
+      {
+        id: 'unit_cost',
+        accessorFn: (row) => row.unit_cost ?? 0,
+        header: ({ column }) => <DataGridColumnHeader title="Unit Cost" column={column} />,
+        cell: ({ row }) => (
+          <span
+            className="block text-end font-medium"
+            title={
+              row.original.unit_cost != null && !row.original.currency
+                ? NO_CURRENCY_NOTE
+                : undefined
+            }
+          >
+            {formatUnitCost(row.original.unit_cost, row.original.currency)}
+          </span>
+        ),
+        size: 130,
+        meta: { headerTitle: 'Unit Cost' },
+      },
+    ],
+    [],
+  );
 
   if (isLoading) {
     return (
@@ -62,77 +131,25 @@ export default function ProductPurchaseHistoryTab({
   const lines = data?.lines ?? [];
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Purchase History</CardTitle>
-      </CardHeader>
-      <CardContent>
-        {lines.length === 0 ? (
-          <div className="py-8 text-center text-muted-foreground">
-            <p>This product has never been purchased.</p>
-            <p className="mt-2 text-sm">
-              There is no purchase order for it, so it has no cost from history.
-            </p>
-          </div>
-        ) : (
-          <>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Date</TableHead>
-                  <TableHead>PO Number</TableHead>
-                  <TableHead>Supplier</TableHead>
-                  <TableHead className="text-end">Quantity</TableHead>
-                  <TableHead className="text-end">Received</TableHead>
-                  <TableHead className="text-end">Unit Cost</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {lines.map((line, i) => (
-                  <TableRow
-                    key={`${line.purchase_order_id}-${i}`}
-                    className="cursor-pointer"
-                    onClick={() =>
-                      router.push(
-                        `/procurement-management/purchase-orders/${line.purchase_order_id}`,
-                      )
-                    }
-                  >
-                    <TableCell className="whitespace-nowrap">
-                      {formatDateSafe(line.issue_date)}
-                    </TableCell>
-                    <TableCell className="font-medium">{line.po_number}</TableCell>
-                    <TableCell
-                      className="max-w-[220px] truncate"
-                      title={line.supplier_name ?? undefined}
-                    >
-                      {line.supplier_name ?? 'No supplier on the order'}
-                    </TableCell>
-                    <TableCell className="text-end">{line.qty_ordered ?? '-'}</TableCell>
-                    <TableCell className="text-end">{line.qty_received ?? '-'}</TableCell>
-                    <TableCell
-                      className="text-end font-medium"
-                      title={
-                        line.unit_cost != null && !line.currency
-                          ? NO_CURRENCY_NOTE
-                          : undefined
-                      }
-                    >
-                      {formatUnitCost(line.unit_cost, line.currency)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-            {/* A cap the user cannot see reads as "this is everything". */}
-            {data && data.total > data.shown ? (
-              <p className="mt-3 text-xs text-muted-foreground">
-                Showing the {data.shown} most recent of {data.total} purchase lines.
-              </p>
-            ) : null}
-          </>
-        )}
-      </CardContent>
-    </Card>
+    <>
+      <PanelDataGrid<ProductPurchaseLine>
+        title="Purchase History"
+        columns={columns}
+        rows={lines}
+        getRowId={(row) => row.purchase_order_id}
+        listingKey="master_data.products.view::purchase-history"
+        onRowClick={(row) =>
+          router.push(`/procurement-management/purchase-orders/${row.purchase_order_id}`)
+        }
+        emptyTitle="This product has never been purchased."
+        emptyBody="There is no purchase order for it, so it has no cost from history."
+      />
+      {/* A cap the user cannot see reads as "this is everything". */}
+      {data && data.total > data.shown ? (
+        <p className="mt-3 text-xs text-muted-foreground">
+          Showing the {data.shown} most recent of {data.total} purchase lines.
+        </p>
+      ) : null}
+    </>
   );
 }
