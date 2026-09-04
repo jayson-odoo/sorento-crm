@@ -148,6 +148,40 @@ CAPTURE_REPORT: dict[str, dict] = {
     # `confirmation` 0, and `mark-casual-error` 0 - the error arm has not fired once since
     # 1 Sep, which is the same "0 is the correct number" statement the two H1 stock arms
     # make below, reached by luck rather than by typo.
+    # S6c's two sub-workflows, captured on 5 Sep. Both pools were scanned to exhaustion,
+    # which is what lets a thin cell read `exhausted` instead of `SHORT`: that traffic does
+    # not exist rather than having been missed.
+    "sub-answer-live": {
+        "version": "b1357c27",
+        "version_pool": 609,
+        "scanned": 609,
+        "all_versions": 609,
+        "captured_on": "2026-09-05",
+        "nodes": (
+            "answer-input",
+            "central-exchange",
+            "answer-result",
+            "miss-roster-check",
+            "miss-roster-plan",
+            "build-miss-member-offer",
+            "dym-transform-partial",
+            "dym-annotate-partial",
+        ),
+    },
+    "sub-miss-suggest-live": {
+        "version": "f42de9c6",
+        "version_pool": 232,
+        "scanned": 232,
+        "all_versions": 232,
+        "captured_on": "2026-09-05",
+        "nodes": (
+            "dym-transform",
+            "dym-annotate",
+            "sibling-transform",
+            "miss-suggest-result",
+            "promo-dym-plan",
+        ),
+    },
     "sub-casual-llm-live": {
         "version": "08bf56a5",
         "version_pool": 13,

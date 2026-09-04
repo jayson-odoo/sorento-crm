@@ -624,3 +624,137 @@ taken, and the module's docstring says so.
   lane with the fetch output attached, so nothing is re-fetched.
 - **The orphaned `AI Agent` + `MCP Client` tool nodes in `sub-get-results` are NOT ported**
   and never ran in the capture pool (H7). They are deleted with the sub.
+
+## S6c - the answer half, `sub-answer` and `sub-miss-suggest` move into the CRM
+
+**CRM side (shipped, inert by default), and it takes TWO switches, not one.**
+`CHATBOT_BUSINESS_LANE_ENABLED` (S6a's flag) decides whether the lane RUNS at all;
+`system_settings.chatbot_completed_lanes` decides whether an arm may ANSWER. Both default
+off, and both are needed: with only the first, the CRM would start answering the moment it
+deploys and the n8n edit would have to land in the same window or every business turn would
+be answered twice. Add `business_query`, then `check_promotion`, then `stock_denied` one at
+a time; each is a data change with an instant rollback.
+
+The three arms are the same three S6a named, and they converge on one node in n8n
+(`resolve-arm`), so the CRM keeps one `delegate` name for all three.
+
+### What the CRM does instead
+
+| n8n | CRM |
+| --- | --- |
+| `validator` | `answer.validator` |
+| `promo-picker` | `answer.promo_picker` |
+| `crossdomain-zeroset` / `crossdomain-gate` / `crossdomain-probe` / `crossdomain-render` | `answer.run_crossdomain` (one `AnswerServices.mcp_probe` call, the turn's SECOND) |
+| `build-result` | `answer.build_result` |
+| `If6` / `Aggregate1` | `answer.dispatch` / `answer.aggregate_response_intro` |
+| `Call 'sub-answer'` -> `answer-input` / `central-exchange` / `miss-roster-*` / `build-miss-member-offer` / `dym-transform-partial` / `dym-probe-partial` / `dym-annotate-partial` / `answer-result` | `sub_answer.py` + `business._run_answer_half` |
+| `not-found-error-message` | `answer.not_found_error_message` |
+| `Call 'sub-miss-suggest'` -> `sibling-gate` / `family-fetch` / `sibling-transform` / `sibling-probe` / `dym-transform` / `dym-gate` / `if-promo-dym` / `promo-dym-plan` / `promo-dym-probe` / `dym-probe` / `dym-annotate` / `miss-suggest-result` | `miss_suggest.py` + `miss_suggest.run_miss_lane` |
+| `build-suggest-offer` | `answer.build_suggest_offer` (still on the SPINE in n8n, RS-7 errata) |
+| `access-level-choice-message` | `answer.access_level_choice_message` |
+
+**One credential and one raw host stop being n8n's problem.** `family-fetch` is an
+`httpRequest` node pointed at `https://72.62.195.20/api/v1/master-data/products` with
+`allowUnauthorizedCerts: true` and a header credential; in process it is
+`ProductService.list_products(query=..., variant_filter="all", limit=5000)`, so there is no
+IP to go stale, no certificate to wave through and no credential in the workflow. That is
+the same class as S6b's H52 / H53 pair, on a third node.
+
+### Which bodies the port was made from, and why it matters here more than anywhere
+
+Four S6c node NAMES exist twice in the n8n instance, with different bodies:
+
+| node | LIVE SPINE (`9qVyfUxmRQqrpGRMDLRuz`) | the sub-workflow | ported from |
+| --- | --- | --- | --- |
+| `dym-transform` | 421 lines (pre-Fix-4) | 561, `sub-miss-suggest-live@f42de9c6` | the SUB |
+| `dym-annotate` | 169 lines (pre-Fix-4 / F1 / F8) | 247, same sub | the SUB |
+| `build-suggest-offer` | 710 lines | 944 in `sub-main-processing-live` | the SPINE |
+| `promo-picker` / `not-found-error-message` | 583 / 667 | 596 / same | the SPINE |
+
+The rule is the SLUG THE CAPTURES CAME FROM. 33 of the 41 graded `dym-transform` captures
+were taken inside `sub-miss-suggest-live`, so the sub's body is what they grade; the four
+captures taken against the spine's stale inline copies are registered in
+`tests/chatbot/divergences.py`, naming exactly the keys the older bodies cannot emit
+(`dym_candidate_uuids`, `dym_probe_row_keys`, `probe_uuid_keyed`, `dym_ambiguous_codes`,
+`dym_ambiguous_uuids`, `dym_probe_meta.key_mode`). **Those two spine nodes are dead code the
+day the wiring change below lands, and re-capturing them is not worth doing.**
+
+### Step 1 - shadow window
+
+Deploy with `chatbot_completed_lanes` EMPTY. The lane runs, the answer half runs, and the
+turn still delegates: `delegate_payload` carries the resolve + gate + fetch output exactly
+as it does today. Compare the CRM's would-be reply against n8n's actual one for 3 to 7 days
+(plan gate 4).
+
+**Precondition for step 2:** branch parity 99%+ and reply-text parity 97%+ on 500
+consecutive live turns, with every mismatch triaged, AND zero `replied`-stage failures. The
+reply text is the thing to watch on this slice specifically: S6c is where the customer's
+words are composed, and a divergence here is visible on WhatsApp rather than in a trace.
+
+### Step 2 - flip the lane on
+
+Add `business_query` to `system_settings.chatbot_completed_lanes`. The CRM answers, returns
+`delegate: null`, and the caller's existing `delegate == null` gate (added at S3) sends the
+reply without entering any n8n lane. Nothing is deleted yet, so the rollback is removing the
+string again.
+
+Then `check_promotion`, then `stock_denied`, each after its own quiet period.
+
+### Step 3 - the wiring change, in `sorento-consume-main` (`S4N1LiisAqA4hpMC`)
+
+Only after all three lanes have been on and quiet.
+
+1. **Delete** `Call 'sub-main-processing'` and its two `tag-entry-*` predecessors
+   (`tag-entry-access-check`, `tag-entry-resolve`) plus `Edit Fields2` - the Set node whose
+   one field, `not_allowed_check_stock`, is now on the CRM's own payload (AC-610).
+2. Wire the `route` Switch's three business outputs straight to the `delegate == null` gate,
+   the same shape S3's eight canned arms already take.
+3. **`access-level-choice-message` goes with them.** S6b deliberately kept it alive behind a
+   small If on `fetch_payload._fetch_arm`; S6c renders that copy, so the If and the node are
+   deleted together.
+
+### Step 4 - unpublish
+
+Seven sub-workflows, and they must go in this order because three of them are called from
+more than one place:
+
+1. `sub-answer` (`oIzFAzi3bGgn5mTH`) and `sub-miss-suggest` - one caller each.
+2. `sub-main-processing` (`53RxDSON8P3QSN22`) - once step 3 has landed.
+3. `sub-resolve-and-gate`, `sub-fetch-results`, `sub-get-rag`, `sub-get-results` - S6a's and
+   S6b's, and `sub-get-results` LAST: it is still called by the two S6a picker probes
+   (`probe-incoming` / `probe-customer-orders`) until that seam is filled in process.
+
+All seven stay published, disabled, for one release. The n8n Postgres credential
+`sub-get-rag` holds can be deleted from the instance once step 4 completes.
+
+### Rollback
+
+Before step 3: remove the branch kind from `chatbot_completed_lanes`, or turn
+`CHATBOT_BUSINESS_LANE_ENABLED` off. Both are data, both take effect on the next turn, and
+neither needs a deploy.
+
+After step 3: re-add the two `tag-entry-*` nodes, `Edit Fields2` and
+`Call 'sub-main-processing'` from the workflow JSON saved before that edit. That JSON is the
+rollback artefact and belongs in the promote note, not in this file.
+
+### H49 is unchanged by this slice, and one more like it turned up
+
+S6b's H49 note stands: no per-tool branch, tables kept verbatim. S6c adds a second
+never-fired path with the same disposition - `promo-dym-plan` and `promo-dym-probe`, the
+promotion did-you-mean fan-out, fired ZERO times in the 232-execution
+`sub-miss-suggest-live` pool that was scanned end to end. The nodes ARE ported
+(`miss_suggest.promo_dym_plan` and the `row_present` predicate in the annotator), because
+the alternative is a lane that dead-ends the first time a promotion miss carries candidates,
+and the port costs 40 lines. What is NOT built is any behaviour keyed on it that no capture
+can grade. It is a real zero cell in `tests/chatbot/COVERAGE.md`, not an oversight.
+
+### Not covered by this slice
+
+- **The two picker probes still call `sub-get-results`.** Unchanged from S6b's note, and it
+  is what keeps that sub published.
+- **`build-suggest-offer` needs the turn id where n8n uses `$execution.id`.** The offer's
+  identity only has to be stable within the session, so the turn id is the correct successor,
+  but it can never equal a captured execution id - registered once for the world replay
+  (`tests/chatbot/worlds.py::WORLD_DROP_PATHS`) and once per fixture in `divergences.py`.
+- **`sub-send-attachments` is untouched.** A promotion answer's attachments still ride the
+  caller's own `send_attachments` action; nothing about that path moves here.

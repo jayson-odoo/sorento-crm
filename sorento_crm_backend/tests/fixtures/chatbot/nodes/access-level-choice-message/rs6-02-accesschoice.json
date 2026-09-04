@@ -1,0 +1,3310 @@
+{
+  "source": {
+    "execution_id": "14564019",
+    "workflow_id": "Hnd4S8SVH6pftjxs",
+    "workflow_version": "15495426-02b1-4d8e-9c7d-51744634d7f8",
+    "node": "access-level-choice-message",
+    "captured_at": "2026-08-30T21:05:19+00:00",
+    "expected_from": "runData",
+    "dedupe_sig": "2e7fb883694c0f754cb9376bb097df638ed8397eca7074f88c96ae02de5562c0",
+    "dev_contact": true
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "test": "obs",
+          "test_run_id": "rs6-02-accesschoice",
+          "started_at": "2026-08-30T17:01:47.898-04:00",
+          "contact": "900000009"
+        }
+      }
+    ],
+    "redis-pop-main-message-list": [
+      {
+        "json": {
+          "message": {
+            "message": {
+              "event_type": "message.received",
+              "event_id": "rs6-02-accesschoice",
+              "contact": {
+                "id": 900000009,
+                "firstName": "Person 12",
+                "lastName": "Person 125",
+                "phone": "60100000010",
+                "status": "open",
+                "assignee": {
+                  "id": null
+                }
+              },
+              "message": {
+                "messageId": 1788123405002,
+                "channelMessageId": "rs6-02-accesschoice",
+                "contactId": 900000009,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788123405002,
+                "replyTo": null,
+                "message": {
+                  "type": "text",
+                  "text": "any Mocha promotion",
+                  "attachment": {
+                    "type": "text",
+                    "description": ""
+                  }
+                }
+              }
+            },
+            "contact": {
+              "id": "900000009",
+              "phone": "60100000010",
+              "firstName": "Person 12",
+              "lastName": "Person 125",
+              "custom_fields": [
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": "true"
+                }
+              ],
+              "assignee": {
+                "id": null
+              }
+            },
+            "messageId": null,
+            "replyTo": null,
+            "test_run_id": "rs6-02-accesschoice",
+            "scope": "deterministic",
+            "test_mode": true,
+            "mode": "uac"
+          }
+        }
+      }
+    ],
+    "media-intake": [
+      {
+        "json": {
+          "handled": false,
+          "item": {
+            "message": {
+              "message": {
+                "event_type": "message.received",
+                "event_id": "rs6-02-accesschoice",
+                "contact": {
+                  "id": 900000009,
+                  "firstName": "Person 12",
+                  "lastName": "Person 125",
+                  "phone": "60100000010",
+                  "status": "open",
+                  "assignee": {
+                    "id": null
+                  }
+                },
+                "message": {
+                  "messageId": 1788123405002,
+                  "channelMessageId": "rs6-02-accesschoice",
+                  "contactId": 900000009,
+                  "channelId": 453209,
+                  "traffic": "incoming",
+                  "timestamp": 1788123405002,
+                  "replyTo": null,
+                  "message": {
+                    "type": "text",
+                    "text": "any Mocha promotion",
+                    "attachment": {
+                      "type": "text",
+                      "description": ""
+                    }
+                  }
+                }
+              },
+              "contact": {
+                "id": "900000009",
+                "phone": "60100000010",
+                "firstName": "Person 12",
+                "lastName": "Person 125",
+                "custom_fields": [
+                  {
+                    "name": "is_human_intervened",
+                    "value": "false"
+                  },
+                  {
+                    "name": "is_allowed_stock",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_allowed_voice",
+                    "value": "true"
+                  }
+                ],
+                "assignee": {
+                  "id": null
+                }
+              },
+              "messageId": null,
+              "replyTo": null,
+              "test_run_id": "rs6-02-accesschoice",
+              "scope": "deterministic",
+              "test_mode": true,
+              "mode": "uac"
+            },
+            "_media": {
+              "modality": null,
+              "attachment_type": "text",
+              "media_url": null,
+              "mime_type": null,
+              "caption": "any Mocha promotion",
+              "bytes": null,
+              "duration_ms": null,
+              "duration_source": null,
+              "message_id": "1788123405002",
+              "respond_io_id": "900000009",
+              "test_run_id": "rs6-02-accesschoice",
+              "scope": "deterministic"
+            }
+          },
+          "media": null
+        }
+      }
+    ],
+    "media-gate": [
+      {
+        "json": {
+          "message": {
+            "message": {
+              "event_type": "message.received",
+              "event_id": "rs6-02-accesschoice",
+              "contact": {
+                "id": 900000009,
+                "firstName": "Person 12",
+                "lastName": "Person 125",
+                "phone": "60100000010",
+                "status": "open",
+                "assignee": {
+                  "id": null
+                }
+              },
+              "message": {
+                "messageId": 1788123405002,
+                "channelMessageId": "rs6-02-accesschoice",
+                "contactId": 900000009,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788123405002,
+                "replyTo": null,
+                "message": {
+                  "type": "text",
+                  "text": "any Mocha promotion",
+                  "attachment": {
+                    "type": "text",
+                    "description": ""
+                  }
+                }
+              }
+            },
+            "contact": {
+              "id": "900000009",
+              "phone": "60100000010",
+              "firstName": "Person 12",
+              "lastName": "Person 125",
+              "custom_fields": [
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": "true"
+                }
+              ],
+              "assignee": {
+                "id": null
+              }
+            },
+            "messageId": null,
+            "replyTo": null,
+            "test_run_id": "rs6-02-accesschoice",
+            "scope": "deterministic",
+            "test_mode": true,
+            "mode": "uac"
+          },
+          "_media": {
+            "modality": null,
+            "attachment_type": "text",
+            "media_url": null,
+            "mime_type": null,
+            "caption": "any Mocha promotion",
+            "bytes": null,
+            "duration_ms": null,
+            "duration_source": null,
+            "message_id": "1788123405002",
+            "respond_io_id": "900000009",
+            "test_run_id": "rs6-02-accesschoice",
+            "scope": "deterministic"
+          }
+        }
+      }
+    ],
+    "tf-message": [
+      {
+        "json": {
+          "event_type": "message.received",
+          "event_id": "rs6-02-accesschoice",
+          "contact": {
+            "id": 900000009,
+            "firstName": "Person 12",
+            "lastName": "Person 125",
+            "phone": "60100000010",
+            "status": "open",
+            "assignee": {
+              "id": null
+            }
+          },
+          "message": {
+            "messageId": 1788123405002,
+            "channelMessageId": "rs6-02-accesschoice",
+            "contactId": 900000009,
+            "channelId": 453209,
+            "traffic": "incoming",
+            "timestamp": 1788123405002,
+            "replyTo": null,
+            "message": {
+              "type": "text",
+              "text": "any Mocha promotion",
+              "attachment": {
+                "type": "text",
+                "description": ""
+              }
+            }
+          }
+        }
+      }
+    ],
+    "sorento-sub-respond-findcontact-respond": [
+      {
+        "json": {
+          "id": "900000009",
+          "phone": "60100000010",
+          "firstName": "Person 12",
+          "lastName": "Person 125",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "assignee": {
+            "id": null
+          }
+        }
+      }
+    ],
+    "is-human-intervened": [
+      {
+        "json": {
+          "id": "900000009",
+          "phone": "60100000010",
+          "firstName": "Person 12",
+          "lastName": "Person 125",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "assignee": {
+            "id": null
+          }
+        }
+      }
+    ],
+    "if-message-is-audio": [],
+    "Call 'sub-respond-save-message-redis'2": [
+      {
+        "json": {
+          "contact_id": "900000009",
+          "phone_number": "60100000010",
+          "message": "any Mocha promotion",
+          "sent_at": 1788123708140,
+          "turn_id": "14564019",
+          "data": "{\"contact_id\":\"900000009\",\"phone_number\":\"60100000010\",\"message\":\"any Mocha promotion\",\"sent_at\":1788123405,\"first_name\":\"Person 12\",\"last_name\":\"Person 125\",\"reply_to_message_id\":null,\"reply_to_message\":null,\"type\":\"incoming\",\"message_id\":\"1788123405002\",\"turn_id\":\"14564019\",\"state_trace\":{\"v\":1,\"before\":null,\"parser_raw\":null,\"parser_applied\":null,\"after\":null}}"
+        }
+      }
+    ],
+    "sim-inject-gate": [],
+    "session-get-gate": [],
+    "get-session-vars-http": [
+      {
+        "json": {
+          "respond_io_id": "900000009",
+          "session_vars": {
+            "variables": {
+              "routing": {
+                "suggested_team": "marketing_promotion",
+                "suggested_agent": "general_enquiries"
+              },
+              "entities": [
+                {
+                  "raw": "srtwc286",
+                  "hint": "product",
+                  "confident": true,
+                  "canonical_code": null,
+                  "current_message": false
+                }
+              ],
+              "ideation": null,
+              "response": "Previous turn (promotion): returned 1 records",
+              "date_mode": null,
+              "dym_offer": null,
+              "user_goal": "trying to select the first result",
+              "escalation": {
+                "is_escalation_confirmation": false
+              },
+              "match_mode": "and",
+              "domain_hint": "promotion",
+              "intent_hint": "check_promotion",
+              "message_type": "business_query",
+              "query_brands": [
+                "sorento"
+              ],
+              "access_levels": [
+                "dealer"
+              ],
+              "routing_brand": "sorento",
+              "contains_flyer": false,
+              "dym_candidates": [],
+              "date_filter_end": null,
+              "last_result_set": [
+                {
+                  "idx": 1,
+                  "uuid": null,
+                  "label": "UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf",
+                  "value": "UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf",
+                  "filename": "UPDATED SORENTO A3 FLYER  2026 (DEALER)_21072026.pdf",
+                  "entity_type": "promotion"
+                },
+                {
+                  "idx": 2,
+                  "uuid": null,
+                  "label": "SORENTO A3 FLYER_DEALER USE_11062026.pdf",
+                  "value": "SORENTO A3 FLYER_DEALER USE_11062026.pdf",
+                  "filename": "SORENTO A3 FLYER_DEALER USE_11062026.pdf",
+                  "entity_type": "promotion"
+                },
+                {
+                  "idx": 3,
+                  "uuid": null,
+                  "label": "JULY SORENTO WATER CLOSET PROMO_06072026 DEALER.pdf",
+                  "value": "JULY SORENTO WATER CLOSET PROMO_06072026 DEALER.pdf",
+                  "filename": "JULY SORENTO WATER CLOSET PROMO_06072026 DEALER.pdf",
+                  "entity_type": "promotion"
+                }
+              ],
+              "routing_company": "00000000-0000-0000-0000-000000000001",
+              "date_filter_start": null,
+              "routing_companies": [
+                {
+                  "codes": [
+                    "SRTWC286-SH-200",
+                    "SRTWC286-SH-P",
+                    "SRTWC286-SH-PP",
+                    "SRTWC286-SH",
+                    "SRTWC286-SH-UF",
+                    "SRTWC286-SH-NEW-150",
+                    "SRTWC286-SH-150",
+                    "SRTWC286-SH-NEW-P",
+                    "SRTWC286-SH-NEW-200",
+                    "SRTWC286-SH-NEW"
+                  ],
+                  "labels": [
+                    "SRTWC286-SH-200",
+                    "SRTWC286-SH-P",
+                    "SRTWC286-SH-PP",
+                    "SRTWC286-SH",
+                    "SRTWC286-SH-UF",
+                    "SRTWC286-SH-NEW-150",
+                    "SRTWC286-SH-150",
+                    "SRTWC286-SH-NEW-P",
+                    "SRTWC286-SH-NEW-200",
+                    "SRTWC286-SH-NEW"
+                  ],
+                  "brand_code": "sorento",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento"
+                }
+              ],
+              "selection_context": "suggest_offer",
+              "routing_roster_plan": null,
+              "requested_attributes": [],
+              "routing_brand_source": "resolved"
+            },
+            "user_response": "I have attached the file(s) below.\n\n1. *Promotion:* UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf\n*Start Date:* 2026-06-01\n*End Date:* 2026-09-30"
+          }
+        }
+      }
+    ],
+    "get-session-vars": [
+      {
+        "json": {
+          "respond_io_id": "900000009",
+          "session_vars": {
+            "variables": {
+              "routing": {
+                "suggested_team": "marketing_promotion",
+                "suggested_agent": "general_enquiries"
+              },
+              "entities": [
+                {
+                  "raw": "srtwc286",
+                  "hint": "product",
+                  "confident": true,
+                  "canonical_code": null,
+                  "current_message": false
+                }
+              ],
+              "ideation": null,
+              "response": "Previous turn (promotion): returned 1 records",
+              "date_mode": null,
+              "dym_offer": null,
+              "user_goal": "trying to select the first result",
+              "escalation": {
+                "is_escalation_confirmation": false
+              },
+              "match_mode": "and",
+              "domain_hint": "promotion",
+              "intent_hint": "check_promotion",
+              "message_type": "business_query",
+              "query_brands": [
+                "sorento"
+              ],
+              "access_levels": [
+                "dealer"
+              ],
+              "routing_brand": "sorento",
+              "contains_flyer": false,
+              "dym_candidates": [],
+              "date_filter_end": null,
+              "last_result_set": [
+                {
+                  "idx": 1,
+                  "uuid": null,
+                  "label": "UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf",
+                  "value": "UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf",
+                  "filename": "UPDATED SORENTO A3 FLYER  2026 (DEALER)_21072026.pdf",
+                  "entity_type": "promotion"
+                },
+                {
+                  "idx": 2,
+                  "uuid": null,
+                  "label": "SORENTO A3 FLYER_DEALER USE_11062026.pdf",
+                  "value": "SORENTO A3 FLYER_DEALER USE_11062026.pdf",
+                  "filename": "SORENTO A3 FLYER_DEALER USE_11062026.pdf",
+                  "entity_type": "promotion"
+                },
+                {
+                  "idx": 3,
+                  "uuid": null,
+                  "label": "JULY SORENTO WATER CLOSET PROMO_06072026 DEALER.pdf",
+                  "value": "JULY SORENTO WATER CLOSET PROMO_06072026 DEALER.pdf",
+                  "filename": "JULY SORENTO WATER CLOSET PROMO_06072026 DEALER.pdf",
+                  "entity_type": "promotion"
+                }
+              ],
+              "routing_company": "00000000-0000-0000-0000-000000000001",
+              "date_filter_start": null,
+              "routing_companies": [
+                {
+                  "codes": [
+                    "SRTWC286-SH-200",
+                    "SRTWC286-SH-P",
+                    "SRTWC286-SH-PP",
+                    "SRTWC286-SH",
+                    "SRTWC286-SH-UF",
+                    "SRTWC286-SH-NEW-150",
+                    "SRTWC286-SH-150",
+                    "SRTWC286-SH-NEW-P",
+                    "SRTWC286-SH-NEW-200",
+                    "SRTWC286-SH-NEW"
+                  ],
+                  "labels": [
+                    "SRTWC286-SH-200",
+                    "SRTWC286-SH-P",
+                    "SRTWC286-SH-PP",
+                    "SRTWC286-SH",
+                    "SRTWC286-SH-UF",
+                    "SRTWC286-SH-NEW-150",
+                    "SRTWC286-SH-150",
+                    "SRTWC286-SH-NEW-P",
+                    "SRTWC286-SH-NEW-200",
+                    "SRTWC286-SH-NEW"
+                  ],
+                  "brand_code": "sorento",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento"
+                }
+              ],
+              "selection_context": "suggest_offer",
+              "routing_roster_plan": null,
+              "requested_attributes": [],
+              "routing_brand_source": "resolved"
+            },
+            "user_response": "I have attached the file(s) below.\n\n1. *Promotion:* UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf\n*Start Date:* 2026-06-01\n*End Date:* 2026-09-30"
+          }
+        }
+      }
+    ],
+    "Call 'sub-query-reformulator'": [
+      {
+        "json": {
+          "output": {
+            "message_type": "business_query",
+            "intent_hint": "check_promotion",
+            "domain_hint": "promotion",
+            "scope_intent": "specific",
+            "is_affirmative": null,
+            "user_goal": "trying to check any Mocha promotion",
+            "access_levels": [],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "Mocha",
+                "hint": "brand",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "entity_op": "replace_combine",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "marketing_promotion",
+              "suggested_agent": "general_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "domain_signal_source": "intent_explicit",
+            "scope_exclusive_applied": false,
+            "entity_op_applied": "replace_combine",
+            "query_brands": [
+              "mocha"
+            ],
+            "entities_filtered": false,
+            "entities_emptied_by_filter": false,
+            "suggest_pick_context": true
+          },
+          "_parser_raw": {
+            "message_type": "business_query",
+            "intent_hint": "check_promotion",
+            "domain_hint": "promotion",
+            "scope_intent": "specific",
+            "is_affirmative": null,
+            "user_goal": "trying to check any Mocha promotion",
+            "access_levels": [],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "Mocha",
+                "hint": "brand",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "entity_op": "replace_combine",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "marketing_promotion",
+              "suggested_agent": "general_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false,
+              "company_pick": null
+            }
+          }
+        }
+      }
+    ],
+    "check-access": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "General Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null
+        }
+      }
+    ],
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": "900000009",
+              "phone": "60100000010",
+              "firstName": "Person 12",
+              "lastName": "Person 125",
+              "custom_fields": [
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": "true"
+                }
+              ],
+              "assignee": {
+                "id": null
+              }
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "rs6-02-accesschoice",
+              "contact": {
+                "id": 900000009,
+                "firstName": "Person 12",
+                "lastName": "Person 125",
+                "phone": "60100000010",
+                "status": "open",
+                "assignee": {
+                  "id": null
+                }
+              },
+              "message": {
+                "messageId": 1788123405002,
+                "channelMessageId": "rs6-02-accesschoice",
+                "contactId": 900000009,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788123405002,
+                "replyTo": null,
+                "message": {
+                  "type": "text",
+                  "text": "any Mocha promotion",
+                  "attachment": {
+                    "type": "text",
+                    "description": ""
+                  }
+                }
+              }
+            },
+            "session": {
+              "respond_io_id": "900000009",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "marketing_promotion",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "entities": [
+                    {
+                      "raw": "srtwc286",
+                      "hint": "product",
+                      "confident": true,
+                      "canonical_code": null,
+                      "current_message": false
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Previous turn (promotion): returned 1 records",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to select the first result",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "promotion",
+                  "intent_hint": "check_promotion",
+                  "message_type": "business_query",
+                  "query_brands": [
+                    "sorento"
+                  ],
+                  "access_levels": [
+                    "dealer"
+                  ],
+                  "routing_brand": "sorento",
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [
+                    {
+                      "idx": 1,
+                      "uuid": null,
+                      "label": "UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf",
+                      "value": "UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf",
+                      "filename": "UPDATED SORENTO A3 FLYER  2026 (DEALER)_21072026.pdf",
+                      "entity_type": "promotion"
+                    },
+                    {
+                      "idx": 2,
+                      "uuid": null,
+                      "label": "SORENTO A3 FLYER_DEALER USE_11062026.pdf",
+                      "value": "SORENTO A3 FLYER_DEALER USE_11062026.pdf",
+                      "filename": "SORENTO A3 FLYER_DEALER USE_11062026.pdf",
+                      "entity_type": "promotion"
+                    },
+                    {
+                      "idx": 3,
+                      "uuid": null,
+                      "label": "JULY SORENTO WATER CLOSET PROMO_06072026 DEALER.pdf",
+                      "value": "JULY SORENTO WATER CLOSET PROMO_06072026 DEALER.pdf",
+                      "filename": "JULY SORENTO WATER CLOSET PROMO_06072026 DEALER.pdf",
+                      "entity_type": "promotion"
+                    }
+                  ],
+                  "routing_company": "00000000-0000-0000-0000-000000000001",
+                  "date_filter_start": null,
+                  "routing_companies": [
+                    {
+                      "codes": [
+                        "SRTWC286-SH-200",
+                        "SRTWC286-SH-P",
+                        "SRTWC286-SH-PP",
+                        "SRTWC286-SH",
+                        "SRTWC286-SH-UF",
+                        "SRTWC286-SH-NEW-150",
+                        "SRTWC286-SH-150",
+                        "SRTWC286-SH-NEW-P",
+                        "SRTWC286-SH-NEW-200",
+                        "SRTWC286-SH-NEW"
+                      ],
+                      "labels": [
+                        "SRTWC286-SH-200",
+                        "SRTWC286-SH-P",
+                        "SRTWC286-SH-PP",
+                        "SRTWC286-SH",
+                        "SRTWC286-SH-UF",
+                        "SRTWC286-SH-NEW-150",
+                        "SRTWC286-SH-150",
+                        "SRTWC286-SH-NEW-P",
+                        "SRTWC286-SH-NEW-200",
+                        "SRTWC286-SH-NEW"
+                      ],
+                      "brand_code": "sorento",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "selection_context": "suggest_offer",
+                  "routing_roster_plan": null,
+                  "requested_attributes": [],
+                  "routing_brand_source": "resolved"
+                },
+                "user_response": "I have attached the file(s) below.\n\n1. *Promotion:* UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf\n*Start Date:* 2026-06-01\n*End Date:* 2026-09-30"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "check_promotion",
+                "domain_hint": "promotion",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check any Mocha promotion",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "Mocha",
+                    "hint": "brand",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "marketing_promotion",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_explicit",
+                "scope_exclusive_applied": false,
+                "entity_op_applied": "replace_combine",
+                "query_brands": [
+                  "mocha"
+                ],
+                "entities_filtered": false,
+                "entities_emptied_by_filter": false,
+                "suggest_pick_context": true
+              },
+              "_parser_raw": {
+                "message_type": "business_query",
+                "intent_hint": "check_promotion",
+                "domain_hint": "promotion",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check any Mocha promotion",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "Mocha",
+                    "hint": "brand",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "marketing_promotion",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "General Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null
+          }
+        }
+      }
+    ],
+    "route-turn": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "General Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null,
+          "branch_kind": "check_promotion"
+        }
+      }
+    ],
+    "route": [],
+    "get-access-types": [
+      {
+        "json": {
+          "name": "Sorento Office",
+          "keywords": [
+            "sorento office",
+            "office"
+          ]
+        }
+      },
+      {
+        "json": {
+          "name": "Sorento Dealer",
+          "keywords": [
+            "sorento dealer",
+            "dealer"
+          ]
+        }
+      },
+      {
+        "json": {
+          "name": "Mocha Dealer",
+          "keywords": [
+            "mocha dealer"
+          ]
+        }
+      },
+      {
+        "json": {
+          "name": "Mocha Office",
+          "keywords": [
+            "mocha office",
+            "office"
+          ]
+        }
+      },
+      {
+        "json": {
+          "name": "Cabana Office",
+          "keywords": [
+            "cabana office",
+            "office"
+          ]
+        }
+      },
+      {
+        "json": {
+          "name": "Cabana Dealer",
+          "keywords": [
+            "cabana dealer"
+          ]
+        }
+      },
+      {
+        "json": {
+          "name": "End User",
+          "keywords": [
+            "customer",
+            "consumer",
+            "homeowner",
+            "b2c",
+            "end-user",
+            "enduser",
+            "user",
+            "client"
+          ]
+        }
+      }
+    ],
+    "Aggregate": [
+      {
+        "json": {
+          "name": [
+            "Sorento Office",
+            "Sorento Dealer",
+            "Mocha Dealer",
+            "Mocha Office",
+            "Cabana Office",
+            "Cabana Dealer",
+            "End User"
+          ]
+        }
+      }
+    ],
+    "tier-gate": [
+      {
+        "json": {
+          "name": [
+            "Sorento Office",
+            "Sorento Dealer",
+            "Mocha Dealer",
+            "Mocha Office",
+            "Cabana Office",
+            "Cabana Dealer",
+            "End User"
+          ],
+          "tier_stated": [],
+          "entitled_tiers": [
+            "dealer",
+            "office",
+            "end_user"
+          ],
+          "entitled_unknown": [],
+          "query_brands": [
+            "mocha"
+          ],
+          "pending_pick": false,
+          "tier_ask": true,
+          "tier_proceed": false,
+          "access_levels_recomposed": [
+            "Mocha Dealer",
+            "Mocha Office",
+            "End User"
+          ],
+          "tier_probe_plan": [
+            {
+              "tier": "dealer",
+              "access_levels": [
+                "Mocha Dealer"
+              ]
+            },
+            {
+              "tier": "office",
+              "access_levels": [
+                "Mocha Office"
+              ]
+            },
+            {
+              "tier": "end_user",
+              "access_levels": [
+                "End User"
+              ]
+            }
+          ],
+          "brand_gate_empty": false,
+          "brand_unheld": false
+        }
+      }
+    ],
+    "If4": [
+      {
+        "json": {
+          "name": [
+            "Sorento Office",
+            "Sorento Dealer",
+            "Mocha Dealer",
+            "Mocha Office",
+            "Cabana Office",
+            "Cabana Dealer",
+            "End User"
+          ],
+          "tier_stated": [],
+          "entitled_tiers": [
+            "dealer",
+            "office",
+            "end_user"
+          ],
+          "entitled_unknown": [],
+          "query_brands": [
+            "mocha"
+          ],
+          "pending_pick": false,
+          "tier_ask": true,
+          "tier_proceed": false,
+          "access_levels_recomposed": [
+            "Mocha Dealer",
+            "Mocha Office",
+            "End User"
+          ],
+          "tier_probe_plan": [
+            {
+              "tier": "dealer",
+              "access_levels": [
+                "Mocha Dealer"
+              ]
+            },
+            {
+              "tier": "office",
+              "access_levels": [
+                "Mocha Office"
+              ]
+            },
+            {
+              "tier": "end_user",
+              "access_levels": [
+                "End User"
+              ]
+            }
+          ],
+          "brand_gate_empty": false,
+          "brand_unheld": false
+        }
+      }
+    ],
+    "resolve-entity": [
+      {
+        "json": {
+          "match_mode": "and",
+          "tokens": [
+            "Mocha"
+          ],
+          "elapsed_ms": 22.52,
+          "intersection": [
+            {
+              "entity_type": "promotion",
+              "canonical_code": "0899962d-2489-4ce9-8ec3-29e437ce6d0e",
+              "uuid": "0899962d-2489-4ce9-8ec3-29e437ce6d0e",
+              "match_field": "description",
+              "match_tier": "and",
+              "company_id": "00000000-0000-0000-0000-000000000001",
+              "company_name": "Sorento",
+              "display": {
+                "description": "MOCHA A3 Flyer 03082026_compressed.pdf",
+                "is_active": true,
+                "promotion_type_code": "a3_flyer",
+                "promotion_type_name": "A3 Flyer",
+                "expired_but_usable": false
+              }
+            },
+            {
+              "entity_type": "promotion",
+              "canonical_code": "62a48f82-f061-4d5e-9f80-78b7e7fb577f",
+              "uuid": "62a48f82-f061-4d5e-9f80-78b7e7fb577f",
+              "match_field": "description",
+              "match_tier": "and",
+              "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+              "company_name": "Mocha",
+              "display": {
+                "description": "MOCHA A3 Flyer 03082026_compressed.pdf",
+                "is_active": true,
+                "promotion_type_code": "a3_flyer",
+                "promotion_type_name": "A3 Flyer",
+                "expired_but_usable": false
+              }
+            },
+            {
+              "entity_type": "promotion",
+              "canonical_code": "b0da7e8f-877a-43b0-ad25-1e6d844c333b",
+              "uuid": "b0da7e8f-877a-43b0-ad25-1e6d844c333b",
+              "match_field": "description",
+              "match_tier": "and",
+              "company_id": "00000000-0000-0000-0000-000000000001",
+              "company_name": "Sorento",
+              "display": {
+                "description": "Mocha A3 Flyer 13032026_compressed (1).pdf",
+                "is_active": true,
+                "promotion_type_code": "a3_flyer",
+                "promotion_type_name": "A3 Flyer",
+                "expired_but_usable": false
+              }
+            }
+          ],
+          "by_entity_type": {
+            "promotion": [
+              {
+                "entity_type": "promotion",
+                "canonical_code": "0899962d-2489-4ce9-8ec3-29e437ce6d0e",
+                "uuid": "0899962d-2489-4ce9-8ec3-29e437ce6d0e",
+                "match_field": "description",
+                "match_tier": "and",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "description": "MOCHA A3 Flyer 03082026_compressed.pdf",
+                  "is_active": true,
+                  "promotion_type_code": "a3_flyer",
+                  "promotion_type_name": "A3 Flyer",
+                  "expired_but_usable": false
+                }
+              },
+              {
+                "entity_type": "promotion",
+                "canonical_code": "62a48f82-f061-4d5e-9f80-78b7e7fb577f",
+                "uuid": "62a48f82-f061-4d5e-9f80-78b7e7fb577f",
+                "match_field": "description",
+                "match_tier": "and",
+                "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                "company_name": "Mocha",
+                "display": {
+                  "description": "MOCHA A3 Flyer 03082026_compressed.pdf",
+                  "is_active": true,
+                  "promotion_type_code": "a3_flyer",
+                  "promotion_type_name": "A3 Flyer",
+                  "expired_but_usable": false
+                }
+              },
+              {
+                "entity_type": "promotion",
+                "canonical_code": "b0da7e8f-877a-43b0-ad25-1e6d844c333b",
+                "uuid": "b0da7e8f-877a-43b0-ad25-1e6d844c333b",
+                "match_field": "description",
+                "match_tier": "and",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "description": "Mocha A3 Flyer 13032026_compressed (1).pdf",
+                  "is_active": true,
+                  "promotion_type_code": "a3_flyer",
+                  "promotion_type_name": "A3 Flyer",
+                  "expired_but_usable": false
+                }
+              }
+            ]
+          },
+          "empty": false,
+          "unresolved_tokens": [],
+          "alternatives": [],
+          "token_coverage": [
+            {
+              "token": "Mocha",
+              "match_semantics": "max_coverage",
+              "coverage": [
+                {
+                  "entity_type": "promotion",
+                  "matched_words": [
+                    "Mocha"
+                  ],
+                  "unmatched_words": [],
+                  "truncated": false
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "disallowed-entity-gate": [
+      {
+        "json": {
+          "match_mode": "and",
+          "tokens": [
+            "Mocha"
+          ],
+          "elapsed_ms": 22.52,
+          "intersection": [
+            {
+              "entity_type": "promotion",
+              "canonical_code": "0899962d-2489-4ce9-8ec3-29e437ce6d0e",
+              "uuid": "0899962d-2489-4ce9-8ec3-29e437ce6d0e",
+              "match_field": "description",
+              "match_tier": "and",
+              "company_id": "00000000-0000-0000-0000-000000000001",
+              "company_name": "Sorento",
+              "display": {
+                "description": "MOCHA A3 Flyer 03082026_compressed.pdf",
+                "is_active": true,
+                "promotion_type_code": "a3_flyer",
+                "promotion_type_name": "A3 Flyer",
+                "expired_but_usable": false
+              }
+            },
+            {
+              "entity_type": "promotion",
+              "canonical_code": "62a48f82-f061-4d5e-9f80-78b7e7fb577f",
+              "uuid": "62a48f82-f061-4d5e-9f80-78b7e7fb577f",
+              "match_field": "description",
+              "match_tier": "and",
+              "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+              "company_name": "Mocha",
+              "display": {
+                "description": "MOCHA A3 Flyer 03082026_compressed.pdf",
+                "is_active": true,
+                "promotion_type_code": "a3_flyer",
+                "promotion_type_name": "A3 Flyer",
+                "expired_but_usable": false
+              }
+            },
+            {
+              "entity_type": "promotion",
+              "canonical_code": "b0da7e8f-877a-43b0-ad25-1e6d844c333b",
+              "uuid": "b0da7e8f-877a-43b0-ad25-1e6d844c333b",
+              "match_field": "description",
+              "match_tier": "and",
+              "company_id": "00000000-0000-0000-0000-000000000001",
+              "company_name": "Sorento",
+              "display": {
+                "description": "Mocha A3 Flyer 13032026_compressed (1).pdf",
+                "is_active": true,
+                "promotion_type_code": "a3_flyer",
+                "promotion_type_name": "A3 Flyer",
+                "expired_but_usable": false
+              }
+            }
+          ],
+          "by_entity_type": {
+            "promotion": [
+              {
+                "entity_type": "promotion",
+                "canonical_code": "0899962d-2489-4ce9-8ec3-29e437ce6d0e",
+                "uuid": "0899962d-2489-4ce9-8ec3-29e437ce6d0e",
+                "match_field": "description",
+                "match_tier": "and",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "description": "MOCHA A3 Flyer 03082026_compressed.pdf",
+                  "is_active": true,
+                  "promotion_type_code": "a3_flyer",
+                  "promotion_type_name": "A3 Flyer",
+                  "expired_but_usable": false
+                }
+              },
+              {
+                "entity_type": "promotion",
+                "canonical_code": "62a48f82-f061-4d5e-9f80-78b7e7fb577f",
+                "uuid": "62a48f82-f061-4d5e-9f80-78b7e7fb577f",
+                "match_field": "description",
+                "match_tier": "and",
+                "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                "company_name": "Mocha",
+                "display": {
+                  "description": "MOCHA A3 Flyer 03082026_compressed.pdf",
+                  "is_active": true,
+                  "promotion_type_code": "a3_flyer",
+                  "promotion_type_name": "A3 Flyer",
+                  "expired_but_usable": false
+                }
+              },
+              {
+                "entity_type": "promotion",
+                "canonical_code": "b0da7e8f-877a-43b0-ad25-1e6d844c333b",
+                "uuid": "b0da7e8f-877a-43b0-ad25-1e6d844c333b",
+                "match_field": "description",
+                "match_tier": "and",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "description": "Mocha A3 Flyer 13032026_compressed (1).pdf",
+                  "is_active": true,
+                  "promotion_type_code": "a3_flyer",
+                  "promotion_type_name": "A3 Flyer",
+                  "expired_but_usable": false
+                }
+              }
+            ]
+          },
+          "empty": false,
+          "unresolved_tokens": [],
+          "alternatives": [],
+          "token_coverage": [
+            {
+              "token": "Mocha",
+              "match_semantics": "max_coverage",
+              "coverage": [
+                {
+                  "entity_type": "promotion",
+                  "matched_words": [
+                    "Mocha"
+                  ],
+                  "unmatched_words": [],
+                  "truncated": false
+                }
+              ]
+            }
+          ],
+          "gate_passed": true,
+          "require_specific": false,
+          "resolved_company": "mocha",
+          "company_team": "marketing_promotion",
+          "resolved_companies": [
+            "mocha"
+          ],
+          "routing_brand": "mocha",
+          "routing_brand_source": "stated",
+          "routing_companies": [
+            {
+              "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+              "company_name": "Mocha",
+              "brand_code": null,
+              "codes": [
+                "62a48f82-f061-4d5e-9f80-78b7e7fb577f"
+              ],
+              "labels": [
+                "62a48f82-f061-4d5e-9f80-78b7e7fb577f"
+              ]
+            },
+            {
+              "company_id": "00000000-0000-0000-0000-000000000001",
+              "company_name": "Sorento",
+              "brand_code": null,
+              "codes": [
+                "0899962d-2489-4ce9-8ec3-29e437ce6d0e",
+                "b0da7e8f-877a-43b0-ad25-1e6d844c333b"
+              ],
+              "labels": [
+                "0899962d-2489-4ce9-8ec3-29e437ce6d0e",
+                "b0da7e8f-877a-43b0-ad25-1e6d844c333b"
+              ]
+            }
+          ],
+          "routing_company": null,
+          "access_denied_levels": [],
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "access_notice": "",
+          "gate_reason": "ok",
+          "gate_clarification": "",
+          "compatible_entities": [
+            {
+              "uuid": "0899962d-2489-4ce9-8ec3-29e437ce6d0e",
+              "entity_type": "promotion",
+              "code": "0899962d-2489-4ce9-8ec3-29e437ce6d0e"
+            },
+            {
+              "uuid": "62a48f82-f061-4d5e-9f80-78b7e7fb577f",
+              "entity_type": "promotion",
+              "code": "62a48f82-f061-4d5e-9f80-78b7e7fb577f"
+            },
+            {
+              "uuid": "b0da7e8f-877a-43b0-ad25-1e6d844c333b",
+              "entity_type": "promotion",
+              "code": "b0da7e8f-877a-43b0-ad25-1e6d844c333b"
+            }
+          ],
+          "gate_debug": {
+            "domain": "promotion",
+            "allowed_lookup": [
+              "product",
+              "promotion",
+              "category",
+              "brand"
+            ],
+            "entities_count": 3
+          }
+        }
+      }
+    ],
+    "build-ctx-resolved": [
+      {
+        "json": {
+          "match_mode": "and",
+          "tokens": [
+            "Mocha"
+          ],
+          "elapsed_ms": 22.52,
+          "intersection": [
+            {
+              "entity_type": "promotion",
+              "canonical_code": "0899962d-2489-4ce9-8ec3-29e437ce6d0e",
+              "uuid": "0899962d-2489-4ce9-8ec3-29e437ce6d0e",
+              "match_field": "description",
+              "match_tier": "and",
+              "company_id": "00000000-0000-0000-0000-000000000001",
+              "company_name": "Sorento",
+              "display": {
+                "description": "MOCHA A3 Flyer 03082026_compressed.pdf",
+                "is_active": true,
+                "promotion_type_code": "a3_flyer",
+                "promotion_type_name": "A3 Flyer",
+                "expired_but_usable": false
+              }
+            },
+            {
+              "entity_type": "promotion",
+              "canonical_code": "62a48f82-f061-4d5e-9f80-78b7e7fb577f",
+              "uuid": "62a48f82-f061-4d5e-9f80-78b7e7fb577f",
+              "match_field": "description",
+              "match_tier": "and",
+              "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+              "company_name": "Mocha",
+              "display": {
+                "description": "MOCHA A3 Flyer 03082026_compressed.pdf",
+                "is_active": true,
+                "promotion_type_code": "a3_flyer",
+                "promotion_type_name": "A3 Flyer",
+                "expired_but_usable": false
+              }
+            },
+            {
+              "entity_type": "promotion",
+              "canonical_code": "b0da7e8f-877a-43b0-ad25-1e6d844c333b",
+              "uuid": "b0da7e8f-877a-43b0-ad25-1e6d844c333b",
+              "match_field": "description",
+              "match_tier": "and",
+              "company_id": "00000000-0000-0000-0000-000000000001",
+              "company_name": "Sorento",
+              "display": {
+                "description": "Mocha A3 Flyer 13032026_compressed (1).pdf",
+                "is_active": true,
+                "promotion_type_code": "a3_flyer",
+                "promotion_type_name": "A3 Flyer",
+                "expired_but_usable": false
+              }
+            }
+          ],
+          "by_entity_type": {
+            "promotion": [
+              {
+                "entity_type": "promotion",
+                "canonical_code": "0899962d-2489-4ce9-8ec3-29e437ce6d0e",
+                "uuid": "0899962d-2489-4ce9-8ec3-29e437ce6d0e",
+                "match_field": "description",
+                "match_tier": "and",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "description": "MOCHA A3 Flyer 03082026_compressed.pdf",
+                  "is_active": true,
+                  "promotion_type_code": "a3_flyer",
+                  "promotion_type_name": "A3 Flyer",
+                  "expired_but_usable": false
+                }
+              },
+              {
+                "entity_type": "promotion",
+                "canonical_code": "62a48f82-f061-4d5e-9f80-78b7e7fb577f",
+                "uuid": "62a48f82-f061-4d5e-9f80-78b7e7fb577f",
+                "match_field": "description",
+                "match_tier": "and",
+                "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                "company_name": "Mocha",
+                "display": {
+                  "description": "MOCHA A3 Flyer 03082026_compressed.pdf",
+                  "is_active": true,
+                  "promotion_type_code": "a3_flyer",
+                  "promotion_type_name": "A3 Flyer",
+                  "expired_but_usable": false
+                }
+              },
+              {
+                "entity_type": "promotion",
+                "canonical_code": "b0da7e8f-877a-43b0-ad25-1e6d844c333b",
+                "uuid": "b0da7e8f-877a-43b0-ad25-1e6d844c333b",
+                "match_field": "description",
+                "match_tier": "and",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "description": "Mocha A3 Flyer 13032026_compressed (1).pdf",
+                  "is_active": true,
+                  "promotion_type_code": "a3_flyer",
+                  "promotion_type_name": "A3 Flyer",
+                  "expired_but_usable": false
+                }
+              }
+            ]
+          },
+          "empty": false,
+          "unresolved_tokens": [],
+          "alternatives": [],
+          "token_coverage": [
+            {
+              "token": "Mocha",
+              "match_semantics": "max_coverage",
+              "coverage": [
+                {
+                  "entity_type": "promotion",
+                  "matched_words": [
+                    "Mocha"
+                  ],
+                  "unmatched_words": [],
+                  "truncated": false
+                }
+              ]
+            }
+          ],
+          "gate_passed": true,
+          "require_specific": false,
+          "resolved_company": "mocha",
+          "company_team": "marketing_promotion",
+          "resolved_companies": [
+            "mocha"
+          ],
+          "routing_brand": "mocha",
+          "routing_brand_source": "stated",
+          "routing_companies": [
+            {
+              "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+              "company_name": "Mocha",
+              "brand_code": null,
+              "codes": [
+                "62a48f82-f061-4d5e-9f80-78b7e7fb577f"
+              ],
+              "labels": [
+                "62a48f82-f061-4d5e-9f80-78b7e7fb577f"
+              ]
+            },
+            {
+              "company_id": "00000000-0000-0000-0000-000000000001",
+              "company_name": "Sorento",
+              "brand_code": null,
+              "codes": [
+                "0899962d-2489-4ce9-8ec3-29e437ce6d0e",
+                "b0da7e8f-877a-43b0-ad25-1e6d844c333b"
+              ],
+              "labels": [
+                "0899962d-2489-4ce9-8ec3-29e437ce6d0e",
+                "b0da7e8f-877a-43b0-ad25-1e6d844c333b"
+              ]
+            }
+          ],
+          "routing_company": null,
+          "access_denied_levels": [],
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "access_notice": "",
+          "gate_reason": "ok",
+          "gate_clarification": "",
+          "compatible_entities": [
+            {
+              "uuid": "0899962d-2489-4ce9-8ec3-29e437ce6d0e",
+              "entity_type": "promotion",
+              "code": "0899962d-2489-4ce9-8ec3-29e437ce6d0e"
+            },
+            {
+              "uuid": "62a48f82-f061-4d5e-9f80-78b7e7fb577f",
+              "entity_type": "promotion",
+              "code": "62a48f82-f061-4d5e-9f80-78b7e7fb577f"
+            },
+            {
+              "uuid": "b0da7e8f-877a-43b0-ad25-1e6d844c333b",
+              "entity_type": "promotion",
+              "code": "b0da7e8f-877a-43b0-ad25-1e6d844c333b"
+            }
+          ],
+          "gate_debug": {
+            "domain": "promotion",
+            "allowed_lookup": [
+              "product",
+              "promotion",
+              "category",
+              "brand"
+            ],
+            "entities_count": 3
+          },
+          "ctx": {
+            "contact": {
+              "id": "900000009",
+              "phone": "60100000010",
+              "firstName": "Person 12",
+              "lastName": "Person 125",
+              "custom_fields": [
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": "true"
+                }
+              ],
+              "assignee": {
+                "id": null
+              }
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "rs6-02-accesschoice",
+              "contact": {
+                "id": 900000009,
+                "firstName": "Person 12",
+                "lastName": "Person 125",
+                "phone": "60100000010",
+                "status": "open",
+                "assignee": {
+                  "id": null
+                }
+              },
+              "message": {
+                "messageId": 1788123405002,
+                "channelMessageId": "rs6-02-accesschoice",
+                "contactId": 900000009,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788123405002,
+                "replyTo": null,
+                "message": {
+                  "type": "text",
+                  "text": "any Mocha promotion",
+                  "attachment": {
+                    "type": "text",
+                    "description": ""
+                  }
+                }
+              }
+            },
+            "session": {
+              "respond_io_id": "900000009",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "marketing_promotion",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "entities": [
+                    {
+                      "raw": "srtwc286",
+                      "hint": "product",
+                      "confident": true,
+                      "canonical_code": null,
+                      "current_message": false
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Previous turn (promotion): returned 1 records",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to select the first result",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "promotion",
+                  "intent_hint": "check_promotion",
+                  "message_type": "business_query",
+                  "query_brands": [
+                    "sorento"
+                  ],
+                  "access_levels": [
+                    "dealer"
+                  ],
+                  "routing_brand": "sorento",
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [
+                    {
+                      "idx": 1,
+                      "uuid": null,
+                      "label": "UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf",
+                      "value": "UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf",
+                      "filename": "UPDATED SORENTO A3 FLYER  2026 (DEALER)_21072026.pdf",
+                      "entity_type": "promotion"
+                    },
+                    {
+                      "idx": 2,
+                      "uuid": null,
+                      "label": "SORENTO A3 FLYER_DEALER USE_11062026.pdf",
+                      "value": "SORENTO A3 FLYER_DEALER USE_11062026.pdf",
+                      "filename": "SORENTO A3 FLYER_DEALER USE_11062026.pdf",
+                      "entity_type": "promotion"
+                    },
+                    {
+                      "idx": 3,
+                      "uuid": null,
+                      "label": "JULY SORENTO WATER CLOSET PROMO_06072026 DEALER.pdf",
+                      "value": "JULY SORENTO WATER CLOSET PROMO_06072026 DEALER.pdf",
+                      "filename": "JULY SORENTO WATER CLOSET PROMO_06072026 DEALER.pdf",
+                      "entity_type": "promotion"
+                    }
+                  ],
+                  "routing_company": "00000000-0000-0000-0000-000000000001",
+                  "date_filter_start": null,
+                  "routing_companies": [
+                    {
+                      "codes": [
+                        "SRTWC286-SH-200",
+                        "SRTWC286-SH-P",
+                        "SRTWC286-SH-PP",
+                        "SRTWC286-SH",
+                        "SRTWC286-SH-UF",
+                        "SRTWC286-SH-NEW-150",
+                        "SRTWC286-SH-150",
+                        "SRTWC286-SH-NEW-P",
+                        "SRTWC286-SH-NEW-200",
+                        "SRTWC286-SH-NEW"
+                      ],
+                      "labels": [
+                        "SRTWC286-SH-200",
+                        "SRTWC286-SH-P",
+                        "SRTWC286-SH-PP",
+                        "SRTWC286-SH",
+                        "SRTWC286-SH-UF",
+                        "SRTWC286-SH-NEW-150",
+                        "SRTWC286-SH-150",
+                        "SRTWC286-SH-NEW-P",
+                        "SRTWC286-SH-NEW-200",
+                        "SRTWC286-SH-NEW"
+                      ],
+                      "brand_code": "sorento",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "selection_context": "suggest_offer",
+                  "routing_roster_plan": null,
+                  "requested_attributes": [],
+                  "routing_brand_source": "resolved"
+                },
+                "user_response": "I have attached the file(s) below.\n\n1. *Promotion:* UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf\n*Start Date:* 2026-06-01\n*End Date:* 2026-09-30"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "check_promotion",
+                "domain_hint": "promotion",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check any Mocha promotion",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "Mocha",
+                    "hint": "brand",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "marketing_promotion",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_explicit",
+                "scope_exclusive_applied": false,
+                "entity_op_applied": "replace_combine",
+                "query_brands": [
+                  "mocha"
+                ],
+                "entities_filtered": false,
+                "entities_emptied_by_filter": false,
+                "suggest_pick_context": true
+              },
+              "_parser_raw": {
+                "message_type": "business_query",
+                "intent_hint": "check_promotion",
+                "domain_hint": "promotion",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check any Mocha promotion",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "Mocha",
+                    "hint": "brand",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "marketing_promotion",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "General Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null,
+            "resolved": {
+              "match_mode": "and",
+              "tokens": [
+                "Mocha"
+              ],
+              "elapsed_ms": 22.52,
+              "intersection": [
+                {
+                  "entity_type": "promotion",
+                  "canonical_code": "0899962d-2489-4ce9-8ec3-29e437ce6d0e",
+                  "uuid": "0899962d-2489-4ce9-8ec3-29e437ce6d0e",
+                  "match_field": "description",
+                  "match_tier": "and",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "description": "MOCHA A3 Flyer 03082026_compressed.pdf",
+                    "is_active": true,
+                    "promotion_type_code": "a3_flyer",
+                    "promotion_type_name": "A3 Flyer",
+                    "expired_but_usable": false
+                  }
+                },
+                {
+                  "entity_type": "promotion",
+                  "canonical_code": "62a48f82-f061-4d5e-9f80-78b7e7fb577f",
+                  "uuid": "62a48f82-f061-4d5e-9f80-78b7e7fb577f",
+                  "match_field": "description",
+                  "match_tier": "and",
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "display": {
+                    "description": "MOCHA A3 Flyer 03082026_compressed.pdf",
+                    "is_active": true,
+                    "promotion_type_code": "a3_flyer",
+                    "promotion_type_name": "A3 Flyer",
+                    "expired_but_usable": false
+                  }
+                },
+                {
+                  "entity_type": "promotion",
+                  "canonical_code": "b0da7e8f-877a-43b0-ad25-1e6d844c333b",
+                  "uuid": "b0da7e8f-877a-43b0-ad25-1e6d844c333b",
+                  "match_field": "description",
+                  "match_tier": "and",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "description": "Mocha A3 Flyer 13032026_compressed (1).pdf",
+                    "is_active": true,
+                    "promotion_type_code": "a3_flyer",
+                    "promotion_type_name": "A3 Flyer",
+                    "expired_but_usable": false
+                  }
+                }
+              ],
+              "by_entity_type": {
+                "promotion": [
+                  {
+                    "entity_type": "promotion",
+                    "canonical_code": "0899962d-2489-4ce9-8ec3-29e437ce6d0e",
+                    "uuid": "0899962d-2489-4ce9-8ec3-29e437ce6d0e",
+                    "match_field": "description",
+                    "match_tier": "and",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento",
+                    "display": {
+                      "description": "MOCHA A3 Flyer 03082026_compressed.pdf",
+                      "is_active": true,
+                      "promotion_type_code": "a3_flyer",
+                      "promotion_type_name": "A3 Flyer",
+                      "expired_but_usable": false
+                    }
+                  },
+                  {
+                    "entity_type": "promotion",
+                    "canonical_code": "62a48f82-f061-4d5e-9f80-78b7e7fb577f",
+                    "uuid": "62a48f82-f061-4d5e-9f80-78b7e7fb577f",
+                    "match_field": "description",
+                    "match_tier": "and",
+                    "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                    "company_name": "Mocha",
+                    "display": {
+                      "description": "MOCHA A3 Flyer 03082026_compressed.pdf",
+                      "is_active": true,
+                      "promotion_type_code": "a3_flyer",
+                      "promotion_type_name": "A3 Flyer",
+                      "expired_but_usable": false
+                    }
+                  },
+                  {
+                    "entity_type": "promotion",
+                    "canonical_code": "b0da7e8f-877a-43b0-ad25-1e6d844c333b",
+                    "uuid": "b0da7e8f-877a-43b0-ad25-1e6d844c333b",
+                    "match_field": "description",
+                    "match_tier": "and",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento",
+                    "display": {
+                      "description": "Mocha A3 Flyer 13032026_compressed (1).pdf",
+                      "is_active": true,
+                      "promotion_type_code": "a3_flyer",
+                      "promotion_type_name": "A3 Flyer",
+                      "expired_but_usable": false
+                    }
+                  }
+                ]
+              },
+              "empty": false,
+              "unresolved_tokens": [],
+              "alternatives": [],
+              "token_coverage": [
+                {
+                  "token": "Mocha",
+                  "match_semantics": "max_coverage",
+                  "coverage": [
+                    {
+                      "entity_type": "promotion",
+                      "matched_words": [
+                        "Mocha"
+                      ],
+                      "unmatched_words": [],
+                      "truncated": false
+                    }
+                  ]
+                }
+              ]
+            },
+            "entities": {
+              "name": [
+                "Sorento Office",
+                "Sorento Dealer",
+                "Mocha Dealer",
+                "Mocha Office",
+                "Cabana Office",
+                "Cabana Dealer",
+                "End User"
+              ]
+            },
+            "gate": {
+              "match_mode": "and",
+              "tokens": [
+                "Mocha"
+              ],
+              "elapsed_ms": 22.52,
+              "intersection": [
+                {
+                  "entity_type": "promotion",
+                  "canonical_code": "0899962d-2489-4ce9-8ec3-29e437ce6d0e",
+                  "uuid": "0899962d-2489-4ce9-8ec3-29e437ce6d0e",
+                  "match_field": "description",
+                  "match_tier": "and",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "description": "MOCHA A3 Flyer 03082026_compressed.pdf",
+                    "is_active": true,
+                    "promotion_type_code": "a3_flyer",
+                    "promotion_type_name": "A3 Flyer",
+                    "expired_but_usable": false
+                  }
+                },
+                {
+                  "entity_type": "promotion",
+                  "canonical_code": "62a48f82-f061-4d5e-9f80-78b7e7fb577f",
+                  "uuid": "62a48f82-f061-4d5e-9f80-78b7e7fb577f",
+                  "match_field": "description",
+                  "match_tier": "and",
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "display": {
+                    "description": "MOCHA A3 Flyer 03082026_compressed.pdf",
+                    "is_active": true,
+                    "promotion_type_code": "a3_flyer",
+                    "promotion_type_name": "A3 Flyer",
+                    "expired_but_usable": false
+                  }
+                },
+                {
+                  "entity_type": "promotion",
+                  "canonical_code": "b0da7e8f-877a-43b0-ad25-1e6d844c333b",
+                  "uuid": "b0da7e8f-877a-43b0-ad25-1e6d844c333b",
+                  "match_field": "description",
+                  "match_tier": "and",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "description": "Mocha A3 Flyer 13032026_compressed (1).pdf",
+                    "is_active": true,
+                    "promotion_type_code": "a3_flyer",
+                    "promotion_type_name": "A3 Flyer",
+                    "expired_but_usable": false
+                  }
+                }
+              ],
+              "by_entity_type": {
+                "promotion": [
+                  {
+                    "entity_type": "promotion",
+                    "canonical_code": "0899962d-2489-4ce9-8ec3-29e437ce6d0e",
+                    "uuid": "0899962d-2489-4ce9-8ec3-29e437ce6d0e",
+                    "match_field": "description",
+                    "match_tier": "and",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento",
+                    "display": {
+                      "description": "MOCHA A3 Flyer 03082026_compressed.pdf",
+                      "is_active": true,
+                      "promotion_type_code": "a3_flyer",
+                      "promotion_type_name": "A3 Flyer",
+                      "expired_but_usable": false
+                    }
+                  },
+                  {
+                    "entity_type": "promotion",
+                    "canonical_code": "62a48f82-f061-4d5e-9f80-78b7e7fb577f",
+                    "uuid": "62a48f82-f061-4d5e-9f80-78b7e7fb577f",
+                    "match_field": "description",
+                    "match_tier": "and",
+                    "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                    "company_name": "Mocha",
+                    "display": {
+                      "description": "MOCHA A3 Flyer 03082026_compressed.pdf",
+                      "is_active": true,
+                      "promotion_type_code": "a3_flyer",
+                      "promotion_type_name": "A3 Flyer",
+                      "expired_but_usable": false
+                    }
+                  },
+                  {
+                    "entity_type": "promotion",
+                    "canonical_code": "b0da7e8f-877a-43b0-ad25-1e6d844c333b",
+                    "uuid": "b0da7e8f-877a-43b0-ad25-1e6d844c333b",
+                    "match_field": "description",
+                    "match_tier": "and",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento",
+                    "display": {
+                      "description": "Mocha A3 Flyer 13032026_compressed (1).pdf",
+                      "is_active": true,
+                      "promotion_type_code": "a3_flyer",
+                      "promotion_type_name": "A3 Flyer",
+                      "expired_but_usable": false
+                    }
+                  }
+                ]
+              },
+              "empty": false,
+              "unresolved_tokens": [],
+              "alternatives": [],
+              "token_coverage": [
+                {
+                  "token": "Mocha",
+                  "match_semantics": "max_coverage",
+                  "coverage": [
+                    {
+                      "entity_type": "promotion",
+                      "matched_words": [
+                        "Mocha"
+                      ],
+                      "unmatched_words": [],
+                      "truncated": false
+                    }
+                  ]
+                }
+              ],
+              "gate_passed": true,
+              "require_specific": false,
+              "resolved_company": "mocha",
+              "company_team": "marketing_promotion",
+              "resolved_companies": [
+                "mocha"
+              ],
+              "routing_brand": "mocha",
+              "routing_brand_source": "stated",
+              "routing_companies": [
+                {
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "brand_code": null,
+                  "codes": [
+                    "62a48f82-f061-4d5e-9f80-78b7e7fb577f"
+                  ],
+                  "labels": [
+                    "62a48f82-f061-4d5e-9f80-78b7e7fb577f"
+                  ]
+                },
+                {
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "brand_code": null,
+                  "codes": [
+                    "0899962d-2489-4ce9-8ec3-29e437ce6d0e",
+                    "b0da7e8f-877a-43b0-ad25-1e6d844c333b"
+                  ],
+                  "labels": [
+                    "0899962d-2489-4ce9-8ec3-29e437ce6d0e",
+                    "b0da7e8f-877a-43b0-ad25-1e6d844c333b"
+                  ]
+                }
+              ],
+              "routing_company": null,
+              "access_denied_levels": [],
+              "brand_gate_empty": false,
+              "brand_unheld": false,
+              "access_notice": "",
+              "gate_reason": "ok",
+              "gate_clarification": "",
+              "compatible_entities": [
+                {
+                  "uuid": "0899962d-2489-4ce9-8ec3-29e437ce6d0e",
+                  "entity_type": "promotion",
+                  "code": "0899962d-2489-4ce9-8ec3-29e437ce6d0e"
+                },
+                {
+                  "uuid": "62a48f82-f061-4d5e-9f80-78b7e7fb577f",
+                  "entity_type": "promotion",
+                  "code": "62a48f82-f061-4d5e-9f80-78b7e7fb577f"
+                },
+                {
+                  "uuid": "b0da7e8f-877a-43b0-ad25-1e6d844c333b",
+                  "entity_type": "promotion",
+                  "code": "b0da7e8f-877a-43b0-ad25-1e6d844c333b"
+                }
+              ],
+              "gate_debug": {
+                "domain": "promotion",
+                "allowed_lookup": [
+                  "product",
+                  "promotion",
+                  "category",
+                  "brand"
+                ],
+                "entities_count": 3
+              }
+            }
+          }
+        }
+      }
+    ],
+    "If3": [],
+    "Call 'sub-fetch-results'": [
+      {
+        "json": {
+          "name": [
+            "Sorento Office",
+            "Sorento Dealer",
+            "Mocha Dealer",
+            "Mocha Office",
+            "Cabana Office",
+            "Cabana Dealer",
+            "End User"
+          ],
+          "tier_stated": [],
+          "entitled_tiers": [
+            "dealer",
+            "office",
+            "end_user"
+          ],
+          "entitled_unknown": [],
+          "query_brands": [
+            "mocha"
+          ],
+          "pending_pick": false,
+          "tier_ask": true,
+          "tier_proceed": false,
+          "access_levels_recomposed": [
+            "Mocha Dealer",
+            "Mocha Office",
+            "End User"
+          ],
+          "tier_probe_plan": [
+            {
+              "tier": "dealer",
+              "access_levels": [
+                "Mocha Dealer"
+              ]
+            },
+            {
+              "tier": "office",
+              "access_levels": [
+                "Mocha Office"
+              ]
+            },
+            {
+              "tier": "end_user",
+              "access_levels": [
+                "End User"
+              ]
+            }
+          ],
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "tier_availability": {
+            "dealer": true,
+            "office": true,
+            "end_user": true
+          },
+          "tier_available_list": [
+            "dealer",
+            "office",
+            "end_user"
+          ],
+          "tier_any_available": true,
+          "_tier_probe_count": 3,
+          "_tier_probe_planned": 3,
+          "_fetch_arm": "tier-ask"
+        }
+      }
+    ],
+    "fetch-arm": [
+      {
+        "json": {
+          "name": [
+            "Sorento Office",
+            "Sorento Dealer",
+            "Mocha Dealer",
+            "Mocha Office",
+            "Cabana Office",
+            "Cabana Dealer",
+            "End User"
+          ],
+          "tier_stated": [],
+          "entitled_tiers": [
+            "dealer",
+            "office",
+            "end_user"
+          ],
+          "entitled_unknown": [],
+          "query_brands": [
+            "mocha"
+          ],
+          "pending_pick": false,
+          "tier_ask": true,
+          "tier_proceed": false,
+          "access_levels_recomposed": [
+            "Mocha Dealer",
+            "Mocha Office",
+            "End User"
+          ],
+          "tier_probe_plan": [
+            {
+              "tier": "dealer",
+              "access_levels": [
+                "Mocha Dealer"
+              ]
+            },
+            {
+              "tier": "office",
+              "access_levels": [
+                "Mocha Office"
+              ]
+            },
+            {
+              "tier": "end_user",
+              "access_levels": [
+                "End User"
+              ]
+            }
+          ],
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "tier_availability": {
+            "dealer": true,
+            "office": true,
+            "end_user": true
+          },
+          "tier_available_list": [
+            "dealer",
+            "office",
+            "end_user"
+          ],
+          "tier_any_available": true,
+          "_tier_probe_count": 3,
+          "_tier_probe_planned": 3,
+          "_fetch_arm": "tier-ask"
+        }
+      }
+    ],
+    "access-level-choice-message": [
+      {
+        "json": {
+          "name": [
+            "Sorento Office",
+            "Sorento Dealer",
+            "Mocha Dealer",
+            "Mocha Office",
+            "Cabana Office",
+            "Cabana Dealer",
+            "End User"
+          ],
+          "tier_stated": [],
+          "entitled_tiers": [
+            "dealer",
+            "office",
+            "end_user"
+          ],
+          "entitled_unknown": [],
+          "query_brands": [
+            "mocha"
+          ],
+          "pending_pick": false,
+          "tier_ask": true,
+          "tier_proceed": false,
+          "access_levels_recomposed": [
+            "Mocha Dealer",
+            "Mocha Office",
+            "End User"
+          ],
+          "tier_probe_plan": [
+            {
+              "tier": "dealer",
+              "access_levels": [
+                "Mocha Dealer"
+              ]
+            },
+            {
+              "tier": "office",
+              "access_levels": [
+                "Mocha Office"
+              ]
+            },
+            {
+              "tier": "end_user",
+              "access_levels": [
+                "End User"
+              ]
+            }
+          ],
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "tier_availability": {
+            "dealer": true,
+            "office": true,
+            "end_user": true
+          },
+          "tier_available_list": [
+            "dealer",
+            "office",
+            "end_user"
+          ],
+          "tier_any_available": true,
+          "_tier_probe_count": 3,
+          "_tier_probe_planned": 3,
+          "_fetch_arm": "tier-ask",
+          "tier_offer": true,
+          "tier_last_result_set": [
+            {
+              "idx": 1,
+              "label": "Office",
+              "value": "office",
+              "tier": "office",
+              "uuid": null,
+              "entity_type": "access_tier",
+              "product": null,
+              "filename": null
+            },
+            {
+              "idx": 2,
+              "label": "Dealer",
+              "value": "dealer",
+              "tier": "dealer",
+              "uuid": null,
+              "entity_type": "access_tier",
+              "product": null,
+              "filename": null
+            },
+            {
+              "idx": 3,
+              "label": "End user",
+              "value": "end_user",
+              "tier": "end_user",
+              "uuid": null,
+              "entity_type": "access_tier",
+              "product": null,
+              "filename": null
+            }
+          ],
+          "escalate_message": "Which access level do you need for Mocha?\n1. Office - has promotion\n2. Dealer - has promotion\n3. End user - has promotion\nReply with the number(s), e.g. \"1\", \"1 and 2\", or \"all\".",
+          "is_clarification": true,
+          "quick_reply": ""
+        }
+      }
+    ],
+    "tag-access-choice": [
+      {
+        "json": {
+          "branch_kind": "access_choice"
+        }
+      }
+    ],
+    "escalate-catalog": [
+      {
+        "json": {
+          "branch_kind": "access_choice",
+          "response": "Which access level do you need for Mocha?\n1. Office - has promotion\n2. Dealer - has promotion\n3. End user - has promotion\nReply with the number(s), e.g. \"1\", \"1 and 2\", or \"all\".",
+          "manualResponse": true,
+          "includeResponse": true,
+          "is_escalate_offer": false
+        }
+      }
+    ],
+    "cs-offer-gate": [],
+    "build-outcome": [
+      {
+        "json": {
+          "branch_kind": "access_choice",
+          "response": "Which access level do you need for Mocha?\n1. Office - has promotion\n2. Dealer - has promotion\n3. End user - has promotion\nReply with the number(s), e.g. \"1\", \"1 and 2\", or \"all\".",
+          "manualResponse": true,
+          "includeResponse": true,
+          "is_escalate_offer": false,
+          "outcome": {
+            "build-ideate-reply": null,
+            "build-suggest-offer": null,
+            "build-cs-member-offer": null,
+            "escalate-catalog": {
+              "branch_kind": "access_choice",
+              "response": "Which access level do you need for Mocha?\n1. Office - has promotion\n2. Dealer - has promotion\n3. End user - has promotion\nReply with the number(s), e.g. \"1\", \"1 and 2\", or \"all\".",
+              "manualResponse": true,
+              "includeResponse": true,
+              "is_escalate_offer": false
+            },
+            "central-exchange": null,
+            "access-level-choice-message": {
+              "name": [
+                "Sorento Office",
+                "Sorento Dealer",
+                "Mocha Dealer",
+                "Mocha Office",
+                "Cabana Office",
+                "Cabana Dealer",
+                "End User"
+              ],
+              "tier_stated": [],
+              "entitled_tiers": [
+                "dealer",
+                "office",
+                "end_user"
+              ],
+              "entitled_unknown": [],
+              "query_brands": [
+                "mocha"
+              ],
+              "pending_pick": false,
+              "tier_ask": true,
+              "tier_proceed": false,
+              "access_levels_recomposed": [
+                "Mocha Dealer",
+                "Mocha Office",
+                "End User"
+              ],
+              "tier_probe_plan": [
+                {
+                  "tier": "dealer",
+                  "access_levels": [
+                    "Mocha Dealer"
+                  ]
+                },
+                {
+                  "tier": "office",
+                  "access_levels": [
+                    "Mocha Office"
+                  ]
+                },
+                {
+                  "tier": "end_user",
+                  "access_levels": [
+                    "End User"
+                  ]
+                }
+              ],
+              "brand_gate_empty": false,
+              "brand_unheld": false,
+              "tier_availability": {
+                "dealer": true,
+                "office": true,
+                "end_user": true
+              },
+              "tier_available_list": [
+                "dealer",
+                "office",
+                "end_user"
+              ],
+              "tier_any_available": true,
+              "_tier_probe_count": 3,
+              "_tier_probe_planned": 3,
+              "_fetch_arm": "tier-ask",
+              "tier_offer": true,
+              "tier_last_result_set": [
+                {
+                  "idx": 1,
+                  "label": "Office",
+                  "value": "office",
+                  "tier": "office",
+                  "uuid": null,
+                  "entity_type": "access_tier",
+                  "product": null,
+                  "filename": null
+                },
+                {
+                  "idx": 2,
+                  "label": "Dealer",
+                  "value": "dealer",
+                  "tier": "dealer",
+                  "uuid": null,
+                  "entity_type": "access_tier",
+                  "product": null,
+                  "filename": null
+                },
+                {
+                  "idx": 3,
+                  "label": "End user",
+                  "value": "end_user",
+                  "tier": "end_user",
+                  "uuid": null,
+                  "entity_type": "access_tier",
+                  "product": null,
+                  "filename": null
+                }
+              ],
+              "escalate_message": "Which access level do you need for Mocha?\n1. Office - has promotion\n2. Dealer - has promotion\n3. End user - has promotion\nReply with the number(s), e.g. \"1\", \"1 and 2\", or \"all\".",
+              "is_clarification": true,
+              "quick_reply": ""
+            },
+            "promo-picker": null,
+            "validator": null,
+            "crossdomain-zeroset": null,
+            "build-miss-member-offer": null,
+            "dym-annotate-partial": null,
+            "dym-annotate": null,
+            "clarify-company-reply": null,
+            "offer-hold-reply": null,
+            "cs-roster-plan": null
+          }
+        }
+      }
+    ],
+    "compile-current-state": [
+      {
+        "json": {
+          "reply": {
+            "text": "Which access level do you need for Mocha?\n1. Office - has promotion\n2. Dealer - has promotion\n3. End user - has promotion\nReply with the number(s), e.g. \"1\", \"1 and 2\", or \"all\".",
+            "quick_replies": null,
+            "session_patch": {
+              "variables": {
+                "message_type": "business_query",
+                "intent_hint": "check_promotion",
+                "domain_hint": "promotion",
+                "user_goal": "trying to check any Mocha promotion",
+                "query_brands": [
+                  "mocha"
+                ],
+                "access_levels": [],
+                "entities": [
+                  {
+                    "raw": "Mocha",
+                    "hint": "brand",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "routing": {
+                  "suggested_team": "marketing_promotion",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "response": "Which access level do you need for Mocha?\n1. Office - has promotion\n2. Dealer - has promotion\n3. End user - has promotion\nReply with the number(s), e.g. \"1\", \"1 and 2\", or \"all\".",
+                "last_result_set": [
+                  {
+                    "idx": 1,
+                    "label": "Office",
+                    "value": "office",
+                    "tier": "office",
+                    "uuid": null,
+                    "entity_type": "access_tier",
+                    "product": null,
+                    "filename": null
+                  },
+                  {
+                    "idx": 2,
+                    "label": "Dealer",
+                    "value": "dealer",
+                    "tier": "dealer",
+                    "uuid": null,
+                    "entity_type": "access_tier",
+                    "product": null,
+                    "filename": null
+                  },
+                  {
+                    "idx": 3,
+                    "label": "End user",
+                    "value": "end_user",
+                    "tier": "end_user",
+                    "uuid": null,
+                    "entity_type": "access_tier",
+                    "product": null,
+                    "filename": null
+                  }
+                ],
+                "selection_context": "tier_offer",
+                "date_filter_start": null,
+                "requested_attributes": [],
+                "date_filter_end": null,
+                "date_mode": null,
+                "match_mode": "and",
+                "contains_flyer": false,
+                "dym_offer": null,
+                "dym_candidates": [],
+                "ideation": null,
+                "routing_roster_plan": null,
+                "routing_brand": "mocha",
+                "routing_brand_source": "stated",
+                "routing_company": null,
+                "routing_companies": [
+                  {
+                    "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                    "company_name": "Mocha",
+                    "brand_code": null,
+                    "codes": [
+                      "62a48f82-f061-4d5e-9f80-78b7e7fb577f"
+                    ],
+                    "labels": [
+                      "62a48f82-f061-4d5e-9f80-78b7e7fb577f"
+                    ]
+                  },
+                  {
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento",
+                    "brand_code": null,
+                    "codes": [
+                      "0899962d-2489-4ce9-8ec3-29e437ce6d0e",
+                      "b0da7e8f-877a-43b0-ad25-1e6d844c333b"
+                    ],
+                    "labels": [
+                      "0899962d-2489-4ce9-8ec3-29e437ce6d0e",
+                      "b0da7e8f-877a-43b0-ad25-1e6d844c333b"
+                    ]
+                  }
+                ]
+              },
+              "user_response": "Which access level do you need for Mocha?\n1. Office - has promotion\n2. Dealer - has promotion\n3. End user - has promotion\nReply with the number(s), e.g. \"1\", \"1 and 2\", or \"all\".",
+              "quick_reply": null
+            }
+          }
+        }
+      }
+    ],
+    "crossdomain-compose": [
+      {
+        "json": {
+          "reply": {
+            "text": "Which access level do you need for Mocha?\n1. Office - has promotion\n2. Dealer - has promotion\n3. End user - has promotion\nReply with the number(s), e.g. \"1\", \"1 and 2\", or \"all\".",
+            "quick_replies": null,
+            "session_patch": {
+              "variables": {
+                "message_type": "business_query",
+                "intent_hint": "check_promotion",
+                "domain_hint": "promotion",
+                "user_goal": "trying to check any Mocha promotion",
+                "query_brands": [
+                  "mocha"
+                ],
+                "access_levels": [],
+                "entities": [
+                  {
+                    "raw": "Mocha",
+                    "hint": "brand",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "routing": {
+                  "suggested_team": "marketing_promotion",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "response": "Which access level do you need for Mocha?\n1. Office - has promotion\n2. Dealer - has promotion\n3. End user - has promotion\nReply with the number(s), e.g. \"1\", \"1 and 2\", or \"all\".",
+                "last_result_set": [
+                  {
+                    "idx": 1,
+                    "label": "Office",
+                    "value": "office",
+                    "tier": "office",
+                    "uuid": null,
+                    "entity_type": "access_tier",
+                    "product": null,
+                    "filename": null
+                  },
+                  {
+                    "idx": 2,
+                    "label": "Dealer",
+                    "value": "dealer",
+                    "tier": "dealer",
+                    "uuid": null,
+                    "entity_type": "access_tier",
+                    "product": null,
+                    "filename": null
+                  },
+                  {
+                    "idx": 3,
+                    "label": "End user",
+                    "value": "end_user",
+                    "tier": "end_user",
+                    "uuid": null,
+                    "entity_type": "access_tier",
+                    "product": null,
+                    "filename": null
+                  }
+                ],
+                "selection_context": "tier_offer",
+                "date_filter_start": null,
+                "requested_attributes": [],
+                "date_filter_end": null,
+                "date_mode": null,
+                "match_mode": "and",
+                "contains_flyer": false,
+                "dym_offer": null,
+                "dym_candidates": [],
+                "ideation": null,
+                "routing_roster_plan": null,
+                "routing_brand": "mocha",
+                "routing_brand_source": "stated",
+                "routing_company": null,
+                "routing_companies": [
+                  {
+                    "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                    "company_name": "Mocha",
+                    "brand_code": null,
+                    "codes": [
+                      "62a48f82-f061-4d5e-9f80-78b7e7fb577f"
+                    ],
+                    "labels": [
+                      "62a48f82-f061-4d5e-9f80-78b7e7fb577f"
+                    ]
+                  },
+                  {
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento",
+                    "brand_code": null,
+                    "codes": [
+                      "0899962d-2489-4ce9-8ec3-29e437ce6d0e",
+                      "b0da7e8f-877a-43b0-ad25-1e6d844c333b"
+                    ],
+                    "labels": [
+                      "0899962d-2489-4ce9-8ec3-29e437ce6d0e",
+                      "b0da7e8f-877a-43b0-ad25-1e6d844c333b"
+                    ]
+                  }
+                ]
+              },
+              "user_response": "Which access level do you need for Mocha?\n1. Office - has promotion\n2. Dealer - has promotion\n3. End user - has promotion\nReply with the number(s), e.g. \"1\", \"1 and 2\", or \"all\".",
+              "quick_reply": null
+            }
+          }
+        }
+      }
+    ],
+    "pg-upsert-session": [
+      {
+        "json": {
+          "success": true
+        }
+      }
+    ],
+    "guard-d-record": [
+      {
+        "json": {
+          "reply": {
+            "text": "Which access level do you need for Mocha?\n1. Office - has promotion\n2. Dealer - has promotion\n3. End user - has promotion\nReply with the number(s), e.g. \"1\", \"1 and 2\", or \"all\".",
+            "quick_replies": null,
+            "session_patch": {
+              "variables": {
+                "message_type": "business_query",
+                "intent_hint": "check_promotion",
+                "domain_hint": "promotion",
+                "user_goal": "trying to check any Mocha promotion",
+                "query_brands": [
+                  "mocha"
+                ],
+                "access_levels": [],
+                "entities": [
+                  {
+                    "raw": "Mocha",
+                    "hint": "brand",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "routing": {
+                  "suggested_team": "marketing_promotion",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "response": "Which access level do you need for Mocha?\n1. Office - has promotion\n2. Dealer - has promotion\n3. End user - has promotion\nReply with the number(s), e.g. \"1\", \"1 and 2\", or \"all\".",
+                "last_result_set": [
+                  {
+                    "idx": 1,
+                    "label": "Office",
+                    "value": "office",
+                    "tier": "office",
+                    "uuid": null,
+                    "entity_type": "access_tier",
+                    "product": null,
+                    "filename": null
+                  },
+                  {
+                    "idx": 2,
+                    "label": "Dealer",
+                    "value": "dealer",
+                    "tier": "dealer",
+                    "uuid": null,
+                    "entity_type": "access_tier",
+                    "product": null,
+                    "filename": null
+                  },
+                  {
+                    "idx": 3,
+                    "label": "End user",
+                    "value": "end_user",
+                    "tier": "end_user",
+                    "uuid": null,
+                    "entity_type": "access_tier",
+                    "product": null,
+                    "filename": null
+                  }
+                ],
+                "selection_context": "tier_offer",
+                "date_filter_start": null,
+                "requested_attributes": [],
+                "date_filter_end": null,
+                "date_mode": null,
+                "match_mode": "and",
+                "contains_flyer": false,
+                "dym_offer": null,
+                "dym_candidates": [],
+                "ideation": null,
+                "routing_roster_plan": null,
+                "routing_brand": "mocha",
+                "routing_brand_source": "stated",
+                "routing_company": null,
+                "routing_companies": [
+                  {
+                    "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                    "company_name": "Mocha",
+                    "brand_code": null,
+                    "codes": [
+                      "62a48f82-f061-4d5e-9f80-78b7e7fb577f"
+                    ],
+                    "labels": [
+                      "62a48f82-f061-4d5e-9f80-78b7e7fb577f"
+                    ]
+                  },
+                  {
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento",
+                    "brand_code": null,
+                    "codes": [
+                      "0899962d-2489-4ce9-8ec3-29e437ce6d0e",
+                      "b0da7e8f-877a-43b0-ad25-1e6d844c333b"
+                    ],
+                    "labels": [
+                      "0899962d-2489-4ce9-8ec3-29e437ce6d0e",
+                      "b0da7e8f-877a-43b0-ad25-1e6d844c333b"
+                    ]
+                  }
+                ]
+              },
+              "user_response": "Which access level do you need for Mocha?\n1. Office - has promotion\n2. Dealer - has promotion\n3. End user - has promotion\nReply with the number(s), e.g. \"1\", \"1 and 2\", or \"all\".",
+              "quick_reply": null
+            }
+          }
+        }
+      }
+    ],
+    "sorento-sub-respond-sendmsg-respond2": [
+      {
+        "json": {
+          "success": true
+        }
+      }
+    ],
+    "Execution Data": [
+      {
+        "json": {
+          "success": true
+        }
+      }
+    ],
+    "send-attachments": [],
+    "guard-h-record": [
+      {
+        "json": {
+          "id": "900000009",
+          "phone": "60100000010",
+          "firstName": "Person 12",
+          "lastName": "Person 125",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "assignee": {
+            "id": null
+          }
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "name": [
+          "Sorento Office",
+          "Sorento Dealer",
+          "Mocha Dealer",
+          "Mocha Office",
+          "Cabana Office",
+          "Cabana Dealer",
+          "End User"
+        ],
+        "tier_stated": [],
+        "entitled_tiers": [
+          "dealer",
+          "office",
+          "end_user"
+        ],
+        "entitled_unknown": [],
+        "query_brands": [
+          "mocha"
+        ],
+        "pending_pick": false,
+        "tier_ask": true,
+        "tier_proceed": false,
+        "access_levels_recomposed": [
+          "Mocha Dealer",
+          "Mocha Office",
+          "End User"
+        ],
+        "tier_probe_plan": [
+          {
+            "tier": "dealer",
+            "access_levels": [
+              "Mocha Dealer"
+            ]
+          },
+          {
+            "tier": "office",
+            "access_levels": [
+              "Mocha Office"
+            ]
+          },
+          {
+            "tier": "end_user",
+            "access_levels": [
+              "End User"
+            ]
+          }
+        ],
+        "brand_gate_empty": false,
+        "brand_unheld": false,
+        "tier_availability": {
+          "dealer": true,
+          "office": true,
+          "end_user": true
+        },
+        "tier_available_list": [
+          "dealer",
+          "office",
+          "end_user"
+        ],
+        "tier_any_available": true,
+        "_tier_probe_count": 3,
+        "_tier_probe_planned": 3,
+        "_fetch_arm": "tier-ask"
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "name": [
+          "Sorento Office",
+          "Sorento Dealer",
+          "Mocha Dealer",
+          "Mocha Office",
+          "Cabana Office",
+          "Cabana Dealer",
+          "End User"
+        ],
+        "tier_stated": [],
+        "entitled_tiers": [
+          "dealer",
+          "office",
+          "end_user"
+        ],
+        "entitled_unknown": [],
+        "query_brands": [
+          "mocha"
+        ],
+        "pending_pick": false,
+        "tier_ask": true,
+        "tier_proceed": false,
+        "access_levels_recomposed": [
+          "Mocha Dealer",
+          "Mocha Office",
+          "End User"
+        ],
+        "tier_probe_plan": [
+          {
+            "tier": "dealer",
+            "access_levels": [
+              "Mocha Dealer"
+            ]
+          },
+          {
+            "tier": "office",
+            "access_levels": [
+              "Mocha Office"
+            ]
+          },
+          {
+            "tier": "end_user",
+            "access_levels": [
+              "End User"
+            ]
+          }
+        ],
+        "brand_gate_empty": false,
+        "brand_unheld": false,
+        "tier_availability": {
+          "dealer": true,
+          "office": true,
+          "end_user": true
+        },
+        "tier_available_list": [
+          "dealer",
+          "office",
+          "end_user"
+        ],
+        "tier_any_available": true,
+        "_tier_probe_count": 3,
+        "_tier_probe_planned": 3,
+        "_fetch_arm": "tier-ask",
+        "tier_offer": true,
+        "tier_last_result_set": [
+          {
+            "idx": 1,
+            "label": "Office",
+            "value": "office",
+            "tier": "office",
+            "uuid": null,
+            "entity_type": "access_tier",
+            "product": null,
+            "filename": null
+          },
+          {
+            "idx": 2,
+            "label": "Dealer",
+            "value": "dealer",
+            "tier": "dealer",
+            "uuid": null,
+            "entity_type": "access_tier",
+            "product": null,
+            "filename": null
+          },
+          {
+            "idx": 3,
+            "label": "End user",
+            "value": "end_user",
+            "tier": "end_user",
+            "uuid": null,
+            "entity_type": "access_tier",
+            "product": null,
+            "filename": null
+          }
+        ],
+        "escalate_message": "Which access level do you need for Mocha?\n1. Office - has promotion\n2. Dealer - has promotion\n3. End user - has promotion\nReply with the number(s), e.g. \"1\", \"1 and 2\", or \"all\".",
+        "is_clarification": true,
+        "quick_reply": ""
+      }
+    }
+  ],
+  "runIndex": 0,
+  "execution": {
+    "id": "14564019"
+  },
+  "ran": [
+    "When Executed by Another Workflow",
+    "redis-pop-main-message-list",
+    "media-intake",
+    "media-gate",
+    "tf-message",
+    "sorento-sub-respond-findcontact-respond",
+    "is-human-intervened",
+    "if-message-is-audio",
+    "Call 'sub-respond-save-message-redis'2",
+    "sim-inject-gate",
+    "session-get-gate",
+    "get-session-vars-http",
+    "get-session-vars",
+    "Call 'sub-query-reformulator'",
+    "check-access",
+    "build-ctx",
+    "route-turn",
+    "route",
+    "get-access-types",
+    "Aggregate",
+    "tier-gate",
+    "If4",
+    "resolve-entity",
+    "disallowed-entity-gate",
+    "build-ctx-resolved",
+    "If3",
+    "Call 'sub-fetch-results'",
+    "fetch-arm",
+    "access-level-choice-message",
+    "tag-access-choice",
+    "escalate-catalog",
+    "cs-offer-gate",
+    "build-outcome",
+    "compile-current-state",
+    "crossdomain-compose",
+    "pg-upsert-session",
+    "guard-d-record",
+    "sorento-sub-respond-sendmsg-respond2",
+    "Execution Data",
+    "send-attachments",
+    "guard-h-record"
+  ]
+}
