@@ -601,6 +601,16 @@ jobs:
     # queue merges it, so each change still deploys exactly once, from main.
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    # Job-level, not workflow-level: a workflow-level group would also queue PR
+    # runs behind each other, which is not the problem here. Two merges close
+    # together used to run two deploys overlapped - the second recreated the
+    # worker while the first was still mid blue/green, killing in-flight RQ
+    # jobs (AbandonedJobError). This queues the second deploy behind the
+    # first instead. cancel-in-progress is false because every merge must
+    # still deploy, none can be dropped for a later one.
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
     steps:
       - name: Checkout
         uses: actions/checkout@v4

@@ -216,6 +216,22 @@ vitest land here, never deferred) → **Phase 3** `/code-review` → DoD gate �
 Skipping or reordering a phase is a process violation; if a phase genuinely cannot be done, say so
 in the PR description.
 
+## Lane merge discipline (standing rule, 2026-09-02)
+
+- **One lane = one branch = one PR.** A feature lane's slices land as commits on the lane branch,
+  folded by the captain; slices are never opened as separate GitHub PRs. The user tests the lane
+  once on its stack, then one merge, one deploy. Exception: genuinely independent work in a
+  different domain gets its own lane, not a sub-PR.
+- **Pre-PR gate (mandatory before marking a PR ready, and again right before merge if another
+  lane merged first):**
+  1. `git fetch origin main` and merge or rebase main into the lane.
+  2. `./scripts/alembic-reparent.sh` re-parents the lane's first new migration onto main's
+     current alembic head (manual down_revision flips are retired).
+  3. Confirm CI's fast gate logic locally: single alembic head.
+- CI enforcement already in place: `check-migration-heads` job fails any PR/merge-queue entry
+  with two heads; `build-and-deploy` runs in the `deploy-production` concurrency group so
+  back-to-back merges deploy serially instead of overlapping.
+
 ## Browser verification (agent-browser)
 
 Frontend changes are not done until verified in a real browser. Type-check + Vitest = code
