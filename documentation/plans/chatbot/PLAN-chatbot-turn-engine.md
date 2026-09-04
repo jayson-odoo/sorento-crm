@@ -379,6 +379,14 @@ item shape). `engine.run_turn` up to routing; `delegate.py` returns the n8n enve
 Human-intervened check becomes an `update_contact_fields` action (AC-108). Audio-not-patched
 becomes a failed turn (AC-107). R3 reader accepts both forms. R5 fail-loud.
 n8n: replace five spine nodes with one `httpRequest` + two re-emitters (AC-110).
+
+**The Switch on `duplicate` must sit BEFORE the `build-ctx` / `route-turn` re-emitters.**
+A duplicate delivery (D15) returns the FIRST turn's stored answer, and a duplicate of a
+turn that FAILED has no `ctx` to replay - the re-emitters read
+`$('build-ctx').first().json.ctx.<key>` and throw on a null. Gating first also skips the
+work n8n would otherwise redo for a message it must not answer twice. The CRM persists
+`ctx` and `item` on `chatbot.turns.response` precisely so the happy-path duplicate has
+something real to hand back; the ordering is what stops the failed-turn case throwing.
 Parity gate: AC-102, AC-103, AC-111.
 
 ### S1b - Parser prompt slim-down (same lane as S1, after parity, before promote)
@@ -484,7 +492,7 @@ From the n8n map's 55 catalogued hazards. `fix` = a named divergence with a test
 
 | id | hazard | disposition |
 |---|---|---|
-| H1 | `stock_check` vs `check_stock`, two dead lanes | fix S1 + S3: correct vocabulary, lanes behind `chatbot_stock_denial_enabled` default off (R1 resolved) |
+| H1 | `stock_check` vs `check_stock`, two dead lanes | fix S1 + S3: correct vocabulary, lanes behind `chatbot_stock_denial_enabled` default off (R1 resolved). **Flag-off is not byte-identical and that is deliberate:** live still EVALUATES its dead predicate, so a contact with no `is_allowed_stock` custom field makes `custom_fields.find(...).value` throw and the turn dies; with the flag off the port skips the predicate and answers `business_query`. A strict improvement (an answered turn instead of a dropped one), invisible to the corpus because every captured contact carries the field, and visible in shadow mode as a CRM reply where live sent nothing. With the flag ON the throw is reproduced exactly, and the turn is recorded `failed` at `stage = routed` rather than escaping. The 4 Sep capture run found the first real turns the flag would wake: `rs1a-15118057`, `15129939`, `15137785`, `15139158`, all `check_stock` from contacts without stock access, all `business_query` in live and `demand_qty` with the flag on. |
 | H2 | clarify-company-reply race | fix S5 (AC-505) |
 | H3, H51 | fan-out order, 165 by-name reads | moot; each read enumerated in the port |
 | H4a | test surface reaches billable media endpoint | moot in pytest; n8n intake unchanged |

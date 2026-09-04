@@ -11,8 +11,6 @@ old nodes can be re-enabled to roll back.
 """
 from __future__ import annotations
 
-from typing import Any
-
 from app.services.chatbot.contracts import DELEGATED_BRANCH_KINDS
 
 
@@ -20,15 +18,3 @@ def delegate_for(branch_kind: str) -> str | None:
     """The n8n lane that must still run, or None when the CRM finished the turn."""
     return branch_kind if branch_kind in DELEGATED_BRANCH_KINDS else None
 
-
-def build_envelope(
-    *, turn_id: str, ctx: dict[str, Any], item: dict[str, Any], branch_kind: str
-) -> dict[str, Any]:
-    """The head's response body during the migration window."""
-    return {
-        "turn_id": turn_id,
-        "ctx": ctx,
-        "item": item,
-        "branch_kind": branch_kind,
-        "delegate": delegate_for(branch_kind),
-    }

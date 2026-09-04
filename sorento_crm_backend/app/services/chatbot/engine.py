@@ -31,7 +31,7 @@ from sqlalchemy.orm import Session
 
 from app.models.chatbot_turn import ChatbotTurn
 from app.services.chatbot import jsc, trace as trace_mod
-from app.services.chatbot.contracts import Envelope
+from app.services.chatbot.contracts import TURN_FAILURE_STAGES, Envelope
 from app.services.chatbot.delegate import delegate_for
 from app.services.chatbot.head import parser
 from app.services.chatbot.head.access import check_access, default_space_id
@@ -274,6 +274,10 @@ def _close_turn(
     records: list[dict[str, Any]],
     response: dict[str, Any] | None = None,
 ) -> None:
+    assert stage is None or stage in TURN_FAILURE_STAGES, (
+        f"{stage!r} is not a declared turn stage - a typo here lands in the column and "
+        f"reads as an unknown state on the trace screen. Declared: {TURN_FAILURE_STAGES}"
+    )
     row = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).first()
     if row is None:  # pragma: no cover - the row was inserted two lines earlier
         return
@@ -420,12 +424,17 @@ def _run_stages(  # noqa: PLR0915
         # AC-107 / H5: the attachment is still audio, so media intake did not patch a
         # transcript in. n8n's audio branch simply had no successor and the turn vanished.
         if _attachment_type(envelope) == "audio":
+            # Two stage names, on purpose. The ROW says `intake` (AC-107's word, and the
+            # real stopping point - media intake, which runs in n8n, is what failed). The
+            # TRACE row says `received`, because `TurnStage` is the closed set of eight
+            # the timeline renders and `intake` is not one of them. `facts.stage` carries
+            # the precise answer so the screen can show it without widening the timeline.
             turn_trace.record(
                 "received",
                 status="failed",
                 summary="Could not read the voice note.",
                 why="Media intake returned no transcript, so there is nothing to understand.",
-                facts={"attachment_type": "audio"},
+                facts={"attachment_type": "audio", "stage": "intake"},
                 error=AUDIO_NOT_PATCHED_ERROR,
                 raw={"message": _inner_message(envelope)},
             )
@@ -653,9 +662,24 @@ def _stock_denial_enabled(db: Session) -> bool:
     return bool(getattr(row, "chatbot_stock_denial_enabled", False)) if row is not None else False
 
 
+# Luxon's `cccc, dd MMMM yyyy` is English regardless of where the process runs. Python's
+# `%A` / `%B` follow LC_TIME, so a container with a non-English locale would hand the
+# parser a date it has never been shown a single example of. Named, not formatted.
+_WEEKDAYS = (
+    "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
+)
+_MONTHS = (
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+)
+
+
 def _current_date_directive() -> str:
     """`{{ $now.toUTC(8*60).format('cccc, dd MMMM yyyy') }}` - Malaysia time, same format."""
     from datetime import timedelta
 
     now_myt = datetime.now(timezone.utc) + timedelta(hours=8)
-    return now_myt.strftime("%A, %d %B %Y")
+    return (
+        f"{_WEEKDAYS[now_myt.weekday()]}, {now_myt.day:02d} "
+        f"{_MONTHS[now_myt.month - 1]} {now_myt.year}"
+    )

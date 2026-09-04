@@ -30,10 +30,12 @@ import json
 
 from app.services.chatbot.head.output_exchange import output_exchange, suggest_follow_up
 
-# The two dashes exec 12053189's own incident and `jsc._DASHES`'s comment both name:
-# U+2212 MINUS SIGN and U+2013 EN DASH - both in the normaliser's character class.
-MINUS_SIGN = "−"  # U+2212
-EN_DASH = "–"  # U+2013
+# The two dashes exec 12053189's own incident and the normaliser's character class both
+# name. Built from CODE POINTS, never pasted: the repo bans literal en/em dashes in source
+# (they are invisible in a diff and one editor normalisation would silently retire this
+# test), and a test ABOUT dash normalisation is the last place to hide one in a string.
+MINUS_SIGN = chr(0x2212)  # MINUS SIGN, what Excel and Sheets emit
+EN_DASH = chr(0x2013)  # EN DASH, what Word autocorrect emits
 
 
 def _parser_output(**overrides) -> dict:

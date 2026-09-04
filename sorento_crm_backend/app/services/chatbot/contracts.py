@@ -163,6 +163,9 @@ TraceStatus = Literal[TRACE_STATUSES]  # type: ignore[valid-type]
 # `casual_llm` is the S4 clarifier call (AC-403).
 TURN_FAILURE_STAGES = TURN_STAGES + ("intake", "queued", "casual_llm")
 TurnFailureStage = Literal[TURN_FAILURE_STAGES]  # type: ignore[valid-type]
+# Enforced where the column is written (`engine._close_turn`), so a typo'd stage fails
+# loudly instead of landing in the row and reading as an unknown state on the trace
+# screen.
 
 TURN_STATUSES = ("queued", "processing", "delegated", "done", "failed")
 TurnStatus = Literal[TURN_STATUSES]  # type: ignore[valid-type]
@@ -331,22 +334,11 @@ class Envelope(BaseModel):
         return bool(self.is_test or self.test_run_id or (self.mode and self.mode != "live"))
 
 
-class Action(BaseModel):
-    """One thing the CALLER does after the turn. Executed in list order."""
-
-    model_config = ConfigDict(extra="allow")
-
-    kind: ActionKind
-    dry_run: bool = False
-
-
-class Reply(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    text: str | None = None
-    quick_replies: list[Any] = Field(default_factory=list)
-    result_set: list[Any] | None = None
-    attachments_src: Any = None
+# `Action` and `Reply` are deliberately NOT modelled. `TurnResponse` carries both as plain
+# dicts: an action's payload differs per kind, `reply.result_set` is whatever the lane
+# produced, and `response_model` silently DROPS anything a model does not declare - so a
+# half-right model is worse than none. The vocabulary that DOES need pinning is
+# `ACTION_KINDS` above, and the endpoint tests assert the keys survive the wire.
 
 
 class TurnRequest(BaseModel):

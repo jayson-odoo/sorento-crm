@@ -187,3 +187,21 @@ def full_corpus(node: str) -> list[Fixture]:
 def json_round_trip(value):
     """What n8n's own comparison does to both sides before diffing them."""
     return json.loads(json.dumps(value))
+
+
+def declared_branches(node: str) -> tuple[str, ...]:
+    """Every branch this node CAN produce, whether or not anything captured it.
+
+    Seeded into the coverage matrix so an arm nobody has ever captured is a visible zero
+    rather than an absent row - which is exactly the cell gate 0 exists to surface. Only
+    `route-turn` has a closed vocabulary; the parser nodes are cut by domain, and the set
+    of domains a capture window happens to contain is not a contract.
+
+    Lives here rather than in `scripts/chatbot_fixture_coverage.py` because this file is
+    inside the module's import boundary (AC-002) and the script is not.
+    """
+    if node == "route-turn":
+        from app.services.chatbot.contracts import BRANCH_KINDS
+
+        return BRANCH_KINDS
+    return ()

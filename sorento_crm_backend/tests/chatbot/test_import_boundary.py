@@ -27,8 +27,15 @@ ALLOWED_PREFIXES = (
     "tests/chatbot/",
 )
 
+# Four ways in, not two. `from app.services import chatbot` and an `importlib` call both
+# reach the package without the dotted path ever appearing at the start of an import line,
+# which is how a guardrail like this quietly stops guarding.
 _IMPORT_RE = re.compile(
-    r"^\s*(?:from\s+app\.services\.chatbot\b|import\s+app\.services\.chatbot\b)",
+    r"^\s*(?:from\s+app\.services\.chatbot\b"
+    r"|import\s+app\.services\.chatbot\b"
+    r"|from\s+app\.services\s+import\s+(?:[^\n]*\b)?chatbot\b)"
+    r"|import_module\(\s*['\"]app\.services\.chatbot"
+    r"|__import__\(\s*['\"]app\.services\.chatbot",
     re.MULTILINE,
 )
 
@@ -63,4 +70,32 @@ def test_the_package_exports_only_its_public_entry_points() -> None:
     assert set(pkg.__all__) <= {"run_turn", "complete_turn"}, (
         "app/services/chatbot/__init__.py must export run_turn / complete_turn only; "
         f"found {sorted(pkg.__all__)}"
+    )
+
+
+def test_the_endpoint_keeps_its_session_factory_patchable() -> None:
+    """The engine's session seam must stay a MODULE-LEVEL name in `chat.py`.
+
+    The engine takes a session FACTORY because it must not hold a session across the LLM
+    call, so it cannot use the request's `Depends(get_db)` session. Whatever name that
+    factory has in `chat.py` is the ONE thing a test patches to keep the engine off the
+    shared prod-copy database - `is_test` suppresses writes, not the connection.
+
+    Inline it (`session_factory=app.database.SessionLocal`) and there is nothing to patch:
+    every endpoint test would keep passing while quietly writing to the real database. The
+    failure would look like flaky unrelated tests, days later.
+    """
+    import app.api.v1.external.chat as chat_module
+
+    source = (BACKEND_ROOT / "app" / "api" / "v1" / "external" / "chat.py").read_text(
+        encoding="utf-8"
+    )
+    assert "session_factory=SessionLocal" in source, (
+        "chat.py must pass the module-level `SessionLocal` name to run_turn; an inlined "
+        "or attribute-qualified factory cannot be patched and sends test traffic to the "
+        "shared database"
+    )
+    assert hasattr(chat_module, "SessionLocal"), (
+        "app.api.v1.external.chat.SessionLocal is the patch target every endpoint test "
+        "relies on"
     )

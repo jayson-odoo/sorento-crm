@@ -11,6 +11,19 @@ This module is one of only two files allowed to import `app.services.chatbot`
 (`tests/chatbot/test_import_boundary.py` enforces it). It is a thin adapter: validate,
 call `run_turn`, serialise, log. Every call writes an `integration_log` on success AND
 failure, the same as the ideation turn and the conversation-variables endpoint.
+
+**`SessionLocal` here is the engine's session seam, and it is the ONLY one.** The engine
+opens and closes its own sessions around the LLM call (the capacity rule: never hold one
+across provider I/O), so it cannot use the request's `Depends(get_db)` session - the
+module-level name below is what it gets instead. Two consequences, both load-bearing:
+
+* it must stay a MODULE-LEVEL name. Inlining it (`session_factory=app.database.SessionLocal`)
+  would leave nothing to patch, and every endpoint test would silently start writing to
+  the shared prod-copy database instead of a scratch schema. `tests/chatbot/
+  test_chat_turn_endpoint.py` guards the shape;
+* a test that exercises this endpoint patches `app.api.v1.external.chat.SessionLocal`,
+  and patching only `Depends(get_db)` is not enough - `is_test` suppresses WRITES, not
+  the connection.
 """
 from __future__ import annotations
 
@@ -21,6 +34,8 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
+# The engine's session seam. See the module docstring: module-level on purpose, and
+# the single point every test patches to keep the engine off the shared database.
 from app.database import SessionLocal, get_db
 from app.dependencies import get_external_api_user
 from app.schemas.integration import IntegrationLogCreate

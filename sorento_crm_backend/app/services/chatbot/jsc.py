@@ -170,6 +170,14 @@ class JsMap:
 
     @staticmethod
     def _k(key: Any) -> tuple[str, Any]:
+        # SameValueZero: every JS number is a double, so `1` and `1.0` are ONE key - but
+        # `1` and `"1"` are two, and `true` is not `1`. Keying on the type NAME alone got
+        # the first of those wrong (`int` vs `float`), so numbers collapse to one bucket
+        # and everything else keeps its type.
+        if isinstance(key, bool):
+            return ("boolean", key)
+        if isinstance(key, (int, float)):
+            return ("number", float(key))
         return (type(key).__name__, key)
 
     def set(self, key: Any, value: Any) -> None:
