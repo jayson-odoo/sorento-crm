@@ -1,0 +1,804 @@
+{
+  "source": {
+    "execution_id": "15145545",
+    "workflow_id": "qa4LWvPrhUnAPgjC",
+    "workflow_version": "c32698c1-fc36-4a48-90cf-9b9ebd6c7341",
+    "node": "crossdomain-compose",
+    "captured_at": "2026-09-04T19:09:41+00:00",
+    "expected_from": "runData",
+    "dedupe_sig": "cd9912cc724548f6c3d1c446f19fb953d926e7b8f5e89d06fe8d08c9e001bbb1"
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "item": {
+            "branch_kind": "out_of_scope"
+          },
+          "ctx": {
+            "contact": {
+              "id": 900000041,
+              "firstName": "Person 45",
+              "lastName": "Person 53",
+              "phone": "+60100000019",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/45ee5bfe-3229-488c-a424-1bf2ff088702"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": null,
+              "created_at": 1782546255
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "80eb1294-9fdb-403e-8400-f2b0e5e42f8e",
+              "contact": {
+                "id": 900000041,
+                "firstName": "Person 45",
+                "lastName": "Person 53",
+                "phone": "+60100000019",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1782546255
+              },
+              "message": {
+                "messageId": 1788508259000000,
+                "channelMessageId": "wamid.HBgLNjAxNjMzNjE2NzkVAgASGBQzQUE4MUZCNDlGQjJFMTE3RDM4NQA=",
+                "contactId": 900000041,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788508259000,
+                "message": {
+                  "type": "text",
+                  "text": "yes"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 45\"},\"wa_id\":\"60100000019\",\"user_id\":\"MY.900000042\",\"firstName\":\"Person 45\",\"lastName\":\"\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000041",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "purchasing",
+                    "suggested_agent": "incoming_stock_enquiries"
+                  },
+                  "entities": [],
+                  "ideation": null,
+                  "response": "Could not find incoming. Would you like me to escalate to purchasing team?",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to check when an incoming order can arrive in 2 months",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "incoming",
+                  "intent_hint": "check_incoming",
+                  "message_type": "business_query",
+                  "query_brands": [],
+                  "access_levels": [],
+                  "routing_brand": null,
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [],
+                  "routing_company": null,
+                  "date_filter_start": null,
+                  "routing_companies": null,
+                  "selection_context": null,
+                  "routing_roster_plan": null,
+                  "requested_attributes": [
+                    "estimated_arrival_date"
+                  ],
+                  "routing_brand_source": null
+                },
+                "user_response": "Could not find incoming. Would you like me to escalate to purchasing team?"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "casual",
+                "intent_hint": null,
+                "domain_hint": null,
+                "scope_intent": null,
+                "is_affirmative": true,
+                "user_goal": "trying to confirm escalation",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [],
+                "entity_op": "reuse",
+                "scope_exclusive": false,
+                "requested_attributes": [
+                  "estimated_arrival_date"
+                ],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "purchasing",
+                  "suggested_agent": "incoming_stock_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": true
+                },
+                "domain_signal_source": "intent_none",
+                "entity_op_applied": "reuse",
+                "query_brands": []
+              },
+              "_parser_raw": {
+                "message_type": "casual",
+                "intent_hint": null,
+                "domain_hint": null,
+                "scope_intent": null,
+                "is_affirmative": true,
+                "user_goal": "trying to confirm escalation",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [],
+                "entity_op": "reuse",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": null,
+                  "suggested_agent": null
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "Incoming Stock Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null
+          }
+        }
+      }
+    ],
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 900000041,
+              "firstName": "Person 45",
+              "lastName": "Person 53",
+              "phone": "+60100000019",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/45ee5bfe-3229-488c-a424-1bf2ff088702"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": null,
+              "created_at": 1782546255
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "80eb1294-9fdb-403e-8400-f2b0e5e42f8e",
+              "contact": {
+                "id": 900000041,
+                "firstName": "Person 45",
+                "lastName": "Person 53",
+                "phone": "+60100000019",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1782546255
+              },
+              "message": {
+                "messageId": 1788508259000000,
+                "channelMessageId": "wamid.HBgLNjAxNjMzNjE2NzkVAgASGBQzQUE4MUZCNDlGQjJFMTE3RDM4NQA=",
+                "contactId": 900000041,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788508259000,
+                "message": {
+                  "type": "text",
+                  "text": "yes"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 45\"},\"wa_id\":\"60100000019\",\"user_id\":\"MY.900000042\",\"firstName\":\"Person 45\",\"lastName\":\"\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000041",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "purchasing",
+                    "suggested_agent": "incoming_stock_enquiries"
+                  },
+                  "entities": [],
+                  "ideation": null,
+                  "response": "Could not find incoming. Would you like me to escalate to purchasing team?",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to check when an incoming order can arrive in 2 months",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "incoming",
+                  "intent_hint": "check_incoming",
+                  "message_type": "business_query",
+                  "query_brands": [],
+                  "access_levels": [],
+                  "routing_brand": null,
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [],
+                  "routing_company": null,
+                  "date_filter_start": null,
+                  "routing_companies": null,
+                  "selection_context": null,
+                  "routing_roster_plan": null,
+                  "requested_attributes": [
+                    "estimated_arrival_date"
+                  ],
+                  "routing_brand_source": null
+                },
+                "user_response": "Could not find incoming. Would you like me to escalate to purchasing team?"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "casual",
+                "intent_hint": null,
+                "domain_hint": null,
+                "scope_intent": null,
+                "is_affirmative": true,
+                "user_goal": "trying to confirm escalation",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [],
+                "entity_op": "reuse",
+                "scope_exclusive": false,
+                "requested_attributes": [
+                  "estimated_arrival_date"
+                ],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "purchasing",
+                  "suggested_agent": "incoming_stock_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": true
+                },
+                "domain_signal_source": "intent_none",
+                "entity_op_applied": "reuse",
+                "query_brands": []
+              },
+              "_parser_raw": {
+                "message_type": "casual",
+                "intent_hint": null,
+                "domain_hint": null,
+                "scope_intent": null,
+                "is_affirmative": true,
+                "user_goal": "trying to confirm escalation",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [],
+                "entity_op": "reuse",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": null,
+                  "suggested_agent": null
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "Incoming Stock Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null
+          }
+        }
+      }
+    ],
+    "g-result": [],
+    "g-resolved": [],
+    "g-gate": [],
+    "g-offer_hold": [],
+    "g-suggest_offer": [],
+    "g-not_found": [],
+    "g-incoming_picker": [],
+    "g-access_choice": [],
+    "g-crossdomain_render": [],
+    "g-answer": [],
+    "g-clarify": [],
+    "item-restore": [
+      {
+        "json": {
+          "branch_kind": "out_of_scope"
+        }
+      }
+    ],
+    "entry-gate": [
+      {
+        "json": {
+          "branch_kind": "out_of_scope"
+        }
+      }
+    ],
+    "escalate-catalog": [
+      {
+        "json": {
+          "branch_kind": "out_of_scope",
+          "response": "Informed the user that request is out of scope and will proceed to escalate to the purchasing team",
+          "manualResponse": true,
+          "includeResponse": false,
+          "is_escalate_offer": false
+        }
+      }
+    ],
+    "cs-offer-gate": [],
+    "build-outcome": [
+      {
+        "json": {
+          "branch_kind": "out_of_scope",
+          "response": "Informed the user that request is out of scope and will proceed to escalate to the purchasing team",
+          "manualResponse": true,
+          "includeResponse": false,
+          "is_escalate_offer": false,
+          "outcome": {
+            "build-ideate-reply": null,
+            "build-suggest-offer": null,
+            "build-cs-member-offer": null,
+            "escalate-catalog": {
+              "branch_kind": "out_of_scope",
+              "response": "Informed the user that request is out of scope and will proceed to escalate to the purchasing team",
+              "manualResponse": true,
+              "includeResponse": false,
+              "is_escalate_offer": false
+            },
+            "central-exchange": null,
+            "access-level-choice-message": null,
+            "promo-picker": null,
+            "validator": null,
+            "crossdomain-zeroset": null,
+            "build-miss-member-offer": null,
+            "dym-annotate-partial": null,
+            "dym-annotate": null,
+            "clarify-company-reply": null,
+            "offer-hold-reply": null,
+            "cs-roster-plan": null
+          }
+        }
+      }
+    ],
+    "compile-current-state": [
+      {
+        "json": {
+          "reply": {
+            "session_patch": {
+              "variables": {
+                "message_type": "casual",
+                "intent_hint": null,
+                "domain_hint": null,
+                "user_goal": "trying to confirm escalation",
+                "query_brands": [],
+                "access_levels": [],
+                "entities": [],
+                "routing": {
+                  "suggested_team": "purchasing",
+                  "suggested_agent": "incoming_stock_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": true
+                },
+                "response": "Informed the user that request is out of scope and will proceed to escalate to the purchasing team",
+                "last_result_set": [],
+                "selection_context": null,
+                "date_filter_start": null,
+                "requested_attributes": [
+                  "estimated_arrival_date"
+                ],
+                "date_filter_end": null,
+                "date_mode": null,
+                "match_mode": "and",
+                "contains_flyer": false,
+                "dym_offer": null,
+                "dym_candidates": [],
+                "ideation": null,
+                "routing_roster_plan": null,
+                "routing_brand": null,
+                "routing_brand_source": null,
+                "routing_company": null,
+                "routing_companies": null
+              }
+            }
+          }
+        }
+      }
+    ],
+    "crossdomain-compose": [
+      {
+        "json": {
+          "reply": {
+            "session_patch": {
+              "variables": {
+                "message_type": "casual",
+                "intent_hint": null,
+                "domain_hint": null,
+                "user_goal": "trying to confirm escalation",
+                "query_brands": [],
+                "access_levels": [],
+                "entities": [],
+                "routing": {
+                  "suggested_team": "purchasing",
+                  "suggested_agent": "incoming_stock_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": true
+                },
+                "response": "Informed the user that request is out of scope and will proceed to escalate to the purchasing team",
+                "last_result_set": [],
+                "selection_context": null,
+                "date_filter_start": null,
+                "requested_attributes": [
+                  "estimated_arrival_date"
+                ],
+                "date_filter_end": null,
+                "date_mode": null,
+                "match_mode": "and",
+                "contains_flyer": false,
+                "dym_offer": null,
+                "dym_candidates": [],
+                "ideation": null,
+                "routing_roster_plan": null,
+                "routing_brand": null,
+                "routing_brand_source": null,
+                "routing_company": null,
+                "routing_companies": null
+              }
+            }
+          }
+        }
+      }
+    ],
+    "save-session-vars": [
+      {
+        "json": {
+          "respond_io_id": "900000041",
+          "session_vars": {
+            "variables": {
+              "message_type": "casual",
+              "intent_hint": null,
+              "domain_hint": null,
+              "user_goal": "trying to confirm escalation",
+              "query_brands": [],
+              "access_levels": [],
+              "entities": [],
+              "routing": {
+                "suggested_team": "purchasing",
+                "suggested_agent": "incoming_stock_enquiries"
+              },
+              "escalation": {
+                "is_escalation_confirmation": true
+              },
+              "response": "Informed the user that request is out of scope and will proceed to escalate to the purchasing team",
+              "last_result_set": [],
+              "selection_context": null,
+              "date_filter_start": null,
+              "requested_attributes": [
+                "estimated_arrival_date"
+              ],
+              "date_filter_end": null,
+              "date_mode": null,
+              "match_mode": "and",
+              "contains_flyer": false,
+              "dym_offer": null,
+              "dym_candidates": [],
+              "ideation": null,
+              "routing_roster_plan": null,
+              "routing_brand": null,
+              "routing_brand_source": null,
+              "routing_company": null,
+              "routing_companies": null
+            }
+          }
+        }
+      }
+    ],
+    "sorento-sub-respond-sendmsg-respond2": []
+  },
+  "input": [
+    {
+      "json": {
+        "reply": {
+          "session_patch": {
+            "variables": {
+              "message_type": "casual",
+              "intent_hint": null,
+              "domain_hint": null,
+              "user_goal": "trying to confirm escalation",
+              "query_brands": [],
+              "access_levels": [],
+              "entities": [],
+              "routing": {
+                "suggested_team": "purchasing",
+                "suggested_agent": "incoming_stock_enquiries"
+              },
+              "escalation": {
+                "is_escalation_confirmation": true
+              },
+              "response": "Informed the user that request is out of scope and will proceed to escalate to the purchasing team",
+              "last_result_set": [],
+              "selection_context": null,
+              "date_filter_start": null,
+              "requested_attributes": [
+                "estimated_arrival_date"
+              ],
+              "date_filter_end": null,
+              "date_mode": null,
+              "match_mode": "and",
+              "contains_flyer": false,
+              "dym_offer": null,
+              "dym_candidates": [],
+              "ideation": null,
+              "routing_roster_plan": null,
+              "routing_brand": null,
+              "routing_brand_source": null,
+              "routing_company": null,
+              "routing_companies": null
+            }
+          }
+        }
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "reply": {
+          "session_patch": {
+            "variables": {
+              "message_type": "casual",
+              "intent_hint": null,
+              "domain_hint": null,
+              "user_goal": "trying to confirm escalation",
+              "query_brands": [],
+              "access_levels": [],
+              "entities": [],
+              "routing": {
+                "suggested_team": "purchasing",
+                "suggested_agent": "incoming_stock_enquiries"
+              },
+              "escalation": {
+                "is_escalation_confirmation": true
+              },
+              "response": "Informed the user that request is out of scope and will proceed to escalate to the purchasing team",
+              "last_result_set": [],
+              "selection_context": null,
+              "date_filter_start": null,
+              "requested_attributes": [
+                "estimated_arrival_date"
+              ],
+              "date_filter_end": null,
+              "date_mode": null,
+              "match_mode": "and",
+              "contains_flyer": false,
+              "dym_offer": null,
+              "dym_candidates": [],
+              "ideation": null,
+              "routing_roster_plan": null,
+              "routing_brand": null,
+              "routing_brand_source": null,
+              "routing_company": null,
+              "routing_companies": null
+            }
+          }
+        }
+      }
+    }
+  ],
+  "runIndex": 0,
+  "execution": {
+    "id": "15145545"
+  },
+  "ran": [
+    "When Executed by Another Workflow",
+    "build-ctx",
+    "g-result",
+    "g-resolved",
+    "g-gate",
+    "g-offer_hold",
+    "g-suggest_offer",
+    "g-not_found",
+    "g-incoming_picker",
+    "g-access_choice",
+    "g-crossdomain_render",
+    "g-answer",
+    "g-clarify",
+    "item-restore",
+    "entry-gate",
+    "escalate-catalog",
+    "cs-offer-gate",
+    "build-outcome",
+    "compile-current-state",
+    "crossdomain-compose",
+    "save-session-vars",
+    "sorento-sub-respond-sendmsg-respond2"
+  ]
+}

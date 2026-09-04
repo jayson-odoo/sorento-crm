@@ -14,9 +14,31 @@ A branch under the bar is `exhausted` - not short - only when EVERY execution on
 
 | workflow | version | scanned | version pool | all versions | exhausted | captured | nodes |
 | --- | --- | ---: | ---: | ---: | --- | --- | --- |
-| `spine-rs-1a` | `51f7b0d2` | 567 | 567 | 946 | yes | 2026-09-04 | `route-turn`, `build-ctx` |
+| `spine-rs-1a` | `51f7b0d2` | 581 | 581 | 946 | yes | 2026-09-05 | `route-turn`, `build-ctx` |
+| `sub-output-live` | `c32698c1` | 760 | 760 | 907 | yes | 2026-09-05 | `compile-current-state`, `crossdomain-compose`, `build-outcome`, `escalate-catalog`, `cs-roster-plan`, `build-cs-member-offer` |
 | `sub-resolve-and-gate-rs` | `4f367b1c` | 682 | 682 | 852 | yes | 2026-09-05 | `disallowed-entity-gate`, `tier-gate`, `build-ctx-resolved`, `annotate-incoming-picker`, `annotate-customer-picker`, `resolve-exit-continue`, `resolve-exit-offer`, `resolve-exit-not-found`, `item`, `sub-resolve-and-gate` |
 | `sub-semantic-parser` | `ab3ec985` | 239 | 239 | 3901 | yes | 2026-09-04 | `output_exchange`, `suggest-follow-up` |
+
+## World replay (AC-009)
+
+A WORLD is one whole captured turn replayed through `run_turn` + `complete_turn` with the parser, the access check and the CS roster read stubbed from that execution's own node outputs. Worlds are DERIVED from spine captures, not captured separately - a spine capture already carries every node output of its execution - so growing the node corpus grows this one for free.
+
+**167 worlds** (34 of them ungradeable in this corpus: a spine-only capture whose resolver and entity gate ran inside a sub the fixture never recorded). **27 multi-turn chains** covering 117 turns, each replayed on the CRM's OWN written memory.
+
+| axis | value | worlds |
+| --- | --- | ---: |
+| branch kind | `business_query` | 7 |
+| branch kind | `check_promotion` | 4 |
+| branch kind | `not_supported` | 8 |
+| branch kind | `out_of_scope` | 9 |
+| branch kind | `unknown` | 139 |
+| shape | `picker` | 10 |
+| shape | `did_you_mean` | 25 |
+| shape | `tier_ask` | 10 |
+| shape | `escalation` | 37 |
+| shape | `offer_hold` | 0 |
+| shape | `media` | 4 |
+| shape | `plain` | 81 |
 
 ## Per node
 
@@ -24,9 +46,15 @@ A branch under the bar is `exhausted` - not short - only when EVERY execution on
 | --- | ---: | ---: | ---: |
 | `annotate-customer-picker` | 4 | 4 | 1 |
 | `annotate-incoming-picker` | 8 | 5 | 2 |
+| `build-cs-member-offer` | 14 | 14 | 1 |
 | `build-ctx` | 114 | 114 | 6 |
 | `build-ctx-resolved` | 41 | 41 | 2 |
+| `build-outcome` | 78 | 78 | 2 |
+| `compile-current-state` | 255 | 165 | 5 |
+| `crossdomain-compose` | 80 | 79 | 5 |
+| `cs-roster-plan` | 14 | 14 | 1 |
 | `disallowed-entity-gate` | 242 | 177 | 6 |
+| `escalate-catalog` | 130 | 130 | 5 |
 | `item` | 11 | 11 | 1 |
 | `output_exchange` | 325 | 249 | 98 |
 | `resolve-exit-continue` | 6 | 6 | 1 |
@@ -43,6 +71,9 @@ A branch under the bar is `exhausted` - not short - only when EVERY execution on
 | --- | --- | ---: | ---: | --- |
 | `annotate-customer-picker` | `order` | 4 | 0 | exhausted (4) |
 | `annotate-incoming-picker` | `incoming` | 5 | 3 | met |
+| `build-cs-member-offer` | `empty_roster` | 0 | 0 | exhausted (0) |
+| `build-cs-member-offer` | `multi_company` | 0 | 0 | exhausted (0) |
+| `build-cs-member-offer` | `single_company` | 14 | 0 | met |
 | `build-ctx` | `all` | 114 | 0 | met |
 | `build-ctx-resolved` | `forms` | 1 | 0 | exhausted (1) |
 | `build-ctx-resolved` | `incoming` | 11 | 0 | met |
@@ -53,6 +84,33 @@ A branch under the bar is `exhausted` - not short - only when EVERY execution on
 | `build-ctx-resolved` | `product_attachment` | 2 | 0 | exhausted (2) |
 | `build-ctx-resolved` | `promotion` | 6 | 0 | met |
 | `build-ctx-resolved` | `resource_attachment` | 2 | 0 | exhausted (2) |
+| `build-outcome` | `access_choice` | 3 | 0 | exhausted (3) |
+| `build-outcome` | `escalation_declined` | 5 | 0 | met |
+| `build-outcome` | `no_branch_kind` | 27 | 0 | met |
+| `build-outcome` | `not_found` | 31 | 0 | met |
+| `build-outcome` | `not_supported` | 3 | 0 | exhausted (3) |
+| `build-outcome` | `out_of_scope` | 9 | 0 | met |
+| `compile-current-state` | `goods_receive` | 2 | 0 | exhausted (2) |
+| `compile-current-state` | `ideate` | 3 | 0 | exhausted (3) |
+| `compile-current-state` | `incoming` | 27 | 9 | met |
+| `compile-current-state` | `inventory` | 42 | 56 | met |
+| `compile-current-state` | `master_products` | 12 | 9 | met |
+| `compile-current-state` | `no_domain` | 30 | 3 | met |
+| `compile-current-state` | `order` | 31 | 0 | met |
+| `compile-current-state` | `product_attachment` | 7 | 4 | met |
+| `compile-current-state` | `promotion` | 7 | 7 | met |
+| `compile-current-state` | `resource_attachment` | 0 | 2 | exhausted (0) |
+| `compile-current-state` | `spo_allocation` | 4 | 0 | exhausted (4) |
+| `crossdomain-compose` | `incoming` | 14 | 1 | met |
+| `crossdomain-compose` | `inventory` | 27 | 0 | met |
+| `crossdomain-compose` | `no_domain` | 11 | 0 | met |
+| `crossdomain-compose` | `order` | 19 | 0 | met |
+| `crossdomain-compose` | `product_attachment` | 5 | 0 | met |
+| `crossdomain-compose` | `promotion` | 2 | 0 | exhausted (2) |
+| `crossdomain-compose` | `spo_allocation` | 1 | 0 | exhausted (1) |
+| `cs-roster-plan` | `empty_roster` | 0 | 0 | exhausted (0) |
+| `cs-roster-plan` | `multi_company` | 0 | 0 | exhausted (0) |
+| `cs-roster-plan` | `single_company` | 14 | 0 | met |
 | `disallowed-entity-gate` | `forms` | 3 | 1 | exhausted (3) |
 | `disallowed-entity-gate` | `incoming` | 55 | 23 | met |
 | `disallowed-entity-gate` | `inventory` | 44 | 6 | met |
@@ -63,6 +121,15 @@ A branch under the bar is `exhausted` - not short - only when EVERY execution on
 | `disallowed-entity-gate` | `product_attachment` | 14 | 14 | met |
 | `disallowed-entity-gate` | `promotion` | 19 | 11 | met |
 | `disallowed-entity-gate` | `resource_attachment` | 4 | 0 | exhausted (4) |
+| `escalate-catalog` | `access_choice` | 2 | 0 | exhausted (2) |
+| `escalate-catalog` | `clarify_menu` | 3 | 0 | exhausted (3) |
+| `escalate-catalog` | `demand_qty` | 3 | 0 | dead by vocabulary |
+| `escalate-catalog` | `escalate_offer` | 6 | 0 | met |
+| `escalate-catalog` | `escalation_declined` | 11 | 0 | met |
+| `escalate-catalog` | `not_found` | 84 | 0 | met |
+| `escalate-catalog` | `not_supported` | 3 | 0 | exhausted (3) |
+| `escalate-catalog` | `offer_hold` | 3 | 0 | exhausted (3) |
+| `escalate-catalog` | `out_of_scope` | 15 | 0 | met |
 | `item` | `no_domain` | 11 | 0 | met |
 | `output_exchange` | `incoming` | 65 | 6 | met |
 | `output_exchange` | `inventory` | 119 | 9 | met |
@@ -107,6 +174,6 @@ A branch under the bar is `exhausted` - not short - only when EVERY execution on
 
 **Not blocked.** Every cell is either met, exhausted in a fully-scanned pool, or dead by vocabulary.
 
-Exhausted (25), under the bar with no more traffic to capture: annotate-customer-picker/order (4), build-ctx-resolved/forms (1), build-ctx-resolved/portal_link (1), build-ctx-resolved/product_attachment (2), build-ctx-resolved/resource_attachment (2), disallowed-entity-gate/forms (3), disallowed-entity-gate/no_domain (0), disallowed-entity-gate/portal_link (1), disallowed-entity-gate/resource_attachment (4), output_exchange/master_products (4), output_exchange/portal_link (0), output_exchange/promotion (0), output_exchange/resource_attachment (1), route-turn/access_denied (1), route-turn/check_promotion (1), route-turn/clarify_menu (0), route-turn/escalate_offer (0), route-turn/escalation_declined (4), route-turn/ideate (0), route-turn/not_supported (1), route-turn/offer_hold (0), sub-resolve-and-gate/access_ask (0), suggest-follow-up/master_products (4), suggest-follow-up/resource_attachment (1), tier-gate/tier_proceed (1).
+Exhausted (41), under the bar with no more traffic to capture: annotate-customer-picker/order (4), build-cs-member-offer/empty_roster (0), build-cs-member-offer/multi_company (0), build-ctx-resolved/forms (1), build-ctx-resolved/portal_link (1), build-ctx-resolved/product_attachment (2), build-ctx-resolved/resource_attachment (2), build-outcome/access_choice (3), build-outcome/not_supported (3), compile-current-state/goods_receive (2), compile-current-state/ideate (3), compile-current-state/resource_attachment (0), compile-current-state/spo_allocation (4), crossdomain-compose/promotion (2), crossdomain-compose/spo_allocation (1), cs-roster-plan/empty_roster (0), cs-roster-plan/multi_company (0), disallowed-entity-gate/forms (3), disallowed-entity-gate/no_domain (0), disallowed-entity-gate/portal_link (1), disallowed-entity-gate/resource_attachment (4), escalate-catalog/access_choice (2), escalate-catalog/clarify_menu (3), escalate-catalog/not_supported (3), escalate-catalog/offer_hold (3), output_exchange/master_products (4), output_exchange/portal_link (0), output_exchange/promotion (0), output_exchange/resource_attachment (1), route-turn/access_denied (1), route-turn/check_promotion (1), route-turn/clarify_menu (0), route-turn/escalate_offer (0), route-turn/escalation_declined (4), route-turn/ideate (0), route-turn/not_supported (1), route-turn/offer_hold (0), sub-resolve-and-gate/access_ask (0), suggest-follow-up/master_products (4), suggest-follow-up/resource_attachment (1), tier-gate/tier_proceed (1).
 
-Dead by vocabulary, 0 captures is the correct number: route-turn/demand_qty, route-turn/stock_denied. These are covered by unit tests behind `chatbot_stock_denial_enabled` (AC-306, R1), never by a capture.
+Dead by vocabulary, 0 captures is the correct number: escalate-catalog/demand_qty, route-turn/demand_qty, route-turn/stock_denied. These are covered by unit tests behind `chatbot_stock_denial_enabled` (AC-306, R1), never by a capture.

@@ -3,19 +3,20 @@
 n8n calls this to get the roster (user_id + name) so it can store and later pass
 preferred_assignee_id to /external/next-assignee (which then skips round-robin).
 Team is resolved the same way as next-assignee: (agent_code/agent_id, team_code/team_id[, tier]).
+
+The resolution itself lives in `app/services/team_roster_service.py` because it has a
+second caller from S2: the chatbot tail builds the numbered CS escalation offer in
+process rather than over this endpoint (D1), and the two MUST resolve the same pool or a
+member offered here would be rejected by next-assignee.
 """
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_external_api_user
-from app.api.v1.external.next_assignee import _resolve_round_robin_team_id
-from app.models.base import set_company_scope
-from app.services.company_routing_service import resolve_routing_company
-from app.services.market_segment_service import MarketSegmentService
-from app.services.user_service import AccessAgentService
+from app.services.team_roster_service import list_team_roster
 
 router = APIRouter()
 
@@ -76,54 +77,17 @@ async def get_team_members(
 
     Response: [{user_id, name, respond_user_id, email, sort_order}] (active users only).
     """
-    service = AccessAgentService(db)
-
-    # Resolve agent_id from agent_code (needed when resolving a team via team_code).
-    resolved_agent_id = agent_id
-    if agent_code and not resolved_agent_id:
-        resolved_agent_id = service.get_agent_id_by_code(agent_code)
-        if not resolved_agent_id:
-            raise HTTPException(status_code=404, detail=f"No agent found with code={agent_code!r}")
-
-    # team_id given directly -> no agent needed; team_code path needs agent_id.
-    if not (team_id and str(team_id).strip()) and not resolved_agent_id:
-        raise HTTPException(
-            status_code=400,
-            detail="agent_id or agent_code is required to resolve team_code (or pass team_id directly).",
-        )
-
-    # Same resolution as next-assignee, so an id returned here is always accepted
-    # there (AC-E1). Resolving the company differently in the two endpoints would
-    # hand n8n a roster from one company and reject those ids from the other.
-    routing_company = resolve_routing_company(
-        db, company_id=company_id, company_code=company_code, contact_id=contact_id,
-        space_id=space_id, phone=contact_phone_number,
-    )
-    set_company_scope(db, frozenset({routing_company.company_id}))
-
-    body = {
-        "team_id": team_id,
-        "team_code": team_code,
-        "tier": tier,
-    }
-    resolved = _resolve_round_robin_team_id(
-        service,
-        str(resolved_agent_id).strip() if resolved_agent_id else "",
-        body,
-        company_id=routing_company.company_id,
-    )
-
-    # Market-segment filter. Unknown / untagged contact -> empty set -> no filter.
-    contact_segments = MarketSegmentService(db).resolve_contact_segments(
-        respond_io_id=contact_id, space_id=space_id, phone=contact_phone_number
-    )
-    # Brand narrows the same roster by the same rule next-assignee applies to the
-    # round-robin pool: tagged with it, or tagged with nothing. The explicit param
-    # wins, falling back to the brand a legacy suffixed team_code encodes - without
-    # that fallback an un-updated n8n gets the whole team here and the brand pool
-    # there, and the preferred_assignee_id it picks is one next-assignee never had.
-    return service.list_active_team_members_detail(
-        resolved.team_id,
-        contact_segments or None,
-        brand_code=brand_code or resolved.brand_code,
+    return list_team_roster(
+        db,
+        team_code=team_code,
+        team_id=team_id,
+        agent_code=agent_code,
+        agent_id=agent_id,
+        tier=tier,
+        contact_id=contact_id,
+        space_id=space_id,
+        contact_phone_number=contact_phone_number,
+        company_code=company_code,
+        company_id=company_id,
+        brand_code=brand_code,
     )

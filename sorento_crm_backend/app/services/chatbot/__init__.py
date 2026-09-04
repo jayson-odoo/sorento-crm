@@ -5,6 +5,6 @@ services freely. `tests/chatbot/test_import_boundary.py` enforces the asymmetry,
 is the whole "liftable later" story: when the named trigger in the plan fires, the
 package moves behind an HTTP boundary with these same contracts.
 """
-from app.services.chatbot.engine import run_turn
+from app.services.chatbot.engine import complete_turn, run_turn
 
-__all__ = ["run_turn"]
+__all__ = ["complete_turn", "run_turn"]

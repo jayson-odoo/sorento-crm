@@ -90,6 +90,31 @@ NODE_SLUGS: dict[str, tuple[str, ...]] = {
     # arm's own capture. It reuses the `resolve-exit-*` directories rather than having one
     # of its own, so no fixture is invented - see `sub_run_fixtures()`.
     "sub-resolve-and-gate": (),
+    # S2, the tail. `clone-sub-output` is the RS-9 split-out sub; the two spine slugs
+    # captured the same node names before and after the split, which is why the loader
+    # unions them and prefixes each id with its slug.
+    # `sub-output-live` is the SHIPPING body captured from live (`qa4LWvPrhUnAPgjC`,
+    # version `c32698c1`), which is the body the port implements - so unlike the
+    # spine slugs it grades the port against itself rather than against an older
+    # deployment, and it is where the tail's real coverage comes from.
+    "build-outcome": ("sub-output-live", "clone-sub-output", "clone-spine-RS"),
+    "escalate-catalog": (
+        "sub-output-live",
+        "live-spine-sorento-consume-main",
+        "clone-spine-RS",
+    ),
+    "cs-roster-plan": ("sub-output-live", "live-spine-sorento-consume-main"),
+    "build-cs-member-offer": ("sub-output-live", "live-spine-sorento-consume-main"),
+    "compile-current-state": (
+        "sub-output-live",
+        "live-spine-sorento-consume-main",
+        "clone-spine-RS",
+    ),
+    "crossdomain-compose": (
+        "sub-output-live",
+        "live-spine-sorento-consume-main",
+        "clone-spine-RS",
+    ),
 }
 
 # Output keys the SHIPPING node bodies emit that the body an OLD capture was taken
@@ -197,6 +222,30 @@ STALE_FIXTURES: dict[tuple[str, str], str] = {
     ("build-ctx", "rs2-02-escalation"): "RS-2 capture, predates the RS-4 `media` key",
     ("build-ctx", "rs2-03-happy"): "RS-2 capture, predates the RS-4 `media` key",
     ("build-ctx", "rs2-04-access-denied"): "RS-2 capture, predates the RS-4 `media` key",
+    # S2, the tail. Six captures that predate the RS-9 "Fix 6" tier-menu block (owner
+    # decision, 2026-09-01). The block is a pure ADDITION in the body the export ships -
+    # visible as a `>`-only hunk in `diff live-spine.../compile-current-state.js
+    # sub-output-live/compile-current-state.js` - so these captures were graded against a
+    # body that could not write `tier_menu` at all. Nothing about the port disagrees with
+    # what ships; re-capturing an access-choice turn retires all six.
+    ("compile-current-state", "exec-14087671"): (
+        "captured before the RS-9 Fix 6 tier_menu block; the live body has no such block"
+    ),
+    ("compile-current-state", "exec-14113654"): (
+        "captured before the RS-9 Fix 6 tier_menu block; the live body has no such block"
+    ),
+    ("compile-current-state", "exec-14120751"): (
+        "captured before the RS-9 Fix 6 tier_menu block; the live body has no such block"
+    ),
+    ("compile-current-state", "hand-tier-ask-roster-and-null-quick-reply"): (
+        "hand-built against the live body, which has no RS-9 Fix 6 tier_menu block"
+    ),
+    ("compile-current-state", "rs34-04-accesschoice"): (
+        "clone capture at workflow version 38cb225d, before the tier_menu block landed"
+    ),
+    ("compile-current-state", "rs6-02-accesschoice"): (
+        "clone capture at workflow version 15495426, before the tier_menu block landed"
+    ),
 }
 
 
@@ -335,6 +384,27 @@ def declared_branches(node: str) -> tuple[str, ...]:
         from app.services.chatbot.contracts import EXIT_KINDS
 
         return EXIT_KINDS
+    if node in ("cs-roster-plan", "build-cs-member-offer"):
+        # Seeded so the two arms live has never reached are VISIBLE zeros. The
+        # multi-company grouped renderer and the empty-roster fallback are the parts of
+        # `build_cs_member_offer` most likely to be wrong and least likely to be
+        # captured, and an `all` cell reading "met" said nothing about either.
+        return ("single_company", "multi_company", "empty_roster")
+    if node == "escalate-catalog":
+        # The nine arms of its own `switch`. Seeded so a copy arm nobody has captured is
+        # a visible zero rather than an absent row - which for a node whose whole job is
+        # customer-facing wording is exactly the cell that matters.
+        return (
+            "not_found",
+            "access_choice",
+            "demand_qty",
+            "not_supported",
+            "clarify_menu",
+            "escalate_offer",
+            "out_of_scope",
+            "escalation_declined",
+            "offer_hold",
+        )
     return ()
 
 
