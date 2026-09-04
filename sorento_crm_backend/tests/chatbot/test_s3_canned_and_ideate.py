@@ -66,6 +66,54 @@ def _seed_session_variables(session_factory, variables: dict[str, Any]) -> None:
     db.commit()
 
 
+# Coordinator contract addition (post-hoc, same day as the rest of this file): the
+# engine completes a branch kind only if it is BOTH in the code-level completed set
+# (S3's growing `CRM_COMPLETED_BRANCH_KINDS`) AND in
+# `system_settings.chatbot_completed_lanes` (a JSON list, default `[]`). Every S3
+# canned/ideate/offer-hold integration test below therefore seeds this list
+# explicitly - without it, S3's own code changes would be inert on a fresh
+# settings row and every "delegate is None" assertion would be unreachable no
+# matter how the lanes are implemented.
+ALL_COMPLETED_LANES = [
+    "escalate_offer",
+    "escalation_declined",
+    "clarify_menu",
+    "not_supported",
+    "demand_qty",
+    "offer_hold",
+    "ideate",
+    "access_denied",
+]
+
+
+def _seed_completed_lanes(session_factory, system_settings_row, lanes=None) -> None:
+    from app.models.user import SystemSetting
+
+    db = session_factory()
+    setting = (
+        db.query(SystemSetting).filter(SystemSetting.id == system_settings_row.id).one()
+    )
+    setting.chatbot_completed_lanes = list(lanes if lanes is not None else ALL_COMPLETED_LANES)
+    db.commit()
+
+
+def _enable_stock_denial(session_factory, system_settings_row) -> None:
+    """R1 (AC-306): `demand_qty` only routes at all with the stock-denial flag on.
+
+    Unrelated to `chatbot_completed_lanes` - the scenario-table tests parametrise
+    over every kind including `demand_qty`, so this is called ONLY for that kind
+    rather than folded into `_seed_completed_lanes` (which the other six kinds
+    must not need to care about)."""
+    from app.models.user import SystemSetting
+
+    db = session_factory()
+    setting = (
+        db.query(SystemSetting).filter(SystemSetting.id == system_settings_row.id).one()
+    )
+    setting.chatbot_stock_denial_enabled = True
+    db.commit()
+
+
 # --------------------------------------------------------------------------- #
 # AC-301 / AC-303: eight branch kinds that finish the turn (delegate = None).
 #
@@ -252,8 +300,18 @@ class TestCannedBranchesFinishInTurn:
 
     @pytest.mark.parametrize("kind", list(_CANNED_SCENARIOS))
     def test_canned_branches_finish_in_turn(
-        self, kind, session_factory, seeded, stub_parser, stub_access, monkeypatch
+        self,
+        kind,
+        session_factory,
+        seeded,
+        system_settings_row,
+        stub_parser,
+        stub_access,
+        monkeypatch,
     ):
+        _seed_completed_lanes(session_factory, system_settings_row)
+        if kind == "demand_qty":
+            _enable_stock_denial(session_factory, system_settings_row)
         envelope, parser_overrides, expected_text = _build_scenario(
             kind, session_factory, monkeypatch
         )
@@ -290,8 +348,9 @@ class TestAccessDeniedNoSessionWrite:
     """AC-301's eighth branch: refused up front, before anything is remembered."""
 
     def test_access_denied_sends_without_session_write(
-        self, session_factory, seeded, stub_parser, stub_access
+        self, session_factory, seeded, system_settings_row, stub_parser, stub_access
     ):
+        _seed_completed_lanes(session_factory, system_settings_row)
         stub_parser(
             _parser_output(
                 routing={"suggested_team": None, "suggested_agent": "general—enquiries"}
@@ -404,38 +463,54 @@ class TestCopyKeysRenderTodaysText:
             assert text_out == expected
 
     def test_a_published_override_wins_after_bust_cache(self):
-        """A registry key is editable in Settings > AI Prompts (journey B)."""
+        """A registry key is editable in Settings > AI Prompts (journey B).
+
+        `render()` populates `ai_prompt_registry`'s module-level, 60-second TTL
+        cache as a SIDE EFFECT - it is not scoped to `blank_session()`'s rolled
+        back transaction, so a test that publishes an override here and does not
+        clean up leaves every LATER test in the same pytest process reading this
+        override's text instead of the real fallback/DB row (bit me once while
+        writing this file: `test_demand_qty_zero_gives_the_canned_reply` started
+        seeing "How many units do you need?" instead of the canned copy). The
+        `finally` undoes the ONE cache entry this test touches.
+        """
         import uuid
 
         from tests._pg_fixture import blank_session
 
-        with blank_session() as db:
-            from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
-            from app.services import ai_prompt_registry
+        from app.services import ai_prompt_registry
 
-            ai_prompt_registry.bust_cache()
-            version_row = AIPromptVersion(
-                id=str(uuid.uuid4()),
-                name="chatbot_reply_demand_qty",
-                version=2,
-                template="How many units do you need?",
-            )
-            db.add(version_row)
-            db.flush()
-            db.add(
-                AIPromptLabel(
+        try:
+            with blank_session() as db:
+                from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
+
+                ai_prompt_registry.bust_cache()
+                version_row = AIPromptVersion(
                     id=str(uuid.uuid4()),
                     name="chatbot_reply_demand_qty",
-                    label="production",
-                    version_id=version_row.id,
+                    version=2,
+                    template="How many units do you need?",
                 )
-            )
-            db.commit()
-            ai_prompt_registry.bust_cache("chatbot_reply_demand_qty")
+                db.add(version_row)
+                db.flush()
+                db.add(
+                    AIPromptLabel(
+                        id=str(uuid.uuid4()),
+                        name="chatbot_reply_demand_qty",
+                        label="production",
+                        version_id=version_row.id,
+                    )
+                )
+                db.commit()
+                ai_prompt_registry.bust_cache("chatbot_reply_demand_qty")
 
-            text_out, resolved_version = ai_prompt_registry.render(db, "chatbot_reply_demand_qty")
-            assert text_out == "How many units do you need?"
-            assert resolved_version == 2
+                text_out, resolved_version = ai_prompt_registry.render(
+                    db, "chatbot_reply_demand_qty"
+                )
+                assert text_out == "How many units do you need?"
+                assert resolved_version == 2
+        finally:
+            ai_prompt_registry.bust_cache("chatbot_reply_demand_qty")
 
 
 # --------------------------------------------------------------------------- #
@@ -445,10 +520,11 @@ class TestCopyKeysRenderTodaysText:
 
 class TestIdeateBranchCallsMcpTool:
     def test_ideate_branch_calls_mcp_tool(
-        self, session_factory, seeded, stub_parser, stub_access, monkeypatch
+        self, session_factory, seeded, system_settings_row, stub_parser, stub_access, monkeypatch
     ):
         from app.services.chatbot.lanes import ideate as ideate_mod
 
+        _seed_completed_lanes(session_factory, system_settings_row)
         captured: list[dict[str, Any]] = []
 
         def _fake_call(**kwargs: Any) -> dict[str, Any]:
@@ -512,10 +588,11 @@ class TestIdeateBranchCallsMcpTool:
         assert result.delegate is None
 
     def test_submitter_name_omitted_without_a_first_name(
-        self, session_factory, seeded, stub_parser, stub_access, monkeypatch
+        self, session_factory, seeded, system_settings_row, stub_parser, stub_access, monkeypatch
     ):
         from app.services.chatbot.lanes import ideate as ideate_mod
 
+        _seed_completed_lanes(session_factory, system_settings_row)
         captured: list[dict[str, Any]] = []
         monkeypatch.setattr(
             ideate_mod,
@@ -532,10 +609,11 @@ class TestIdeateBranchCallsMcpTool:
         assert "submitter_name" not in captured[0]
 
     def test_media_selection_omitted_when_no_media_menu_is_open(
-        self, session_factory, seeded, stub_parser, stub_access, monkeypatch
+        self, session_factory, seeded, system_settings_row, stub_parser, stub_access, monkeypatch
     ):
         from app.services.chatbot.lanes import ideate as ideate_mod
 
+        _seed_completed_lanes(session_factory, system_settings_row)
         captured: list[dict[str, Any]] = []
         monkeypatch.setattr(
             ideate_mod,
@@ -558,10 +636,12 @@ class TestIdeateBranchCallsMcpTool:
         assert "media_selection" not in captured[0]
 
     def test_ideate_tool_error_is_failed_stage(
-        self, session_factory, seeded, stub_parser, stub_access, monkeypatch
+        self, session_factory, seeded, system_settings_row, stub_parser, stub_access, monkeypatch
     ):
         from app.services.chatbot.lanes import ideate as ideate_mod
         from app.services.chatbot.head import parser as parser_mod
+
+        _seed_completed_lanes(session_factory, system_settings_row)
 
         def _boom(**kwargs: Any):
             raise RuntimeError("MCP call failed")
@@ -597,8 +677,9 @@ class TestIdeateBranchCallsMcpTool:
 
 class TestOfferHold:
     def test_offer_hold_reply_composes_from_persisted_pool(
-        self, session_factory, seeded, stub_parser, stub_access
+        self, session_factory, seeded, system_settings_row, stub_parser, stub_access
     ):
+        _seed_completed_lanes(session_factory, system_settings_row)
         envelope, parser_overrides, expected_text = _build_scenario(
             "offer_hold", session_factory, monkeypatch=None
         )
@@ -736,6 +817,7 @@ class TestStockDenialFlagGatesTwoLanes:
         )
         setting.chatbot_stock_denial_enabled = True
         db.commit()
+        _seed_completed_lanes(session_factory, system_settings_row)
 
         stub_parser(
             _parser_output(intent_hint="check_stock", domain_hint="inventory", demand_qty=0)
@@ -785,8 +867,18 @@ class TestStockDenialFlagGatesTwoLanes:
 class TestCannedLanesDryRun:
     @pytest.mark.parametrize("kind", list(_CANNED_SCENARIOS))
     def test_canned_lanes_dry_run_write_nothing(
-        self, kind, session_factory, seeded, stub_parser, stub_access, monkeypatch
+        self,
+        kind,
+        session_factory,
+        seeded,
+        system_settings_row,
+        stub_parser,
+        stub_access,
+        monkeypatch,
     ):
+        _seed_completed_lanes(session_factory, system_settings_row)
+        if kind == "demand_qty":
+            _enable_stock_denial(session_factory, system_settings_row)
         envelope, parser_overrides, expected_text = _build_scenario(
             kind, session_factory, monkeypatch
         )
@@ -806,8 +898,9 @@ class TestCannedLanesDryRun:
         )
 
     def test_access_denied_dry_run_write_nothing(
-        self, session_factory, seeded, stub_parser, stub_access
+        self, session_factory, seeded, system_settings_row, stub_parser, stub_access
     ):
+        _seed_completed_lanes(session_factory, system_settings_row)
         stub_parser(_parser_output())
         stub_access(allowed=False, decision="deny_unknown_agent")
         before = _session_vars_raw(session_factory)
@@ -819,3 +912,37 @@ class TestCannedLanesDryRun:
         assert result.delegate is None
         assert result.actions, "access_denied must still hand the caller a reply to send"
         assert all(a.get("dry_run") is True for a in result.actions)
+
+
+# --------------------------------------------------------------------------- #
+# Coordinator contract addition: `chatbot_completed_lanes` gates COMPLETION
+# separately from the code-level set. Default `[]` (no settings row at all,
+# or a row that predates the column) must leave every branch delegated exactly
+# as it is today, even once S3's code otherwise knows how to finish it.
+# --------------------------------------------------------------------------- #
+
+
+class TestCompletedLanesGateDefaultsClosed:
+    def test_default_empty_list_still_delegates(
+        self, session_factory, seeded, stub_parser, stub_access
+    ):
+        """No `system_settings` row at all -> `chatbot_completed_lanes` reads as `[]`."""
+        from app.models.user import SystemSetting
+
+        assert session_factory().query(SystemSetting).first() is None, (
+            "this test's whole point is the no-row default"
+        )
+        stub_parser(
+            _parser_output(
+                message_type="clarification",
+                domain_hint=None,
+                escalation={"is_escalation_confirmation": False, "company_pick": None},
+            )
+        )
+        stub_access()
+
+        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
+
+        # `route.decide()` still picks the lane - only COMPLETION is gated.
+        assert result.branch_kind == "clarify_menu"
+        assert result.delegate == "clarify_menu"
