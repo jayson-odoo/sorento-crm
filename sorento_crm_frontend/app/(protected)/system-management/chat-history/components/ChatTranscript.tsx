@@ -8,7 +8,9 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import type { ChatMessageRow } from '../types/chatHistory.types';
+import type { ChatbotTurn } from '../types/chatbotTurn.types';
 import { StateTracePanel } from './StateTracePanel';
+import { TurnPanel } from './TurnPanel';
 
 interface ChatTranscriptProps {
   messages: ChatMessageRow[];
@@ -16,6 +18,10 @@ interface ChatTranscriptProps {
   /** Message to centre on and ring-highlight when there is no active search. */
   anchorId?: number | null;
   emptyText?: string;
+  /** The turn recorded for each incoming message, keyed by respond message id. */
+  turnsByMessageId?: Map<string, ChatbotTurn>;
+  /** AC-255: show only the incoming messages whose turn failed, plus their replies. */
+  failedTurnsOnly?: boolean;
 }
 
 function latencyVariant(seconds: number): string {
@@ -46,9 +52,47 @@ function highlight(text: string, term: string): { text: string; hit: boolean }[]
   return out;
 }
 
-export function ChatTranscript({ messages, isLoading, anchorId, emptyText }: ChatTranscriptProps) {
+export function ChatTranscript({
+  messages,
+  isLoading,
+  anchorId,
+  emptyText,
+  turnsByMessageId,
+  failedTurnsOnly = false,
+}: ChatTranscriptProps) {
   const [term, setTerm] = useState('');
   const [activeMatch, setActiveMatch] = useState(0);
+  const turnFor = (m: ChatMessageRow) =>
+    m.message_id ? turnsByMessageId?.get(m.message_id) : undefined;
+
+  // AC-255. A failed turn is a PAIR the operator wants to read: what the customer sent
+  // and what the bot sent back. Filtering the incoming message alone would leave the
+  // error reply out of the transcript, which is half the evidence.
+  const visible = useMemo(() => {
+    if (!failedTurnsOnly) return messages;
+    const failedTurnIds = new Set(
+      messages
+        .map((m) => turnFor(m))
+        .filter((t): t is ChatbotTurn => Boolean(t) && t!.status === 'failed')
+        .map((t) => t.id),
+    );
+    if (failedTurnIds.size === 0) return [];
+    const keepTurnIds = new Set(
+      messages
+        .filter((m) => {
+          const turn = turnFor(m);
+          return turn ? failedTurnIds.has(turn.id) : false;
+        })
+        .map((m) => m.turn_id)
+        .filter(Boolean) as string[],
+    );
+    return messages.filter((m) => {
+      const turn = turnFor(m);
+      if (turn && failedTurnIds.has(turn.id)) return true;
+      return Boolean(m.turn_id && keepTurnIds.has(m.turn_id));
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages, failedTurnsOnly, turnsByMessageId]);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const anchorRef = useRef<HTMLDivElement | null>(null);
   const matchRefs = useRef<(HTMLDivElement | null)[]>([]);
@@ -57,8 +101,8 @@ export function ChatTranscript({ messages, isLoading, anchorId, emptyText }: Cha
   const matches = useMemo(() => {
     const q = term.trim().toLowerCase();
     if (!q) return [] as number[];
-    return messages.filter((m) => m.message.toLowerCase().includes(q)).map((m) => m.id);
-  }, [messages, term]);
+    return visible.filter((m) => m.message.toLowerCase().includes(q)).map((m) => m.id);
+  }, [visible, term]);
 
   useEffect(() => {
     setActiveMatch(0);
@@ -73,12 +117,12 @@ export function ChatTranscript({ messages, isLoading, anchorId, emptyText }: Cha
 
   // With no search, land on the clicked message (bot replies can be very long).
   useEffect(() => {
-    if (isLoading || term || !messages.length) return;
+    if (isLoading || term || !visible.length) return;
     const id = window.requestAnimationFrame(() =>
       anchorRef.current?.scrollIntoView({ block: 'center' }),
     );
     return () => window.cancelAnimationFrame(id);
-  }, [isLoading, term, messages, anchorId]);
+  }, [isLoading, term, visible, anchorId]);
 
   const step = (delta: number) => {
     if (!matches.length) return;
@@ -147,16 +191,18 @@ export function ChatTranscript({ messages, isLoading, anchorId, emptyText }: Cha
           </>
         )}
 
-        {!isLoading && messages.length === 0 && (
+        {!isLoading && visible.length === 0 && (
           <div className="text-center py-12">
             <p className="text-sm text-muted-foreground">
-              {emptyText ?? 'No messages stored for this contact.'}
+              {failedTurnsOnly
+                ? 'No failed turns in this conversation.'
+                : (emptyText ?? 'No messages stored for this contact.')}
             </p>
           </div>
         )}
 
         {!isLoading &&
-          messages.map((m) => {
+          visible.map((m) => {
             const outgoing = m.type === 'outgoing';
             const isAnchor = m.id === anchorId;
             const matchIdx = matches.indexOf(m.id);
@@ -202,8 +248,15 @@ export function ChatTranscript({ messages, isLoading, anchorId, emptyText }: Cha
                   {m.delivery_status && (
                     <span className="text-[11px] text-muted-foreground">{m.delivery_status}</span>
                   )}
-                  {/* Diagnosis surface: incoming rows carry the per-turn state trace. */}
-                  {!outgoing && m.state_trace && <StateTracePanel trace={m.state_trace} />}
+                  {/* Diagnosis surface. The turn trace is the one to read; the older raw
+                      state trace stays as the fallback for messages that predate the turn
+                      engine, and goes when every message has a turn (Phase 2). */}
+                  {!outgoing &&
+                    (turnFor(m) ? (
+                      <TurnPanel turn={turnFor(m) as ChatbotTurn} />
+                    ) : (
+                      m.state_trace && <StateTracePanel trace={m.state_trace} />
+                    ))}
                 </div>
               </div>
             );
