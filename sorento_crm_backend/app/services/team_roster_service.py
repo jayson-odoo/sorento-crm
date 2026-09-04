@@ -43,6 +43,12 @@ def list_team_roster(
     Raises `HTTPException` for an unknown agent code or an unresolvable team, which is
     what the endpoint surfaces and what the chatbot's roster fetch degrades on (n8n's
     `onError: continueRegularOutput`, one company's failure never costs the whole offer).
+
+    **`HTTPException` from a SERVICE is parity, not the pattern.** The layering rule
+    says a service raises `AppException` and lets the global handler serialise it; this
+    raises what the ROUTE raised before the extraction, byte for byte, so the endpoint's
+    404 and 400 bodies cannot move under a refactor that was supposed to change nothing.
+    Swap both to `AppException` at S8, with those response bodies asserted first.
     """
     # LOCAL on purpose, and the only one: `_resolve_round_robin_team_id` still lives in
     # the next-assignee ROUTER, so importing it at module level would make a service

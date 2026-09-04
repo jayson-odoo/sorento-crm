@@ -30,6 +30,17 @@ def full_corpus() -> None:
             "COVERAGE.md describes the FULL corpus, which this checkout cannot see; "
             f"{_corpus.corpus_skip_reason()}"
         )
+    if not (_corpus.corpus_root() / "nodes" / "sub-output-live").is_dir():
+        # TEMPORARY, with a named exit: the 5 Sep tail capture batch (305 files) lives on
+        # an n8n-repo WORKTREE and has not been merged into the sibling checkout yet.
+        # COVERAGE.md describes the corpus WITH it, so comparing against a corpus without
+        # it would be a red for a reason that has nothing to do with drift. This skip
+        # disappears the moment the n8n lane merges the captures - no code change here.
+        pytest.skip(
+            "this corpus has no `sub-output-live` slug, so it predates the 5 Sep tail "
+            "capture batch COVERAGE.md was generated from; point CHATBOT_FIXTURES_DIR at "
+            "the captures worktree, or wait for the n8n lane to merge them"
+        )
 
 
 def test_coverage_md_is_not_stale(full_corpus) -> None:
@@ -112,36 +123,16 @@ class TestGateStates:
         assert coverage._cell_state("route-turn", "business_query", 87) == ("met", False)
 
 
-# The cells gate 0 blocks on TODAY, pinned so the list can only shrink. Every entry is a
-# tail node the S2 slice ports, and every one is short for the same reason: no capture
-# agent has run against `sub-output` yet, so its pool is not in `CAPTURE_REPORT` and
-# `exhausted` cannot be earned. The fix is a capture run before the S2 PR opens, per gate
-# 0; the fix is NEVER an entry added here. A cell that leaves this list and a cell that
-# joins it are both failures worth reading.
-EXPECTED_BLOCKING: frozenset[str] = frozenset(
-    {
-        "build-cs-member-offer/all (4 of 5)",
-        "build-outcome/access_choice (2 of 5)",
-        "build-outcome/not_found (1 of 5)",
-        "build-outcome/not_supported (3 of 5)",
-        "build-outcome/out_of_scope (4 of 5)",
-        "compile-current-state/goods_receive (2 of 5)",
-        "compile-current-state/ideate (3 of 5)",
-        "compile-current-state/product_attachment (2 of 5)",
-        "compile-current-state/resource_attachment (0 of 5)",
-        "compile-current-state/spo_allocation (4 of 5)",
-        "crossdomain-compose/incoming (3 of 5)",
-        "crossdomain-compose/inventory (4 of 5)",
-        "crossdomain-compose/no_domain (1 of 5)",
-        "crossdomain-compose/promotion (1 of 5)",
-        "crossdomain-compose/spo_allocation (1 of 5)",
-        "cs-roster-plan/all (4 of 5)",
-        "escalate-catalog/access_choice (1 of 5)",
-        "escalate-catalog/clarify_menu (3 of 5)",
-        "escalate-catalog/not_supported (3 of 5)",
-        "escalate-catalog/offer_hold (3 of 5)",
-    }
-)
+# The cells gate 0 blocks on TODAY. EMPTY since the 5 Sep tail capture batch: 305 real
+# captures off `sub-output-live` (the body the port implements), and the pool that
+# produced them was scanned end to end - 760 of 760 on version `c32698c1` - so the arms
+# still reading zero are `exhausted`, not short.
+#
+# Pinned as a SET rather than asserted empty, so both directions are failures worth
+# reading: a new short cell fails here instead of hiding in a table, and a cell that has
+# since been captured fails too, so the list shrinks rather than rotting. The fix for a
+# new entry is always more captures, never an entry added here.
+EXPECTED_BLOCKING: frozenset[str] = frozenset()
 
 
 class TestTheReportIsHonest:

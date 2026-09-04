@@ -185,12 +185,16 @@ step 2 was not completed.
 
 ### Precondition for the promote
 
-- `pytest tests/chatbot -q` green in the CRM, including the 103-world replay.
+- `pytest tests/chatbot -q` green in the CRM, including the 166-world replay.
 - The clone smoke set (15 turns) run against the S2 build: same lane and same reply text
   as the pre-S2 baseline, zero egress (AC-208 asserts the persisted `session_vars` too).
-- Gate 0's blocking cells for the tail nodes captured and cleared
-  (`tests/chatbot/COVERAGE.md`; the list is pinned in
-  `tests/chatbot/test_coverage_fresh.py::EXPECTED_BLOCKING`).
+- Gate 0 not blocked (`tests/chatbot/COVERAGE.md`; the blocking set is pinned EMPTY in
+  `tests/chatbot/test_coverage_fresh.py::EXPECTED_BLOCKING`). Cleared on 5 Sep by the
+  `sub-output-live` capture batch: 305 real captures off the shipping body, from a pool
+  scanned end to end (760 of 760 on version `c32698c1`), which is what earns `exhausted`
+  for the arms that still read zero.
+- The captures themselves merged from the n8n capture worktree into the sibling checkout,
+  or `test_coverage_fresh.py` skips its comparison with a message saying so.
 
 ### Rollback
 

@@ -30,7 +30,7 @@ text, not a remembered one, so it is a local predicate rather than a state read)
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Mapping
 
 from app.services.chatbot import jsc
@@ -57,14 +57,17 @@ class CompiledState:
       asked "does the state start with `Previous turn (`" of the state it had just
       written; this is the same question answered from the branch that wrote it.
     * `offer_open` is whether this turn's reply leaves an escalation offer open. It is
-      what `pending.derive` keys on, and compose re-derives the marker when IT appends
-      the phrase.
+      what `pending.derive` keys on. NOTHING READS IT OFF THIS OBJECT TODAY - the marker
+      is already written into `variables.pending` before the return - and it is carried
+      anyway because `crossdomain-compose` APPENDS the frozen phrase on its total-miss
+      arm, which opens an offer the compiler did not know about. Wiring that is S5's (the
+      escalation lane is what reads the marker for anything but `escalation_offer`); the
+      value is here so that wiring is a read and not a re-derivation.
     """
 
     item: dict[str, Any]
     answered_domain: str | None = None
     offer_open: bool = False
-    _notes: dict[str, Any] = field(default_factory=dict)
 
 
 # --------------------------------------------------------------------------- #
@@ -820,8 +823,10 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
     # CONTRIBUTED a member are kept: a company whose roster came back empty was named in
     # the reply but has nobody to assign, so it must not turn a de-facto single pool into
     # "both axes null" on the bare-"yes" turn. A plan must never outlive its roster.
+    # `?? null` in the JS, which matters there because `undefined` and `null` are tested
+    # apart below (`_planItems === null`). `.get` already returns None for both, so the
+    # coercion the JS needs is a no-op here and is not written.
     plan_items = outcome.get("cs-roster-plan")
-    plan_items = plan_items if plan_items is not None else None
     shown_rows = (
         jsc.get(mem, "cs_last_result_set")
         if (not jsc.truthy(ideate) and jsc.truthy(mem) and jsc.is_array(jsc.get(mem, "cs_last_result_set")))
@@ -1889,6 +1894,15 @@ def _miss_company_routing(  # noqa: PLR0912, PLR0915 - one ported block, kept wh
         # The clarify ask REPLACES the reply, so this turn no longer answered anything -
         # which is exactly what the "starts with Previous turn (" test used to detect
         # once the response had been overwritten.
+        #
+        # NOT byte-equivalent in one unreachable case, named so nobody has to re-derive
+        # it: the JS re-reads `variables.response` AFTER this block, so a branch below
+        # that left the PREVIOUS turn's compressed string in place would read `answered`
+        # true where this reads None. That needs the previous turn to have answered AND
+        # this turn to take the clarify arm AND the stale-response branch to win, and the
+        # clarify arm overwrites or carries a clarify string on every path here. Verified
+        # over all 224 `compile-current-state` captures by the corpus-wide equivalence
+        # test: zero disagreements.
         turn_state["answered_domain"] = None
         # B-HB-2: the escalation sub's OWN THIS-TURN gate ask. CHECKED FIRST, ahead of
         # "an offer was already open": persistence must track what was ACTUALLY SENT, or

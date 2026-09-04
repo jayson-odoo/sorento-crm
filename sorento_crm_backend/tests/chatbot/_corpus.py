@@ -47,12 +47,28 @@ NODE_SLUGS: dict[str, tuple[str, ...]] = {
     # S2, the tail. `clone-sub-output` is the RS-9 split-out sub; the two spine slugs
     # captured the same node names before and after the split, which is why the loader
     # unions them and prefixes each id with its slug.
-    "build-outcome": ("clone-sub-output", "clone-spine-RS"),
-    "escalate-catalog": ("live-spine-sorento-consume-main", "clone-spine-RS"),
-    "cs-roster-plan": ("live-spine-sorento-consume-main",),
-    "build-cs-member-offer": ("live-spine-sorento-consume-main",),
-    "compile-current-state": ("live-spine-sorento-consume-main", "clone-spine-RS"),
-    "crossdomain-compose": ("live-spine-sorento-consume-main", "clone-spine-RS"),
+    # `sub-output-live` is the SHIPPING body captured from live (`qa4LWvPrhUnAPgjC`,
+    # version `c32698c1`), which is the body the port implements - so unlike the
+    # spine slugs it grades the port against itself rather than against an older
+    # deployment, and it is where the tail's real coverage comes from.
+    "build-outcome": ("sub-output-live", "clone-sub-output", "clone-spine-RS"),
+    "escalate-catalog": (
+        "sub-output-live",
+        "live-spine-sorento-consume-main",
+        "clone-spine-RS",
+    ),
+    "cs-roster-plan": ("sub-output-live", "live-spine-sorento-consume-main"),
+    "build-cs-member-offer": ("sub-output-live", "live-spine-sorento-consume-main"),
+    "compile-current-state": (
+        "sub-output-live",
+        "live-spine-sorento-consume-main",
+        "clone-spine-RS",
+    ),
+    "crossdomain-compose": (
+        "sub-output-live",
+        "live-spine-sorento-consume-main",
+        "clone-spine-RS",
+    ),
 }
 
 
@@ -132,6 +148,23 @@ STALE_FIXTURES: dict[tuple[str, str], str] = {
 def stale_entries() -> list[tuple[str, str, str]]:
     """`(node, fixture, reason)` for every registered stale capture, sorted."""
     return sorted((node, name, reason) for (node, name), reason in STALE_FIXTURES.items())
+
+
+# `expected_from` says who authored the `expected` block. `runData` means a real
+# execution produced it and it GRADES; anything else - `reasoned` is the one in use, a
+# hand-derived expectation written to describe intended behaviour - is INFORMATIONAL and
+# is loaded but not graded.
+#
+# The distinction is not bureaucracy. A `reasoned` fixture is a claim about what the node
+# SHOULD do, so replaying the port against it grades the port against whoever wrote the
+# claim, and a mismatch is an argument rather than a defect. Gate 0 counts `runData` only
+# for the same reason, and `COVERAGE.md` reports the two separately so nobody can meet the
+# bar by writing fixtures.
+GRADED_PROVENANCE = "runData"
+
+
+def is_graded(fixture: "Fixture") -> bool:
+    return str((fixture.data.get("source") or {}).get("expected_from") or "") == GRADED_PROVENANCE
 
 
 @dataclass(frozen=True)
@@ -237,6 +270,12 @@ def declared_branches(node: str) -> tuple[str, ...]:
         from app.services.chatbot.contracts import BRANCH_KINDS
 
         return BRANCH_KINDS
+    if node in ("cs-roster-plan", "build-cs-member-offer"):
+        # Seeded so the two arms live has never reached are VISIBLE zeros. The
+        # multi-company grouped renderer and the empty-roster fallback are the parts of
+        # `build_cs_member_offer` most likely to be wrong and least likely to be
+        # captured, and an `all` cell reading "met" said nothing about either.
+        return ("single_company", "multi_company", "empty_roster")
     if node == "escalate-catalog":
         # The nine arms of its own `switch`. Seeded so a copy arm nobody has captured is
         # a visible zero rather than an absent row - which for a node whose whole job is

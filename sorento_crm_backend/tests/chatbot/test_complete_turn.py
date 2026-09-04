@@ -231,20 +231,11 @@ class TestGuards:
         assert second.reply == first.reply
         assert _integration_logs(session_factory, "respond_contacts.session_vars") == 1
 
-    @pytest.mark.xfail(
-        reason="DEFECT (tester, S2): `complete_turn` (engine.py) only special-cases "
-        "`row.status == 'done'` (the D15 replay). A turn that never delegated - "
-        "status='failed' from a parser error, or any other non-'delegated' status - "
-        "falls through to the normal tail run: it does NOT raise, is not a 409, and "
-        "silently produces a reply from whatever `item.branch_kind` the CALLER's "
-        "fragments happen to carry (decoupled from the real failure) and closes the "
-        "turn status='done'. Confirmed manually: a parser-failure turn "
-        "(status='failed', stage='understood') fed `_fragments()` (branch_kind "
-        "'not_supported') completed with a fabricated 'not supported' reply and no "
-        "error. red until `complete_turn` checks `row.status == 'delegated'` before "
-        "running the tail and raises a 409-shaped error otherwise.",
-        strict=False,
-    )
+    # FIXED (coder, 5 Sep): `complete_turn` refuses any status but `delegated` (and the
+    # `done` idempotent replay) BEFORE the tail runs. Left unguarded it composed a reply
+    # out of whatever `branch_kind` the caller's fragments carried, wrote it to the
+    # customer's session, and overwrote `status` / `error` with `done` / null - erasing
+    # the R4 / H32 record the trace screen exists to show.
     def test_completing_a_turn_that_never_delegated_is_refused(
         self, seeded, session_factory, monkeypatch
     ):
@@ -331,18 +322,10 @@ class TestGuards:
         assert n_contacts_after == n_contacts_before, "the allowlist raise must not touch respond_contacts at all"
         assert _session_of(session_factory) == PRIOR_SESSION
 
-    @pytest.mark.xfail(
-        reason="DEFECT (tester, S2): `complete_turn` has no except-block around the "
-        "SessionVars(**variables) raise (engine.py, around line 912-925 - the raise sits "
-        "between `turn_trace.record('replied', ...)` and `_close_turn`, and nothing calls "
-        "`_close_turn` on this path). The turn row is left at whatever the HEAD wrote "
-        "(status='delegated', stage='routed') instead of being closed "
-        "status='failed', stage='remembered' the way R4 promises every other failure "
-        "path in this codebase. Row count on respond_contacts IS unaffected (confirmed), "
-        "only the turn row's own status/stage is wrong. red until engine.complete_turn "
-        "gets a try/except around the SessionVars construction that calls _close_turn.",
-        strict=False,
-    )
+    # FIXED (coder, 5 Sep): every failure in the tail now closes the turn `failed` at
+    # `remembered`, through the tail's OWN session after a rollback. A fresh session
+    # would nest on the same connection under this fixture and its commit would be
+    # discarded when the outer session closed - reported and then silently undone.
     def test_the_turn_row_is_closed_failed_at_remembered_when_the_allowlist_raises(
         self, seeded, stub_parser, session_factory, monkeypatch
     ):
@@ -428,14 +411,9 @@ class TestTheEndpoint:
         assert body["actions"] == canned["actions"]
         assert body["session_patch"] == canned["session_patch"]
 
-    @pytest.mark.xfail(
-        reason="DEFECT (tester, S2): the engine raises no distinguishable exception for "
-        "a non-delegated turn (see test_completing_a_turn_that_never_delegated_is_refused "
-        "in TestGuards), so the route's `except Exception` catches whatever generic error "
-        "surfaces and returns 500, never 409. red until the engine names the condition "
-        "(e.g. a dedicated exception type) and the route maps it to 409.",
-        strict=False,
-    )
+    # FIXED (coder, 5 Sep): the engine raises `AppException(409, ...)`, which IS an
+    # `HTTPException`, so the route's existing handler carries the status and the reason
+    # through without a new branch.
     def test_complete_on_a_non_delegated_turn_is_a_409(
         self, client, api_key, session_factory, monkeypatch
     ):

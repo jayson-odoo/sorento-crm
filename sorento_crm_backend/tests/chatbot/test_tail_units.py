@@ -487,3 +487,60 @@ class TestCsMemberOffer:
         assert offer["response"].count("1. Ms Bay") == 2, "listed under each company"
         assert len(offer["cs_last_result_set"]) == 1, "one number, so a reply of 1 is unambiguous"
         assert offer["cs_last_result_set"][0]["companies"] == ["Sorento", "Mocha"]
+
+
+# --------------------------------------------------------------------------- #
+# R3 / D11: `answered_domain` replaces `crossdomain-compose`'s regex, and the
+# substitution is graded against the whole corpus rather than asserted.
+# --------------------------------------------------------------------------- #
+
+
+class TestAnsweredDomainEquivalence:
+    """The port swapped a REGEX for a VALUE, and node replay cannot see the swap.
+
+    `crossdomain-compose.js` decides between its PARTIAL and its TOTAL-MISS branch with
+    `/^Previous turn \\(/` over the state it has just written. The port takes
+    `CompiledState.answered_domain` instead (D11: no reading a reply back), and
+    `test_replay.py`'s compose runner DERIVES `answered` with that same regex off the
+    fixture - which is correct for grading compose, and means the substitution itself is
+    never compared to anything.
+
+    So it is compared here, over every `compile-current-state` capture the corpus holds:
+    the port's `answered_domain is not None` against the JS predicate applied to the
+    variables the port persisted. A single disagreement is a turn where the cross-domain
+    block would land in the wrong half of the reply.
+    """
+
+    def test_the_value_agrees_with_the_regex_on_every_capture(self) -> None:
+        from tests.chatbot import _corpus
+        from tests.chatbot.test_replay import _ctx_of, _execution_id, _ran
+
+        fixtures = list(_corpus.vendored("compile-current-state")) + list(
+            _corpus.full_corpus("compile-current-state")
+        )
+        assert fixtures, "no compile-current-state captures: this test would be vacuous"
+
+        mismatches = []
+        for fixture in fixtures:
+            compiled = compile_current_state(
+                (fixture.input[0] or {}).get("json") or {},
+                _ctx_of(fixture),
+                resolved=_ran(fixture, "resolve-entity"),
+                gate=_ran(fixture, "disallowed-entity-gate"),
+                execution_id=_execution_id(fixture),
+            )
+            response = (
+                (compiled.item["reply"]["session_patch"].get("variables") or {}).get("response")
+            )
+            by_regex = isinstance(response, str) and response.startswith("Previous turn (")
+            by_value = compiled.answered_domain is not None
+            if by_regex != by_value:
+                mismatches.append(
+                    f"{fixture.name}: regex={by_regex} value={by_value} "
+                    f"domain={compiled.answered_domain!r} response={str(response)[:60]!r}"
+                )
+        assert not mismatches, (
+            f"{len(mismatches)} of {len(fixtures)} captures disagree - the cross-domain "
+            "block would land in the wrong half of the reply on each:\n"
+            + "\n".join(mismatches[:10])
+        )

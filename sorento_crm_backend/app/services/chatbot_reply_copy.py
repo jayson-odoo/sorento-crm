@@ -74,6 +74,19 @@ CHATBOT_REPLY_OUT_OF_SCOPE_NO_TEAM = (
 # `case 'escalation_declined'` - FIXED canned reply, no LLM shaping.
 CHATBOT_REPLY_ESCALATION_DECLINED = "Escalation declined."
 
+# What the customer reads when a turn could not be finished - byte-identical to what the
+# spine sends today when `sub-query-reformulator` fails (`sub-error-logger`).
+#
+# **It lives here, not in the package, because the ENDPOINT sends it.** The head returns
+# it as an action on a failed parse and the tail's route returns it when the tail raises,
+# so a copy inside `app/services/chatbot/` would have to be re-exported and the package's
+# "one public entry point" rule (D3, `test_import_boundary.py`) would have to be widened
+# for a string. NOT a registry key: an owner editing it in Settings could leave a failed
+# turn with no words at all, and this is the one sentence that must always exist.
+CHATBOT_TURN_ERROR_REPLY = (
+    "Sorry, I ran into a problem understanding that. Please try again in a moment."
+)
+
 
 # `short name -> (registry key, template, declared {{tokens}})`. ONE table: the registry
 # builds `PROMPT_KEYS` from it, the seed migration seeds from it, and the package's

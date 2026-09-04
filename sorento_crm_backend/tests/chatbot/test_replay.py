@@ -272,6 +272,17 @@ PORTED_NODES = sorted(RUNNERS)
 
 
 def _replay(fixture: _corpus.Fixture) -> None:
+    if not _corpus.is_graded(fixture):
+        # A `reasoned` fixture is a claim about intended behaviour, not a record of a
+        # real execution. Replaying the port against it grades the port against whoever
+        # wrote the claim, and a mismatch is an argument, not a defect. It is still RUN,
+        # so a crash in the port shows up; only the comparison is withheld.
+        RUNNERS[fixture.node](fixture)
+        pytest.skip(
+            f"{fixture.node}/{fixture.name}: expected_from="
+            f"{(fixture.data.get('source') or {}).get('expected_from')!r}, informational "
+            "(gate 0 counts real captures only)"
+        )
     actual = _corpus.json_round_trip(RUNNERS[fixture.node](fixture))
     expected = _corpus.json_round_trip(fixture.expected)
     registered = divergences.find(fixture.node, fixture.name.split("/")[-1])

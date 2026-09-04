@@ -35,22 +35,27 @@ from typing import Any, Iterable
 
 from tests.chatbot import _corpus
 
-# The nodes a capture must carry before a world can be built from it. Each one is a value
-# the turn cannot be replayed without: the message, the contact, the session it read, the
-# parser's raw emission, the access answer, and the reply the turn actually sent.
-REQUIRED_NODES = (
-    "tf-message",
-    "sorento-sub-respond-findcontact-respond",
-    "get-session-vars",
-    "Call 'sub-query-reformulator'",
-    "check-access",
-    "build-ctx",
-    "crossdomain-compose",
-)
+# TWO nodes, not seven. Every input a world needs is on the `build-ctx` HUB - the message,
+# the contact, the session that was read, the parser's raw emission, the access answer and
+# the media block are each a producer's output VERBATIM on it (that is what `build-ctx.js`
+# is for) - so reading the hub covers a capture whose own graph does not contain those
+# producers as nodes at all. `crossdomain-compose` is the reply the turn actually sent, and
+# without it there is nothing to grade against.
+REQUIRED_NODES = ("build-ctx", "crossdomain-compose")
 
-# Which captures can supply a world. Every slug whose graph is a whole spine execution;
-# a sub-workflow capture only has its own sub's nodes and cannot make one.
-WORLD_SLUGS = ("live-spine-sorento-consume-main", "clone-spine-RS", "spine-rs-1a")
+# Which captures can supply a world.
+#
+# `sub-output-live` is the best of them and was added on 5 Sep: the tail's own workflow
+# carries the whole hub on its `build-ctx` carrier AND the thirteen trigger fields
+# verbatim, so a world derived from it is complete by construction and grades the body the
+# port implements. The three spine slugs stay because they are what the head's own
+# captures live under.
+WORLD_SLUGS = (
+    "sub-output-live",
+    "live-spine-sorento-consume-main",
+    "clone-spine-RS",
+    "spine-rs-1a",
+)
 
 # The shapes gate 0 asks for by name (plan, cutover ladder 0): "at least 5 per branch_kind
 # and per shape (picker, did-you-mean, tier ask, escalation, offer-hold, media)". Derived
@@ -176,8 +181,30 @@ _FRAGMENT_PRODUCERS = (
 )
 
 
+# The eleven nullable producer fields `sub-output`'s trigger declares, beside `item` and
+# `ctx`. ONE list, so the world harness and `engine.FRAGMENT_FIELDS` cannot drift.
+_TRIGGER_FIELDS = (
+    "result",
+    "resolved",
+    "gate",
+    "offer_hold",
+    "suggest_offer",
+    "not_found",
+    "incoming_picker",
+    "access_choice",
+    "crossdomain_render",
+    "answer",
+    "clarify",
+)
+
+
 def _tail_input_item(ctx: dict) -> dict[str, Any]:
     """The item as it ENTERS the tail, recovered from whichever node the capture holds."""
+    restored = _json(ctx.get("item-restore"))
+    if isinstance(restored, dict):
+        # `item-restore` re-emits the trigger's `item` VERBATIM, which is exactly what the
+        # tail receives - no recovery arithmetic needed.
+        return restored
     catalog = _json(ctx.get("escalate-catalog"))
     if isinstance(catalog, dict):
         return {k: v for k, v in catalog.items() if k not in _CATALOG_STAMPS}
@@ -194,7 +221,17 @@ def _fragments_from(ctx: dict, item: dict) -> dict[str, Any]:
     Exactly the expressions `Call 'sub-output'` carries today
     (`$('x').isExecuted ? $('x').first().json : null`), which is what makes a world's
     `/complete` call the same call n8n makes.
+
+    A `sub-output-live` capture has the trigger ITSELF, which is better than rebuilding:
+    it is the body of the real call, with n8n's own null-dropping already applied. It is
+    preferred whenever present and the reconstruction is the fallback for spine captures.
     """
+    trigger = _json(ctx.get("When Executed by Another Workflow"))
+    if isinstance(trigger, dict) and "item" in trigger:
+        return {
+            "item": item,
+            **{name: trigger.get(name) for name in _TRIGGER_FIELDS},
+        }
     fragment = {
         name: _json(ctx.get(name)) for name in _FRAGMENT_PRODUCERS if ctx.get(name)
     }
@@ -232,11 +269,20 @@ _TEXT_PRODUCERS = (
 def _can_produce_the_reply(ctx: dict, variables: dict) -> bool:
     """Does this capture carry the producer its own reply came from?
 
-    An ANSWERED turn compresses `variables.response` to `Previous turn (<domain>): ...`,
-    and that answer comes from `central-exchange` and nowhere else - so a capture without
-    it cannot reproduce the reply no matter how faithful the port is. Every other lane
-    needs one of the escalate / offer builders instead.
+    A `sub-output` capture always does, by construction: the tail's INPUT ITEM is the
+    answer envelope on the happy path (`compile-current-state`'s `getResultObj` falls
+    back to `$input`, because no node in that graph writes `outcome_fragment`), and the
+    trigger carries it verbatim. So a capture with the trigger needs no producer test at
+    all - it has exactly what the tail runs on.
     """
+    trigger = _json(ctx.get("When Executed by Another Workflow"))
+    if isinstance(trigger, dict) and "item" in trigger:
+        return True
+    # A SPINE capture is the other case: the tail ran inline or inside a sub, so the
+    # answer came from a named producer. An ANSWERED turn compresses `variables.response`
+    # to `Previous turn (<domain>): ...` and that comes from `central-exchange` and
+    # nowhere else, so a capture without it cannot reproduce the reply no matter how
+    # faithful the port is. Every other lane needs one of the escalate / offer builders.
     response = variables.get("response")
     if isinstance(response, str) and response.startswith("Previous turn ("):
         return bool(ctx.get("central-exchange"))
@@ -312,11 +358,13 @@ def _world_from(fixture: _corpus.Fixture) -> World | None:
     contact_id = str(contact.get("id") or "")
     if not contact_id:
         return None
-    parse = _json(ctx["Call 'sub-query-reformulator'"]) or {}
+    # Every one of these is read off the HUB rather than off the producer node, so a
+    # capture whose graph does not contain that producer still makes a world.
+    parse = hub.get("parse") or {}
     parser_raw = parse.get("_parser_raw")
     if not isinstance(parser_raw, dict):
         return None
-    session = _json(ctx["get-session-vars"]) or {}
+    session = hub.get("session") or {}
     session_vars = session.get("session_vars") or {}
     if not isinstance(session_vars, dict):
         session_vars = {}
@@ -343,8 +391,8 @@ def _world_from(fixture: _corpus.Fixture) -> World | None:
         lane_tag=(item or {}).get("branch_kind"),
         shape=_shape_of(hub, ctx, item or {}, variables, text),
         envelope={
-            "message": _json(ctx["tf-message"]) or {},
-            "contact": _json(ctx["sorento-sub-respond-findcontact-respond"]) or {},
+            "message": hub.get("text") or {},
+            "contact": contact,
             # `ctx.media` is the RS-4 hub key the media-confirmation block reads. It rides
             # on the envelope because that is where `run_turn` takes it from - n8n's
             # `sub-media-intake` patches it onto the queue item before the spine runs.
@@ -357,7 +405,7 @@ def _world_from(fixture: _corpus.Fixture) -> World | None:
         },
         session_vars=session_vars,
         parser_raw=parser_raw,
-        access=_json(ctx["check-access"]) or {},
+        access=hub.get("access") or {},
         fragments=_fragments_from(ctx, item or {}),
         roster_responses=_all_json(ctx.get("get-cs-members")),
         expected_text=text,

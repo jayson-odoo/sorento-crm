@@ -12,41 +12,42 @@ A branch under the bar is `exhausted` - not short - only when EVERY execution on
 
 | workflow | version | scanned | version pool | all versions | exhausted | captured | nodes |
 | --- | --- | ---: | ---: | ---: | --- | --- | --- |
-| `spine-rs-1a` | `51f7b0d2` | 567 | 567 | 946 | yes | 2026-09-04 | `route-turn`, `build-ctx` |
+| `spine-rs-1a` | `51f7b0d2` | 581 | 581 | 946 | yes | 2026-09-05 | `route-turn`, `build-ctx` |
+| `sub-output-live` | `c32698c1` | 760 | 760 | 907 | yes | 2026-09-05 | `compile-current-state`, `crossdomain-compose`, `build-outcome`, `escalate-catalog`, `cs-roster-plan`, `build-cs-member-offer` |
 | `sub-semantic-parser` | `ab3ec985` | 239 | 239 | 3901 | yes | 2026-09-04 | `output_exchange`, `suggest-follow-up` |
 
 ## World replay (AC-009)
 
 A WORLD is one whole captured turn replayed through `run_turn` + `complete_turn` with the parser, the access check and the CS roster read stubbed from that execution's own node outputs. Worlds are DERIVED from spine captures, not captured separately - a spine capture already carries every node output of its execution - so growing the node corpus grows this one for free.
 
-**103 worlds** (22 of them ungradeable in this corpus: a spine-only capture whose resolver and entity gate ran inside a sub the fixture never recorded). **17 multi-turn chains** covering 72 turns, each replayed on the CRM's OWN written memory.
+**166 worlds** (34 of them ungradeable in this corpus: a spine-only capture whose resolver and entity gate ran inside a sub the fixture never recorded). **26 multi-turn chains** covering 114 turns, each replayed on the CRM's OWN written memory.
 
 | axis | value | worlds |
 | --- | --- | ---: |
 | branch kind | `business_query` | 7 |
 | branch kind | `check_promotion` | 4 |
-| branch kind | `not_supported` | 9 |
-| branch kind | `out_of_scope` | 11 |
-| branch kind | `unknown` | 72 |
-| shape | `picker` | 5 |
-| shape | `did_you_mean` | 13 |
-| shape | `tier_ask` | 8 |
-| shape | `escalation` | 20 |
+| branch kind | `not_supported` | 8 |
+| branch kind | `out_of_scope` | 9 |
+| branch kind | `unknown` | 138 |
+| shape | `picker` | 10 |
+| shape | `did_you_mean` | 25 |
+| shape | `tier_ask` | 9 |
+| shape | `escalation` | 37 |
 | shape | `offer_hold` | 0 |
-| shape | `media` | 2 |
-| shape | `plain` | 55 |
+| shape | `media` | 4 |
+| shape | `plain` | 81 |
 
 ## Per node
 
 | node | fixtures | real captures | vendored (always run) |
 | --- | ---: | ---: | ---: |
-| `build-cs-member-offer` | 4 | 4 | 1 |
+| `build-cs-member-offer` | 14 | 14 | 1 |
 | `build-ctx` | 114 | 114 | 6 |
-| `build-outcome` | 17 | 17 | 2 |
-| `compile-current-state` | 194 | 104 | 30 |
-| `crossdomain-compose` | 19 | 18 | 2 |
-| `cs-roster-plan` | 4 | 4 | 1 |
-| `escalate-catalog` | 89 | 89 | 6 |
+| `build-outcome` | 78 | 78 | 2 |
+| `compile-current-state` | 255 | 165 | 5 |
+| `crossdomain-compose` | 80 | 79 | 5 |
+| `cs-roster-plan` | 14 | 14 | 1 |
+| `escalate-catalog` | 130 | 130 | 5 |
 | `output_exchange` | 320 | 244 | 98 |
 | `route-turn` | 116 | 116 | 14 |
 | `suggest-follow-up` | 242 | 242 | 16 |
@@ -55,40 +56,46 @@ A WORLD is one whole captured turn replayed through `run_turn` + `complete_turn`
 
 | node | branch | real captures | other | gate 0 |
 | --- | --- | ---: | ---: | --- |
-| `build-cs-member-offer` | `all` | 4 | 0 | SHORT |
+| `build-cs-member-offer` | `empty_roster` | 0 | 0 | exhausted (0) |
+| `build-cs-member-offer` | `multi_company` | 0 | 0 | exhausted (0) |
+| `build-cs-member-offer` | `single_company` | 14 | 0 | met |
 | `build-ctx` | `all` | 114 | 0 | met |
-| `build-outcome` | `access_choice` | 2 | 0 | SHORT |
-| `build-outcome` | `no_branch_kind` | 7 | 0 | met |
-| `build-outcome` | `not_found` | 1 | 0 | SHORT |
-| `build-outcome` | `not_supported` | 3 | 0 | SHORT |
-| `build-outcome` | `out_of_scope` | 4 | 0 | SHORT |
-| `compile-current-state` | `goods_receive` | 2 | 0 | SHORT |
-| `compile-current-state` | `ideate` | 3 | 0 | SHORT |
-| `compile-current-state` | `incoming` | 16 | 9 | met |
-| `compile-current-state` | `inventory` | 19 | 56 | met |
+| `build-outcome` | `access_choice` | 3 | 0 | exhausted (3) |
+| `build-outcome` | `escalation_declined` | 5 | 0 | met |
+| `build-outcome` | `no_branch_kind` | 27 | 0 | met |
+| `build-outcome` | `not_found` | 31 | 0 | met |
+| `build-outcome` | `not_supported` | 3 | 0 | exhausted (3) |
+| `build-outcome` | `out_of_scope` | 9 | 0 | met |
+| `compile-current-state` | `goods_receive` | 2 | 0 | exhausted (2) |
+| `compile-current-state` | `ideate` | 3 | 0 | exhausted (3) |
+| `compile-current-state` | `incoming` | 27 | 9 | met |
+| `compile-current-state` | `inventory` | 42 | 56 | met |
 | `compile-current-state` | `master_products` | 12 | 9 | met |
-| `compile-current-state` | `no_domain` | 20 | 3 | met |
-| `compile-current-state` | `order` | 20 | 0 | met |
-| `compile-current-state` | `product_attachment` | 2 | 4 | SHORT |
-| `compile-current-state` | `promotion` | 6 | 7 | met |
-| `compile-current-state` | `resource_attachment` | 0 | 2 | SHORT |
-| `compile-current-state` | `spo_allocation` | 4 | 0 | SHORT |
-| `crossdomain-compose` | `incoming` | 3 | 1 | SHORT |
-| `crossdomain-compose` | `inventory` | 4 | 0 | SHORT |
-| `crossdomain-compose` | `no_domain` | 1 | 0 | SHORT |
-| `crossdomain-compose` | `order` | 8 | 0 | met |
-| `crossdomain-compose` | `promotion` | 1 | 0 | SHORT |
-| `crossdomain-compose` | `spo_allocation` | 1 | 0 | SHORT |
-| `cs-roster-plan` | `all` | 4 | 0 | SHORT |
-| `escalate-catalog` | `access_choice` | 1 | 0 | SHORT |
-| `escalate-catalog` | `clarify_menu` | 3 | 0 | SHORT |
+| `compile-current-state` | `no_domain` | 30 | 3 | met |
+| `compile-current-state` | `order` | 31 | 0 | met |
+| `compile-current-state` | `product_attachment` | 7 | 4 | met |
+| `compile-current-state` | `promotion` | 7 | 7 | met |
+| `compile-current-state` | `resource_attachment` | 0 | 2 | exhausted (0) |
+| `compile-current-state` | `spo_allocation` | 4 | 0 | exhausted (4) |
+| `crossdomain-compose` | `incoming` | 14 | 1 | met |
+| `crossdomain-compose` | `inventory` | 27 | 0 | met |
+| `crossdomain-compose` | `no_domain` | 11 | 0 | met |
+| `crossdomain-compose` | `order` | 19 | 0 | met |
+| `crossdomain-compose` | `product_attachment` | 5 | 0 | met |
+| `crossdomain-compose` | `promotion` | 2 | 0 | exhausted (2) |
+| `crossdomain-compose` | `spo_allocation` | 1 | 0 | exhausted (1) |
+| `cs-roster-plan` | `empty_roster` | 0 | 0 | exhausted (0) |
+| `cs-roster-plan` | `multi_company` | 0 | 0 | exhausted (0) |
+| `cs-roster-plan` | `single_company` | 14 | 0 | met |
+| `escalate-catalog` | `access_choice` | 2 | 0 | exhausted (2) |
+| `escalate-catalog` | `clarify_menu` | 3 | 0 | exhausted (3) |
 | `escalate-catalog` | `demand_qty` | 3 | 0 | dead by vocabulary |
 | `escalate-catalog` | `escalate_offer` | 6 | 0 | met |
-| `escalate-catalog` | `escalation_declined` | 6 | 0 | met |
-| `escalate-catalog` | `not_found` | 54 | 0 | met |
-| `escalate-catalog` | `not_supported` | 3 | 0 | SHORT |
-| `escalate-catalog` | `offer_hold` | 3 | 0 | SHORT |
-| `escalate-catalog` | `out_of_scope` | 10 | 0 | met |
+| `escalate-catalog` | `escalation_declined` | 11 | 0 | met |
+| `escalate-catalog` | `not_found` | 84 | 0 | met |
+| `escalate-catalog` | `not_supported` | 3 | 0 | exhausted (3) |
+| `escalate-catalog` | `offer_hold` | 3 | 0 | exhausted (3) |
+| `escalate-catalog` | `out_of_scope` | 15 | 0 | met |
 | `output_exchange` | `incoming` | 65 | 6 | met |
 | `output_exchange` | `inventory` | 119 | 9 | met |
 | `output_exchange` | `master_products` | 4 | 13 | exhausted (4) |
@@ -120,8 +127,8 @@ A WORLD is one whole captured turn replayed through `run_turn` + `complete_turn`
 
 ## Gate 0 status
 
-**BLOCKED: 20 cell(s) short in a pool that was not fully scanned.** Capture more turns for: build-cs-member-offer/all (4 of 5), build-outcome/access_choice (2 of 5), build-outcome/not_found (1 of 5), build-outcome/not_supported (3 of 5), build-outcome/out_of_scope (4 of 5), compile-current-state/goods_receive (2 of 5), compile-current-state/ideate (3 of 5), compile-current-state/product_attachment (2 of 5), compile-current-state/resource_attachment (0 of 5), compile-current-state/spo_allocation (4 of 5), crossdomain-compose/incoming (3 of 5), crossdomain-compose/inventory (4 of 5), crossdomain-compose/no_domain (1 of 5), crossdomain-compose/promotion (1 of 5), crossdomain-compose/spo_allocation (1 of 5), cs-roster-plan/all (4 of 5), escalate-catalog/access_choice (1 of 5), escalate-catalog/clarify_menu (3 of 5), escalate-catalog/not_supported (3 of 5), escalate-catalog/offer_hold (3 of 5).
+**Not blocked.** Every cell is either met, exhausted in a fully-scanned pool, or dead by vocabulary.
 
-Exhausted (13), under the bar with no more traffic to capture: output_exchange/master_products (4), output_exchange/portal_link (0), output_exchange/promotion (0), route-turn/access_denied (1), route-turn/check_promotion (1), route-turn/clarify_menu (0), route-turn/escalate_offer (0), route-turn/escalation_declined (4), route-turn/ideate (0), route-turn/not_supported (1), route-turn/offer_hold (0), suggest-follow-up/master_products (4), suggest-follow-up/resource_attachment (1).
+Exhausted (29), under the bar with no more traffic to capture: build-cs-member-offer/empty_roster (0), build-cs-member-offer/multi_company (0), build-outcome/access_choice (3), build-outcome/not_supported (3), compile-current-state/goods_receive (2), compile-current-state/ideate (3), compile-current-state/resource_attachment (0), compile-current-state/spo_allocation (4), crossdomain-compose/promotion (2), crossdomain-compose/spo_allocation (1), cs-roster-plan/empty_roster (0), cs-roster-plan/multi_company (0), escalate-catalog/access_choice (2), escalate-catalog/clarify_menu (3), escalate-catalog/not_supported (3), escalate-catalog/offer_hold (3), output_exchange/master_products (4), output_exchange/portal_link (0), output_exchange/promotion (0), route-turn/access_denied (1), route-turn/check_promotion (1), route-turn/clarify_menu (0), route-turn/escalate_offer (0), route-turn/escalation_declined (4), route-turn/ideate (0), route-turn/not_supported (1), route-turn/offer_hold (0), suggest-follow-up/master_products (4), suggest-follow-up/resource_attachment (1).
 
 Dead by vocabulary, 0 captures is the correct number: escalate-catalog/demand_qty, route-turn/demand_qty, route-turn/stock_denied. These are covered by unit tests behind `chatbot_stock_denial_enabled` (AC-306, R1), never by a capture.

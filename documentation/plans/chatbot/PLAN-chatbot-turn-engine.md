@@ -423,7 +423,7 @@ only for language" lands, and it is the first prompt change the corpus can prove
 members in-process). `engine.complete_turn` writes session vars via
 `overwrite_for_contact` and closes the turn. R2 drops, R3 marker written.
 
-**Landed 5 Sep 2026**, with three shape notes worth carrying forward:
+**Landed 5 Sep 2026**, with four shape notes worth carrying forward:
 `tail/member_offer.py` holds `cs-roster-plan` + the roster read + `build-cs-member-offer`;
 the roster read is `app/services/team_roster_service.list_team_roster`, EXTRACTED from
 `app/api/v1/external/team_members.py` so the endpoint n8n still uses and the tail resolve
@@ -432,7 +432,10 @@ endpoint's own stated contract). `compile_current_state` returns a `CompiledStat
 bare item: `item` is what the corpus grades and `answered_domain` is what replaces
 `crossdomain-compose`'s regex. And `copy.py` reads its strings from
 `app/services/chatbot_reply_copy.py`, OUTSIDE the package, because `ai_prompt_registry` is
-core and core must not import the module (AC-002).
+core and core must not import the module (AC-002). Fourth, `/complete` refuses any turn
+that is not `delegated` with a 409 and closes every tail failure `failed` at `remembered`:
+without the guard a FAILED turn could be completed, which wrote a fabricated reply into
+the customer's session and overwrote the R4 / H32 failure record with `done`.
 n8n: `sub-output` body + `save-session-vars` replaced by `/complete` (AC-207). After this PR
 the CRM is the only session writer on the turn path (AC-207 grep is the proof).
 Parity gate: AC-202, AC-204, AC-205, AC-208.

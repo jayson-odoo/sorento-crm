@@ -50,11 +50,35 @@ CAPTURES_PER_BRANCH = 5
 CAPTURE_REPORT: dict[str, dict] = {
     "spine-rs-1a": {
         "version": "51f7b0d2",
-        "version_pool": 567,
-        "scanned": 567,
+        # Re-scanned 5 Sep: the on-version pool had grown from 567 to 581 and all 581
+        # were captured (the batch also took 8 `media-gate` items, which is where the
+        # media-shaped worlds come from; `media-gate` is not a ported node, so it adds
+        # no cell of its own).
+        "version_pool": 581,
+        "scanned": 581,
         "all_versions": 946,
-        "captured_on": "2026-09-04",
+        "captured_on": "2026-09-05",
         "nodes": ("route-turn", "build-ctx"),
+    },
+    # The tail's own workflow, captured for the first time on 5 Sep. This is the pool
+    # that matters for S2: `sub-output` runs the body the port implements, so unlike the
+    # spine slugs it grades the port against what SHIPS rather than against an older
+    # deployment. 907 executions since 1 Sep, 760 of them on the current version; all 760
+    # were scanned, which is what earns `exhausted` for the arms that still read zero.
+    "sub-output-live": {
+        "version": "c32698c1",
+        "version_pool": 760,
+        "scanned": 760,
+        "all_versions": 907,
+        "captured_on": "2026-09-05",
+        "nodes": (
+            "compile-current-state",
+            "crossdomain-compose",
+            "build-outcome",
+            "escalate-catalog",
+            "cs-roster-plan",
+            "build-cs-member-offer",
+        ),
     },
     "sub-semantic-parser": {
         "version": "ab3ec985",
@@ -126,6 +150,12 @@ _DOMAIN_NODES = (
     "compile-current-state",
     "crossdomain-compose",
 )
+# The CS roster pair turns on ONE axis and it is not the domain: how many companies the
+# offer spans, and whether anybody was in it. Cutting them by `all` hid three zeros that
+# matter - the multi-company grouped renderer, the shared-member dedupe and the
+# empty-roster fallback are the three arms with no capture at all, and a single `all`
+# cell reading "met" said the opposite.
+_ROSTER_NODES = ("cs-roster-plan", "build-cs-member-offer")
 
 
 def _session_variables(fixture: _corpus.Fixture) -> dict:
@@ -144,8 +174,21 @@ def _session_variables(fixture: _corpus.Fixture) -> dict:
     return {}
 
 
+def _roster_cell(fixture: _corpus.Fixture) -> str:
+    """`single_company` / `multi_company` / `empty_roster` for the CS roster pair."""
+    items = fixture.expected
+    if fixture.node == "cs-roster-plan":
+        return "multi_company" if len(items) > 1 else "single_company"
+    body = (items[0] or {}).get("json") or {} if items else {}
+    if not (body.get("cs_last_result_set") or []):
+        return "empty_roster"
+    return "multi_company" if len(body.get("routing_companies") or []) > 1 else "single_company"
+
+
 def _branch_of(fixture: _corpus.Fixture) -> str:
     """A coverage CELL for one fixture."""
+    if fixture.node in _ROSTER_NODES:
+        return _roster_cell(fixture)
     if fixture.node in _BRANCH_KIND_NODES:
         # `build-outcome` FORWARDS the item, so the arm is on its input as well as its
         # output; `escalate-catalog` stamps its answer onto the same item it received.

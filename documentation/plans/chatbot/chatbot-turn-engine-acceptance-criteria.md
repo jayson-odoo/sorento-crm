@@ -255,21 +255,32 @@ clone or live. Each AC traces to a journey step (A1 to D1).
   tail exists to replay them end to end. S1's gate is node replay (AC-102, AC-103); world
   replay is S2's.
 
-  **PARTIALLY MET at S2 (5 Sep 2026), and the shortfall is a capture gap, not a code
-  gap.** `tests/chatbot/worlds.py` derives **103 worlds** and **17 multi-turn chains**
-  (72 turns) from the spine captures, and `tests/chatbot/test_worlds.py` replays each
-  through `run_turn` + `complete_turn` with the parser, the access check and the CS
-  roster read stubbed from that execution's own node outputs. Per shape: `plain` 55,
-  `escalation` 20, `did_you_mean` 13, `tier_ask` 8, `picker` 5, `media` 2,
-  `offer_hold` 0 - so **two of the six named shapes are under the bar of 5 and one is at
-  zero**, and that is what a capture run must fix before the S2 PR promotes.
+  **MET at S2 (5 Sep 2026), after the tail capture batch.** `tests/chatbot/worlds.py`
+  derives **166 worlds** and **26 multi-turn chains** (114 turns) and
+  `tests/chatbot/test_worlds.py` replays each through `run_turn` + `complete_turn` with
+  the parser, the access check and the CS roster read stubbed from that execution's own
+  node outputs. 86 single-turn worlds and 6 chains grade today; the rest carry a NAMED
+  body difference or are spine-only captures whose resolver and entity gate ran inside a
+  sub the fixture never recorded.
 
-  A world is either GRADED or SKIPPED BY NAME: 37 grade today, and the rest carry a
-  named body difference (the exported parser post-processor's routing ladder, pre-QS-9
-  `requested_attributes`, the pre-Fix-6 tier menu, pre-B56) or are spine-only captures
-  whose resolver and entity gate ran inside a sub the fixture never recorded. Nothing is
-  partly excused: the only two allowed value differences anywhere are the `pending`
-  marker and `dym_offer.id`, which is `$execution.id` becoming the CRM turn id.
+  A world is either GRADED or SKIPPED BY NAME. Nothing is partly excused: the only two
+  allowed value differences anywhere are the `pending` marker and `dym_offer.id`, which
+  is `$execution.id` becoming the CRM turn id.
+
+  Per shape: `plain` 81, `escalation` 37, `did_you_mean` 25, `picker` 10, `tier_ask` 9,
+  `media` 4, **`offer_hold` 0**. The last one is EXHAUSTED, not short: 0 of 556
+  `route-turn` runs in the scanned pool took that arm, so no further capturing produces
+  one and it is covered by unit tests instead. `media` is bounded the same way - the pool
+  held 2 voice, 1 video and 8 already-handled images, so the head never runs on more.
+
+  **The source changed, and that is why the number moved.** A world used to need seven
+  named head nodes; it needs TWO - `build-ctx` and `crossdomain-compose` - because every
+  input is a producer's output VERBATIM on the `build-ctx` hub, which is what that node
+  is for. That is what lets the `sub-output-live` captures (the tail's own workflow,
+  running the body the port implements) make worlds at all, and they are the best source
+  in the corpus: the hub plus the thirteen trigger fields is a complete world by
+  construction.
+
 - AC-006 `[BE][T]` Given a caller with a valid integration key but without the slug
   `integration.chat_turn.submit`, when it calls any `/api/v1/external/chat/*` route, then 403
   `permission_denied` naming the slug; with the slug and the module disabled under strict mode,

@@ -40,6 +40,7 @@ from app.database import SessionLocal, get_db
 from app.dependencies import get_external_api_user
 from app.schemas.integration import IntegrationLogCreate
 from app.services.chatbot import complete_turn, run_turn
+from app.services.chatbot_reply_copy import CHATBOT_TURN_ERROR_REPLY
 from app.services.chatbot.contracts import (
     CompleteRequest,
     CompleteResponse,
@@ -50,6 +51,12 @@ from app.services.integration_service import IntegrationLogService
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# What the customer reads when the tail could not finish. The SAME declaration the head's
+# parser reads, in a core module the package does not own, so the two can never drift
+# into two different apologies for the same silence and the package keeps exporting
+# exactly its two entry points (D3).
+TAIL_ERROR_REPLY = CHATBOT_TURN_ERROR_REPLY
 
 
 @router.post("/turn", response_model=TurnResponse, status_code=status.HTTP_200_OK)
@@ -166,14 +173,25 @@ def chat_turn_complete(
         error_message = str(missing)
         to_reraise = HTTPException(status_code=response_status, detail=error_message)
     except HTTPException as http_exc:
+        # `AppException` is an `HTTPException`, so the engine's 409 for a turn that never
+        # delegated arrives here already carrying its own status and reason.
         response_status = http_exc.status_code
         error_message = str(http_exc.detail)
         to_reraise = http_exc
-    except Exception as exc:  # noqa: BLE001 - log then surface a clean 500
+    except Exception as exc:  # noqa: BLE001 - a failed tail is an ANSWERED call
+        # The engine has already closed the turn `failed` at `remembered` with the reason
+        # on the row and the trace. What the CALLER needs from here is the same thing the
+        # head gives it on a failed parse (AC-105): today's error reply to send, as an
+        # action, so the customer is answered rather than left silent. A 500 would leave
+        # n8n with nothing to send and the customer with nothing at all - and the failure
+        # is not lost, it is on `chatbot.turns` and in the integration log below.
         logger.exception("chatbot turn %s failed to complete: %s", turn_id, exc)
-        response_status = status.HTTP_500_INTERNAL_SERVER_ERROR
-        error_message = "Failed to complete chatbot turn."
-        to_reraise = HTTPException(status_code=response_status, detail=error_message)
+        error_message = f"{type(exc).__name__}: {exc}"
+        response_payload = CompleteResponse(
+            turn_id=turn_id,
+            reply={"text": TAIL_ERROR_REPLY, "quick_replies": None, "result_set": [], "attachments_src": None},
+            actions=[{"kind": "send_message", "text": TAIL_ERROR_REPLY, "quick_replies": None}],
+        )
 
     try:
         request_headers = dict(request.headers)
