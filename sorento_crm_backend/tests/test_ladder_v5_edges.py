@@ -139,11 +139,13 @@ def test_an_overdue_promise_that_still_lands_in_time_is_drawn_as_water_and_dated
     promising against a passed date was promising against paperwork nobody believed. R-O
     keeps that distrust but gives it a number: a document whose arrival has passed with
     nothing received still counts, landing on `as_of + overdue_grace_days` rather than the
-    date it stated. Relative to this fixture's `as_of` (`TODAY`, 18 Aug 2026) the document
-    is 24 days late (not the 40 the wall clock would read against real `today`) and its
-    ASSUMED arrival - 1 Sep, off the RECOMMENDED 14-day grace this test activates
-    explicitly - lands before the line's own 3 Sep, so question 1 draws it whole, dated at
-    the assumed day, and the sentence states the lateness. A document past
+    date it stated. Relative to this fixture's `as_of` (`TODAY`, 18 Aug 2026) the document's
+    lateness is TODAY minus its wall-clock arrival date, not the 40 days the wall clock
+    would read against real `today` - the sentence's number drifts with the calendar since
+    the arrival is dated off `date.today()`. Its ASSUMED arrival - 1 Sep, off the
+    RECOMMENDED 14-day grace this test activates explicitly - lands before the line's own
+    3 Sep, so question 1 draws it whole, dated at the assumed day, and the sentence states
+    the lateness. A document past
     `overdue_dead_days` (90, also activated explicitly) is still not supply (R31 stands for
     the dead).
 
@@ -163,8 +165,9 @@ def test_an_overdue_promise_that_still_lands_in_time_is_drawn_as_water_and_dated
         # (`spo_supply.overdue_days`'s own default), not against the board's `as_of` dial -
         # so the arrival is dated off `date.today()`, never off the fixture's own `TODAY`
         # constant. The WALK's own lateness (`days_late` on the trail's sentence) is
-        # measured against `as_of` instead, which is why the two numbers below differ (40
-        # vs 24) for the very same document.
+        # measured against `as_of` instead, which is why the two numbers below differ for
+        # the very same document: 40 is the fixed wall-clock offset below, while the
+        # walk's number is TODAY minus this arrival date and so drifts with the calendar.
         arrives = date.today() - timedelta(days=40)
         late = _incoming(
             db, product, own, spo_number="ZZT-SPO-LATE", allocated=40, received=0,
@@ -184,7 +187,8 @@ def test_an_overdue_promise_that_still_lands_in_time_is_drawn_as_water_and_dated
         source = contribution["sources"][0]
         # The ASSUMED date (`as_of` + the 14-day grace), not the date the paperwork states.
         assert source["arrival_date"] == TODAY + timedelta(days=14)
-        assert "is 24 days late, assumed by" in source["reason"], source["reason"]
+        expected_late = (TODAY - arrives).days
+        assert f"is {expected_late} days late, assumed by" in source["reason"], source["reason"]
 
         detail = _service(db).stock_detail(str(product.id), str(own.id))
         incoming_row = next(
