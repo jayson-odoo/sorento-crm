@@ -89,6 +89,7 @@ from app.services.master_ingest_service import (
 )
 from app.services.scm import customer_back_create, sales_agent_service
 from app.services.scm.customer_label import normalize_debtor_code
+from app.services.scm.demand_class import classify_document
 # `_clean_supplier_name` and `DEFAULT_PO_CURRENCY` are the upload's own rules
 # (D9's "cleaned name" match, D1's CNY fill) - imported rather than restated so
 # the two channels that read a purchase book from AutoCount cannot drift on
@@ -136,7 +137,8 @@ WARN_CUSTOMER_UNRESOLVED = "customer_unresolved"
 WARN_SUPPLIER_CREATED = "supplier_created"
 WARN_AGENT_CREATED = "agent_created"
 WARN_WAREHOUSE_UNRESOLVED = "warehouse_unresolved"
-#: Reserved for S2 (`classify_document`); not yet emitted.
+#: D4/S2 - a sales order `classify_document` could not classify, and nothing
+#: was stored before this push either.
 WARN_UNCLASSIFIED_DEMAND = "unclassified_demand"
 
 # The exact-match code column per master the ref/code ladder resolves through.
@@ -431,19 +433,28 @@ class DocumentIngestService:
         # header, not a per-line list nothing reads (D9).
         warnings: list[str] = []
         status = self._status(spec, payload.status)
-        header_values = self._header_values(spec, payload, status, warnings)
+        # The header is resolved (not yet written into) BEFORE `_header_values`, unlike
+        # every other value here: D4's fill-only `order_type` and never-downgraded
+        # `demand_class` both have to read what the row ALREADY holds, which does not
+        # exist to read until `_header` has found-or-created it. For a CREATE, `header`
+        # is deliberately not in the session yet (see `_header`'s comment) - added just
+        # below, once `header_values` is complete and about to be written, so no query
+        # the ref/demand ladders run in between can autoflush a half-built row and fail
+        # on its own not-null constraints.
+        header, outcome = self._header(spec, payload)
+        header_values = self._header_values(spec, payload, status, warnings, header)
         line_values = [
             self._line_values(spec, line, index, status, warnings)
             for index, line in enumerate(payload.lines)
         ]
 
-        header, outcome = self._header(spec, payload)
         # Only an update overwrites anything, and only a dry run needs to say so.
         diff = (
             self._diff(header, header_values)
             if outcome is IngestOutcome.UPDATED
             else None
         )
+        self.db.add(header)
         for column, value in header_values.items():
             setattr(header, column, value)
         self.db.flush()
@@ -515,7 +526,15 @@ class DocumentIngestService:
             return self._load(spec, adopted), IngestOutcome.UPDATED
 
         header = spec.header_model(id=str(uuid.uuid4()), company_id=self.company_id)
-        self.db.add(header)
+        # NOT `db.add()`-ed here on purpose. `_header_values` (D4) reads this
+        # object's stored columns before the caller ever writes into it -
+        # harmless for an UPDATE (`_load` returns an already-persisted row),
+        # but a CREATE's row would otherwise sit in the session as a pending
+        # INSERT with every NOT NULL column still empty. Any query anywhere
+        # between here and the setattr loop - the ref/code ladder's lookups, a
+        # back-create's own explicit flush - would autoflush that half-built
+        # row and fail on its own constraints. `_apply` adds it once
+        # `header_values` is complete and about to be written.
         return header, IngestOutcome.CREATED
 
     def _load(self, spec: DocumentSpec, entity_id: str):
@@ -530,7 +549,12 @@ class DocumentIngestService:
         return header
 
     def _header_values(
-        self, spec: DocumentSpec, payload: Any, status: str, warnings: list[str]
+        self,
+        spec: DocumentSpec,
+        payload: Any,
+        status: str,
+        warnings: list[str],
+        header: Any,
     ) -> dict[str, Any]:
         values: dict[str, Any] = {
             column: getattr(payload, field) for column, field in spec.header_fields
@@ -559,6 +583,11 @@ class DocumentIngestService:
         # so the fill is shape-driven rather than a hardcoded entity check.
         if "currency" in values and not values["currency"]:
             values["currency"] = DEFAULT_PO_CURRENCY
+        # v2 demand classification (D4, sales_orders only). `order_type` only
+        # exists on `CanonicalSalesOrder`, so this is a no-op for a PO - the
+        # same shape-driven guard the currency fill above uses.
+        if hasattr(payload, "order_type"):
+            self._classify_sales_order(payload, values, warnings, header, customer_code)
         # Adoption takes ownership: from here on the row is AutoCount's, and the
         # next push has to find it by reference rather than by number again.
         values["source_system"] = SOURCE_SYSTEM
@@ -566,6 +595,61 @@ class DocumentIngestService:
         if spec.doc_no_column:
             values[spec.doc_no_column] = getattr(payload, spec.number_field)
         return values
+
+    def _classify_sales_order(
+        self,
+        payload: Any,
+        values: dict[str, Any],
+        warnings: list[str],
+        header: Any,
+        customer_code: Optional[str],
+    ) -> None:
+        """D4 (plan section 1/2.3): fill-only `order_type`, never-downgraded `demand_class`.
+
+        A stored `demand_class` is a settled fact - possibly set by CS by hand,
+        possibly by an order_type this same ladder decided on an earlier push -
+        and this ingest never overwrites or blanks it, whatever a fresh run of
+        the ladder would say today (AC-V2-6). Only when NOTHING is stored yet
+        does `classify_document` run at all.
+        """
+        stored_order_type = getattr(header, "order_type", None)
+        stated_order_type = payload.order_type
+        if not stored_order_type and stated_order_type:
+            values["order_type"] = stated_order_type
+
+        if getattr(header, "demand_class", None):
+            return
+
+        agent_id = values.get("sales_agent_id")
+        agent_demand_class = (
+            self.db.query(SalesAgent.demand_class).filter(SalesAgent.id == agent_id).scalar()
+            if agent_id
+            else None
+        )
+        debtor_code = customer_code or getattr(header, "debtor_code", None)
+        customer_id = values.get("customer_id")
+        if not debtor_code and customer_id:
+            # No code was SENT and none is stored yet, but the ref resolved to a
+            # real customer - its own code is the debtor code this document
+            # names, just not spelled out in this particular payload.
+            debtor_code = (
+                self.db.query(Customer.customer_code)
+                .filter(Customer.id == customer_id)
+                .scalar()
+            )
+
+        cls = classify_document(
+            self.db,
+            stored_order_type=stored_order_type,
+            stated_order_type=stated_order_type,
+            agent_demand_class=agent_demand_class,
+            debtor_code=debtor_code,
+            company_id=self.company_id,
+        )
+        if cls is not None:
+            values["demand_class"] = cls
+        else:
+            warnings.append(WARN_UNCLASSIFIED_DEMAND)
 
     def _line_values(
         self, spec: DocumentSpec, line: Any, index: int, status: str, warnings: list[str]
@@ -1118,6 +1202,13 @@ class DocumentReadService:
         record["status"] = _canonical_status(spec, header.status)
         for column, field, model, _code_field, _name_field in spec.header_refs:
             record[field] = self._ref_of(model, getattr(header, column))
+        # `order_type` (D4) is read-only here on purpose - NOT added to
+        # `header_fields`, which `_header_values` also uses to build the write
+        # side, where it would restate the payload's value unconditionally and
+        # break the fill-only rule (AC-V2-1). `PurchaseOrder` has no such
+        # column, hence the guard rather than a per-entity literal.
+        if hasattr(header, "order_type"):
+            record["order_type"] = header.order_type
         record["lines"] = [
             self._line(spec, line) for line in self._lines(spec, header)
         ]

@@ -540,6 +540,11 @@ class TestVerdictLineCounts:
         assert entry["lines"] == self.EXPECTED
 
     def test_a_second_push_that_only_updates_a_line_reports_updated(self, env):
+        """A partial second push still sweeps the lines it does not name - the
+        document owns ALL of its lines, not just the ones a given push mentions
+        - so the previously-created line is deleted (unreferenced) and the
+        previously-cancelled line is swept into `cancelled` again (still
+        referenced, still ref-less)."""
         header, record, rows = _seed_mixed_document(env)
         first = env.post(INGEST_SO, [record])
         adopted_ref = first.json()["records"][0]  # sanity: first push landed
@@ -565,8 +570,8 @@ class TestVerdictLineCounts:
             "adopted": 0,
             "created": 0,
             "updated": 1,
-            "deleted": 0,
-            "cancelled": 0,
+            "deleted": 1,
+            "cancelled": 1,
         }
 
     def test_dry_run_reports_the_same_counts_and_writes_nothing(self, env):

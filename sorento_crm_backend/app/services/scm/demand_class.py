@@ -68,3 +68,51 @@ def check_constraint_sql(column: str = "demand_class") -> str:
     """
     allowed = ", ".join(f"'{c}'" for c in DEMAND_CLASSES)
     return f"{column} IS NULL OR {column} IN ({allowed})"
+
+
+def classify_document(
+    db,
+    *,
+    stored_order_type: Optional[str],
+    stated_order_type: Optional[str],
+    agent_demand_class: Optional[str],
+    debtor_code: Optional[str],
+    company_id,
+) -> Optional[str]:
+    """The demand class a sales document should carry (D4, plan section 1/2.3).
+
+    ONE ladder, two callers - `outstanding_import_service._classify_demand`
+    (the weekly upload) and the AutoCount document ingest - so a class the
+    upload would decide and a class the ingest would decide can never disagree
+    about the same order:
+
+        stored order type -> stated order type -> the selling agent's demand
+        class -> the customer's market segment (by debtor code, within
+        company).
+
+    `stored_order_type` outranks everything: a document does not restate its
+    own settled history. `stated_order_type` outranks the agent and the
+    customer because it is a statement about THIS document, where the other
+    two are statements about the account and the salesperson in general.
+    `agent_demand_class` is taken AS STORED, never through `class_of` - the
+    agent master's own check constraint already limits it to the vocabulary,
+    and running an already-valid value back through the segment matcher would
+    turn a value that somehow escaped the constraint into a GUESSED `retail`,
+    exactly the mistake this ladder exists to refuse.
+
+    Returns `None` when nothing classifies - the caller decides what that
+    means for its own record (the upload refuses the file; the ingest lands
+    the record and warns `unclassified_demand`).
+
+    The segment DB read is a lazy import from `demand_classifier`, a thin
+    sibling this module does not import at module scope (see the module
+    docstring's import-cycle warning) - `app.models.sales_agent` reaches into
+    THIS module for `check_constraint_sql`, so a top-level model import here
+    would close that cycle at start-up rather than at call time.
+    """
+    cls = class_of(stored_order_type) or class_of(stated_order_type) or agent_demand_class
+    if cls is not None:
+        return cls
+    from app.services.scm.demand_classifier import segment_of
+
+    return class_of(segment_of(db, debtor_code, company_id))

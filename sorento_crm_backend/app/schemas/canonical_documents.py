@@ -141,6 +141,12 @@ class CanonicalSalesOrder(_CanonicalDocument):
     customer_name: Optional[str] = Field(None, max_length=255)
     sales_agent_ref: Optional[str] = Field(None, max_length=255)
     agent_code: Optional[str] = Field(None, max_length=100)
+    # v2 demand classification (D4). FILL-only: written to `sales_orders.order_type`
+    # only when the header holds none yet, the same rule `customer_code` follows for
+    # `debtor_code`. `demand_class` itself stays an unaccepted key (AC-V2-7) - it is
+    # DERIVED from this ladder, never stated directly, so a payload naming it outright
+    # would let a document claim a priority nothing here actually earned.
+    order_type: Optional[str] = Field(None, max_length=50)
     doc_date: Optional[date] = None
     requested_delivery_date: Optional[date] = None
     internal_note: Optional[str] = None

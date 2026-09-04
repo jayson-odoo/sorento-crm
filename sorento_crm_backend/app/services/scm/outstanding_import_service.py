@@ -53,7 +53,13 @@ from app.services.scm import sales_agent_service
 # check constraint, so a second copy of the word list would be a database that accepts what
 # the importer rejects.
 from app.services.scm.history_sources import HISTORY_SOURCE_SYSTEMS
-from app.services.scm.demand_class import class_of as _class_of
+from app.services.scm.demand_class import class_of as _class_of, classify_document
+# The segment DB read this module's `_classify_demand` used to define locally, moved to
+# `demand_classifier` (D4) so the AutoCount document ingest classifies off the SAME read
+# rather than a second one that could drift. Re-exported under the old name so this
+# module's own directly-testing callers (`tests/scm/test_outstanding_import_*`) are
+# unaffected.
+from app.services.scm.demand_classifier import segment_of as _segment_of
 from app.services.scm.customer_label import normalize_debtor_code
 from app.services.scm.outstanding_reader import PO, SO, ReadResult, RowProblem, read_workbook
 # The supplier back-create rule itself, shared with the purchase-HISTORY channel: the two
@@ -763,41 +769,16 @@ def _header_state(db: Session, docs: tuple[str, ...],
     return {r[0]: (r[1], str(r[2]) if r[2] else None) for r in rows}
 
 
-def _segment_of(db: Session, debtor_code: str) -> Optional[str]:
-    """This customer's market segment code, or None when there is no customer to read.
-
-    Three answers, and the caller needs all three apart: "no such customer" and "customer
-    with no segment" are both None and both nothing to go on, and a segment that says
-    retail is an answer. There is deliberately no defaulting wrapper around this any more
-    (QP1): the import refuses a document it cannot classify rather than writing a guess.
-    Since the amendment of 4 Aug 2026 the segment was the FALLBACK rather than the source of
-    truth, because it was NULL on 3,276 of 3,284 customers. Migration 425 changed that
-    balance - it stamped 503 customers retail so the real AutoCount export, which carries no
-    order type column, can classify at all - but not the rule: silence here is still
-    silence, and treating it as "retail" is exactly the invisible mis-prioritisation the
-    refusal exists to prevent.
-    """
-    if not debtor_code:
-        return None
-    # ORM again: customers are company-scoped too, and reading another company's customer
-    # would decide this order's fulfilment priority from the wrong row.
-    #
-    # ORDERED, because `LIMIT 1` without one picks whatever the planner returns first. The
-    # scope should leave at most one row per code (`customer_code` is unique per company),
-    # and on the day it leaves two - a company-shared row, an unscoped principal - the
-    # useful answer is the one that STATES a segment rather than a coin toss between an
-    # answer and a blank. `id` breaks the remaining tie so a re-run cannot classify the
-    # same file two ways.
-    return (
-        db.query(func.lower(func.coalesce(Customer.market_segment_code, "")))
-        .filter(func.upper(Customer.customer_code) == _norm(debtor_code))
-        .order_by(
-            (func.coalesce(func.trim(Customer.market_segment_code), "") == ""),
-            Customer.id,
-        )
-        .limit(1)
-        .scalar()
-    )
+# `_segment_of` itself now lives in `demand_classifier.py` (D4) and is imported above under
+# this name - moved rather than duplicated so the AutoCount document ingest classifies off
+# the exact same read. There is deliberately no defaulting wrapper around it (QP1): the
+# import refuses a document it cannot classify rather than writing a guess. Since the
+# amendment of 4 Aug 2026 the segment was the FALLBACK rather than the source of truth,
+# because it was NULL on 3,276 of 3,284 customers. Migration 425 changed that balance - it
+# stamped 503 customers retail so the real AutoCount export, which carries no order type
+# column, can classify at all - but not the rule: silence here is still silence, and
+# treating it as "retail" is exactly the invisible mis-prioritisation the refusal exists to
+# prevent.
 
 
 def _demand_state(db: Session, docs: tuple[str, ...],
@@ -912,17 +893,24 @@ def _classify_demand(db: Session, diff: Diff, resolved: _Resolved,
 
     out: dict[str, str] = {}
     problems: list[RowProblem] = []
+    # Resolved once, not per document: `None` on an ambiguous/unset scope leaves
+    # `classify_document`'s segment read exactly as ambient-scope-only as `_segment_of`
+    # always was, rather than inventing a company this upload never named.
+    company_id = resolve_write_company_id(get_company_scope(db), ambiguous=None)
     for number in diff.scope_documents:
         stored_split, current = state.get(number, (None, None))
         stated_split = resolved.header_by_doc.get(number, {}).get("order_type")
         agent_code = resolved.agent_by_doc.get(number, "")
-        cls = (_class_of(stored_split) or _class_of(stated_split)
-               # Taken as stored, NOT through `_class_of`: the column holds a class already,
-               # constrained to the vocabulary, so passing it through the segment matcher
-               # would turn a value that somehow escaped the constraint into `retail` - a
-               # guess, in the one place this module refuses to guess.
-               or agent_classes.get(agent_code)
-               or _class_of(_segment_of(db, resolved.party_code_by_doc.get(number, ""))))
+        # ONE ladder (D4): `classify_document` is also what the AutoCount document ingest
+        # calls, so the two can never decide the same order two different ways.
+        cls = classify_document(
+            db,
+            stored_order_type=stored_split,
+            stated_order_type=stated_split,
+            agent_demand_class=agent_classes.get(agent_code),
+            debtor_code=resolved.party_code_by_doc.get(number, ""),
+            company_id=company_id,
+        )
         if cls is not None:
             out[number] = cls
             continue
