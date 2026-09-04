@@ -379,6 +379,12 @@ def access_level_choice_message(
 
 _ISO_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
 
+# The MCP presenter renders an EMPTY field value as an em dash, and both cross-domain
+# nodes test for that exact character when they decide whether a product code is real.
+# Written as an escape, not the character: the repo forbids an em dash in anything WE
+# write, and this is the presenter's literal, not prose. Same treatment as S6b's renderer.
+_EMPTY_VALUE = "\u2014"
+
 
 def _norm_code(value: Any) -> str:
     return jsc.js_string(value).strip().upper()
@@ -446,7 +452,7 @@ def crossdomain_zeroset(
     returned_codes: set[str] = set()
     for it in items:
         v = _field_val(it, "product code")
-        if v is not None and jsc.js_string(v).strip() not in ("", "—"):
+        if v is not None and jsc.js_string(v).strip() not in ("", _EMPTY_VALUE):
             returned_codes.add(_norm_code(v))
 
     # The REQUESTED set: TYPED-exact UNION DYM-PICKED. Deliberately NOT
@@ -699,7 +705,7 @@ def crossdomain_render(
     by_code: dict[str, list[Any]] = {}
     for it in items:
         c = jsc.nullish_str(_field_val(it, "product code")).strip()
-        if not c or c == "—":
+        if not c or c == _EMPTY_VALUE:
             continue
         by_code.setdefault(c.upper(), []).append(it)
 
