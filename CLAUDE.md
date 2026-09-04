@@ -13,7 +13,7 @@ Monorepo. Four siblings:
 
 Shared docs live in `documentation/`. `PRINCIPLES.md` at the repo root governs (it holds the layering rules the deleted `ARCHITECTURE-RULES.md` used to carry); treat `documentation/reference/ADR-PRODUCT-STANDARDS.md` as binding alongside it.
 
-**Plans:** every implementation/design plan (from planning sessions, grill-me, etc.) is written to `documentation/plans/<domain>/PLAN-<slug>.md`, with its UAC file alongside as `<slug>-acceptance-criteria.md`, before implementation starts. Update the plan's Status line as work progresses. Once that Status line reads terminal (implemented, done, shipped, merged, built, deployed, complete, closed, superseded, or abandoned), the plan and its UAC move to `documentation/plans/_archive/<domain>/`.
+**Plans:** every implementation/design plan (from planning sessions, grill-me, etc.) is written to `documentation/plans/<domain>/PLAN-<slug>.md`, with its UAC file alongside as `<slug>-acceptance-criteria.md` (or `UAC-<slug>.md`, the older-convention name some plans still use), before implementation starts. Update the plan's Status line as work progresses. Once that Status line reads terminal (implemented, done, shipped, merged, built, deployed, complete, closed, superseded, or abandoned), the plan and its UAC move to `documentation/plans/_archive/<domain>/`.
 
 ## Common commands
 
