@@ -23,6 +23,8 @@ from pathlib import Path
 
 import pytest
 
+from app.config import settings
+
 worker = importlib.import_module("worker")
 
 # The real compose file (repo root, three levels up from this test) is gitignored
@@ -39,6 +41,128 @@ _COMPOSE_PATH = Path(__file__).resolve().parents[2] / "docker-compose.yml"
 # one-line assertion needs, so this reads `WORKER_ROLE:` lines directly.
 _WORKER_ROLE_LINE = re.compile(r'^\s*WORKER_ROLE:\s*"?([^"#\n]+?)"?\s*(?:#.*)?$', re.MULTILINE)
 _WORKER_QUEUES_LINE = re.compile(r'^\s*WORKER_QUEUES:\s*"?([^"#\n]*)"?\s*(?:#.*)?$', re.MULTILINE)
+
+# --- Source scan: every RQ queue name the codebase enqueues to -------------
+#
+# The list above (test_every_known_queue_is_drained_by_default) is hand-typed, and a
+# hand-typed list is exactly what let `notifications` go missing from DEFAULT_QUEUES
+# in the first place (see the module docstring). This scans app/ for every shape an
+# enqueue call takes here and asserts each resulting queue name is either drained by
+# DEFAULT_QUEUES or explicitly accounted for elsewhere, so a NEW `queue_name="foo"`
+# fails this test instead of silently enqueuing into a queue nothing drains.
+_APP_DIR = Path(__file__).resolve().parents[1] / "app"
+
+# The four shapes an enqueue call takes in this codebase: a bare string literal
+# (`queue_name="imports"` / `Queue('imports', ...)`), a `settings.<attr>` /
+# `get_queue(settings.<attr>)` reference (resolved via getattr on the real settings
+# object), or a module-level `SOMETHING_QUEUE = "..."` constant referenced by name
+# (resolved by finding its one definition under app/). Regex over source text, not
+# AST - these four shapes are stable and a line-based scan is legible where an AST
+# visitor would not be simpler.
+_QUEUE_NAME_LITERAL = re.compile(r'queue_name\s*=\s*["\']([a-z_]+)["\']')
+_QUEUE_CTOR_LITERAL = re.compile(r'\bQueue\(\s*["\']([a-z_]+)["\']')
+_QUEUE_NAME_SETTINGS_ATTR = re.compile(r'queue_name\s*=\s*[\w.]*settings\.(\w+)')
+_GET_QUEUE_SETTINGS_ATTR = re.compile(r'get_queue\(\s*[\w.]*settings\.(\w+)\)')
+_QUEUE_NAME_CONSTANT_REF = re.compile(r'queue_name\s*=\s*(?:\w+\.)?([A-Z_]+_QUEUE)\b')
+
+# Queues that are real and enqueued to, but drained by something other than
+# worker.py's Worker.work() loop over DEFAULT_QUEUES, so they belong off that list
+# on purpose rather than by omission.
+_DRAINED_ELSEWHERE = {
+    # embedding_service.py / product_service.py enqueue onto settings.embedding_queue_name
+    # ("embeddings" by default). Manually: app/scripts/drain_embedding_queue.py (see its
+    # module docstring). Automatically, when ENABLE_SCHEDULER=true (the "worker" batch
+    # container only): app/scheduler/task_scheduler.py's embedding_job_processor handler
+    # (_handler_embedding_job_processor, registered at task_scheduler.py:500) ticks
+    # _run_queue_jobs_impl(settings.embedding_queue_name, ...) on a schedule - a manual
+    # pull, not the RQ Worker's queue list. Either way, never worker.QUEUES.
+    "embeddings": (
+        "drained by app/scripts/drain_embedding_queue.py and by the scheduler's "
+        "embedding_job_processor tick (app/scheduler/task_scheduler.py), not by "
+        "worker.py's Worker.work() loop"
+    ),
+}
+
+
+def _iter_app_py_files():
+    for path in _APP_DIR.rglob("*.py"):
+        if "__pycache__" in path.parts:
+            continue
+        yield path
+
+
+def _resolve_queue_constant(name, all_texts):
+    """Find the one `NAME = "value"` definition under app/ and return its value.
+
+    Fails (does not skip) on zero or more than one definition - a `queue_name=NAME`
+    reference that cannot be resolved to exactly one string literal is exactly the
+    drift this scan exists to catch.
+    """
+    pattern = re.compile(rf'^\s*{re.escape(name)}\s*=\s*["\']([a-z_]+)["\']', re.MULTILINE)
+    matches = set()
+    for text in all_texts:
+        matches.update(pattern.findall(text))
+    assert len(matches) == 1, (
+        f"expected exactly one string-literal definition of {name} under app/, "
+        f"found {sorted(matches)!r}"
+    )
+    return next(iter(matches))
+
+
+def _enqueued_queue_names():
+    """Every RQ queue name the codebase enqueues to, scanned from app/ source text."""
+    texts = [path.read_text() for path in _iter_app_py_files()]
+    found = set()
+
+    for text in texts:
+        found.update(_QUEUE_NAME_LITERAL.findall(text))
+        found.update(_QUEUE_CTOR_LITERAL.findall(text))
+
+        for attr in _QUEUE_NAME_SETTINGS_ATTR.findall(text):
+            assert hasattr(settings, attr), (
+                f"queue_name references settings.{attr}, which does not exist on "
+                "app.config.Settings"
+            )
+            found.add(getattr(settings, attr))
+        for attr in _GET_QUEUE_SETTINGS_ATTR.findall(text):
+            assert hasattr(settings, attr), (
+                f"get_queue references settings.{attr}, which does not exist on "
+                "app.config.Settings"
+            )
+            found.add(getattr(settings, attr))
+
+        for const_name in _QUEUE_NAME_CONSTANT_REF.findall(text):
+            found.add(_resolve_queue_constant(const_name, texts))
+
+    return found
+
+
+def test_every_queue_the_code_enqueues_to_is_drained_by_the_worker():
+    """A NEW `queue_name="foo"` must drain via DEFAULT_QUEUES or be on the allowlist."""
+    found = _enqueued_queue_names()
+    # Guards the regexes themselves: if they silently stopped matching anything,
+    # `undrained` below would be vacuously empty and this test would be dead weight.
+    assert found, "the source scan found no queue names at all - the regexes broke"
+    assert "imports" in found and "notifications" in found, (
+        f"expected the scan to find at least 'imports' and 'notifications', got {found!r}"
+    )
+
+    undrained = found - set(worker.DEFAULT_QUEUES) - set(_DRAINED_ELSEWHERE)
+    assert not undrained, (
+        f"queue(s) {sorted(undrained)!r} are enqueued to but not in worker.DEFAULT_QUEUES - "
+        "add them to worker.QUEUES with a role, or to _DRAINED_ELSEWHERE in this file "
+        "naming the script/handler that drains them"
+    )
+
+
+def test_every_default_queue_has_an_enqueue_site():
+    """A queue the worker drains but nothing enqueues to is dead config."""
+    found = _enqueued_queue_names()
+    dead = set(worker.DEFAULT_QUEUES) - found
+    assert not dead, (
+        f"queue(s) {sorted(dead)!r} are in worker.DEFAULT_QUEUES but the scan found no "
+        "enqueue site for them under app/ - dead config, or the scan needs a new pattern"
+    )
 
 
 def test_notifications_is_drained_by_default():
