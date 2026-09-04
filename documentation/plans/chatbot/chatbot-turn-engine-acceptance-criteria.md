@@ -254,6 +254,22 @@ clone or live. Each AC traces to a journey step (A1 to D1).
   the S1 corpus already holds (116 route-turn / 114 build-ctx today), which is also when the
   tail exists to replay them end to end. S1's gate is node replay (AC-102, AC-103); world
   replay is S2's.
+
+  **PARTIALLY MET at S2 (5 Sep 2026), and the shortfall is a capture gap, not a code
+  gap.** `tests/chatbot/worlds.py` derives **103 worlds** and **17 multi-turn chains**
+  (72 turns) from the spine captures, and `tests/chatbot/test_worlds.py` replays each
+  through `run_turn` + `complete_turn` with the parser, the access check and the CS
+  roster read stubbed from that execution's own node outputs. Per shape: `plain` 55,
+  `escalation` 20, `did_you_mean` 13, `tier_ask` 8, `picker` 5, `media` 2,
+  `offer_hold` 0 - so **two of the six named shapes are under the bar of 5 and one is at
+  zero**, and that is what a capture run must fix before the S2 PR promotes.
+
+  A world is either GRADED or SKIPPED BY NAME: 37 grade today, and the rest carry a
+  named body difference (the exported parser post-processor's routing ladder, pre-QS-9
+  `requested_attributes`, the pre-Fix-6 tier menu, pre-B56) or are spine-only captures
+  whose resolver and entity gate ran inside a sub the fixture never recorded. Nothing is
+  partly excused: the only two allowed value differences anywhere are the `pending`
+  marker and `dym_offer.id`, which is `$execution.id` becoming the CRM turn id.
 - AC-006 `[BE][T]` Given a caller with a valid integration key but without the slug
   `integration.chat_turn.submit`, when it calls any `/api/v1/external/chat/*` route, then 403
   `permission_denied` naming the slug; with the slug and the module disabled under strict mode,
@@ -345,6 +361,17 @@ Runs after S1 parity is green and before S1 promotes, in the same lane.
   `escalate-catalog`, `cs-roster-plan`, `build-cs-member-offer` fixture, when replayed, then
   `reply.text`, `reply.quick_replies` and `session_patch.variables` equal `expected`, the only
   registered divergence being the added `pending` marker (R3). (A3)
+
+  **MET, with one divergence more than this line predicted** (5 Sep 2026): 1,321
+  fixtures replay green across the six tail nodes and S1's four. The `pending`
+  divergence is FIELD-scoped, not blanket - the named path comes off both sides and
+  every other byte is still compared, because a whole-node exemption for one added key
+  would make that node's replay vacuous forever. The second entry is **H29 on
+  `b56-roster-turn`**: that capture RECORDS the defect AC-205 fixes (the turn persisted
+  the previous turn's picker under a roster it had just replaced), so it cannot be green
+  and correct at once. Six further captures are registered STALE rather than divergent -
+  they predate the RS-9 Fix 6 `tier_menu` block, which is a `>`-only hunk in the body the
+  export ships, so nothing about the port disagrees with what ships.
 - AC-203 `[BE][T]` Given `SessionVars` (Pydantic, `extra = "forbid"`), when compile-state
   produces a key not on the allowlist, then it raises before any write; the allowlist is every
   key `compile-current-state` writes today (R2: nothing dropped) plus `pending` (H15, H22). (A3)
@@ -407,6 +434,25 @@ endpoint over `chatbot.turns.trace`. Lands after S2 so the head and tail both wr
   `chatbot_reply_not_supported`, `chatbot_reply_demand_qty`, `chatbot_reply_escalate_offer`,
   `chatbot_reply_escalation_declined`, `chatbot_reply_offer_hold`) whose fallback is today's text
   verbatim, with `{{team}}`, `{{user_goal}}`, `{{companies}}` variables. (B1, B2)
+
+  **Landed early, at S2, because the catalog IS the tail** (5 Sep 2026), with the key
+  list amended against what `escalate-catalog.js` actually holds:
+
+  - **Eight keys ship**, not seven. `escalate_offer` and `out_of_scope` each have a
+    with-team AND a no-team SENTENCE in the JS ("escalate to X team?" vs "escalate this
+    to our team?"), so each ships as a pair (`*_no_team`); substituting an empty
+    `{{team}}` would send "escalate to  team?" to a customer. `chatbot_reply_out_of_scope`
+    is added because the catalog has that arm and this list did not name it.
+  - **Two of the seven named keys are NOT registered here.** `access_denied` has no
+    `escalate-catalog` case at all (it falls through the switch to an empty response, and
+    the port reproduces that), and `offer_hold`'s text is COMPUTED upstream by
+    `offer-hold-reply` rather than canned. Registering copy for either would be inventing
+    behaviour, so they land with their lanes at S3 and S5.
+  - `{{companies}}` is not used by any catalog template: the multi-company sentence is
+    built by `build-cs-member-offer` from the roster plan, not interpolated into canned
+    copy. Only `{{team}}` and `{{user_goal}}` are declared.
+  - Migration `473_chatbot_reply_copy` seeds them; the engine falls back to the same
+    strings when a row is missing or the DB is unreachable, so the bot answers either way.
 - AC-303 `[BE][T]` Given `domain_hint == 'ideate'`, when the head runs, then the engine calls
   MCP tool `crm_ideation_turn` (via `MCPRuntimeClient`) with the same arguments
   `ideate-turn-http` sends today (including `media_selection` derivation from

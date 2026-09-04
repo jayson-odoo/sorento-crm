@@ -1,6 +1,8 @@
 # PLAN - Chatbot Turn Engine: n8n business logic moves into the CRM
 
-Status: S0 + S1 IMPLEMENTED on lane feat/chatbot-turn-engine (4 Sep 2026); approved "ok good to go", 6 review rounds, D1 to D16; S1b next
+Status: S0 + S1 IMPLEMENTED on lane feat/chatbot-turn-engine (4 Sep 2026); S2 (the tail)
+IMPLEMENTED on feat/chatbot-turn-engine-s2 (5 Sep 2026); approved "ok good to go", 6 review
+rounds, D1 to D16; S1b next
 UAC: `documentation/plans/chatbot/chatbot-turn-engine-acceptance-criteria.md`
 Classification: **MODULE** (`chatbot`), own Postgres schema `chatbot` (D12)
 Owner decisions: D1 to D13 in the UAC; rulings R1 to R6 in the UAC
@@ -225,6 +227,14 @@ picker_families_carried, routing_roster_plan, routing_brand, routing_brand_sourc
 routing_company, routing_companies`, plus the new `pending {kind, team?, domain?}` marker
 (R3). `extra = "forbid"` still matters: it is what stops harness keys leaking into customer
 sessions (H15). `is_active` stays a phantom read (the parser port reads it as null).
+
+**`pending` is written for ONE kind at S2, and that is deliberate** (amended 5 Sep 2026).
+`PendingKind` declares five, but the other four (`team_clarify`, `company_clarify`,
+`tier_ask`, `member_offer`) already have a structured reader today - `selection_context`
+plus `last_result_set`, which the parser post-processor reads without touching text. Only
+`escalation_offer` replaces a TEXT read (`output_exchange._offer_is_open`), so only it is
+written; writing a marker nobody reads would be machinery for a hypothetical. S5 writes
+the clarify kinds when its escalation lane needs them.
 Top-level siblings `user_response` and `quick_reply` persist as today. The ideation service
 keeps writing `ideation` through the same store (already in-process, already the CRM).
 
@@ -238,7 +248,7 @@ inventoried during S1 and listed here with its disposition:
 | site | what it matches | disposition |
 |---|---|---|
 | `output_exchange.js` `offeredEscalation` regex over previous `response` | "would you like me to escalate" | replaced by `pending.kind = escalation_offer` (R3, S1/S2) |
-| `crossdomain-compose.js` `isAnswered` regex over previous `response` | "Previous turn (" | replaced by `pending.kind`/`last_answer_domain` (R3, S2) |
+| `crossdomain-compose.js` `isAnswered` regex over previous `response` | "Previous turn (" | replaced at S2 by a VALUE, not a session key: `CompiledState.answered_domain`. The question is "did THIS turn's business-summary arm run", which never crosses a turn boundary, so the compiler hands the answer down instead of persisting one. `last_answer_domain` is therefore NOT a session key (amended 5 Sep 2026) |
 | `route-turn.js` `tierRepick` | bare digit or exact menu word in the raw message | reproduced (owner's own Fix 6 rule; exact match, not fuzzy); candidate to move into the parser as `tier_pick` after parity |
 | `escalation-context.js` `_CO_ALIASES` company name / code match | company name or alias in `escalation.company_pick` | reproduced; the parser already emits `company_pick`, the alias table is a STOPGAP mirror, candidate to delete once the parser output is trusted |
 | `output_exchange.js` `domain_switched_by_keyword` and sibling keyword checks | domain keywords in the raw message | reproduced for parity; listed as divergence candidates for the parser prompt (backlog issue) |
@@ -412,6 +422,17 @@ only for language" lands, and it is the first prompt change the corpus can prove
 (110), `copy.py` (escalate-catalog 104, registry keys), CS member offer (23 + 163, team
 members in-process). `engine.complete_turn` writes session vars via
 `overwrite_for_contact` and closes the turn. R2 drops, R3 marker written.
+
+**Landed 5 Sep 2026**, with three shape notes worth carrying forward:
+`tail/member_offer.py` holds `cs-roster-plan` + the roster read + `build-cs-member-offer`;
+the roster read is `app/services/team_roster_service.list_team_roster`, EXTRACTED from
+`app/api/v1/external/team_members.py` so the endpoint n8n still uses and the tail resolve
+the same pool (an id offered by one must be accepted by next-assignee, which is the
+endpoint's own stated contract). `compile_current_state` returns a `CompiledState`, not a
+bare item: `item` is what the corpus grades and `answered_domain` is what replaces
+`crossdomain-compose`'s regex. And `copy.py` reads its strings from
+`app/services/chatbot_reply_copy.py`, OUTSIDE the package, because `ai_prompt_registry` is
+core and core must not import the module (AC-002).
 n8n: `sub-output` body + `save-session-vars` replaced by `/complete` (AC-207). After this PR
 the CRM is the only session writer on the turn path (AC-207 grep is the proof).
 Parity gate: AC-202, AC-204, AC-205, AC-208.

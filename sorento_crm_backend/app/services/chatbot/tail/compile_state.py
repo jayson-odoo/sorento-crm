@@ -38,6 +38,12 @@ from app.services.chatbot.tail import pending as pending_marker
 
 UNDEFINED = jsc.UNDEFINED
 
+# U+2014, written as an escape rather than as the character itself. The repo's own hard
+# rule forbids the byte in source (and the pre-push guard enforces it), but this node both
+# EMITS one on the merge arm and FOLDS every one it finds - the JS does, so the port must,
+# or the two disagree on a customer-visible string.
+EM_DASH = "\u2014"
+
 
 @dataclass
 class CompiledState:
@@ -97,13 +103,13 @@ def sanitize_em_dash(value: Any) -> Any:
     if isinstance(value, dict):
         for key, inner in value.items():
             if isinstance(inner, str):
-                value[key] = inner.replace("—", "-")
+                value[key] = inner.replace(EM_DASH, "-")
             elif isinstance(inner, (dict, list)):
                 sanitize_em_dash(inner)
     elif isinstance(value, list):
         for index, inner in enumerate(value):
             if isinstance(inner, str):
-                value[index] = inner.replace("—", "-")
+                value[index] = inner.replace(EM_DASH, "-")
             elif isinstance(inner, (dict, list)):
                 sanitize_em_dash(inner)
     return value
@@ -336,7 +342,7 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
                 ) not in mem_companies:
                     lines.append(
                         f"[ {jsc.js_string(jsc.get(p, 'company_name'))}: no customer-service "
-                        f"members are configured — omitted. ]"
+                        f"members are configured {EM_DASH} omitted. ]"
                     )
         picker = "\n".join(lines)
         multi_close = jsc.get(mem, "cs_multi_close")
