@@ -1,7 +1,7 @@
 # UAC - Bubble Record-Context + System Guides
 
 **Status:** Draft (pre-implementation regression baseline).
-**Companion to:** [`PLAN-bubble-record-context-and-guides.md`](./PLAN-bubble-record-context-and-guides.md)
+**Companion to:** [`PLAN-bubble-record-context-and-guides.md`](./_archive/PLAN-bubble-record-context-and-guides.md)
 **Owner:** Jayson
 **Date:** 2026-06-28
 
