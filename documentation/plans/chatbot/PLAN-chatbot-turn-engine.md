@@ -1,6 +1,6 @@
 # PLAN - Chatbot Turn Engine: n8n business logic moves into the CRM
 
-Status: S0 + S1 IMPLEMENTED on lane feat/chatbot-turn-engine (4 Sep 2026); approved "ok good to go", 6 review rounds, D1 to D16; re-ported onto the LIVE n8n body 5 Sep (see S1 "pending re-port"); S1b next
+Status: S0 + S1 IMPLEMENTED on lane feat/chatbot-turn-engine (4 Sep 2026); approved "ok good to go", 6 review rounds, D1 to D16; re-ported onto the LIVE n8n body 5 Sep (see S1 "pending re-port"); S1b DELIVERED 5 Sep (-40.0% prompt, published unlabelled, promote is the owner's call)
 UAC: `documentation/plans/chatbot/chatbot-turn-engine-acceptance-criteria.md`
 Classification: **MODULE** (`chatbot`), own Postgres schema `chatbot` (D12)
 Owner decisions: D1 to D13 in the UAC; rulings R1 to R6 in the UAC
@@ -440,15 +440,43 @@ Parity gate: AC-102, AC-103, AC-111.
 
 ### S1b - Parser prompt slim-down (same lane as S1, after parity, before promote)
 
-D16. Inventory the 48 KB system message section by section
+D16. Inventory the 46 KB system message section by section
 (`documentation/plans/chatbot/parser-prompt-inventory.md`): `understanding` stays;
-`rule` (the domain-to-team map, date maths, positional / ordinal resolution, carry and
-entity-op rules, quantity parsing) moves into `output_exchange.py` where most of it already
-has a deterministic twin; `example` survives only when it stands for a phrasing class the
-corpus shows; `dead` goes. Gate: parser fixtures still equal, live parity 99%+ on the
-regression guards plus a fresh 200-turn sample, at least 40% fewer characters, published as a
-registry version. AC-151 to AC-155. This is where the owner's "no overfitting, no bloat, LLM
-only for language" lands, and it is the first prompt change the corpus can prove safe.
+`rule` moves into `output_exchange.py` where it already has a deterministic twin; `example`
+survives only when it stands for a phrasing class the corpus shows; `dead` goes. AC-151 to
+AC-155. This is where the owner's "no overfitting, no bloat, LLM only for language" lands.
+
+**Delivered (5 Sep 2026), on the LIVE body after the re-port above.**
+
+* 46,906 -> 28,124 characters, **-40.04%** (AC-154). Published as registry version 2 with
+  NO label by migration `475_chatbot_parser_prompt_slim`; `production` stays on version 1,
+  so the promote is a label move and the rollback is the reverse move. The migration seeds
+  both on a fresh database.
+* Six `rule` sections deleted, all six with an existing twin in `output_exchange.py`
+  (domain-to-team map, the `business_query` force, the `attachment_type` drop on
+  `master_products`, the `broaden_axis` domain restore, the brand-plus-tier access-level
+  split, the legacy promotion-team suffix). Four `dead` sections deleted, including 700
+  characters of n8n JavaScript the registry cannot evaluate and hands to the model as
+  source code. **No new post-processor code**: `output_exchange.py` is untouched by S1b.
+  Unit cover in `tests/chatbot/test_output_exchange_rules.py`, every case feeding a
+  deliberately non-compliant emission.
+* Date maths, `demand_qty` and ordinal resolution were each investigated and REJECTED as
+  moves, on evidence, in the inventory. Two date gates were measured against the replay
+  corpus and would have rewritten fixtures the post-processor deliberately produces.
+
+**AC-153's 99% bar cannot be met by any prompt, and the measurement says why.** A control
+run sending the LIVE prompt down BOTH lanes agrees with itself on only 99.0% of key
+instances, and on the free-prose `user_goal` only 81.6%. The parser is not deterministic at
+temperature 0. Old vs new is 95.8% post-processed (97.5% excluding `user_goal`), i.e. 3.2
+points from the noise floor, with every disagreement triaged: 13 improvements, 11
+regressions, 20 "neither matches the capture", 38 noise, 1 ungraded, zero untriaged. The
+regressions are enumerated in the inventory and none is systematic. **Owner call at
+promote**, and the bar in AC-153 should be restated against the measured floor.
+
+**AC-155 could not be met as written**: the corpus contains no Malay capture at all (249
+real captures, zero). The parity script uses eight real corpus turns with the message
+translated and the real previous state kept, labelled `synthetic-from-corpus`; seven of the
+eight agree on every key. Capturing real Malay turns is a backlog item.
 
 ### S2 - Tail (2,400 lines)
 
