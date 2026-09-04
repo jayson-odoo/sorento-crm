@@ -624,3 +624,119 @@ taken, and the module's docstring says so.
   lane with the fetch output attached, so nothing is re-fetched.
 - **The orphaned `AI Agent` + `MCP Client` tool nodes in `sub-get-results` are NOT ported**
   and never ran in the capture pool (H7). They are deleted with the sub.
+
+---
+
+## S7 - the dispatcher retires and the CRM orders each contact's turns
+
+**CRM side (shipped, inert by default).** Two flags, both `false` on deploy:
+
+| flag | default | what it does |
+| --- | --- | --- |
+| `CHATBOT_ORDERING_ENABLED` | `false` | the request takes a redis ticket per contact and waits for the ticket before it (`app/services/chatbot/dispatch.py`) |
+| `CHATBOT_TURN_ON_WORKER` | `false` | the turn runs on the `chat` RQ queue instead of the API thread; the request still waits for it and answers the same body |
+
+Two more knobs, both with defaults that do not need touching for the promote:
+`CHATBOT_QUEUE_WAIT_SECONDS` (45) and `CHATBOT_TURN_WAIT_SECONDS` (60).
+
+**Nothing changes in n8n until the owner flips `CHATBOT_ORDERING_ENABLED`, and nothing
+changes in the CRM when they do except who waits.** That is the whole cutover: today
+`sorento-dispatcher` pops one contact per second and serialises the world; after the flip
+the CRM serialises per contact and different contacts run at once. Flipping the flag while
+the dispatcher is still in front of it is harmless (the CRM's ticket is always free, because
+the dispatcher already made sure of it), which is exactly why the order below is CRM flag
+first, n8n edit second.
+
+### Which turns this covers
+
+Every turn. This slice does not move logic; it moves the QUEUE. The owner's number is the
+one to hold it to: 50 dealers x 2 questions arriving together. Through the dispatcher that
+is 50 seconds of serving before the last dealer's first question starts. After this slice
+the 50 first questions run at once and each dealer's second question waits only for their
+own first.
+
+### Step 1 - raise n8n's concurrency BEFORE anything else
+
+`N8N_CONCURRENCY_PRODUCTION_LIMIT` (queue mode, per worker; default 10) is the first
+throttle the burst meets, and it is upstream of every CRM change here. 100 concurrent
+executions means either the limit raised to cover it or enough workers to add up to it.
+
+**Proof it took:** fire the load gate (step 4) and watch the n8n executions list - if
+executions sit `waiting` rather than `running`, the limit is still the ceiling and the CRM's
+ordering is not what is being measured.
+
+### Step 2 - flip the CRM flag (the real cutover)
+
+`CHATBOT_ORDERING_ENABLED=true`, restart the API. Nothing in n8n has changed yet, so the
+rollback is the same env var back to `false`: no workflow edit, no deploy of anything else.
+
+**Precondition:** the load gate (step 4) green on the lane's own backend, and
+`chatbot.turns` showing no rows failed at `stage = queued` in the shadow window.
+
+### Step 3 - retire the dispatcher, BOTH injectors in the same promote
+
+The two injectors are the webhook producer and the failover poller
+(`CYNq34WZx83POLQ5` -> `sorento-main-INJECT`). **Both flip together.** This is the
+concurrency plan's own lesson written down: flip one and the other keeps pushing into redis
+lists nothing drains, so every message that arrives through it is stranded silently - the
+worst shape of failure this program has, because the customer sees nothing and no row is
+written anywhere.
+
+1. **Producer:** replace "push to redis" with the HTTP call to `/api/v1/external/chat/turn`
+   (the same node shape S1 introduced) followed by the existing Switch on `action.kind`.
+2. **Poller:** the same replacement inside `sorento-main-INJECT`. The carve state
+   (`failover_watermark`) and the `in-failover?` gate are UNCHANGED - S7 changes where a
+   carved message is posted, never how the carve is decided.
+3. **Delete** `sorento-dispatcher` and its redis keys: `q:*`, `ready-contacts`, `lock:*`.
+   Only after a week with no rollback; the workflow JSON from before this edit is the
+   rollback artefact.
+4. **Unpublish** the old monolith `9qVyfUxmRQqrpGRMDLRuz`.
+5. **Clone** `Hnd4S8SVH6pftjxs` calls the same endpoint with `is_test: true`; its
+   `test-guard` keeps recording actions to `test:egress:{run}`. No change beyond the URL.
+
+### Step 4 - the load gate (AC-711), before step 2 and again after step 3
+
+`sorento_crm_backend/scripts/chatbot_load.py`, dry-run by default:
+
+```bash
+python scripts/chatbot_load.py --base-url http://localhost:8002 --contacts 50 --messages 2
+python scripts/chatbot_load.py --base-url http://localhost:8002 --contacts 50 --messages 6   # the 300-turn repeat
+```
+
+Green means: p95 turn time under 12 s, zero errors, every contact's replies in the order
+they were sent. It posts `is_test: true` envelopes (D14: nothing outside `chatbot.turns` is
+written and no WhatsApp message can leave), which is what makes it safe to run repeatedly.
+`--live-llm` exists for the one run that measures the real parser cost and must be pointed
+at a non-production backend.
+
+### Step 5 - the switchover proof (AC-714), on the clone
+
+Not a load test, a correctness one, and it is the reason both injectors flip together:
+
+1. Carve one contact to polling (`failover_watermark`), send a message: it must arrive
+   through poller -> `INJECT` -> `/chat/turn` -> send.
+2. Un-carve the same contact, send again: it must arrive through the webhook path.
+3. Deliver ONE message through both during the switch: exactly one turn runs, the second
+   answer is the first one replayed with `duplicate: true`, and the caller's Switch sends
+   nothing (AC-712, already covered by `tests/chatbot/test_d15_duplicate_race.py`).
+
+### Rollback
+
+Before step 3: `CHATBOT_ORDERING_ENABLED=false`. Effective on the next turn, no deploy.
+After step 3 the dispatcher no longer exists to fall back to, which is why step 3 waits a
+week behind step 2 rather than riding with it.
+
+### Not covered by this slice
+
+- **`/turn` and `/complete` do NOT collapse yet.** The plan's S7 line says the thin spine
+  ends with one trigger, and AC-701 says so "after S6c" - which has not landed. Until every
+  lane completes inside the CRM, `POST /turn/{turn_id}/complete` is how a delegated lane
+  finishes its turn, and deleting it would strand every turn n8n still completes.
+  `tests/chatbot/test_s7_ordering_and_offload.py::TestSingleTrigger` is the guard that goes
+  green on the day that collapse is real; it is red today for that reason and no other.
+- **The worker offload stays off.** It is built and tested, and the trigger for turning it
+  on is measured, not scheduled: beyond roughly 250 concurrent turns the API threads become
+  the limit (the plan's capacity section). Turning it on also needs the server compose to
+  run a `worker_fast` container, which already drains `chat` via `worker.QUEUES`.
+- **Nothing here changes the egress.** The CRM still never sends; the Switch on
+  `action.kind` over the existing send / assign / comment nodes is S1's and stays as it is.
