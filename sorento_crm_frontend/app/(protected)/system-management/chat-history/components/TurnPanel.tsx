@@ -59,9 +59,14 @@ export function TurnPanel({ turn }: { turn: ChatbotTurn }) {
         >
           {headline.word}
         </Badge>
-        <span className="text-xs text-muted-foreground">
-          {laneWords(turn.branch_kind)}
-        </span>
+        {turn.branch_kind && laneWords(turn.branch_kind) !== headline.word && (
+          // Two suppressions. On `clarify_menu` and friends the status word IS the lane,
+          // and printing it twice reads as a rendering bug rather than as emphasis. On a
+          // turn that failed before routing there is no lane at all, and "Failed at
+          // Understood, Lane not reached" says the same thing twice in a worse voice -
+          // the timeline's own "not reached" row already carries it.
+          <span className="text-xs text-muted-foreground">{laneWords(turn.branch_kind)}</span>
+        )}
         {turn.attempt > 1 && (
           <Badge variant="warning" appearance="light" size="sm">
             attempt {turn.attempt}
@@ -135,7 +140,7 @@ function StageRow({
       <Dot tone={failed ? 'failed' : 'ok'} />
       <div className="flex items-baseline justify-between gap-2">
         <span className="text-xs font-medium">{label}</span>
-        <span className="text-[11px] text-muted-foreground tabular-nums shrink-0">
+        <span className="text-2xs text-muted-foreground tabular-nums shrink-0">
           {formatMs(record.ms)}
         </span>
       </div>
@@ -148,11 +153,11 @@ function StageRow({
         <p className="text-xs text-muted-foreground">{record.summary}</p>
       )}
       {record.why && !failed && (
-        <p className="text-[11px] italic text-muted-foreground/80">{record.why}</p>
+        <p className="text-2xs italic text-muted-foreground/80">{record.why}</p>
       )}
 
       {Object.keys(record.facts ?? {}).length > 0 && (
-        <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-2.5 gap-y-0.5 text-[11px]">
+        <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-2.5 gap-y-0.5 text-2xs">
           {Object.entries(record.facts).map(([key, value]) => (
             <div key={key} className="contents">
               <dt className="text-muted-foreground">{key.replace(/_/g, ' ')}</dt>
@@ -181,7 +186,7 @@ function NotReachedRow({ labels }: { labels: string[] }) {
       <Dot tone="skipped" />
       <div className="flex items-baseline justify-between gap-2">
         <span className="text-xs font-medium text-muted-foreground">{labels.join(' · ')}</span>
-        <span className="text-[11px] text-muted-foreground shrink-0">not reached</span>
+        <span className="text-2xs text-muted-foreground shrink-0">not reached</span>
       </div>
       <p className="text-xs text-muted-foreground">Memory was left unchanged.</p>
     </li>
@@ -272,7 +277,7 @@ function TurnFooter({ turn }: { turn: ChatbotTurn }) {
           type="button"
           onClick={() => setShowRaw((v) => !v)}
           aria-expanded={showRaw}
-          className="flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+          className="flex items-center gap-1 text-2xs text-muted-foreground hover:text-foreground transition-colors"
         >
           {showRaw ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
           Technical details

@@ -93,13 +93,14 @@ export async function getChatbotTurns(
   // if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load turns'));
   // return response.json();
   // -------------------------------------------------------------------------
-  const items = MOCK_TURNS.filter((turn) => {
-    if (filters.contact_respond_id && turn.contact_respond_id !== filters.contact_respond_id) {
-      return false;
-    }
-    if (filters.status && turn.status !== filters.status) return false;
-    return true;
-  });
+  // PHASE 1: `contact_respond_id` is deliberately NOT applied. The fixture is a set of
+  // SHAPES to review, not a store, and keying it to one invented contact would leave the
+  // screen blank on every real thread in the dev database - which reads as a broken
+  // feature rather than as an unfinished one. `status` IS applied, because the filter it
+  // drives is part of what Phase 1 has to demonstrate.
+  const items = MOCK_TURNS.filter(
+    (turn) => !filters.status || turn.status === filters.status,
+  );
   return delay({ items, next_cursor: null });
 }
 

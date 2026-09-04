@@ -208,6 +208,7 @@ export function ChatTranscript({
             const matchIdx = matches.indexOf(m.id);
             const isMatch = matchIdx !== -1;
             const isActive = isMatch && matchIdx === activeMatch;
+            const turn = turnFor(m);
             return (
               <div
                 key={m.id}
@@ -215,8 +216,9 @@ export function ChatTranscript({
                   if (isAnchor) anchorRef.current = el;
                   if (isMatch) matchRefs.current[matchIdx] = el;
                 }}
-                className={`flex ${outgoing ? 'justify-end' : 'justify-start'}`}
+                className="space-y-1.5"
               >
+                <div className={`flex ${outgoing ? 'justify-end' : 'justify-start'}`}>
                 <div
                   className={[
                     'max-w-[85%] rounded-lg px-3 py-2 text-sm',
@@ -248,16 +250,20 @@ export function ChatTranscript({
                   {m.delivery_status && (
                     <span className="text-[11px] text-muted-foreground">{m.delivery_status}</span>
                   )}
-                  {/* Diagnosis surface. The turn trace is the one to read; the older raw
-                      state trace stays as the fallback for messages that predate the turn
-                      engine, and goes when every message has a turn (Phase 2). */}
-                  {!outgoing &&
-                    (turnFor(m) ? (
-                      <TurnPanel turn={turnFor(m) as ChatbotTurn} />
-                    ) : (
-                      m.state_trace && <StateTracePanel trace={m.state_trace} />
-                    ))}
                 </div>
+                </div>
+                {/* Diagnosis surface, FULL WIDTH under the bubble rather than inside it:
+                    the timeline needs the room, and at 375 a panel squeezed into 85% of
+                    the column wraps every sentence to three lines. The turn trace is the
+                    one to read; the older raw state trace stays as the fallback for
+                    messages that predate the turn engine, and goes when every message has
+                    a turn (Phase 2). */}
+                {!outgoing &&
+                  (turn ? (
+                    <TurnPanel turn={turn} />
+                  ) : (
+                    m.state_trace && <StateTracePanel trace={m.state_trace} />
+                  ))}
               </div>
             );
           })}
