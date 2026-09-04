@@ -1,0 +1,143 @@
+# n8n changes, per slice - Chatbot Turn Engine
+
+Plan: `documentation/plans/chatbot/PLAN-chatbot-turn-engine.md`
+UAC: `documentation/plans/chatbot/chatbot-turn-engine-acceptance-criteria.md`
+
+**This file is the n8n half of the cut, written by whoever ships the CRM half, executed by
+the owner.** Every slice moves logic out of n8n; the CRM change lands first and is inert,
+then the n8n edit below switches the traffic over. Nothing here is automated: the prod n8n
+instance is edited by hand, so each section is written at NODE level - which node, what it
+becomes, and what proves it worked - rather than as prose.
+
+Two rules that apply to every section:
+
+- **The CRM ships first and OFF.** A slice's CRM code is behind a flag or an unread
+  response field until the n8n edit is made, so the two can be deployed in either order and
+  a bad slice is reverted by turning the flag off, not by re-editing n8n under pressure.
+- **A cutover has a named precondition.** It is written in the section. "It looks right" is
+  not one.
+
+---
+
+## S6a - `sub-resolve-and-gate` moves into the CRM
+
+**CRM side (shipped, inert by default).** `POST /api/v1/external/chat/turn` now returns
+`delegate_payload`: exactly the item `sub-resolve-and-gate` returns today - the four
+`resolve-exit-*` arms' `_exit_kind` plus `resolved`, `gate`, `ctx_resolved`, `aggregate`,
+`tier_gate`, `annotate_incoming` and that arm's own item. It is `null` unless
+`CHATBOT_BUSINESS_LANE_ENABLED=true`, and null on every branch kind except the three that
+reach the sub.
+
+### Which turns this covers
+
+`sorento-consume-main`'s `route` Switch has three outputs that reach the sub, and the CRM
+lane covers exactly those three:
+
+| `route` output | node it feeds | `entry` stamped | CRM `branch_kind` |
+| --- | --- | --- | --- |
+| 8 `check_promotion` | `tag-entry-access-check` | `access_check` | `check_promotion` |
+| 11 `stock_denied` | `Edit Fields2` -> `tag-entry-resolve` | `resolve` | `stock_denied` |
+| fallback `business_query` | `tag-entry-resolve` | `resolve` | `business_query` |
+
+`Edit Fields2`' single field (`not_allowed_check_stock: true`) is stamped by the CRM on the
+`stock_denied` arm, so the item `sub-main-processing` receives is unchanged.
+
+### Step 1 - shadow window (no wiring change)
+
+1. Set `CHATBOT_BUSINESS_LANE_ENABLED=true` on the CRM. Nothing in n8n changes: it still
+   calls `sub-resolve-and-gate` itself and still answers from it.
+2. For a week of live traffic, compare each turn's `delegate_payload` with what
+   `Call 'sub-resolve-and-gate'` returned on the same turn. The CRM writes the payload to
+   `chatbot.turns.trace` under the `looked_up` record, so this is a query, not an
+   instrumentation project.
+
+**Precondition for step 2, and it is not negotiable:** zero `looked_up` records with
+`status = failed`, and zero payload mismatches outside the two keys
+`tests/chatbot/_corpus.py::CAPTURE_BODY_ADDITIONS` names. The shadow costs one extra
+resolver call per business turn - that is the price of the window and the reason it is a
+window and not the permanent state.
+
+### Step 2 - the wiring change, in `sub-main-processing` (`53RxDSON8P3QSN22`)
+
+The sub keeps its shape; only its FRONT changes. Today:
+
+```
+When Executed by Another Workflow -> build-ctx -> ef2-gate -> Edit Fields2 / item-restore
+item-restore -> Call 'sub-resolve-and-gate' -> resolve-gate -> ... -> resolve-item -> resolve-arm
+```
+
+After:
+
+1. **Add** a trigger input `resolve_payload` (type object) to
+   `When Executed by Another Workflow`, beside the existing `ctx`, `item`,
+   `not_allowed_check_stock`, `is_test`.
+2. **Replace the body of `resolve-item`** (Code node, already the chain's item carrier)
+   with a read of the trigger instead of the call:
+
+   ```js
+   return [{ json: $('When Executed by Another Workflow').first().json.resolve_payload }];
+   ```
+
+3. **Repoint the four presence gates and the five name-preserving stand-ins** from
+   `$("Call 'sub-resolve-and-gate'").first().json.<key>` to
+   `$('When Executed by Another Workflow').first().json.resolve_payload.<key>`. They are:
+
+   | node | key it reads |
+   | --- | --- |
+   | `resolve-gate` (If) | `resolved` |
+   | `aggregate-gate` (If) | `aggregate` |
+   | `annotate-incoming-gate` (If) | `annotate_incoming` |
+   | `resolve-entity` (Code stand-in) | `resolved` |
+   | `disallowed-entity-gate` (Code stand-in) | `gate` |
+   | `build-ctx-resolved` (Code stand-in) | `ctx_resolved` |
+   | `Aggregate` (Code stand-in) | `aggregate` |
+   | `tier-gate` (Code stand-in) | `tier_gate` |
+   | `annotate-incoming-picker` (Code stand-in) | `annotate_incoming` |
+
+   Rewiring alone does NOT redirect these - they are by-name reads (`TOPOLOGY.md`, "Read BY
+   NAME"). The expression has to be edited too. This is the one step where a missed node
+   fails silently: a stand-in that never executes makes every downstream
+   `$('<name>').first()` throw, and the turn dies with a node-not-executed error rather
+   than a wrong answer.
+
+4. **Delete** `Call 'sub-resolve-and-gate'` (executeWorkflow), `ef2-gate` (If),
+   `Edit Fields2` (Set) and `item-restore` (Code). Wire `build-ctx[0] -> resolve-gate`
+   so the stand-in chain still runs and still dominates its readers (LESSONS 91: a sibling
+   has no ordering relation, so the chain cannot become a branch).
+
+### Step 3 - the caller, in `sorento-consume-main` (`S4N1LiisAqA4hpMC`)
+
+5. On both `Call 'sub-main-processing'` call sites, add the input
+   `resolve_payload: {{ $json.delegate_payload }}` (the CRM `/chat/turn` response the two
+   re-emitters already read `ctx` and `item` from).
+6. `tag-entry-resolve` / `tag-entry-access-check` stay for now: `entry` is inert once the
+   CRM decides it, and leaving them costs nothing and keeps step 2 revertible. They are
+   deleted at S6c with the rest of the lane (AC-610).
+
+### Step 4 - unpublish
+
+7. `sub-resolve-and-gate` (`tKeQUkZK5cFK9BFa`) is unpublished ONLY after a week with no
+   rollback. Until then it stays published and unreferenced, which is what makes the
+   rollback a one-field edit (`resolve_payload` back to the call's output).
+
+### Rollback
+
+Turn `CHATBOT_BUSINESS_LANE_ENABLED` off. The CRM returns `delegate_payload: null`, so
+`resolve-gate` / `aggregate-gate` / `annotate-incoming-gate` all take their FALSE arms and
+`resolve-arm` receives an item with no `_exit_kind`. **That is a dead turn, not a fallback**
+- so if step 2 has already landed, the rollback is to re-add the
+`Call 'sub-resolve-and-gate'` node and repoint the nine expressions back. Keep a copy of
+the workflow JSON from before step 2; that is the actual rollback artefact.
+
+### Not covered by this slice
+
+- `probe-incoming` and `probe-customer-orders` still run in n8n's `sub-get-results` when
+  the CRM lane is off. With it ON, the CRM's own probe seam raises (it needs S6b's
+  `entity-ids-transformer` and `output-structurer`), which both annotators render as their
+  documented UNPROBED arm: the customer picker ships bare with
+  `customer_probe_skip_reason: 'probe_unavailable'`, and the incoming picker ships today's
+  "None of these have incoming stock right now." **This is a real behaviour difference on
+  picker turns and it is why step 1's shadow window must include picker traffic**; if it
+  matters to the owner before S6b, S6a stays in shadow until S6b lands.
+- The `resolve-exit-access-ask` arm has zero captured executions, in any slug (see
+  `tests/chatbot/COVERAGE.md`). It is covered by unit tests, not by replay.

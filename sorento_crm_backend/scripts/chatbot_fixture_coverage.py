@@ -110,6 +110,47 @@ def _expected_branch_kind(fixture: _corpus.Fixture) -> str | None:
     return None
 
 
+# The S6a nodes, cut by the turn's DOMAIN. That is the axis their code path actually
+# turns on: `ALLOWED` / `ALLOWS_EMPTY` / `REQUIRED_TYPES` / `REQUIRE_SPECIFIC_DOMAINS` are
+# all keyed by domain, so "five captures of `incoming`" says something and "five captures"
+# says nothing.
+_DOMAIN_CUT_NODES = frozenset(
+    {
+        "disallowed-entity-gate",
+        "build-ctx-resolved",
+        "annotate-incoming-picker",
+        "annotate-customer-picker",
+        "item",
+    }
+)
+
+# The exits, cut by the arm they took. Same argument, different vocabulary.
+_EXIT_CUT_NODES = frozenset(
+    {
+        "resolve-exit-continue",
+        "resolve-exit-access-ask",
+        "resolve-exit-not-found",
+        "resolve-exit-offer",
+        "sub-resolve-and-gate",
+    }
+)
+
+
+def _expected_domain(fixture: _corpus.Fixture) -> str | None:
+    """`gate_debug.domain` off whatever level of the item this node's output carries it."""
+    for item in fixture.expected:
+        json_body = item.get("json") or {}
+        for block in (
+            json_body,
+            (json_body.get("gate") or {}),
+            ((json_body.get("ctx") or {}).get("gate") or {}),
+        ):
+            debug = block.get("gate_debug") if isinstance(block, dict) else None
+            if isinstance(debug, dict) and debug.get("domain"):
+                return str(debug["domain"])
+    return None
+
+
 def _branch_of(fixture: _corpus.Fixture) -> str:
     """A coverage CELL for one fixture.
 
@@ -125,6 +166,19 @@ def _branch_of(fixture: _corpus.Fixture) -> str:
             if isinstance(output, dict):
                 return str(output.get("domain_hint") or "no_domain")
         return "unknown"
+    if fixture.node in _EXIT_CUT_NODES:
+        for item in fixture.expected:
+            kind = (item.get("json") or {}).get("_exit_kind")
+            if kind:
+                return str(kind)
+        return "unknown"
+    if fixture.node == "tier-gate":
+        # The one branch this node has: does it ASK, or does it proceed?
+        for item in fixture.expected:
+            return "tier_ask" if (item.get("json") or {}).get("tier_ask") else "tier_proceed"
+        return "unknown"
+    if fixture.node in _DOMAIN_CUT_NODES:
+        return _expected_domain(fixture) or "no_domain"
     return "all"
 
 
@@ -144,11 +198,21 @@ def collect() -> dict:
         # UNION by file stem, so a fixture that is only vendored (the world-derived
         # route-turn capture) is counted once and only once alongside the full corpus.
         seen: dict[str, _corpus.Fixture] = {}
-        for fixture in _corpus.vendored(node):
-            vendored_names[node].add(fixture.name)
-            seen[fixture.name] = fixture
-        for fixture in _corpus.full_corpus(node):
-            seen.setdefault(fixture.name.split("/")[-1], fixture)
+        if node == "sub-resolve-and-gate":
+            # The synthetic whole-sub replay has no directory: it reuses the four
+            # `resolve-exit-*` captures. Counted here so its `access_ask` arm shows up as
+            # the zero cell it is.
+            for fixture in _corpus.sub_run_fixtures(vendored_only=True):
+                vendored_names[node].add(fixture.name)
+                seen[fixture.name] = fixture
+            for fixture in _corpus.sub_run_fixtures(vendored_only=False):
+                seen.setdefault(fixture.name.split("/")[-1], fixture)
+        else:
+            for fixture in _corpus.vendored(node):
+                vendored_names[node].add(fixture.name)
+                seen[fixture.name] = fixture
+            for fixture in _corpus.full_corpus(node):
+                seen.setdefault(fixture.name.split("/")[-1], fixture)
         # Seed every branch the node CAN produce, so a zero-capture arm is a visible row
         # rather than an absent one. An arm nobody has ever captured is exactly the cell
         # gate 0 exists to surface.
