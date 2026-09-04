@@ -324,12 +324,36 @@ Baseline measured on `origin/main` e1adad4d2, 2 Sep 2026.
   click appends `from=<row id>` to the detail href; Back, the post-delete push and Edit all
   carry it; on list mount the row with that id is scrolled into view (`block: 'center'`) and
   highlighted until the next pointer or key event. Browser: open row 38 on Products page 2,
-  press Back, row 38 is centred and highlighted; the same after stepping prev/next three times
-  on the detail pager.
-  **Shipped (M5 run 1, `[vitest]` done, `[browser]` open):**
+  the in-app "Back to list" button restores it centred and highlighted; the browser's own Back
+  button does too, in one press, from a plain row-open. After stepping prev/next three times on
+  the detail pager, the in-app Back to list button restores the record the reader ended on in
+  one press; the browser Back button walks the pager's own history first (one press per step,
+  N steps need N presses to reach the list) before it restores the list the same way - the
+  pager keeps `router.push` per step on purpose (a reader may want to walk back through the
+  records it visited), so this is the honest shape of the guarantee, not a defect.
+  **Shipped (M5 run 1, `[vitest]` done, `[browser]` FAIL - see evidence run 1, Finding 1):**
   `components/ui/data-grid-table.listState.test.tsx`, `lib/listNavQuery.test.ts` (reserved-key
-  case), `hooks/useListPager.test.ts` (`from=<landing id>` case). The `[browser]` row-38 walk is
-  still open.
+  case), `hooks/useListPager.test.ts` (`from=<landing id>` case). The browser walk found the
+  browser's native Back button returned to the list's BARE original URL (no page, no `from`) in
+  both the row-38-on-page-2 and pager-then-Back shapes, because `appendListState` only ever
+  wrote list state into the DETAIL href - nothing wrote it into the LIST's own history entry.
+  **Fix (evidence run 1 fix):** `LinkableBodyRow` (`components/ui/data-grid-table.tsx`) now
+  calls `window.history.replaceState(window.history.state, '', <list path>?<same list
+  state + from=<row id>>)` on the list's own history entry immediately BEFORE `router.push`ing
+  the detail href open (row click and keyboard Enter both go through this one function; the
+  middle-click/new-tab `window.open` path does not, since it leaves this tab's history alone).
+  `history.state` is passed through unchanged so Next's own router state on that entry survives;
+  `history.replaceState` is used rather than `router.replace` because the latter re-renders the
+  list (and can refetch) for a navigation that is about to leave it anyway. Both `appendListState`
+  and the new call build their params through the same `listStateParams`/`splitHref` helpers, so
+  the list's own entry and the detail href it hands the reader cannot disagree. Tests:
+  `components/ui/data-grid-table.listState.test.tsx` ("rewrites the list's own history entry
+  before pushing" describe block) - `replaceState` fires once, before `push` (call-order
+  assertion), naming page/limit/sort/dir/`from`, preserving `history.state`; the middle-click
+  path does not call it; a keyboard Enter open does. The row-click and page-1 shapes are fixed by
+  this same mechanism; the pager-step shape's `[browser]` half needs a **re-test** against the
+  honest wording above (in-app Back to list in one press; browser Back walks the pager history
+  first) rather than the original "press Back once" framing.
   **Review run 1 fix (S5/S7):** `returnedFromId` used to be resolved by a hook called PER ROW
   (N document listeners, N independent `cleared` states, a row mounting after the reader's
   first pointer event re-armed its own highlight). Now resolved ONCE per rendered grid

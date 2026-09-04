@@ -54,6 +54,35 @@ function rowRestoreId<TData>(
 }
 
 /**
+ * Splits a href into its path, query string (no leading `?`) and fragment
+ * (leading `#` kept, or `''`).
+ *
+ * A fragment has to survive, and it sits AFTER the query string - splitting on
+ * '?' alone turns `/orders/a1#lines` into a param named `a1#lines`. Shared by
+ * `appendListState` and `LinkableBodyRow`'s history rewrite (M5-07) so both
+ * parse a detail href the same way.
+ */
+function splitHref(href: string): { path: string; search: string; hash: string } {
+  const hashAt = href.indexOf('#');
+  const hash = hashAt === -1 ? '' : href.slice(hashAt);
+  const [path, search = ''] = (hashAt === -1 ? href : href.slice(0, hashAt)).split('?');
+  return { path, search, hash };
+}
+
+/** The list's own page/sort/query state, in the param shape `appendListState` writes into a detail href. */
+function listStateParams<TData>(table: Table<TData>): URLSearchParams {
+  const state = table.getState();
+  return new URLSearchParams(
+    buildDetailSearch({
+      pageIndex: state.pagination?.pageIndex ?? 0,
+      pageSize: state.pagination?.pageSize ?? 50,
+      sorting: state.sorting,
+      searchQuery: typeof state.globalFilter === 'string' ? state.globalFilter : '',
+    }),
+  );
+}
+
+/**
  * Appends the list state the grid is showing to a row's detail href.
  *
  * The detail page's pager walks the page the user came FROM, so the URL has to
@@ -65,20 +94,8 @@ function rowRestoreId<TData>(
  * this exact row back into view and highlight it when the reader returns.
  */
 function appendListState<TData>(href: string, table: Table<TData>, row: Row<TData>): string {
-  // A fragment has to survive, and it sits AFTER the query string - splitting on
-  // '?' alone turns `/orders/a1#lines` into a param named `a1#lines`.
-  const hashAt = href.indexOf('#');
-  const hash = hashAt === -1 ? '' : href.slice(hashAt);
-  const [path, ownSearch] = (hashAt === -1 ? href : href.slice(0, hashAt)).split('?');
-  const state = table.getState();
-  const params = new URLSearchParams(
-    buildDetailSearch({
-      pageIndex: state.pagination?.pageIndex ?? 0,
-      pageSize: state.pagination?.pageSize ?? 50,
-      sorting: state.sorting,
-      searchQuery: typeof state.globalFilter === 'string' ? state.globalFilter : '',
-    }),
-  );
+  const { path, search: ownSearch, hash } = splitHref(href);
+  const params = listStateParams(table);
   if (ownSearch) {
     for (const [key, value] of new URLSearchParams(ownSearch)) params.set(key, value);
   }
@@ -565,9 +582,32 @@ function LinkableBodyRow({
   const openRecord = (newTab = false) => {
     if (newTab) {
       // `router.push` applies the deploy base path itself; `window.open` does not,
-      // so a sub-path deploy would open a 404 in the new tab.
+      // so a sub-path deploy would open a 404 in the new tab. A new tab leaves
+      // this tab's own history alone, so nothing below runs for it either.
       window.open(toAbsoluteUrl(href), '_blank', 'noopener,noreferrer');
     } else {
+      // M5-07 browser-Back gap (evidence run 1): `appendListState` only ever
+      // wrote page/sort/query/`from` into the DETAIL href. The in-app Back
+      // button (`useHrefWithListState`, `BackToList.tsx`) reads that href back
+      // and works; the browser's OWN Back button does not replay a `push` -
+      // it returns to whatever URL sits in the LIST's own history entry, which
+      // without this stayed the bare URL from first mount (no page, no `from`),
+      // so Back silently reset to page 1 with the row never highlighted.
+      //
+      // `history.replaceState` rewrites that entry in place, BEFORE the push,
+      // reusing the same search `appendListState` already built into `href`
+      // (page/sort/query/filters + `from=<this row's id>`) - one param
+      // builder, so the list's own history entry and the detail href it is
+      // about to carry the reader to cannot disagree. `history.state` is
+      // passed through unchanged so Next's own router state on this entry
+      // survives the rewrite. Not `router.replace`: that re-renders the list
+      // (and can refetch) for a navigation that is about to leave it anyway.
+      const { search } = splitHref(href);
+      window.history.replaceState(
+        window.history.state,
+        '',
+        `${window.location.pathname}${search ? `?${search}` : ''}`,
+      );
       router.push(href);
     }
   };

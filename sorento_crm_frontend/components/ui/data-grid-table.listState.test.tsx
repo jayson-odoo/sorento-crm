@@ -248,6 +248,96 @@ describe('DataGridTable restores the row on the way in (M5-07)', () => {
   });
 });
 
+describe('LinkableBodyRow rewrites the list\'s own history entry before pushing (M5-07 browser Back gap)', () => {
+  /**
+   * A grid with pagination/sorting state that is NOT the defaults, so the
+   * asserted URL proves the real table state made it through rather than
+   * coincidentally matching `buildDataGridParams`'s page-1 defaults.
+   */
+  function PagedHarness() {
+    const table = useReactTable({
+      data: ROWS,
+      columns: COLUMNS,
+      getRowId: (r) => r.id,
+      getCoreRowModel: getCoreRowModel(),
+      initialState: {
+        pagination: { pageIndex: 2, pageSize: 25 },
+        sorting: [{ id: 'name', desc: true }],
+      },
+    });
+    return (
+      <DataGrid
+        table={table}
+        recordCount={ROWS.length}
+        isLoading={false}
+        rowHref={(r) => `/order-management/orders/${r.id}`}
+        tableLayout={{ width: 'fixed', columnsResizable: true }}
+      >
+        <DataGridTable />
+      </DataGrid>
+    );
+  }
+
+  it('click: replaceState fires once, before push, naming the list path + page/limit/sort/dir + from=<id>, preserving history.state', () => {
+    setLocationSearch('');
+    const priorState = window.history.state;
+    const replaceStateSpy = vi.spyOn(window.history, 'replaceState');
+
+    render(<PagedHarness />);
+    fireEvent.click(screen.getByText('Beta'));
+
+    expect(replaceStateSpy).toHaveBeenCalledTimes(1);
+    const [state, , url] = replaceStateSpy.mock.calls[0];
+    // The existing history.state object is passed through unchanged, not
+    // replaced or dropped - Next's own router state on this entry survives.
+    expect(state).toBe(priorState);
+
+    const replaced = new URL(url as string, 'http://localhost');
+    expect(replaced.pathname).toBe('/order-management/orders');
+    expect(replaced.searchParams.get('page')).toBe('3');
+    expect(replaced.searchParams.get('limit')).toBe('25');
+    expect(replaced.searchParams.get('sort')).toBe('name');
+    expect(replaced.searchParams.get('dir')).toBe('desc');
+    expect(replaced.searchParams.get('from')).toBe('a2');
+
+    // Call order: the list's own entry is rewritten BEFORE the push away from it.
+    expect(replaceStateSpy.mock.invocationCallOrder[0]).toBeLessThan(
+      push.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('middle-click (new tab, window.open) does not touch the list\'s history entry', () => {
+    setLocationSearch('');
+    const replaceStateSpy = vi.spyOn(window.history, 'replaceState');
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
+
+    render(<PagedHarness />);
+    fireEvent(
+      screen.getByText('Beta').closest('tr')!,
+      new MouseEvent('auxclick', { bubbles: true, cancelable: true, button: 1 }),
+    );
+
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(replaceStateSpy).not.toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it('keyboard Enter open rewrites the list history entry the same as a click', () => {
+    setLocationSearch('');
+    const replaceStateSpy = vi.spyOn(window.history, 'replaceState');
+
+    render(<PagedHarness />);
+    const row = screen.getByText('Beta').closest('tr')!;
+    fireEvent.keyDown(row, { key: 'Enter' });
+
+    expect(replaceStateSpy).toHaveBeenCalledTimes(1);
+    const url = replaceStateSpy.mock.calls[0][2] as string;
+    const replaced = new URL(url, 'http://localhost');
+    expect(replaced.searchParams.get('from')).toBe('a2');
+    expect(push).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('useHrefWithListState forwards from unchanged (M5-07)', () => {
   it('carries `from` through to Back/Edit/post-delete hrefs, since it forwards the whole query string', () => {
     search = 'page=2&limit=50&from=row-38';
