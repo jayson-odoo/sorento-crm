@@ -114,6 +114,12 @@ class RecordResult:
     # customer or an unresolved warehouse NULLed onto the line (D9/D10). Same
     # rule as `errors`: omitted from `as_dict()` when empty.
     warnings: list[str] = field(default_factory=list)
+    # Documents only (D11): per-line outcome counts for this record - adopted
+    # (an xlsx-era ref-less row claimed by the three-step match), created,
+    # updated (matched by its own existing source_ref), deleted, cancelled.
+    # None for a master record (there are no lines) and omitted from
+    # `as_dict()` in that case, same rule as `diff`.
+    lines: Optional[dict[str, int]] = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -123,6 +129,7 @@ class RecordResult:
             **({"errors": self.errors} if self.errors else {}),
             **({"diff": self.diff} if self.diff is not None else {}),
             **({"warnings": self.warnings} if self.warnings else {}),
+            **({"lines": self.lines} if self.lines is not None else {}),
         }
 
 

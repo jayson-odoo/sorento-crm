@@ -58,6 +58,8 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
+from decimal import Decimal
 from typing import Any, Optional
 
 from pydantic import BaseModel, ValidationError
@@ -367,7 +369,7 @@ class DocumentIngestService:
         # session and every later record in the file fails too.
         savepoint = self.db.begin_nested()
         try:
-            outcome, entity_id, diff, warnings = self._apply(spec, payload)
+            outcome, entity_id, diff, warnings, line_counts = self._apply(spec, payload)
             savepoint.commit()
             return RecordResult(
                 source_ref=payload.source_ref,
@@ -375,6 +377,7 @@ class DocumentIngestService:
                 entity_id=entity_id,
                 diff=diff,
                 warnings=warnings,
+                lines=line_counts,
             )
         except MissingReference as exc:
             savepoint.rollback()
@@ -414,7 +417,9 @@ class DocumentIngestService:
     # ------------------------------------------------------------ one document
     def _apply(
         self, spec: DocumentSpec, payload: Any
-    ) -> tuple[IngestOutcome, str, Optional[dict[str, dict[str, Any]]], list[str]]:
+    ) -> tuple[
+        IngestOutcome, str, Optional[dict[str, dict[str, Any]]], list[str], dict[str, int]
+    ]:
         # EVERYTHING is resolved before ANYTHING is written. An unresolved
         # reference has to leave the database exactly as it found it, and a
         # header inserted before the line that fails would only be taken back by
@@ -443,7 +448,7 @@ class DocumentIngestService:
             setattr(header, column, value)
         self.db.flush()
 
-        self._sync_lines(spec, header, line_values)
+        line_counts = self._sync_lines(spec, header, line_values)
         self.refs.link(
             entity_type=spec.entity_type,
             entity_id=str(header.id),
@@ -451,7 +456,7 @@ class DocumentIngestService:
             source_doc_no=payload.source_doc_no,
             integration_id=self.integration_id,
         )
-        return outcome, str(header.id), diff, warnings
+        return outcome, str(header.id), diff, warnings, line_counts
 
     def _status(self, spec: DocumentSpec, canonical: str) -> str:
         """The stored status for a canonical word.
@@ -591,6 +596,10 @@ class DocumentIngestService:
         )
         values["source_system"] = SOURCE_SYSTEM
         values["source_ref"] = line.source_ref
+        # AutoCount's Seq (D11), position only - popped before persistence by
+        # every setattr site in `_sync_lines`/`_adopt_lines`. No column exists
+        # for it on either line table.
+        values["line_number"] = getattr(line, "line_number", None)
         return values
 
     def _resolve_ref(
@@ -806,18 +815,25 @@ class DocumentIngestService:
 
     def _sync_lines(
         self, spec: DocumentSpec, header: Any, line_values: list[dict[str, Any]]
-    ) -> None:
+    ) -> dict[str, int]:
         """Make the header's lines equal to the payload's, by the line's own ref.
 
-        Four outcomes per existing row: matched (updated in place, same id),
-        absent from the database (inserted), unmatched and unreferenced
-        (deleted), unmatched but referenced (cancelled in place). The last two
-        are the ones that need saying out loud. A line whose `source_ref` is NULL
-        was written by the extract importer before AutoCount owned this document,
-        and leaving it counted would count the same physical line twice - but
-        deleting one a loading plan or a stock transfer points at either destroys
-        that row (CASCADE) or orphans it (SET NULL). Cancelled satisfies both:
-        the demand is gone, the row a dependent needs is still there.
+        Five outcomes per line, counted for the verdict (D11, AC-V7-5):
+        `updated` (matched by its own existing `source_ref`), `adopted` (an
+        xlsx-era ref-less row claimed by `_adopt_lines`'s three-step match),
+        `created` (neither matched, so a fresh row), `deleted` (an unmatched
+        leftover row nothing points at) and `cancelled` (an unmatched leftover
+        row something still points at).
+
+        A line whose `source_ref` is NULL was written by the extract importer
+        before AutoCount owned this document, and leaving it counted would
+        count the same physical line twice - but deleting one a loading plan or
+        a stock transfer points at either destroys that row (CASCADE) or
+        orphans it (SET NULL). Cancelled satisfies both: the demand is gone,
+        the row a dependent needs is still there. Adoption (D11) exists so
+        that row is not manufactured fresh in the first place: the SAME
+        physical line, matched by what it actually is rather than replaced,
+        keeps every allocation, claim and GRN link that already hangs off it.
         """
         existing = (
             self.db.query(spec.line_model)
@@ -825,35 +841,189 @@ class DocumentIngestService:
             .all()
         )
         by_ref: dict[str, Any] = {}
-        stale = []
+        pool: list[Any] = []
+        # A second row sharing a ref another row already claims (should never
+        # happen, but the original code guarded it) - a leftover like any
+        # other, never a D11 adoption candidate since it already has A ref.
+        dup_ref: list[Any] = []
         for row in existing:
             if row.source_ref and row.source_ref not in by_ref:
                 by_ref[row.source_ref] = row
+            elif row.source_ref:
+                dup_ref.append(row)
             else:
-                stale.append(row)
+                pool.append(row)
 
+        counts = {"adopted": 0, "created": 0, "updated": 0, "deleted": 0, "cancelled": 0}
+
+        unmatched: list[dict[str, Any]] = []
         for values in line_values:
             row = by_ref.pop(values["source_ref"], None)
-            if row is None:
-                row = spec.line_model(
-                    id=str(uuid.uuid4()),
-                    company_id=self.company_id,
-                    **{spec.line_fk: str(header.id)},
-                )
-                self.db.add(row)
+            if row is not None:
+                values.pop("line_number", None)
+                for column, value in values.items():
+                    setattr(row, column, value)
+                counts["updated"] += 1
+            else:
+                unmatched.append(values)
+
+        if unmatched and pool:
+            self._adopt_lines(spec, unmatched, pool, counts)
+
+        for values in unmatched:
+            row = spec.line_model(
+                id=str(uuid.uuid4()),
+                company_id=self.company_id,
+                **{spec.line_fk: str(header.id)},
+            )
+            self.db.add(row)
+            values.pop("line_number", None)
             for column, value in values.items():
                 setattr(row, column, value)
+            counts["created"] += 1
 
         line_table = spec.line_model.__tablename__
-        for row in [*by_ref.values(), *stale]:
+        for row in [*by_ref.values(), *pool, *dup_ref]:
             if is_referenced(self.db, line_table, row.id):
                 # Quantities and prices are left exactly as they were: this row
                 # is now evidence of what a transfer moved or a plan was built
                 # from, and rewriting it would falsify that record.
                 row.line_status = CANCELLED
+                counts["cancelled"] += 1
             else:
                 self.db.delete(row)
+                counts["deleted"] += 1
         self.db.flush()
+        return counts
+
+    def _adopt_lines(
+        self,
+        spec: DocumentSpec,
+        unmatched: list[dict[str, Any]],
+        pool: list[Any],
+        counts: dict[str, int],
+    ) -> None:
+        """D11: claim ref-less POOL rows for ref-less UNMATCHED incoming lines.
+
+        Three ordered passes over what the PREVIOUS pass left unclaimed:
+
+        1. exact `(product_id, warehouse_id-or-None, outstanding)` key, ties
+           among rows/lines sharing one key broken by position;
+        2. `(product_id, warehouse_id-or-None)` alone, only where exactly one
+           pool row remains for it;
+        3. position alone (incoming `line_number` order against the rows' own
+           `created_at, id` order), only where the remaining counts agree.
+
+        `outstanding` is `qty_ordered - qty_delivered|qty_received`, never
+        `qty_ordered` alone - the upload writes `qty_ordered = outstanding` on
+        an open xlsx-era line and `fulfilled + outstanding` on update, so
+        `qty_ordered` on such a row is not AutoCount's Qty; outstanding is the
+        one figure both sides agree on. Mutates `unmatched` and `pool` in
+        place, removing whatever it claims - what is left in `unmatched` is a
+        genuinely new line, what is left in `pool` is a genuinely stale row
+        for the caller's existing delete-or-cancel step.
+        """
+        delivered_field = spec.line_delivered_field
+        all_have_line_number = all(v.get("line_number") is not None for v in unmatched)
+
+        def _position(idx: int, values: dict[str, Any]):
+            return values["line_number"] if all_have_line_number else idx
+
+        def _row_created(row: Any):
+            return row.created_at or datetime.min
+
+        def _row_key(row: Any):
+            ordered = getattr(row, "qty_ordered", None) or Decimal("0")
+            delivered = getattr(row, delivered_field, None) or Decimal("0")
+            outstanding = (ordered - delivered).quantize(Decimal("0.0001"))
+            return (
+                str(row.product_id) if row.product_id else None,
+                str(row.warehouse_id) if row.warehouse_id else None,
+                outstanding,
+            )
+
+        def _line_key(values: dict[str, Any]):
+            ordered = values.get("qty_ordered") or Decimal("0")
+            delivered = values.get(delivered_field) or Decimal("0")
+            outstanding = (ordered - delivered).quantize(Decimal("0.0001"))
+            product_id = values.get("product_id")
+            warehouse_id = values.get("warehouse_id")
+            return (
+                str(product_id) if product_id else None,
+                str(warehouse_id) if warehouse_id else None,
+                outstanding,
+            )
+
+        claimed_lines: set[int] = set()
+        claimed_rows: set[int] = set()
+
+        def _claim(idx: int, values: dict[str, Any], row: Any) -> None:
+            values.pop("line_number", None)
+            for column, value in values.items():
+                setattr(row, column, value)
+            counts["adopted"] += 1
+            claimed_lines.add(idx)
+            claimed_rows.add(id(row))
+
+        # ---- pass 1: exact (product, warehouse, outstanding) key ----
+        pool_by_key: dict[tuple, list] = {}
+        for row in pool:
+            pool_by_key.setdefault(_row_key(row), []).append(row)
+        for rows in pool_by_key.values():
+            rows.sort(key=lambda r: (_row_created(r), str(r.id)))
+
+        lines_by_key: dict[tuple, list] = {}
+        for idx, values in enumerate(unmatched):
+            lines_by_key.setdefault(_line_key(values), []).append(idx)
+        for indices in lines_by_key.values():
+            indices.sort(key=lambda i: _position(i, unmatched[i]))
+
+        for key, indices in lines_by_key.items():
+            rows = pool_by_key.get(key, [])
+            for idx, row in zip(indices, rows):
+                _claim(idx, unmatched[idx], row)
+
+        # ---- pass 2: (product, warehouse) alone, exactly one row remaining ----
+        remaining_indices = sorted(
+            (i for i in range(len(unmatched)) if i not in claimed_lines),
+            key=lambda i: _position(i, unmatched[i]),
+        )
+        pw_pool: dict[tuple, list] = {}
+        for row in pool:
+            if id(row) in claimed_rows:
+                continue
+            pw_pool.setdefault(
+                (
+                    str(row.product_id) if row.product_id else None,
+                    str(row.warehouse_id) if row.warehouse_id else None,
+                ),
+                [],
+            ).append(row)
+
+        for idx in remaining_indices:
+            values = unmatched[idx]
+            pw_key = (
+                str(values.get("product_id")) if values.get("product_id") else None,
+                str(values.get("warehouse_id")) if values.get("warehouse_id") else None,
+            )
+            rows = pw_pool.get(pw_key)
+            if rows and len(rows) == 1:
+                row = rows[0]
+                _claim(idx, values, row)
+                pw_pool[pw_key] = []
+
+        # ---- pass 3: position alone, only when the remaining counts agree ----
+        remaining_indices = [i for i in range(len(unmatched)) if i not in claimed_lines]
+        remaining_pool = [r for r in pool if id(r) not in claimed_rows]
+        if remaining_indices and len(remaining_indices) == len(remaining_pool):
+            remaining_indices.sort(key=lambda i: _position(i, unmatched[i]))
+            remaining_pool.sort(key=lambda r: (_row_created(r), str(r.id)))
+            for idx, row in zip(remaining_indices, remaining_pool):
+                _claim(idx, unmatched[idx], row)
+
+        for idx in sorted(claimed_lines, reverse=True):
+            del unmatched[idx]
+        pool[:] = [r for r in pool if id(r) not in claimed_rows]
 
     def _diff(self, header: Any, values: dict[str, Any]) -> Optional[dict[str, dict[str, Any]]]:
         """Header values this document would replace, dry run only.

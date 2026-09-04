@@ -64,6 +64,10 @@ class _CanonicalLine(BaseModel):
     discount: Optional[Decimal] = None
     line_total: Optional[Decimal] = None
     uom: Optional[str] = Field(None, max_length=100)
+    # AutoCount's Seq (D11). Position only, for telling apart ref-less rows
+    # that share the same (product, warehouse, outstanding) key at cutover -
+    # never persisted, no column exists for it on either line table.
+    line_number: Optional[int] = Field(None, ge=0)
 
     @model_validator(mode="after")
     def _product_ref_or_code(self):

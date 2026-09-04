@@ -35,6 +35,13 @@ The ESB gates every new key behind `sorento_contract_version = 2` on its consume
   Open question for the ESB: it should ALWAYS send `*_ref` next to code/name so the created row
   can be registered under it; Sorento will not mint a ref it was not given (no `DatabaseName`
   to build one from).
+  **As built (S1, approved 2026-09-05):** a ref that is SENT but unresolved falls through to
+  code/name/back-create when either is also present, rather than failing the record outright -
+  sending more identifying information must never make a push worse off than sending the ref
+  alone; the ref is then linked to whatever resolves, so the next push is step 1. `ReferenceConflict`
+  gained an optional `field_name` (default `"source_ref"`) so a cross-company MASTER ref
+  (`customer_ref`, `supplier_ref`, ...) files its verdict error under its own key instead of
+  always under `source_ref`.
 - **D2. Customer back-create identity.** The upload does NOT create customers (keeps the code
   on the header, links nothing). The addendum asks to create. Recommendation: create only when
   BOTH `customer_code` and `customer_name` are present (the unique index is on the pair;

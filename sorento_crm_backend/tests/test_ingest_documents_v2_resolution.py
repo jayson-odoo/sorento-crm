@@ -160,7 +160,7 @@ class TestCustomerBackCreate:
         assert created["customer_type"] == "company"
         assert created["is_active"] is True
         assert created["market_segment_code"] is None
-        assert created["company_id"] == env.company_a
+        assert str(created["company_id"]) == str(env.company_a)
 
     def test_a_customer_ref_sent_alongside_resolves_the_new_row_next_time(self, env):
         """The created row is registered under the ref that was sent, so a
