@@ -19,6 +19,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { toast } from '@/lib/toast';
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
@@ -631,7 +632,7 @@ function TextPreview({
         {error ? (
           <p className="text-sm text-destructive">{error}</p>
         ) : content === null ? (
-          <p className="text-sm text-muted-foreground">Loading…</p>
+          <SectionSkeleton rows={4} />
         ) : (
           <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words rounded-md border bg-muted/30 p-3 text-sm">
             {content || '(empty file)'}

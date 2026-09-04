@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { PRESSED_CLASS } from '@/components/ui/primitive-classes';
 import {
   fetchAIAssistantGreeting,
@@ -585,10 +586,7 @@ export default function AIAssistantBubble() {
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto p-2">
                 {historyLoading ? (
-                  <div className="flex items-center justify-center p-4 text-sm text-muted-foreground">
-                    <Loader2 className="mr-2 size-4 animate-spin" />
-                    Loading...
-                  </div>
+                  <SectionSkeleton rows={4} className="p-4" />
                 ) : historyError ? (
                   <p className="rounded-xl bg-destructive/10 p-3 text-sm text-destructive">{historyError}</p>
                 ) : historyItems.length === 0 ? (

@@ -7,6 +7,7 @@ import { toast } from '@/lib/toast';
 import { Pencil, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog,
@@ -220,7 +221,7 @@ export default function ModuleBundlesAdmin() {
         </CardHeader>
         <CardContent>
           {bundlesQuery.isLoading ? (
-            <p className="text-sm text-muted-foreground">Loading…</p>
+            <SectionSkeleton rows={4} />
           ) : bundlesQuery.error ? (
             <p className="text-sm text-destructive">Failed to load bundles.</p>
           ) : (

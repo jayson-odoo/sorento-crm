@@ -17,6 +17,7 @@ import { usePromotion } from '../hooks/usePromotions';
 import { useDownloadAttachment, useAttachments, useUploadAttachment, useDirectoryTree } from '@/app/(protected)/resource-management/attachments/hooks/useAttachments';
 import { useUploadConflict } from '@/hooks/use-upload-conflict';
 import { FileDropzone } from '@/components/common/FileDropzone';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { toast } from '@/lib/toast';
 import type { PromotionAttachment } from '../../promotion-attachments/types/promotionAttachment.types';
 import { formatDate } from '@/lib/helpers';
@@ -874,10 +875,7 @@ function LinkAttachmentDialog({ open, onOpenChange, promotionId }: LinkAttachmen
               <ScrollArea className="flex-1 min-h-0">
                 <div className="p-2">
                   {isLoadingAttachments || isLoadingExisting || isLoadingTree ? (
-                    <div className="flex items-center justify-center py-8 text-muted-foreground text-sm">
-                      <LoaderCircleIcon className="size-5 animate-spin mr-2" />
-                      Loading...
-                    </div>
+                    <SectionSkeleton rows={4} className="py-2" />
                   ) : availableAttachments.length === 0 ? (
                     <div className="py-8 text-center text-sm text-muted-foreground">
                       {attachments.length === 0

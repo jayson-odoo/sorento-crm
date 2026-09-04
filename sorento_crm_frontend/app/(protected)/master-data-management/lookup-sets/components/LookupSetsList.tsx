@@ -22,6 +22,7 @@ import LookupSetTable from './LookupSetTable';
 import LookupSetFormDialog from './LookupSetFormDialog';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 
 export default function LookupSetsList() {
   const router = useRouter();
@@ -200,7 +201,7 @@ export default function LookupSetsList() {
           </CardHeader>
           <CardTable>
             {isLoading ? (
-              <div className="py-12 text-center text-muted-foreground">Loading…</div>
+              <SectionSkeleton rows={4} className="p-4" />
             ) : (
               <ScrollArea>
                 <LookupSetTable isEmpty={rows.length === 0} />

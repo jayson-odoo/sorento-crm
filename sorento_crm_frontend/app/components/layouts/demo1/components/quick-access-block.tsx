@@ -6,6 +6,7 @@ import { Star, GripVertical, PinOff, Plus, Search, Folder, FileText } from 'luci
 import { AccordionMenuSub, AccordionMenuSubContent, AccordionMenuSubTrigger, AccordionMenuGroup } from '@/components/ui/accordion-menu';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -134,7 +135,10 @@ export function QuickAccessBlock() {
             </DropdownMenu>
           </div>
           {isLoading ? (
-            <div className="text-[13px] text-muted-foreground py-1">Loading…</div>
+            <div className="space-y-1.5 py-1">
+              <Skeleton className="h-3 w-full" />
+              <Skeleton className="h-3 w-full" />
+            </div>
           ) : items.length === 0 ? (
             <div className="text-[13px] text-muted-foreground py-1 px-1">
               Pin menu items or folders for quick access.

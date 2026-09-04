@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { Switch } from '@/components/ui/switch';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import {
@@ -75,7 +76,7 @@ export default function AutomationDetailPage() {
             </CardHeader>
             <CardContent className="space-y-2 text-sm">
               {isLoading || !automation ? (
-                <p className="text-muted-foreground">Loading…</p>
+                <SectionSkeleton rows={3} />
               ) : (
                 <>
                   <Row label="Description" value={automation.description ?? <Empty />} />

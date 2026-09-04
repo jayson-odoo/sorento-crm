@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { AlertTriangle, Check, CheckCircle2, Copy } from 'lucide-react';
+import { AlertTriangle, Check, CheckCircle2, Copy, LoaderCircle } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import {
   AlertDialog,
@@ -166,7 +166,13 @@ export function SeriesSheetLoader({ series }: { series: ProjectSeries }) {
           </label>
         </div>
         <Button onClick={start} disabled={!canLoad || pending}>
-          {pending ? 'Loading…' : 'Load'}
+          {pending ? (
+            <>
+              <LoaderCircle className="size-4 animate-spin" /> Loading
+            </>
+          ) : (
+            'Load'
+          )}
         </Button>
       </div>
 

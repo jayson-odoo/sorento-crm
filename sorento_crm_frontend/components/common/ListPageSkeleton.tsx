@@ -5,6 +5,13 @@ import { Skeleton } from '@/components/ui/skeleton';
 export interface ListPageSkeletonProps {
   /** How many row bars to draw. Ten is a page of a busy list. */
   rows?: number;
+  /**
+   * Skip the title/toolbar bar and its `Container` - for a `Suspense`
+   * boundary wrapped around just the list component on a page that already
+   * renders its own `PageHeader` and `Container` above it (M5-02). Without
+   * this the fallback would duplicate the title and double the padding.
+   */
+  bodyOnly?: boolean;
 }
 
 /**
@@ -24,7 +31,46 @@ export interface ListPageSkeletonProps {
  * page under one of these lists is held by the same shape, and a card with
  * bars in it is a fair account of either.
  */
-export function ListPageSkeleton({ rows = 10 }: ListPageSkeletonProps) {
+export function ListPageSkeleton({ rows = 10, bodyOnly = false }: ListPageSkeletonProps) {
+  const card = (
+    <Card>
+      <CardHeader className="flex items-center justify-between gap-3">
+        <Skeleton className="h-9 w-64" />
+        <div className="flex items-center gap-2">
+          <Skeleton className="h-9 w-24" />
+          <Skeleton className="h-9 w-9" />
+        </div>
+      </CardHeader>
+      <CardContent className="p-0">
+        {/* The header row reads darker than the body rows, as it does in a
+            real grid, so the shape is recognisable before the words land. */}
+        <div className="flex items-center gap-4 border-b border-border px-5 py-3">
+          <Skeleton className="h-4 w-4 shrink-0" />
+          <Skeleton className="h-3.5 w-32" />
+          <Skeleton className="h-3.5 w-24" />
+          <Skeleton className="hidden h-3.5 w-28 sm:block" />
+          <Skeleton className="hidden h-3.5 w-20 lg:block" />
+          <Skeleton className="ms-auto h-3.5 w-16" />
+        </div>
+        {Array.from({ length: rows }).map((_, index) => (
+          <div
+            key={index}
+            className="flex items-center gap-4 border-b border-border px-5 py-3.5 last:border-b-0"
+          >
+            <Skeleton className="h-4 w-4 shrink-0" />
+            <Skeleton className="h-3.5 w-40" />
+            <Skeleton className="h-3.5 w-20" />
+            <Skeleton className="hidden h-3.5 w-32 sm:block" />
+            <Skeleton className="hidden h-3.5 w-16 lg:block" />
+            <Skeleton className="ms-auto h-3.5 w-8" />
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
+
+  if (bodyOnly) return card;
+
   return (
     <>
       <Container>
@@ -37,42 +83,7 @@ export function ListPageSkeleton({ rows = 10 }: ListPageSkeletonProps) {
         </div>
       </Container>
 
-      <Container>
-        <Card>
-          <CardHeader className="flex items-center justify-between gap-3">
-            <Skeleton className="h-9 w-64" />
-            <div className="flex items-center gap-2">
-              <Skeleton className="h-9 w-24" />
-              <Skeleton className="h-9 w-9" />
-            </div>
-          </CardHeader>
-          <CardContent className="p-0">
-            {/* The header row reads darker than the body rows, as it does in a
-                real grid, so the shape is recognisable before the words land. */}
-            <div className="flex items-center gap-4 border-b border-border px-5 py-3">
-              <Skeleton className="h-4 w-4 shrink-0" />
-              <Skeleton className="h-3.5 w-32" />
-              <Skeleton className="h-3.5 w-24" />
-              <Skeleton className="hidden h-3.5 w-28 sm:block" />
-              <Skeleton className="hidden h-3.5 w-20 lg:block" />
-              <Skeleton className="ms-auto h-3.5 w-16" />
-            </div>
-            {Array.from({ length: rows }).map((_, index) => (
-              <div
-                key={index}
-                className="flex items-center gap-4 border-b border-border px-5 py-3.5 last:border-b-0"
-              >
-                <Skeleton className="h-4 w-4 shrink-0" />
-                <Skeleton className="h-3.5 w-40" />
-                <Skeleton className="h-3.5 w-20" />
-                <Skeleton className="hidden h-3.5 w-32 sm:block" />
-                <Skeleton className="hidden h-3.5 w-16 lg:block" />
-                <Skeleton className="ms-auto h-3.5 w-8" />
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      </Container>
+      <Container>{card}</Container>
     </>
   );
 }

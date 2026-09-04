@@ -24,6 +24,7 @@ import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
   DropdownMenu,
@@ -296,7 +297,7 @@ export default function WorkflowFormBuilder({ definitionId }: { definitionId: st
   }, [flowDraft, flowPublished]);
 
   if (isLoading || !def) {
-    return <p className="p-6 text-muted-foreground">Loading…</p>;
+    return <SectionSkeleton rows={6} className="p-6" />;
   }
 
   return (

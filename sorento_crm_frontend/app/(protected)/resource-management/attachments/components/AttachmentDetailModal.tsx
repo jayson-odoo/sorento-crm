@@ -871,7 +871,15 @@ export default function AttachmentDetailModal({
         <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col overflow-hidden p-0">
           <DialogHeader className="px-6 pt-6 pb-0 pr-12 flex flex-row items-center justify-between gap-4">
             <DialogTitle className="text-xl truncate min-w-0 flex-1">
-              {attachment?.original_filename ?? (isLoading ? 'Loading...' : 'Attachment')}
+              {attachment?.original_filename ??
+                (isLoading ? (
+                  // A `<h2>` (DialogTitle's element) may only hold phrasing
+                  // content, so this is a styled `span`, not the shared
+                  // `Skeleton` `div`, but the same bar-shaped placeholder.
+                  <span className="inline-block h-5 w-48 animate-pulse rounded-md bg-accent align-middle" />
+                ) : (
+                  'Attachment'
+                ))}
             </DialogTitle>
             {neighbourItems.length > 0 && onAttachmentChange && attachmentId && (
               <RecordNavigation

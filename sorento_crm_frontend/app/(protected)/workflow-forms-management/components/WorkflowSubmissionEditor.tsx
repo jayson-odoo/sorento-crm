@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import {
   Dialog,
   DialogContent,
@@ -322,7 +323,7 @@ export function WorkflowSubmissionDetail({ submissionId }: { submissionId: strin
   };
 
   if (isLoading || !sub) {
-    return <p className="text-muted-foreground">Loading…</p>;
+    return <SectionSkeleton rows={6} />;
   }
 
   const submissionsListHref = `/workflow-forms-management/forms/${sub.definition_id}/submissions`;

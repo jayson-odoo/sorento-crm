@@ -4,6 +4,7 @@ import { Plus, Trash2 } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { useBindings, useOptions, useSetBindingDefaultValue } from '../hooks/useLookupSets';
 import BindingAddDialog from './BindingAddDialog';
@@ -48,7 +49,7 @@ export default function BindingsSection({ setId }: { setId: string }) {
         <Button onClick={() => setAddOpen(true)}><Plus className="size-4" /> Add binding</Button>
       </CardHeader>
       <CardContent>
-        {isLoading ? <div>Loading…</div> :
+        {isLoading ? <SectionSkeleton rows={3} /> :
           (bindings ?? []).length === 0 ? (
             <div className="py-6 text-muted-foreground text-sm">
               Not yet bound to any field. Click &quot;Add binding&quot; to choose where this dropdown appears.

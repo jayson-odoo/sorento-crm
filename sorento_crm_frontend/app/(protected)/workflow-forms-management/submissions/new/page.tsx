@@ -2,6 +2,7 @@ import { Suspense } from 'react';
 import { Metadata } from 'next';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { NewWorkflowSubmission } from '../../components/WorkflowSubmissionEditor';
 
 export const metadata: Metadata = {
@@ -26,7 +27,7 @@ export default async function NewWorkflowSubmissionPage({
         />
       </Container>
       <Container>
-        <Suspense fallback={<p className="text-muted-foreground p-2">Loading…</p>}>
+        <Suspense fallback={<SectionSkeleton rows={5} className="p-2" />}>
           <NewWorkflowSubmission defaultDefinitionId={sp.definitionId} />
         </Suspense>
       </Container>

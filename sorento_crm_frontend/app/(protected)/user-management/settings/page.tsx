@@ -184,7 +184,7 @@ export default function Page() {
         byId.set(savedSupplierId, {
           id: savedSupplierId,
           supplier_code: '…',
-          supplier_name: 'Loading…',
+          supplier_name: 'Loading supplier…',
         });
       } else {
         byId.set(savedSupplierId, {

@@ -6,6 +6,7 @@ import { Loader2 } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
@@ -99,9 +100,7 @@ export default function TraceSettingsCard() {
       </CardHeader>
       <CardContent className="space-y-5">
         {loading ? (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="size-4 animate-spin" /> Loading…
-          </div>
+          <SectionSkeleton rows={3} />
         ) : loadFailed ? (
           <div data-testid="trace-settings-load-failed" className="text-sm text-destructive">
             Could not load the current tracing settings, so they cannot be edited here. This

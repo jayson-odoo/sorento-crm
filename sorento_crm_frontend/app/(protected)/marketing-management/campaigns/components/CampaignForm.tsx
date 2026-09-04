@@ -198,7 +198,7 @@ export default function CampaignForm({ campaignId, onSuccess }: CampaignFormProp
                         value={field.value}
                         onChange={field.onChange}
                         options={campaignTypes.map((t) => ({ value: t.id, label: t.type_name }))}
-                        placeholder={isLoadingTypes ? 'Loading…' : 'Select a type'}
+                        placeholder={isLoadingTypes ? 'Loading types…' : 'Select a type'}
                       />
                     </FormControl>
                     <FormMessage />

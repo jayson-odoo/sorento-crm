@@ -4,6 +4,7 @@ import * as React from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import {
   Dialog,
   DialogBody,
@@ -54,7 +55,7 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
           <div>
             <p className="text-xs text-muted-foreground">Collaborators</p>
             {collaborators.isLoading ? (
-              <p className="text-sm text-muted-foreground">Loading…</p>
+              <SectionSkeleton rows={2} className="mt-1" />
             ) : (collaborators.data ?? []).length === 0 ? (
               <p className="text-sm text-muted-foreground">-</p>
             ) : (

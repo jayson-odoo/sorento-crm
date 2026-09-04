@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import {
   Table,
   TableBody,
@@ -62,8 +63,8 @@ export function McpToolsList() {
           <TableBody>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={3} className="text-center text-muted-foreground">
-                  Loading...
+                <TableCell colSpan={3} className="p-4">
+                  <SectionSkeleton rows={3} />
                 </TableCell>
               </TableRow>
             ) : rows.length === 0 ? (

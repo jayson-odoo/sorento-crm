@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { Slider, SliderThumb } from '@/components/ui/slider';
 import {
   useAIAssistantConfig,
@@ -129,12 +130,7 @@ export default function AIAssistantSettingsForm() {
   };
 
   if (isLoading) {
-    return (
-      <div className="flex items-center gap-2 text-muted-foreground">
-        <Loader2 className="size-4 animate-spin" />
-        Loading...
-      </div>
-    );
+    return <SectionSkeleton rows={4} />;
   }
   if (isError) return <p className="text-sm text-destructive">{(error as Error)?.message || 'Failed to load config'}</p>;
 

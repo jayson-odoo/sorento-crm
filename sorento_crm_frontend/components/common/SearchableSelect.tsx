@@ -500,7 +500,7 @@ export function SearchableSelect({
                   className="flex w-full items-center justify-center gap-2 rounded-sm px-2 py-1.5 text-sm text-muted-foreground hover:bg-accent disabled:opacity-60"
                 >
                   {loadingMore ? <Loader2 className="size-4 animate-spin" /> : null}
-                  {loadingMore ? 'Loading…' : 'Load more'}
+                  {loadingMore ? 'Loading' : 'Load more'}
                 </button>
               </div>
             ) : null}

@@ -1,10 +1,10 @@
 'use client';
 
 import { format } from 'date-fns';
-import { Loader2 } from 'lucide-react';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useWishlist } from '../hooks/useAIUsage';
@@ -51,10 +51,7 @@ export default function AIWishlistPage() {
           </CardHeader>
           <CardContent>
             {wishlistQuery.isLoading ? (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Loader2 className="size-4 animate-spin" />
-                Loading...
-              </div>
+              <SectionSkeleton rows={3} />
             ) : wishlistQuery.isError ? (
               <p className="text-sm text-destructive">
                 {(wishlistQuery.error as Error)?.message || 'Failed to load wishlist.'}

@@ -22,6 +22,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import {
   useQueryDetail,
   useRecentQueries,
@@ -263,10 +264,7 @@ export default function AIUsagePage() {
             </CardHeader>
             <CardContent>
               {topUsersQuery.isLoading ? (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Loader2 className="size-4 animate-spin" />
-                  Loading...
-                </div>
+                <SectionSkeleton rows={3} />
               ) : (topUsersQuery.data || []).length === 0 ? (
                 <p className="text-sm text-muted-foreground">No user activity yet.</p>
               ) : (
@@ -306,10 +304,7 @@ export default function AIUsagePage() {
             </CardHeader>
             <CardContent>
               {topContactsQuery.isLoading ? (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Loader2 className="size-4 animate-spin" />
-                  Loading...
-                </div>
+                <SectionSkeleton rows={3} />
               ) : (topContactsQuery.data || []).length === 0 ? (
                 <p className="text-sm text-muted-foreground">
                   No portal contact activity in range.
@@ -354,10 +349,7 @@ export default function AIUsagePage() {
             </CardHeader>
             <CardContent>
               {recentQueriesQuery.isLoading ? (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Loader2 className="size-4 animate-spin" />
-                  Loading...
-                </div>
+                <SectionSkeleton rows={3} />
               ) : (recentQueriesQuery.data || []).length === 0 ? (
                 <p className="text-sm text-muted-foreground">No recent queries in range.</p>
               ) : (

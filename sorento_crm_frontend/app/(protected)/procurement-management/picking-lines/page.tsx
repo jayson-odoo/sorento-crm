@@ -1,6 +1,7 @@
 import { Metadata } from 'next';
 import { Suspense } from 'react';
 import { Container } from '@/components/common/container';
+import { ListPageSkeleton } from '@/components/common/ListPageSkeleton';
 import { PageHeader } from '@/components/common/PageHeader';
 import PickingLinesList from './components/PickingLinesList';
 
@@ -17,7 +18,7 @@ export default function PickingLinesPage() {
       </Container>
 
       <Container>
-        <Suspense fallback={<div>Loading...</div>}>
+        <Suspense fallback={<ListPageSkeleton bodyOnly />}>
           <PickingLinesList />
         </Suspense>
       </Container>

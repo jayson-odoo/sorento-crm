@@ -43,6 +43,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -1319,7 +1320,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   };
 
   if (loading) {
-    return <div className="p-6 text-sm text-muted-foreground">Loading...</div>;
+    return <SectionSkeleton rows={6} className="p-6" />;
   }
 
   // The badge always reflects the real state - revising does NOT override it
