@@ -483,3 +483,69 @@ class TestLatestUserMessage:
             "attachment": {"type": "image", "description": "a photo of a basin"},
         }
         assert engine_mod.build_latest_user_message(envelope) == "a photo of a basin\n\n"
+
+
+class TestStockDenialGateEndToEnd:
+    """R1 / AC-306, wired end to end through `run_turn` (not just `route.decide`).
+
+    `test_route_unit.py` already proves the pure predicate; this proves
+    `engine._stock_denial_enabled` actually reads `system_settings.chatbot_stock_denial_enabled`
+    off the row the fixture flips and hands it to `decide` unchanged, on the real Postgres
+    fixture used everywhere else in this suite.
+    """
+
+    @staticmethod
+    def _stock_envelope(*, message_id: str) -> Envelope:
+        envelope = _envelope()
+        envelope.message["message"]["messageId"] = message_id
+        # A contact without stock access - not one missing the field outright, which is
+        # the OTHER covered property (test_route_unit's "still throws exactly as live does").
+        envelope.contact["custom_fields"] = [
+            {"name": "is_human_intervened", "value": "false"},
+            {"name": "is_allowed_stock", "value": "false"},
+        ]
+        return envelope
+
+    def test_off_by_default_a_stock_check_still_answers_business_query(
+        self, session_factory, seeded, system_settings_row, stub_parser, stub_access
+    ):
+        assert system_settings_row.chatbot_stock_denial_enabled in (False, None)
+        stub_parser(
+            _parser_output(
+                intent_hint="check_stock",
+                domain_hint="inventory",
+                demand_qty=5,
+            )
+        )
+        stub_access()
+
+        result = engine_mod.run_turn(
+            self._stock_envelope(message_id="ZZT-msg-stock-off"),
+            session_factory=session_factory,
+        )
+        assert result.branch_kind == "business_query"
+
+    def test_flipped_on_the_same_contact_is_denied(
+        self, session_factory, seeded, system_settings_row, stub_parser, stub_access
+    ):
+        from app.models.user import SystemSetting
+
+        db = session_factory()
+        setting = db.query(SystemSetting).filter(SystemSetting.id == system_settings_row.id).one()
+        setting.chatbot_stock_denial_enabled = True
+        db.commit()
+
+        stub_parser(
+            _parser_output(
+                intent_hint="check_stock",
+                domain_hint="inventory",
+                demand_qty=5,
+            )
+        )
+        stub_access()
+
+        result = engine_mod.run_turn(
+            self._stock_envelope(message_id="ZZT-msg-stock-on"),
+            session_factory=session_factory,
+        )
+        assert result.branch_kind == "stock_denied"
