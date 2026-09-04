@@ -83,6 +83,30 @@ NODE_SLUGS: dict[str, tuple[str, ...]] = {
     "annotate-incoming-picker": ("sub-resolve-and-gate-rs", "live-spine-sorento-consume-main"),
     "annotate-customer-picker": ("live-spine-sorento-consume-main",),
     "resolve-exit-continue": ("sub-resolve-and-gate-rs",),
+    # S4 - the low_signal lane. Two slugs, and both are real captures of the same node:
+    # the SPINE sees it through `Call 'sub-casual-llm'`, and `sub-casual-llm-live` is the
+    # sub's own execution list (version 08bf56a5, pool fully scanned - see
+    # `scripts/chatbot_fixture_coverage.py`'s CAPTURE_REPORT).
+    "construct-user-prompt": ("live-spine-sorento-consume-main", "sub-casual-llm-live"),
+    # `central-exchange` is the SAME name on two DIFFERENT node bodies, and only one of
+    # them is the fence-stripping parse this lane ports. The three slugs registered are
+    # that one: the SPINE (which sees the node through `Call 'sub-answer'`) plus
+    # `sub-answer`'s own two execution lists.
+    #   * `sub-answer{,-live,-rs}` - sha256 1ad9139d..., 28 lines, the parse;
+    #   * `sub-send-attachments{,-rs}` - sha256 f7042838..., 12 lines, an RS-5 name-
+    #     preserving stub that returns `attachments_src` off the trigger and has nothing to
+    #     do with parsing anything.
+    # The second pair is deliberately absent for the same reason S6a leaves its stand-ins
+    # out above. Measured, not assumed: with both pairs registered the parse agrees on
+    # 13/13 `sub-answer`-family fixtures and on 1/4 of the attachment ones, and the one
+    # graded (`runData`) mismatch is `sub-send-attachments-rs/rs51-02-withattach`, whose
+    # `input` is `[{"json": {}}]` while its `expected` is a fully composed answer - the
+    # signature of a node reading something other than its own input.
+    "central-exchange": (
+        "live-spine-sorento-consume-main",
+        "sub-answer-live",
+        "sub-answer-rs",
+    ),
     "resolve-exit-offer": ("sub-resolve-and-gate-rs",),
     "resolve-exit-not-found": ("sub-resolve-and-gate-rs",),
     "item": ("sub-resolve-and-gate-rs",),

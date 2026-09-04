@@ -129,11 +129,19 @@ def run(ctx: Mapping[str, Any], item: Mapping[str, Any]) -> dict[str, Any]:
 
     The reply rides on `item.outcome_fragment['build-ideate-reply']` - RS-6.1c's own
     mechanism, and the exact key `build-outcome` reads - so the tail needs no ideate arm.
+
+    **The item is `build-ideate-reply`'s own output, and it carries NO `branch_kind`.**
+    That is not tidiness. `entry-gate` fires on `(item.branch_kind ?? '') !== ''`, so an
+    item that kept the router's tag would run `escalate-catalog` on a turn n8n never runs
+    it on - and `ideate` is not one of its nine arms, so it would fall through the switch
+    and put an EMPTY response into the outcome hub. The compile ladder happens to check
+    the ideate fragment first, so today that empty arm loses; a ladder edit is all it
+    would take for it to win, which is exactly the shape S4 hit on `low_signal`.
     """
     result = call_ideation_tool(**build_arguments(ctx))
     reply = build_reply(result)
     return {
-        "item": {**dict(item), "outcome_fragment": {"build-ideate-reply": reply}},
+        "item": {**reply, "outcome_fragment": {"build-ideate-reply": reply}},
         "reply_extras": {
             "manualResponse": reply["manualResponse"],
             "includeResponse": reply["includeResponse"],

@@ -14,6 +14,14 @@ Two rules that apply to every section:
 - **The CRM ships first and OFF.** A slice's CRM code is behind a flag or an unread
   response field until the n8n edit is made, so the two can be deployed in either order and
   a bad slice is reverted by turning the flag off, not by re-editing n8n under pressure.
+- **For a LANE, the flag is `system_settings.chatbot_completed_lanes`** (a JSON array of
+  `branch_kind`, default `[]`), and the order is fixed by it: **CRM deploy -> shadow ->
+  the owner adds the kind to the list -> the n8n Switch output is deleted.** The CRM
+  completes a lane only when its kind is in that list AND in
+  `contracts.CRM_COMPLETED_BRANCH_KINDS`, so deploying changes nothing on its own.
+  **Rollback before the n8n cut is removing the kind from the list** - a settings edit,
+  effective on the next turn, no deploy and no n8n edit. That is why the n8n nodes are
+  deleted LAST: after that the flag alone cannot bring the old path back.
 - **A cutover has a named precondition.** It is written in the section. "It looks right" is
   not one.
 
@@ -238,6 +246,135 @@ reads those sessions correctly and simply ignores the extra key.
   all (it falls through the switch to an empty response) and `offer_hold`'s text is
   computed upstream by `offer-hold-reply` rather than canned. Inventing copy for either
   would be inventing behaviour; they land with their lanes at S3 and S5.
+
+---
+## S4 - the `low_signal` lane moves into the CRM
+
+**CRM side (shipped, and inert until switched on).** S4 puts `low_signal` in
+`contracts.CRM_COMPLETED_BRANCH_KINDS`, which says the CODE can complete it. It does not
+say the CRM may. A turn is completed in the CRM only when its `branch_kind` is ALSO listed
+in `system_settings.chatbot_completed_lanes`, which defaults to `[]` - so on the day the
+CRM deploys nothing changes: every low-signal turn still gets `delegate: "low_signal"` and
+n8n answers it exactly as it does today, and the clarifier does not run in the CRM at all.
+
+**The order is: deploy, then flip the data, then cut n8n.** Not the other way round, and
+the three steps are independent - each one is separately reversible.
+
+There is no double run at any point. Once the lane is switched on, the CRM answers and
+returns `delegate: null`, and the spine's `head-arm` Switch (S1) already routes a null
+delegate to `send-crm-reply` and never reaches `route`. So `Call 'sub-casual-llm'` stops
+being entered the moment the flag flips, before a single node is deleted; step 3 removes
+nodes that are already cold.
+
+### Which turns this covers
+
+One `route` output. `route[11]` is the `low_signal` arm and it is the only path to
+`Call 'sub-casual-llm'`.
+
+| `route` output | node it feeds today | CRM `branch_kind` |
+| --- | --- | --- |
+| 11 `low_signal` | `Call 'sub-casual-llm'` | `low_signal` |
+
+### Step 1 - deploy (nothing changes)
+
+Deploy the CRM with `chatbot_completed_lanes = []`. Low-signal turns keep delegating and
+n8n keeps answering them. The only new thing is a `chatbot.turns` row per turn, which is
+what the next step is judged on.
+
+**Precondition to proceed:** none. This step cannot change a customer's answer.
+
+### Step 2 - flip the lane on (the real cutover)
+
+Add `"low_signal"` to `system_settings.chatbot_completed_lanes` (Settings, or one UPDATE).
+From the next turn the CRM answers, `head-arm` sends its reply, and `Call 'sub-casual-llm'`
+is never entered.
+
+**Precondition to proceed to step 3:** over at least 20 low-signal turns since the flip,
+
+```sql
+SELECT status, stage, count(*)
+FROM chatbot.turns
+WHERE branch_kind = 'low_signal' AND created_at > now() - interval '7 days'
+GROUP BY 1, 2;
+```
+
+shows `done` / `remembered` rows and **zero** `failed` / `casual_llm`. A `failed` /
+`casual_llm` row is the lane saying it could not reach the clarifier, with the reason in
+`error`. Do not proceed with any.
+
+**Rollback for this step is the flag**: remove the string, and the very next turn delegates
+again and n8n answers it. No deploy, no n8n edit. That is the whole reason the flag exists,
+and it is why the n8n nodes are not deleted until step 3.
+
+### Step 3 - delete the cold nodes, in `sorento-consume-main` (`S4N1LiisAqA4hpMC`)
+
+Three nodes go, one arrives.
+
+| node | today | after |
+| --- | --- | --- |
+| `Call 'sub-casual-llm'` | executeWorkflow -> `sub-casual-llm` (`4dPJ8ykop8VIpddY`) | **DELETE** |
+| `casual-gate` | IF on `$json._casual_error === true`; true arm terminal, false arm -> `Call 'sub-answer'1` | **DELETE** |
+| `Call 'sub-answer'1` | executeWorkflow -> `sub-answer` (`oIzFAzi3bGgn5mTH`) | **REPLACE with a one-line Code node of the SAME NAME** |
+
+By this point none of the three has run since step 2, so this is tidying, not a cutover.
+
+The replacement keeps the name on purpose. `Call 'sub-output'6` maps its `answer` input as
+`{{ $("Call 'sub-answer'1").isExecuted ? $("Call 'sub-answer'1").first().json : null }}`,
+and that expression is shared with the arms this slice does not touch. Keeping the name
+means **no edit to `sub-output`'s mapping at all** - the same trick AC-110 uses for
+`build-ctx` and `route-turn`.
+
+New `Call 'sub-answer'1` body (Code node, run once for all items):
+
+```js
+// S4: the CRM already answered. `sub-answer` used to parse the clarifier's JSON here
+// (`central-exchange`); the CRM does that now and hands back the finished text.
+return [{ json: { response: $('route-turn').first().json.reply.text } }];
+```
+
+`route-turn` is S1's re-emitter of the `/chat/turn` response. If the reply is exposed under
+a different name when S1 is wired, use that name - the point is `response.reply.text` from
+the one HTTP call, not this specific node.
+
+Rewire: `route[11]` -> the new `Call 'sub-answer'1` -> `Call 'sub-output'6`. Both edges
+already exist for the second hop; only the first changes, from
+`route[11] -> Call 'sub-casual-llm'`.
+
+**What happens to the error arm.** `casual-gate` exists to catch `_casual_error`, which
+`mark-casual-error` sets when `sub-error-logger2` has ALREADY sent the error text from
+inside the sub. That whole path goes: the CRM's failed lane returns the same
+`sub-error-logger` text as `reply.text` plus a `send_message` action, so the error is sent
+by the same outbound as any other reply and there is nothing to gate on. This is the
+behaviour change to watch in step 1, and it is why the precondition counts failed rows.
+
+### Step 4 - unpublish
+
+`sub-casual-llm` (`4dPJ8ykop8VIpddY`) has no other caller once step 2 lands. Deactivate it;
+do not delete it, so the rollback below is a re-activation rather than a rebuild.
+
+`sub-answer` (`oIzFAzi3bGgn5mTH`) **STAYS ACTIVE.** `Call 'sub-answer'1` was one of several
+callers; the business lane still uses the others, and its `central-exchange` node is still
+what parses those answers. Only this caller goes.
+
+### Rollback
+
+**Before step 3: remove `"low_signal"` from `chatbot_completed_lanes`.** One data change,
+effective on the next turn, no deploy and no n8n edit.
+
+**After step 3** the flag alone is not enough - the CRM would stop answering and the nodes
+that used to are gone, so the turn would reach `route[11]` with nothing behind it. Restore
+the three nodes and re-activate `sub-casual-llm` FIRST, then clear the flag. This is the
+whole reason step 3 comes last and only after the precondition: it is the one step that
+takes the old path away.
+
+### Not covered by this slice
+
+- **Nothing about the session write.** S2's tail landed first, so a CRM-completed
+  low-signal turn runs the same `complete_turn` pipeline every other lane will: outcome ->
+  compile-state -> compose -> session write, closing `done` at `remembered`. While the lane
+  is switched off, n8n's `Call 'sub-output'6` writes the session exactly as today.
+- **The other `casual`-ish arms.** `clarify_menu`, `out_of_scope` and `not_supported` are
+  canned-reply arms and belong to S3; they still go to `Call 'sub-output'6` untouched.
 
 ---
 

@@ -1,0 +1,1527 @@
+{
+  "source": {
+    "execution_id": "13425599",
+    "workflow_id": "9qVyfUxmRQqrpGRMDLRuz",
+    "node": "construct-user-prompt",
+    "captured_at": "2026-08-22T12:01:56+00:00",
+    "expected_from": "runData"
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "test": null,
+          "test_run_id": null,
+          "started_at": null,
+          "contact": "900000016"
+        }
+      }
+    ],
+    "redis-pop-main-message-list": [
+      {
+        "json": {
+          "message": {
+            "message": {
+              "event_type": "message.received",
+              "event_id": "b16429ec-b7e8-4d59-b42f-5a59d4a0a51e",
+              "contact": {
+                "id": 900000016,
+                "firstName": "<redacted>",
+                "lastName": "<redacted>",
+                "phone": "<redacted>",
+                "email": "<redacted>",
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": "<redacted>",
+                  "lastName": "<redacted>",
+                  "email": "<redacted>"
+                },
+                "created_at": 1778415977
+              },
+              "message": {
+                "messageId": 1787358077000000,
+                "channelMessageId": "wamid.HBgLNjAxOTcyOTM5NjMVAgASGBQyQTRGNkJGNTNCMUNENjVBMzY5QQA=",
+                "contactId": 900000016,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1787358077000,
+                "message": {
+                  "type": "text",
+                  "text": "Yes escalate"
+                },
+                "replyTo": {
+                  "id": 1787358047613928,
+                  "mId": "wamid.HBgLNjAxOTcyOTM5NjMVAgARGBI3RUYxQ0FCOUIwQTJGMTc0MDYA",
+                  "message": {
+                    "replies": [
+                      "SRT391-GM",
+                      "Yes escalate",
+                      "No it's okay"
+                    ],
+                    "type": "quick_reply",
+                    "title": "No technical drawing for SRT391B-30. Try: SRT391-GM. Reply with a code to continue, or would you like me to escalate to marketing_product team?"
+                  },
+                  "sender": {
+                    "type": "message",
+                    "source": "n8n"
+                  }
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 45\"},\"wa_id\":\"60100000013\",\"user_id\":\"MY.900000033\",\"firstName\":\"Person 45\",\"lastName\":\"\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "contact": {
+              "id": 900000016,
+              "firstName": "<redacted>",
+              "lastName": "<redacted>",
+              "phone": "<redacted>",
+              "email": "<redacted>",
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": null
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/c09a1386-cc00-4afd-82db-f7870697fb51"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260510_200514",
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": null,
+              "created_at": 1778415977
+            }
+          }
+        }
+      }
+    ],
+    "if-audio-in": [],
+    "tf-message": [
+      {
+        "json": {
+          "event_type": "message.received",
+          "event_id": "b16429ec-b7e8-4d59-b42f-5a59d4a0a51e",
+          "contact": {
+            "id": 900000016,
+            "firstName": "<redacted>",
+            "lastName": "<redacted>",
+            "phone": "<redacted>",
+            "email": "<redacted>",
+            "language": null,
+            "profilePic": null,
+            "countryCode": "MY",
+            "status": "open",
+            "assignee": {
+              "id": null,
+              "firstName": "<redacted>",
+              "lastName": "<redacted>",
+              "email": "<redacted>"
+            },
+            "created_at": 1778415977
+          },
+          "message": {
+            "messageId": 1787358077000000,
+            "channelMessageId": "wamid.HBgLNjAxOTcyOTM5NjMVAgASGBQyQTRGNkJGNTNCMUNENjVBMzY5QQA=",
+            "contactId": 900000016,
+            "channelId": 453209,
+            "traffic": "incoming",
+            "timestamp": 1787358077000,
+            "message": {
+              "type": "text",
+              "text": "Yes escalate"
+            },
+            "replyTo": {
+              "id": 1787358047613928,
+              "mId": "wamid.HBgLNjAxOTcyOTM5NjMVAgARGBI3RUYxQ0FCOUIwQTJGMTc0MDYA",
+              "message": {
+                "replies": [
+                  "SRT391-GM",
+                  "Yes escalate",
+                  "No it's okay"
+                ],
+                "type": "quick_reply",
+                "title": "No technical drawing for SRT391B-30. Try: SRT391-GM. Reply with a code to continue, or would you like me to escalate to marketing_product team?"
+              },
+              "sender": {
+                "type": "message",
+                "source": "n8n"
+              }
+            }
+          },
+          "channel": {
+            "id": 453209,
+            "name": "Internal (+60 11-1673 1179)",
+            "source": "whatsapp_business",
+            "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 45\"},\"wa_id\":\"60100000013\",\"user_id\":\"MY.900000033\",\"firstName\":\"Person 45\",\"lastName\":\"\"}}",
+            "created_at": 1767682908
+          },
+          "sender": {
+            "source": "contact",
+            "userId": null,
+            "teamId": null,
+            "workflowId": null,
+            "broadcastHistoryId": null
+          }
+        }
+      }
+    ],
+    "sorento-sub-respond-findcontact-respond": [
+      {
+        "json": {
+          "id": 900000016,
+          "firstName": "<redacted>",
+          "lastName": "<redacted>",
+          "phone": "<redacted>",
+          "email": "<redacted>",
+          "language": null,
+          "profilePic": null,
+          "locale": null,
+          "countryCode": "MY",
+          "status": "open",
+          "isBlocked": false,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": null
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_human_intervened",
+              "value": null
+            },
+            {
+              "name": "backend_id",
+              "value": "https://fe-sorento.foundryx.my/user-management/contacts/c09a1386-cc00-4afd-82db-f7870697fb51"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "tags": [
+            "imported_20260510_200514",
+            "imported_20260627_150636"
+          ],
+          "assignee": null,
+          "lifecycle": null,
+          "created_at": 1778415977
+        }
+      }
+    ],
+    "if-transcribed-confirm": [],
+    "is-human-intervened": [
+      {
+        "json": {
+          "id": 900000016,
+          "firstName": "<redacted>",
+          "lastName": "<redacted>",
+          "phone": "<redacted>",
+          "email": "<redacted>",
+          "language": null,
+          "profilePic": null,
+          "locale": null,
+          "countryCode": "MY",
+          "status": "open",
+          "isBlocked": false,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": null
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_human_intervened",
+              "value": null
+            },
+            {
+              "name": "backend_id",
+              "value": "https://fe-sorento.foundryx.my/user-management/contacts/c09a1386-cc00-4afd-82db-f7870697fb51"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "tags": [
+            "imported_20260510_200514",
+            "imported_20260627_150636"
+          ],
+          "assignee": null,
+          "lifecycle": null,
+          "created_at": 1778415977
+        }
+      }
+    ],
+    "if-message-is-audio": [],
+    "get-session-vars": [
+      {
+        "json": {
+          "respond_io_id": "900000016",
+          "session_vars": {
+            "variables": {
+              "routing": {
+                "suggested_team": "marketing_product",
+                "suggested_agent": "general_enquiries"
+              },
+              "entities": [
+                {
+                  "raw": "SRT391-GM",
+                  "hint": "product",
+                  "uuid": null,
+                  "dym_slot": "13425519",
+                  "canonical_code": "SRT391-GM",
+                  "current_message": true
+                },
+                {
+                  "raw": "Technical Specifications",
+                  "hint": "attachment_type",
+                  "confident": true,
+                  "canonical_code": "Technical Specifications",
+                  "current_message": true
+                }
+              ],
+              "ideation": null,
+              "response": "Previous turn (product_attachment): returned 1 records",
+              "date_mode": null,
+              "dym_offer": {
+                "id": "13425519",
+                "ttl": 3,
+                "domain": "product_attachment",
+                "picked": [
+                  "SRT391-GM"
+                ],
+                "candidates": [
+                  {
+                    "code": "SRT391-GM",
+                    "uuid": null,
+                    "for_raw": "SRT391B-30",
+                    "for_hint": "product",
+                    "entity_type": null,
+                    "for_canonical": "SRT391B-30"
+                  }
+                ]
+              },
+              "user_goal": "trying to continue the technical drawing lookup with SRT391-GM",
+              "escalation": {
+                "is_escalation_confirmation": false
+              },
+              "match_mode": "and",
+              "domain_hint": "product_attachment",
+              "intent_hint": "check_product_attachment",
+              "message_type": "business_query",
+              "query_brands": [],
+              "access_levels": [],
+              "routing_brand": "sorento",
+              "contains_flyer": false,
+              "dym_candidates": [
+                {
+                  "code": "SRT391-GM",
+                  "uuid": null,
+                  "for_raw": "SRT391B-30",
+                  "for_hint": "product",
+                  "entity_type": null,
+                  "for_canonical": "SRT391B-30"
+                }
+              ],
+              "date_filter_end": null,
+              "last_result_set": [
+                {
+                  "idx": 1,
+                  "uuid": null,
+                  "label": "SRT391-GM",
+                  "product": null,
+                  "filename": null,
+                  "entity_type": null,
+                  "attachment_type": null
+                }
+              ],
+              "routing_company": "00000000-0000-0000-0000-000000000001",
+              "date_filter_start": null,
+              "routing_companies": [
+                {
+                  "codes": [
+                    "SRT391-GM"
+                  ],
+                  "brand_code": "sorento",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento"
+                }
+              ],
+              "selection_context": null,
+              "routing_roster_plan": null,
+              "routing_brand_source": "resolved"
+            },
+            "user_response": "I have attached the file(s) below.\n\n1. *Product Code:* SRT391-GM\n*Attachment Type:* Technical Specifications\n*File Name:* SRT390-BL_SRT391-GM_TD.jpg\n\n_Data last updated: 18/05/2026 15:56:53_",
+            "referenced_result_set": [
+              {
+                "idx": 1,
+                "label": "SRT391-GM",
+                "value": "SRT391-GM",
+                "display": "SRT391-GM",
+                "product": "SRT391-GM",
+                "order_number": null
+              }
+            ],
+            "referenced_state": {
+              "domain_hint": "product_attachment",
+              "intent_hint": "check_product_attachment",
+              "entities": [
+                {
+                  "raw": "SRT391B-30",
+                  "hint": "product",
+                  "confident": true,
+                  "canonical_code": "SRT391B-30",
+                  "current_message": true
+                },
+                {
+                  "raw": "technical drawing",
+                  "hint": "attachment_type",
+                  "confident": true,
+                  "canonical_code": "Technical Specifications",
+                  "current_message": true
+                }
+              ],
+              "dym_offer": {
+                "id": "13425519",
+                "ttl": 3,
+                "domain": "product_attachment",
+                "picked": [],
+                "candidates": [
+                  {
+                    "code": "SRT391-GM",
+                    "uuid": null,
+                    "for_raw": "SRT391B-30",
+                    "for_hint": "product",
+                    "entity_type": null,
+                    "for_canonical": "SRT391B-30"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    ],
+    "Call 'sub-query-reformulator'": [
+      {
+        "json": {
+          "output": {
+            "message_type": "casual",
+            "intent_hint": null,
+            "domain_hint": null,
+            "scope_intent": null,
+            "is_affirmative": true,
+            "user_goal": "trying to escalate to the marketing_product team",
+            "access_levels": [],
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "SRT391-GM",
+                "hint": "product",
+                "uuid": null,
+                "dym_slot": "13425519",
+                "canonical_code": "SRT391-GM",
+                "current_message": false
+              },
+              {
+                "raw": "Technical Specifications",
+                "hint": "attachment_type",
+                "confident": true,
+                "canonical_code": "Technical Specifications",
+                "current_message": false
+              }
+            ],
+            "entity_op": "reuse",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "marketing_product",
+              "suggested_agent": "general_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "domain_signal_source": "intent_none",
+            "entity_op_applied": "reuse",
+            "query_brands": [],
+            "_pending_pick": true
+          },
+          "_parser_raw": {
+            "message_type": "casual",
+            "intent_hint": null,
+            "domain_hint": null,
+            "scope_intent": null,
+            "is_affirmative": true,
+            "user_goal": "trying to escalate to the marketing_product team",
+            "access_levels": [],
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [],
+            "entity_op": "reuse",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "marketing_product",
+              "suggested_agent": "general_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            }
+          }
+        }
+      }
+    ],
+    "check-access": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "General Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null
+        }
+      }
+    ],
+    "If5": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "General Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null
+        }
+      }
+    ],
+    "If2": [],
+    "If-ideate": [],
+    "If10": [],
+    "is-escalation-declined": [],
+    "If9": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "General Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null
+        }
+      }
+    ],
+    "resolve-entity-clarification": [
+      {
+        "json": {
+          "tokens": [
+            "SRT391-GM",
+            "Technical Specifications"
+          ],
+          "elapsed_ms": 83.02,
+          "resolutions": [
+            {
+              "token": "SRT391-GM",
+              "resolved": true,
+              "ambiguous": false,
+              "matches": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "SRT391-GM",
+                  "uuid": "8d72daca-a057-40cb-be08-18f71837df14",
+                  "match_field": "product_code",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "product_name": "SRT391-GM",
+                    "is_active": true,
+                    "brand": {
+                      "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                      "brand_code": "SORENTO",
+                      "brand_name": "SORENTO"
+                    }
+                  }
+                }
+              ],
+              "alternatives": []
+            },
+            {
+              "token": "Technical Specifications",
+              "resolved": true,
+              "ambiguous": false,
+              "matches": [
+                {
+                  "entity_type": "attachment_type",
+                  "canonical_code": "Technical Specifications",
+                  "uuid": "759e8bb0-0895-40ca-98eb-74870303cf3e",
+                  "match_field": "type_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": null,
+                  "company_name": null,
+                  "display": {
+                    "code": null,
+                    "type_name": "Technical Specifications",
+                    "description": "Technical Specifications / Spec / Drawing by Marketing"
+                  }
+                }
+              ],
+              "alternatives": []
+            }
+          ],
+          "unresolved_tokens": []
+        }
+      }
+    ],
+    "construct-user-prompt": [
+      {
+        "json": {
+          "message_type": "casual",
+          "intent_hint": null,
+          "domain_hint": null,
+          "session_vars": {},
+          "entities": [
+            {
+              "entity_type": "product",
+              "canonical_code": "SRT391-GM"
+            },
+            {
+              "entity_type": "attachment_type",
+              "canonical_code": "Technical Specifications"
+            }
+          ],
+          "user_goal": "trying to escalate to the marketing_product team"
+        }
+      }
+    ],
+    "OpenAI Chat Model": [],
+    "Basic LLM Chain": [
+      {
+        "json": {
+          "text": "{\n  \"response\": \"Hi! Could you please provide more details about your request for the marketing product team?\"\n}"
+        }
+      }
+    ],
+    "central-exchange": [
+      {
+        "json": {
+          "response": "Hi! Could you please provide more details about your request for the marketing product team?"
+        }
+      }
+    ],
+    "dym-transform-partial": [
+      {
+        "json": {
+          "response": "Hi! Could you please provide more details about your request for the marketing product team?",
+          "dym_probe_entities": [],
+          "dym_candidate_codes": [],
+          "dym_excluded_codes": [],
+          "dym_capped_codes": [],
+          "probe_cap_applied": false,
+          "probe_tool": null,
+          "probe_noun": null,
+          "probe_predicate": null,
+          "probe_needed": false,
+          "probe_skip_reason": "domain_not_enabled",
+          "probe_lane": "d1",
+          "_dym_probe_input": true
+        }
+      }
+    ],
+    "dym-gate-partial": [],
+    "compile-current-state": [
+      {
+        "json": {
+          "variables": {
+            "message_type": "casual",
+            "intent_hint": null,
+            "domain_hint": null,
+            "user_goal": "trying to escalate to the marketing_product team",
+            "query_brands": [],
+            "access_levels": [],
+            "entities": [
+              {
+                "raw": "SRT391-GM",
+                "hint": "product",
+                "uuid": null,
+                "dym_slot": "13425519",
+                "canonical_code": "SRT391-GM",
+                "current_message": false
+              },
+              {
+                "raw": "Technical Specifications",
+                "hint": "attachment_type",
+                "confident": true,
+                "canonical_code": "Technical Specifications",
+                "current_message": false
+              }
+            ],
+            "routing": {
+              "suggested_team": "marketing_product",
+              "suggested_agent": "general_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "response": "Hi! Could you please provide more details about your request for the marketing product team?",
+            "last_result_set": [],
+            "selection_context": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "date_mode": null,
+            "match_mode": "and",
+            "contains_flyer": false,
+            "dym_offer": {
+              "id": "13425519",
+              "ttl": 2,
+              "domain": "product_attachment",
+              "picked": [
+                "SRT391-GM"
+              ],
+              "candidates": [
+                {
+                  "code": "SRT391-GM",
+                  "uuid": null,
+                  "for_raw": "SRT391B-30",
+                  "for_hint": "product",
+                  "entity_type": null,
+                  "for_canonical": "SRT391B-30"
+                }
+              ]
+            },
+            "dym_candidates": [
+              {
+                "code": "SRT391-GM",
+                "uuid": null,
+                "for_raw": "SRT391B-30",
+                "for_hint": "product",
+                "entity_type": null,
+                "for_canonical": "SRT391B-30"
+              }
+            ],
+            "ideation": null,
+            "routing_roster_plan": null,
+            "routing_brand": "sorento",
+            "routing_brand_source": "resolved",
+            "routing_company": "00000000-0000-0000-0000-000000000001",
+            "routing_companies": [
+              {
+                "codes": [
+                  "SRT391-GM"
+                ],
+                "brand_code": "sorento",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento"
+              }
+            ]
+          },
+          "user_response": "Hi! Could you please provide more details about your request for the marketing product team?"
+        }
+      }
+    ],
+    "crossdomain-compose": [
+      {
+        "json": {
+          "variables": {
+            "message_type": "casual",
+            "intent_hint": null,
+            "domain_hint": null,
+            "user_goal": "trying to escalate to the marketing_product team",
+            "query_brands": [],
+            "access_levels": [],
+            "entities": [
+              {
+                "raw": "SRT391-GM",
+                "hint": "product",
+                "uuid": null,
+                "dym_slot": "13425519",
+                "canonical_code": "SRT391-GM",
+                "current_message": false
+              },
+              {
+                "raw": "Technical Specifications",
+                "hint": "attachment_type",
+                "confident": true,
+                "canonical_code": "Technical Specifications",
+                "current_message": false
+              }
+            ],
+            "routing": {
+              "suggested_team": "marketing_product",
+              "suggested_agent": "general_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "response": "Hi! Could you please provide more details about your request for the marketing product team?",
+            "last_result_set": [],
+            "selection_context": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "date_mode": null,
+            "match_mode": "and",
+            "contains_flyer": false,
+            "dym_offer": {
+              "id": "13425519",
+              "ttl": 2,
+              "domain": "product_attachment",
+              "picked": [
+                "SRT391-GM"
+              ],
+              "candidates": [
+                {
+                  "code": "SRT391-GM",
+                  "uuid": null,
+                  "for_raw": "SRT391B-30",
+                  "for_hint": "product",
+                  "entity_type": null,
+                  "for_canonical": "SRT391B-30"
+                }
+              ]
+            },
+            "dym_candidates": [
+              {
+                "code": "SRT391-GM",
+                "uuid": null,
+                "for_raw": "SRT391B-30",
+                "for_hint": "product",
+                "entity_type": null,
+                "for_canonical": "SRT391B-30"
+              }
+            ],
+            "ideation": null,
+            "routing_roster_plan": null,
+            "routing_brand": "sorento",
+            "routing_brand_source": "resolved",
+            "routing_company": "00000000-0000-0000-0000-000000000001",
+            "routing_companies": [
+              {
+                "codes": [
+                  "SRT391-GM"
+                ],
+                "brand_code": "sorento",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento"
+              }
+            ]
+          },
+          "user_response": "Hi! Could you please provide more details about your request for the marketing product team?"
+        }
+      }
+    ],
+    "sorento-sub-respond-sendmsg-respond2": [
+      {
+        "json": {
+          "success": true
+        }
+      }
+    ],
+    "Execution Data": [
+      {
+        "json": {
+          "success": true
+        }
+      }
+    ],
+    "attach-merge": [
+      {
+        "json": {
+          "attachments": []
+        }
+      }
+    ],
+    "if-got-attachments": [],
+    "save-session-vars": [
+      {
+        "json": {
+          "respond_io_id": "900000016",
+          "session_vars": {
+            "variables": {
+              "message_type": "casual",
+              "intent_hint": null,
+              "domain_hint": null,
+              "user_goal": "trying to escalate to the marketing_product team",
+              "query_brands": [],
+              "access_levels": [],
+              "entities": [
+                {
+                  "raw": "SRT391-GM",
+                  "hint": "product",
+                  "uuid": null,
+                  "dym_slot": "13425519",
+                  "canonical_code": "SRT391-GM",
+                  "current_message": false
+                },
+                {
+                  "raw": "Technical Specifications",
+                  "hint": "attachment_type",
+                  "confident": true,
+                  "canonical_code": "Technical Specifications",
+                  "current_message": false
+                }
+              ],
+              "routing": {
+                "suggested_team": "marketing_product",
+                "suggested_agent": "general_enquiries"
+              },
+              "escalation": {
+                "is_escalation_confirmation": false
+              },
+              "response": "Hi! Could you please provide more details about your request for the marketing product team?",
+              "last_result_set": [],
+              "selection_context": null,
+              "date_filter_start": null,
+              "date_filter_end": null,
+              "date_mode": null,
+              "match_mode": "and",
+              "contains_flyer": false,
+              "dym_offer": {
+                "id": "13425519",
+                "ttl": 2,
+                "domain": "product_attachment",
+                "picked": [
+                  "SRT391-GM"
+                ],
+                "candidates": [
+                  {
+                    "code": "SRT391-GM",
+                    "uuid": null,
+                    "for_raw": "SRT391B-30",
+                    "for_hint": "product",
+                    "entity_type": null,
+                    "for_canonical": "SRT391B-30"
+                  }
+                ]
+              },
+              "dym_candidates": [
+                {
+                  "code": "SRT391-GM",
+                  "uuid": null,
+                  "for_raw": "SRT391B-30",
+                  "for_hint": "product",
+                  "entity_type": null,
+                  "for_canonical": "SRT391B-30"
+                }
+              ],
+              "ideation": null,
+              "routing_roster_plan": null,
+              "routing_brand": "sorento",
+              "routing_brand_source": "resolved",
+              "routing_company": "00000000-0000-0000-0000-000000000001",
+              "routing_companies": [
+                {
+                  "codes": [
+                    "SRT391-GM"
+                  ],
+                  "brand_code": "sorento",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento"
+                }
+              ]
+            },
+            "user_response": "Hi! Could you please provide more details about your request for the marketing product team?"
+          }
+        }
+      }
+    ],
+    "Call 'sub-respond-save-message-redis'2": [
+      {
+        "json": {
+          "contact_id": 900000016,
+          "phone_number": "<redacted>",
+          "message": "Yes escalate",
+          "sent_at": 1787358086859,
+          "turn_id": "13425599",
+          "data": "{\"contact_id\":\"900000016\",\"phone_number\":\"+60100000013\",\"message\":\"Yes escalate\",\"sent_at\":1787358077000,\"first_name\":\"Person 45\",\"last_name\":null,\"reply_to_message_id\":1787358047613928,\"reply_to_message\":null,\"type\":\"incoming\",\"message_id\":\"1787358077000000\",\"turn_id\":\"13425599\",\"state_trace\":{\"v\":1,\"before\":{\"routing\":{\"suggested_team\":\"marketing_product\",\"suggested_agent\":\"general_enquiries\"},\"entities\":[{\"raw\":\"SRT391-GM\",\"hint\":\"product\",\"uuid\":null,\"dym_slot\":\"13425519\",\"canonical_code\":\"SRT391-GM\",\"current_message\":true},{\"raw\":\"Technical Specifications\",\"hint\":\"attachment_type\",\"confident\":true,\"canonical_code\":\"Technical Specifications\",\"current_message\":true}],\"ideation\":null,\"response\":\"Previous turn (product_attachment): returned 1 records\",\"date_mode\":null,\"dym_offer\":{\"id\":\"13425519\",\"ttl\":3,\"domain\":\"product_attachment\",\"picked\":[\"SRT391-GM\"],\"candidates\":[{\"code\":\"SRT391-GM\",\"uuid\":null,\"for_raw\":\"SRT391B-30\",\"for_hint\":\"product\",\"entity_type\":null,\"for_canonical\":\"SRT391B-30\"}]},\"user_goal\":\"trying to continue the technical drawing lookup with SRT391-GM\",\"escalation\":{\"is_escalation_confirmation\":false},\"match_mode\":\"and\",\"domain_hint\":\"product_attachment\",\"intent_hint\":\"check_product_attachment\",\"message_type\":\"business_query\",\"query_brands\":[],\"access_levels\":[],\"routing_brand\":\"sorento\",\"contains_flyer\":false,\"dym_candidates\":{\"n\":1,\"first\":\"SRT391-GM\"},\"date_filter_end\":null,\"last_result_set\":{\"n\":1,\"first\":\"SRT391-GM\"},\"routing_company\":\"00000000-0000-0000-0000-000000000001\",\"date_filter_start\":null,\"routing_companies\":[{\"codes\":[\"SRT391-GM\"],\"brand_code\":\"sorento\",\"company_id\":\"00000000-0000-0000-0000-000000000001\",\"company_name\":\"Sorento\"}],\"selection_context\":null,\"routing_roster_plan\":null,\"routing_brand_source\":\"resolved\"},\"parser_raw\":{\"message_type\":\"casual\",\"intent_hint\":null,\"domain_hint\":null,\"scope_intent\":null,\"is_affirmative\":true,\"user_goal\":\"trying to escalate to the marketing_product team\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[],\"entity_op\":\"reuse\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":\"marketing_product\",\"suggested_agent\":\"general_enquiries\"},\"escalation\":{\"is_escalation_confirmation\":false}},\"parser_applied\":{\"message_type\":\"casual\",\"intent_hint\":null,\"domain_hint\":null,\"scope_intent\":null,\"is_affirmative\":true,\"user_goal\":\"trying to escalate to the marketing_product team\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[{\"raw\":\"SRT391-GM\",\"hint\":\"product\",\"uuid\":null,\"dym_slot\":\"13425519\",\"canonical_code\":\"SRT391-GM\",\"current_message\":false},{\"raw\":\"Technical Specifications\",\"hint\":\"attachment_type\",\"confident\":true,\"canonical_code\":\"Technical Specifications\",\"current_message\":false}],\"entity_op\":\"reuse\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":\"marketing_product\",\"suggested_agent\":\"general_enquiries\"},\"escalation\":{\"is_escalation_confirmation\":false},\"domain_signal_source\":\"intent_none\",\"entity_op_applied\":\"reuse\",\"query_brands\":[],\"_pending_pick\":true},\"after\":{\"message_type\":\"casual\",\"intent_hint\":null,\"domain_hint\":null,\"user_goal\":\"trying to escalate to the marketing_product team\",\"query_brands\":[],\"access_levels\":[],\"entities\":[{\"raw\":\"SRT391-GM\",\"hint\":\"product\",\"uuid\":null,\"dym_slot\":\"13425519\",\"canonical_code\":\"SRT391-GM\",\"current_message\":false},{\"raw\":\"Technical Specifications\",\"hint\":\"attachment_type\",\"confident\":true,\"canonical_code\":\"Technical Specifications\",\"current_message\":false}],\"routing\":{\"suggested_team\":\"marketing_product\",\"suggested_agent\":\"general_enquiries\"},\"escalation\":{\"is_escalation_confirmation\":false},\"response\":\"Hi! Could you please provide more details about your request for the marketing product team?\",\"last_result_set\":{\"n\":0,\"first\":null},\"selection_context\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"date_mode\":null,\"match_mode\":\"and\",\"contains_flyer\":false,\"dym_offer\":{\"id\":\"13425519\",\"ttl\":2,\"domain\":\"product_attachment\",\"picked\":[\"SRT391-GM\"],\"candidates\":[{\"code\":\"SRT391-GM\",\"uuid\":null,\"for_raw\":\"SRT391B-30\",\"for_hint\":\"product\",\"entity_type\":null,\"for_canonical\":\"SRT391B-30\"}]},\"dym_candidates\":{\"n\":1,\"first\":\"SRT391-GM\"},\"ideation\":null,\"routing_roster_plan\":null,\"routing_brand\":\"sorento\",\"routing_brand_source\":\"resolved\",\"routing_company\":\"00000000-0000-0000-0000-000000000001\",\"routing_companies\":[{\"codes\":[\"SRT391-GM\"],\"brand_code\":\"sorento\",\"company_id\":\"00000000-0000-0000-0000-000000000001\",\"company_name\":\"Sorento\"}]}}}"
+        }
+      }
+    ],
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 900000016,
+              "firstName": "<redacted>",
+              "lastName": "<redacted>",
+              "phone": "<redacted>",
+              "email": "<redacted>",
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": null
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/c09a1386-cc00-4afd-82db-f7870697fb51"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260510_200514",
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": null,
+              "created_at": 1778415977
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "b16429ec-b7e8-4d59-b42f-5a59d4a0a51e",
+              "contact": {
+                "id": 900000016,
+                "firstName": "<redacted>",
+                "lastName": "<redacted>",
+                "phone": "<redacted>",
+                "email": "<redacted>",
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": "<redacted>",
+                  "lastName": "<redacted>",
+                  "email": "<redacted>"
+                },
+                "created_at": 1778415977
+              },
+              "message": {
+                "messageId": 1787358077000000,
+                "channelMessageId": "wamid.HBgLNjAxOTcyOTM5NjMVAgASGBQyQTRGNkJGNTNCMUNENjVBMzY5QQA=",
+                "contactId": 900000016,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1787358077000,
+                "message": {
+                  "type": "text",
+                  "text": "Yes escalate"
+                },
+                "replyTo": {
+                  "id": 1787358047613928,
+                  "mId": "wamid.HBgLNjAxOTcyOTM5NjMVAgARGBI3RUYxQ0FCOUIwQTJGMTc0MDYA",
+                  "message": {
+                    "replies": [
+                      "SRT391-GM",
+                      "Yes escalate",
+                      "No it's okay"
+                    ],
+                    "type": "quick_reply",
+                    "title": "No technical drawing for SRT391B-30. Try: SRT391-GM. Reply with a code to continue, or would you like me to escalate to marketing_product team?"
+                  },
+                  "sender": {
+                    "type": "message",
+                    "source": "n8n"
+                  }
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 45\"},\"wa_id\":\"60100000013\",\"user_id\":\"MY.900000033\",\"firstName\":\"Person 45\",\"lastName\":\"\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000016",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "marketing_product",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "entities": [
+                    {
+                      "raw": "SRT391-GM",
+                      "hint": "product",
+                      "uuid": null,
+                      "dym_slot": "13425519",
+                      "canonical_code": "SRT391-GM",
+                      "current_message": true
+                    },
+                    {
+                      "raw": "Technical Specifications",
+                      "hint": "attachment_type",
+                      "confident": true,
+                      "canonical_code": "Technical Specifications",
+                      "current_message": true
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Previous turn (product_attachment): returned 1 records",
+                  "date_mode": null,
+                  "dym_offer": {
+                    "id": "13425519",
+                    "ttl": 3,
+                    "domain": "product_attachment",
+                    "picked": [
+                      "SRT391-GM"
+                    ],
+                    "candidates": [
+                      {
+                        "code": "SRT391-GM",
+                        "uuid": null,
+                        "for_raw": "SRT391B-30",
+                        "for_hint": "product",
+                        "entity_type": null,
+                        "for_canonical": "SRT391B-30"
+                      }
+                    ]
+                  },
+                  "user_goal": "trying to continue the technical drawing lookup with SRT391-GM",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "product_attachment",
+                  "intent_hint": "check_product_attachment",
+                  "message_type": "business_query",
+                  "query_brands": [],
+                  "access_levels": [],
+                  "routing_brand": "sorento",
+                  "contains_flyer": false,
+                  "dym_candidates": [
+                    {
+                      "code": "SRT391-GM",
+                      "uuid": null,
+                      "for_raw": "SRT391B-30",
+                      "for_hint": "product",
+                      "entity_type": null,
+                      "for_canonical": "SRT391B-30"
+                    }
+                  ],
+                  "date_filter_end": null,
+                  "last_result_set": [
+                    {
+                      "idx": 1,
+                      "uuid": null,
+                      "label": "SRT391-GM",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    }
+                  ],
+                  "routing_company": "00000000-0000-0000-0000-000000000001",
+                  "date_filter_start": null,
+                  "routing_companies": [
+                    {
+                      "codes": [
+                        "SRT391-GM"
+                      ],
+                      "brand_code": "sorento",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "selection_context": null,
+                  "routing_roster_plan": null,
+                  "routing_brand_source": "resolved"
+                },
+                "user_response": "I have attached the file(s) below.\n\n1. *Product Code:* SRT391-GM\n*Attachment Type:* Technical Specifications\n*File Name:* SRT390-BL_SRT391-GM_TD.jpg\n\n_Data last updated: 18/05/2026 15:56:53_",
+                "referenced_result_set": [
+                  {
+                    "idx": 1,
+                    "label": "SRT391-GM",
+                    "value": "SRT391-GM",
+                    "display": "SRT391-GM",
+                    "product": "SRT391-GM",
+                    "order_number": null
+                  }
+                ],
+                "referenced_state": {
+                  "domain_hint": "product_attachment",
+                  "intent_hint": "check_product_attachment",
+                  "entities": [
+                    {
+                      "raw": "SRT391B-30",
+                      "hint": "product",
+                      "confident": true,
+                      "canonical_code": "SRT391B-30",
+                      "current_message": true
+                    },
+                    {
+                      "raw": "technical drawing",
+                      "hint": "attachment_type",
+                      "confident": true,
+                      "canonical_code": "Technical Specifications",
+                      "current_message": true
+                    }
+                  ],
+                  "dym_offer": {
+                    "id": "13425519",
+                    "ttl": 3,
+                    "domain": "product_attachment",
+                    "picked": [],
+                    "candidates": [
+                      {
+                        "code": "SRT391-GM",
+                        "uuid": null,
+                        "for_raw": "SRT391B-30",
+                        "for_hint": "product",
+                        "entity_type": null,
+                        "for_canonical": "SRT391B-30"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "casual",
+                "intent_hint": null,
+                "domain_hint": null,
+                "scope_intent": null,
+                "is_affirmative": true,
+                "user_goal": "trying to escalate to the marketing_product team",
+                "access_levels": [],
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "SRT391-GM",
+                    "hint": "product",
+                    "uuid": null,
+                    "dym_slot": "13425519",
+                    "canonical_code": "SRT391-GM",
+                    "current_message": false
+                  },
+                  {
+                    "raw": "Technical Specifications",
+                    "hint": "attachment_type",
+                    "confident": true,
+                    "canonical_code": "Technical Specifications",
+                    "current_message": false
+                  }
+                ],
+                "entity_op": "reuse",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "marketing_product",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_none",
+                "entity_op_applied": "reuse",
+                "query_brands": [],
+                "_pending_pick": true
+              },
+              "_parser_raw": {
+                "message_type": "casual",
+                "intent_hint": null,
+                "domain_hint": null,
+                "scope_intent": null,
+                "is_affirmative": true,
+                "user_goal": "trying to escalate to the marketing_product team",
+                "access_levels": [],
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [],
+                "entity_op": "reuse",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "marketing_product",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "General Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            }
+          }
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "tokens": [
+          "SRT391-GM",
+          "Technical Specifications"
+        ],
+        "elapsed_ms": 83.02,
+        "resolutions": [
+          {
+            "token": "SRT391-GM",
+            "resolved": true,
+            "ambiguous": false,
+            "matches": [
+              {
+                "entity_type": "product",
+                "canonical_code": "SRT391-GM",
+                "uuid": "8d72daca-a057-40cb-be08-18f71837df14",
+                "match_field": "product_code",
+                "match_tier": "exact",
+                "similarity": null,
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "product_name": "SRT391-GM",
+                  "is_active": true,
+                  "brand": {
+                    "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                    "brand_code": "SORENTO",
+                    "brand_name": "SORENTO"
+                  }
+                }
+              }
+            ],
+            "alternatives": []
+          },
+          {
+            "token": "Technical Specifications",
+            "resolved": true,
+            "ambiguous": false,
+            "matches": [
+              {
+                "entity_type": "attachment_type",
+                "canonical_code": "Technical Specifications",
+                "uuid": "759e8bb0-0895-40ca-98eb-74870303cf3e",
+                "match_field": "type_name",
+                "match_tier": "exact",
+                "similarity": null,
+                "company_id": null,
+                "company_name": null,
+                "display": {
+                  "code": null,
+                  "type_name": "Technical Specifications",
+                  "description": "Technical Specifications / Spec / Drawing by Marketing"
+                }
+              }
+            ],
+            "alternatives": []
+          }
+        ],
+        "unresolved_tokens": []
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "message_type": "casual",
+        "intent_hint": null,
+        "domain_hint": null,
+        "session_vars": {},
+        "entities": [
+          {
+            "entity_type": "product",
+            "canonical_code": "SRT391-GM"
+          },
+          {
+            "entity_type": "attachment_type",
+            "canonical_code": "Technical Specifications"
+          }
+        ],
+        "user_goal": "trying to escalate to the marketing_product team"
+      }
+    }
+  ],
+  "runIndex": 0,
+  "execution": {
+    "id": "13425599"
+  },
+  "ran": [
+    "When Executed by Another Workflow",
+    "redis-pop-main-message-list",
+    "if-audio-in",
+    "tf-message",
+    "sorento-sub-respond-findcontact-respond",
+    "if-transcribed-confirm",
+    "is-human-intervened",
+    "if-message-is-audio",
+    "get-session-vars",
+    "Call 'sub-query-reformulator'",
+    "check-access",
+    "If5",
+    "If2",
+    "If-ideate",
+    "If10",
+    "is-escalation-declined",
+    "If9",
+    "resolve-entity-clarification",
+    "construct-user-prompt",
+    "OpenAI Chat Model",
+    "Basic LLM Chain",
+    "central-exchange",
+    "dym-transform-partial",
+    "dym-gate-partial",
+    "compile-current-state",
+    "crossdomain-compose",
+    "sorento-sub-respond-sendmsg-respond2",
+    "Execution Data",
+    "attach-merge",
+    "if-got-attachments",
+    "save-session-vars",
+    "Call 'sub-respond-save-message-redis'2"
+  ]
+}

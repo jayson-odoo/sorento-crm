@@ -119,8 +119,13 @@ class TestTheCompletedLaneSwitch:
         assert result.delegate == "business_query"
 
     def test_the_two_halves_are_declared_once_each(self):
-        """A lane named in the settings list that the code cannot finish is a typo the
-        engine ignores; a lane the code CAN finish is the closed set S3 ported."""
+        """ONE place answers "does this turn complete here": `delegate_for`, reading the
+        code half (`contracts.CRM_COMPLETED_BRANCH_KINDS`) and the data half (the settings
+        list) together. `lanes.canned` only says which of them IT knows how to compose."""
+        from app.services.chatbot.contracts import CRM_COMPLETED_BRANCH_KINDS
+        from app.services.chatbot.delegate import delegate_for
+
+        assert canned_lanes.COMPLETED_BRANCH_KINDS == CRM_COMPLETED_BRANCH_KINDS - {"low_signal"}
         assert canned_lanes.COMPLETED_BRANCH_KINDS == {
             "access_denied",
             "escalate_offer",
@@ -131,9 +136,11 @@ class TestTheCompletedLaneSwitch:
             "offer_hold",
             "ideate",
         }
-        assert canned_lanes.handles("business_query", ["business_query"]) is False
-        assert canned_lanes.handles("clarify_menu", []) is False
-        assert canned_lanes.handles("clarify_menu", ["clarify_menu"]) is True
+        # A lane the CODE cannot finish is delegated however the list is configured.
+        assert delegate_for("business_query", frozenset({"business_query"})) == "business_query"
+        # A lane the code CAN finish is still delegated until the list names it.
+        assert delegate_for("clarify_menu", frozenset()) == "clarify_menu"
+        assert delegate_for("clarify_menu", frozenset({"clarify_menu"})) is None
 
     def test_switching_a_lane_off_again_is_the_rollback(
         self, session_factory, seeded, stub_parser, stub_access

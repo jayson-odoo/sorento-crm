@@ -535,17 +535,20 @@ class SystemSetting(Base):
         server_default='["goods_receive", "spo_allocation"]',
         default=lambda: ["goods_receive", "spo_allocation"],
     )
-    # Which branch kinds the CRM FINISHES rather than delegating to n8n. The code half of
-    # the rule is `lanes.canned.COMPLETED_BRANCH_KINDS`; a lane completes only when it is
-    # in BOTH, so the cutover is a data change the owner makes after a shadow window, and
-    # the rollback is editing this list rather than a deploy.
+    # Which lanes the CRM is allowed to FINISH, by `branch_kind`, one at a time.
     #
-    # EMPTY on purpose. Every n8n-changes section opens with the same rule - "the CRM
-    # ships first and OFF" - and a lane that completed the moment the code landed would
-    # change what a customer reads before anyone had decided to.
-    chatbot_completed_lanes = Column(
-        JSONB, nullable=False, server_default="[]", default=list
-    )
+    # `contracts.CRM_COMPLETED_BRANCH_KINDS` says what the code CAN complete; this says
+    # what it MAY. A lane has to be in both, so shipping a lane and switching it on are
+    # two separate events: the code deploys inert, the owner compares it against n8n's
+    # answer for as long as they like, and then flips one string. Default `[]` means the
+    # CRM completes nothing and every turn delegates exactly as it does today, which is
+    # what makes a lane deploy safe on its own.
+    #
+    # A JSON array rather than a column per lane: there are thirteen branch kinds and this
+    # is one decision repeated, not thirteen different ones. An unknown string in the list
+    # is ignored with a warning rather than raising, because this is operator data and a
+    # typo must not take the turn engine down.
+    chatbot_completed_lanes = Column(JSONB, nullable=False, server_default="[]", default=list)
 
 
 class UserQuickAccess(Base):

@@ -24,23 +24,15 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from app.services.chatbot import jsc
+from app.services.chatbot.contracts import CRM_COMPLETED_BRANCH_KINDS
 from app.services.chatbot.copy import CannedCopy
 
-# The eight `branch_kind`s S3 completes. `stock_denied` is NOT here: it still delegates to
-# the business lane, which S6 owns. This is the CODE half of the rule; the DATA half is
-# `system_settings.chatbot_completed_lanes`, and a lane completes only when it is in both.
-COMPLETED_BRANCH_KINDS: frozenset[str] = frozenset(
-    {
-        "access_denied",
-        "escalate_offer",
-        "escalation_declined",
-        "clarify_menu",
-        "not_supported",
-        "demand_qty",
-        "offer_hold",
-        "ideate",
-    }
-)
+# The eight `branch_kind`s S3 answers, PROJECTED off the one declaration rather than
+# repeated: `contracts.CRM_COMPLETED_BRANCH_KINDS` is what the code can finish across every
+# slice, and `delegate_for` reads it together with `system_settings.chatbot_completed_lanes`
+# to decide a turn. This subset only says which of them THIS module knows how to compose;
+# `low_signal` is S4's and is answered by `lanes/casual.py`.
+COMPLETED_BRANCH_KINDS: frozenset[str] = CRM_COMPLETED_BRANCH_KINDS - {"low_signal"}
 
 # The one lane that answers WITHOUT the tail, and therefore without a session write.
 NO_SESSION_WRITE_BRANCH_KINDS: frozenset[str] = frozenset({"access_denied"})
@@ -109,20 +101,6 @@ def offer_hold_clarify_text(
     if names:
         return lead + canned.render("offer_hold", companies=" / ".join(bold))
     return lead + canned.render("offer_hold_no_companies")
-
-
-def handles(branch_kind: str | None, completed_lanes: Any) -> bool:
-    """Does the CRM finish this lane itself?
-
-    BOTH halves, and the order is not arbitrary: the CODE set says what has been ported,
-    the SETTINGS list says what the owner has switched on. A lane the code cannot finish
-    is never completed however the list is configured, and a lane the code CAN finish is
-    still delegated until the list names it - which is what makes the cutover a data
-    change with a rollback rather than a deploy.
-    """
-    if branch_kind not in COMPLETED_BRANCH_KINDS:
-        return False
-    return branch_kind in (completed_lanes or ())
 
 
 def fragments_for(

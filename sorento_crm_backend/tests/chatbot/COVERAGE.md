@@ -15,6 +15,7 @@ A branch under the bar is `exhausted` - not short - only when EVERY execution on
 | workflow | version | scanned | version pool | all versions | exhausted | captured | nodes |
 | --- | --- | ---: | ---: | ---: | --- | --- | --- |
 | `spine-rs-1a` | `51f7b0d2` | 581 | 581 | 946 | yes | 2026-09-05 | `route-turn`, `build-ctx` |
+| `sub-casual-llm-live` | `08bf56a5` | 13 | 13 | 13 | yes | 2026-09-05 | `construct-user-prompt`, `mark-casual-error` |
 | `sub-output-live` | `c32698c1` | 760 | 760 | 907 | yes | 2026-09-05 | `compile-current-state`, `crossdomain-compose`, `build-outcome`, `escalate-catalog`, `cs-roster-plan`, `build-cs-member-offer` |
 | `sub-resolve-and-gate-rs` | `4f367b1c` | 682 | 682 | 852 | yes | 2026-09-05 | `disallowed-entity-gate`, `tier-gate`, `build-ctx-resolved`, `annotate-incoming-picker`, `annotate-customer-picker`, `resolve-exit-continue`, `resolve-exit-offer`, `resolve-exit-not-found`, `item`, `sub-resolve-and-gate` |
 | `sub-semantic-parser` | `ab3ec985` | 239 | 239 | 3901 | yes | 2026-09-04 | `output_exchange`, `suggest-follow-up` |
@@ -23,7 +24,7 @@ A branch under the bar is `exhausted` - not short - only when EVERY execution on
 
 A WORLD is one whole captured turn replayed through `run_turn` + `complete_turn` with the parser, the access check and the CS roster read stubbed from that execution's own node outputs. Worlds are DERIVED from spine captures, not captured separately - a spine capture already carries every node output of its execution - so growing the node corpus grows this one for free.
 
-**167 worlds** (34 of them ungradeable in this corpus: a spine-only capture whose resolver and entity gate ran inside a sub the fixture never recorded). **27 multi-turn chains** covering 117 turns, each replayed on the CRM's OWN written memory.
+**172 worlds** (37 of them ungradeable in this corpus: a spine-only capture whose resolver and entity gate ran inside a sub the fixture never recorded). **29 multi-turn chains** covering 125 turns, each replayed on the CRM's OWN written memory.
 
 | axis | value | worlds |
 | --- | --- | ---: |
@@ -31,14 +32,14 @@ A WORLD is one whole captured turn replayed through `run_turn` + `complete_turn`
 | branch kind | `check_promotion` | 4 |
 | branch kind | `not_supported` | 8 |
 | branch kind | `out_of_scope` | 9 |
-| branch kind | `unknown` | 139 |
+| branch kind | `unknown` | 144 |
 | shape | `picker` | 10 |
-| shape | `did_you_mean` | 25 |
+| shape | `did_you_mean` | 26 |
 | shape | `tier_ask` | 10 |
 | shape | `escalation` | 37 |
 | shape | `offer_hold` | 0 |
 | shape | `media` | 4 |
-| shape | `plain` | 81 |
+| shape | `plain` | 85 |
 
 ## Per node
 
@@ -50,7 +51,9 @@ A WORLD is one whole captured turn replayed through `run_turn` + `complete_turn`
 | `build-ctx` | 114 | 114 | 6 |
 | `build-ctx-resolved` | 41 | 41 | 2 |
 | `build-outcome` | 78 | 78 | 2 |
+| `central-exchange` | 49 | 49 | 2 |
 | `compile-current-state` | 255 | 165 | 5 |
+| `construct-user-prompt` | 11 | 11 | 5 |
 | `crossdomain-compose` | 80 | 79 | 5 |
 | `cs-roster-plan` | 14 | 14 | 1 |
 | `disallowed-entity-gate` | 242 | 177 | 6 |
@@ -90,6 +93,7 @@ A WORLD is one whole captured turn replayed through `run_turn` + `complete_turn`
 | `build-outcome` | `not_found` | 31 | 0 | met |
 | `build-outcome` | `not_supported` | 3 | 0 | exhausted (3) |
 | `build-outcome` | `out_of_scope` | 9 | 0 | met |
+| `central-exchange` | `all` | 49 | 0 | met |
 | `compile-current-state` | `goods_receive` | 2 | 0 | exhausted (2) |
 | `compile-current-state` | `ideate` | 3 | 0 | exhausted (3) |
 | `compile-current-state` | `incoming` | 27 | 9 | met |
@@ -101,6 +105,7 @@ A WORLD is one whole captured turn replayed through `run_turn` + `complete_turn`
 | `compile-current-state` | `promotion` | 7 | 7 | met |
 | `compile-current-state` | `resource_attachment` | 0 | 2 | exhausted (0) |
 | `compile-current-state` | `spo_allocation` | 4 | 0 | exhausted (4) |
+| `construct-user-prompt` | `all` | 11 | 0 | met |
 | `crossdomain-compose` | `incoming` | 14 | 1 | met |
 | `crossdomain-compose` | `inventory` | 27 | 0 | met |
 | `crossdomain-compose` | `no_domain` | 11 | 0 | met |

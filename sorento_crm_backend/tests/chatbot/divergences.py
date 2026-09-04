@@ -102,6 +102,34 @@ SPACE_ID_FROM_THE_WORKSPACE_ROW = Divergence(
 )
 
 
+# S4. n8n has NO reply on the low_signal lane's setup paths. `sub-casual-llm` binds its
+# OpenAI credential to the node, so a missing API key, an unset AI-assistant config or a
+# resolver that will not answer does not reach `sub-error-logger2` at all: the sub throws,
+# the spine's caller has no error output on that edge, and the turn dies with the customer
+# never told anything. Zero captures on the arm since 1 Sep, which is consistent with it
+# never having produced an item to capture.
+#
+# The port fails that turn instead, at `stage = casual_llm` with `branch_kind` still
+# `low_signal`, and sends a FIXED sentence (`casual.CLARIFIER_UNAVAILABLE_REPLY`) rather
+# than interpolating the exception: those messages name providers and configuration keys,
+# and none of it belongs in a WhatsApp reply. The CALL arm is unchanged and still sends
+# `sub-error-logger`'s own interpolated text, which is why the two differ.
+#
+# Not fixture-visible - there is no capture of a path that never emitted one - so this is
+# recorded here rather than against a replay.
+CASUAL_SETUP_FAILURE_HAS_A_REPLY = Divergence(
+    node="sub-casual-llm",
+    fixture=None,
+    hazard="H32",
+    reason=(
+        "n8n drops a low_signal turn whose clarifier could not be SET UP (no API key, no "
+        "AI config, resolver error): the credential is node-bound, so nothing reaches "
+        "sub-error-logger2 and the customer is told nothing. The port fails the turn at "
+        "stage=casual_llm and sends a fixed sentence, never str(exc)."
+    ),
+)
+
+
 def find(node: str, fixture: str) -> Divergence | None:
     """The registered divergence covering this replay, or None."""
     for d in DIVERGENCES:

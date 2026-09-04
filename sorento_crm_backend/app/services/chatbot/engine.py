@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import logging
 from contextlib import contextmanager
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterator, Mapping
 
@@ -33,7 +32,7 @@ from sqlalchemy.orm import Session
 from app.models.chatbot_turn import ChatbotTurn
 from app.services.chatbot import jsc, trace as trace_mod
 from app.services.chatbot.contracts import TURN_FAILURE_STAGES, Envelope
-from app.services.chatbot.delegate import delegate_for
+from app.services.chatbot.delegate import delegate_for, enabled_lanes_from
 from app.services.error_handler import AppException
 from app.services.chatbot.head import parser
 from app.services.chatbot.head.access import check_access, default_space_id
@@ -44,13 +43,16 @@ from app.services.chatbot.head.output_exchange import (
     suggest_follow_up,
 )
 from app.services.chatbot.head.route import decide
-from app.services.chatbot.lanes import canned as canned_lanes
-from app.services.chatbot.lanes import business
+from app.services.chatbot.lanes import business, canned as canned_lanes, casual
 from app.services.chatbot.lanes.business import resolve_gate, services as business_services
 
 logger = logging.getLogger(__name__)
 
 SessionFactory = Callable[[], Session]
+
+# "the caller did not pass a row", which `None` cannot mean here: `None` is the real value
+# when the settings singleton does not exist yet.
+_UNSET: Any = object()
 
 # H5 / AC-107: `sub-media-intake` did not patch a transcript onto an audio turn, so the
 # spine's audio branch had no successor and the turn died silently. It is now a FAILED
@@ -60,11 +62,6 @@ AUDIO_NOT_PATCHED_ERROR = (
 )
 GENERIC_ERROR_REPLY = parser.PARSER_ERROR_REPLY
 
-# What `system_settings.chatbot_completed_lanes` falls back to when an install has no
-# settings row at all. EMPTY, matching the column's own default: the CRM ships inert and
-# the owner turns each lane on after its shadow window. `lanes.canned.COMPLETED_BRANCH_KINDS`
-# is the other half - what the code CAN finish - and a lane needs both.
-DEFAULT_COMPLETED_LANES: tuple[str, ...] = ()
 
 
 class TurnResult:
@@ -408,7 +405,11 @@ def _duplicate_result(row: ChatbotTurn) -> TurnResult:
         ctx=response.get("ctx"),
         item=response.get("item"),
         branch_kind=row.branch_kind,
-        delegate=delegate_for(row.branch_kind) if row.branch_kind else None,
+        # D15: replay what the FIRST turn decided, never recompute it. The row's status
+        # already records it, and recomputing would hand a different answer back for the
+        # same message if `chatbot_completed_lanes` changed in between - which is the one
+        # thing a duplicate must not do.
+        delegate=row.branch_kind if row.status == "delegated" else None,
         delegate_payload=response.get("delegate_payload"),
         reply=response.get("reply"),
         actions=response.get("actions") or [],
@@ -706,21 +707,22 @@ def _run_stages(  # noqa: PLR0915
             media=getattr(envelope, "media", None),
         )[0]["json"]["ctx"]
 
-        chatbot_settings = _chatbot_settings(db)
-        stock_denial_enabled = chatbot_settings.stock_denial_enabled
-        # `unsupported_domains` is passed ONLY when the owner has configured one. Unset
-        # means "use route's own default", and saying that by NOT passing the argument
-        # keeps `decide`'s call shape exactly what it was before S3 - which matters
+        # ONE read of the settings singleton for the whole turn, on the session routing
+        # already holds: no extra session, no second query, and nothing read again later.
+        settings_row = _settings_row(db)
+        stock_denial_enabled = _stock_denial_enabled(db, settings_row)
+        enabled_lanes = _enabled_lanes(db, settings_row)
+        # AC-304: the configured unsupported-domain list is passed ONLY when the owner has
+        # set one. Unset means "use route's own default", and saying that by NOT passing
+        # the argument keeps `decide`'s call shape exactly what it was - which matters
         # because `test_s6a_gate_dry_run_and_seams.py` substitutes `decide` with a
         # two-argument stub, and a kwarg it does not accept would turn every one of those
-        # turns into a failed turn instead of the seam the test is about.
-        overrides = (
-            {"unsupported_domains": chatbot_settings.unsupported_domains}
-            if chatbot_settings.unsupported_domains is not None
-            else {}
-        )
+        # turns into a failed turn instead of the seam that test is about.
+        configured_domains = _unsupported_domains(settings_row)
         branch_kind, tier_stamp = decide(
-            ctx, stock_denial_enabled=stock_denial_enabled, **overrides
+            ctx,
+            stock_denial_enabled=stock_denial_enabled,
+            **({} if configured_domains is None else {"unsupported_domains": configured_domains}),
         )
         item = _stamp_item(access, branch_kind, tier_stamp)
 
@@ -732,6 +734,8 @@ def _run_stages(  # noqa: PLR0915
                 "lane": branch_kind,
                 "tier_pick": tier_stamp.get("tier_pick"),
                 "stock_denial_enabled": stock_denial_enabled,
+                # Why this turn went to n8n or did not, without reading the settings row.
+                "lane_completed_by_crm": branch_kind in enabled_lanes,
             },
             raw={"item": item},
         )
@@ -749,7 +753,39 @@ def _run_stages(  # noqa: PLR0915
         # provider I/O" rule. Named rather than hidden: S6b moves fetch into its own stage
         # and is where the split belongs, because it adds the MCP call this lane does not
         # yet make.
-        delegate = delegate_for(branch_kind)
+        delegate = delegate_for(branch_kind, enabled_lanes)
+        completes_here = delegate is None
+
+        # S4: the low_signal lane finishes INSIDE the CRM, and its model call must not
+        # run with a session open. Everything it needs from the database is read here,
+        # while one already is; `_run_casual_lane` below does the rest with none.
+        #
+        # Gated on `completes_here`, not on the branch kind alone: while the lane is off in
+        # `chatbot_completed_lanes` this turn belongs to n8n, and running the clarifier
+        # anyway would spend a model call and the customer's time on an answer nobody
+        # reads. Shadow mode compares the two lanes by REPLAYING captures, not by paying
+        # for every live turn twice.
+        clarifier_prompt: dict[str, Any] | None = None
+        clarifier_config: Any = None
+        clarifier_setup_error: str | None = None
+        if branch_kind == "low_signal" and completes_here:
+            try:
+                resolved = casual.resolve_for_prompt(db, ctx=ctx)
+                clarifier_prompt = casual.construct_user_prompt(ctx, resolved)
+                clarifier_config = casual.resolve_clarifier_config(db)
+            except Exception as exc:  # noqa: BLE001 - see below
+                # Everything in this block exists to make the clarifier call possible: the
+                # entities that go into its prompt, and the prompt / model / key it runs
+                # on. A failure here is the same customer-visible event as the call itself
+                # failing - the lane cannot answer - and AC-403 fixes what that looks like:
+                # `stage = casual_llm`, `branch_kind` still `low_signal`, and today's
+                # `sub-error-logger` text. Letting it reach `run_turn`'s catch-all instead
+                # would null the branch kind and send another lane's error reply.
+                logger.warning(
+                    "chatbot turn %s: low_signal lane setup failed", turn_id, exc_info=True
+                )
+                clarifier_setup_error = str(exc)
+
         delegate_payload: dict[str, Any] | None = None
         lane_error_text: str | None = None
         if business.handles(branch_kind) and _business_lane_enabled():
@@ -815,10 +851,10 @@ def _run_stages(  # noqa: PLR0915
         # the operator's query, and `response.delegate_error` beside it carries the reason
         # (`ENTITY_PIN_MISMATCH` included, which arrives here as an AppException).
         # -- the lanes the CRM finishes itself (S3, AC-301) ------------------ #
-        # Placed AFTER the business lane so the two cannot both claim a turn: the eight
-        # completed kinds and the three business kinds are disjoint, and reading that off
-        # one `if/elif` here is what keeps it so.
-        if canned_lanes.handles(branch_kind, chatbot_settings.completed_lanes):
+        # Gated on `completes_here` exactly as the low_signal block above is: the code
+        # half is `contracts.CRM_COMPLETED_BRANCH_KINDS` and the data half is
+        # `chatbot_completed_lanes`, and `delegate_for` is the ONE place that reads both.
+        if branch_kind in canned_lanes.COMPLETED_BRANCH_KINDS and completes_here:
             # `ideate` makes a TOOL call, so a failure there stops at `looked_up` the way
             # every other lookup does; the canned kinds have nothing to look up and go
             # straight to composing. The distinction is what the trace screen shows an
@@ -862,25 +898,46 @@ def _run_stages(  # noqa: PLR0915
                 stage="sent",
             )
 
-        _close_turn(
-            db,
-            turn_id,
-            status="delegated" if delegate else "done",
-            stage="looked_up" if lane_error_text else "routed",
-            branch_kind=branch_kind,
-            error=None,
-            records=turn_trace.records,
-            # S2 / D15: a duplicate delivery replays THIS, so n8n's re-emitters never see
-            # a null `ctx` or `item`. `actions` rides along because the caller must not
-            # execute them twice either - it gets the original list and its own Switch on
-            # `duplicate` decides to send nothing.
-            response={
-                "ctx": ctx,
-                "item": item,
-                "actions": actions,
-                "delegate_payload": delegate_payload,
-                "delegate_error": lane_error_text,
-            },
+        # The lane the CRM is finishing is the exception: its turn is not over yet, so
+        # closing it here would record a `done` turn before the reply exists (and
+        # `_close_turn` is write-once). `_run_casual_lane` closes it after the clarifier
+        # answers. With the lane switched off there is nothing to wait for and this closes
+        # as `delegated`, exactly as it did before S4.
+        if not (branch_kind == "low_signal" and completes_here):
+            _close_turn(
+                db,
+                turn_id,
+                status="delegated" if delegate else "done",
+                stage="looked_up" if lane_error_text else "routed",
+                branch_kind=branch_kind,
+                error=None,
+                records=turn_trace.records,
+                # S2 / D15: a duplicate delivery replays THIS, so n8n's re-emitters never
+                # see a null `ctx` or `item`. `actions` rides along because the caller must
+                # not execute them twice either - it gets the original list and its own
+                # Switch on `duplicate` decides to send nothing.
+                response={
+                    "ctx": ctx,
+                    "item": item,
+                    "actions": actions,
+                    "delegate_payload": delegate_payload,
+                    "delegate_error": lane_error_text,
+                },
+            )
+
+    if branch_kind == "low_signal" and completes_here:
+        return _run_casual_lane(
+            turn_id=turn_id,
+            ctx=ctx,
+            item=item,
+            actions=actions,
+            dry_run=dry_run,
+            session_factory=session_factory,
+            turn_trace=turn_trace,
+            stage=stage,
+            clarifier_prompt=clarifier_prompt,
+            clarifier_config=clarifier_config,
+            setup_error=clarifier_setup_error,
         )
 
     return TurnResult(
@@ -898,6 +955,205 @@ def _run_stages(  # noqa: PLR0915
         status="delegated" if delegate else "done",
         stage="looked_up" if lane_error_text else "routed",
     )
+
+
+def _run_casual_lane(
+    *,
+    turn_id: str,
+    ctx: dict[str, Any],
+    item: dict[str, Any],
+    actions: list[dict[str, Any]],
+    dry_run: bool,
+    session_factory: SessionFactory,
+    turn_trace: Any,
+    stage: list[str],
+    clarifier_prompt: dict[str, Any] | None,
+    clarifier_config: Any,
+    setup_error: str | None = None,
+) -> TurnResult:
+    """The `low_signal` lane, from the model call to the closed turn (AC-401, AC-403).
+
+    Split out of `_run_stages` so the "no DB session across LLM I/O" rule is visible in the
+    signature rather than in a comment: this function takes a `session_factory`, never a
+    `Session`, and opens one only after the provider has answered.
+
+    `ClarifierError` is caught HERE and not by `run_turn`'s outer handler. Routing already
+    succeeded, so the turn keeps `branch_kind = "low_signal"` and fails at
+    `stage = "casual_llm"`; the outer handler would null the branch kind and send the
+    generic parser-error reply, which is a different lane's text (AC-403).
+    """
+    stage[0] = "casual_llm"
+    user_message = (
+        casual.render_user_message(clarifier_prompt) if clarifier_prompt is not None else ""
+    )
+
+    # -- NO DB SESSION IS OPEN HERE ---------------------------------------- #
+    # Every failure string here is TYPE-PREFIXED, and every test against it is
+    # `is not None`. `str(exc)` alone is EMPTY for `ValueError("")` or a bare
+    # `ClarifierError()`, and an empty string is falsy: `if failed` would read the turn as
+    # a success, close the row `done`, and leave `error` as "" - a turn that failed,
+    # recorded as fine, with nothing on the trace screen to say otherwise.
+    failed: str | None = setup_error
+    if failed is not None:
+        # SETUP failure (the resolver, the registry, the AI config, the API key). The
+        # customer gets a FIXED sentence, never `str(exc)`: these messages carry provider
+        # detail and configuration names, and none of that belongs in a WhatsApp reply.
+        # The real reason is on the row and on the trace, which is where an operator looks.
+        text = casual.CLARIFIER_UNAVAILABLE_REPLY
+    else:
+        try:
+            raw = casual.call_clarifier(clarifier_config, user_message)
+            text = casual.reply_text(casual.central_exchange({"text": raw}))
+        except casual.ClarifierError as exc:
+            failed = f"{type(exc).__name__}: {exc}"
+            # The CALL arm keeps today's `sub-error-logger` text, which interpolates the
+            # error and has been what a customer sees on this path since it was written.
+            # Parity, and the reason the two arms differ (divergences.py, H32).
+            text = casual.CLARIFIER_ERROR_PREFIX + str(exc)
+        except Exception as exc:  # noqa: BLE001 - a malformed answer is the same failure
+            # The model answered but the answer was not usable (invalid JSON out of
+            # `central_exchange`). Same lane, same stage, same reply: from the customer's
+            # side there is no difference between "no answer" and "an answer I cannot read".
+            failed = f"{type(exc).__name__}: {exc}"
+            text = casual.CLARIFIER_ERROR_PREFIX + str(exc)
+
+    actions = [
+        *actions,
+        {"kind": "send_message", "text": text, "quick_replies": [], "dry_run": dry_run},
+    ]
+
+    # The clarifier IS this lane's lookup: it is where the turn's answer comes from, the
+    # way `sub-answer` is for the business lane. Recorded at `looked_up` rather than
+    # `replied` so it does not collide with the `replied` record the tail writes below.
+    turn_trace.record(
+        "looked_up",
+        status="failed" if failed is not None else "ok",
+        summary=(
+            _casual_failure_summary(failed, setup_error)
+            if failed is not None
+            else "The clarifier wrote small talk or one clarifying question."
+        ),
+        why=(
+            "The turn carried no business question to look up, so the clarifier writes "
+            "the reply."
+        ),
+        facts={
+            "message_type": (clarifier_prompt or {}).get("message_type"),
+            "model": getattr(clarifier_config, "model", None),
+            "prompt_version": getattr(clarifier_config, "prompt_version", None),
+            "resolved_entities": len((clarifier_prompt or {}).get("entities") or []),
+        },
+        error=failed,
+        raw={"user_prompt": user_message},
+    )
+
+    if failed is not None:
+        # AC-403: a failed clarifier is a FAILED turn, and the tail does not run. No
+        # session is written (the customer's memory must not record an answer that was
+        # never composed), and `branch_kind` stays `low_signal` because routing succeeded.
+        reply = {"text": text, "quick_replies": []}
+        with _session(session_factory) as db:
+            _close_turn(
+                db,
+                turn_id,
+                status="failed",
+                stage="casual_llm",
+                branch_kind="low_signal",
+                error=failed,
+                records=turn_trace.records,
+                response={"ctx": ctx, "item": item, "actions": actions, "reply": reply},
+            )
+        return TurnResult(
+            turn_id=turn_id,
+            ctx=ctx,
+            item=item,
+            branch_kind="low_signal",
+            delegate=None,
+            reply=reply,
+            actions=actions,
+            session_patch=None,
+            status="failed",
+            stage="casual_llm",
+        )
+
+    # -- the tail, exactly the one every other lane will use ---------------- #
+    # The row is closed `delegated` at `routed` FIRST, which is not bookkeeping: it is the
+    # state the turn is genuinely in (a lane produced a result and the tail has not folded
+    # it in yet), it is the state `complete_turn` refuses to run without, and it is what
+    # the trace screen should show if this process dies between the two. It also puts the
+    # `send_message` action on the row before the tail reads `prior_actions` off it, so a
+    # duplicate delivery replays the action as well as the reply (D15).
+    #
+    # `answer` is `sub-answer`'s own return on this arm, reproduced exactly: its
+    # `answer-result` node emits `{...central-exchange's output, outcome_fragment}`, and
+    # the ITEM that reaches `sub-output` is that object - NOT `route-turn`'s item.
+    #
+    # The difference decides the reply. `build-outcome` reads `central-exchange` out of
+    # `item.outcome_fragment`, and `complete_turn`'s entry gate runs `escalate-catalog`
+    # only when the item carries a `branch_kind`. `sub-answer`'s output has none, so the
+    # catalog is skipped and the compile-state ladder falls through to `central-exchange`.
+    # Hand it `route-turn`'s item instead and the catalog runs, produces an empty
+    # `response` for a kind it has no case for, and wins the ladder - the reply comes out
+    # blank. The turn ROW keeps `low_signal` either way; `branch_kind` is read off the row.
+    central = {"response": text}
+    answer = {
+        **central,
+        "outcome_fragment": {
+            "central-exchange": central,
+            "build-miss-member-offer": None,
+            "dym-annotate-partial": None,
+        },
+    }
+
+    with _session(session_factory) as db:
+        _close_turn(
+            db,
+            turn_id,
+            status="delegated",
+            stage="routed",
+            branch_kind="low_signal",
+            error=None,
+            records=turn_trace.records,
+            response={"ctx": ctx, "item": item, "actions": actions},
+        )
+
+    completed = complete_turn(
+        turn_id,
+        {"item": answer, "ctx": ctx, "answer": answer},
+        session_factory=session_factory,
+    )
+
+    return TurnResult(
+        turn_id=turn_id,
+        ctx=ctx,
+        item=item,
+        branch_kind="low_signal",
+        delegate=None,
+        reply=completed.reply,
+        actions=completed.actions,
+        # D14: on a dry run the tail wrote nothing and hands back what it WOULD have
+        # written, so a console turn can be inspected. On a live turn it is already saved.
+        session_patch=completed.session_patch,
+        status=completed.status,
+        stage=completed.stage,
+    )
+
+
+def _casual_failure_summary(failed: str, setup_error: str | None) -> str:
+    """One sentence for the trace screen, in the operator's words not the provider's.
+
+    "Could not reach the clarifier" is wrong for the commonest setup failure by far - a
+    missing API key or an unset AI-assistant config never reached anything, and telling an
+    operator the model was unreachable sends them to look at the wrong system.
+    """
+    if setup_error is None:
+        return "Could not reach the clarifier."
+    lowered = failed.lower()
+    if "api key" in lowered:
+        return "The clarifier is not configured: no API key for its provider."
+    if "configuration is not set" in lowered:
+        return "The clarifier is not configured: the AI assistant settings are empty."
+    return "Could not prepare the clarifier call."
 
 
 def _stamp_item(access: dict, branch_kind: str, tier_stamp: dict) -> dict[str, Any]:
@@ -959,60 +1215,53 @@ def _business_lane_enabled() -> bool:
     return bool(getattr(settings, "chatbot_business_lane_enabled", False))
 
 
-def _stock_denial_enabled(db: Session) -> bool:
+def _settings_row(db: Session) -> Any:
+    """The `system_settings` singleton, read ONCE per turn.
+
+    Both chatbot switches live on it, and both predicates below take the ROW rather than a
+    session so the turn makes one query for the pair instead of one each.
+    """
+    from app.models.user import SystemSetting
+
+    return db.query(SystemSetting).first()
+
+
+def _stock_denial_enabled(db: Session, row: Any = _UNSET) -> bool:
     """R1: `system_settings.chatbot_stock_denial_enabled`, default false.
 
     Off, `isStockCheckDenied` is never evaluated and no turn can reach `stock_denied` or
     `demand_qty` - which is exactly as dead as those two lanes are today, by typo.
-    """
-    from app.models.user import SystemSetting
 
-    row = db.query(SystemSetting).first()
+    Keeps its name and its leading `db` parameter because `test_engine_failure_paths.py`
+    patches it by name with a one-argument lambda. `row` is how the caller passes the
+    singleton it has already read; omit it and this reads its own, which is what that
+    patched call site and any future caller get for free.
+    """
+    if row is _UNSET:
+        row = _settings_row(db)
     return bool(getattr(row, "chatbot_stock_denial_enabled", False)) if row is not None else False
 
 
-@dataclass(frozen=True)
-class ChatbotSettings:
-    """The three `system_settings` answers one turn needs, read ONCE.
+def _unsupported_domains(row: Any) -> tuple[str, ...] | None:
+    """`system_settings.chatbot_unsupported_domains` (AC-304), or None for the default.
 
-    Three separate `.first()` calls is three round trips for one singleton, and worse:
-    `system_settings` has no ORDER BY on `.first()` (a known gotcha in this repo), so three
-    reads could in principle disagree with each other about which row is the singleton.
-    One read cannot.
+    None rather than the default list, so `route.decide` owns the fallback in ONE place -
+    returning the two literals here would put them in two files. Takes the row the turn
+    has already read rather than querying again.
     """
-
-    stock_denial_enabled: bool
-    unsupported_domains: tuple[str, ...] | None
-    completed_lanes: tuple[str, ...]
+    configured = getattr(row, "chatbot_unsupported_domains", None) if row else None
+    return tuple(str(x) for x in configured) if isinstance(configured, list) else None
 
 
-def _chatbot_settings(db: Session) -> ChatbotSettings:
-    """Read the singleton once and project the three chatbot answers off it.
+def _enabled_lanes(db: Session, row: Any = _UNSET) -> frozenset[str]:
+    """`system_settings.chatbot_completed_lanes`: which lanes the CRM may FINISH.
 
-    Every fallback is the column's OWN default, so an install with no settings row at all
-    behaves like a migrated one: stock denial off (R1), the two unsupported domains the JS
-    hard-codes (`None` here means "route decides", so those two literals live in exactly
-    one place), and NO completed lanes - the CRM ships inert.
+    Empty by default, so a newly deployed lane delegates to n8n until the owner turns it
+    on, and an absent settings row means "none" rather than "all" - the safe direction.
     """
-    from app.models.user import SystemSetting
-
-    row = db.query(SystemSetting).first()
-    unsupported = getattr(row, "chatbot_unsupported_domains", None) if row is not None else None
-    completed = getattr(row, "chatbot_completed_lanes", None) if row is not None else None
-    return ChatbotSettings(
-        # Through the named helper, not off the row: `tests/chatbot/test_engine_failure_paths.py`
-        # patches `_stock_denial_enabled` to reach the throw R1's flag guards, and reading
-        # the column here instead would bypass the patch and make that test vacuous.
-        stock_denial_enabled=_stock_denial_enabled(db),
-        unsupported_domains=(
-            tuple(str(x) for x in unsupported) if isinstance(unsupported, list) else None
-        ),
-        completed_lanes=(
-            tuple(str(x) for x in completed)
-            if isinstance(completed, list)
-            else tuple(DEFAULT_COMPLETED_LANES)
-        ),
-    )
+    if row is _UNSET:
+        row = _settings_row(db)
+    return enabled_lanes_from(getattr(row, "chatbot_completed_lanes", None)) if row else frozenset()
 
 
 # Luxon's `cccc, dd MMMM yyyy` is English regardless of where the process runs. Python's
