@@ -22,6 +22,8 @@ interface ChatTranscriptProps {
   turnsByMessageId?: Map<string, ChatbotTurn>;
   /** AC-255: show only the incoming messages whose turn failed, plus their replies. */
   failedTurnsOnly?: boolean;
+  /** When set, Retry is disabled everywhere in this transcript, with this as the reason. */
+  retryUnavailableReason?: string | null;
 }
 
 function latencyVariant(seconds: number): string {
@@ -59,6 +61,7 @@ export function ChatTranscript({
   emptyText,
   turnsByMessageId,
   failedTurnsOnly = false,
+  retryUnavailableReason = null,
 }: ChatTranscriptProps) {
   const [term, setTerm] = useState('');
   const [activeMatch, setActiveMatch] = useState(0);
@@ -260,7 +263,7 @@ export function ChatTranscript({
                     a turn (Phase 2). */}
                 {!outgoing &&
                   (turn ? (
-                    <TurnPanel turn={turn} />
+                    <TurnPanel turn={turn} retryUnavailableReason={retryUnavailableReason} />
                   ) : (
                     m.state_trace && <StateTracePanel trace={m.state_trace} />
                   ))}

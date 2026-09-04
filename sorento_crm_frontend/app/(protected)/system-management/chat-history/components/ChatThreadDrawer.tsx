@@ -5,7 +5,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useChatThread } from '../hooks/useChatHistory';
-import { useChatbotTurns } from '../hooks/useChatbotTurns';
+import { useChatbotTurns, useRetryAvailability } from '../hooks/useChatbotTurns';
 import { ChatTranscript } from './ChatTranscript';
 import type { ChatMessageRow } from '../types/chatHistory.types';
 
@@ -19,19 +19,13 @@ export function ChatThreadDrawer({ row, onOpenChange }: ChatThreadDrawerProps) {
   const { data, isLoading } = useChatThread(row?.contact_id ?? null, row?.id);
 
   const messages = useMemo(() => data?.data ?? [], [data]);
-  const incomingMessageIds = useMemo(
-    () =>
-      messages
-        .filter((m) => m.type === 'incoming' && m.message_id)
-        .map((m) => m.message_id as string),
-    [messages],
-  );
 
   const {
     byMessageId,
     isLoading: turnsLoading,
     isError: turnsFailed,
-  } = useChatbotTurns(row?.contact_id ?? null, incomingMessageIds);
+  } = useChatbotTurns(row?.contact_id ?? null);
+  const { data: retry } = useRetryAvailability(Boolean(row));
 
   const failedCount = useMemo(
     () => [...byMessageId.values()].filter((t) => t.status === 'failed').length,
@@ -78,6 +72,7 @@ export function ChatThreadDrawer({ row, onOpenChange }: ChatThreadDrawerProps) {
             anchorId={row?.id ?? null}
             turnsByMessageId={byMessageId}
             failedTurnsOnly={failedOnly}
+            retryUnavailableReason={retry && !retry.available ? retry.reason : null}
           />
         </div>
       </SheetContent>

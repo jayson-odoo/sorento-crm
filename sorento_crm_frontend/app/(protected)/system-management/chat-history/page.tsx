@@ -29,6 +29,8 @@ import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { buildGroupHeader } from './groupHeader';
 import { getChatMessages } from './services/chatHistoryService';
 import { useExportChatHistory } from './hooks/useChatHistory';
+import { useFailedChatbotContacts } from './hooks/useChatbotTurns';
+import { stageLabel } from './turnPresentation';
 import { ChatThreadDrawer } from './components/ChatThreadDrawer';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import type {
@@ -72,6 +74,8 @@ export default function ChatHistoryPage() {
   const [dateTo, setDateTo] = useState(() => localInput(0));
   const [direction, setDirection] = useState('');
   const [breachedOnly, setBreachedOnly] = useState(false);
+  // AC-255. Narrows the LIST to contacts whose chatbot turns failed in this range.
+  const [failedTurnsOnly, setFailedTurnsOnly] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [groupBy, setGroupBy] = useState<ChatHistoryGroupBy>('none');
 
@@ -104,9 +108,27 @@ export default function ChatHistoryPage() {
     staleTime: 15_000,
   });
 
+  // AC-255. Only fetched when the filter is on: an aggregate over the whole turn table
+  // behind a toggle most operators never touch would be a page-load cost for nothing.
+  const { byContactId: failedByContact, isLoading: failedLoading } = useFailedChatbotContacts(
+    { from: filters.date_from, to: filters.date_to },
+    failedTurnsOnly,
+  );
+
   const exportMutation = useExportChatHistory();
 
   const resetPage = () => setPagination((p) => ({ ...p, pageIndex: 0 }));
+
+  // The SERVER decided which contacts have a failed turn; this narrows the page to them.
+  // Done here rather than as a query param because the chat-history list is paged over
+  // MESSAGES and the failure is a property of the CONTACT - joining the two server-side
+  // would mean teaching that endpoint about turns, which is the coupling the separate
+  // aggregate exists to avoid.
+  const rows = useMemo(() => {
+    const all = data?.data ?? [];
+    if (!failedTurnsOnly) return all;
+    return all.filter((row) => failedByContact.has(row.contact_id));
+  }, [data, failedTurnsOnly, failedByContact]);
 
   const columns = useMemo<ColumnDef<ChatMessageRow>[]>(
     () => [
@@ -123,11 +145,24 @@ export default function ChatHistoryPage() {
         accessorKey: 'contact_display',
         id: 'contact_display',
         header: ({ column }) => <DataGridColumnHeader title="Contact" column={column} />,
-        cell: ({ row }) => (
-          <span className="truncate" title={row.original.contact_display}>
-            {row.original.contact_display}
-          </span>
-        ),
+        cell: ({ row }) => {
+          const failed = failedByContact.get(row.original.contact_id);
+          return (
+            <div className="min-w-0">
+              <span className="truncate block" title={row.original.contact_display}>
+                {row.original.contact_display}
+              </span>
+              {failed && (
+                // AC-255: the row says what stopped last, so the list itself answers
+                // "which of these is worth opening" without opening any of them.
+                <Badge variant="destructive" appearance="light" size="sm" className="mt-0.5">
+                  failed at {stageLabel(failed.last_failed_stage ?? 'received').toLowerCase()}
+                  {failed.count > 1 ? ` (${failed.count})` : ''}
+                </Badge>
+              )}
+            </div>
+          );
+        },
         size: 210,
       },
       {
@@ -172,14 +207,17 @@ export default function ChatHistoryPage() {
         size: 110,
       },
     ],
-    [],
+    // `failedByContact` is read by the Contact cell (AC-255's last-failed-stage badge).
+    // Without it here the columns memo would keep the first, empty map and the badge
+    // would never appear - the filter would look like it silently did nothing.
+    [failedByContact],
   );
 
   const renderGroupHeader = useMemo(() => buildGroupHeader(groupBy), [groupBy]);
 
   const table = useReactTable({
     columns,
-    data: data?.data ?? [],
+    data: rows,
     pageCount: Math.ceil((data?.pagination.total ?? 0) / pagination.pageSize),
     getRowId: (row) => String(row.id),
     state: { pagination, sorting },
@@ -193,7 +231,7 @@ export default function ChatHistoryPage() {
     manualSorting: true,
   });
 
-  const filtersActive = (direction ? 1 : 0) + (breachedOnly ? 1 : 0);
+  const filtersActive = (direction ? 1 : 0) + (breachedOnly ? 1 : 0) + (failedTurnsOnly ? 1 : 0);
 
   const GridToolbar = () => {
     const [inputValue, setInputValue] = useState(searchQuery);
@@ -292,6 +330,20 @@ export default function ChatHistoryPage() {
                 </div>
                 <div>
                   <Button
+                    variant={failedTurnsOnly ? 'primary' : 'outline'}
+                    size="sm"
+                    className="w-full"
+                    onClick={() => {
+                      setFailedTurnsOnly((v) => !v);
+                      resetPage();
+                    }}
+                    aria-pressed={failedTurnsOnly}
+                  >
+                    {failedTurnsOnly ? 'Failed turns only: on' : 'Failed turns only: off'}
+                  </Button>
+                </div>
+                <div>
+                  <Button
                     variant={breachedOnly ? 'primary' : 'outline'}
                     size="sm"
                     className="w-full"
@@ -342,7 +394,13 @@ export default function ChatHistoryPage() {
           standardToolbar={false}
           tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
           renderGroupHeader={renderGroupHeader}
-          emptyMessage="No messages in this range. Widen the date range or clear filters - chat history is written by the n8n WhatsApp flow."
+          emptyMessage={
+            failedTurnsOnly
+              ? (failedLoading
+                  ? 'Looking for failed turns…'
+                  : 'No chatbot turns failed in this range.')
+              : 'No messages in this range. Widen the date range or clear filters - chat history is written by the n8n WhatsApp flow.'
+          }
         >
           <Card>
             <GridToolbar />

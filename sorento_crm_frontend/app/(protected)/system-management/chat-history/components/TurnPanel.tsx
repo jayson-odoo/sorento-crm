@@ -31,7 +31,15 @@ import type { ChatbotTurn, TurnTraceRecord } from '../types/chatbotTurn.types';
  * Collapsed by default: a thread has many turns and the status line alone is what a scan
  * needs. Failed turns carry the destructive tone so they are findable without expanding.
  */
-export function TurnPanel({ turn }: { turn: ChatbotTurn }) {
+export function TurnPanel({
+  turn,
+  retryUnavailableReason = null,
+}: {
+  turn: ChatbotTurn;
+  /** Environment-level: Retry is not wired here at all. Disables the button with a reason
+   *  rather than offering one that always 409s. */
+  retryUnavailableReason?: string | null;
+}) {
   const [open, setOpen] = useState(false);
   const headline = useMemo(() => turnHeadline(turn), [turn]);
   const rows = useMemo(() => buildTimeline(turn), [turn]);
@@ -96,7 +104,13 @@ export function TurnPanel({ turn }: { turn: ChatbotTurn }) {
           <ol className="ms-1.5 border-s ps-0 space-y-0">
             {rows.map((row, i) =>
               row.kind === 'stage' ? (
-                <StageRow key={`${row.record.stage}-${i}`} record={row.record} label={row.label} turn={turn} />
+                <StageRow
+                  key={`${row.record.stage}-${i}`}
+                  record={row.record}
+                  label={row.label}
+                  turn={turn}
+                  retryUnavailableReason={retryUnavailableReason}
+                />
               ) : (
                 <NotReachedRow key={`skipped-${i}`} labels={row.labels} />
               ),
@@ -127,10 +141,12 @@ function StageRow({
   record,
   label,
   turn,
+  retryUnavailableReason = null,
 }: {
   record: TurnTraceRecord;
   label: string;
   turn: ChatbotTurn;
+  retryUnavailableReason?: string | null;
 }) {
   const failed = record.status === 'failed';
   const memory = record.stage === 'remembered' ? memoryChips(rememberedRecord(turn)) : [];
@@ -170,7 +186,9 @@ function StageRow({
       )}
 
       {record.stage === 'remembered' && <MemoryChips chips={memory} />}
-      {failed && <FailedStageActions turn={turn} />}
+      {failed && (
+        <FailedStageActions turn={turn} retryUnavailableReason={retryUnavailableReason} />
+      )}
     </li>
   );
 }
@@ -214,21 +232,44 @@ function MemoryChips({ chips }: { chips: ReturnType<typeof memoryChips> }) {
   );
 }
 
-/** AC-253. Retry is enabled only on a failed turn; R4 says this is the only retry there is. */
-function FailedStageActions({ turn }: { turn: ChatbotTurn }) {
+/** AC-253. Retry is enabled only on a failed turn; R4 says this is the only retry there is.
+ *
+ *  Three separate reasons it can be off, each with its own words, because "disabled" with
+ *  no explanation is what teaches an operator to stop trusting a screen: the turn did not
+ *  fail, a retry is already on its way, or this environment has no ingress wired. */
+function FailedStageActions({
+  turn,
+  retryUnavailableReason = null,
+}: {
+  turn: ChatbotTurn;
+  retryUnavailableReason?: string | null;
+}) {
   const retry = useRetryChatbotTurn();
+  const alreadyRequested = Boolean(turn.retry_requested_at);
+  const disabledReason = retryUnavailableReason
+    ? retryUnavailableReason
+    : !canRetry(turn)
+      ? 'Only a failed turn can be retried.'
+      : alreadyRequested
+        ? 'A retry is already on its way; it will arrive as a new turn.'
+        : null;
+
   return (
-    <div className="mt-2 flex flex-wrap gap-1.5">
+    <div className="mt-2 flex flex-wrap items-center gap-1.5">
       <Button
         size="sm"
         variant="primary"
-        disabled={!canRetry(turn) || retry.isPending}
+        disabled={Boolean(disabledReason) || retry.isPending}
         onClick={() => retry.mutate(turn.id)}
+        title={disabledReason ?? undefined}
       >
         <RotateCcw className="size-3.5" />
         {retry.isPending ? 'Re-queueing' : 'Retry turn'}
       </Button>
       <CopyTurnId id={turn.id} />
+      {disabledReason && (
+        <span className="text-2xs text-muted-foreground">{disabledReason}</span>
+      )}
     </div>
   );
 }

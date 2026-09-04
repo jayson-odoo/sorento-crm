@@ -87,8 +87,17 @@ export interface ChatbotTurn {
   /** Manual retries from this screen. 1 on a turn nobody has retried. */
   attempt: number;
   is_test: boolean;
+  // Optional, all four: the API always sends them, but nothing in the UI needs them to
+  // be there. Requiring them would only force every caller that legitimately does not
+  // have one - a test factory, a narrower projection, a response from before the column
+  // existed - to invent a value, which is how a type stops describing reality.
+  ingress?: 'webhook' | 'poller' | 'retry' | 'console';
+  error?: string | null;
   created_at: string;
+  started_at?: string | null;
   finished_at: string | null;
+  /** Set while a requested retry is on its way; the row itself stays `failed`. */
+  retry_requested_at?: string | null;
   trace: TurnTraceRecord[];
   response: TurnResponseBody | null;
   /**
@@ -110,9 +119,40 @@ export interface ChatbotTurnFilters {
   from?: string;
   to?: string;
   status?: TurnStatus;
+  /** Page size. The endpoint defaults to 50 and caps at 200. */
+  limit?: number;
+  /** The previous page's opaque `next_cursor`. */
+  cursor?: string | null;
+}
+
+export interface FailedContactFilters {
+  from?: string;
+  to?: string;
+}
+
+/** One contact with at least one failed turn in the range (AC-255). */
+export interface FailedContactRow {
+  contact_respond_id: string;
+  last_failed_stage: TurnFailureStage | null;
+  last_failed_at: string | null;
+  count: number;
+}
+
+export interface FailedContactListResponse {
+  items: FailedContactRow[];
 }
 
 export interface RetryTurnResponse {
   turn_id: string;
+  /** What the RE-INJECTED turn will carry. The retried row keeps its own attempt. */
   attempt: number;
+}
+
+/**
+ * Whether Retry can work in this environment. Read so the button can be disabled with a
+ * reason rather than offering an action that always 409s.
+ */
+export interface RetryAvailability {
+  available: boolean;
+  reason: string | null;
 }
