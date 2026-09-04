@@ -96,12 +96,20 @@ def _qf(ctx: Any) -> dict:
     return jsc.get(jsc.get(ctx, "parse"), "output") or {}
 
 
-def resolve_for_prompt(db: Session, *, ctx: dict, dry_run: bool = False) -> dict:
+def resolve_for_prompt(db: Session, *, ctx: dict) -> dict:
     """The body `resolve-entity-clarification` posts, sent in process. Session-bound.
 
     `contact_id` and `space_id` ride on that node's URL query string and neither is read
     by `_resolve_input` (grepped: no reference), so they carry no signal and are not
     threaded here.
+
+    **No `dry_run` parameter, deliberately.** S6a added `ResolveReferenceRequest.dry_run`
+    for exactly this rule, and what it suppresses is the `ai_assistant_usage_logs` row the
+    spec-search reader writes - in `resolve_reference_post`, ABOVE `_resolve_input`. This
+    lane calls `_resolve_input` directly and so never reaches that write; the function
+    itself is read-only (no `db.add` / `db.commit` / INSERT in its body). A flag here would
+    guard nothing. The trigger to add one is named: the first write `_resolve_input` itself
+    grows.
 
     `access_levels` comes straight from the parse output. The live node wraps it in an
     `$('Aggregate').isExecuted ? intersection(...) : ...` ternary whose true arm is
@@ -123,7 +131,6 @@ def resolve_for_prompt(db: Session, *, ctx: dict, dry_run: bool = False) -> dict
         allowed_entity_types=hints if len(raws) else [NOTHING],
         access_levels=jsc.array(out.get("access_levels")),
         fallback_to_all_types=True,
-        dry_run=dry_run,
     )
 
 

@@ -64,6 +64,35 @@ CAPTURE_REPORT: dict[str, dict] = {
         "captured_on": "2026-09-04",
         "nodes": ("output_exchange", "suggest-follow-up"),
     },
+    # The LIVE `sub-resolve-and-gate` (`tKeQUkZK5cFK9BFa`), not the RS fork the 31 Aug
+    # captures came from. Its node bodies are byte-identical to the export, so these are
+    # the first captures that can grade `specific_options` and `tier_pick_domain` - the two
+    # keys `tests/chatbot/_corpus.py::CAPTURE_BODY_ADDITIONS` has to strip from every older
+    # capture. Every execution on the version was scanned, so a cell still under the bar is
+    # exhausted, not short: the traffic does not exist. The thin ones and their real pools:
+    # `access_ask` 0, `no_domain` 0, `portal_link` 1, `forms` 1, `master_products`
+    # (not_found) 1, `customer-picker` 2, `resource_attachment` 2, `promotion` 3,
+    # `tier-gate` 3. `build-ctx` is deliberately NOT listed: it already has a pool under
+    # `spine-rs-1a`, and the one capture of it here only adds to that count.
+    "sub-resolve-and-gate-rs": {
+        "version": "4f367b1c",
+        "version_pool": 682,
+        "scanned": 682,
+        "all_versions": 852,
+        "captured_on": "2026-09-05",
+        "nodes": (
+            "disallowed-entity-gate",
+            "tier-gate",
+            "build-ctx-resolved",
+            "annotate-incoming-picker",
+            "annotate-customer-picker",
+            "resolve-exit-continue",
+            "resolve-exit-offer",
+            "resolve-exit-not-found",
+            "item",
+            "sub-resolve-and-gate",
+        ),
+    },
 }
 
 # Branches that CANNOT be captured because live never reaches them. H1: the spine tests
@@ -110,6 +139,47 @@ def _expected_branch_kind(fixture: _corpus.Fixture) -> str | None:
     return None
 
 
+# The S6a nodes, cut by the turn's DOMAIN. That is the axis their code path actually
+# turns on: `ALLOWED` / `ALLOWS_EMPTY` / `REQUIRED_TYPES` / `REQUIRE_SPECIFIC_DOMAINS` are
+# all keyed by domain, so "five captures of `incoming`" says something and "five captures"
+# says nothing.
+_DOMAIN_CUT_NODES = frozenset(
+    {
+        "disallowed-entity-gate",
+        "build-ctx-resolved",
+        "annotate-incoming-picker",
+        "annotate-customer-picker",
+        "item",
+    }
+)
+
+# The exits, cut by the arm they took. Same argument, different vocabulary.
+_EXIT_CUT_NODES = frozenset(
+    {
+        "resolve-exit-continue",
+        "resolve-exit-access-ask",
+        "resolve-exit-not-found",
+        "resolve-exit-offer",
+        "sub-resolve-and-gate",
+    }
+)
+
+
+def _expected_domain(fixture: _corpus.Fixture) -> str | None:
+    """`gate_debug.domain` off whatever level of the item this node's output carries it."""
+    for item in fixture.expected:
+        json_body = item.get("json") or {}
+        for block in (
+            json_body,
+            (json_body.get("gate") or {}),
+            ((json_body.get("ctx") or {}).get("gate") or {}),
+        ):
+            debug = block.get("gate_debug") if isinstance(block, dict) else None
+            if isinstance(debug, dict) and debug.get("domain"):
+                return str(debug["domain"])
+    return None
+
+
 def _branch_of(fixture: _corpus.Fixture) -> str:
     """A coverage CELL for one fixture.
 
@@ -125,6 +195,19 @@ def _branch_of(fixture: _corpus.Fixture) -> str:
             if isinstance(output, dict):
                 return str(output.get("domain_hint") or "no_domain")
         return "unknown"
+    if fixture.node in _EXIT_CUT_NODES:
+        for item in fixture.expected:
+            kind = (item.get("json") or {}).get("_exit_kind")
+            if kind:
+                return str(kind)
+        return "unknown"
+    if fixture.node == "tier-gate":
+        # The one branch this node has: does it ASK, or does it proceed?
+        for item in fixture.expected:
+            return "tier_ask" if (item.get("json") or {}).get("tier_ask") else "tier_proceed"
+        return "unknown"
+    if fixture.node in _DOMAIN_CUT_NODES:
+        return _expected_domain(fixture) or "no_domain"
     return "all"
 
 
@@ -144,11 +227,21 @@ def collect() -> dict:
         # UNION by file stem, so a fixture that is only vendored (the world-derived
         # route-turn capture) is counted once and only once alongside the full corpus.
         seen: dict[str, _corpus.Fixture] = {}
-        for fixture in _corpus.vendored(node):
-            vendored_names[node].add(fixture.name)
-            seen[fixture.name] = fixture
-        for fixture in _corpus.full_corpus(node):
-            seen.setdefault(fixture.name.split("/")[-1], fixture)
+        if node == "sub-resolve-and-gate":
+            # The synthetic whole-sub replay has no directory: it reuses the four
+            # `resolve-exit-*` captures. Counted here so its `access_ask` arm shows up as
+            # the zero cell it is.
+            for fixture in _corpus.sub_run_fixtures(vendored_only=True):
+                vendored_names[node].add(fixture.name)
+                seen[fixture.name] = fixture
+            for fixture in _corpus.sub_run_fixtures(vendored_only=False):
+                seen.setdefault(fixture.name.split("/")[-1], fixture)
+        else:
+            for fixture in _corpus.vendored(node):
+                vendored_names[node].add(fixture.name)
+                seen[fixture.name] = fixture
+            for fixture in _corpus.full_corpus(node):
+                seen.setdefault(fixture.name.split("/")[-1], fixture)
         # Seed every branch the node CAN produce, so a zero-capture arm is a visible row
         # rather than an absent one. An arm nobody has ever captured is exactly the cell
         # gate 0 exists to surface.
@@ -186,6 +279,16 @@ def render(data: dict) -> str:
         f"Corpus: `{data['corpus_root']}` - the sibling n8n checkout's "
         "`n8n-workflows-init/tests/fixtures`, found by walking up from the backend or "
         "named explicitly by that environment variable."
+    )
+    lines.append("")
+    lines.append(
+        "**This file was rendered against a corpus that includes the 5 Sep "
+        "`sub-resolve-and-gate` capture run, which lives on an n8n WORKTREE and not yet in "
+        "that repo's main checkout.** Until those 84 files land there, reproducing this "
+        "report needs `CHATBOT_FIXTURES_DIR=<n8n worktree>/n8n-workflows-init/tests/"
+        "fixtures`; without it `test_coverage_md_is_not_stale` fails because the loader "
+        "sees a smaller corpus, not because anything drifted. CI is unaffected: it has the "
+        "vendored subset only and skips the comparison."
     )
     lines.append("")
     lines.append(

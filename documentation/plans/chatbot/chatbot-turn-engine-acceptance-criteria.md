@@ -486,6 +486,16 @@ the seam).
 - AC-602 `[T]` (S6a) Given every `disallowed-entity-gate`, `tier-gate`, `annotate-*-picker`,
   `resolve-exit-*` fixture, when replayed, then output equals `expected`; the `_isTimeline`
   contains-sentinel semantic is reproduced exactly (H46). (A2)
+  - Amended 5 Sep 2026, at implementation. Two clauses needed narrowing against what the
+    export actually ships. (a) `_isTimeline` lives in `output-structurer`, which is S6b, not
+    in any node of `sub-resolve-and-gate`; S6a therefore declares the sentinel and its
+    CONTAINS reading once (`contracts.TIMELINE_SENTINEL` / `is_timeline`) with the
+    mixed-array contract test, and S6b consumes that rather than re-deriving the guard a
+    second time. (b) Every capture predates two output keys the shipping bodies emit
+    (`specific_options`, `tier_pick_domain`); those keys are excluded from the comparison,
+    with the two-commit evidence recorded in `tests/chatbot/_corpus.py`
+    `CAPTURE_BODY_ADDITIONS`, and covered by unit tests instead. Everything else is compared
+    unchanged.
 - AC-603 `[BE]` (S6a) Given `resolved.by_entity_type`, when rendered to the customer, then only
   entity-type keys are iterated; a contract test adds a metadata key and asserts it never reaches
   the reply (H16). (A2)

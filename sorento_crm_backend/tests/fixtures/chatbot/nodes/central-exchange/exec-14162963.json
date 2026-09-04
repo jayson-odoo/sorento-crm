@@ -1,0 +1,2237 @@
+{
+  "source": {
+    "execution_id": "14162963",
+    "workflow_id": "9qVyfUxmRQqrpGRMDLRuz",
+    "node": "central-exchange",
+    "captured_at": "2026-08-29T05:49:21+00:00",
+    "expected_from": "runData"
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "test": null,
+          "test_run_id": null,
+          "started_at": null,
+          "contact": "900000050"
+        }
+      }
+    ],
+    "redis-pop-main-message-list": [
+      {
+        "json": {
+          "message": {
+            "message": {
+              "event_type": "message.received",
+              "event_id": "d63fb767-4729-455b-9b9a-286f02bf1fd6",
+              "contact": {
+                "id": 900000050,
+                "firstName": "Person 78",
+                "lastName": "",
+                "phone": "+60100000027",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1777880659
+              },
+              "message": {
+                "messageId": 1787850943000000,
+                "channelMessageId": "wamid.HBgLNjAxMjI0NjUyMTMVAgASGBYzRUIwRkM0REI4MDM4RUM3NDM2OTkxAA==",
+                "contactId": 900000050,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1787850943000,
+                "message": {
+                  "type": "text",
+                  "text": "check srtwb7096"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 78\"},\"wa_id\":\"60100000027\",\"user_id\":\"MY.900000051\",\"firstName\":\"Person 78\",\"lastName\":\"\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "contact": {
+              "id": 900000050,
+              "firstName": "Person 78",
+              "lastName": null,
+              "phone": "+60100000027",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/aefb2cb0-abec-490e-b74b-bf2f2d4a5b37"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260510_200514",
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": "New Lead",
+              "created_at": 1777880659
+            }
+          }
+        }
+      }
+    ],
+    "detect-media": [
+      {
+        "json": {
+          "message": {
+            "message": {
+              "event_type": "message.received",
+              "event_id": "d63fb767-4729-455b-9b9a-286f02bf1fd6",
+              "contact": {
+                "id": 900000050,
+                "firstName": "Person 78",
+                "lastName": "",
+                "phone": "+60100000027",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1777880659
+              },
+              "message": {
+                "messageId": 1787850943000000,
+                "channelMessageId": "wamid.HBgLNjAxMjI0NjUyMTMVAgASGBYzRUIwRkM0REI4MDM4RUM3NDM2OTkxAA==",
+                "contactId": 900000050,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1787850943000,
+                "message": {
+                  "type": "text",
+                  "text": "check srtwb7096"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 78\"},\"wa_id\":\"60100000027\",\"user_id\":\"MY.900000051\",\"firstName\":\"Person 78\",\"lastName\":\"\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "contact": {
+              "id": 900000050,
+              "firstName": "Person 78",
+              "lastName": null,
+              "phone": "+60100000027",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/aefb2cb0-abec-490e-b74b-bf2f2d4a5b37"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260510_200514",
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": "New Lead",
+              "created_at": 1777880659
+            }
+          },
+          "_media": {
+            "modality": null,
+            "attachment_type": null,
+            "media_url": null,
+            "mime_type": null,
+            "caption": "check srtwb7096",
+            "bytes": null,
+            "duration_ms": null,
+            "duration_source": null,
+            "message_id": "1787850943000000",
+            "respond_io_id": "900000050",
+            "test_run_id": null,
+            "scope": null
+          }
+        }
+      }
+    ],
+    "if-media-in": [],
+    "tf-message": [
+      {
+        "json": {
+          "event_type": "message.received",
+          "event_id": "d63fb767-4729-455b-9b9a-286f02bf1fd6",
+          "contact": {
+            "id": 900000050,
+            "firstName": "Person 78",
+            "lastName": "",
+            "phone": "+60100000027",
+            "email": null,
+            "language": null,
+            "profilePic": null,
+            "countryCode": "MY",
+            "status": "open",
+            "assignee": {
+              "id": null,
+              "firstName": null,
+              "lastName": null,
+              "email": null
+            },
+            "created_at": 1777880659
+          },
+          "message": {
+            "messageId": 1787850943000000,
+            "channelMessageId": "wamid.HBgLNjAxMjI0NjUyMTMVAgASGBYzRUIwRkM0REI4MDM4RUM3NDM2OTkxAA==",
+            "contactId": 900000050,
+            "channelId": 453209,
+            "traffic": "incoming",
+            "timestamp": 1787850943000,
+            "message": {
+              "type": "text",
+              "text": "check srtwb7096"
+            }
+          },
+          "channel": {
+            "id": 453209,
+            "name": "Internal (+60 11-1673 1179)",
+            "source": "whatsapp_business",
+            "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 78\"},\"wa_id\":\"60100000027\",\"user_id\":\"MY.900000051\",\"firstName\":\"Person 78\",\"lastName\":\"\"}}",
+            "created_at": 1767682908
+          },
+          "sender": {
+            "source": "contact",
+            "userId": null,
+            "teamId": null,
+            "workflowId": null,
+            "broadcastHistoryId": null
+          }
+        }
+      }
+    ],
+    "sorento-sub-respond-findcontact-respond": [
+      {
+        "json": {
+          "id": 900000050,
+          "firstName": "Person 78",
+          "lastName": null,
+          "phone": "+60100000027",
+          "email": null,
+          "language": null,
+          "profilePic": null,
+          "locale": null,
+          "countryCode": "MY",
+          "status": "open",
+          "isBlocked": false,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": null
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "backend_id",
+              "value": "https://fe-sorento.foundryx.my/user-management/contacts/aefb2cb0-abec-490e-b74b-bf2f2d4a5b37"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "tags": [
+            "imported_20260510_200514",
+            "imported_20260627_150636"
+          ],
+          "assignee": null,
+          "lifecycle": "New Lead",
+          "created_at": 1777880659
+        }
+      }
+    ],
+    "if-transcribed-confirm": [],
+    "is-human-intervened": [
+      {
+        "json": {
+          "id": 900000050,
+          "firstName": "Person 78",
+          "lastName": null,
+          "phone": "+60100000027",
+          "email": null,
+          "language": null,
+          "profilePic": null,
+          "locale": null,
+          "countryCode": "MY",
+          "status": "open",
+          "isBlocked": false,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": null
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "backend_id",
+              "value": "https://fe-sorento.foundryx.my/user-management/contacts/aefb2cb0-abec-490e-b74b-bf2f2d4a5b37"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "tags": [
+            "imported_20260510_200514",
+            "imported_20260627_150636"
+          ],
+          "assignee": null,
+          "lifecycle": "New Lead",
+          "created_at": 1777880659
+        }
+      }
+    ],
+    "if-message-is-audio": [],
+    "get-session-vars": [
+      {
+        "json": {
+          "respond_io_id": "900000050",
+          "session_vars": {
+            "variables": {
+              "routing": {
+                "suggested_team": "warehouse",
+                "suggested_agent": "general_enquiries"
+              },
+              "entities": [
+                {
+                  "raw": "SRTWB7099",
+                  "hint": "product",
+                  "uuid": null,
+                  "dym_slot": "14162774",
+                  "canonical_code": "SRTWB7099",
+                  "current_message": true
+                }
+              ],
+              "ideation": null,
+              "response": "Previous turn (inventory): returned 13 records",
+              "date_mode": null,
+              "dym_offer": {
+                "id": "14162774",
+                "ttl": 3,
+                "domain": "inventory",
+                "picked": [
+                  "SRTWB7099"
+                ],
+                "candidates": [
+                  {
+                    "code": "SRTWB7095",
+                    "uuid": null,
+                    "for_raw": "SRTWB7098-PJ",
+                    "for_hint": "product",
+                    "entity_type": null,
+                    "for_canonical": "SRTWB7098-PJ"
+                  },
+                  {
+                    "code": "SRTWB7096",
+                    "uuid": null,
+                    "for_raw": "SRTWB7098-PJ",
+                    "for_hint": "product",
+                    "entity_type": null,
+                    "for_canonical": "SRTWB7098-PJ"
+                  },
+                  {
+                    "code": "SRTWB7099",
+                    "uuid": null,
+                    "for_raw": "SRTWB7098-PJ",
+                    "for_hint": "product",
+                    "entity_type": null,
+                    "for_canonical": "SRTWB7098-PJ"
+                  }
+                ]
+              },
+              "user_goal": "trying to check stock for SRTWB7099",
+              "escalation": {
+                "is_escalation_confirmation": false
+              },
+              "match_mode": "and",
+              "domain_hint": "inventory",
+              "intent_hint": "check_stock",
+              "message_type": "business_query",
+              "query_brands": [],
+              "access_levels": [],
+              "routing_brand": "sorento",
+              "contains_flyer": false,
+              "dym_candidates": [
+                {
+                  "code": "SRTWB7095",
+                  "uuid": null,
+                  "for_raw": "SRTWB7098-PJ",
+                  "for_hint": "product",
+                  "entity_type": null,
+                  "for_canonical": "SRTWB7098-PJ"
+                },
+                {
+                  "code": "SRTWB7096",
+                  "uuid": null,
+                  "for_raw": "SRTWB7098-PJ",
+                  "for_hint": "product",
+                  "entity_type": null,
+                  "for_canonical": "SRTWB7098-PJ"
+                },
+                {
+                  "code": "SRTWB7099",
+                  "uuid": null,
+                  "for_raw": "SRTWB7098-PJ",
+                  "for_hint": "product",
+                  "entity_type": null,
+                  "for_canonical": "SRTWB7098-PJ"
+                }
+              ],
+              "date_filter_end": null,
+              "last_result_set": [
+                {
+                  "idx": 1,
+                  "uuid": null,
+                  "label": "SRTWB7099",
+                  "product": null,
+                  "filename": null,
+                  "entity_type": null,
+                  "attachment_type": null
+                },
+                {
+                  "idx": 2,
+                  "uuid": null,
+                  "label": "SRTWB7099",
+                  "product": null,
+                  "filename": null,
+                  "entity_type": null,
+                  "attachment_type": null
+                },
+                {
+                  "idx": 3,
+                  "uuid": null,
+                  "label": "SRTWB7099",
+                  "product": null,
+                  "filename": null,
+                  "entity_type": null,
+                  "attachment_type": null
+                },
+                {
+                  "idx": 4,
+                  "uuid": null,
+                  "label": "SRTWB7099",
+                  "product": null,
+                  "filename": null,
+                  "entity_type": null,
+                  "attachment_type": null
+                },
+                {
+                  "idx": 5,
+                  "uuid": null,
+                  "label": "SRTWB7099",
+                  "product": null,
+                  "filename": null,
+                  "entity_type": null,
+                  "attachment_type": null
+                },
+                {
+                  "idx": 6,
+                  "uuid": null,
+                  "label": "SRTWB7099",
+                  "product": null,
+                  "filename": null,
+                  "entity_type": null,
+                  "attachment_type": null
+                },
+                {
+                  "idx": 7,
+                  "uuid": null,
+                  "label": "SRTWB7099",
+                  "product": null,
+                  "filename": null,
+                  "entity_type": null,
+                  "attachment_type": null
+                },
+                {
+                  "idx": 8,
+                  "uuid": null,
+                  "label": "SRTWB7099",
+                  "product": null,
+                  "filename": null,
+                  "entity_type": null,
+                  "attachment_type": null
+                },
+                {
+                  "idx": 9,
+                  "uuid": null,
+                  "label": "SRTWB7099",
+                  "product": null,
+                  "filename": null,
+                  "entity_type": null,
+                  "attachment_type": null
+                },
+                {
+                  "idx": 10,
+                  "uuid": null,
+                  "label": "SRTWB7099",
+                  "product": null,
+                  "filename": null,
+                  "entity_type": null,
+                  "attachment_type": null
+                },
+                {
+                  "idx": 11,
+                  "uuid": null,
+                  "label": "SRTWB7099",
+                  "product": null,
+                  "filename": null,
+                  "entity_type": null,
+                  "attachment_type": null
+                },
+                {
+                  "idx": 12,
+                  "uuid": null,
+                  "label": "SRTWB7099",
+                  "product": null,
+                  "filename": null,
+                  "entity_type": null,
+                  "attachment_type": null
+                },
+                {
+                  "idx": 13,
+                  "uuid": null,
+                  "label": "SRTWB7099",
+                  "product": null,
+                  "filename": null,
+                  "entity_type": null,
+                  "attachment_type": null
+                }
+              ],
+              "routing_company": "00000000-0000-0000-0000-000000000001",
+              "date_filter_start": null,
+              "routing_companies": [
+                {
+                  "codes": [
+                    "SRTWB7099"
+                  ],
+                  "labels": [
+                    "SRTWB7099"
+                  ],
+                  "brand_code": "sorento",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento"
+                }
+              ],
+              "selection_context": null,
+              "routing_roster_plan": null,
+              "requested_attributes": [],
+              "routing_brand_source": "resolved"
+            },
+            "user_response": "Stock details found for the requested products.\n\n1. *Product Code:* SRTWB7099\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 8\n\n2. *Product Code:* SRTWB7099\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 0\n\n3. *Product Code:* SRTWB7099\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-IB\n*Quantity On Hand:* 0\n\n4. *Product Code:* SRTWB7099\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-IR\n*Quantity On Hand:* 0\n\n5. *Product Code:* SRTWB7099\n*Warehouse:* BERSATU (PORT KLANG)\n*System Location:* DC1-BB\n*Quantity On Hand:* 0\n\n6. *Product Code:* SRTWB7099\n*Warehouse:* BERSATU (PORT KLANG)\n*System Location:* DC1-IR\n*Quantity On Hand:* 0\n\n7. *Product Code:* SRTWB7099\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 70\n\n8. *Product Code:* SRTWB7099\n*Warehouse:* MERU\n*System Location:* MWH-BB\n*Quantity On Hand:* 130\n\n9. *Product Code:* SRTWB7099\n*Warehouse:* MERU\n*System Location:* MWH-IB\n*Quantity On Hand:* 320\n\n10. *Product Code:* SRTWB7099\n*Warehouse:* MERU\n*System Location:* MWH-IR\n*Quantity On Hand:* 0\n\n11. *Product Code:* SRTWB7099\n*Warehouse:* WH3 (PSM)\n*System Location:* WH3-BB\n*Quantity On Hand:* 93\n\n12. *Product Code:* SRTWB7099\n*Warehouse:* WH3 (PSM)\n*System Location:* WH3-IB\n*Quantity On Hand:* 267\n\n13. *Product Code:* SRTWB7099\n*Warehouse:* WH3 (PSM)\n*System Location:* WH3-IR\n*Quantity On Hand:* 70\n\n_Data last updated: 27/08/2026 17:21:45_"
+          }
+        }
+      }
+    ],
+    "Call 'sub-query-reformulator'": [
+      {
+        "json": {
+          "output": {
+            "message_type": "business_query",
+            "intent_hint": "check_product",
+            "domain_hint": "master_products",
+            "scope_intent": "specific",
+            "is_affirmative": null,
+            "user_goal": "trying to check the product details for srtwb7096",
+            "access_levels": [],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "SRTWB7096",
+                "hint": "product",
+                "canonical_code": "SRTWB7096",
+                "uuid": null,
+                "current_message": true,
+                "dym_slot": "14162774"
+              }
+            ],
+            "entity_op": "replace_combine",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "purchasing_product",
+              "suggested_agent": "general_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "dym_pick_applied": true,
+            "dym_offer_pick_code": "SRTWB7096",
+            "domain_signal_source": "intent_explicit",
+            "scope_exclusive_applied": false,
+            "entity_op_applied": "replace_combine",
+            "query_brands": [],
+            "entities_filtered": false,
+            "entities_emptied_by_filter": false,
+            "_pending_pick": true,
+            "dym_superseded_dropped": 0
+          },
+          "_parser_raw": {
+            "message_type": "business_query",
+            "intent_hint": "check_product",
+            "domain_hint": "master_products",
+            "scope_intent": "specific",
+            "is_affirmative": null,
+            "user_goal": "trying to check the product details for srtwb7096",
+            "access_levels": [],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "srtwb7096",
+                "hint": "product",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "entity_op": "replace_combine",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "purchasing_product",
+              "suggested_agent": "general_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false,
+              "company_pick": null
+            }
+          }
+        }
+      }
+    ],
+    "check-access": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "General Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null
+        }
+      }
+    ],
+    "If5": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "General Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null
+        }
+      }
+    ],
+    "If2": [],
+    "If-ideate": [],
+    "offer-hold-gate": [],
+    "If10": [],
+    "is-escalation-declined": [],
+    "If9": [],
+    "If1": [],
+    "not-supported-domain": [],
+    "If": [],
+    "If7": [],
+    "resolve-entity": [
+      {
+        "json": {
+          "match_mode": "and",
+          "tokens": [
+            "SRTWB7096"
+          ],
+          "elapsed_ms": 75.44,
+          "intersection": [
+            {
+              "entity_type": "product",
+              "canonical_code": "SRTWB7096",
+              "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+              "match_field": "product_code",
+              "match_tier": "and",
+              "company_id": "00000000-0000-0000-0000-000000000001",
+              "company_name": "Sorento",
+              "display": {
+                "product_name": "SRTWB7096",
+                "is_active": true,
+                "brand": {
+                  "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                  "brand_code": "SORENTO",
+                  "brand_name": "SORENTO"
+                }
+              }
+            }
+          ],
+          "by_entity_type": {
+            "product": [
+              {
+                "entity_type": "product",
+                "canonical_code": "SRTWB7096",
+                "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                "match_field": "product_code",
+                "match_tier": "and",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "product_name": "SRTWB7096",
+                  "is_active": true,
+                  "brand": {
+                    "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                    "brand_code": "SORENTO",
+                    "brand_name": "SORENTO"
+                  }
+                }
+              }
+            ]
+          },
+          "empty": false,
+          "unresolved_tokens": [],
+          "alternatives": [],
+          "token_coverage": [
+            {
+              "token": "SRTWB7096",
+              "match_semantics": "max_coverage",
+              "coverage": [
+                {
+                  "entity_type": "product",
+                  "matched_words": [
+                    "SRTWB7096"
+                  ],
+                  "unmatched_words": [],
+                  "truncated": false
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "disallowed-entity-gate": [
+      {
+        "json": {
+          "match_mode": "and",
+          "tokens": [
+            "SRTWB7096"
+          ],
+          "elapsed_ms": 75.44,
+          "intersection": [
+            {
+              "entity_type": "product",
+              "canonical_code": "SRTWB7096",
+              "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+              "match_field": "product_code",
+              "match_tier": "and",
+              "company_id": "00000000-0000-0000-0000-000000000001",
+              "company_name": "Sorento",
+              "display": {
+                "product_name": "SRTWB7096",
+                "is_active": true,
+                "brand": {
+                  "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                  "brand_code": "SORENTO",
+                  "brand_name": "SORENTO"
+                }
+              }
+            }
+          ],
+          "by_entity_type": {
+            "product": [
+              {
+                "entity_type": "product",
+                "canonical_code": "SRTWB7096",
+                "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                "match_field": "product_code",
+                "match_tier": "and",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "product_name": "SRTWB7096",
+                  "is_active": true,
+                  "brand": {
+                    "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                    "brand_code": "SORENTO",
+                    "brand_name": "SORENTO"
+                  }
+                }
+              }
+            ]
+          },
+          "empty": false,
+          "unresolved_tokens": [],
+          "alternatives": [],
+          "token_coverage": [
+            {
+              "token": "SRTWB7096",
+              "match_semantics": "max_coverage",
+              "coverage": [
+                {
+                  "entity_type": "product",
+                  "matched_words": [
+                    "SRTWB7096"
+                  ],
+                  "unmatched_words": [],
+                  "truncated": false
+                }
+              ]
+            }
+          ],
+          "gate_passed": true,
+          "require_specific": false,
+          "resolved_company": "sorento",
+          "company_team": null,
+          "resolved_companies": [
+            "sorento"
+          ],
+          "routing_brand": "sorento",
+          "routing_brand_source": "resolved",
+          "routing_companies": [
+            {
+              "company_id": "00000000-0000-0000-0000-000000000001",
+              "company_name": "Sorento",
+              "brand_code": "sorento",
+              "codes": [
+                "SRTWB7096"
+              ],
+              "labels": [
+                "SRTWB7096"
+              ]
+            }
+          ],
+          "routing_company": "00000000-0000-0000-0000-000000000001",
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "ok",
+          "gate_clarification": "",
+          "compatible_entities": [
+            {
+              "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+              "entity_type": "product",
+              "code": "SRTWB7096"
+            }
+          ],
+          "gate_debug": {
+            "domain": "master_products",
+            "allowed_lookup": [
+              "product",
+              "category",
+              "brand"
+            ],
+            "entities_count": 1
+          }
+        }
+      }
+    ],
+    "If3": [],
+    "Execute 'sub-get-rag'": [
+      {
+        "json": {
+          "tools": [
+            {
+              "name": "crm_master_products_list",
+              "similarity": 0.45654811963015796
+            }
+          ]
+        }
+      }
+    ],
+    "tool-filter": [
+      {
+        "json": {
+          "name": "crm_master_products_list",
+          "similarity": 0.45654811963015796,
+          "_tool_pick": {
+            "chosen": "crm_master_products_list",
+            "rejected": [],
+            "count": 1,
+            "has_product": true
+          }
+        }
+      }
+    ],
+    "if-tier-ask": [],
+    "Call 'sub-get-results'": [
+      {
+        "json": {
+          "response": "Here are the matching products.\n\n1. *Product Code:* SRTWB7096\n*Description:* SORENTO COUNTER TOP BASIN (815*445*145)  SRTWB7096\n*List Price:* MYR 0.00\n*Dimensions:* Not defined\n\n_Data last updated: 24/08/2026 08:35:39_",
+          "response_intro": "Here are the matching products.",
+          "answers": [
+            {
+              "title": "SRTWB7096",
+              "fields": [
+                {
+                  "label": "Product Code",
+                  "value": "SRTWB7096"
+                },
+                {
+                  "label": "Description",
+                  "value": "SORENTO COUNTER TOP BASIN (815*445*145)  SRTWB7096"
+                },
+                {
+                  "label": "List Price",
+                  "value": "MYR 0.00"
+                },
+                {
+                  "label": "Dimensions",
+                  "value": "Not defined"
+                }
+              ],
+              "flags": {
+                "discontinued": false,
+                "expired": false,
+                "expiring_soon": false,
+                "unallocated": false,
+                "partially_allocated": false
+              }
+            }
+          ],
+          "attachments": [],
+          "action_links": [],
+          "last_updated_at": "2026-08-24T08:35:39.373411",
+          "has_result": true,
+          "alternatives": [],
+          "relaxed_axis": null,
+          "field_access": null,
+          "requested_attributes": [],
+          "keys_served": false
+        }
+      }
+    ],
+    "validator": [
+      {
+        "json": {
+          "response": "Here are the matching products.\n\n1. *Product Code:* SRTWB7096\n*Description:* SORENTO COUNTER TOP BASIN (815*445*145)  SRTWB7096\n*List Price:* MYR 0.00\n*Dimensions:* Not defined\n\n_Data last updated: 24/08/2026 08:35:39_",
+          "response_intro": "Here are the matching products.",
+          "answers": [
+            {
+              "title": "SRTWB7096",
+              "fields": [
+                {
+                  "label": "Product Code",
+                  "value": "SRTWB7096"
+                },
+                {
+                  "label": "Description",
+                  "value": "SORENTO COUNTER TOP BASIN (815*445*145)  SRTWB7096"
+                },
+                {
+                  "label": "List Price",
+                  "value": "MYR 0.00"
+                },
+                {
+                  "label": "Dimensions",
+                  "value": "Not defined"
+                }
+              ],
+              "flags": {
+                "discontinued": false,
+                "expired": false,
+                "expiring_soon": false,
+                "unallocated": false,
+                "partially_allocated": false
+              }
+            }
+          ],
+          "attachments": [],
+          "action_links": [],
+          "last_updated_at": "2026-08-24T08:35:39.373411",
+          "has_result": true,
+          "alternatives": [],
+          "relaxed_axis": null,
+          "field_access": null,
+          "requested_attributes": [],
+          "keys_served": false,
+          "is_valid": true
+        }
+      }
+    ],
+    "promo-picker": [
+      {
+        "json": {
+          "response": "Here are the matching products.\n\n1. *Product Code:* SRTWB7096\n*Description:* SORENTO COUNTER TOP BASIN (815*445*145)  SRTWB7096\n*List Price:* MYR 0.00\n*Dimensions:* Not defined\n\n_Data last updated: 24/08/2026 08:35:39_",
+          "response_intro": "Here are the matching products.",
+          "answers": [
+            {
+              "title": "SRTWB7096",
+              "fields": [
+                {
+                  "label": "Product Code",
+                  "value": "SRTWB7096"
+                },
+                {
+                  "label": "Description",
+                  "value": "SORENTO COUNTER TOP BASIN (815*445*145)  SRTWB7096"
+                },
+                {
+                  "label": "List Price",
+                  "value": "MYR 0.00"
+                },
+                {
+                  "label": "Dimensions",
+                  "value": "Not defined"
+                }
+              ],
+              "flags": {
+                "discontinued": false,
+                "expired": false,
+                "expiring_soon": false,
+                "unallocated": false,
+                "partially_allocated": false
+              }
+            }
+          ],
+          "attachments": [],
+          "action_links": [],
+          "last_updated_at": "2026-08-24T08:35:39.373411",
+          "has_result": true,
+          "alternatives": [],
+          "relaxed_axis": null,
+          "field_access": null,
+          "requested_attributes": [],
+          "keys_served": false,
+          "is_valid": true
+        }
+      }
+    ],
+    "crossdomain-zeroset": [
+      {
+        "json": {
+          "response": "Here are the matching products.\n\n1. *Product Code:* SRTWB7096\n*Description:* SORENTO COUNTER TOP BASIN (815*445*145)  SRTWB7096\n*List Price:* MYR 0.00\n*Dimensions:* Not defined\n\n_Data last updated: 24/08/2026 08:35:39_",
+          "response_intro": "Here are the matching products.",
+          "answers": [
+            {
+              "title": "SRTWB7096",
+              "fields": [
+                {
+                  "label": "Product Code",
+                  "value": "SRTWB7096"
+                },
+                {
+                  "label": "Description",
+                  "value": "SORENTO COUNTER TOP BASIN (815*445*145)  SRTWB7096"
+                },
+                {
+                  "label": "List Price",
+                  "value": "MYR 0.00"
+                },
+                {
+                  "label": "Dimensions",
+                  "value": "Not defined"
+                }
+              ],
+              "flags": {
+                "discontinued": false,
+                "expired": false,
+                "expiring_soon": false,
+                "unallocated": false,
+                "partially_allocated": false
+              }
+            }
+          ],
+          "attachments": [],
+          "action_links": [],
+          "last_updated_at": "2026-08-24T08:35:39.373411",
+          "has_result": true,
+          "alternatives": [],
+          "relaxed_axis": null,
+          "field_access": null,
+          "requested_attributes": [],
+          "keys_served": false,
+          "is_valid": true,
+          "_xd": {
+            "active": false,
+            "why": "domain"
+          }
+        }
+      }
+    ],
+    "crossdomain-gate": [],
+    "If6": [
+      {
+        "json": {
+          "response": "Here are the matching products.\n\n1. *Product Code:* SRTWB7096\n*Description:* SORENTO COUNTER TOP BASIN (815*445*145)  SRTWB7096\n*List Price:* MYR 0.00\n*Dimensions:* Not defined\n\n_Data last updated: 24/08/2026 08:35:39_",
+          "response_intro": "Here are the matching products.",
+          "answers": [
+            {
+              "title": "SRTWB7096",
+              "fields": [
+                {
+                  "label": "Product Code",
+                  "value": "SRTWB7096"
+                },
+                {
+                  "label": "Description",
+                  "value": "SORENTO COUNTER TOP BASIN (815*445*145)  SRTWB7096"
+                },
+                {
+                  "label": "List Price",
+                  "value": "MYR 0.00"
+                },
+                {
+                  "label": "Dimensions",
+                  "value": "Not defined"
+                }
+              ],
+              "flags": {
+                "discontinued": false,
+                "expired": false,
+                "expiring_soon": false,
+                "unallocated": false,
+                "partially_allocated": false
+              }
+            }
+          ],
+          "attachments": [],
+          "action_links": [],
+          "last_updated_at": "2026-08-24T08:35:39.373411",
+          "has_result": true,
+          "alternatives": [],
+          "relaxed_axis": null,
+          "field_access": null,
+          "requested_attributes": [],
+          "keys_served": false,
+          "is_valid": true,
+          "_xd": {
+            "active": false,
+            "why": "domain"
+          }
+        }
+      }
+    ],
+    "central-exchange": [
+      {
+        "json": {
+          "response": "Here are the matching products.\n\n1. *Product Code:* SRTWB7096\n*Description:* SORENTO COUNTER TOP BASIN (815*445*145)  SRTWB7096\n*List Price:* MYR 0.00\n*Dimensions:* Not defined\n\n_Data last updated: 24/08/2026 08:35:39_",
+          "response_intro": "Here are the matching products.",
+          "answers": [
+            {
+              "title": "SRTWB7096",
+              "fields": [
+                {
+                  "label": "Product Code",
+                  "value": "SRTWB7096"
+                },
+                {
+                  "label": "Description",
+                  "value": "SORENTO COUNTER TOP BASIN (815*445*145)  SRTWB7096"
+                },
+                {
+                  "label": "List Price",
+                  "value": "MYR 0.00"
+                },
+                {
+                  "label": "Dimensions",
+                  "value": "Not defined"
+                }
+              ],
+              "flags": {
+                "discontinued": false,
+                "expired": false,
+                "expiring_soon": false,
+                "unallocated": false,
+                "partially_allocated": false
+              }
+            }
+          ],
+          "attachments": [],
+          "action_links": [],
+          "last_updated_at": "2026-08-24T08:35:39.373411",
+          "has_result": true,
+          "alternatives": [],
+          "relaxed_axis": null,
+          "field_access": null,
+          "requested_attributes": [],
+          "keys_served": false,
+          "is_valid": true,
+          "_xd": {
+            "active": false,
+            "why": "domain"
+          }
+        }
+      }
+    ],
+    "miss-roster-gate": [],
+    "dym-transform-partial": [
+      {
+        "json": {
+          "response": "Here are the matching products.\n\n1. *Product Code:* SRTWB7096\n*Description:* SORENTO COUNTER TOP BASIN (815*445*145)  SRTWB7096\n*List Price:* MYR 0.00\n*Dimensions:* Not defined\n\n_Data last updated: 24/08/2026 08:35:39_",
+          "response_intro": "Here are the matching products.",
+          "answers": [
+            {
+              "title": "SRTWB7096",
+              "fields": [
+                {
+                  "label": "Product Code",
+                  "value": "SRTWB7096"
+                },
+                {
+                  "label": "Description",
+                  "value": "SORENTO COUNTER TOP BASIN (815*445*145)  SRTWB7096"
+                },
+                {
+                  "label": "List Price",
+                  "value": "MYR 0.00"
+                },
+                {
+                  "label": "Dimensions",
+                  "value": "Not defined"
+                }
+              ],
+              "flags": {
+                "discontinued": false,
+                "expired": false,
+                "expiring_soon": false,
+                "unallocated": false,
+                "partially_allocated": false
+              }
+            }
+          ],
+          "attachments": [],
+          "action_links": [],
+          "last_updated_at": "2026-08-24T08:35:39.373411",
+          "has_result": true,
+          "alternatives": [],
+          "relaxed_axis": null,
+          "field_access": null,
+          "requested_attributes": [],
+          "keys_served": false,
+          "is_valid": true,
+          "_xd": {
+            "active": false,
+            "why": "domain"
+          },
+          "dym_probe_entities": [],
+          "dym_candidate_codes": [],
+          "dym_excluded_codes": [],
+          "dym_capped_codes": [],
+          "probe_cap_applied": false,
+          "probe_tool": null,
+          "probe_noun": null,
+          "probe_predicate": null,
+          "probe_needed": false,
+          "probe_skip_reason": "domain_not_enabled",
+          "probe_lane": "d1",
+          "_dym_probe_input": true
+        }
+      }
+    ],
+    "dym-gate-partial": [],
+    "compile-current-state": [
+      {
+        "json": {
+          "variables": {
+            "message_type": "business_query",
+            "intent_hint": "check_product",
+            "domain_hint": "master_products",
+            "user_goal": "trying to check the product details for srtwb7096",
+            "query_brands": [],
+            "access_levels": [],
+            "entities": [
+              {
+                "raw": "SRTWB7096",
+                "hint": "product",
+                "canonical_code": "SRTWB7096",
+                "uuid": null,
+                "current_message": true,
+                "dym_slot": "14162774"
+              }
+            ],
+            "routing": {
+              "suggested_team": "purchasing_product",
+              "suggested_agent": "general_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "response": "Previous turn (master_products): returned 1 records",
+            "last_result_set": [
+              {
+                "idx": 1,
+                "uuid": null,
+                "label": "SRTWB7096",
+                "entity_type": null,
+                "product": null,
+                "attachment_type": null,
+                "filename": null
+              }
+            ],
+            "selection_context": null,
+            "date_filter_start": null,
+            "requested_attributes": [],
+            "date_filter_end": null,
+            "date_mode": null,
+            "match_mode": "and",
+            "contains_flyer": false,
+            "dym_offer": null,
+            "dym_candidates": [],
+            "ideation": null,
+            "routing_roster_plan": null,
+            "routing_brand": "sorento",
+            "routing_brand_source": "resolved",
+            "routing_company": "00000000-0000-0000-0000-000000000001",
+            "routing_companies": [
+              {
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "brand_code": "sorento",
+                "codes": [
+                  "SRTWB7096"
+                ],
+                "labels": [
+                  "SRTWB7096"
+                ]
+              }
+            ]
+          },
+          "user_response": "Here are the matching products.\n\n1. *Product Code:* SRTWB7096\n*Description:* SORENTO COUNTER TOP BASIN (815*445*145)  SRTWB7096\n*List Price:* MYR 0.00\n*Dimensions:* Not defined\n\n_Data last updated: 24/08/2026 08:35:39_\n\nP/S: if the spec you're after isn't shown above, just ask me for the *product catalogue* and I'll pull it up for you \ud83d\ude0a"
+        }
+      }
+    ],
+    "crossdomain-compose": [
+      {
+        "json": {
+          "variables": {
+            "message_type": "business_query",
+            "intent_hint": "check_product",
+            "domain_hint": "master_products",
+            "user_goal": "trying to check the product details for srtwb7096",
+            "query_brands": [],
+            "access_levels": [],
+            "entities": [
+              {
+                "raw": "SRTWB7096",
+                "hint": "product",
+                "canonical_code": "SRTWB7096",
+                "uuid": null,
+                "current_message": true,
+                "dym_slot": "14162774"
+              }
+            ],
+            "routing": {
+              "suggested_team": "purchasing_product",
+              "suggested_agent": "general_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "response": "Previous turn (master_products): returned 1 records",
+            "last_result_set": [
+              {
+                "idx": 1,
+                "uuid": null,
+                "label": "SRTWB7096",
+                "entity_type": null,
+                "product": null,
+                "attachment_type": null,
+                "filename": null
+              }
+            ],
+            "selection_context": null,
+            "date_filter_start": null,
+            "requested_attributes": [],
+            "date_filter_end": null,
+            "date_mode": null,
+            "match_mode": "and",
+            "contains_flyer": false,
+            "dym_offer": null,
+            "dym_candidates": [],
+            "ideation": null,
+            "routing_roster_plan": null,
+            "routing_brand": "sorento",
+            "routing_brand_source": "resolved",
+            "routing_company": "00000000-0000-0000-0000-000000000001",
+            "routing_companies": [
+              {
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "brand_code": "sorento",
+                "codes": [
+                  "SRTWB7096"
+                ],
+                "labels": [
+                  "SRTWB7096"
+                ]
+              }
+            ]
+          },
+          "user_response": "Here are the matching products.\n\n1. *Product Code:* SRTWB7096\n*Description:* SORENTO COUNTER TOP BASIN (815*445*145)  SRTWB7096\n*List Price:* MYR 0.00\n*Dimensions:* Not defined\n\n_Data last updated: 24/08/2026 08:35:39_\n\nP/S: if the spec you're after isn't shown above, just ask me for the *product catalogue* and I'll pull it up for you \ud83d\ude0a"
+        }
+      }
+    ],
+    "sorento-sub-respond-sendmsg-respond2": [
+      {
+        "json": {
+          "success": true
+        }
+      }
+    ],
+    "Execution Data": [
+      {
+        "json": {
+          "success": true
+        }
+      }
+    ],
+    "attach-merge": [
+      {
+        "json": {
+          "attachments": []
+        }
+      }
+    ],
+    "if-got-attachments": [],
+    "save-session-vars": [
+      {
+        "json": {
+          "respond_io_id": "900000050",
+          "session_vars": {
+            "variables": {
+              "message_type": "business_query",
+              "intent_hint": "check_product",
+              "domain_hint": "master_products",
+              "user_goal": "trying to check the product details for srtwb7096",
+              "query_brands": [],
+              "access_levels": [],
+              "entities": [
+                {
+                  "raw": "SRTWB7096",
+                  "hint": "product",
+                  "canonical_code": "SRTWB7096",
+                  "uuid": null,
+                  "current_message": true,
+                  "dym_slot": "14162774"
+                }
+              ],
+              "routing": {
+                "suggested_team": "purchasing_product",
+                "suggested_agent": "general_enquiries"
+              },
+              "escalation": {
+                "is_escalation_confirmation": false
+              },
+              "response": "Previous turn (master_products): returned 1 records",
+              "last_result_set": [
+                {
+                  "idx": 1,
+                  "uuid": null,
+                  "label": "SRTWB7096",
+                  "entity_type": null,
+                  "product": null,
+                  "attachment_type": null,
+                  "filename": null
+                }
+              ],
+              "selection_context": null,
+              "date_filter_start": null,
+              "requested_attributes": [],
+              "date_filter_end": null,
+              "date_mode": null,
+              "match_mode": "and",
+              "contains_flyer": false,
+              "dym_offer": null,
+              "dym_candidates": [],
+              "ideation": null,
+              "routing_roster_plan": null,
+              "routing_brand": "sorento",
+              "routing_brand_source": "resolved",
+              "routing_company": "00000000-0000-0000-0000-000000000001",
+              "routing_companies": [
+                {
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "brand_code": "sorento",
+                  "codes": [
+                    "SRTWB7096"
+                  ],
+                  "labels": [
+                    "SRTWB7096"
+                  ]
+                }
+              ]
+            },
+            "user_response": "Here are the matching products.\n\n1. *Product Code:* SRTWB7096\n*Description:* SORENTO COUNTER TOP BASIN (815*445*145)  SRTWB7096\n*List Price:* MYR 0.00\n*Dimensions:* Not defined\n\n_Data last updated: 24/08/2026 08:35:39_\n\nP/S: if the spec you're after isn't shown above, just ask me for the *product catalogue* and I'll pull it up for you \ud83d\ude0a"
+          }
+        }
+      }
+    ],
+    "Call 'sub-respond-save-message-redis'2": [
+      {
+        "json": {
+          "contact_id": 900000050,
+          "phone_number": "+60100000027",
+          "message": "check srtwb7096",
+          "sent_at": 1787850954190,
+          "turn_id": "14162963",
+          "data": "{\"contact_id\":\"900000050\",\"phone_number\":\"+60100000027\",\"message\":\"check srtwb7096\",\"sent_at\":1787850943000,\"first_name\":\"Person 78\",\"last_name\":null,\"reply_to_message_id\":null,\"reply_to_message\":null,\"type\":\"incoming\",\"message_id\":\"1787850943000000\",\"turn_id\":\"14162963\",\"state_trace\":{\"v\":1,\"before\":{\"routing\":{\"suggested_team\":\"warehouse\",\"suggested_agent\":\"general_enquiries\"},\"entities\":[{\"raw\":\"SRTWB7099\",\"hint\":\"product\",\"uuid\":null,\"dym_slot\":\"14162774\",\"canonical_code\":\"SRTWB7099\",\"current_message\":true}],\"ideation\":null,\"response\":\"Previous turn (inventory): returned 13 records\",\"date_mode\":null,\"dym_offer\":{\"id\":\"14162774\",\"ttl\":3,\"domain\":\"inventory\",\"picked\":[\"SRTWB7099\"],\"candidates\":[{\"code\":\"SRTWB7095\",\"uuid\":null,\"for_raw\":\"SRTWB7098-PJ\",\"for_hint\":\"product\",\"entity_type\":null,\"for_canonical\":\"SRTWB7098-PJ\"},{\"code\":\"SRTWB7096\",\"uuid\":null,\"for_raw\":\"SRTWB7098-PJ\",\"for_hint\":\"product\",\"entity_type\":null,\"for_canonical\":\"SRTWB7098-PJ\"},{\"code\":\"SRTWB7099\",\"uuid\":null,\"for_raw\":\"SRTWB7098-PJ\",\"for_hint\":\"product\",\"entity_type\":null,\"for_canonical\":\"SRTWB7098-PJ\"}]},\"user_goal\":\"trying to check stock for SRTWB7099\",\"escalation\":{\"is_escalation_confirmation\":false},\"match_mode\":\"and\",\"domain_hint\":\"inventory\",\"intent_hint\":\"check_stock\",\"message_type\":\"business_query\",\"query_brands\":[],\"access_levels\":[],\"routing_brand\":\"sorento\",\"contains_flyer\":false,\"dym_candidates\":{\"n\":3,\"first\":\"SRTWB7095\"},\"date_filter_end\":null,\"last_result_set\":{\"n\":13,\"first\":\"SRTWB7099\"},\"routing_company\":\"00000000-0000-0000-0000-000000000001\",\"date_filter_start\":null,\"routing_companies\":[{\"codes\":[\"SRTWB7099\"],\"labels\":[\"SRTWB7099\"],\"brand_code\":\"sorento\",\"company_id\":\"00000000-0000-0000-0000-000000000001\",\"company_name\":\"Sorento\"}],\"selection_context\":null,\"routing_roster_plan\":null,\"requested_attributes\":[],\"routing_brand_source\":\"resolved\"},\"parser_raw\":{\"message_type\":\"business_query\",\"intent_hint\":\"check_product\",\"domain_hint\":\"master_products\",\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"trying to check the product details for srtwb7096\",\"access_levels\":[],\"broaden_axis\":null,\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[{\"raw\":\"srtwb7096\",\"hint\":\"product\",\"canonical_code\":null,\"current_message\":true,\"confident\":true}],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":\"purchasing_product\",\"suggested_agent\":\"general_enquiries\"},\"escalation\":{\"is_escalation_confirmation\":false,\"company_pick\":null}},\"parser_applied\":{\"message_type\":\"business_query\",\"intent_hint\":\"check_product\",\"domain_hint\":\"master_products\",\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"trying to check the product details for srtwb7096\",\"access_levels\":[],\"broaden_axis\":null,\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[{\"raw\":\"SRTWB7096\",\"hint\":\"product\",\"canonical_code\":\"SRTWB7096\",\"uuid\":null,\"current_message\":true,\"dym_slot\":\"14162774\"}],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":\"purchasing_product\",\"suggested_agent\":\"general_enquiries\"},\"escalation\":{\"is_escalation_confirmation\":false},\"dym_pick_applied\":true,\"dym_offer_pick_code\":\"SRTWB7096\",\"domain_signal_source\":\"intent_explicit\",\"scope_exclusive_applied\":false,\"entity_op_applied\":\"replace_combine\",\"query_brands\":[],\"entities_filtered\":false,\"entities_emptied_by_filter\":false,\"_pending_pick\":true,\"dym_superseded_dropped\":0},\"after\":{\"message_type\":\"business_query\",\"intent_hint\":\"check_product\",\"domain_hint\":\"master_products\",\"user_goal\":\"trying to check the product details for srtwb7096\",\"query_brands\":[],\"access_levels\":[],\"entities\":[{\"raw\":\"SRTWB7096\",\"hint\":\"product\",\"canonical_code\":\"SRTWB7096\",\"uuid\":null,\"current_message\":true,\"dym_slot\":\"14162774\"}],\"routing\":{\"suggested_team\":\"purchasing_product\",\"suggested_agent\":\"general_enquiries\"},\"escalation\":{\"is_escalation_confirmation\":false},\"response\":\"Previous turn (master_products): returned 1 records\",\"last_result_set\":{\"n\":1,\"first\":\"SRTWB7096\"},\"selection_context\":null,\"date_filter_start\":null,\"requested_attributes\":[],\"date_filter_end\":null,\"date_mode\":null,\"match_mode\":\"and\",\"contains_flyer\":false,\"dym_offer\":null,\"dym_candidates\":{\"n\":0,\"first\":null},\"ideation\":null,\"routing_roster_plan\":null,\"routing_brand\":\"sorento\",\"routing_brand_source\":\"resolved\",\"routing_company\":\"00000000-0000-0000-0000-000000000001\",\"routing_companies\":[{\"company_id\":\"00000000-0000-0000-0000-000000000001\",\"company_name\":\"Sorento\",\"brand_code\":\"sorento\",\"codes\":[\"SRTWB7096\"],\"labels\":[\"SRTWB7096\"]}]}}}"
+        }
+      }
+    ],
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 900000050,
+              "firstName": "Person 78",
+              "lastName": null,
+              "phone": "+60100000027",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/aefb2cb0-abec-490e-b74b-bf2f2d4a5b37"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260510_200514",
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": "New Lead",
+              "created_at": 1777880659
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "d63fb767-4729-455b-9b9a-286f02bf1fd6",
+              "contact": {
+                "id": 900000050,
+                "firstName": "Person 78",
+                "lastName": "",
+                "phone": "+60100000027",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1777880659
+              },
+              "message": {
+                "messageId": 1787850943000000,
+                "channelMessageId": "wamid.HBgLNjAxMjI0NjUyMTMVAgASGBYzRUIwRkM0REI4MDM4RUM3NDM2OTkxAA==",
+                "contactId": 900000050,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1787850943000,
+                "message": {
+                  "type": "text",
+                  "text": "check srtwb7096"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 78\"},\"wa_id\":\"60100000027\",\"user_id\":\"MY.900000051\",\"firstName\":\"Person 78\",\"lastName\":\"\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000050",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "warehouse",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "entities": [
+                    {
+                      "raw": "SRTWB7099",
+                      "hint": "product",
+                      "uuid": null,
+                      "dym_slot": "14162774",
+                      "canonical_code": "SRTWB7099",
+                      "current_message": true
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Previous turn (inventory): returned 13 records",
+                  "date_mode": null,
+                  "dym_offer": {
+                    "id": "14162774",
+                    "ttl": 3,
+                    "domain": "inventory",
+                    "picked": [
+                      "SRTWB7099"
+                    ],
+                    "candidates": [
+                      {
+                        "code": "SRTWB7095",
+                        "uuid": null,
+                        "for_raw": "SRTWB7098-PJ",
+                        "for_hint": "product",
+                        "entity_type": null,
+                        "for_canonical": "SRTWB7098-PJ"
+                      },
+                      {
+                        "code": "SRTWB7096",
+                        "uuid": null,
+                        "for_raw": "SRTWB7098-PJ",
+                        "for_hint": "product",
+                        "entity_type": null,
+                        "for_canonical": "SRTWB7098-PJ"
+                      },
+                      {
+                        "code": "SRTWB7099",
+                        "uuid": null,
+                        "for_raw": "SRTWB7098-PJ",
+                        "for_hint": "product",
+                        "entity_type": null,
+                        "for_canonical": "SRTWB7098-PJ"
+                      }
+                    ]
+                  },
+                  "user_goal": "trying to check stock for SRTWB7099",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "inventory",
+                  "intent_hint": "check_stock",
+                  "message_type": "business_query",
+                  "query_brands": [],
+                  "access_levels": [],
+                  "routing_brand": "sorento",
+                  "contains_flyer": false,
+                  "dym_candidates": [
+                    {
+                      "code": "SRTWB7095",
+                      "uuid": null,
+                      "for_raw": "SRTWB7098-PJ",
+                      "for_hint": "product",
+                      "entity_type": null,
+                      "for_canonical": "SRTWB7098-PJ"
+                    },
+                    {
+                      "code": "SRTWB7096",
+                      "uuid": null,
+                      "for_raw": "SRTWB7098-PJ",
+                      "for_hint": "product",
+                      "entity_type": null,
+                      "for_canonical": "SRTWB7098-PJ"
+                    },
+                    {
+                      "code": "SRTWB7099",
+                      "uuid": null,
+                      "for_raw": "SRTWB7098-PJ",
+                      "for_hint": "product",
+                      "entity_type": null,
+                      "for_canonical": "SRTWB7098-PJ"
+                    }
+                  ],
+                  "date_filter_end": null,
+                  "last_result_set": [
+                    {
+                      "idx": 1,
+                      "uuid": null,
+                      "label": "SRTWB7099",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 2,
+                      "uuid": null,
+                      "label": "SRTWB7099",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 3,
+                      "uuid": null,
+                      "label": "SRTWB7099",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 4,
+                      "uuid": null,
+                      "label": "SRTWB7099",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 5,
+                      "uuid": null,
+                      "label": "SRTWB7099",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 6,
+                      "uuid": null,
+                      "label": "SRTWB7099",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 7,
+                      "uuid": null,
+                      "label": "SRTWB7099",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 8,
+                      "uuid": null,
+                      "label": "SRTWB7099",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 9,
+                      "uuid": null,
+                      "label": "SRTWB7099",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 10,
+                      "uuid": null,
+                      "label": "SRTWB7099",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 11,
+                      "uuid": null,
+                      "label": "SRTWB7099",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 12,
+                      "uuid": null,
+                      "label": "SRTWB7099",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 13,
+                      "uuid": null,
+                      "label": "SRTWB7099",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    }
+                  ],
+                  "routing_company": "00000000-0000-0000-0000-000000000001",
+                  "date_filter_start": null,
+                  "routing_companies": [
+                    {
+                      "codes": [
+                        "SRTWB7099"
+                      ],
+                      "labels": [
+                        "SRTWB7099"
+                      ],
+                      "brand_code": "sorento",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "selection_context": null,
+                  "routing_roster_plan": null,
+                  "requested_attributes": [],
+                  "routing_brand_source": "resolved"
+                },
+                "user_response": "Stock details found for the requested products.\n\n1. *Product Code:* SRTWB7099\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 8\n\n2. *Product Code:* SRTWB7099\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 0\n\n3. *Product Code:* SRTWB7099\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-IB\n*Quantity On Hand:* 0\n\n4. *Product Code:* SRTWB7099\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-IR\n*Quantity On Hand:* 0\n\n5. *Product Code:* SRTWB7099\n*Warehouse:* BERSATU (PORT KLANG)\n*System Location:* DC1-BB\n*Quantity On Hand:* 0\n\n6. *Product Code:* SRTWB7099\n*Warehouse:* BERSATU (PORT KLANG)\n*System Location:* DC1-IR\n*Quantity On Hand:* 0\n\n7. *Product Code:* SRTWB7099\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 70\n\n8. *Product Code:* SRTWB7099\n*Warehouse:* MERU\n*System Location:* MWH-BB\n*Quantity On Hand:* 130\n\n9. *Product Code:* SRTWB7099\n*Warehouse:* MERU\n*System Location:* MWH-IB\n*Quantity On Hand:* 320\n\n10. *Product Code:* SRTWB7099\n*Warehouse:* MERU\n*System Location:* MWH-IR\n*Quantity On Hand:* 0\n\n11. *Product Code:* SRTWB7099\n*Warehouse:* WH3 (PSM)\n*System Location:* WH3-BB\n*Quantity On Hand:* 93\n\n12. *Product Code:* SRTWB7099\n*Warehouse:* WH3 (PSM)\n*System Location:* WH3-IB\n*Quantity On Hand:* 267\n\n13. *Product Code:* SRTWB7099\n*Warehouse:* WH3 (PSM)\n*System Location:* WH3-IR\n*Quantity On Hand:* 70\n\n_Data last updated: 27/08/2026 17:21:45_"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "check_product",
+                "domain_hint": "master_products",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check the product details for srtwb7096",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "SRTWB7096",
+                    "hint": "product",
+                    "canonical_code": "SRTWB7096",
+                    "uuid": null,
+                    "current_message": true,
+                    "dym_slot": "14162774"
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "purchasing_product",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "dym_pick_applied": true,
+                "dym_offer_pick_code": "SRTWB7096",
+                "domain_signal_source": "intent_explicit",
+                "scope_exclusive_applied": false,
+                "entity_op_applied": "replace_combine",
+                "query_brands": [],
+                "entities_filtered": false,
+                "entities_emptied_by_filter": false,
+                "_pending_pick": true,
+                "dym_superseded_dropped": 0
+              },
+              "_parser_raw": {
+                "message_type": "business_query",
+                "intent_hint": "check_product",
+                "domain_hint": "master_products",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check the product details for srtwb7096",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "srtwb7096",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "purchasing_product",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "General Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            }
+          }
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "response": "Here are the matching products.\n\n1. *Product Code:* SRTWB7096\n*Description:* SORENTO COUNTER TOP BASIN (815*445*145)  SRTWB7096\n*List Price:* MYR 0.00\n*Dimensions:* Not defined\n\n_Data last updated: 24/08/2026 08:35:39_",
+        "response_intro": "Here are the matching products.",
+        "answers": [
+          {
+            "title": "SRTWB7096",
+            "fields": [
+              {
+                "label": "Product Code",
+                "value": "SRTWB7096"
+              },
+              {
+                "label": "Description",
+                "value": "SORENTO COUNTER TOP BASIN (815*445*145)  SRTWB7096"
+              },
+              {
+                "label": "List Price",
+                "value": "MYR 0.00"
+              },
+              {
+                "label": "Dimensions",
+                "value": "Not defined"
+              }
+            ],
+            "flags": {
+              "discontinued": false,
+              "expired": false,
+              "expiring_soon": false,
+              "unallocated": false,
+              "partially_allocated": false
+            }
+          }
+        ],
+        "attachments": [],
+        "action_links": [],
+        "last_updated_at": "2026-08-24T08:35:39.373411",
+        "has_result": true,
+        "alternatives": [],
+        "relaxed_axis": null,
+        "field_access": null,
+        "requested_attributes": [],
+        "keys_served": false,
+        "is_valid": true,
+        "_xd": {
+          "active": false,
+          "why": "domain"
+        }
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "response": "Here are the matching products.\n\n1. *Product Code:* SRTWB7096\n*Description:* SORENTO COUNTER TOP BASIN (815*445*145)  SRTWB7096\n*List Price:* MYR 0.00\n*Dimensions:* Not defined\n\n_Data last updated: 24/08/2026 08:35:39_",
+        "response_intro": "Here are the matching products.",
+        "answers": [
+          {
+            "title": "SRTWB7096",
+            "fields": [
+              {
+                "label": "Product Code",
+                "value": "SRTWB7096"
+              },
+              {
+                "label": "Description",
+                "value": "SORENTO COUNTER TOP BASIN (815*445*145)  SRTWB7096"
+              },
+              {
+                "label": "List Price",
+                "value": "MYR 0.00"
+              },
+              {
+                "label": "Dimensions",
+                "value": "Not defined"
+              }
+            ],
+            "flags": {
+              "discontinued": false,
+              "expired": false,
+              "expiring_soon": false,
+              "unallocated": false,
+              "partially_allocated": false
+            }
+          }
+        ],
+        "attachments": [],
+        "action_links": [],
+        "last_updated_at": "2026-08-24T08:35:39.373411",
+        "has_result": true,
+        "alternatives": [],
+        "relaxed_axis": null,
+        "field_access": null,
+        "requested_attributes": [],
+        "keys_served": false,
+        "is_valid": true,
+        "_xd": {
+          "active": false,
+          "why": "domain"
+        }
+      }
+    }
+  ],
+  "runIndex": 0,
+  "execution": {
+    "id": "14162963"
+  },
+  "ran": [
+    "When Executed by Another Workflow",
+    "redis-pop-main-message-list",
+    "detect-media",
+    "if-media-in",
+    "tf-message",
+    "sorento-sub-respond-findcontact-respond",
+    "if-transcribed-confirm",
+    "is-human-intervened",
+    "if-message-is-audio",
+    "get-session-vars",
+    "Call 'sub-query-reformulator'",
+    "check-access",
+    "If5",
+    "If2",
+    "If-ideate",
+    "offer-hold-gate",
+    "If10",
+    "is-escalation-declined",
+    "If9",
+    "If1",
+    "not-supported-domain",
+    "If",
+    "If7",
+    "resolve-entity",
+    "disallowed-entity-gate",
+    "If3",
+    "Execute 'sub-get-rag'",
+    "tool-filter",
+    "if-tier-ask",
+    "Call 'sub-get-results'",
+    "validator",
+    "promo-picker",
+    "crossdomain-zeroset",
+    "crossdomain-gate",
+    "If6",
+    "central-exchange",
+    "miss-roster-gate",
+    "dym-transform-partial",
+    "dym-gate-partial",
+    "compile-current-state",
+    "crossdomain-compose",
+    "sorento-sub-respond-sendmsg-respond2",
+    "Execution Data",
+    "attach-merge",
+    "if-got-attachments",
+    "save-session-vars",
+    "Call 'sub-respond-save-message-redis'2"
+  ]
+}

@@ -1,0 +1,4311 @@
+{
+  "source": {
+    "execution_id": "14095480",
+    "workflow_id": "9qVyfUxmRQqrpGRMDLRuz",
+    "node": "annotate-customer-picker",
+    "captured_at": "2026-08-29T05:49:16+00:00",
+    "expected_from": "runData"
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "test": null,
+          "test_run_id": null,
+          "started_at": null,
+          "contact": "477071885"
+        }
+      }
+    ],
+    "redis-pop-main-message-list": [
+      {
+        "json": {
+          "message": {
+            "message": {
+              "event_type": "message.received",
+              "event_id": "e2959045-eca2-4e07-aafb-da17b51a81b8",
+              "contact": {
+                "id": 900000036,
+                "firstName": "Person 63",
+                "lastName": "Person 64",
+                "phone": "+60100000020",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1782546255
+              },
+              "message": {
+                "messageId": 1787805594000000,
+                "channelMessageId": "wamid.HBgLNjAxNjMzNjE2NzkVAgASGBQzQTI3QjJCMkFEQURFQjgzNEI4QwA=",
+                "contactId": 900000036,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1787805594000,
+                "message": {
+                  "type": "text",
+                  "text": "kim seng srtks7547-new delivery"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 63\"},\"wa_id\":\"60100000020\",\"user_id\":\"MY.900000037\",\"firstName\":\"Person 63\",\"lastName\":\"\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "contact": {
+              "id": 900000036,
+              "firstName": "Person 63",
+              "lastName": "Person 64",
+              "phone": "+60100000020",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": null
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/45ee5bfe-3229-488c-a424-1bf2ff088702"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": null,
+              "created_at": 1782546255
+            }
+          }
+        }
+      }
+    ],
+    "detect-media": [
+      {
+        "json": {
+          "message": {
+            "message": {
+              "event_type": "message.received",
+              "event_id": "e2959045-eca2-4e07-aafb-da17b51a81b8",
+              "contact": {
+                "id": 900000036,
+                "firstName": "Person 63",
+                "lastName": "Person 64",
+                "phone": "+60100000020",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1782546255
+              },
+              "message": {
+                "messageId": 1787805594000000,
+                "channelMessageId": "wamid.HBgLNjAxNjMzNjE2NzkVAgASGBQzQTI3QjJCMkFEQURFQjgzNEI4QwA=",
+                "contactId": 900000036,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1787805594000,
+                "message": {
+                  "type": "text",
+                  "text": "kim seng srtks7547-new delivery"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 63\"},\"wa_id\":\"60100000020\",\"user_id\":\"MY.900000037\",\"firstName\":\"Person 63\",\"lastName\":\"\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "contact": {
+              "id": 900000036,
+              "firstName": "Person 63",
+              "lastName": "Person 64",
+              "phone": "+60100000020",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": null
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/45ee5bfe-3229-488c-a424-1bf2ff088702"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": null,
+              "created_at": 1782546255
+            }
+          },
+          "_media": {
+            "modality": null,
+            "attachment_type": null,
+            "media_url": null,
+            "mime_type": null,
+            "caption": "kim seng srtks7547-new delivery",
+            "bytes": null,
+            "duration_ms": null,
+            "duration_source": null,
+            "message_id": "1787805594000000",
+            "respond_io_id": "900000036",
+            "test_run_id": null,
+            "scope": null
+          }
+        }
+      }
+    ],
+    "if-media-in": [],
+    "tf-message": [
+      {
+        "json": {
+          "event_type": "message.received",
+          "event_id": "e2959045-eca2-4e07-aafb-da17b51a81b8",
+          "contact": {
+            "id": 900000036,
+            "firstName": "Person 63",
+            "lastName": "Person 64",
+            "phone": "+60100000020",
+            "email": null,
+            "language": null,
+            "profilePic": null,
+            "countryCode": "MY",
+            "status": "open",
+            "assignee": {
+              "id": null,
+              "firstName": null,
+              "lastName": null,
+              "email": null
+            },
+            "created_at": 1782546255
+          },
+          "message": {
+            "messageId": 1787805594000000,
+            "channelMessageId": "wamid.HBgLNjAxNjMzNjE2NzkVAgASGBQzQTI3QjJCMkFEQURFQjgzNEI4QwA=",
+            "contactId": 900000036,
+            "channelId": 453209,
+            "traffic": "incoming",
+            "timestamp": 1787805594000,
+            "message": {
+              "type": "text",
+              "text": "kim seng srtks7547-new delivery"
+            }
+          },
+          "channel": {
+            "id": 453209,
+            "name": "Internal (+60 11-1673 1179)",
+            "source": "whatsapp_business",
+            "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 63\"},\"wa_id\":\"60100000020\",\"user_id\":\"MY.900000037\",\"firstName\":\"Person 63\",\"lastName\":\"\"}}",
+            "created_at": 1767682908
+          },
+          "sender": {
+            "source": "contact",
+            "userId": null,
+            "teamId": null,
+            "workflowId": null,
+            "broadcastHistoryId": null
+          }
+        }
+      }
+    ],
+    "sorento-sub-respond-findcontact-respond": [
+      {
+        "json": {
+          "id": 900000036,
+          "firstName": "Person 63",
+          "lastName": "Person 64",
+          "phone": "+60100000020",
+          "email": null,
+          "language": null,
+          "profilePic": null,
+          "locale": null,
+          "countryCode": "MY",
+          "status": "open",
+          "isBlocked": false,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": null
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_human_intervened",
+              "value": null
+            },
+            {
+              "name": "backend_id",
+              "value": "https://fe-sorento.foundryx.my/user-management/contacts/45ee5bfe-3229-488c-a424-1bf2ff088702"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "tags": [
+            "imported_20260627_150636"
+          ],
+          "assignee": null,
+          "lifecycle": null,
+          "created_at": 1782546255
+        }
+      }
+    ],
+    "if-transcribed-confirm": [],
+    "is-human-intervened": [
+      {
+        "json": {
+          "id": 900000036,
+          "firstName": "Person 63",
+          "lastName": "Person 64",
+          "phone": "+60100000020",
+          "email": null,
+          "language": null,
+          "profilePic": null,
+          "locale": null,
+          "countryCode": "MY",
+          "status": "open",
+          "isBlocked": false,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": null
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_human_intervened",
+              "value": null
+            },
+            {
+              "name": "backend_id",
+              "value": "https://fe-sorento.foundryx.my/user-management/contacts/45ee5bfe-3229-488c-a424-1bf2ff088702"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "tags": [
+            "imported_20260627_150636"
+          ],
+          "assignee": null,
+          "lifecycle": null,
+          "created_at": 1782546255
+        }
+      }
+    ],
+    "if-message-is-audio": [],
+    "get-session-vars": [
+      {
+        "json": {
+          "respond_io_id": "900000036",
+          "session_vars": {
+            "variables": {
+              "routing": {
+                "suggested_team": "purchasing",
+                "suggested_agent": "incoming_stock_enquiries"
+              },
+              "entities": [
+                {
+                  "raw": "cks6407",
+                  "hint": "product",
+                  "confident": true,
+                  "canonical_code": "CKS6407",
+                  "current_message": true
+                }
+              ],
+              "ideation": null,
+              "response": "Here's what you want:\n\u2022 product: CKS6407\n\nBut no incoming matched these. Would you like me to escalate to purchasing team?",
+              "date_mode": null,
+              "dym_offer": null,
+              "user_goal": "trying to check the ETA for cks6407",
+              "escalation": {
+                "is_escalation_confirmation": false
+              },
+              "match_mode": "and",
+              "domain_hint": "incoming",
+              "intent_hint": "check_incoming",
+              "message_type": "business_query",
+              "query_brands": [],
+              "access_levels": [],
+              "routing_brand": "cabana",
+              "contains_flyer": false,
+              "dym_candidates": [],
+              "date_filter_end": null,
+              "last_result_set": [],
+              "routing_company": "00000000-0000-0000-0000-000000000001",
+              "date_filter_start": null,
+              "routing_companies": [
+                {
+                  "codes": [
+                    "CKS6407"
+                  ],
+                  "labels": [
+                    "CKS6407"
+                  ],
+                  "brand_code": "cabana",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento"
+                }
+              ],
+              "selection_context": null,
+              "routing_roster_plan": null,
+              "requested_attributes": [
+                "estimated_arrival_date"
+              ],
+              "routing_brand_source": "resolved"
+            },
+            "user_response": "Here's what you want:\n\u2022 product: CKS6407\n\nBut no incoming matched these.\nBut here are the stock details for the requested products:\n\n- *Product Code:* CKS6407\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 0\n\n- *Product Code:* CKS6407\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-HP\n*Quantity On Hand:* 0\n\n- *Product Code:* CKS6407\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 0\n\n- *Product Code:* CKS6407\n*Warehouse:* WH3 (PSM)\n*System Location:* WH3-PSM\n*Quantity On Hand:* 0\n\nWould you like me to escalate to purchasing team?"
+          }
+        }
+      }
+    ],
+    "Call 'sub-query-reformulator'": [
+      {
+        "json": {
+          "output": {
+            "message_type": "business_query",
+            "intent_hint": "check_order",
+            "domain_hint": "order",
+            "scope_intent": "specific",
+            "is_affirmative": null,
+            "user_goal": "trying to check the delivery order for kim seng srtks7547-new",
+            "access_levels": [],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "kim seng",
+                "hint": "customer",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              },
+              {
+                "raw": "srtks7547-new",
+                "hint": "order",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "entity_op": "replace_combine",
+            "scope_exclusive": false,
+            "requested_attributes": [
+              "delivery"
+            ],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "customer_service",
+              "suggested_agent": "order_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "domain_signal_source": "intent_explicit",
+            "scope_exclusive_applied": false,
+            "entity_op_applied": "replace_combine",
+            "query_brands": [],
+            "entities_filtered": false,
+            "entities_emptied_by_filter": false
+          },
+          "_parser_raw": {
+            "message_type": "business_query",
+            "intent_hint": "check_order",
+            "domain_hint": "order",
+            "scope_intent": "specific",
+            "is_affirmative": null,
+            "user_goal": "trying to check the delivery order for kim seng srtks7547-new",
+            "access_levels": [],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "kim seng",
+                "hint": "customer",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              },
+              {
+                "raw": "srtks7547-new",
+                "hint": "order",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "entity_op": "replace_combine",
+            "scope_exclusive": false,
+            "requested_attributes": [
+              "delivery"
+            ],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "customer_service",
+              "suggested_agent": "order_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false,
+              "company_pick": null
+            }
+          }
+        }
+      }
+    ],
+    "check-access": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "Order Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null
+        }
+      }
+    ],
+    "If5": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "Order Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null
+        }
+      }
+    ],
+    "If2": [],
+    "If-ideate": [],
+    "offer-hold-gate": [],
+    "If10": [],
+    "is-escalation-declined": [],
+    "If9": [],
+    "If1": [],
+    "not-supported-domain": [],
+    "If": [],
+    "If7": [],
+    "resolve-entity": [
+      {
+        "json": {
+          "tokens": [
+            "kim seng",
+            "srtks7547-new"
+          ],
+          "elapsed_ms": 840.93,
+          "resolutions": [
+            {
+              "token": "kim seng",
+              "resolved": false,
+              "ambiguous": false,
+              "matches": [
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "301-J009",
+                  "uuid": "fb9b873c-0451-4efc-8821-690b79c3e74c",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KHOO KIM SENG",
+                    "phone_number": "012-6383161",
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "300-K117",
+                  "uuid": "75488d1b-6cd7-4046-bb1b-e61c988f0482",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KIM SENG JAYA SDN BHD [A/C I]",
+                    "phone_number": "017-590 0899",
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "300-K118",
+                  "uuid": "91451971-a859-417a-84e5-01e2a784a598",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KIM SENG JAYA SDN BHD [A/C III]",
+                    "phone_number": "017-590 0899",
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "300-K119",
+                  "uuid": "909619b8-a003-4ced-af5a-7b1a4501d6de",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KIM SENG JAYA SDN BHD [A/C IV]",
+                    "phone_number": "017-590 0899",
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "300-K118",
+                  "uuid": "991b3780-c35a-4c2a-8dcd-77a5cb055b20",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KIM SENG JAYA SDN BHD (CERAMIC & ELLECI)",
+                    "phone_number": null,
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "300-K117",
+                  "uuid": "af32d612-9bbe-4e75-8193-48fe92b56524",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KIM SENG JAYA SDN BHD",
+                    "phone_number": null,
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "300-K119",
+                  "uuid": "65a194e4-3adc-4b2c-bd24-2a2b14cad98e",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KIM SENG JAYA SDN BHD (SRT)",
+                    "phone_number": null,
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "KIM SENG JAYA SDN BHD [A/C III]",
+                  "uuid": "91451971-a859-417a-84e5-01e2a784a598",
+                  "match_field": "debtor_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "debtor_name": "KIM SENG JAYA SDN BHD [A/C III]",
+                    "debtor_code": "300-K118",
+                    "source": "orders"
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "KIM SENG JAYA SDN BHD",
+                  "uuid": "af32d612-9bbe-4e75-8193-48fe92b56524",
+                  "match_field": "debtor_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "debtor_name": "KIM SENG JAYA SDN BHD",
+                    "debtor_code": "300-K117",
+                    "source": "orders"
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "KIM SENG JAYA SDN BHD [A/C IV]",
+                  "uuid": "909619b8-a003-4ced-af5a-7b1a4501d6de",
+                  "match_field": "debtor_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "debtor_name": "KIM SENG JAYA SDN BHD [A/C IV]",
+                    "debtor_code": "300-K119",
+                    "source": "orders"
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "KIM SENG JAYA SDN BHD (CERAMIC & ELLECI)",
+                  "uuid": "991b3780-c35a-4c2a-8dcd-77a5cb055b20",
+                  "match_field": "debtor_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "debtor_name": "KIM SENG JAYA SDN BHD (CERAMIC & ELLECI)",
+                    "debtor_code": "300-K118",
+                    "source": "orders"
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "KIM SENG JAYA SDN BHD [A/C I]",
+                  "uuid": "75488d1b-6cd7-4046-bb1b-e61c988f0482",
+                  "match_field": "debtor_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "debtor_name": "KIM SENG JAYA SDN BHD [A/C I]",
+                    "debtor_code": "300-K117",
+                    "source": "orders"
+                  }
+                }
+              ],
+              "alternatives": []
+            },
+            {
+              "token": "srtks7547-new",
+              "resolved": true,
+              "ambiguous": false,
+              "matches": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "SRTKS7547-NEW",
+                  "uuid": "e7d8a184-f6f2-4fca-9887-cd0cc934831e",
+                  "match_field": "product_code",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "product_name": "SRTKS7547-NEW",
+                    "is_active": true,
+                    "brand": {
+                      "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                      "brand_code": "SORENTO",
+                      "brand_name": "SORENTO"
+                    }
+                  }
+                }
+              ],
+              "alternatives": []
+            }
+          ],
+          "unresolved_tokens": [],
+          "fallback_applied": true,
+          "fallback_requested_types": [
+            "customer",
+            "order"
+          ],
+          "fallback_types_found": [
+            "customer",
+            "product"
+          ],
+          "fallback_per_token": true,
+          "fallback_match_mode": "or",
+          "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens."
+        }
+      }
+    ],
+    "disallowed-entity-gate": [
+      {
+        "json": {
+          "tokens": [
+            "kim seng",
+            "srtks7547-new"
+          ],
+          "elapsed_ms": 840.93,
+          "resolutions": [
+            {
+              "token": "kim seng",
+              "resolved": false,
+              "ambiguous": false,
+              "matches": [
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "301-J009",
+                  "uuid": "fb9b873c-0451-4efc-8821-690b79c3e74c",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KHOO KIM SENG",
+                    "phone_number": "012-6383161",
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "300-K117",
+                  "uuid": "75488d1b-6cd7-4046-bb1b-e61c988f0482",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KIM SENG JAYA SDN BHD [A/C I]",
+                    "phone_number": "017-590 0899",
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "300-K118",
+                  "uuid": "91451971-a859-417a-84e5-01e2a784a598",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KIM SENG JAYA SDN BHD [A/C III]",
+                    "phone_number": "017-590 0899",
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "300-K119",
+                  "uuid": "909619b8-a003-4ced-af5a-7b1a4501d6de",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KIM SENG JAYA SDN BHD [A/C IV]",
+                    "phone_number": "017-590 0899",
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "300-K118",
+                  "uuid": "991b3780-c35a-4c2a-8dcd-77a5cb055b20",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KIM SENG JAYA SDN BHD (CERAMIC & ELLECI)",
+                    "phone_number": null,
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "300-K117",
+                  "uuid": "af32d612-9bbe-4e75-8193-48fe92b56524",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KIM SENG JAYA SDN BHD",
+                    "phone_number": null,
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "300-K119",
+                  "uuid": "65a194e4-3adc-4b2c-bd24-2a2b14cad98e",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KIM SENG JAYA SDN BHD (SRT)",
+                    "phone_number": null,
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "KIM SENG JAYA SDN BHD [A/C III]",
+                  "uuid": "91451971-a859-417a-84e5-01e2a784a598",
+                  "match_field": "debtor_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "debtor_name": "KIM SENG JAYA SDN BHD [A/C III]",
+                    "debtor_code": "300-K118",
+                    "source": "orders"
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "KIM SENG JAYA SDN BHD",
+                  "uuid": "af32d612-9bbe-4e75-8193-48fe92b56524",
+                  "match_field": "debtor_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "debtor_name": "KIM SENG JAYA SDN BHD",
+                    "debtor_code": "300-K117",
+                    "source": "orders"
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "KIM SENG JAYA SDN BHD [A/C IV]",
+                  "uuid": "909619b8-a003-4ced-af5a-7b1a4501d6de",
+                  "match_field": "debtor_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "debtor_name": "KIM SENG JAYA SDN BHD [A/C IV]",
+                    "debtor_code": "300-K119",
+                    "source": "orders"
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "KIM SENG JAYA SDN BHD (CERAMIC & ELLECI)",
+                  "uuid": "991b3780-c35a-4c2a-8dcd-77a5cb055b20",
+                  "match_field": "debtor_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "debtor_name": "KIM SENG JAYA SDN BHD (CERAMIC & ELLECI)",
+                    "debtor_code": "300-K118",
+                    "source": "orders"
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "KIM SENG JAYA SDN BHD [A/C I]",
+                  "uuid": "75488d1b-6cd7-4046-bb1b-e61c988f0482",
+                  "match_field": "debtor_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "debtor_name": "KIM SENG JAYA SDN BHD [A/C I]",
+                    "debtor_code": "300-K117",
+                    "source": "orders"
+                  }
+                }
+              ],
+              "alternatives": []
+            },
+            {
+              "token": "srtks7547-new",
+              "resolved": true,
+              "ambiguous": false,
+              "matches": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "SRTKS7547-NEW",
+                  "uuid": "e7d8a184-f6f2-4fca-9887-cd0cc934831e",
+                  "match_field": "product_code",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "product_name": "SRTKS7547-NEW",
+                    "is_active": true,
+                    "brand": {
+                      "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                      "brand_code": "SORENTO",
+                      "brand_name": "SORENTO"
+                    }
+                  }
+                }
+              ],
+              "alternatives": []
+            }
+          ],
+          "unresolved_tokens": [],
+          "fallback_applied": true,
+          "fallback_requested_types": [
+            "customer",
+            "order"
+          ],
+          "fallback_types_found": [
+            "customer",
+            "product"
+          ],
+          "fallback_per_token": true,
+          "fallback_match_mode": "or",
+          "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+          "gate_passed": false,
+          "require_specific": true,
+          "resolved_company": "sorento",
+          "company_team": null,
+          "resolved_companies": [
+            "sorento"
+          ],
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_companies": [
+            {
+              "company_id": "00000000-0000-0000-0000-000000000001",
+              "company_name": "Sorento",
+              "brand_code": null,
+              "codes": [
+                "301-J009",
+                "300-K117",
+                "KIM SENG JAYA SDN BHD [A/C I]"
+              ],
+              "labels": [
+                "KHOO KIM SENG",
+                "KIM SENG JAYA SDN BHD [A/C I]"
+              ]
+            }
+          ],
+          "routing_company": "00000000-0000-0000-0000-000000000001",
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "'order' customer token matches 2 different companies; user must pick",
+          "gate_clarification": "Which customer do you mean? Please choose:\n1. KHOO KIM SENG\n2. KIM SENG JAYA SDN BHD",
+          "compatible_entities": [
+            {
+              "uuid": "fb9b873c-0451-4efc-8821-690b79c3e74c",
+              "entity_type": "customer",
+              "code": "301-J009",
+              "title": "KHOO KIM SENG"
+            },
+            {
+              "uuid": "75488d1b-6cd7-4046-bb1b-e61c988f0482",
+              "entity_type": "customer",
+              "code": "300-K117",
+              "title": "KIM SENG JAYA SDN BHD"
+            }
+          ],
+          "customer_probe_entities": [
+            {
+              "uuid": "fb9b873c-0451-4efc-8821-690b79c3e74c",
+              "entity_type": "customer",
+              "code": "301-J009"
+            },
+            {
+              "uuid": "75488d1b-6cd7-4046-bb1b-e61c988f0482",
+              "entity_type": "customer",
+              "code": "300-K117"
+            },
+            {
+              "uuid": "91451971-a859-417a-84e5-01e2a784a598",
+              "entity_type": "customer",
+              "code": "300-K118"
+            },
+            {
+              "uuid": "909619b8-a003-4ced-af5a-7b1a4501d6de",
+              "entity_type": "customer",
+              "code": "300-K119"
+            },
+            {
+              "uuid": "991b3780-c35a-4c2a-8dcd-77a5cb055b20",
+              "entity_type": "customer",
+              "code": "300-K118"
+            },
+            {
+              "uuid": "af32d612-9bbe-4e75-8193-48fe92b56524",
+              "entity_type": "customer",
+              "code": "300-K117"
+            },
+            {
+              "uuid": "65a194e4-3adc-4b2c-bd24-2a2b14cad98e",
+              "entity_type": "customer",
+              "code": "300-K119"
+            },
+            {
+              "uuid": "e7d8a184-f6f2-4fca-9887-cd0cc934831e",
+              "entity_type": "product",
+              "code": "SRTKS7547-NEW"
+            }
+          ],
+          "picker_families": {
+            "KHOO KIM SENG": [
+              "fb9b873c-0451-4efc-8821-690b79c3e74c"
+            ],
+            "KIM SENG JAYA": [
+              "75488d1b-6cd7-4046-bb1b-e61c988f0482",
+              "91451971-a859-417a-84e5-01e2a784a598",
+              "909619b8-a003-4ced-af5a-7b1a4501d6de",
+              "991b3780-c35a-4c2a-8dcd-77a5cb055b20",
+              "af32d612-9bbe-4e75-8193-48fe92b56524",
+              "65a194e4-3adc-4b2c-bd24-2a2b14cad98e",
+              "91451971-a859-417a-84e5-01e2a784a598",
+              "af32d612-9bbe-4e75-8193-48fe92b56524",
+              "909619b8-a003-4ced-af5a-7b1a4501d6de",
+              "991b3780-c35a-4c2a-8dcd-77a5cb055b20",
+              "75488d1b-6cd7-4046-bb1b-e61c988f0482"
+            ]
+          },
+          "gate_debug": {
+            "domain": "order",
+            "allowed_lookup": [
+              "order",
+              "customer_order",
+              "transporter",
+              "customer",
+              "product"
+            ],
+            "entities_count": 8
+          }
+        }
+      }
+    ],
+    "If3": [
+      {
+        "json": {
+          "tokens": [
+            "kim seng",
+            "srtks7547-new"
+          ],
+          "elapsed_ms": 840.93,
+          "resolutions": [
+            {
+              "token": "kim seng",
+              "resolved": false,
+              "ambiguous": false,
+              "matches": [
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "301-J009",
+                  "uuid": "fb9b873c-0451-4efc-8821-690b79c3e74c",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KHOO KIM SENG",
+                    "phone_number": "012-6383161",
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "300-K117",
+                  "uuid": "75488d1b-6cd7-4046-bb1b-e61c988f0482",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KIM SENG JAYA SDN BHD [A/C I]",
+                    "phone_number": "017-590 0899",
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "300-K118",
+                  "uuid": "91451971-a859-417a-84e5-01e2a784a598",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KIM SENG JAYA SDN BHD [A/C III]",
+                    "phone_number": "017-590 0899",
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "300-K119",
+                  "uuid": "909619b8-a003-4ced-af5a-7b1a4501d6de",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KIM SENG JAYA SDN BHD [A/C IV]",
+                    "phone_number": "017-590 0899",
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "300-K118",
+                  "uuid": "991b3780-c35a-4c2a-8dcd-77a5cb055b20",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KIM SENG JAYA SDN BHD (CERAMIC & ELLECI)",
+                    "phone_number": null,
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "300-K117",
+                  "uuid": "af32d612-9bbe-4e75-8193-48fe92b56524",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KIM SENG JAYA SDN BHD",
+                    "phone_number": null,
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "300-K119",
+                  "uuid": "65a194e4-3adc-4b2c-bd24-2a2b14cad98e",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KIM SENG JAYA SDN BHD (SRT)",
+                    "phone_number": null,
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "KIM SENG JAYA SDN BHD [A/C III]",
+                  "uuid": "91451971-a859-417a-84e5-01e2a784a598",
+                  "match_field": "debtor_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "debtor_name": "KIM SENG JAYA SDN BHD [A/C III]",
+                    "debtor_code": "300-K118",
+                    "source": "orders"
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "KIM SENG JAYA SDN BHD",
+                  "uuid": "af32d612-9bbe-4e75-8193-48fe92b56524",
+                  "match_field": "debtor_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "debtor_name": "KIM SENG JAYA SDN BHD",
+                    "debtor_code": "300-K117",
+                    "source": "orders"
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "KIM SENG JAYA SDN BHD [A/C IV]",
+                  "uuid": "909619b8-a003-4ced-af5a-7b1a4501d6de",
+                  "match_field": "debtor_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "debtor_name": "KIM SENG JAYA SDN BHD [A/C IV]",
+                    "debtor_code": "300-K119",
+                    "source": "orders"
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "KIM SENG JAYA SDN BHD (CERAMIC & ELLECI)",
+                  "uuid": "991b3780-c35a-4c2a-8dcd-77a5cb055b20",
+                  "match_field": "debtor_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "debtor_name": "KIM SENG JAYA SDN BHD (CERAMIC & ELLECI)",
+                    "debtor_code": "300-K118",
+                    "source": "orders"
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "KIM SENG JAYA SDN BHD [A/C I]",
+                  "uuid": "75488d1b-6cd7-4046-bb1b-e61c988f0482",
+                  "match_field": "debtor_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "debtor_name": "KIM SENG JAYA SDN BHD [A/C I]",
+                    "debtor_code": "300-K117",
+                    "source": "orders"
+                  }
+                }
+              ],
+              "alternatives": []
+            },
+            {
+              "token": "srtks7547-new",
+              "resolved": true,
+              "ambiguous": false,
+              "matches": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "SRTKS7547-NEW",
+                  "uuid": "e7d8a184-f6f2-4fca-9887-cd0cc934831e",
+                  "match_field": "product_code",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "product_name": "SRTKS7547-NEW",
+                    "is_active": true,
+                    "brand": {
+                      "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                      "brand_code": "SORENTO",
+                      "brand_name": "SORENTO"
+                    }
+                  }
+                }
+              ],
+              "alternatives": []
+            }
+          ],
+          "unresolved_tokens": [],
+          "fallback_applied": true,
+          "fallback_requested_types": [
+            "customer",
+            "order"
+          ],
+          "fallback_types_found": [
+            "customer",
+            "product"
+          ],
+          "fallback_per_token": true,
+          "fallback_match_mode": "or",
+          "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+          "gate_passed": false,
+          "require_specific": true,
+          "resolved_company": "sorento",
+          "company_team": null,
+          "resolved_companies": [
+            "sorento"
+          ],
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_companies": [
+            {
+              "company_id": "00000000-0000-0000-0000-000000000001",
+              "company_name": "Sorento",
+              "brand_code": null,
+              "codes": [
+                "301-J009",
+                "300-K117",
+                "KIM SENG JAYA SDN BHD [A/C I]"
+              ],
+              "labels": [
+                "KHOO KIM SENG",
+                "KIM SENG JAYA SDN BHD [A/C I]"
+              ]
+            }
+          ],
+          "routing_company": "00000000-0000-0000-0000-000000000001",
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "'order' customer token matches 2 different companies; user must pick",
+          "gate_clarification": "Which customer do you mean? Please choose:\n1. KHOO KIM SENG\n2. KIM SENG JAYA SDN BHD",
+          "compatible_entities": [
+            {
+              "uuid": "fb9b873c-0451-4efc-8821-690b79c3e74c",
+              "entity_type": "customer",
+              "code": "301-J009",
+              "title": "KHOO KIM SENG"
+            },
+            {
+              "uuid": "75488d1b-6cd7-4046-bb1b-e61c988f0482",
+              "entity_type": "customer",
+              "code": "300-K117",
+              "title": "KIM SENG JAYA SDN BHD"
+            }
+          ],
+          "customer_probe_entities": [
+            {
+              "uuid": "fb9b873c-0451-4efc-8821-690b79c3e74c",
+              "entity_type": "customer",
+              "code": "301-J009"
+            },
+            {
+              "uuid": "75488d1b-6cd7-4046-bb1b-e61c988f0482",
+              "entity_type": "customer",
+              "code": "300-K117"
+            },
+            {
+              "uuid": "91451971-a859-417a-84e5-01e2a784a598",
+              "entity_type": "customer",
+              "code": "300-K118"
+            },
+            {
+              "uuid": "909619b8-a003-4ced-af5a-7b1a4501d6de",
+              "entity_type": "customer",
+              "code": "300-K119"
+            },
+            {
+              "uuid": "991b3780-c35a-4c2a-8dcd-77a5cb055b20",
+              "entity_type": "customer",
+              "code": "300-K118"
+            },
+            {
+              "uuid": "af32d612-9bbe-4e75-8193-48fe92b56524",
+              "entity_type": "customer",
+              "code": "300-K117"
+            },
+            {
+              "uuid": "65a194e4-3adc-4b2c-bd24-2a2b14cad98e",
+              "entity_type": "customer",
+              "code": "300-K119"
+            },
+            {
+              "uuid": "e7d8a184-f6f2-4fca-9887-cd0cc934831e",
+              "entity_type": "product",
+              "code": "SRTKS7547-NEW"
+            }
+          ],
+          "picker_families": {
+            "KHOO KIM SENG": [
+              "fb9b873c-0451-4efc-8821-690b79c3e74c"
+            ],
+            "KIM SENG JAYA": [
+              "75488d1b-6cd7-4046-bb1b-e61c988f0482",
+              "91451971-a859-417a-84e5-01e2a784a598",
+              "909619b8-a003-4ced-af5a-7b1a4501d6de",
+              "991b3780-c35a-4c2a-8dcd-77a5cb055b20",
+              "af32d612-9bbe-4e75-8193-48fe92b56524",
+              "65a194e4-3adc-4b2c-bd24-2a2b14cad98e",
+              "91451971-a859-417a-84e5-01e2a784a598",
+              "af32d612-9bbe-4e75-8193-48fe92b56524",
+              "909619b8-a003-4ced-af5a-7b1a4501d6de",
+              "991b3780-c35a-4c2a-8dcd-77a5cb055b20",
+              "75488d1b-6cd7-4046-bb1b-e61c988f0482"
+            ]
+          },
+          "gate_debug": {
+            "domain": "order",
+            "allowed_lookup": [
+              "order",
+              "customer_order",
+              "transporter",
+              "customer",
+              "product"
+            ],
+            "entities_count": 8
+          }
+        }
+      }
+    ],
+    "If-incoming-picker": [],
+    "If-customer-picker": [
+      {
+        "json": {
+          "tokens": [
+            "kim seng",
+            "srtks7547-new"
+          ],
+          "elapsed_ms": 840.93,
+          "resolutions": [
+            {
+              "token": "kim seng",
+              "resolved": false,
+              "ambiguous": false,
+              "matches": [
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "301-J009",
+                  "uuid": "fb9b873c-0451-4efc-8821-690b79c3e74c",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KHOO KIM SENG",
+                    "phone_number": "012-6383161",
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "300-K117",
+                  "uuid": "75488d1b-6cd7-4046-bb1b-e61c988f0482",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KIM SENG JAYA SDN BHD [A/C I]",
+                    "phone_number": "017-590 0899",
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "300-K118",
+                  "uuid": "91451971-a859-417a-84e5-01e2a784a598",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KIM SENG JAYA SDN BHD [A/C III]",
+                    "phone_number": "017-590 0899",
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "300-K119",
+                  "uuid": "909619b8-a003-4ced-af5a-7b1a4501d6de",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KIM SENG JAYA SDN BHD [A/C IV]",
+                    "phone_number": "017-590 0899",
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "300-K118",
+                  "uuid": "991b3780-c35a-4c2a-8dcd-77a5cb055b20",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KIM SENG JAYA SDN BHD (CERAMIC & ELLECI)",
+                    "phone_number": null,
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "300-K117",
+                  "uuid": "af32d612-9bbe-4e75-8193-48fe92b56524",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KIM SENG JAYA SDN BHD",
+                    "phone_number": null,
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "300-K119",
+                  "uuid": "65a194e4-3adc-4b2c-bd24-2a2b14cad98e",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KIM SENG JAYA SDN BHD (SRT)",
+                    "phone_number": null,
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "KIM SENG JAYA SDN BHD [A/C III]",
+                  "uuid": "91451971-a859-417a-84e5-01e2a784a598",
+                  "match_field": "debtor_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "debtor_name": "KIM SENG JAYA SDN BHD [A/C III]",
+                    "debtor_code": "300-K118",
+                    "source": "orders"
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "KIM SENG JAYA SDN BHD",
+                  "uuid": "af32d612-9bbe-4e75-8193-48fe92b56524",
+                  "match_field": "debtor_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "debtor_name": "KIM SENG JAYA SDN BHD",
+                    "debtor_code": "300-K117",
+                    "source": "orders"
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "KIM SENG JAYA SDN BHD [A/C IV]",
+                  "uuid": "909619b8-a003-4ced-af5a-7b1a4501d6de",
+                  "match_field": "debtor_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "debtor_name": "KIM SENG JAYA SDN BHD [A/C IV]",
+                    "debtor_code": "300-K119",
+                    "source": "orders"
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "KIM SENG JAYA SDN BHD (CERAMIC & ELLECI)",
+                  "uuid": "991b3780-c35a-4c2a-8dcd-77a5cb055b20",
+                  "match_field": "debtor_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "debtor_name": "KIM SENG JAYA SDN BHD (CERAMIC & ELLECI)",
+                    "debtor_code": "300-K118",
+                    "source": "orders"
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "KIM SENG JAYA SDN BHD [A/C I]",
+                  "uuid": "75488d1b-6cd7-4046-bb1b-e61c988f0482",
+                  "match_field": "debtor_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "debtor_name": "KIM SENG JAYA SDN BHD [A/C I]",
+                    "debtor_code": "300-K117",
+                    "source": "orders"
+                  }
+                }
+              ],
+              "alternatives": []
+            },
+            {
+              "token": "srtks7547-new",
+              "resolved": true,
+              "ambiguous": false,
+              "matches": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "SRTKS7547-NEW",
+                  "uuid": "e7d8a184-f6f2-4fca-9887-cd0cc934831e",
+                  "match_field": "product_code",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "product_name": "SRTKS7547-NEW",
+                    "is_active": true,
+                    "brand": {
+                      "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                      "brand_code": "SORENTO",
+                      "brand_name": "SORENTO"
+                    }
+                  }
+                }
+              ],
+              "alternatives": []
+            }
+          ],
+          "unresolved_tokens": [],
+          "fallback_applied": true,
+          "fallback_requested_types": [
+            "customer",
+            "order"
+          ],
+          "fallback_types_found": [
+            "customer",
+            "product"
+          ],
+          "fallback_per_token": true,
+          "fallback_match_mode": "or",
+          "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+          "gate_passed": false,
+          "require_specific": true,
+          "resolved_company": "sorento",
+          "company_team": null,
+          "resolved_companies": [
+            "sorento"
+          ],
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_companies": [
+            {
+              "company_id": "00000000-0000-0000-0000-000000000001",
+              "company_name": "Sorento",
+              "brand_code": null,
+              "codes": [
+                "301-J009",
+                "300-K117",
+                "KIM SENG JAYA SDN BHD [A/C I]"
+              ],
+              "labels": [
+                "KHOO KIM SENG",
+                "KIM SENG JAYA SDN BHD [A/C I]"
+              ]
+            }
+          ],
+          "routing_company": "00000000-0000-0000-0000-000000000001",
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "'order' customer token matches 2 different companies; user must pick",
+          "gate_clarification": "Which customer do you mean? Please choose:\n1. KHOO KIM SENG\n2. KIM SENG JAYA SDN BHD",
+          "compatible_entities": [
+            {
+              "uuid": "fb9b873c-0451-4efc-8821-690b79c3e74c",
+              "entity_type": "customer",
+              "code": "301-J009",
+              "title": "KHOO KIM SENG"
+            },
+            {
+              "uuid": "75488d1b-6cd7-4046-bb1b-e61c988f0482",
+              "entity_type": "customer",
+              "code": "300-K117",
+              "title": "KIM SENG JAYA SDN BHD"
+            }
+          ],
+          "customer_probe_entities": [
+            {
+              "uuid": "fb9b873c-0451-4efc-8821-690b79c3e74c",
+              "entity_type": "customer",
+              "code": "301-J009"
+            },
+            {
+              "uuid": "75488d1b-6cd7-4046-bb1b-e61c988f0482",
+              "entity_type": "customer",
+              "code": "300-K117"
+            },
+            {
+              "uuid": "91451971-a859-417a-84e5-01e2a784a598",
+              "entity_type": "customer",
+              "code": "300-K118"
+            },
+            {
+              "uuid": "909619b8-a003-4ced-af5a-7b1a4501d6de",
+              "entity_type": "customer",
+              "code": "300-K119"
+            },
+            {
+              "uuid": "991b3780-c35a-4c2a-8dcd-77a5cb055b20",
+              "entity_type": "customer",
+              "code": "300-K118"
+            },
+            {
+              "uuid": "af32d612-9bbe-4e75-8193-48fe92b56524",
+              "entity_type": "customer",
+              "code": "300-K117"
+            },
+            {
+              "uuid": "65a194e4-3adc-4b2c-bd24-2a2b14cad98e",
+              "entity_type": "customer",
+              "code": "300-K119"
+            },
+            {
+              "uuid": "e7d8a184-f6f2-4fca-9887-cd0cc934831e",
+              "entity_type": "product",
+              "code": "SRTKS7547-NEW"
+            }
+          ],
+          "picker_families": {
+            "KHOO KIM SENG": [
+              "fb9b873c-0451-4efc-8821-690b79c3e74c"
+            ],
+            "KIM SENG JAYA": [
+              "75488d1b-6cd7-4046-bb1b-e61c988f0482",
+              "91451971-a859-417a-84e5-01e2a784a598",
+              "909619b8-a003-4ced-af5a-7b1a4501d6de",
+              "991b3780-c35a-4c2a-8dcd-77a5cb055b20",
+              "af32d612-9bbe-4e75-8193-48fe92b56524",
+              "65a194e4-3adc-4b2c-bd24-2a2b14cad98e",
+              "91451971-a859-417a-84e5-01e2a784a598",
+              "af32d612-9bbe-4e75-8193-48fe92b56524",
+              "909619b8-a003-4ced-af5a-7b1a4501d6de",
+              "991b3780-c35a-4c2a-8dcd-77a5cb055b20",
+              "75488d1b-6cd7-4046-bb1b-e61c988f0482"
+            ]
+          },
+          "gate_debug": {
+            "domain": "order",
+            "allowed_lookup": [
+              "order",
+              "customer_order",
+              "transporter",
+              "customer",
+              "product"
+            ],
+            "entities_count": 8
+          }
+        }
+      }
+    ],
+    "probe-customer-orders": [
+      {
+        "json": {
+          "response": "Here are the orders I found.\n\n1. *Order Number:* REP202608-0235\n*Customer:* KIM SENG JAYA SDN BHD [A/C I]\n*Order Date:* 12/08/2026\n*Actual Delivery Date:* 13/08/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 15:55:00\n*Transporter:* ASAC TRANSPORT\n*Driver:* ZAINAL\n*Lorry Plate:* KBU78\n*Warehouse:* BRW\n*Products:* SRTKS7081 (1), SRTKS2426-RG (1), SRTKS2433 (1), SRTKS7547-NEW (2)\n\n2. *Order Number:* 202607-1499\n*Customer:* KIM SENG JAYA SDN BHD [A/C I]\n*Order Date:* 08/07/2026\n*Actual Delivery Date:* 13/07/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 20:07:00\n*Transporter:* SUNCREST\n*Driver:* RAJENDRAN\n*Lorry Plate:* BQL5483\n*Warehouse:* BRW\n*Products:* SRTKS7547-NEW (10), SRTKS6047-NEW (3)\n\n3. *Order Number:* 202606-2736\n*Customer:* KIM SENG JAYA SDN BHD [A/C I]\n*Order Date:* 18/06/2026\n*Actual Delivery Date:* 20/06/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 14:25:00\n*Transporter:* ASAC TRANSPORT\n*Driver:* KHAIRIL\n*Lorry Plate:* KFF2878\n*Warehouse:* BRW\n*Products:* SRTKS7547-NEW (5)\n\n4. *Order Number:* 202606-1013\n*Customer:* KIM SENG JAYA SDN BHD [A/C I]\n*Order Date:* 08/06/2026\n*Actual Delivery Date:* 06/06/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 16:10:00\n*Transporter:* SORENTO\n*Driver:* SAMSUDIN\n*Lorry Plate:* VCH1678\n*Warehouse:* BRW\n*Products:* SRTSH22914-GM (15), SRTSH2625-BL (3), SRTSH22914-BL (2), SRTSH22914-BL (5), SRTKS7547-NEW (5), SRTKS8050 (1), SRTKS8047-NEW (4), SRTKS8845 (1), SRTKT74SS-GM (1), SRTKS8845-BL (1), SRTKT74SS-BL (1), SRTKS1045 (1), SRTKT73SS (1), SRTKS1045-BL (1), SRTKT73SS-BL (1)\n\n_Data last updated: 27/08/2026 10:17:12_",
+          "response_intro": "Here are the orders I found.",
+          "answers": [
+            {
+              "title": "REP202608-0235",
+              "fields": [
+                {
+                  "label": "Order Number",
+                  "value": "REP202608-0235"
+                },
+                {
+                  "label": "Customer",
+                  "value": "KIM SENG JAYA SDN BHD [A/C I]"
+                },
+                {
+                  "label": "Order Date",
+                  "value": "2026-08-12T00:00:00"
+                },
+                {
+                  "label": "Actual Delivery Date",
+                  "value": "2026-08-13T00:00:00"
+                },
+                {
+                  "label": "Status",
+                  "value": "Picked Up / In Transit"
+                },
+                {
+                  "label": "Pickup Time",
+                  "value": "15:55:00"
+                },
+                {
+                  "label": "Transporter",
+                  "value": "ASAC TRANSPORT"
+                },
+                {
+                  "label": "Driver",
+                  "value": "ZAINAL"
+                },
+                {
+                  "label": "Lorry Plate",
+                  "value": "KBU78"
+                },
+                {
+                  "label": "Warehouse",
+                  "value": "BRW"
+                },
+                {
+                  "label": "Products",
+                  "value": "SRTKS7081 (1), SRTKS2426-RG (1), SRTKS2433 (1), SRTKS7547-NEW (2)"
+                }
+              ],
+              "flags": {
+                "discontinued": false,
+                "expired": false,
+                "expiring_soon": false,
+                "unallocated": false,
+                "partially_allocated": false
+              }
+            },
+            {
+              "title": "202607-1499",
+              "fields": [
+                {
+                  "label": "Order Number",
+                  "value": "202607-1499"
+                },
+                {
+                  "label": "Customer",
+                  "value": "KIM SENG JAYA SDN BHD [A/C I]"
+                },
+                {
+                  "label": "Order Date",
+                  "value": "2026-07-08T00:00:00"
+                },
+                {
+                  "label": "Actual Delivery Date",
+                  "value": "2026-07-13T00:00:00"
+                },
+                {
+                  "label": "Status",
+                  "value": "Picked Up / In Transit"
+                },
+                {
+                  "label": "Pickup Time",
+                  "value": "20:07:00"
+                },
+                {
+                  "label": "Transporter",
+                  "value": "SUNCREST"
+                },
+                {
+                  "label": "Driver",
+                  "value": "RAJENDRAN"
+                },
+                {
+                  "label": "Lorry Plate",
+                  "value": "BQL5483"
+                },
+                {
+                  "label": "Warehouse",
+                  "value": "BRW"
+                },
+                {
+                  "label": "Products",
+                  "value": "SRTKS7547-NEW (10), SRTKS6047-NEW (3)"
+                }
+              ],
+              "flags": {
+                "discontinued": false,
+                "expired": false,
+                "expiring_soon": false,
+                "unallocated": false,
+                "partially_allocated": false
+              }
+            },
+            {
+              "title": "202606-2736",
+              "fields": [
+                {
+                  "label": "Order Number",
+                  "value": "202606-2736"
+                },
+                {
+                  "label": "Customer",
+                  "value": "KIM SENG JAYA SDN BHD [A/C I]"
+                },
+                {
+                  "label": "Order Date",
+                  "value": "2026-06-18T00:00:00"
+                },
+                {
+                  "label": "Actual Delivery Date",
+                  "value": "2026-06-20T00:00:00"
+                },
+                {
+                  "label": "Status",
+                  "value": "Picked Up / In Transit"
+                },
+                {
+                  "label": "Pickup Time",
+                  "value": "14:25:00"
+                },
+                {
+                  "label": "Transporter",
+                  "value": "ASAC TRANSPORT"
+                },
+                {
+                  "label": "Driver",
+                  "value": "KHAIRIL"
+                },
+                {
+                  "label": "Lorry Plate",
+                  "value": "KFF2878"
+                },
+                {
+                  "label": "Warehouse",
+                  "value": "BRW"
+                },
+                {
+                  "label": "Products",
+                  "value": "SRTKS7547-NEW (5)"
+                }
+              ],
+              "flags": {
+                "discontinued": false,
+                "expired": false,
+                "expiring_soon": false,
+                "unallocated": false,
+                "partially_allocated": false
+              }
+            },
+            {
+              "title": "202606-1013",
+              "fields": [
+                {
+                  "label": "Order Number",
+                  "value": "202606-1013"
+                },
+                {
+                  "label": "Customer",
+                  "value": "KIM SENG JAYA SDN BHD [A/C I]"
+                },
+                {
+                  "label": "Order Date",
+                  "value": "2026-06-08T00:00:00"
+                },
+                {
+                  "label": "Actual Delivery Date",
+                  "value": "2026-06-06T00:00:00"
+                },
+                {
+                  "label": "Status",
+                  "value": "Picked Up / In Transit"
+                },
+                {
+                  "label": "Pickup Time",
+                  "value": "16:10:00"
+                },
+                {
+                  "label": "Transporter",
+                  "value": "SORENTO"
+                },
+                {
+                  "label": "Driver",
+                  "value": "SAMSUDIN"
+                },
+                {
+                  "label": "Lorry Plate",
+                  "value": "VCH1678"
+                },
+                {
+                  "label": "Warehouse",
+                  "value": "BRW"
+                },
+                {
+                  "label": "Products",
+                  "value": "SRTSH22914-GM (15), SRTSH2625-BL (3), SRTSH22914-BL (2), SRTSH22914-BL (5), SRTKS7547-NEW (5), SRTKS8050 (1), SRTKS8047-NEW (4), SRTKS8845 (1), SRTKT74SS-GM (1), SRTKS8845-BL (1), SRTKT74SS-BL (1), SRTKS1045 (1), SRTKT73SS (1), SRTKS1045-BL (1), SRTKT73SS-BL (1)"
+                }
+              ],
+              "flags": {
+                "discontinued": false,
+                "expired": false,
+                "expiring_soon": false,
+                "unallocated": false,
+                "partially_allocated": false
+              }
+            }
+          ],
+          "attachments": [],
+          "action_links": [],
+          "last_updated_at": "2026-08-27T10:17:12.869047",
+          "has_result": true,
+          "alternatives": [],
+          "relaxed_axis": null,
+          "field_access": null,
+          "requested_attributes": [
+            "delivery"
+          ],
+          "keys_served": false
+        }
+      }
+    ],
+    "annotate-customer-picker": [
+      {
+        "json": {
+          "tokens": [
+            "kim seng",
+            "srtks7547-new"
+          ],
+          "elapsed_ms": 840.93,
+          "resolutions": [
+            {
+              "token": "kim seng",
+              "resolved": false,
+              "ambiguous": false,
+              "matches": [
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "301-J009",
+                  "uuid": "fb9b873c-0451-4efc-8821-690b79c3e74c",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KHOO KIM SENG",
+                    "phone_number": "012-6383161",
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "300-K117",
+                  "uuid": "75488d1b-6cd7-4046-bb1b-e61c988f0482",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KIM SENG JAYA SDN BHD [A/C I]",
+                    "phone_number": "017-590 0899",
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "300-K118",
+                  "uuid": "91451971-a859-417a-84e5-01e2a784a598",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KIM SENG JAYA SDN BHD [A/C III]",
+                    "phone_number": "017-590 0899",
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "300-K119",
+                  "uuid": "909619b8-a003-4ced-af5a-7b1a4501d6de",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KIM SENG JAYA SDN BHD [A/C IV]",
+                    "phone_number": "017-590 0899",
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "300-K118",
+                  "uuid": "991b3780-c35a-4c2a-8dcd-77a5cb055b20",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KIM SENG JAYA SDN BHD (CERAMIC & ELLECI)",
+                    "phone_number": null,
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "300-K117",
+                  "uuid": "af32d612-9bbe-4e75-8193-48fe92b56524",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KIM SENG JAYA SDN BHD",
+                    "phone_number": null,
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "300-K119",
+                  "uuid": "65a194e4-3adc-4b2c-bd24-2a2b14cad98e",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KIM SENG JAYA SDN BHD (SRT)",
+                    "phone_number": null,
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "KIM SENG JAYA SDN BHD [A/C III]",
+                  "uuid": "91451971-a859-417a-84e5-01e2a784a598",
+                  "match_field": "debtor_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "debtor_name": "KIM SENG JAYA SDN BHD [A/C III]",
+                    "debtor_code": "300-K118",
+                    "source": "orders"
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "KIM SENG JAYA SDN BHD",
+                  "uuid": "af32d612-9bbe-4e75-8193-48fe92b56524",
+                  "match_field": "debtor_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "debtor_name": "KIM SENG JAYA SDN BHD",
+                    "debtor_code": "300-K117",
+                    "source": "orders"
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "KIM SENG JAYA SDN BHD [A/C IV]",
+                  "uuid": "909619b8-a003-4ced-af5a-7b1a4501d6de",
+                  "match_field": "debtor_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "debtor_name": "KIM SENG JAYA SDN BHD [A/C IV]",
+                    "debtor_code": "300-K119",
+                    "source": "orders"
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "KIM SENG JAYA SDN BHD (CERAMIC & ELLECI)",
+                  "uuid": "991b3780-c35a-4c2a-8dcd-77a5cb055b20",
+                  "match_field": "debtor_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "debtor_name": "KIM SENG JAYA SDN BHD (CERAMIC & ELLECI)",
+                    "debtor_code": "300-K118",
+                    "source": "orders"
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "KIM SENG JAYA SDN BHD [A/C I]",
+                  "uuid": "75488d1b-6cd7-4046-bb1b-e61c988f0482",
+                  "match_field": "debtor_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "debtor_name": "KIM SENG JAYA SDN BHD [A/C I]",
+                    "debtor_code": "300-K117",
+                    "source": "orders"
+                  }
+                }
+              ],
+              "alternatives": []
+            },
+            {
+              "token": "srtks7547-new",
+              "resolved": true,
+              "ambiguous": false,
+              "matches": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "SRTKS7547-NEW",
+                  "uuid": "e7d8a184-f6f2-4fca-9887-cd0cc934831e",
+                  "match_field": "product_code",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "product_name": "SRTKS7547-NEW",
+                    "is_active": true,
+                    "brand": {
+                      "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                      "brand_code": "SORENTO",
+                      "brand_name": "SORENTO"
+                    }
+                  }
+                }
+              ],
+              "alternatives": []
+            }
+          ],
+          "unresolved_tokens": [],
+          "fallback_applied": true,
+          "fallback_requested_types": [
+            "customer",
+            "order"
+          ],
+          "fallback_types_found": [
+            "customer",
+            "product"
+          ],
+          "fallback_per_token": true,
+          "fallback_match_mode": "or",
+          "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+          "gate_passed": false,
+          "require_specific": true,
+          "resolved_company": "sorento",
+          "company_team": null,
+          "resolved_companies": [
+            "sorento"
+          ],
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_companies": [
+            {
+              "company_id": "00000000-0000-0000-0000-000000000001",
+              "company_name": "Sorento",
+              "brand_code": null,
+              "codes": [
+                "301-J009",
+                "300-K117",
+                "KIM SENG JAYA SDN BHD [A/C I]"
+              ],
+              "labels": [
+                "KHOO KIM SENG",
+                "KIM SENG JAYA SDN BHD [A/C I]"
+              ]
+            }
+          ],
+          "routing_company": "00000000-0000-0000-0000-000000000001",
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "'order' customer token matches 2 different companies; user must pick",
+          "gate_clarification": "Which customer do you mean? Please choose:\n1. KHOO KIM SENG\n2. KIM SENG JAYA SDN BHD",
+          "compatible_entities": [
+            {
+              "uuid": "fb9b873c-0451-4efc-8821-690b79c3e74c",
+              "entity_type": "customer",
+              "code": "301-J009",
+              "title": "KHOO KIM SENG"
+            },
+            {
+              "uuid": "75488d1b-6cd7-4046-bb1b-e61c988f0482",
+              "entity_type": "customer",
+              "code": "300-K117",
+              "title": "KIM SENG JAYA SDN BHD"
+            }
+          ],
+          "customer_probe_entities": [
+            {
+              "uuid": "fb9b873c-0451-4efc-8821-690b79c3e74c",
+              "entity_type": "customer",
+              "code": "301-J009"
+            },
+            {
+              "uuid": "75488d1b-6cd7-4046-bb1b-e61c988f0482",
+              "entity_type": "customer",
+              "code": "300-K117"
+            },
+            {
+              "uuid": "91451971-a859-417a-84e5-01e2a784a598",
+              "entity_type": "customer",
+              "code": "300-K118"
+            },
+            {
+              "uuid": "909619b8-a003-4ced-af5a-7b1a4501d6de",
+              "entity_type": "customer",
+              "code": "300-K119"
+            },
+            {
+              "uuid": "991b3780-c35a-4c2a-8dcd-77a5cb055b20",
+              "entity_type": "customer",
+              "code": "300-K118"
+            },
+            {
+              "uuid": "af32d612-9bbe-4e75-8193-48fe92b56524",
+              "entity_type": "customer",
+              "code": "300-K117"
+            },
+            {
+              "uuid": "65a194e4-3adc-4b2c-bd24-2a2b14cad98e",
+              "entity_type": "customer",
+              "code": "300-K119"
+            },
+            {
+              "uuid": "e7d8a184-f6f2-4fca-9887-cd0cc934831e",
+              "entity_type": "product",
+              "code": "SRTKS7547-NEW"
+            }
+          ],
+          "picker_families": {
+            "KHOO KIM SENG": [
+              "fb9b873c-0451-4efc-8821-690b79c3e74c"
+            ],
+            "KIM SENG JAYA": [
+              "75488d1b-6cd7-4046-bb1b-e61c988f0482",
+              "91451971-a859-417a-84e5-01e2a784a598",
+              "909619b8-a003-4ced-af5a-7b1a4501d6de",
+              "991b3780-c35a-4c2a-8dcd-77a5cb055b20",
+              "af32d612-9bbe-4e75-8193-48fe92b56524",
+              "65a194e4-3adc-4b2c-bd24-2a2b14cad98e",
+              "91451971-a859-417a-84e5-01e2a784a598",
+              "af32d612-9bbe-4e75-8193-48fe92b56524",
+              "909619b8-a003-4ced-af5a-7b1a4501d6de",
+              "991b3780-c35a-4c2a-8dcd-77a5cb055b20",
+              "75488d1b-6cd7-4046-bb1b-e61c988f0482"
+            ]
+          },
+          "gate_debug": {
+            "domain": "order",
+            "allowed_lookup": [
+              "order",
+              "customer_order",
+              "transporter",
+              "customer",
+              "product"
+            ],
+            "entities_count": 8
+          },
+          "is_clarification": false,
+          "customer_probe_window_days": 90,
+          "escalate_message": "Which customer do you mean? Please choose:\n1. KHOO KIM SENG - no recent delivery\n2. KIM SENG JAYA SDN BHD - has delivery",
+          "customer_probe_hits": 1,
+          "customer_probe_skip_reason": null
+        }
+      }
+    ],
+    "build-suggest-offer": [
+      {
+        "json": {
+          "tokens": [
+            "kim seng",
+            "srtks7547-new"
+          ],
+          "elapsed_ms": 840.93,
+          "resolutions": [
+            {
+              "token": "kim seng",
+              "resolved": false,
+              "ambiguous": false,
+              "matches": [
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "301-J009",
+                  "uuid": "fb9b873c-0451-4efc-8821-690b79c3e74c",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KHOO KIM SENG",
+                    "phone_number": "012-6383161",
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "300-K117",
+                  "uuid": "75488d1b-6cd7-4046-bb1b-e61c988f0482",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KIM SENG JAYA SDN BHD [A/C I]",
+                    "phone_number": "017-590 0899",
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "300-K118",
+                  "uuid": "91451971-a859-417a-84e5-01e2a784a598",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KIM SENG JAYA SDN BHD [A/C III]",
+                    "phone_number": "017-590 0899",
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "300-K119",
+                  "uuid": "909619b8-a003-4ced-af5a-7b1a4501d6de",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KIM SENG JAYA SDN BHD [A/C IV]",
+                    "phone_number": "017-590 0899",
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "300-K118",
+                  "uuid": "991b3780-c35a-4c2a-8dcd-77a5cb055b20",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KIM SENG JAYA SDN BHD (CERAMIC & ELLECI)",
+                    "phone_number": null,
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "300-K117",
+                  "uuid": "af32d612-9bbe-4e75-8193-48fe92b56524",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KIM SENG JAYA SDN BHD",
+                    "phone_number": null,
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "300-K119",
+                  "uuid": "65a194e4-3adc-4b2c-bd24-2a2b14cad98e",
+                  "match_field": "customer_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "customer_name": "KIM SENG JAYA SDN BHD (SRT)",
+                    "phone_number": null,
+                    "email": null
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "KIM SENG JAYA SDN BHD [A/C III]",
+                  "uuid": "91451971-a859-417a-84e5-01e2a784a598",
+                  "match_field": "debtor_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "debtor_name": "KIM SENG JAYA SDN BHD [A/C III]",
+                    "debtor_code": "300-K118",
+                    "source": "orders"
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "KIM SENG JAYA SDN BHD",
+                  "uuid": "af32d612-9bbe-4e75-8193-48fe92b56524",
+                  "match_field": "debtor_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "debtor_name": "KIM SENG JAYA SDN BHD",
+                    "debtor_code": "300-K117",
+                    "source": "orders"
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "KIM SENG JAYA SDN BHD [A/C IV]",
+                  "uuid": "909619b8-a003-4ced-af5a-7b1a4501d6de",
+                  "match_field": "debtor_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "debtor_name": "KIM SENG JAYA SDN BHD [A/C IV]",
+                    "debtor_code": "300-K119",
+                    "source": "orders"
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "KIM SENG JAYA SDN BHD (CERAMIC & ELLECI)",
+                  "uuid": "991b3780-c35a-4c2a-8dcd-77a5cb055b20",
+                  "match_field": "debtor_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "debtor_name": "KIM SENG JAYA SDN BHD (CERAMIC & ELLECI)",
+                    "debtor_code": "300-K118",
+                    "source": "orders"
+                  }
+                },
+                {
+                  "entity_type": "customer",
+                  "canonical_code": "KIM SENG JAYA SDN BHD [A/C I]",
+                  "uuid": "75488d1b-6cd7-4046-bb1b-e61c988f0482",
+                  "match_field": "debtor_name",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "debtor_name": "KIM SENG JAYA SDN BHD [A/C I]",
+                    "debtor_code": "300-K117",
+                    "source": "orders"
+                  }
+                }
+              ],
+              "alternatives": []
+            },
+            {
+              "token": "srtks7547-new",
+              "resolved": true,
+              "ambiguous": false,
+              "matches": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "SRTKS7547-NEW",
+                  "uuid": "e7d8a184-f6f2-4fca-9887-cd0cc934831e",
+                  "match_field": "product_code",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "product_name": "SRTKS7547-NEW",
+                    "is_active": true,
+                    "brand": {
+                      "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                      "brand_code": "SORENTO",
+                      "brand_name": "SORENTO"
+                    }
+                  }
+                }
+              ],
+              "alternatives": []
+            }
+          ],
+          "unresolved_tokens": [],
+          "fallback_applied": true,
+          "fallback_requested_types": [
+            "customer",
+            "order"
+          ],
+          "fallback_types_found": [
+            "customer",
+            "product"
+          ],
+          "fallback_per_token": true,
+          "fallback_match_mode": "or",
+          "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+          "gate_passed": false,
+          "require_specific": true,
+          "resolved_company": "sorento",
+          "company_team": null,
+          "resolved_companies": [
+            "sorento"
+          ],
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_companies": [
+            {
+              "company_id": "00000000-0000-0000-0000-000000000001",
+              "company_name": "Sorento",
+              "brand_code": null,
+              "codes": [
+                "301-J009",
+                "300-K117",
+                "KIM SENG JAYA SDN BHD [A/C I]"
+              ],
+              "labels": [
+                "KHOO KIM SENG",
+                "KIM SENG JAYA SDN BHD [A/C I]"
+              ]
+            }
+          ],
+          "routing_company": "00000000-0000-0000-0000-000000000001",
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "'order' customer token matches 2 different companies; user must pick",
+          "gate_clarification": "Which customer do you mean? Please choose:\n1. KHOO KIM SENG\n2. KIM SENG JAYA SDN BHD",
+          "compatible_entities": [
+            {
+              "uuid": "fb9b873c-0451-4efc-8821-690b79c3e74c",
+              "entity_type": "customer",
+              "code": "301-J009",
+              "title": "KHOO KIM SENG"
+            },
+            {
+              "uuid": "75488d1b-6cd7-4046-bb1b-e61c988f0482",
+              "entity_type": "customer",
+              "code": "300-K117",
+              "title": "KIM SENG JAYA SDN BHD"
+            }
+          ],
+          "customer_probe_entities": [
+            {
+              "uuid": "fb9b873c-0451-4efc-8821-690b79c3e74c",
+              "entity_type": "customer",
+              "code": "301-J009"
+            },
+            {
+              "uuid": "75488d1b-6cd7-4046-bb1b-e61c988f0482",
+              "entity_type": "customer",
+              "code": "300-K117"
+            },
+            {
+              "uuid": "91451971-a859-417a-84e5-01e2a784a598",
+              "entity_type": "customer",
+              "code": "300-K118"
+            },
+            {
+              "uuid": "909619b8-a003-4ced-af5a-7b1a4501d6de",
+              "entity_type": "customer",
+              "code": "300-K119"
+            },
+            {
+              "uuid": "991b3780-c35a-4c2a-8dcd-77a5cb055b20",
+              "entity_type": "customer",
+              "code": "300-K118"
+            },
+            {
+              "uuid": "af32d612-9bbe-4e75-8193-48fe92b56524",
+              "entity_type": "customer",
+              "code": "300-K117"
+            },
+            {
+              "uuid": "65a194e4-3adc-4b2c-bd24-2a2b14cad98e",
+              "entity_type": "customer",
+              "code": "300-K119"
+            },
+            {
+              "uuid": "e7d8a184-f6f2-4fca-9887-cd0cc934831e",
+              "entity_type": "product",
+              "code": "SRTKS7547-NEW"
+            }
+          ],
+          "picker_families": {
+            "KHOO KIM SENG": [
+              "fb9b873c-0451-4efc-8821-690b79c3e74c"
+            ],
+            "KIM SENG JAYA": [
+              "75488d1b-6cd7-4046-bb1b-e61c988f0482",
+              "91451971-a859-417a-84e5-01e2a784a598",
+              "909619b8-a003-4ced-af5a-7b1a4501d6de",
+              "991b3780-c35a-4c2a-8dcd-77a5cb055b20",
+              "af32d612-9bbe-4e75-8193-48fe92b56524",
+              "65a194e4-3adc-4b2c-bd24-2a2b14cad98e",
+              "91451971-a859-417a-84e5-01e2a784a598",
+              "af32d612-9bbe-4e75-8193-48fe92b56524",
+              "909619b8-a003-4ced-af5a-7b1a4501d6de",
+              "991b3780-c35a-4c2a-8dcd-77a5cb055b20",
+              "75488d1b-6cd7-4046-bb1b-e61c988f0482"
+            ]
+          },
+          "gate_debug": {
+            "domain": "order",
+            "allowed_lookup": [
+              "order",
+              "customer_order",
+              "transporter",
+              "customer",
+              "product"
+            ],
+            "entities_count": 8
+          },
+          "is_clarification": false,
+          "customer_probe_window_days": 90,
+          "escalate_message": "Which customer do you mean? Please choose:\n1. KHOO KIM SENG - no recent delivery\n2. KIM SENG JAYA SDN BHD - has delivery",
+          "customer_probe_hits": 1,
+          "customer_probe_skip_reason": null,
+          "suggest_offer": false
+        }
+      }
+    ],
+    "tag-not-found": [
+      {
+        "json": {
+          "branch_kind": "not_found"
+        }
+      }
+    ],
+    "escalate-catalog": [
+      {
+        "json": {
+          "branch_kind": "not_found",
+          "response": "Which customer do you mean? Please choose:\n1. KHOO KIM SENG - no recent delivery\n2. KIM SENG JAYA SDN BHD - has delivery",
+          "manualResponse": false,
+          "includeResponse": true,
+          "is_escalate_offer": true
+        }
+      }
+    ],
+    "cs-offer-gate": [],
+    "compile-current-state": [
+      {
+        "json": {
+          "variables": {
+            "message_type": "business_query",
+            "intent_hint": "check_order",
+            "domain_hint": "order",
+            "user_goal": "trying to check the delivery order for kim seng srtks7547-new",
+            "query_brands": [],
+            "access_levels": [],
+            "entities": [
+              {
+                "raw": "kim seng",
+                "hint": "customer",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              },
+              {
+                "raw": "srtks7547-new",
+                "hint": "product",
+                "canonical_code": "SRTKS7547-NEW",
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "routing": {
+              "suggested_team": "customer_service",
+              "suggested_agent": "order_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "response": "Previous turn (order): returned 2 records",
+            "last_result_set": [
+              {
+                "idx": 1,
+                "uuid": "fb9b873c-0451-4efc-8821-690b79c3e74c",
+                "label": "KHOO KIM SENG",
+                "entity_type": "customer",
+                "product": "301-J009",
+                "attachment_type": null,
+                "filename": null
+              },
+              {
+                "idx": 2,
+                "uuid": "75488d1b-6cd7-4046-bb1b-e61c988f0482",
+                "label": "KIM SENG JAYA SDN BHD",
+                "entity_type": "customer",
+                "product": "300-K117",
+                "attachment_type": null,
+                "filename": null
+              }
+            ],
+            "selection_context": "disambiguation",
+            "date_filter_start": null,
+            "requested_attributes": [
+              "delivery"
+            ],
+            "date_filter_end": null,
+            "date_mode": null,
+            "match_mode": "and",
+            "contains_flyer": false,
+            "dym_offer": null,
+            "dym_candidates": [],
+            "ideation": null,
+            "picker_last_result_set": [
+              {
+                "idx": 1,
+                "uuid": "fb9b873c-0451-4efc-8821-690b79c3e74c",
+                "label": "KHOO KIM SENG",
+                "entity_type": "customer",
+                "product": "301-J009",
+                "attachment_type": null,
+                "filename": null
+              },
+              {
+                "idx": 2,
+                "uuid": "75488d1b-6cd7-4046-bb1b-e61c988f0482",
+                "label": "KIM SENG JAYA SDN BHD",
+                "entity_type": "customer",
+                "product": "300-K117",
+                "attachment_type": null,
+                "filename": null
+              }
+            ],
+            "picker_families": {
+              "KHOO KIM SENG": [
+                "fb9b873c-0451-4efc-8821-690b79c3e74c"
+              ],
+              "KIM SENG JAYA": [
+                "75488d1b-6cd7-4046-bb1b-e61c988f0482",
+                "91451971-a859-417a-84e5-01e2a784a598",
+                "909619b8-a003-4ced-af5a-7b1a4501d6de",
+                "991b3780-c35a-4c2a-8dcd-77a5cb055b20",
+                "af32d612-9bbe-4e75-8193-48fe92b56524",
+                "65a194e4-3adc-4b2c-bd24-2a2b14cad98e",
+                "91451971-a859-417a-84e5-01e2a784a598",
+                "af32d612-9bbe-4e75-8193-48fe92b56524",
+                "909619b8-a003-4ced-af5a-7b1a4501d6de",
+                "991b3780-c35a-4c2a-8dcd-77a5cb055b20",
+                "75488d1b-6cd7-4046-bb1b-e61c988f0482"
+              ]
+            },
+            "picker_domain": "order",
+            "picker_selection_context": "disambiguation",
+            "routing_roster_plan": null,
+            "routing_brand": null,
+            "routing_brand_source": null,
+            "routing_company": "00000000-0000-0000-0000-000000000001",
+            "routing_companies": [
+              {
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "brand_code": null,
+                "codes": [
+                  "301-J009",
+                  "300-K117",
+                  "KIM SENG JAYA SDN BHD [A/C I]"
+                ],
+                "labels": [
+                  "KHOO KIM SENG",
+                  "KIM SENG JAYA SDN BHD [A/C I]"
+                ]
+              }
+            ]
+          },
+          "user_response": "Which customer do you mean? Please choose:\n1. KHOO KIM SENG - no recent delivery\n2. KIM SENG JAYA SDN BHD - has delivery"
+        }
+      }
+    ],
+    "crossdomain-compose": [
+      {
+        "json": {
+          "variables": {
+            "message_type": "business_query",
+            "intent_hint": "check_order",
+            "domain_hint": "order",
+            "user_goal": "trying to check the delivery order for kim seng srtks7547-new",
+            "query_brands": [],
+            "access_levels": [],
+            "entities": [
+              {
+                "raw": "kim seng",
+                "hint": "customer",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              },
+              {
+                "raw": "srtks7547-new",
+                "hint": "product",
+                "canonical_code": "SRTKS7547-NEW",
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "routing": {
+              "suggested_team": "customer_service",
+              "suggested_agent": "order_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "response": "Previous turn (order): returned 2 records",
+            "last_result_set": [
+              {
+                "idx": 1,
+                "uuid": "fb9b873c-0451-4efc-8821-690b79c3e74c",
+                "label": "KHOO KIM SENG",
+                "entity_type": "customer",
+                "product": "301-J009",
+                "attachment_type": null,
+                "filename": null
+              },
+              {
+                "idx": 2,
+                "uuid": "75488d1b-6cd7-4046-bb1b-e61c988f0482",
+                "label": "KIM SENG JAYA SDN BHD",
+                "entity_type": "customer",
+                "product": "300-K117",
+                "attachment_type": null,
+                "filename": null
+              }
+            ],
+            "selection_context": "disambiguation",
+            "date_filter_start": null,
+            "requested_attributes": [
+              "delivery"
+            ],
+            "date_filter_end": null,
+            "date_mode": null,
+            "match_mode": "and",
+            "contains_flyer": false,
+            "dym_offer": null,
+            "dym_candidates": [],
+            "ideation": null,
+            "picker_last_result_set": [
+              {
+                "idx": 1,
+                "uuid": "fb9b873c-0451-4efc-8821-690b79c3e74c",
+                "label": "KHOO KIM SENG",
+                "entity_type": "customer",
+                "product": "301-J009",
+                "attachment_type": null,
+                "filename": null
+              },
+              {
+                "idx": 2,
+                "uuid": "75488d1b-6cd7-4046-bb1b-e61c988f0482",
+                "label": "KIM SENG JAYA SDN BHD",
+                "entity_type": "customer",
+                "product": "300-K117",
+                "attachment_type": null,
+                "filename": null
+              }
+            ],
+            "picker_families": {
+              "KHOO KIM SENG": [
+                "fb9b873c-0451-4efc-8821-690b79c3e74c"
+              ],
+              "KIM SENG JAYA": [
+                "75488d1b-6cd7-4046-bb1b-e61c988f0482",
+                "91451971-a859-417a-84e5-01e2a784a598",
+                "909619b8-a003-4ced-af5a-7b1a4501d6de",
+                "991b3780-c35a-4c2a-8dcd-77a5cb055b20",
+                "af32d612-9bbe-4e75-8193-48fe92b56524",
+                "65a194e4-3adc-4b2c-bd24-2a2b14cad98e",
+                "91451971-a859-417a-84e5-01e2a784a598",
+                "af32d612-9bbe-4e75-8193-48fe92b56524",
+                "909619b8-a003-4ced-af5a-7b1a4501d6de",
+                "991b3780-c35a-4c2a-8dcd-77a5cb055b20",
+                "75488d1b-6cd7-4046-bb1b-e61c988f0482"
+              ]
+            },
+            "picker_domain": "order",
+            "picker_selection_context": "disambiguation",
+            "routing_roster_plan": null,
+            "routing_brand": null,
+            "routing_brand_source": null,
+            "routing_company": "00000000-0000-0000-0000-000000000001",
+            "routing_companies": [
+              {
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "brand_code": null,
+                "codes": [
+                  "301-J009",
+                  "300-K117",
+                  "KIM SENG JAYA SDN BHD [A/C I]"
+                ],
+                "labels": [
+                  "KHOO KIM SENG",
+                  "KIM SENG JAYA SDN BHD [A/C I]"
+                ]
+              }
+            ]
+          },
+          "user_response": "Which customer do you mean? Please choose:\n1. KHOO KIM SENG - no recent delivery\n2. KIM SENG JAYA SDN BHD - has delivery"
+        }
+      }
+    ],
+    "sorento-sub-respond-sendmsg-respond2": [
+      {
+        "json": {
+          "success": true
+        }
+      }
+    ],
+    "Execution Data": [
+      {
+        "json": {
+          "success": true
+        }
+      }
+    ],
+    "attach-merge": [
+      {
+        "json": {
+          "attachments": []
+        }
+      }
+    ],
+    "if-got-attachments": [],
+    "save-session-vars": [
+      {
+        "json": {
+          "respond_io_id": "900000036",
+          "session_vars": {
+            "variables": {
+              "message_type": "business_query",
+              "intent_hint": "check_order",
+              "domain_hint": "order",
+              "user_goal": "trying to check the delivery order for kim seng srtks7547-new",
+              "query_brands": [],
+              "access_levels": [],
+              "entities": [
+                {
+                  "raw": "kim seng",
+                  "hint": "customer",
+                  "canonical_code": null,
+                  "current_message": true,
+                  "confident": true
+                },
+                {
+                  "raw": "srtks7547-new",
+                  "hint": "product",
+                  "canonical_code": "SRTKS7547-NEW",
+                  "current_message": true,
+                  "confident": true
+                }
+              ],
+              "routing": {
+                "suggested_team": "customer_service",
+                "suggested_agent": "order_enquiries"
+              },
+              "escalation": {
+                "is_escalation_confirmation": false
+              },
+              "response": "Previous turn (order): returned 2 records",
+              "last_result_set": [
+                {
+                  "idx": 1,
+                  "uuid": "fb9b873c-0451-4efc-8821-690b79c3e74c",
+                  "label": "KHOO KIM SENG",
+                  "entity_type": "customer",
+                  "product": "301-J009",
+                  "attachment_type": null,
+                  "filename": null
+                },
+                {
+                  "idx": 2,
+                  "uuid": "75488d1b-6cd7-4046-bb1b-e61c988f0482",
+                  "label": "KIM SENG JAYA SDN BHD",
+                  "entity_type": "customer",
+                  "product": "300-K117",
+                  "attachment_type": null,
+                  "filename": null
+                }
+              ],
+              "selection_context": "disambiguation",
+              "date_filter_start": null,
+              "requested_attributes": [
+                "delivery"
+              ],
+              "date_filter_end": null,
+              "date_mode": null,
+              "match_mode": "and",
+              "contains_flyer": false,
+              "dym_offer": null,
+              "dym_candidates": [],
+              "ideation": null,
+              "picker_last_result_set": [
+                {
+                  "idx": 1,
+                  "uuid": "fb9b873c-0451-4efc-8821-690b79c3e74c",
+                  "label": "KHOO KIM SENG",
+                  "entity_type": "customer",
+                  "product": "301-J009",
+                  "attachment_type": null,
+                  "filename": null
+                },
+                {
+                  "idx": 2,
+                  "uuid": "75488d1b-6cd7-4046-bb1b-e61c988f0482",
+                  "label": "KIM SENG JAYA SDN BHD",
+                  "entity_type": "customer",
+                  "product": "300-K117",
+                  "attachment_type": null,
+                  "filename": null
+                }
+              ],
+              "picker_families": {
+                "KHOO KIM SENG": [
+                  "fb9b873c-0451-4efc-8821-690b79c3e74c"
+                ],
+                "KIM SENG JAYA": [
+                  "75488d1b-6cd7-4046-bb1b-e61c988f0482",
+                  "91451971-a859-417a-84e5-01e2a784a598",
+                  "909619b8-a003-4ced-af5a-7b1a4501d6de",
+                  "991b3780-c35a-4c2a-8dcd-77a5cb055b20",
+                  "af32d612-9bbe-4e75-8193-48fe92b56524",
+                  "65a194e4-3adc-4b2c-bd24-2a2b14cad98e",
+                  "91451971-a859-417a-84e5-01e2a784a598",
+                  "af32d612-9bbe-4e75-8193-48fe92b56524",
+                  "909619b8-a003-4ced-af5a-7b1a4501d6de",
+                  "991b3780-c35a-4c2a-8dcd-77a5cb055b20",
+                  "75488d1b-6cd7-4046-bb1b-e61c988f0482"
+                ]
+              },
+              "picker_domain": "order",
+              "picker_selection_context": "disambiguation",
+              "routing_roster_plan": null,
+              "routing_brand": null,
+              "routing_brand_source": null,
+              "routing_company": "00000000-0000-0000-0000-000000000001",
+              "routing_companies": [
+                {
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "brand_code": null,
+                  "codes": [
+                    "301-J009",
+                    "300-K117",
+                    "KIM SENG JAYA SDN BHD [A/C I]"
+                  ],
+                  "labels": [
+                    "KHOO KIM SENG",
+                    "KIM SENG JAYA SDN BHD [A/C I]"
+                  ]
+                }
+              ]
+            },
+            "user_response": "Which customer do you mean? Please choose:\n1. KHOO KIM SENG - no recent delivery\n2. KIM SENG JAYA SDN BHD - has delivery"
+          }
+        }
+      }
+    ],
+    "Call 'sub-respond-save-message-redis'2": [
+      {
+        "json": {
+          "contact_id": 900000036,
+          "phone_number": "+60100000020",
+          "message": "kim seng srtks7547-new delivery",
+          "sent_at": 1787805606974,
+          "turn_id": "14095480",
+          "data": "{\"contact_id\":\"900000036\",\"phone_number\":\"+60100000020\",\"message\":\"kim seng srtks7547-new delivery\",\"sent_at\":1787805594000,\"first_name\":\"Person 63\",\"last_name\":\"Person 64\",\"reply_to_message_id\":null,\"reply_to_message\":null,\"type\":\"incoming\",\"message_id\":\"1787805594000000\",\"turn_id\":\"14095480\",\"state_trace\":{\"v\":1,\"before\":{\"routing\":{\"suggested_team\":\"purchasing\",\"suggested_agent\":\"incoming_stock_enquiries\"},\"entities\":[{\"raw\":\"cks6407\",\"hint\":\"product\",\"confident\":true,\"canonical_code\":\"CKS6407\",\"current_message\":true}],\"ideation\":null,\"response\":\"Here's what you want:\\n\u2022 product: CKS6407\\n\\nBut no incoming matched these. Would you like me to escalate to purchasing team?\",\"date_mode\":null,\"dym_offer\":null,\"user_goal\":\"trying to check the ETA for cks6407\",\"escalation\":{\"is_escalation_confirmation\":false},\"match_mode\":\"and\",\"domain_hint\":\"incoming\",\"intent_hint\":\"check_incoming\",\"message_type\":\"business_query\",\"query_brands\":[],\"access_levels\":[],\"routing_brand\":\"cabana\",\"contains_flyer\":false,\"dym_candidates\":{\"n\":0,\"first\":null},\"date_filter_end\":null,\"last_result_set\":{\"n\":0,\"first\":null},\"routing_company\":\"00000000-0000-0000-0000-000000000001\",\"date_filter_start\":null,\"routing_companies\":[{\"codes\":[\"CKS6407\"],\"labels\":[\"CKS6407\"],\"brand_code\":\"cabana\",\"company_id\":\"00000000-0000-0000-0000-000000000001\",\"company_name\":\"Sorento\"}],\"selection_context\":null,\"routing_roster_plan\":null,\"requested_attributes\":[\"estimated_arrival_date\"],\"routing_brand_source\":\"resolved\"},\"parser_raw\":{\"message_type\":\"business_query\",\"intent_hint\":\"check_order\",\"domain_hint\":\"order\",\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"trying to check the delivery order for kim seng srtks7547-new\",\"access_levels\":[],\"broaden_axis\":null,\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[{\"raw\":\"kim seng\",\"hint\":\"customer\",\"canonical_code\":null,\"current_message\":true,\"confident\":true},{\"raw\":\"srtks7547-new\",\"hint\":\"order\",\"canonical_code\":null,\"current_message\":true,\"confident\":true}],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[\"delivery\"],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":\"customer_service\",\"suggested_agent\":\"order_enquiries\"},\"escalation\":{\"is_escalation_confirmation\":false,\"company_pick\":null}},\"parser_applied\":{\"message_type\":\"business_query\",\"intent_hint\":\"check_order\",\"domain_hint\":\"order\",\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"trying to check the delivery order for kim seng srtks7547-new\",\"access_levels\":[],\"broaden_axis\":null,\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[{\"raw\":\"kim seng\",\"hint\":\"customer\",\"canonical_code\":null,\"current_message\":true,\"confident\":true},{\"raw\":\"srtks7547-new\",\"hint\":\"order\",\"canonical_code\":null,\"current_message\":true,\"confident\":true}],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[\"delivery\"],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":\"customer_service\",\"suggested_agent\":\"order_enquiries\"},\"escalation\":{\"is_escalation_confirmation\":false},\"domain_signal_source\":\"intent_explicit\",\"scope_exclusive_applied\":false,\"entity_op_applied\":\"replace_combine\",\"query_brands\":[],\"entities_filtered\":false,\"entities_emptied_by_filter\":false},\"after\":{\"message_type\":\"business_query\",\"intent_hint\":\"check_order\",\"domain_hint\":\"order\",\"user_goal\":\"trying to check the delivery order for kim seng srtks7547-new\",\"query_brands\":[],\"access_levels\":[],\"entities\":[{\"raw\":\"kim seng\",\"hint\":\"customer\",\"canonical_code\":null,\"current_message\":true,\"confident\":true},{\"raw\":\"srtks7547-new\",\"hint\":\"product\",\"canonical_code\":\"SRTKS7547-NEW\",\"current_message\":true,\"confident\":true}],\"routing\":{\"suggested_team\":\"customer_service\",\"suggested_agent\":\"order_enquiries\"},\"escalation\":{\"is_escalation_confirmation\":false},\"response\":\"Previous turn (order): returned 2 records\",\"last_result_set\":{\"n\":2,\"first\":\"KHOO KIM SENG\"},\"selection_context\":\"disambiguation\",\"date_filter_start\":null,\"requested_attributes\":[\"delivery\"],\"date_filter_end\":null,\"date_mode\":null,\"match_mode\":\"and\",\"contains_flyer\":false,\"dym_offer\":null,\"dym_candidates\":{\"n\":0,\"first\":null},\"ideation\":null,\"picker_last_result_set\":[{\"idx\":1,\"uuid\":\"fb9b873c-0451-4efc-8821-690b79c3e74c\",\"label\":\"KHOO KIM SENG\",\"entity_type\":\"customer\",\"product\":\"301-J009\",\"attachment_type\":null,\"filename\":null},{\"idx\":2,\"uuid\":\"75488d1b-6cd7-4046-bb1b-e61c988f0482\",\"label\":\"KIM SENG JAYA SDN BHD\",\"entity_type\":\"customer\",\"product\":\"300-K117\",\"attachment_type\":null,\"filename\":null}],\"picker_families\":{\"KHOO KIM SENG\":[\"fb9b873c-0451-4efc-8821-690b79c3e74c\"],\"KIM SENG JAYA\":[\"75488d1b-6cd7-4046-bb1b-e61c988f0482\",\"91451971-a859-417a-84e5-01e2a784a598\",\"909619b8-a003-4ced-af5a-7b1a4501d6de\",\"991b3780-c35a-4c2a-8dcd-77a5cb055b20\",\"af32d612-9bbe-4e75-8193-48fe92b56524\",\"65a194e4-3adc-4b2c-bd24-2a2b14cad98e\",\"91451971-a859-417a-84e5-01e2a784a598\",\"af32d612-9bbe-4e75-8193-48fe92b56524\",\"909619b8-a003-4ced-af5a-7b1a4501d6de\",\"991b3780-c35a-4c2a-8dcd-77a5cb055b20\",\"75488d1b-6cd7-4046-bb1b-e61c988f0482\"]},\"picker_domain\":\"order\",\"picker_selection_context\":\"disambiguation\",\"routing_roster_plan\":null,\"routing_brand\":null,\"routing_brand_source\":null,\"routing_company\":\"00000000-0000-0000-0000-000000000001\",\"routing_companies\":[{\"company_id\":\"00000000-0000-0000-0000-000000000001\",\"company_name\":\"Sorento\",\"brand_code\":null,\"codes\":[\"301-J009\",\"300-K117\",\"KIM SENG JAYA SDN BHD [A/C I]\"],\"labels\":[\"KHOO KIM SENG\",\"KIM SENG JAYA SDN BHD [A/C I]\"]}]}}}"
+        }
+      }
+    ],
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 900000036,
+              "firstName": "Person 63",
+              "lastName": "Person 64",
+              "phone": "+60100000020",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": null
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/45ee5bfe-3229-488c-a424-1bf2ff088702"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": null,
+              "created_at": 1782546255
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "e2959045-eca2-4e07-aafb-da17b51a81b8",
+              "contact": {
+                "id": 900000036,
+                "firstName": "Person 63",
+                "lastName": "Person 64",
+                "phone": "+60100000020",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1782546255
+              },
+              "message": {
+                "messageId": 1787805594000000,
+                "channelMessageId": "wamid.HBgLNjAxNjMzNjE2NzkVAgASGBQzQTI3QjJCMkFEQURFQjgzNEI4QwA=",
+                "contactId": 900000036,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1787805594000,
+                "message": {
+                  "type": "text",
+                  "text": "kim seng srtks7547-new delivery"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 63\"},\"wa_id\":\"60100000020\",\"user_id\":\"MY.900000037\",\"firstName\":\"Person 63\",\"lastName\":\"\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000036",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "purchasing",
+                    "suggested_agent": "incoming_stock_enquiries"
+                  },
+                  "entities": [
+                    {
+                      "raw": "cks6407",
+                      "hint": "product",
+                      "confident": true,
+                      "canonical_code": "CKS6407",
+                      "current_message": true
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Here's what you want:\n\u2022 product: CKS6407\n\nBut no incoming matched these. Would you like me to escalate to purchasing team?",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to check the ETA for cks6407",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "incoming",
+                  "intent_hint": "check_incoming",
+                  "message_type": "business_query",
+                  "query_brands": [],
+                  "access_levels": [],
+                  "routing_brand": "cabana",
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [],
+                  "routing_company": "00000000-0000-0000-0000-000000000001",
+                  "date_filter_start": null,
+                  "routing_companies": [
+                    {
+                      "codes": [
+                        "CKS6407"
+                      ],
+                      "labels": [
+                        "CKS6407"
+                      ],
+                      "brand_code": "cabana",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "selection_context": null,
+                  "routing_roster_plan": null,
+                  "requested_attributes": [
+                    "estimated_arrival_date"
+                  ],
+                  "routing_brand_source": "resolved"
+                },
+                "user_response": "Here's what you want:\n\u2022 product: CKS6407\n\nBut no incoming matched these.\nBut here are the stock details for the requested products:\n\n- *Product Code:* CKS6407\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 0\n\n- *Product Code:* CKS6407\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-HP\n*Quantity On Hand:* 0\n\n- *Product Code:* CKS6407\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 0\n\n- *Product Code:* CKS6407\n*Warehouse:* WH3 (PSM)\n*System Location:* WH3-PSM\n*Quantity On Hand:* 0\n\nWould you like me to escalate to purchasing team?"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "check_order",
+                "domain_hint": "order",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check the delivery order for kim seng srtks7547-new",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "kim seng",
+                    "hint": "customer",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  },
+                  {
+                    "raw": "srtks7547-new",
+                    "hint": "order",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [
+                  "delivery"
+                ],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "customer_service",
+                  "suggested_agent": "order_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_explicit",
+                "scope_exclusive_applied": false,
+                "entity_op_applied": "replace_combine",
+                "query_brands": [],
+                "entities_filtered": false,
+                "entities_emptied_by_filter": false
+              },
+              "_parser_raw": {
+                "message_type": "business_query",
+                "intent_hint": "check_order",
+                "domain_hint": "order",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check the delivery order for kim seng srtks7547-new",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "kim seng",
+                    "hint": "customer",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  },
+                  {
+                    "raw": "srtks7547-new",
+                    "hint": "order",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [
+                  "delivery"
+                ],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "customer_service",
+                  "suggested_agent": "order_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "Order Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            }
+          }
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "response": "Here are the orders I found.\n\n1. *Order Number:* REP202608-0235\n*Customer:* KIM SENG JAYA SDN BHD [A/C I]\n*Order Date:* 12/08/2026\n*Actual Delivery Date:* 13/08/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 15:55:00\n*Transporter:* ASAC TRANSPORT\n*Driver:* ZAINAL\n*Lorry Plate:* KBU78\n*Warehouse:* BRW\n*Products:* SRTKS7081 (1), SRTKS2426-RG (1), SRTKS2433 (1), SRTKS7547-NEW (2)\n\n2. *Order Number:* 202607-1499\n*Customer:* KIM SENG JAYA SDN BHD [A/C I]\n*Order Date:* 08/07/2026\n*Actual Delivery Date:* 13/07/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 20:07:00\n*Transporter:* SUNCREST\n*Driver:* RAJENDRAN\n*Lorry Plate:* BQL5483\n*Warehouse:* BRW\n*Products:* SRTKS7547-NEW (10), SRTKS6047-NEW (3)\n\n3. *Order Number:* 202606-2736\n*Customer:* KIM SENG JAYA SDN BHD [A/C I]\n*Order Date:* 18/06/2026\n*Actual Delivery Date:* 20/06/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 14:25:00\n*Transporter:* ASAC TRANSPORT\n*Driver:* KHAIRIL\n*Lorry Plate:* KFF2878\n*Warehouse:* BRW\n*Products:* SRTKS7547-NEW (5)\n\n4. *Order Number:* 202606-1013\n*Customer:* KIM SENG JAYA SDN BHD [A/C I]\n*Order Date:* 08/06/2026\n*Actual Delivery Date:* 06/06/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 16:10:00\n*Transporter:* SORENTO\n*Driver:* SAMSUDIN\n*Lorry Plate:* VCH1678\n*Warehouse:* BRW\n*Products:* SRTSH22914-GM (15), SRTSH2625-BL (3), SRTSH22914-BL (2), SRTSH22914-BL (5), SRTKS7547-NEW (5), SRTKS8050 (1), SRTKS8047-NEW (4), SRTKS8845 (1), SRTKT74SS-GM (1), SRTKS8845-BL (1), SRTKT74SS-BL (1), SRTKS1045 (1), SRTKT73SS (1), SRTKS1045-BL (1), SRTKT73SS-BL (1)\n\n_Data last updated: 27/08/2026 10:17:12_",
+        "response_intro": "Here are the orders I found.",
+        "answers": [
+          {
+            "title": "REP202608-0235",
+            "fields": [
+              {
+                "label": "Order Number",
+                "value": "REP202608-0235"
+              },
+              {
+                "label": "Customer",
+                "value": "KIM SENG JAYA SDN BHD [A/C I]"
+              },
+              {
+                "label": "Order Date",
+                "value": "2026-08-12T00:00:00"
+              },
+              {
+                "label": "Actual Delivery Date",
+                "value": "2026-08-13T00:00:00"
+              },
+              {
+                "label": "Status",
+                "value": "Picked Up / In Transit"
+              },
+              {
+                "label": "Pickup Time",
+                "value": "15:55:00"
+              },
+              {
+                "label": "Transporter",
+                "value": "ASAC TRANSPORT"
+              },
+              {
+                "label": "Driver",
+                "value": "ZAINAL"
+              },
+              {
+                "label": "Lorry Plate",
+                "value": "KBU78"
+              },
+              {
+                "label": "Warehouse",
+                "value": "BRW"
+              },
+              {
+                "label": "Products",
+                "value": "SRTKS7081 (1), SRTKS2426-RG (1), SRTKS2433 (1), SRTKS7547-NEW (2)"
+              }
+            ],
+            "flags": {
+              "discontinued": false,
+              "expired": false,
+              "expiring_soon": false,
+              "unallocated": false,
+              "partially_allocated": false
+            }
+          },
+          {
+            "title": "202607-1499",
+            "fields": [
+              {
+                "label": "Order Number",
+                "value": "202607-1499"
+              },
+              {
+                "label": "Customer",
+                "value": "KIM SENG JAYA SDN BHD [A/C I]"
+              },
+              {
+                "label": "Order Date",
+                "value": "2026-07-08T00:00:00"
+              },
+              {
+                "label": "Actual Delivery Date",
+                "value": "2026-07-13T00:00:00"
+              },
+              {
+                "label": "Status",
+                "value": "Picked Up / In Transit"
+              },
+              {
+                "label": "Pickup Time",
+                "value": "20:07:00"
+              },
+              {
+                "label": "Transporter",
+                "value": "SUNCREST"
+              },
+              {
+                "label": "Driver",
+                "value": "RAJENDRAN"
+              },
+              {
+                "label": "Lorry Plate",
+                "value": "BQL5483"
+              },
+              {
+                "label": "Warehouse",
+                "value": "BRW"
+              },
+              {
+                "label": "Products",
+                "value": "SRTKS7547-NEW (10), SRTKS6047-NEW (3)"
+              }
+            ],
+            "flags": {
+              "discontinued": false,
+              "expired": false,
+              "expiring_soon": false,
+              "unallocated": false,
+              "partially_allocated": false
+            }
+          },
+          {
+            "title": "202606-2736",
+            "fields": [
+              {
+                "label": "Order Number",
+                "value": "202606-2736"
+              },
+              {
+                "label": "Customer",
+                "value": "KIM SENG JAYA SDN BHD [A/C I]"
+              },
+              {
+                "label": "Order Date",
+                "value": "2026-06-18T00:00:00"
+              },
+              {
+                "label": "Actual Delivery Date",
+                "value": "2026-06-20T00:00:00"
+              },
+              {
+                "label": "Status",
+                "value": "Picked Up / In Transit"
+              },
+              {
+                "label": "Pickup Time",
+                "value": "14:25:00"
+              },
+              {
+                "label": "Transporter",
+                "value": "ASAC TRANSPORT"
+              },
+              {
+                "label": "Driver",
+                "value": "KHAIRIL"
+              },
+              {
+                "label": "Lorry Plate",
+                "value": "KFF2878"
+              },
+              {
+                "label": "Warehouse",
+                "value": "BRW"
+              },
+              {
+                "label": "Products",
+                "value": "SRTKS7547-NEW (5)"
+              }
+            ],
+            "flags": {
+              "discontinued": false,
+              "expired": false,
+              "expiring_soon": false,
+              "unallocated": false,
+              "partially_allocated": false
+            }
+          },
+          {
+            "title": "202606-1013",
+            "fields": [
+              {
+                "label": "Order Number",
+                "value": "202606-1013"
+              },
+              {
+                "label": "Customer",
+                "value": "KIM SENG JAYA SDN BHD [A/C I]"
+              },
+              {
+                "label": "Order Date",
+                "value": "2026-06-08T00:00:00"
+              },
+              {
+                "label": "Actual Delivery Date",
+                "value": "2026-06-06T00:00:00"
+              },
+              {
+                "label": "Status",
+                "value": "Picked Up / In Transit"
+              },
+              {
+                "label": "Pickup Time",
+                "value": "16:10:00"
+              },
+              {
+                "label": "Transporter",
+                "value": "SORENTO"
+              },
+              {
+                "label": "Driver",
+                "value": "SAMSUDIN"
+              },
+              {
+                "label": "Lorry Plate",
+                "value": "VCH1678"
+              },
+              {
+                "label": "Warehouse",
+                "value": "BRW"
+              },
+              {
+                "label": "Products",
+                "value": "SRTSH22914-GM (15), SRTSH2625-BL (3), SRTSH22914-BL (2), SRTSH22914-BL (5), SRTKS7547-NEW (5), SRTKS8050 (1), SRTKS8047-NEW (4), SRTKS8845 (1), SRTKT74SS-GM (1), SRTKS8845-BL (1), SRTKT74SS-BL (1), SRTKS1045 (1), SRTKT73SS (1), SRTKS1045-BL (1), SRTKT73SS-BL (1)"
+              }
+            ],
+            "flags": {
+              "discontinued": false,
+              "expired": false,
+              "expiring_soon": false,
+              "unallocated": false,
+              "partially_allocated": false
+            }
+          }
+        ],
+        "attachments": [],
+        "action_links": [],
+        "last_updated_at": "2026-08-27T10:17:12.869047",
+        "has_result": true,
+        "alternatives": [],
+        "relaxed_axis": null,
+        "field_access": null,
+        "requested_attributes": [
+          "delivery"
+        ],
+        "keys_served": false
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "tokens": [
+          "kim seng",
+          "srtks7547-new"
+        ],
+        "elapsed_ms": 840.93,
+        "resolutions": [
+          {
+            "token": "kim seng",
+            "resolved": false,
+            "ambiguous": false,
+            "matches": [
+              {
+                "entity_type": "customer",
+                "canonical_code": "301-J009",
+                "uuid": "fb9b873c-0451-4efc-8821-690b79c3e74c",
+                "match_field": "customer_name",
+                "match_tier": "exact",
+                "similarity": null,
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "customer_name": "KHOO KIM SENG",
+                  "phone_number": "012-6383161",
+                  "email": null
+                }
+              },
+              {
+                "entity_type": "customer",
+                "canonical_code": "300-K117",
+                "uuid": "75488d1b-6cd7-4046-bb1b-e61c988f0482",
+                "match_field": "customer_name",
+                "match_tier": "exact",
+                "similarity": null,
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "customer_name": "KIM SENG JAYA SDN BHD [A/C I]",
+                  "phone_number": "017-590 0899",
+                  "email": null
+                }
+              },
+              {
+                "entity_type": "customer",
+                "canonical_code": "300-K118",
+                "uuid": "91451971-a859-417a-84e5-01e2a784a598",
+                "match_field": "customer_name",
+                "match_tier": "exact",
+                "similarity": null,
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "customer_name": "KIM SENG JAYA SDN BHD [A/C III]",
+                  "phone_number": "017-590 0899",
+                  "email": null
+                }
+              },
+              {
+                "entity_type": "customer",
+                "canonical_code": "300-K119",
+                "uuid": "909619b8-a003-4ced-af5a-7b1a4501d6de",
+                "match_field": "customer_name",
+                "match_tier": "exact",
+                "similarity": null,
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "customer_name": "KIM SENG JAYA SDN BHD [A/C IV]",
+                  "phone_number": "017-590 0899",
+                  "email": null
+                }
+              },
+              {
+                "entity_type": "customer",
+                "canonical_code": "300-K118",
+                "uuid": "991b3780-c35a-4c2a-8dcd-77a5cb055b20",
+                "match_field": "customer_name",
+                "match_tier": "exact",
+                "similarity": null,
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "customer_name": "KIM SENG JAYA SDN BHD (CERAMIC & ELLECI)",
+                  "phone_number": null,
+                  "email": null
+                }
+              },
+              {
+                "entity_type": "customer",
+                "canonical_code": "300-K117",
+                "uuid": "af32d612-9bbe-4e75-8193-48fe92b56524",
+                "match_field": "customer_name",
+                "match_tier": "exact",
+                "similarity": null,
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "customer_name": "KIM SENG JAYA SDN BHD",
+                  "phone_number": null,
+                  "email": null
+                }
+              },
+              {
+                "entity_type": "customer",
+                "canonical_code": "300-K119",
+                "uuid": "65a194e4-3adc-4b2c-bd24-2a2b14cad98e",
+                "match_field": "customer_name",
+                "match_tier": "exact",
+                "similarity": null,
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "customer_name": "KIM SENG JAYA SDN BHD (SRT)",
+                  "phone_number": null,
+                  "email": null
+                }
+              },
+              {
+                "entity_type": "customer",
+                "canonical_code": "KIM SENG JAYA SDN BHD [A/C III]",
+                "uuid": "91451971-a859-417a-84e5-01e2a784a598",
+                "match_field": "debtor_name",
+                "match_tier": "exact",
+                "similarity": null,
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "debtor_name": "KIM SENG JAYA SDN BHD [A/C III]",
+                  "debtor_code": "300-K118",
+                  "source": "orders"
+                }
+              },
+              {
+                "entity_type": "customer",
+                "canonical_code": "KIM SENG JAYA SDN BHD",
+                "uuid": "af32d612-9bbe-4e75-8193-48fe92b56524",
+                "match_field": "debtor_name",
+                "match_tier": "exact",
+                "similarity": null,
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "debtor_name": "KIM SENG JAYA SDN BHD",
+                  "debtor_code": "300-K117",
+                  "source": "orders"
+                }
+              },
+              {
+                "entity_type": "customer",
+                "canonical_code": "KIM SENG JAYA SDN BHD [A/C IV]",
+                "uuid": "909619b8-a003-4ced-af5a-7b1a4501d6de",
+                "match_field": "debtor_name",
+                "match_tier": "exact",
+                "similarity": null,
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "debtor_name": "KIM SENG JAYA SDN BHD [A/C IV]",
+                  "debtor_code": "300-K119",
+                  "source": "orders"
+                }
+              },
+              {
+                "entity_type": "customer",
+                "canonical_code": "KIM SENG JAYA SDN BHD (CERAMIC & ELLECI)",
+                "uuid": "991b3780-c35a-4c2a-8dcd-77a5cb055b20",
+                "match_field": "debtor_name",
+                "match_tier": "exact",
+                "similarity": null,
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "debtor_name": "KIM SENG JAYA SDN BHD (CERAMIC & ELLECI)",
+                  "debtor_code": "300-K118",
+                  "source": "orders"
+                }
+              },
+              {
+                "entity_type": "customer",
+                "canonical_code": "KIM SENG JAYA SDN BHD [A/C I]",
+                "uuid": "75488d1b-6cd7-4046-bb1b-e61c988f0482",
+                "match_field": "debtor_name",
+                "match_tier": "exact",
+                "similarity": null,
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "debtor_name": "KIM SENG JAYA SDN BHD [A/C I]",
+                  "debtor_code": "300-K117",
+                  "source": "orders"
+                }
+              }
+            ],
+            "alternatives": []
+          },
+          {
+            "token": "srtks7547-new",
+            "resolved": true,
+            "ambiguous": false,
+            "matches": [
+              {
+                "entity_type": "product",
+                "canonical_code": "SRTKS7547-NEW",
+                "uuid": "e7d8a184-f6f2-4fca-9887-cd0cc934831e",
+                "match_field": "product_code",
+                "match_tier": "exact",
+                "similarity": null,
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "product_name": "SRTKS7547-NEW",
+                  "is_active": true,
+                  "brand": {
+                    "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                    "brand_code": "SORENTO",
+                    "brand_name": "SORENTO"
+                  }
+                }
+              }
+            ],
+            "alternatives": []
+          }
+        ],
+        "unresolved_tokens": [],
+        "fallback_applied": true,
+        "fallback_requested_types": [
+          "customer",
+          "order"
+        ],
+        "fallback_types_found": [
+          "customer",
+          "product"
+        ],
+        "fallback_per_token": true,
+        "fallback_match_mode": "or",
+        "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+        "gate_passed": false,
+        "require_specific": true,
+        "resolved_company": "sorento",
+        "company_team": null,
+        "resolved_companies": [
+          "sorento"
+        ],
+        "routing_brand": null,
+        "routing_brand_source": null,
+        "routing_companies": [
+          {
+            "company_id": "00000000-0000-0000-0000-000000000001",
+            "company_name": "Sorento",
+            "brand_code": null,
+            "codes": [
+              "301-J009",
+              "300-K117",
+              "KIM SENG JAYA SDN BHD [A/C I]"
+            ],
+            "labels": [
+              "KHOO KIM SENG",
+              "KIM SENG JAYA SDN BHD [A/C I]"
+            ]
+          }
+        ],
+        "routing_company": "00000000-0000-0000-0000-000000000001",
+        "access_denied_levels": [],
+        "access_notice": "",
+        "brand_gate_empty": false,
+        "brand_unheld": false,
+        "gate_reason": "'order' customer token matches 2 different companies; user must pick",
+        "gate_clarification": "Which customer do you mean? Please choose:\n1. KHOO KIM SENG\n2. KIM SENG JAYA SDN BHD",
+        "compatible_entities": [
+          {
+            "uuid": "fb9b873c-0451-4efc-8821-690b79c3e74c",
+            "entity_type": "customer",
+            "code": "301-J009",
+            "title": "KHOO KIM SENG"
+          },
+          {
+            "uuid": "75488d1b-6cd7-4046-bb1b-e61c988f0482",
+            "entity_type": "customer",
+            "code": "300-K117",
+            "title": "KIM SENG JAYA SDN BHD"
+          }
+        ],
+        "customer_probe_entities": [
+          {
+            "uuid": "fb9b873c-0451-4efc-8821-690b79c3e74c",
+            "entity_type": "customer",
+            "code": "301-J009"
+          },
+          {
+            "uuid": "75488d1b-6cd7-4046-bb1b-e61c988f0482",
+            "entity_type": "customer",
+            "code": "300-K117"
+          },
+          {
+            "uuid": "91451971-a859-417a-84e5-01e2a784a598",
+            "entity_type": "customer",
+            "code": "300-K118"
+          },
+          {
+            "uuid": "909619b8-a003-4ced-af5a-7b1a4501d6de",
+            "entity_type": "customer",
+            "code": "300-K119"
+          },
+          {
+            "uuid": "991b3780-c35a-4c2a-8dcd-77a5cb055b20",
+            "entity_type": "customer",
+            "code": "300-K118"
+          },
+          {
+            "uuid": "af32d612-9bbe-4e75-8193-48fe92b56524",
+            "entity_type": "customer",
+            "code": "300-K117"
+          },
+          {
+            "uuid": "65a194e4-3adc-4b2c-bd24-2a2b14cad98e",
+            "entity_type": "customer",
+            "code": "300-K119"
+          },
+          {
+            "uuid": "e7d8a184-f6f2-4fca-9887-cd0cc934831e",
+            "entity_type": "product",
+            "code": "SRTKS7547-NEW"
+          }
+        ],
+        "picker_families": {
+          "KHOO KIM SENG": [
+            "fb9b873c-0451-4efc-8821-690b79c3e74c"
+          ],
+          "KIM SENG JAYA": [
+            "75488d1b-6cd7-4046-bb1b-e61c988f0482",
+            "91451971-a859-417a-84e5-01e2a784a598",
+            "909619b8-a003-4ced-af5a-7b1a4501d6de",
+            "991b3780-c35a-4c2a-8dcd-77a5cb055b20",
+            "af32d612-9bbe-4e75-8193-48fe92b56524",
+            "65a194e4-3adc-4b2c-bd24-2a2b14cad98e",
+            "91451971-a859-417a-84e5-01e2a784a598",
+            "af32d612-9bbe-4e75-8193-48fe92b56524",
+            "909619b8-a003-4ced-af5a-7b1a4501d6de",
+            "991b3780-c35a-4c2a-8dcd-77a5cb055b20",
+            "75488d1b-6cd7-4046-bb1b-e61c988f0482"
+          ]
+        },
+        "gate_debug": {
+          "domain": "order",
+          "allowed_lookup": [
+            "order",
+            "customer_order",
+            "transporter",
+            "customer",
+            "product"
+          ],
+          "entities_count": 8
+        },
+        "is_clarification": false,
+        "customer_probe_window_days": 90,
+        "escalate_message": "Which customer do you mean? Please choose:\n1. KHOO KIM SENG - no recent delivery\n2. KIM SENG JAYA SDN BHD - has delivery",
+        "customer_probe_hits": 1,
+        "customer_probe_skip_reason": null
+      }
+    }
+  ],
+  "runIndex": 0,
+  "execution": {
+    "id": "14095480"
+  },
+  "ran": [
+    "When Executed by Another Workflow",
+    "redis-pop-main-message-list",
+    "detect-media",
+    "if-media-in",
+    "tf-message",
+    "sorento-sub-respond-findcontact-respond",
+    "if-transcribed-confirm",
+    "is-human-intervened",
+    "if-message-is-audio",
+    "get-session-vars",
+    "Call 'sub-query-reformulator'",
+    "check-access",
+    "If5",
+    "If2",
+    "If-ideate",
+    "offer-hold-gate",
+    "If10",
+    "is-escalation-declined",
+    "If9",
+    "If1",
+    "not-supported-domain",
+    "If",
+    "If7",
+    "resolve-entity",
+    "disallowed-entity-gate",
+    "If3",
+    "If-incoming-picker",
+    "If-customer-picker",
+    "probe-customer-orders",
+    "annotate-customer-picker",
+    "build-suggest-offer",
+    "tag-not-found",
+    "escalate-catalog",
+    "cs-offer-gate",
+    "compile-current-state",
+    "crossdomain-compose",
+    "sorento-sub-respond-sendmsg-respond2",
+    "Execution Data",
+    "attach-merge",
+    "if-got-attachments",
+    "save-session-vars",
+    "Call 'sub-respond-save-message-redis'2"
+  ]
+}
