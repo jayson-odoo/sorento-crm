@@ -22,21 +22,24 @@ import base64
 import binascii
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import desc, func
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.database import get_db
 from app.dependencies import require_permission
 from app.models.chatbot_turn import ChatbotTurn
+from app.schemas.integration import IntegrationLogCreate
 from app.schemas.chatbot_turn import (
     ChatbotTurnListResponse,
     FailedContactListResponse,
     RetryTurnResponse,
 )
 from app.services.chatbot.contracts import TURN_STAGES
+from app.services.integration_service import IntegrationLogService
 from app.services.chatbot.dispatch import (
     ReinjectFailed,
     RetryUnavailable,
@@ -57,6 +60,27 @@ TURN_STATUSES = ("queued", "processing", "delegated", "done", "failed")
 
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 200
+# The list filter shows a roster of contacts to open, not a report. Past a couple of
+# hundred the answer is "something is broadly wrong", which is a different screen.
+FAILED_CONTACTS_LIMIT = 200
+FAILED_CONTACTS_DEFAULT_DAYS = 7
+
+
+def _retry_in_flight(row: ChatbotTurn) -> bool:
+    """Is a requested retry still expected to arrive?
+
+    The marker is cleared by the re-injected turn arriving. If it never does - n8n dropped
+    it, the contact was deleted, the workflow was mid-deploy - the row would be
+    un-retryable forever, which turns one lost message into a permanently stuck one. After
+    `chatbot_retry_stale_minutes` the operator may try again.
+    """
+    if row.retry_requested_at is None:
+        return False
+    requested_at = row.retry_requested_at
+    if requested_at.tzinfo is None:
+        requested_at = requested_at.replace(tzinfo=timezone.utc)
+    window = timedelta(minutes=max(1, int(settings.chatbot_retry_stale_minutes)))
+    return datetime.now(timezone.utc) - requested_at < window
 
 
 def _encode_cursor(row: ChatbotTurn) -> str:
@@ -128,9 +152,14 @@ def list_turns(
     )
     has_more = len(rows) > limit
     page = rows[:limit]
+    available = retry_available()
     return ChatbotTurnListResponse(
         items=page,
         next_cursor=_encode_cursor(page[-1]) if has_more and page else None,
+        retry_available=available,
+        retry_unavailable_reason=None
+        if available
+        else "Retry is not configured in this environment.",
     )
 
 
@@ -138,6 +167,7 @@ def list_turns(
 def failed_contacts(
     from_: datetime | None = Query(None, alias="from"),
     to: datetime | None = Query(None),
+    limit: int = Query(FAILED_CONTACTS_LIMIT, ge=1, le=FAILED_CONTACTS_LIMIT),
     current_user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
 ):
@@ -147,45 +177,50 @@ def failed_contacts(
     went wrong last - two aggregates - not the turns themselves. Answering it by paging
     `/turns` and grouping in the browser would move thousands of rows to answer a question
     about tens, and would be wrong the moment the answer spans a page boundary.
+
+    A range is REQUIRED (a default of the last 7 days when neither bound is given): this
+    is the one query here that does not start from a contact id, so unbounded it is a scan
+    of every failed turn ever recorded, growing forever, behind a toggle.
     """
     _ = current_user
 
-    query = db.query(ChatbotTurn).filter(ChatbotTurn.status == "failed")
-    if from_ is not None:
-        query = query.filter(ChatbotTurn.created_at >= from_)
-    if to is not None:
-        query = query.filter(ChatbotTurn.created_at <= to)
+    if from_ is None and to is None:
+        from_ = datetime.now(timezone.utc) - timedelta(days=FAILED_CONTACTS_DEFAULT_DAYS)
 
+    window = [ChatbotTurn.status == "failed"]
+    if from_ is not None:
+        window.append(ChatbotTurn.created_at >= from_)
+    if to is not None:
+        window.append(ChatbotTurn.created_at <= to)
+
+    # The counts.
     aggregates = (
-        query.with_entities(
+        db.query(
             ChatbotTurn.contact_respond_id.label("contact_respond_id"),
             func.count(ChatbotTurn.id).label("count"),
             func.max(ChatbotTurn.created_at).label("last_failed_at"),
         )
+        .filter(*window)
         .group_by(ChatbotTurn.contact_respond_id)
         .order_by(desc(func.max(ChatbotTurn.created_at)))
+        .limit(limit)
         .all()
     )
     if not aggregates:
         return FailedContactListResponse(items=[])
 
-    # The stage of the LAST failure per contact. A second small query rather than a window
-    # function so the aggregate above stays legible and portable; the input is already
-    # narrowed to contacts that have a failure.
-    latest_stage: dict[str, str | None] = {}
     contact_ids = [row.contact_respond_id for row in aggregates]
-    stage_rows = (
-        query.with_entities(
-            ChatbotTurn.contact_respond_id,
-            ChatbotTurn.stage,
-            ChatbotTurn.created_at,
-        )
-        .filter(ChatbotTurn.contact_respond_id.in_(contact_ids))
+    # The stage of the LAST failure per contact. DISTINCT ON returns ONE row per contact
+    # rather than every failed row for the app to fold - on a contact with hundreds of
+    # failures the difference is the whole result set.
+    latest = (
+        db.query(ChatbotTurn.contact_respond_id, ChatbotTurn.stage)
+        .filter(*window, ChatbotTurn.contact_respond_id.in_(contact_ids))
+        .distinct(ChatbotTurn.contact_respond_id)
         .order_by(ChatbotTurn.contact_respond_id, desc(ChatbotTurn.created_at))
         .all()
     )
-    for contact_id, stage, _created in stage_rows:
-        latest_stage.setdefault(contact_id, stage)
+    latest_stage = {contact_id: stage for contact_id, stage in latest}
 
     return FailedContactListResponse(
         items=[
@@ -203,6 +238,7 @@ def failed_contacts(
 @router.post("/turns/{turn_id}/retry", response_model=RetryTurnResponse)
 def retry_turn(
     turn_id: str,
+    request: Request,
     current_user: dict = Depends(require_permission(MANAGE)),
     db: Session = Depends(get_db),
 ):
@@ -212,9 +248,13 @@ def retry_turn(
     gains a marker. The retry arrives back the ordinary way, as its own row with the next
     attempt - which is what makes the retried turn get the same ordering, the same lanes
     and the same sending path a live message gets.
-    """
-    _ = current_user
 
+    **The marker is written and COMMITTED before the POST**, and rolled back if the POST
+    does not happen. The other order looks tidier and is a race: n8n can deliver the
+    re-injected message, and the engine can look for the marker, before this request has
+    committed it - so the engine would read `failed` with no marker, call it a duplicate,
+    and the retry would vanish while the marker stayed set forever.
+    """
     row = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).first()
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Turn not found.")
@@ -227,7 +267,7 @@ def retry_turn(
                 "Nothing retries automatically (R4)."
             ),
         )
-    if row.retry_requested_at is not None:
+    if _retry_in_flight(row):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
@@ -236,33 +276,15 @@ def retry_turn(
             ),
         )
 
-    try:
-        reinject_envelope(row)
-    except RetryUnavailable as exc:
-        # Not an error the operator caused, and not a 500: this environment simply has no
-        # ingress wired, which is the correct state for a developer machine.
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={"code": "retry_unavailable", "message": str(exc)},
-        ) from exc
-    except ReinjectFailed as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"The message could not be re-injected: {exc}",
-        ) from exc
-
     now = datetime.now(timezone.utc)
+    actor_id = str(current_user.get("id") or "")
+
+    # Claim FIRST, then send. See the docstring.
     row.retry_requested_at = now
-    # The trace is the operator's record of this turn, and asking for a retry is something
-    # that happened to it. Appended in the same shape every stage record has, so the
-    # timeline renders it without a special case.
     trace = list(row.trace or [])
     trace.append(
         {
-            # The stage this turn stopped at, so the note sits with the failure it belongs
-            # to rather than inventing a ninth stage the timeline would not know how to
-            # label. `intake` / `queued` / `casual_llm` are row-only stages, hence the
-            # fallback.
+            "kind": "note",  # not a stage: rendered as a footer line, not a timeline row
             "stage": row.stage if row.stage in TURN_STAGES else "sent",
             "status": "ok",
             "started_at": now.isoformat(),
@@ -272,30 +294,85 @@ def retry_turn(
                 "The original message was re-posted to the chatbot ingress; it will arrive "
                 "as a new turn with the next attempt number."
             ),
-            "facts": {"attempt": row.attempt + 1, "requested_at": now.isoformat()},
+            "facts": {
+                "attempt": row.attempt + 1,
+                "requested_at": now.isoformat(),
+                "requested_by": actor_id,
+            },
             "error": None,
-            "raw": {"retry": True, "from_attempt": row.attempt},
+            "raw": {"retry": True, "from_attempt": row.attempt, "requested_by": actor_id},
         }
     )
     row.trace = trace
     db.commit()
 
+    outcome_status = 200
+    error_message: str | None = None
+    try:
+        reinject_envelope(row)
+    except (RetryUnavailable, ReinjectFailed) as exc:
+        # Nothing was accepted by the ingress, so the claim must not stand: another
+        # operator has to be able to try again, and a marker nobody will ever clear would
+        # make this row permanently un-retryable.
+        row.retry_requested_at = None
+        row.trace = trace[:-1]
+        db.commit()
+        unavailable = isinstance(exc, RetryUnavailable)
+        outcome_status = 409 if unavailable else 502
+        error_message = str(exc)
+        _log_retry(db, request, row, actor_id, outcome_status, error_message)
+        if unavailable:
+            # Not an error the operator caused, and not a 500: this environment simply has
+            # no ingress wired, which is the correct state for a developer machine.
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"code": "retry_unavailable", "message": error_message},
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"The message could not be re-injected: {error_message}",
+        ) from exc
+
+    _log_retry(db, request, row, actor_id, outcome_status, error_message)
     return RetryTurnResponse(turn_id=str(row.id), attempt=row.attempt + 1)
 
 
-@router.get("/retry-availability")
-def retry_availability(
-    current_user: dict = Depends(require_permission(VIEW)),
-):
-    """Whether Retry can work here at all, so the UI disables rather than offers a 409.
+def _log_retry(
+    db: Session,
+    request: Request,
+    row: ChatbotTurn,
+    actor_id: str,
+    status_code: int,
+    error_message: str | None,
+) -> None:
+    """An `integration_log` row for the outbound POST, success AND failure.
 
-    A button that always 409s teaches an operator to distrust the screen; one that is
-    visibly unavailable, with the reason, teaches them it is an environment thing.
+    Same rule every Respond.io send follows: an outbound call that touched a customer
+    leaves a record whichever way it went, so "did we re-send that?" is answerable from
+    the database rather than from someone's memory of a button click.
     """
-    _ = current_user
-    return {
-        "available": retry_available(),
-        "reason": None
-        if retry_available()
-        else "Retry is not configured in this environment.",
-    }
+    try:
+        IntegrationLogService(db).create_integration_log(
+            IntegrationLogCreate(
+                integration_channel="n8n",
+                business_table="chatbot.turns",
+                business_id=str(row.id),
+                external_reference=row.contact_respond_id,
+                direction="outbound",
+                endpoint=str(request.url.path),
+                http_method="POST",
+                request_payload=json.dumps(
+                    {
+                        "turn_id": str(row.id),
+                        "message_id": row.message_id,
+                        "from_attempt": row.attempt,
+                        "requested_by": actor_id,
+                    }
+                ),
+                status_code=status_code,
+                status="success" if status_code < 400 else "failed",
+                error_message=error_message,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - the log must never fail the retry
+        logger.warning("chatbot retry: integration log failed: %s", exc, exc_info=True)

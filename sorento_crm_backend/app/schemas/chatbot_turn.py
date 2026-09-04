@@ -47,6 +47,12 @@ class ChatbotTurnListResponse(BaseModel):
     items: list[ChatbotTurnResponse]
     # Opaque. Absent (null) when there is no further page.
     next_cursor: str | None = None
+    # Whether Retry can work in this environment at all. Rides the list rather than a
+    # route of its own: it is one boolean the screen needs at the same moment it needs the
+    # turns, and a second endpoint, hook, query and prop hop to deliver it is machinery a
+    # single field does not need.
+    retry_available: bool = False
+    retry_unavailable_reason: str | None = None
 
 
 class FailedContactRow(BaseModel):

@@ -86,6 +86,11 @@ class Settings(BaseSettings):
     chatbot_retry_ingress_url: str | None = None  # CHATBOT_RETRY_INGRESS_URL
     # Sent as `X-Chatbot-Retry-Key`. n8n checks it on its side (owner item).
     chatbot_retry_ingress_key: str | None = None  # CHATBOT_RETRY_INGRESS_KEY
+    # How long a `retry_requested_at` marker blocks a second Retry. The marker is
+    # cleared by the re-injected turn arriving; if it never arrives (n8n dropped it,
+    # the contact was deleted) the row would otherwise be un-retryable forever, so an
+    # older marker is treated as stale and the operator may try again.
+    chatbot_retry_stale_minutes: int = 5  # CHATBOT_RETRY_STALE_MINUTES
 
     # External API Access
     external_api_key: str | None = None  # API key for external parties to access endpoints
