@@ -1,0 +1,1802 @@
+{
+  "source": {
+    "execution_id": "14895669",
+    "workflow_id": "tKeQUkZK5cFK9BFa",
+    "workflow_version": "4f367b1c-bd82-494f-882d-522fe20b5bc3",
+    "node": "disallowed-entity-gate",
+    "captured_at": "2026-09-04T17:07:35+00:00",
+    "expected_from": "runData",
+    "dedupe_sig": "b37bd4dd922ae7d5a517e782d306e7ed51e87fec03e4a87b3ab70ed06715be6b"
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "ctx": {
+            "ctx": {
+              "contact": {
+                "id": 900000043,
+                "firstName": "Person 54",
+                "lastName": null,
+                "phone": "+60100000020",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "locale": null,
+                "countryCode": "MY",
+                "status": "open",
+                "isBlocked": false,
+                "custom_fields": [
+                  {
+                    "name": "enquiry_type",
+                    "value": null
+                  },
+                  {
+                    "name": "user_type",
+                    "value": null
+                  },
+                  {
+                    "name": "complaint_id",
+                    "value": null
+                  },
+                  {
+                    "name": "is_allowed_stock",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_human_intervened",
+                    "value": "false"
+                  },
+                  {
+                    "name": "backend_id",
+                    "value": "https://fe-sorento.foundryx.my/user-management/contacts/60403815-829a-4a4a-8842-3ca525bf3047"
+                  },
+                  {
+                    "name": "is_allowed_ai",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_allowed_voice",
+                    "value": null
+                  }
+                ],
+                "tags": [
+                  "imported_20260510_200514",
+                  "imported_20260627_150636"
+                ],
+                "assignee": null,
+                "lifecycle": "New Lead",
+                "created_at": 1777550801
+              },
+              "text": {
+                "event_type": "message.received",
+                "event_id": "b9753640-1ba8-484a-8a3b-2629386c9398",
+                "contact": {
+                  "id": 900000043,
+                  "firstName": "Person 54",
+                  "lastName": "",
+                  "phone": "+60100000020",
+                  "email": null,
+                  "language": null,
+                  "profilePic": null,
+                  "countryCode": "MY",
+                  "status": "open",
+                  "assignee": {
+                    "id": null,
+                    "firstName": null,
+                    "lastName": null,
+                    "email": null
+                  },
+                  "created_at": 1777550801
+                },
+                "message": {
+                  "messageId": 1788342435000000,
+                  "channelMessageId": "wamid.HBgLNjAxNjkyMDEyODYVAgASGBQzQUE3NEM1ODEwOTQ1MkY1Rjk0MAA=",
+                  "contactId": 900000043,
+                  "channelId": 453209,
+                  "traffic": "incoming",
+                  "timestamp": 1788342435000,
+                  "message": {
+                    "type": "text",
+                    "text": "To lodge complaint"
+                  }
+                },
+                "channel": {
+                  "id": 453209,
+                  "name": "Internal (+60 11-1673 1179)",
+                  "source": "whatsapp_business",
+                  "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 54\"},\"wa_id\":\"60100000020\",\"user_id\":\"MY.900000044\",\"firstName\":\"Person 54\",\"lastName\":\"\"}}",
+                  "created_at": 1767682908
+                },
+                "sender": {
+                  "source": "contact",
+                  "userId": null,
+                  "teamId": null,
+                  "workflowId": null,
+                  "broadcastHistoryId": null
+                }
+              },
+              "session": {
+                "respond_io_id": "900000043",
+                "session_vars": {
+                  "variables": {
+                    "routing": {
+                      "suggested_team": "warehouse",
+                      "suggested_agent": "general_enquiries"
+                    },
+                    "entities": [
+                      {
+                        "raw": "SRTWT6855-GY",
+                        "hint": "product",
+                        "confident": true,
+                        "canonical_code": "SRTWT6855-GY",
+                        "current_message": true
+                      }
+                    ],
+                    "ideation": null,
+                    "response": "Previous turn (inventory): returned 1 records",
+                    "date_mode": null,
+                    "dym_offer": null,
+                    "user_goal": "trying to continue the previous lookup for SRTWT6855-GY",
+                    "escalation": {
+                      "is_escalation_confirmation": false
+                    },
+                    "match_mode": "and",
+                    "domain_hint": "inventory",
+                    "intent_hint": "check_stock",
+                    "message_type": "business_query",
+                    "query_brands": [],
+                    "access_levels": [],
+                    "routing_brand": "sorento",
+                    "contains_flyer": false,
+                    "dym_candidates": [],
+                    "date_filter_end": null,
+                    "last_result_set": [
+                      {
+                        "idx": 1,
+                        "uuid": null,
+                        "label": "SRTWT6855-GY",
+                        "product": null,
+                        "filename": null,
+                        "entity_type": null,
+                        "attachment_type": null
+                      }
+                    ],
+                    "routing_company": "00000000-0000-0000-0000-000000000001",
+                    "date_filter_start": null,
+                    "routing_companies": [
+                      {
+                        "codes": [
+                          "SRTWT6855-GY"
+                        ],
+                        "labels": [
+                          "SRTWT6855-GY"
+                        ],
+                        "brand_code": "sorento",
+                        "company_id": "00000000-0000-0000-0000-000000000001",
+                        "company_name": "Sorento"
+                      }
+                    ],
+                    "selection_context": null,
+                    "routing_roster_plan": null,
+                    "requested_attributes": [],
+                    "routing_brand_source": "resolved"
+                  },
+                  "user_response": "Stock details found for the requested products.\n\n1. *Product Code:* SRTWT6855-GY\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 0\n\u26a0\ufe0f  *(PRODUCT DISCONTINUED)*\n\n_Data last updated: 02/09/2026 17:04:32_"
+                }
+              },
+              "parse": {
+                "output": {
+                  "message_type": "business_query",
+                  "intent_hint": "get_portal_link",
+                  "domain_hint": "portal_link",
+                  "scope_intent": null,
+                  "is_affirmative": null,
+                  "user_goal": "trying to get the portal link to lodge a complaint",
+                  "access_levels": [],
+                  "broaden_axis": null,
+                  "date_mode": null,
+                  "date_filter_start": null,
+                  "date_filter_end": null,
+                  "match_mode": "and",
+                  "demand_qty": null,
+                  "entities": [],
+                  "entity_op": "reuse",
+                  "scope_exclusive": false,
+                  "requested_attributes": [],
+                  "contains_flyer": false,
+                  "reference_positions": [],
+                  "reference_target": null,
+                  "person_mention": null,
+                  "is_active": null,
+                  "order_status": null,
+                  "correction": false,
+                  "routing": {
+                    "suggested_team": "warehouse",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "domain_signal_source": "intent_explicit",
+                  "entity_op_applied": "reuse",
+                  "query_brands": [],
+                  "entities_filtered": true,
+                  "entities_emptied_by_filter": true,
+                  "broaden_dropped": [
+                    "product:SRTWT6855-GY"
+                  ],
+                  "_pending_pick": true
+                },
+                "_parser_raw": {
+                  "message_type": "business_query",
+                  "intent_hint": "get_portal_link",
+                  "domain_hint": "portal_link",
+                  "scope_intent": null,
+                  "is_affirmative": null,
+                  "user_goal": "trying to get the portal link to lodge a complaint",
+                  "access_levels": [],
+                  "broaden_axis": null,
+                  "date_mode": null,
+                  "date_filter_start": null,
+                  "date_filter_end": null,
+                  "match_mode": "and",
+                  "demand_qty": null,
+                  "entities": [],
+                  "entity_op": "reuse",
+                  "scope_exclusive": false,
+                  "requested_attributes": [],
+                  "contains_flyer": false,
+                  "reference_positions": [],
+                  "reference_target": null,
+                  "person_mention": null,
+                  "is_active": null,
+                  "order_status": null,
+                  "correction": false,
+                  "routing": {
+                    "suggested_team": null,
+                    "suggested_agent": null
+                  },
+                  "escalation": {
+                    "is_escalation_confirmation": false,
+                    "company_pick": null
+                  }
+                }
+              },
+              "access": {
+                "allowed": true,
+                "decision": "allow",
+                "agent_name": "General Enquiries",
+                "attributes": null,
+                "all_attributes_allowed": null
+              },
+              "media": null
+            }
+          },
+          "entry": "resolve",
+          "item": {
+            "allowed": true,
+            "decision": "allow",
+            "agent_name": "General Enquiries",
+            "attributes": null,
+            "all_attributes_allowed": null,
+            "branch_kind": "business_query",
+            "entry": "resolve"
+          },
+          "is_test": false
+        }
+      }
+    ],
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 900000043,
+              "firstName": "Person 54",
+              "lastName": null,
+              "phone": "+60100000020",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/60403815-829a-4a4a-8842-3ca525bf3047"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260510_200514",
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": "New Lead",
+              "created_at": 1777550801
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "b9753640-1ba8-484a-8a3b-2629386c9398",
+              "contact": {
+                "id": 900000043,
+                "firstName": "Person 54",
+                "lastName": "",
+                "phone": "+60100000020",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1777550801
+              },
+              "message": {
+                "messageId": 1788342435000000,
+                "channelMessageId": "wamid.HBgLNjAxNjkyMDEyODYVAgASGBQzQUE3NEM1ODEwOTQ1MkY1Rjk0MAA=",
+                "contactId": 900000043,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788342435000,
+                "message": {
+                  "type": "text",
+                  "text": "To lodge complaint"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 54\"},\"wa_id\":\"60100000020\",\"user_id\":\"MY.900000044\",\"firstName\":\"Person 54\",\"lastName\":\"\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000043",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "warehouse",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "entities": [
+                    {
+                      "raw": "SRTWT6855-GY",
+                      "hint": "product",
+                      "confident": true,
+                      "canonical_code": "SRTWT6855-GY",
+                      "current_message": true
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Previous turn (inventory): returned 1 records",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to continue the previous lookup for SRTWT6855-GY",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "inventory",
+                  "intent_hint": "check_stock",
+                  "message_type": "business_query",
+                  "query_brands": [],
+                  "access_levels": [],
+                  "routing_brand": "sorento",
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [
+                    {
+                      "idx": 1,
+                      "uuid": null,
+                      "label": "SRTWT6855-GY",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    }
+                  ],
+                  "routing_company": "00000000-0000-0000-0000-000000000001",
+                  "date_filter_start": null,
+                  "routing_companies": [
+                    {
+                      "codes": [
+                        "SRTWT6855-GY"
+                      ],
+                      "labels": [
+                        "SRTWT6855-GY"
+                      ],
+                      "brand_code": "sorento",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "selection_context": null,
+                  "routing_roster_plan": null,
+                  "requested_attributes": [],
+                  "routing_brand_source": "resolved"
+                },
+                "user_response": "Stock details found for the requested products.\n\n1. *Product Code:* SRTWT6855-GY\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 0\n\u26a0\ufe0f  *(PRODUCT DISCONTINUED)*\n\n_Data last updated: 02/09/2026 17:04:32_"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "get_portal_link",
+                "domain_hint": "portal_link",
+                "scope_intent": null,
+                "is_affirmative": null,
+                "user_goal": "trying to get the portal link to lodge a complaint",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [],
+                "entity_op": "reuse",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "warehouse",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_explicit",
+                "entity_op_applied": "reuse",
+                "query_brands": [],
+                "entities_filtered": true,
+                "entities_emptied_by_filter": true,
+                "broaden_dropped": [
+                  "product:SRTWT6855-GY"
+                ],
+                "_pending_pick": true
+              },
+              "_parser_raw": {
+                "message_type": "business_query",
+                "intent_hint": "get_portal_link",
+                "domain_hint": "portal_link",
+                "scope_intent": null,
+                "is_affirmative": null,
+                "user_goal": "trying to get the portal link to lodge a complaint",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [],
+                "entity_op": "reuse",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": null,
+                  "suggested_agent": null
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "General Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null
+          }
+        }
+      }
+    ],
+    "item": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "General Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null,
+          "branch_kind": "business_query",
+          "entry": "resolve"
+        }
+      }
+    ],
+    "entry-gate": [],
+    "resolve-entity": [
+      {
+        "json": {
+          "tokens": [],
+          "elapsed_ms": 0,
+          "resolutions": [],
+          "unresolved_tokens": [],
+          "ambiguous_tokens": [],
+          "spec_candidates": [],
+          "floor_missed": true,
+          "spec_unmet": [],
+          "spec_asked": [],
+          "unrecognized_terms": [],
+          "semantic_used": true,
+          "semantic_ms": 4157
+        }
+      }
+    ],
+    "disallowed-entity-gate": [
+      {
+        "json": {
+          "tokens": [],
+          "elapsed_ms": 0,
+          "resolutions": [],
+          "unresolved_tokens": [],
+          "ambiguous_tokens": [],
+          "spec_candidates": [],
+          "floor_missed": true,
+          "spec_unmet": [],
+          "spec_asked": [],
+          "unrecognized_terms": [],
+          "semantic_used": true,
+          "semantic_ms": 4157,
+          "gate_passed": true,
+          "require_specific": false,
+          "specific_options": [],
+          "resolved_company": null,
+          "company_team": null,
+          "resolved_companies": [],
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_companies": [],
+          "routing_company": null,
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "no entities; 'portal_link' permits broad query",
+          "gate_clarification": "",
+          "compatible_entities": [],
+          "gate_debug": {
+            "domain": "portal_link",
+            "allowed_lookup": [],
+            "entities_count": 0
+          }
+        }
+      }
+    ],
+    "build-ctx-resolved": [
+      {
+        "json": {
+          "tokens": [],
+          "elapsed_ms": 0,
+          "resolutions": [],
+          "unresolved_tokens": [],
+          "ambiguous_tokens": [],
+          "spec_candidates": [],
+          "floor_missed": true,
+          "spec_unmet": [],
+          "spec_asked": [],
+          "unrecognized_terms": [],
+          "semantic_used": true,
+          "semantic_ms": 4157,
+          "gate_passed": true,
+          "require_specific": false,
+          "specific_options": [],
+          "resolved_company": null,
+          "company_team": null,
+          "resolved_companies": [],
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_companies": [],
+          "routing_company": null,
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "no entities; 'portal_link' permits broad query",
+          "gate_clarification": "",
+          "compatible_entities": [],
+          "gate_debug": {
+            "domain": "portal_link",
+            "allowed_lookup": [],
+            "entities_count": 0
+          },
+          "ctx": {
+            "contact": {
+              "id": 900000043,
+              "firstName": "Person 54",
+              "lastName": null,
+              "phone": "+60100000020",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/60403815-829a-4a4a-8842-3ca525bf3047"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260510_200514",
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": "New Lead",
+              "created_at": 1777550801
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "b9753640-1ba8-484a-8a3b-2629386c9398",
+              "contact": {
+                "id": 900000043,
+                "firstName": "Person 54",
+                "lastName": "",
+                "phone": "+60100000020",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1777550801
+              },
+              "message": {
+                "messageId": 1788342435000000,
+                "channelMessageId": "wamid.HBgLNjAxNjkyMDEyODYVAgASGBQzQUE3NEM1ODEwOTQ1MkY1Rjk0MAA=",
+                "contactId": 900000043,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788342435000,
+                "message": {
+                  "type": "text",
+                  "text": "To lodge complaint"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 54\"},\"wa_id\":\"60100000020\",\"user_id\":\"MY.900000044\",\"firstName\":\"Person 54\",\"lastName\":\"\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000043",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "warehouse",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "entities": [
+                    {
+                      "raw": "SRTWT6855-GY",
+                      "hint": "product",
+                      "confident": true,
+                      "canonical_code": "SRTWT6855-GY",
+                      "current_message": true
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Previous turn (inventory): returned 1 records",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to continue the previous lookup for SRTWT6855-GY",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "inventory",
+                  "intent_hint": "check_stock",
+                  "message_type": "business_query",
+                  "query_brands": [],
+                  "access_levels": [],
+                  "routing_brand": "sorento",
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [
+                    {
+                      "idx": 1,
+                      "uuid": null,
+                      "label": "SRTWT6855-GY",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    }
+                  ],
+                  "routing_company": "00000000-0000-0000-0000-000000000001",
+                  "date_filter_start": null,
+                  "routing_companies": [
+                    {
+                      "codes": [
+                        "SRTWT6855-GY"
+                      ],
+                      "labels": [
+                        "SRTWT6855-GY"
+                      ],
+                      "brand_code": "sorento",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "selection_context": null,
+                  "routing_roster_plan": null,
+                  "requested_attributes": [],
+                  "routing_brand_source": "resolved"
+                },
+                "user_response": "Stock details found for the requested products.\n\n1. *Product Code:* SRTWT6855-GY\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 0\n\u26a0\ufe0f  *(PRODUCT DISCONTINUED)*\n\n_Data last updated: 02/09/2026 17:04:32_"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "get_portal_link",
+                "domain_hint": "portal_link",
+                "scope_intent": null,
+                "is_affirmative": null,
+                "user_goal": "trying to get the portal link to lodge a complaint",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [],
+                "entity_op": "reuse",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "warehouse",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_explicit",
+                "entity_op_applied": "reuse",
+                "query_brands": [],
+                "entities_filtered": true,
+                "entities_emptied_by_filter": true,
+                "broaden_dropped": [
+                  "product:SRTWT6855-GY"
+                ],
+                "_pending_pick": true
+              },
+              "_parser_raw": {
+                "message_type": "business_query",
+                "intent_hint": "get_portal_link",
+                "domain_hint": "portal_link",
+                "scope_intent": null,
+                "is_affirmative": null,
+                "user_goal": "trying to get the portal link to lodge a complaint",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [],
+                "entity_op": "reuse",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": null,
+                  "suggested_agent": null
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "General Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null,
+            "resolved": {
+              "tokens": [],
+              "elapsed_ms": 0,
+              "resolutions": [],
+              "unresolved_tokens": [],
+              "ambiguous_tokens": [],
+              "spec_candidates": [],
+              "floor_missed": true,
+              "spec_unmet": [],
+              "spec_asked": [],
+              "unrecognized_terms": [],
+              "semantic_used": true,
+              "semantic_ms": 4157
+            },
+            "entities": null,
+            "gate": {
+              "tokens": [],
+              "elapsed_ms": 0,
+              "resolutions": [],
+              "unresolved_tokens": [],
+              "ambiguous_tokens": [],
+              "spec_candidates": [],
+              "floor_missed": true,
+              "spec_unmet": [],
+              "spec_asked": [],
+              "unrecognized_terms": [],
+              "semantic_used": true,
+              "semantic_ms": 4157,
+              "gate_passed": true,
+              "require_specific": false,
+              "specific_options": [],
+              "resolved_company": null,
+              "company_team": null,
+              "resolved_companies": [],
+              "routing_brand": null,
+              "routing_brand_source": null,
+              "routing_companies": [],
+              "routing_company": null,
+              "access_denied_levels": [],
+              "access_notice": "",
+              "brand_gate_empty": false,
+              "brand_unheld": false,
+              "gate_reason": "no entities; 'portal_link' permits broad query",
+              "gate_clarification": "",
+              "compatible_entities": [],
+              "gate_debug": {
+                "domain": "portal_link",
+                "allowed_lookup": [],
+                "entities_count": 0
+              }
+            }
+          }
+        }
+      }
+    ],
+    "If3": [],
+    "resolve-exit-continue": [
+      {
+        "json": {
+          "tokens": [],
+          "elapsed_ms": 0,
+          "resolutions": [],
+          "unresolved_tokens": [],
+          "ambiguous_tokens": [],
+          "spec_candidates": [],
+          "floor_missed": true,
+          "spec_unmet": [],
+          "spec_asked": [],
+          "unrecognized_terms": [],
+          "semantic_used": true,
+          "semantic_ms": 4157,
+          "gate_passed": true,
+          "require_specific": false,
+          "specific_options": [],
+          "resolved_company": null,
+          "company_team": null,
+          "resolved_companies": [],
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_companies": [],
+          "routing_company": null,
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "no entities; 'portal_link' permits broad query",
+          "gate_clarification": "",
+          "compatible_entities": [],
+          "gate_debug": {
+            "domain": "portal_link",
+            "allowed_lookup": [],
+            "entities_count": 0
+          },
+          "ctx": {
+            "contact": {
+              "id": 900000043,
+              "firstName": "Person 54",
+              "lastName": null,
+              "phone": "+60100000020",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/60403815-829a-4a4a-8842-3ca525bf3047"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260510_200514",
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": "New Lead",
+              "created_at": 1777550801
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "b9753640-1ba8-484a-8a3b-2629386c9398",
+              "contact": {
+                "id": 900000043,
+                "firstName": "Person 54",
+                "lastName": "",
+                "phone": "+60100000020",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1777550801
+              },
+              "message": {
+                "messageId": 1788342435000000,
+                "channelMessageId": "wamid.HBgLNjAxNjkyMDEyODYVAgASGBQzQUE3NEM1ODEwOTQ1MkY1Rjk0MAA=",
+                "contactId": 900000043,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788342435000,
+                "message": {
+                  "type": "text",
+                  "text": "To lodge complaint"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 54\"},\"wa_id\":\"60100000020\",\"user_id\":\"MY.900000044\",\"firstName\":\"Person 54\",\"lastName\":\"\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000043",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "warehouse",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "entities": [
+                    {
+                      "raw": "SRTWT6855-GY",
+                      "hint": "product",
+                      "confident": true,
+                      "canonical_code": "SRTWT6855-GY",
+                      "current_message": true
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Previous turn (inventory): returned 1 records",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to continue the previous lookup for SRTWT6855-GY",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "inventory",
+                  "intent_hint": "check_stock",
+                  "message_type": "business_query",
+                  "query_brands": [],
+                  "access_levels": [],
+                  "routing_brand": "sorento",
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [
+                    {
+                      "idx": 1,
+                      "uuid": null,
+                      "label": "SRTWT6855-GY",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    }
+                  ],
+                  "routing_company": "00000000-0000-0000-0000-000000000001",
+                  "date_filter_start": null,
+                  "routing_companies": [
+                    {
+                      "codes": [
+                        "SRTWT6855-GY"
+                      ],
+                      "labels": [
+                        "SRTWT6855-GY"
+                      ],
+                      "brand_code": "sorento",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "selection_context": null,
+                  "routing_roster_plan": null,
+                  "requested_attributes": [],
+                  "routing_brand_source": "resolved"
+                },
+                "user_response": "Stock details found for the requested products.\n\n1. *Product Code:* SRTWT6855-GY\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 0\n\u26a0\ufe0f  *(PRODUCT DISCONTINUED)*\n\n_Data last updated: 02/09/2026 17:04:32_"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "get_portal_link",
+                "domain_hint": "portal_link",
+                "scope_intent": null,
+                "is_affirmative": null,
+                "user_goal": "trying to get the portal link to lodge a complaint",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [],
+                "entity_op": "reuse",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "warehouse",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_explicit",
+                "entity_op_applied": "reuse",
+                "query_brands": [],
+                "entities_filtered": true,
+                "entities_emptied_by_filter": true,
+                "broaden_dropped": [
+                  "product:SRTWT6855-GY"
+                ],
+                "_pending_pick": true
+              },
+              "_parser_raw": {
+                "message_type": "business_query",
+                "intent_hint": "get_portal_link",
+                "domain_hint": "portal_link",
+                "scope_intent": null,
+                "is_affirmative": null,
+                "user_goal": "trying to get the portal link to lodge a complaint",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [],
+                "entity_op": "reuse",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": null,
+                  "suggested_agent": null
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "General Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null,
+            "resolved": {
+              "tokens": [],
+              "elapsed_ms": 0,
+              "resolutions": [],
+              "unresolved_tokens": [],
+              "ambiguous_tokens": [],
+              "spec_candidates": [],
+              "floor_missed": true,
+              "spec_unmet": [],
+              "spec_asked": [],
+              "unrecognized_terms": [],
+              "semantic_used": true,
+              "semantic_ms": 4157
+            },
+            "entities": null,
+            "gate": {
+              "tokens": [],
+              "elapsed_ms": 0,
+              "resolutions": [],
+              "unresolved_tokens": [],
+              "ambiguous_tokens": [],
+              "spec_candidates": [],
+              "floor_missed": true,
+              "spec_unmet": [],
+              "spec_asked": [],
+              "unrecognized_terms": [],
+              "semantic_used": true,
+              "semantic_ms": 4157,
+              "gate_passed": true,
+              "require_specific": false,
+              "specific_options": [],
+              "resolved_company": null,
+              "company_team": null,
+              "resolved_companies": [],
+              "routing_brand": null,
+              "routing_brand_source": null,
+              "routing_companies": [],
+              "routing_company": null,
+              "access_denied_levels": [],
+              "access_notice": "",
+              "brand_gate_empty": false,
+              "brand_unheld": false,
+              "gate_reason": "no entities; 'portal_link' permits broad query",
+              "gate_clarification": "",
+              "compatible_entities": [],
+              "gate_debug": {
+                "domain": "portal_link",
+                "allowed_lookup": [],
+                "entities_count": 0
+              }
+            }
+          },
+          "resolved": {
+            "tokens": [],
+            "elapsed_ms": 0,
+            "resolutions": [],
+            "unresolved_tokens": [],
+            "ambiguous_tokens": [],
+            "spec_candidates": [],
+            "floor_missed": true,
+            "spec_unmet": [],
+            "spec_asked": [],
+            "unrecognized_terms": [],
+            "semantic_used": true,
+            "semantic_ms": 4157
+          },
+          "gate": {
+            "tokens": [],
+            "elapsed_ms": 0,
+            "resolutions": [],
+            "unresolved_tokens": [],
+            "ambiguous_tokens": [],
+            "spec_candidates": [],
+            "floor_missed": true,
+            "spec_unmet": [],
+            "spec_asked": [],
+            "unrecognized_terms": [],
+            "semantic_used": true,
+            "semantic_ms": 4157,
+            "gate_passed": true,
+            "require_specific": false,
+            "specific_options": [],
+            "resolved_company": null,
+            "company_team": null,
+            "resolved_companies": [],
+            "routing_brand": null,
+            "routing_brand_source": null,
+            "routing_companies": [],
+            "routing_company": null,
+            "access_denied_levels": [],
+            "access_notice": "",
+            "brand_gate_empty": false,
+            "brand_unheld": false,
+            "gate_reason": "no entities; 'portal_link' permits broad query",
+            "gate_clarification": "",
+            "compatible_entities": [],
+            "gate_debug": {
+              "domain": "portal_link",
+              "allowed_lookup": [],
+              "entities_count": 0
+            }
+          },
+          "ctx_resolved": {
+            "tokens": [],
+            "elapsed_ms": 0,
+            "resolutions": [],
+            "unresolved_tokens": [],
+            "ambiguous_tokens": [],
+            "spec_candidates": [],
+            "floor_missed": true,
+            "spec_unmet": [],
+            "spec_asked": [],
+            "unrecognized_terms": [],
+            "semantic_used": true,
+            "semantic_ms": 4157,
+            "gate_passed": true,
+            "require_specific": false,
+            "specific_options": [],
+            "resolved_company": null,
+            "company_team": null,
+            "resolved_companies": [],
+            "routing_brand": null,
+            "routing_brand_source": null,
+            "routing_companies": [],
+            "routing_company": null,
+            "access_denied_levels": [],
+            "access_notice": "",
+            "brand_gate_empty": false,
+            "brand_unheld": false,
+            "gate_reason": "no entities; 'portal_link' permits broad query",
+            "gate_clarification": "",
+            "compatible_entities": [],
+            "gate_debug": {
+              "domain": "portal_link",
+              "allowed_lookup": [],
+              "entities_count": 0
+            },
+            "ctx": {
+              "contact": {
+                "id": 900000043,
+                "firstName": "Person 54",
+                "lastName": null,
+                "phone": "+60100000020",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "locale": null,
+                "countryCode": "MY",
+                "status": "open",
+                "isBlocked": false,
+                "custom_fields": [
+                  {
+                    "name": "enquiry_type",
+                    "value": null
+                  },
+                  {
+                    "name": "user_type",
+                    "value": null
+                  },
+                  {
+                    "name": "complaint_id",
+                    "value": null
+                  },
+                  {
+                    "name": "is_allowed_stock",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_human_intervened",
+                    "value": "false"
+                  },
+                  {
+                    "name": "backend_id",
+                    "value": "https://fe-sorento.foundryx.my/user-management/contacts/60403815-829a-4a4a-8842-3ca525bf3047"
+                  },
+                  {
+                    "name": "is_allowed_ai",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_allowed_voice",
+                    "value": null
+                  }
+                ],
+                "tags": [
+                  "imported_20260510_200514",
+                  "imported_20260627_150636"
+                ],
+                "assignee": null,
+                "lifecycle": "New Lead",
+                "created_at": 1777550801
+              },
+              "text": {
+                "event_type": "message.received",
+                "event_id": "b9753640-1ba8-484a-8a3b-2629386c9398",
+                "contact": {
+                  "id": 900000043,
+                  "firstName": "Person 54",
+                  "lastName": "",
+                  "phone": "+60100000020",
+                  "email": null,
+                  "language": null,
+                  "profilePic": null,
+                  "countryCode": "MY",
+                  "status": "open",
+                  "assignee": {
+                    "id": null,
+                    "firstName": null,
+                    "lastName": null,
+                    "email": null
+                  },
+                  "created_at": 1777550801
+                },
+                "message": {
+                  "messageId": 1788342435000000,
+                  "channelMessageId": "wamid.HBgLNjAxNjkyMDEyODYVAgASGBQzQUE3NEM1ODEwOTQ1MkY1Rjk0MAA=",
+                  "contactId": 900000043,
+                  "channelId": 453209,
+                  "traffic": "incoming",
+                  "timestamp": 1788342435000,
+                  "message": {
+                    "type": "text",
+                    "text": "To lodge complaint"
+                  }
+                },
+                "channel": {
+                  "id": 453209,
+                  "name": "Internal (+60 11-1673 1179)",
+                  "source": "whatsapp_business",
+                  "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 54\"},\"wa_id\":\"60100000020\",\"user_id\":\"MY.900000044\",\"firstName\":\"Person 54\",\"lastName\":\"\"}}",
+                  "created_at": 1767682908
+                },
+                "sender": {
+                  "source": "contact",
+                  "userId": null,
+                  "teamId": null,
+                  "workflowId": null,
+                  "broadcastHistoryId": null
+                }
+              },
+              "session": {
+                "respond_io_id": "900000043",
+                "session_vars": {
+                  "variables": {
+                    "routing": {
+                      "suggested_team": "warehouse",
+                      "suggested_agent": "general_enquiries"
+                    },
+                    "entities": [
+                      {
+                        "raw": "SRTWT6855-GY",
+                        "hint": "product",
+                        "confident": true,
+                        "canonical_code": "SRTWT6855-GY",
+                        "current_message": true
+                      }
+                    ],
+                    "ideation": null,
+                    "response": "Previous turn (inventory): returned 1 records",
+                    "date_mode": null,
+                    "dym_offer": null,
+                    "user_goal": "trying to continue the previous lookup for SRTWT6855-GY",
+                    "escalation": {
+                      "is_escalation_confirmation": false
+                    },
+                    "match_mode": "and",
+                    "domain_hint": "inventory",
+                    "intent_hint": "check_stock",
+                    "message_type": "business_query",
+                    "query_brands": [],
+                    "access_levels": [],
+                    "routing_brand": "sorento",
+                    "contains_flyer": false,
+                    "dym_candidates": [],
+                    "date_filter_end": null,
+                    "last_result_set": [
+                      {
+                        "idx": 1,
+                        "uuid": null,
+                        "label": "SRTWT6855-GY",
+                        "product": null,
+                        "filename": null,
+                        "entity_type": null,
+                        "attachment_type": null
+                      }
+                    ],
+                    "routing_company": "00000000-0000-0000-0000-000000000001",
+                    "date_filter_start": null,
+                    "routing_companies": [
+                      {
+                        "codes": [
+                          "SRTWT6855-GY"
+                        ],
+                        "labels": [
+                          "SRTWT6855-GY"
+                        ],
+                        "brand_code": "sorento",
+                        "company_id": "00000000-0000-0000-0000-000000000001",
+                        "company_name": "Sorento"
+                      }
+                    ],
+                    "selection_context": null,
+                    "routing_roster_plan": null,
+                    "requested_attributes": [],
+                    "routing_brand_source": "resolved"
+                  },
+                  "user_response": "Stock details found for the requested products.\n\n1. *Product Code:* SRTWT6855-GY\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 0\n\u26a0\ufe0f  *(PRODUCT DISCONTINUED)*\n\n_Data last updated: 02/09/2026 17:04:32_"
+                }
+              },
+              "parse": {
+                "output": {
+                  "message_type": "business_query",
+                  "intent_hint": "get_portal_link",
+                  "domain_hint": "portal_link",
+                  "scope_intent": null,
+                  "is_affirmative": null,
+                  "user_goal": "trying to get the portal link to lodge a complaint",
+                  "access_levels": [],
+                  "broaden_axis": null,
+                  "date_mode": null,
+                  "date_filter_start": null,
+                  "date_filter_end": null,
+                  "match_mode": "and",
+                  "demand_qty": null,
+                  "entities": [],
+                  "entity_op": "reuse",
+                  "scope_exclusive": false,
+                  "requested_attributes": [],
+                  "contains_flyer": false,
+                  "reference_positions": [],
+                  "reference_target": null,
+                  "person_mention": null,
+                  "is_active": null,
+                  "order_status": null,
+                  "correction": false,
+                  "routing": {
+                    "suggested_team": "warehouse",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "domain_signal_source": "intent_explicit",
+                  "entity_op_applied": "reuse",
+                  "query_brands": [],
+                  "entities_filtered": true,
+                  "entities_emptied_by_filter": true,
+                  "broaden_dropped": [
+                    "product:SRTWT6855-GY"
+                  ],
+                  "_pending_pick": true
+                },
+                "_parser_raw": {
+                  "message_type": "business_query",
+                  "intent_hint": "get_portal_link",
+                  "domain_hint": "portal_link",
+                  "scope_intent": null,
+                  "is_affirmative": null,
+                  "user_goal": "trying to get the portal link to lodge a complaint",
+                  "access_levels": [],
+                  "broaden_axis": null,
+                  "date_mode": null,
+                  "date_filter_start": null,
+                  "date_filter_end": null,
+                  "match_mode": "and",
+                  "demand_qty": null,
+                  "entities": [],
+                  "entity_op": "reuse",
+                  "scope_exclusive": false,
+                  "requested_attributes": [],
+                  "contains_flyer": false,
+                  "reference_positions": [],
+                  "reference_target": null,
+                  "person_mention": null,
+                  "is_active": null,
+                  "order_status": null,
+                  "correction": false,
+                  "routing": {
+                    "suggested_team": null,
+                    "suggested_agent": null
+                  },
+                  "escalation": {
+                    "is_escalation_confirmation": false,
+                    "company_pick": null
+                  }
+                }
+              },
+              "access": {
+                "allowed": true,
+                "decision": "allow",
+                "agent_name": "General Enquiries",
+                "attributes": null,
+                "all_attributes_allowed": null
+              },
+              "media": null,
+              "resolved": {
+                "tokens": [],
+                "elapsed_ms": 0,
+                "resolutions": [],
+                "unresolved_tokens": [],
+                "ambiguous_tokens": [],
+                "spec_candidates": [],
+                "floor_missed": true,
+                "spec_unmet": [],
+                "spec_asked": [],
+                "unrecognized_terms": [],
+                "semantic_used": true,
+                "semantic_ms": 4157
+              },
+              "entities": null,
+              "gate": {
+                "tokens": [],
+                "elapsed_ms": 0,
+                "resolutions": [],
+                "unresolved_tokens": [],
+                "ambiguous_tokens": [],
+                "spec_candidates": [],
+                "floor_missed": true,
+                "spec_unmet": [],
+                "spec_asked": [],
+                "unrecognized_terms": [],
+                "semantic_used": true,
+                "semantic_ms": 4157,
+                "gate_passed": true,
+                "require_specific": false,
+                "specific_options": [],
+                "resolved_company": null,
+                "company_team": null,
+                "resolved_companies": [],
+                "routing_brand": null,
+                "routing_brand_source": null,
+                "routing_companies": [],
+                "routing_company": null,
+                "access_denied_levels": [],
+                "access_notice": "",
+                "brand_gate_empty": false,
+                "brand_unheld": false,
+                "gate_reason": "no entities; 'portal_link' permits broad query",
+                "gate_clarification": "",
+                "compatible_entities": [],
+                "gate_debug": {
+                  "domain": "portal_link",
+                  "allowed_lookup": [],
+                  "entities_count": 0
+                }
+              }
+            }
+          },
+          "aggregate": null,
+          "tier_gate": null,
+          "annotate_incoming": null,
+          "_exit_kind": "continue"
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "tokens": [],
+        "elapsed_ms": 0,
+        "resolutions": [],
+        "unresolved_tokens": [],
+        "ambiguous_tokens": [],
+        "spec_candidates": [],
+        "floor_missed": true,
+        "spec_unmet": [],
+        "spec_asked": [],
+        "unrecognized_terms": [],
+        "semantic_used": true,
+        "semantic_ms": 4157
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "tokens": [],
+        "elapsed_ms": 0,
+        "resolutions": [],
+        "unresolved_tokens": [],
+        "ambiguous_tokens": [],
+        "spec_candidates": [],
+        "floor_missed": true,
+        "spec_unmet": [],
+        "spec_asked": [],
+        "unrecognized_terms": [],
+        "semantic_used": true,
+        "semantic_ms": 4157,
+        "gate_passed": true,
+        "require_specific": false,
+        "specific_options": [],
+        "resolved_company": null,
+        "company_team": null,
+        "resolved_companies": [],
+        "routing_brand": null,
+        "routing_brand_source": null,
+        "routing_companies": [],
+        "routing_company": null,
+        "access_denied_levels": [],
+        "access_notice": "",
+        "brand_gate_empty": false,
+        "brand_unheld": false,
+        "gate_reason": "no entities; 'portal_link' permits broad query",
+        "gate_clarification": "",
+        "compatible_entities": [],
+        "gate_debug": {
+          "domain": "portal_link",
+          "allowed_lookup": [],
+          "entities_count": 0
+        }
+      }
+    }
+  ],
+  "runIndex": 0,
+  "execution": {
+    "id": "14895669"
+  },
+  "ran": [
+    "When Executed by Another Workflow",
+    "build-ctx",
+    "item",
+    "entry-gate",
+    "resolve-entity",
+    "disallowed-entity-gate",
+    "build-ctx-resolved",
+    "If3",
+    "resolve-exit-continue"
+  ]
+}

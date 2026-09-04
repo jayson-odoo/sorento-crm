@@ -716,6 +716,22 @@ def _chatbot_semantic_parser_fallback() -> str:
     return SEMANTIC_PARSER_PROMPT
 
 
+def _chatbot_clarifier_fallback() -> str:
+    """System prompt for the WhatsApp chatbot's clarifier (`chatbot_clarifier`).
+
+    The low_signal lane's answer: small talk and the one short clarifying question. The
+    fallback is the inline system message on `sub-casual-llm`'s `Basic LLM Chain` node,
+    verbatim (AC-401), vendored in `app/services/chatbot_clarifier_prompt.py` - outside
+    the module package, so this core module does not import it (AC-002).
+
+    No variables: the node's system message carries no n8n expression, so there is nothing
+    to substitute and `variables=[]`.
+    """
+    from app.services.chatbot_clarifier_prompt import CLARIFIER_PROMPT
+
+    return CLARIFIER_PROMPT
+
+
 @dataclass(frozen=True)
 class PromptKeySpec:
     name: str
@@ -756,6 +772,20 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
         variables=["current_date"],
         fallback=_chatbot_semantic_parser_fallback,
     ),
+    # --- The `low_signal` lane's own model call (S4). One per turn, only on a turn the
+    #     parser could not route: small talk, or a request too vague to answer. ---
+    "chatbot_clarifier": PromptKeySpec(
+        name="chatbot_clarifier",
+        role="Chatbot clarifier - small talk and ONE clarifying question (JSON)",
+        active=True,
+        activates_in=None,
+        variables=[],
+        fallback=_chatbot_clarifier_fallback,
+    ),
+    # The bot's CANNED SENTENCES (AC-302, journey B). Registered here rather than
+    # written out one PromptKeySpec at a time so this dict and the copy table can never
+    # list different keys - the same single-declaration rule H28 imposed on the enums.
+    # Appended below the literal entries by `_register_chatbot_reply_keys()`.
     "ideate_extractor": PromptKeySpec(
         name="ideate_extractor",
         role="Ideate extractor - NLU for ideation turns (fields/remove/confirm)",
@@ -919,6 +949,37 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
         fallback=_spec_extractor_fallback,
     ),
 }
+
+
+def _register_chatbot_reply_keys() -> None:
+    """Add one `PromptKeySpec` per canned bot reply, from the copy table (AC-302).
+
+    A loop, not eight hand-written entries: the fallback body, the declared `{{tokens}}`
+    and the key name all come off `CHATBOT_REPLY_COPY`, so adding a canned reply is one
+    row in one table and the registry, the seed migration and the engine cannot end up
+    describing different keys.
+
+    `dry_runnable` stays False: the assistant's prompt dry-run runs a whole ASSISTANT
+    turn, and these keys belong to the WhatsApp chatbot, so a dry run would show the
+    tester an answer their edit had no part in.
+    """
+    from app.services.chatbot_reply_copy import CHATBOT_REPLY_COPY
+
+    for key, body, variables in CHATBOT_REPLY_COPY.values():
+        PROMPT_KEYS[key] = PromptKeySpec(
+            name=key,
+            role=f"Chatbot canned reply - {key.removeprefix('chatbot_reply_').replace('_', ' ')}",
+            active=True,
+            activates_in=None,
+            variables=list(variables),
+            # Bound at registration, not read at call time: `fallback` is a zero-arg
+            # callable by contract, and a late-binding closure over the loop variable
+            # would hand every key the last body in the table.
+            fallback=(lambda text=body: text),
+        )
+
+
+_register_chatbot_reply_keys()
 
 
 def prompt_key_names() -> list[str]:

@@ -100,6 +100,18 @@ class TestResponseModelSurvival:
             "item": {"branch_kind": "business_query", "allowed": True, "decision": "allow"},
             "branch_kind": "business_query",
             "delegate": "business_query",
+            # S6a: the business lane's resolve+gate result. It is what n8n's `resolve-arm`
+            # runs on, so a `response_model` that dropped it would leave the caller
+            # entering that Switch with no `_exit_kind` and every presence gate false.
+            "delegate_payload": {
+                "_exit_kind": "continue",
+                "resolved": {"tokens": []},
+                "gate": {"gate_passed": True},
+                "ctx_resolved": {"ctx": {}},
+                "aggregate": None,
+                "tier_gate": None,
+                "annotate_incoming": None,
+            },
             "reply": None,
             "actions": [{"kind": "send_message", "text": "hi", "dry_run": True}],
             "session_patch": {"variables": {"pending": None}},
@@ -123,11 +135,24 @@ class TestResponseModelSurvival:
 
         assert resp.status_code == 200, resp.text
         body = resp.json()
-        for key in ("duplicate", "session_patch", "delegate", "branch_kind", "ctx", "item", "actions"):
+        for key in (
+            "duplicate",
+            "session_patch",
+            "delegate",
+            "delegate_payload",
+            "branch_kind",
+            "ctx",
+            "item",
+            "actions",
+        ):
             assert key in body, f"{key!r} missing from the response body: {body}"
         assert body["duplicate"] is True
         assert body["session_patch"] == canned["session_patch"]
         assert body["delegate"] == "business_query"
+        assert body["delegate_payload"] == canned["delegate_payload"], (
+            "every key of the sub's output item must survive the wire, nested ones "
+            "included - n8n's stand-in chain reads all six by name"
+        )
         assert body["branch_kind"] == "business_query"
         assert body["ctx"]["contact"]["id"] == CONTACT_ID
         assert body["item"]["branch_kind"] == "business_query"

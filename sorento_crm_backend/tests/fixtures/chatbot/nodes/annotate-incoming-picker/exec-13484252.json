@@ -1,0 +1,2331 @@
+{
+  "source": {
+    "execution_id": "13484252",
+    "workflow_id": "9qVyfUxmRQqrpGRMDLRuz",
+    "node": "annotate-incoming-picker",
+    "captured_at": "2026-08-22T12:01:58+00:00",
+    "expected_from": "reasoned",
+    "reasoned": true,
+    "repinned_at_version": "df165492",
+    "repin_rationale": "RE-PINNED at live df165492 (media-intake promote). Only change: the ` - has/no incoming` separator folded from U+2014 to a plain hyphen, per the repo hard rule that no em-dash reaches customer output. Nothing about WHICH codes are annotated, or has-vs-no, changed."
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "test": null,
+          "test_run_id": null,
+          "started_at": null,
+          "contact": "900000007"
+        }
+      }
+    ],
+    "redis-pop-main-message-list": [
+      {
+        "json": {
+          "message": {
+            "message": {
+              "event_type": "message.received",
+              "event_id": "a0ef3b3f-6b88-4ed4-a74b-878fc2a1e9fc",
+              "contact": {
+                "id": 900000007,
+                "firstName": "<redacted>",
+                "lastName": "<redacted>",
+                "phone": "<redacted>",
+                "email": "<redacted>",
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": 900000006,
+                  "email": "<redacted>",
+                  "firstName": "<redacted>",
+                  "lastName": "<redacted>",
+                  "role": "user"
+                },
+                "created_at": 1785977537
+              },
+              "message": {
+                "messageId": 1787395901000000,
+                "channelMessageId": "wamid.HBgLNjAxNjIyOTExNzkVAgASGBQzQTZFNzlCODVCMEU3RUI0M0JDOQA=",
+                "contactId": 900000007,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1787395901000,
+                "message": {
+                  "type": "text",
+                  "text": "IBKS7245\nEta"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 27\"},\"wa_id\":\"60100000005\",\"user_id\":\"MY.900000025\",\"firstName\":\"Person 25\",\"lastName\":\"Person 26\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "contact": {
+              "id": 900000007,
+              "firstName": "<redacted>",
+              "lastName": "<redacted>",
+              "phone": "<redacted>",
+              "email": "<redacted>",
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": null
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/62ab75cf-fda5-4f41-9cdd-f6a2142f7935"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [],
+              "assignee": {
+                "id": 900000006,
+                "firstName": "<redacted>",
+                "lastName": "<redacted>",
+                "email": "<redacted>"
+              },
+              "lifecycle": null,
+              "created_at": 1785977537
+            }
+          }
+        }
+      }
+    ],
+    "if-audio-in": [],
+    "tf-message": [
+      {
+        "json": {
+          "event_type": "message.received",
+          "event_id": "a0ef3b3f-6b88-4ed4-a74b-878fc2a1e9fc",
+          "contact": {
+            "id": 900000007,
+            "firstName": "<redacted>",
+            "lastName": "<redacted>",
+            "phone": "<redacted>",
+            "email": "<redacted>",
+            "language": null,
+            "profilePic": null,
+            "countryCode": "MY",
+            "status": "open",
+            "assignee": {
+              "id": 900000006,
+              "email": "<redacted>",
+              "firstName": "<redacted>",
+              "lastName": "<redacted>",
+              "role": "user"
+            },
+            "created_at": 1785977537
+          },
+          "message": {
+            "messageId": 1787395901000000,
+            "channelMessageId": "wamid.HBgLNjAxNjIyOTExNzkVAgASGBQzQTZFNzlCODVCMEU3RUI0M0JDOQA=",
+            "contactId": 900000007,
+            "channelId": 453209,
+            "traffic": "incoming",
+            "timestamp": 1787395901000,
+            "message": {
+              "type": "text",
+              "text": "IBKS7245\nEta"
+            }
+          },
+          "channel": {
+            "id": 453209,
+            "name": "Internal (+60 11-1673 1179)",
+            "source": "whatsapp_business",
+            "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 27\"},\"wa_id\":\"60100000005\",\"user_id\":\"MY.900000025\",\"firstName\":\"Person 25\",\"lastName\":\"Person 26\"}}",
+            "created_at": 1767682908
+          },
+          "sender": {
+            "source": "contact",
+            "userId": null,
+            "teamId": null,
+            "workflowId": null,
+            "broadcastHistoryId": null
+          }
+        }
+      }
+    ],
+    "sorento-sub-respond-findcontact-respond": [
+      {
+        "json": {
+          "id": 900000007,
+          "firstName": "<redacted>",
+          "lastName": "<redacted>",
+          "phone": "<redacted>",
+          "email": "<redacted>",
+          "language": null,
+          "profilePic": null,
+          "locale": null,
+          "countryCode": "MY",
+          "status": "open",
+          "isBlocked": false,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": null
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": null
+            },
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "backend_id",
+              "value": "https://fe-sorento.foundryx.my/user-management/contacts/62ab75cf-fda5-4f41-9cdd-f6a2142f7935"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "tags": [],
+          "assignee": {
+            "id": 900000006,
+            "firstName": "<redacted>",
+            "lastName": "<redacted>",
+            "email": "<redacted>"
+          },
+          "lifecycle": null,
+          "created_at": 1785977537
+        }
+      }
+    ],
+    "if-transcribed-confirm": [],
+    "is-human-intervened": [
+      {
+        "json": {
+          "id": 900000007,
+          "firstName": "<redacted>",
+          "lastName": "<redacted>",
+          "phone": "<redacted>",
+          "email": "<redacted>",
+          "language": null,
+          "profilePic": null,
+          "locale": null,
+          "countryCode": "MY",
+          "status": "open",
+          "isBlocked": false,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": null
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": null
+            },
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "backend_id",
+              "value": "https://fe-sorento.foundryx.my/user-management/contacts/62ab75cf-fda5-4f41-9cdd-f6a2142f7935"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "tags": [],
+          "assignee": {
+            "id": 900000006,
+            "firstName": "<redacted>",
+            "lastName": "<redacted>",
+            "email": "<redacted>"
+          },
+          "lifecycle": null,
+          "created_at": 1785977537
+        }
+      }
+    ],
+    "if-message-is-audio": [],
+    "get-session-vars": [
+      {
+        "json": {
+          "respond_io_id": "900000007",
+          "session_vars": {
+            "variables": {
+              "routing": {
+                "suggested_team": "purchasing",
+                "suggested_agent": "incoming_stock_enquiries"
+              },
+              "entities": [
+                {
+                  "raw": "IBBF60015",
+                  "hint": "inbound_shipment",
+                  "confident": true,
+                  "canonical_code": null,
+                  "current_message": true
+                },
+                {
+                  "raw": "IBBF60016",
+                  "hint": "inbound_shipment",
+                  "confident": true,
+                  "canonical_code": null,
+                  "current_message": true
+                },
+                {
+                  "raw": "IBKS5245",
+                  "hint": "product",
+                  "confident": true,
+                  "canonical_code": "IBKS5245-NG-BL",
+                  "current_message": true
+                }
+              ],
+              "ideation": null,
+              "response": "Previous turn (incoming): returned 2 records",
+              "date_mode": null,
+              "dym_offer": null,
+              "user_goal": "trying to check the stock ETA for the listed incoming shipments",
+              "escalation": {
+                "is_escalation_confirmation": false
+              },
+              "match_mode": "and",
+              "domain_hint": "incoming",
+              "intent_hint": "check_incoming",
+              "message_type": "business_query",
+              "query_brands": [],
+              "access_levels": [],
+              "routing_brand": null,
+              "contains_flyer": false,
+              "dym_candidates": [],
+              "date_filter_end": null,
+              "last_result_set": [
+                {
+                  "idx": 1,
+                  "uuid": "2e5ca1be-237e-43cd-9f57-80bee3e579bd",
+                  "label": "IBKS5245-NG-BL",
+                  "product": "IBKS5245-NG-BL",
+                  "filename": null,
+                  "entity_type": "product",
+                  "attachment_type": null
+                },
+                {
+                  "idx": 2,
+                  "uuid": "fa941f5f-8147-4bd3-a5fc-abbb52d392a4",
+                  "label": "IBKS5245-NG-SS",
+                  "product": "IBKS5245-NG-SS",
+                  "filename": null,
+                  "entity_type": "product",
+                  "attachment_type": null
+                }
+              ],
+              "routing_company": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+              "date_filter_start": null,
+              "routing_companies": [
+                {
+                  "codes": [
+                    "IBKS5245-NG-BL",
+                    "IBKS5245-NG-SS"
+                  ],
+                  "brand_code": null,
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha"
+                }
+              ],
+              "selection_context": "disambiguation",
+              "routing_roster_plan": null,
+              "routing_brand_source": null
+            },
+            "user_response": "incoming search needs to be more specific. Multiple matches found. Please choose:\n1. IBKS5245-NG-BL \u2014 has incoming\n2. IBKS5245-NG-SS \u2014 no incoming"
+          }
+        }
+      }
+    ],
+    "Call 'sub-query-reformulator'": [
+      {
+        "json": {
+          "output": {
+            "message_type": "business_query",
+            "intent_hint": "check_incoming",
+            "domain_hint": "incoming",
+            "scope_intent": null,
+            "is_affirmative": null,
+            "user_goal": "trying to check the ETA for IBKS7245",
+            "access_levels": [],
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "IBKS7245",
+                "hint": "inbound_shipment",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "entity_op": "replace_combine",
+            "scope_exclusive": false,
+            "requested_attributes": [
+              "estimated_arrival_date"
+            ],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "purchasing",
+              "suggested_agent": "incoming_stock_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "domain_signal_source": "intent_explicit",
+            "scope_exclusive_applied": false,
+            "entity_op_applied": "replace_combine",
+            "query_brands": [],
+            "entities_filtered": false,
+            "entities_emptied_by_filter": false
+          },
+          "_parser_raw": {
+            "message_type": "business_query",
+            "intent_hint": "check_incoming",
+            "domain_hint": "incoming",
+            "scope_intent": null,
+            "is_affirmative": null,
+            "user_goal": "trying to check the ETA for IBKS7245",
+            "access_levels": [],
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "IBKS7245",
+                "hint": "inbound_shipment",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "entity_op": "replace_combine",
+            "scope_exclusive": false,
+            "requested_attributes": [
+              "estimated_arrival_date"
+            ],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "purchasing",
+              "suggested_agent": "incoming_stock_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            }
+          }
+        }
+      }
+    ],
+    "check-access": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "Incoming Stock Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null
+        }
+      }
+    ],
+    "If5": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "Incoming Stock Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null
+        }
+      }
+    ],
+    "If2": [],
+    "If-ideate": [],
+    "If10": [],
+    "is-escalation-declined": [],
+    "If9": [],
+    "If1": [],
+    "not-supported-domain": [],
+    "If": [],
+    "If7": [],
+    "resolve-entity": [
+      {
+        "json": {
+          "tokens": [
+            "IBKS7245"
+          ],
+          "elapsed_ms": 576.54,
+          "resolutions": [
+            {
+              "token": "IBKS7245",
+              "resolved": false,
+              "ambiguous": true,
+              "matches": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "IBKS7245-NG-SS",
+                  "uuid": "441f6dd6-4459-4788-8031-087ae4c51fef",
+                  "match_field": "product_code",
+                  "match_tier": "prefix",
+                  "similarity": null,
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "display": {
+                    "product_name": "IBKS7245-NG-SS",
+                    "is_active": true,
+                    "brand": null
+                  }
+                },
+                {
+                  "entity_type": "product",
+                  "canonical_code": "IBKS7245-NG-BL",
+                  "uuid": "70c695aa-d814-472d-be75-dcc2ed15a1d7",
+                  "match_field": "product_code",
+                  "match_tier": "prefix",
+                  "similarity": null,
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "display": {
+                    "product_name": "IBKS7245-NG-BL",
+                    "is_active": true,
+                    "brand": null
+                  }
+                }
+              ],
+              "alternatives": []
+            }
+          ],
+          "unresolved_tokens": [],
+          "fallback_applied": true,
+          "fallback_requested_types": [
+            "inbound_shipment"
+          ],
+          "fallback_types_found": [
+            "product"
+          ],
+          "fallback_per_token": true,
+          "fallback_match_mode": "or",
+          "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens."
+        }
+      }
+    ],
+    "disallowed-entity-gate": [
+      {
+        "json": {
+          "tokens": [
+            "IBKS7245"
+          ],
+          "elapsed_ms": 576.54,
+          "resolutions": [
+            {
+              "token": "IBKS7245",
+              "resolved": false,
+              "ambiguous": true,
+              "matches": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "IBKS7245-NG-SS",
+                  "uuid": "441f6dd6-4459-4788-8031-087ae4c51fef",
+                  "match_field": "product_code",
+                  "match_tier": "prefix",
+                  "similarity": null,
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "display": {
+                    "product_name": "IBKS7245-NG-SS",
+                    "is_active": true,
+                    "brand": null
+                  }
+                },
+                {
+                  "entity_type": "product",
+                  "canonical_code": "IBKS7245-NG-BL",
+                  "uuid": "70c695aa-d814-472d-be75-dcc2ed15a1d7",
+                  "match_field": "product_code",
+                  "match_tier": "prefix",
+                  "similarity": null,
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "display": {
+                    "product_name": "IBKS7245-NG-BL",
+                    "is_active": true,
+                    "brand": null
+                  }
+                }
+              ],
+              "alternatives": []
+            }
+          ],
+          "unresolved_tokens": [],
+          "fallback_applied": true,
+          "fallback_requested_types": [
+            "inbound_shipment"
+          ],
+          "fallback_types_found": [
+            "product"
+          ],
+          "fallback_per_token": true,
+          "fallback_match_mode": "or",
+          "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+          "gate_passed": false,
+          "require_specific": true,
+          "resolved_company": "mocha",
+          "company_team": null,
+          "resolved_companies": [
+            "mocha"
+          ],
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_companies": [
+            {
+              "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+              "company_name": "Mocha",
+              "brand_code": null,
+              "codes": [
+                "IBKS7245-NG-SS",
+                "IBKS7245-NG-BL"
+              ]
+            }
+          ],
+          "routing_company": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "'incoming' ambiguous (no single exact match); user must pick",
+          "gate_clarification": "incoming search needs to be more specific. Multiple matches found. Please choose:\n1. IBKS7245-NG-SS\n2. IBKS7245-NG-BL",
+          "compatible_entities": [
+            {
+              "uuid": "441f6dd6-4459-4788-8031-087ae4c51fef",
+              "entity_type": "product",
+              "code": "IBKS7245-NG-SS"
+            },
+            {
+              "uuid": "70c695aa-d814-472d-be75-dcc2ed15a1d7",
+              "entity_type": "product",
+              "code": "IBKS7245-NG-BL"
+            }
+          ],
+          "gate_debug": {
+            "domain": "incoming",
+            "allowed_lookup": [
+              "product",
+              "inbound_shipment",
+              "category",
+              "brand"
+            ],
+            "entities_count": 2
+          }
+        }
+      }
+    ],
+    "If3": [
+      {
+        "json": {
+          "tokens": [
+            "IBKS7245"
+          ],
+          "elapsed_ms": 576.54,
+          "resolutions": [
+            {
+              "token": "IBKS7245",
+              "resolved": false,
+              "ambiguous": true,
+              "matches": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "IBKS7245-NG-SS",
+                  "uuid": "441f6dd6-4459-4788-8031-087ae4c51fef",
+                  "match_field": "product_code",
+                  "match_tier": "prefix",
+                  "similarity": null,
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "display": {
+                    "product_name": "IBKS7245-NG-SS",
+                    "is_active": true,
+                    "brand": null
+                  }
+                },
+                {
+                  "entity_type": "product",
+                  "canonical_code": "IBKS7245-NG-BL",
+                  "uuid": "70c695aa-d814-472d-be75-dcc2ed15a1d7",
+                  "match_field": "product_code",
+                  "match_tier": "prefix",
+                  "similarity": null,
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "display": {
+                    "product_name": "IBKS7245-NG-BL",
+                    "is_active": true,
+                    "brand": null
+                  }
+                }
+              ],
+              "alternatives": []
+            }
+          ],
+          "unresolved_tokens": [],
+          "fallback_applied": true,
+          "fallback_requested_types": [
+            "inbound_shipment"
+          ],
+          "fallback_types_found": [
+            "product"
+          ],
+          "fallback_per_token": true,
+          "fallback_match_mode": "or",
+          "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+          "gate_passed": false,
+          "require_specific": true,
+          "resolved_company": "mocha",
+          "company_team": null,
+          "resolved_companies": [
+            "mocha"
+          ],
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_companies": [
+            {
+              "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+              "company_name": "Mocha",
+              "brand_code": null,
+              "codes": [
+                "IBKS7245-NG-SS",
+                "IBKS7245-NG-BL"
+              ]
+            }
+          ],
+          "routing_company": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "'incoming' ambiguous (no single exact match); user must pick",
+          "gate_clarification": "incoming search needs to be more specific. Multiple matches found. Please choose:\n1. IBKS7245-NG-SS\n2. IBKS7245-NG-BL",
+          "compatible_entities": [
+            {
+              "uuid": "441f6dd6-4459-4788-8031-087ae4c51fef",
+              "entity_type": "product",
+              "code": "IBKS7245-NG-SS"
+            },
+            {
+              "uuid": "70c695aa-d814-472d-be75-dcc2ed15a1d7",
+              "entity_type": "product",
+              "code": "IBKS7245-NG-BL"
+            }
+          ],
+          "gate_debug": {
+            "domain": "incoming",
+            "allowed_lookup": [
+              "product",
+              "inbound_shipment",
+              "category",
+              "brand"
+            ],
+            "entities_count": 2
+          }
+        }
+      }
+    ],
+    "If-incoming-picker": [
+      {
+        "json": {
+          "tokens": [
+            "IBKS7245"
+          ],
+          "elapsed_ms": 576.54,
+          "resolutions": [
+            {
+              "token": "IBKS7245",
+              "resolved": false,
+              "ambiguous": true,
+              "matches": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "IBKS7245-NG-SS",
+                  "uuid": "441f6dd6-4459-4788-8031-087ae4c51fef",
+                  "match_field": "product_code",
+                  "match_tier": "prefix",
+                  "similarity": null,
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "display": {
+                    "product_name": "IBKS7245-NG-SS",
+                    "is_active": true,
+                    "brand": null
+                  }
+                },
+                {
+                  "entity_type": "product",
+                  "canonical_code": "IBKS7245-NG-BL",
+                  "uuid": "70c695aa-d814-472d-be75-dcc2ed15a1d7",
+                  "match_field": "product_code",
+                  "match_tier": "prefix",
+                  "similarity": null,
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "display": {
+                    "product_name": "IBKS7245-NG-BL",
+                    "is_active": true,
+                    "brand": null
+                  }
+                }
+              ],
+              "alternatives": []
+            }
+          ],
+          "unresolved_tokens": [],
+          "fallback_applied": true,
+          "fallback_requested_types": [
+            "inbound_shipment"
+          ],
+          "fallback_types_found": [
+            "product"
+          ],
+          "fallback_per_token": true,
+          "fallback_match_mode": "or",
+          "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+          "gate_passed": false,
+          "require_specific": true,
+          "resolved_company": "mocha",
+          "company_team": null,
+          "resolved_companies": [
+            "mocha"
+          ],
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_companies": [
+            {
+              "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+              "company_name": "Mocha",
+              "brand_code": null,
+              "codes": [
+                "IBKS7245-NG-SS",
+                "IBKS7245-NG-BL"
+              ]
+            }
+          ],
+          "routing_company": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "'incoming' ambiguous (no single exact match); user must pick",
+          "gate_clarification": "incoming search needs to be more specific. Multiple matches found. Please choose:\n1. IBKS7245-NG-SS\n2. IBKS7245-NG-BL",
+          "compatible_entities": [
+            {
+              "uuid": "441f6dd6-4459-4788-8031-087ae4c51fef",
+              "entity_type": "product",
+              "code": "IBKS7245-NG-SS"
+            },
+            {
+              "uuid": "70c695aa-d814-472d-be75-dcc2ed15a1d7",
+              "entity_type": "product",
+              "code": "IBKS7245-NG-BL"
+            }
+          ],
+          "gate_debug": {
+            "domain": "incoming",
+            "allowed_lookup": [
+              "product",
+              "inbound_shipment",
+              "category",
+              "brand"
+            ],
+            "entities_count": 2
+          }
+        }
+      }
+    ],
+    "probe-incoming": [
+      {
+        "json": {
+          "response": "I have attached the file(s) below.\n\n1. *Company:* Sorento\n*Product Code:* IBKS7245-NG-BL\n*Container:* TLLU5098391\n*Incoming Quantity:* 194\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n*Mocha:* no incoming stock records for IBKS7245-NG-SS, IBKS7245-NG-BL.\n\nI can't share the eta \u2014 please check with the office.",
+          "response_intro": "I have attached the file(s) below.",
+          "answers": [
+            {
+              "title": "IBKS7245-NG-BL",
+              "fields": [
+                {
+                  "key": "company_name",
+                  "label": "Company",
+                  "value": "Sorento"
+                },
+                {
+                  "key": "product_code",
+                  "label": "Product Code",
+                  "value": "IBKS7245-NG-BL"
+                },
+                {
+                  "key": "shipping_container_number",
+                  "label": "Container",
+                  "value": "TLLU5098391"
+                },
+                {
+                  "key": "remaining_incoming_quantity",
+                  "label": "Incoming Quantity",
+                  "value": 194
+                }
+              ],
+              "flags": {
+                "discontinued": false,
+                "expired": false,
+                "expiring_soon": false,
+                "unallocated": true,
+                "partially_allocated": false
+              }
+            }
+          ],
+          "attachments": [
+            {
+              "url": "https://cdn-sorento.com/packing_list/df142786-ead5-4a5e-9373-838423a8aaf6/TLLU5098391 - WH SRT.xlsx",
+              "filename": "TLLU5098391 - WH SRT.xlsx",
+              "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+              "attachmentType": null
+            }
+          ],
+          "action_links": [],
+          "last_updated_at": null,
+          "has_result": true,
+          "alternatives": [],
+          "relaxed_axis": null,
+          "field_access": {
+            "denied": [
+              {
+                "field": "estimated_arrival_date",
+                "agent_code": "incoming_stock_enquiries",
+                "outcome": "contact_not_found",
+                "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted.",
+                "label": "ETA"
+              },
+              {
+                "field": "eta_delay_date",
+                "agent_code": "incoming_stock_enquiries",
+                "outcome": "contact_not_found",
+                "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted.",
+                "label": "ETA Delay"
+              },
+              {
+                "field": "inspection_date",
+                "agent_code": "incoming_stock_enquiries",
+                "outcome": "contact_not_found",
+                "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted.",
+                "label": "CIDB Inspection"
+              },
+              {
+                "field": "approval_date",
+                "agent_code": "incoming_stock_enquiries",
+                "outcome": "contact_not_found",
+                "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted.",
+                "label": "CIDB Approval"
+              },
+              {
+                "field": "gatepass_date",
+                "agent_code": "incoming_stock_enquiries",
+                "outcome": "contact_not_found",
+                "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted.",
+                "label": "Gatepass"
+              },
+              {
+                "field": "warehouse_arrival_date",
+                "agent_code": "incoming_stock_enquiries",
+                "outcome": "contact_not_found",
+                "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted.",
+                "label": "Warehouse Arrival"
+              },
+              {
+                "field": "informed_collection_date",
+                "agent_code": "incoming_stock_enquiries",
+                "outcome": "contact_not_found",
+                "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted.",
+                "label": "Collection Informed"
+              },
+              {
+                "field": "collection_date",
+                "agent_code": "incoming_stock_enquiries",
+                "outcome": "contact_not_found",
+                "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted.",
+                "label": "Collection"
+              },
+              {
+                "field": "loading_date",
+                "agent_code": "incoming_stock_enquiries",
+                "outcome": "contact_not_found",
+                "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted.",
+                "label": "Loading"
+              },
+              {
+                "field": "etc_date",
+                "agent_code": "incoming_stock_enquiries",
+                "outcome": "contact_not_found",
+                "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted.",
+                "label": "ETC"
+              },
+              {
+                "field": "etd_date",
+                "agent_code": "incoming_stock_enquiries",
+                "outcome": "contact_not_found",
+                "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted.",
+                "label": "ETD"
+              },
+              {
+                "field": "liner_code",
+                "agent_code": "incoming_stock_enquiries",
+                "outcome": "contact_not_found",
+                "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted.",
+                "label": "Liner"
+              },
+              {
+                "field": "china_forwarder",
+                "agent_code": "incoming_stock_enquiries",
+                "outcome": "contact_not_found",
+                "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted.",
+                "label": "China Forwarder"
+              },
+              {
+                "field": "malaysia_forwarder",
+                "agent_code": "incoming_stock_enquiries",
+                "outcome": "contact_not_found",
+                "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted.",
+                "label": "Malaysia Forwarder"
+              },
+              {
+                "field": "consignee",
+                "agent_code": "incoming_stock_enquiries",
+                "outcome": "contact_not_found",
+                "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted.",
+                "label": "Consignee"
+              },
+              {
+                "field": "delivery_warehouse",
+                "agent_code": "incoming_stock_enquiries",
+                "outcome": "contact_not_found",
+                "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted.",
+                "label": "Delivery Warehouse"
+              },
+              {
+                "field": "free_days_available",
+                "agent_code": "incoming_stock_enquiries",
+                "outcome": "contact_not_found",
+                "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted.",
+                "label": "Free Days Available"
+              },
+              {
+                "field": "loc",
+                "agent_code": "incoming_stock_enquiries",
+                "outcome": "contact_not_found",
+                "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted.",
+                "label": "Location"
+              },
+              {
+                "field": "stacked",
+                "agent_code": "incoming_stock_enquiries",
+                "outcome": "contact_not_found",
+                "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted.",
+                "label": "Stacked"
+              },
+              {
+                "field": "coa_permit_no",
+                "agent_code": "incoming_stock_enquiries",
+                "outcome": "contact_not_found",
+                "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted.",
+                "label": "COA Permit No."
+              },
+              {
+                "field": "source_sheet",
+                "agent_code": "incoming_stock_enquiries",
+                "outcome": "contact_not_found",
+                "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted."
+              }
+            ],
+            "note": "These fields are omitted because this caller may not see them. Absent does NOT mean the value is unknown or not yet reached."
+          },
+          "requested_attributes": [
+            "estimated_arrival_date"
+          ],
+          "keys_served": true,
+          "lookup_companies": [
+            {
+              "id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+              "name": "Mocha"
+            },
+            {
+              "id": "00000000-0000-0000-0000-000000000001",
+              "name": "Sorento"
+            }
+          ]
+        }
+      }
+    ],
+    "annotate-incoming-picker": [
+      {
+        "json": {
+          "tokens": [
+            "IBKS7245"
+          ],
+          "elapsed_ms": 576.54,
+          "resolutions": [
+            {
+              "token": "IBKS7245",
+              "resolved": false,
+              "ambiguous": true,
+              "matches": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "IBKS7245-NG-SS",
+                  "uuid": "441f6dd6-4459-4788-8031-087ae4c51fef",
+                  "match_field": "product_code",
+                  "match_tier": "prefix",
+                  "similarity": null,
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "display": {
+                    "product_name": "IBKS7245-NG-SS",
+                    "is_active": true,
+                    "brand": null
+                  }
+                },
+                {
+                  "entity_type": "product",
+                  "canonical_code": "IBKS7245-NG-BL",
+                  "uuid": "70c695aa-d814-472d-be75-dcc2ed15a1d7",
+                  "match_field": "product_code",
+                  "match_tier": "prefix",
+                  "similarity": null,
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "display": {
+                    "product_name": "IBKS7245-NG-BL",
+                    "is_active": true,
+                    "brand": null
+                  }
+                }
+              ],
+              "alternatives": []
+            }
+          ],
+          "unresolved_tokens": [],
+          "fallback_applied": true,
+          "fallback_requested_types": [
+            "inbound_shipment"
+          ],
+          "fallback_types_found": [
+            "product"
+          ],
+          "fallback_per_token": true,
+          "fallback_match_mode": "or",
+          "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+          "gate_passed": false,
+          "require_specific": true,
+          "resolved_company": "mocha",
+          "company_team": null,
+          "resolved_companies": [
+            "mocha"
+          ],
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_companies": [
+            {
+              "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+              "company_name": "Mocha",
+              "brand_code": null,
+              "codes": [
+                "IBKS7245-NG-SS",
+                "IBKS7245-NG-BL"
+              ]
+            }
+          ],
+          "routing_company": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "'incoming' ambiguous (no single exact match); user must pick",
+          "gate_clarification": "incoming search needs to be more specific. Multiple matches found. Please choose:\n1. IBKS7245-NG-SS\n2. IBKS7245-NG-BL",
+          "compatible_entities": [
+            {
+              "uuid": "441f6dd6-4459-4788-8031-087ae4c51fef",
+              "entity_type": "product",
+              "code": "IBKS7245-NG-SS"
+            },
+            {
+              "uuid": "70c695aa-d814-472d-be75-dcc2ed15a1d7",
+              "entity_type": "product",
+              "code": "IBKS7245-NG-BL"
+            }
+          ],
+          "gate_debug": {
+            "domain": "incoming",
+            "allowed_lookup": [
+              "product",
+              "inbound_shipment",
+              "category",
+              "brand"
+            ],
+            "entities_count": 2
+          },
+          "escalate_message": "incoming search needs to be more specific. Multiple matches found. Please choose:\n1. IBKS7245-NG-SS \u2014 no incoming\n2. IBKS7245-NG-BL \u2014 has incoming",
+          "is_clarification": false
+        }
+      }
+    ],
+    "build-suggest-offer": [
+      {
+        "json": {
+          "tokens": [
+            "IBKS7245"
+          ],
+          "elapsed_ms": 576.54,
+          "resolutions": [
+            {
+              "token": "IBKS7245",
+              "resolved": false,
+              "ambiguous": true,
+              "matches": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "IBKS7245-NG-SS",
+                  "uuid": "441f6dd6-4459-4788-8031-087ae4c51fef",
+                  "match_field": "product_code",
+                  "match_tier": "prefix",
+                  "similarity": null,
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "display": {
+                    "product_name": "IBKS7245-NG-SS",
+                    "is_active": true,
+                    "brand": null
+                  }
+                },
+                {
+                  "entity_type": "product",
+                  "canonical_code": "IBKS7245-NG-BL",
+                  "uuid": "70c695aa-d814-472d-be75-dcc2ed15a1d7",
+                  "match_field": "product_code",
+                  "match_tier": "prefix",
+                  "similarity": null,
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "display": {
+                    "product_name": "IBKS7245-NG-BL",
+                    "is_active": true,
+                    "brand": null
+                  }
+                }
+              ],
+              "alternatives": []
+            }
+          ],
+          "unresolved_tokens": [],
+          "fallback_applied": true,
+          "fallback_requested_types": [
+            "inbound_shipment"
+          ],
+          "fallback_types_found": [
+            "product"
+          ],
+          "fallback_per_token": true,
+          "fallback_match_mode": "or",
+          "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+          "gate_passed": false,
+          "require_specific": true,
+          "resolved_company": "mocha",
+          "company_team": null,
+          "resolved_companies": [
+            "mocha"
+          ],
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_companies": [
+            {
+              "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+              "company_name": "Mocha",
+              "brand_code": null,
+              "codes": [
+                "IBKS7245-NG-SS",
+                "IBKS7245-NG-BL"
+              ]
+            }
+          ],
+          "routing_company": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "'incoming' ambiguous (no single exact match); user must pick",
+          "gate_clarification": "incoming search needs to be more specific. Multiple matches found. Please choose:\n1. IBKS7245-NG-SS\n2. IBKS7245-NG-BL",
+          "compatible_entities": [
+            {
+              "uuid": "441f6dd6-4459-4788-8031-087ae4c51fef",
+              "entity_type": "product",
+              "code": "IBKS7245-NG-SS"
+            },
+            {
+              "uuid": "70c695aa-d814-472d-be75-dcc2ed15a1d7",
+              "entity_type": "product",
+              "code": "IBKS7245-NG-BL"
+            }
+          ],
+          "gate_debug": {
+            "domain": "incoming",
+            "allowed_lookup": [
+              "product",
+              "inbound_shipment",
+              "category",
+              "brand"
+            ],
+            "entities_count": 2
+          },
+          "escalate_message": "incoming search needs to be more specific. Multiple matches found. Please choose:\n1. IBKS7245-NG-SS \u2014 no incoming\n2. IBKS7245-NG-BL \u2014 has incoming",
+          "is_clarification": false,
+          "suggest_offer": false
+        }
+      }
+    ],
+    "tag-not-found": [
+      {
+        "json": {
+          "branch_kind": "not_found"
+        }
+      }
+    ],
+    "escalate-catalog": [
+      {
+        "json": {
+          "branch_kind": "not_found",
+          "response": "incoming search needs to be more specific. Multiple matches found. Please choose:\n1. IBKS7245-NG-SS \u2014 no incoming\n2. IBKS7245-NG-BL \u2014 has incoming",
+          "manualResponse": false,
+          "includeResponse": true,
+          "is_escalate_offer": true
+        }
+      }
+    ],
+    "cs-offer-gate": [],
+    "compile-current-state": [
+      {
+        "json": {
+          "variables": {
+            "message_type": "business_query",
+            "intent_hint": "check_incoming",
+            "domain_hint": "incoming",
+            "user_goal": "trying to check the ETA for IBKS7245",
+            "query_brands": [],
+            "access_levels": [],
+            "entities": [
+              {
+                "raw": "IBKS7245",
+                "hint": "product",
+                "canonical_code": "IBKS7245-NG-SS",
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "routing": {
+              "suggested_team": "purchasing",
+              "suggested_agent": "incoming_stock_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "response": "Previous turn (incoming): returned 2 records",
+            "last_result_set": [
+              {
+                "idx": 1,
+                "uuid": "441f6dd6-4459-4788-8031-087ae4c51fef",
+                "label": "IBKS7245-NG-SS",
+                "entity_type": "product",
+                "product": "IBKS7245-NG-SS",
+                "attachment_type": null,
+                "filename": null
+              },
+              {
+                "idx": 2,
+                "uuid": "70c695aa-d814-472d-be75-dcc2ed15a1d7",
+                "label": "IBKS7245-NG-BL",
+                "entity_type": "product",
+                "product": "IBKS7245-NG-BL",
+                "attachment_type": null,
+                "filename": null
+              }
+            ],
+            "selection_context": "disambiguation",
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "date_mode": null,
+            "match_mode": "and",
+            "contains_flyer": false,
+            "dym_offer": null,
+            "dym_candidates": [],
+            "ideation": null,
+            "routing_roster_plan": null,
+            "routing_brand": null,
+            "routing_brand_source": null,
+            "routing_company": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+            "routing_companies": [
+              {
+                "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                "company_name": "Mocha",
+                "brand_code": null,
+                "codes": [
+                  "IBKS7245-NG-SS",
+                  "IBKS7245-NG-BL"
+                ]
+              }
+            ]
+          },
+          "user_response": "incoming search needs to be more specific. Multiple matches found. Please choose:\n1. IBKS7245-NG-SS \u2014 no incoming\n2. IBKS7245-NG-BL \u2014 has incoming"
+        }
+      }
+    ],
+    "crossdomain-compose": [
+      {
+        "json": {
+          "variables": {
+            "message_type": "business_query",
+            "intent_hint": "check_incoming",
+            "domain_hint": "incoming",
+            "user_goal": "trying to check the ETA for IBKS7245",
+            "query_brands": [],
+            "access_levels": [],
+            "entities": [
+              {
+                "raw": "IBKS7245",
+                "hint": "product",
+                "canonical_code": "IBKS7245-NG-SS",
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "routing": {
+              "suggested_team": "purchasing",
+              "suggested_agent": "incoming_stock_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "response": "Previous turn (incoming): returned 2 records",
+            "last_result_set": [
+              {
+                "idx": 1,
+                "uuid": "441f6dd6-4459-4788-8031-087ae4c51fef",
+                "label": "IBKS7245-NG-SS",
+                "entity_type": "product",
+                "product": "IBKS7245-NG-SS",
+                "attachment_type": null,
+                "filename": null
+              },
+              {
+                "idx": 2,
+                "uuid": "70c695aa-d814-472d-be75-dcc2ed15a1d7",
+                "label": "IBKS7245-NG-BL",
+                "entity_type": "product",
+                "product": "IBKS7245-NG-BL",
+                "attachment_type": null,
+                "filename": null
+              }
+            ],
+            "selection_context": "disambiguation",
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "date_mode": null,
+            "match_mode": "and",
+            "contains_flyer": false,
+            "dym_offer": null,
+            "dym_candidates": [],
+            "ideation": null,
+            "routing_roster_plan": null,
+            "routing_brand": null,
+            "routing_brand_source": null,
+            "routing_company": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+            "routing_companies": [
+              {
+                "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                "company_name": "Mocha",
+                "brand_code": null,
+                "codes": [
+                  "IBKS7245-NG-SS",
+                  "IBKS7245-NG-BL"
+                ]
+              }
+            ]
+          },
+          "user_response": "incoming search needs to be more specific. Multiple matches found. Please choose:\n1. IBKS7245-NG-SS \u2014 no incoming\n2. IBKS7245-NG-BL \u2014 has incoming"
+        }
+      }
+    ],
+    "sorento-sub-respond-sendmsg-respond2": [
+      {
+        "json": {
+          "success": true
+        }
+      }
+    ],
+    "Execution Data": [
+      {
+        "json": {
+          "success": true
+        }
+      }
+    ],
+    "attach-merge": [
+      {
+        "json": {
+          "attachments": []
+        }
+      }
+    ],
+    "if-got-attachments": [],
+    "save-session-vars": [
+      {
+        "json": {
+          "respond_io_id": "900000007",
+          "session_vars": {
+            "variables": {
+              "message_type": "business_query",
+              "intent_hint": "check_incoming",
+              "domain_hint": "incoming",
+              "user_goal": "trying to check the ETA for IBKS7245",
+              "query_brands": [],
+              "access_levels": [],
+              "entities": [
+                {
+                  "raw": "IBKS7245",
+                  "hint": "product",
+                  "canonical_code": "IBKS7245-NG-SS",
+                  "current_message": true,
+                  "confident": true
+                }
+              ],
+              "routing": {
+                "suggested_team": "purchasing",
+                "suggested_agent": "incoming_stock_enquiries"
+              },
+              "escalation": {
+                "is_escalation_confirmation": false
+              },
+              "response": "Previous turn (incoming): returned 2 records",
+              "last_result_set": [
+                {
+                  "idx": 1,
+                  "uuid": "441f6dd6-4459-4788-8031-087ae4c51fef",
+                  "label": "IBKS7245-NG-SS",
+                  "entity_type": "product",
+                  "product": "IBKS7245-NG-SS",
+                  "attachment_type": null,
+                  "filename": null
+                },
+                {
+                  "idx": 2,
+                  "uuid": "70c695aa-d814-472d-be75-dcc2ed15a1d7",
+                  "label": "IBKS7245-NG-BL",
+                  "entity_type": "product",
+                  "product": "IBKS7245-NG-BL",
+                  "attachment_type": null,
+                  "filename": null
+                }
+              ],
+              "selection_context": "disambiguation",
+              "date_filter_start": null,
+              "date_filter_end": null,
+              "date_mode": null,
+              "match_mode": "and",
+              "contains_flyer": false,
+              "dym_offer": null,
+              "dym_candidates": [],
+              "ideation": null,
+              "routing_roster_plan": null,
+              "routing_brand": null,
+              "routing_brand_source": null,
+              "routing_company": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+              "routing_companies": [
+                {
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "brand_code": null,
+                  "codes": [
+                    "IBKS7245-NG-SS",
+                    "IBKS7245-NG-BL"
+                  ]
+                }
+              ]
+            },
+            "user_response": "incoming search needs to be more specific. Multiple matches found. Please choose:\n1. IBKS7245-NG-SS \u2014 no incoming\n2. IBKS7245-NG-BL \u2014 has incoming"
+          }
+        }
+      }
+    ],
+    "Call 'sub-respond-save-message-redis'2": [
+      {
+        "json": {
+          "contact_id": 900000007,
+          "phone_number": "<redacted>",
+          "message": "IBKS7245\nEta",
+          "sent_at": 1787395913413,
+          "turn_id": "13484252",
+          "data": "{\"contact_id\":\"900000007\",\"phone_number\":\"+60100000005\",\"message\":\"IBKS7245\\nEta\",\"sent_at\":1787395901000,\"first_name\":\"Person 25\",\"last_name\":null,\"reply_to_message_id\":null,\"reply_to_message\":null,\"type\":\"incoming\",\"message_id\":\"1787395901000000\",\"turn_id\":\"13484252\",\"state_trace\":{\"v\":1,\"before\":{\"routing\":{\"suggested_team\":\"purchasing\",\"suggested_agent\":\"incoming_stock_enquiries\"},\"entities\":[{\"raw\":\"IBBF60015\",\"hint\":\"inbound_shipment\",\"confident\":true,\"canonical_code\":null,\"current_message\":true},{\"raw\":\"IBBF60016\",\"hint\":\"inbound_shipment\",\"confident\":true,\"canonical_code\":null,\"current_message\":true},{\"raw\":\"IBKS5245\",\"hint\":\"product\",\"confident\":true,\"canonical_code\":\"IBKS5245-NG-BL\",\"current_message\":true}],\"ideation\":null,\"response\":\"Previous turn (incoming): returned 2 records\",\"date_mode\":null,\"dym_offer\":null,\"user_goal\":\"trying to check the stock ETA for the listed incoming shipments\",\"escalation\":{\"is_escalation_confirmation\":false},\"match_mode\":\"and\",\"domain_hint\":\"incoming\",\"intent_hint\":\"check_incoming\",\"message_type\":\"business_query\",\"query_brands\":[],\"access_levels\":[],\"routing_brand\":null,\"contains_flyer\":false,\"dym_candidates\":{\"n\":0,\"first\":null},\"date_filter_end\":null,\"last_result_set\":{\"n\":2,\"first\":\"IBKS5245-NG-BL\"},\"routing_company\":\"38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2\",\"date_filter_start\":null,\"routing_companies\":[{\"codes\":[\"IBKS5245-NG-BL\",\"IBKS5245-NG-SS\"],\"brand_code\":null,\"company_id\":\"38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2\",\"company_name\":\"Mocha\"}],\"selection_context\":\"disambiguation\",\"routing_roster_plan\":null,\"routing_brand_source\":null},\"parser_raw\":{\"message_type\":\"business_query\",\"intent_hint\":\"check_incoming\",\"domain_hint\":\"incoming\",\"scope_intent\":null,\"is_affirmative\":null,\"user_goal\":\"trying to check the ETA for IBKS7245\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[{\"raw\":\"IBKS7245\",\"hint\":\"inbound_shipment\",\"canonical_code\":null,\"current_message\":true,\"confident\":true}],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[\"estimated_arrival_date\"],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":\"purchasing\",\"suggested_agent\":\"incoming_stock_enquiries\"},\"escalation\":{\"is_escalation_confirmation\":false}},\"parser_applied\":{\"message_type\":\"business_query\",\"intent_hint\":\"check_incoming\",\"domain_hint\":\"incoming\",\"scope_intent\":null,\"is_affirmative\":null,\"user_goal\":\"trying to check the ETA for IBKS7245\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[{\"raw\":\"IBKS7245\",\"hint\":\"inbound_shipment\",\"canonical_code\":null,\"current_message\":true,\"confident\":true}],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[\"estimated_arrival_date\"],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":\"purchasing\",\"suggested_agent\":\"incoming_stock_enquiries\"},\"escalation\":{\"is_escalation_confirmation\":false},\"domain_signal_source\":\"intent_explicit\",\"scope_exclusive_applied\":false,\"entity_op_applied\":\"replace_combine\",\"query_brands\":[],\"entities_filtered\":false,\"entities_emptied_by_filter\":false},\"after\":{\"message_type\":\"business_query\",\"intent_hint\":\"check_incoming\",\"domain_hint\":\"incoming\",\"user_goal\":\"trying to check the ETA for IBKS7245\",\"query_brands\":[],\"access_levels\":[],\"entities\":[{\"raw\":\"IBKS7245\",\"hint\":\"product\",\"canonical_code\":\"IBKS7245-NG-SS\",\"current_message\":true,\"confident\":true}],\"routing\":{\"suggested_team\":\"purchasing\",\"suggested_agent\":\"incoming_stock_enquiries\"},\"escalation\":{\"is_escalation_confirmation\":false},\"response\":\"Previous turn (incoming): returned 2 records\",\"last_result_set\":{\"n\":2,\"first\":\"IBKS7245-NG-SS\"},\"selection_context\":\"disambiguation\",\"date_filter_start\":null,\"date_filter_end\":null,\"date_mode\":null,\"match_mode\":\"and\",\"contains_flyer\":false,\"dym_offer\":null,\"dym_candidates\":{\"n\":0,\"first\":null},\"ideation\":null,\"routing_roster_plan\":null,\"routing_brand\":null,\"routing_brand_source\":null,\"routing_company\":\"38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2\",\"routing_companies\":[{\"company_id\":\"38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2\",\"company_name\":\"Mocha\",\"brand_code\":null,\"codes\":[\"IBKS7245-NG-SS\",\"IBKS7245-NG-BL\"]}]}}}"
+        }
+      }
+    ],
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 900000007,
+              "firstName": "<redacted>",
+              "lastName": "<redacted>",
+              "phone": "<redacted>",
+              "email": "<redacted>",
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": null
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/62ab75cf-fda5-4f41-9cdd-f6a2142f7935"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [],
+              "assignee": {
+                "id": 900000006,
+                "firstName": "<redacted>",
+                "lastName": "<redacted>",
+                "email": "<redacted>"
+              },
+              "lifecycle": null,
+              "created_at": 1785977537
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "a0ef3b3f-6b88-4ed4-a74b-878fc2a1e9fc",
+              "contact": {
+                "id": 900000007,
+                "firstName": "<redacted>",
+                "lastName": "<redacted>",
+                "phone": "<redacted>",
+                "email": "<redacted>",
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": 900000006,
+                  "email": "<redacted>",
+                  "firstName": "<redacted>",
+                  "lastName": "<redacted>",
+                  "role": "user"
+                },
+                "created_at": 1785977537
+              },
+              "message": {
+                "messageId": 1787395901000000,
+                "channelMessageId": "wamid.HBgLNjAxNjIyOTExNzkVAgASGBQzQTZFNzlCODVCMEU3RUI0M0JDOQA=",
+                "contactId": 900000007,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1787395901000,
+                "message": {
+                  "type": "text",
+                  "text": "IBKS7245\nEta"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 27\"},\"wa_id\":\"60100000005\",\"user_id\":\"MY.900000025\",\"firstName\":\"Person 25\",\"lastName\":\"Person 26\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000007",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "purchasing",
+                    "suggested_agent": "incoming_stock_enquiries"
+                  },
+                  "entities": [
+                    {
+                      "raw": "IBBF60015",
+                      "hint": "inbound_shipment",
+                      "confident": true,
+                      "canonical_code": null,
+                      "current_message": true
+                    },
+                    {
+                      "raw": "IBBF60016",
+                      "hint": "inbound_shipment",
+                      "confident": true,
+                      "canonical_code": null,
+                      "current_message": true
+                    },
+                    {
+                      "raw": "IBKS5245",
+                      "hint": "product",
+                      "confident": true,
+                      "canonical_code": "IBKS5245-NG-BL",
+                      "current_message": true
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Previous turn (incoming): returned 2 records",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to check the stock ETA for the listed incoming shipments",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "incoming",
+                  "intent_hint": "check_incoming",
+                  "message_type": "business_query",
+                  "query_brands": [],
+                  "access_levels": [],
+                  "routing_brand": null,
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [
+                    {
+                      "idx": 1,
+                      "uuid": "2e5ca1be-237e-43cd-9f57-80bee3e579bd",
+                      "label": "IBKS5245-NG-BL",
+                      "product": "IBKS5245-NG-BL",
+                      "filename": null,
+                      "entity_type": "product",
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 2,
+                      "uuid": "fa941f5f-8147-4bd3-a5fc-abbb52d392a4",
+                      "label": "IBKS5245-NG-SS",
+                      "product": "IBKS5245-NG-SS",
+                      "filename": null,
+                      "entity_type": "product",
+                      "attachment_type": null
+                    }
+                  ],
+                  "routing_company": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "date_filter_start": null,
+                  "routing_companies": [
+                    {
+                      "codes": [
+                        "IBKS5245-NG-BL",
+                        "IBKS5245-NG-SS"
+                      ],
+                      "brand_code": null,
+                      "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                      "company_name": "Mocha"
+                    }
+                  ],
+                  "selection_context": "disambiguation",
+                  "routing_roster_plan": null,
+                  "routing_brand_source": null
+                },
+                "user_response": "incoming search needs to be more specific. Multiple matches found. Please choose:\n1. IBKS5245-NG-BL \u2014 has incoming\n2. IBKS5245-NG-SS \u2014 no incoming"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "check_incoming",
+                "domain_hint": "incoming",
+                "scope_intent": null,
+                "is_affirmative": null,
+                "user_goal": "trying to check the ETA for IBKS7245",
+                "access_levels": [],
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "IBKS7245",
+                    "hint": "inbound_shipment",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [
+                  "estimated_arrival_date"
+                ],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "purchasing",
+                  "suggested_agent": "incoming_stock_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_explicit",
+                "scope_exclusive_applied": false,
+                "entity_op_applied": "replace_combine",
+                "query_brands": [],
+                "entities_filtered": false,
+                "entities_emptied_by_filter": false
+              },
+              "_parser_raw": {
+                "message_type": "business_query",
+                "intent_hint": "check_incoming",
+                "domain_hint": "incoming",
+                "scope_intent": null,
+                "is_affirmative": null,
+                "user_goal": "trying to check the ETA for IBKS7245",
+                "access_levels": [],
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "IBKS7245",
+                    "hint": "inbound_shipment",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [
+                  "estimated_arrival_date"
+                ],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "purchasing",
+                  "suggested_agent": "incoming_stock_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "Incoming Stock Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            }
+          }
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "response": "I have attached the file(s) below.\n\n1. *Company:* Sorento\n*Product Code:* IBKS7245-NG-BL\n*Container:* TLLU5098391\n*Incoming Quantity:* 194\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n*Mocha:* no incoming stock records for IBKS7245-NG-SS, IBKS7245-NG-BL.\n\nI can't share the eta \u2014 please check with the office.",
+        "response_intro": "I have attached the file(s) below.",
+        "answers": [
+          {
+            "title": "IBKS7245-NG-BL",
+            "fields": [
+              {
+                "key": "company_name",
+                "label": "Company",
+                "value": "Sorento"
+              },
+              {
+                "key": "product_code",
+                "label": "Product Code",
+                "value": "IBKS7245-NG-BL"
+              },
+              {
+                "key": "shipping_container_number",
+                "label": "Container",
+                "value": "TLLU5098391"
+              },
+              {
+                "key": "remaining_incoming_quantity",
+                "label": "Incoming Quantity",
+                "value": 194
+              }
+            ],
+            "flags": {
+              "discontinued": false,
+              "expired": false,
+              "expiring_soon": false,
+              "unallocated": true,
+              "partially_allocated": false
+            }
+          }
+        ],
+        "attachments": [
+          {
+            "url": "https://cdn-sorento.com/packing_list/df142786-ead5-4a5e-9373-838423a8aaf6/TLLU5098391 - WH SRT.xlsx",
+            "filename": "TLLU5098391 - WH SRT.xlsx",
+            "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "attachmentType": null
+          }
+        ],
+        "action_links": [],
+        "last_updated_at": null,
+        "has_result": true,
+        "alternatives": [],
+        "relaxed_axis": null,
+        "field_access": {
+          "denied": [
+            {
+              "field": "estimated_arrival_date",
+              "agent_code": "incoming_stock_enquiries",
+              "outcome": "contact_not_found",
+              "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted.",
+              "label": "ETA"
+            },
+            {
+              "field": "eta_delay_date",
+              "agent_code": "incoming_stock_enquiries",
+              "outcome": "contact_not_found",
+              "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted.",
+              "label": "ETA Delay"
+            },
+            {
+              "field": "inspection_date",
+              "agent_code": "incoming_stock_enquiries",
+              "outcome": "contact_not_found",
+              "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted.",
+              "label": "CIDB Inspection"
+            },
+            {
+              "field": "approval_date",
+              "agent_code": "incoming_stock_enquiries",
+              "outcome": "contact_not_found",
+              "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted.",
+              "label": "CIDB Approval"
+            },
+            {
+              "field": "gatepass_date",
+              "agent_code": "incoming_stock_enquiries",
+              "outcome": "contact_not_found",
+              "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted.",
+              "label": "Gatepass"
+            },
+            {
+              "field": "warehouse_arrival_date",
+              "agent_code": "incoming_stock_enquiries",
+              "outcome": "contact_not_found",
+              "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted.",
+              "label": "Warehouse Arrival"
+            },
+            {
+              "field": "informed_collection_date",
+              "agent_code": "incoming_stock_enquiries",
+              "outcome": "contact_not_found",
+              "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted.",
+              "label": "Collection Informed"
+            },
+            {
+              "field": "collection_date",
+              "agent_code": "incoming_stock_enquiries",
+              "outcome": "contact_not_found",
+              "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted.",
+              "label": "Collection"
+            },
+            {
+              "field": "loading_date",
+              "agent_code": "incoming_stock_enquiries",
+              "outcome": "contact_not_found",
+              "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted.",
+              "label": "Loading"
+            },
+            {
+              "field": "etc_date",
+              "agent_code": "incoming_stock_enquiries",
+              "outcome": "contact_not_found",
+              "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted.",
+              "label": "ETC"
+            },
+            {
+              "field": "etd_date",
+              "agent_code": "incoming_stock_enquiries",
+              "outcome": "contact_not_found",
+              "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted.",
+              "label": "ETD"
+            },
+            {
+              "field": "liner_code",
+              "agent_code": "incoming_stock_enquiries",
+              "outcome": "contact_not_found",
+              "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted.",
+              "label": "Liner"
+            },
+            {
+              "field": "china_forwarder",
+              "agent_code": "incoming_stock_enquiries",
+              "outcome": "contact_not_found",
+              "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted.",
+              "label": "China Forwarder"
+            },
+            {
+              "field": "malaysia_forwarder",
+              "agent_code": "incoming_stock_enquiries",
+              "outcome": "contact_not_found",
+              "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted.",
+              "label": "Malaysia Forwarder"
+            },
+            {
+              "field": "consignee",
+              "agent_code": "incoming_stock_enquiries",
+              "outcome": "contact_not_found",
+              "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted.",
+              "label": "Consignee"
+            },
+            {
+              "field": "delivery_warehouse",
+              "agent_code": "incoming_stock_enquiries",
+              "outcome": "contact_not_found",
+              "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted.",
+              "label": "Delivery Warehouse"
+            },
+            {
+              "field": "free_days_available",
+              "agent_code": "incoming_stock_enquiries",
+              "outcome": "contact_not_found",
+              "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted.",
+              "label": "Free Days Available"
+            },
+            {
+              "field": "loc",
+              "agent_code": "incoming_stock_enquiries",
+              "outcome": "contact_not_found",
+              "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted.",
+              "label": "Location"
+            },
+            {
+              "field": "stacked",
+              "agent_code": "incoming_stock_enquiries",
+              "outcome": "contact_not_found",
+              "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted.",
+              "label": "Stacked"
+            },
+            {
+              "field": "coa_permit_no",
+              "agent_code": "incoming_stock_enquiries",
+              "outcome": "contact_not_found",
+              "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted.",
+              "label": "COA Permit No."
+            },
+            {
+              "field": "source_sheet",
+              "agent_code": "incoming_stock_enquiries",
+              "outcome": "contact_not_found",
+              "reason": "No contact matches this contact_id. If a space_id was supplied, check it belongs to the same workspace as the contact - a mismatched pair resolves to nobody. This is NOT a grant problem: the contact's agents and fields were never consulted."
+            }
+          ],
+          "note": "These fields are omitted because this caller may not see them. Absent does NOT mean the value is unknown or not yet reached."
+        },
+        "requested_attributes": [
+          "estimated_arrival_date"
+        ],
+        "keys_served": true,
+        "lookup_companies": [
+          {
+            "id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+            "name": "Mocha"
+          },
+          {
+            "id": "00000000-0000-0000-0000-000000000001",
+            "name": "Sorento"
+          }
+        ]
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "tokens": [
+          "IBKS7245"
+        ],
+        "elapsed_ms": 576.54,
+        "resolutions": [
+          {
+            "token": "IBKS7245",
+            "resolved": false,
+            "ambiguous": true,
+            "matches": [
+              {
+                "entity_type": "product",
+                "canonical_code": "IBKS7245-NG-SS",
+                "uuid": "441f6dd6-4459-4788-8031-087ae4c51fef",
+                "match_field": "product_code",
+                "match_tier": "prefix",
+                "similarity": null,
+                "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                "company_name": "Mocha",
+                "display": {
+                  "product_name": "IBKS7245-NG-SS",
+                  "is_active": true,
+                  "brand": null
+                }
+              },
+              {
+                "entity_type": "product",
+                "canonical_code": "IBKS7245-NG-BL",
+                "uuid": "70c695aa-d814-472d-be75-dcc2ed15a1d7",
+                "match_field": "product_code",
+                "match_tier": "prefix",
+                "similarity": null,
+                "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                "company_name": "Mocha",
+                "display": {
+                  "product_name": "IBKS7245-NG-BL",
+                  "is_active": true,
+                  "brand": null
+                }
+              }
+            ],
+            "alternatives": []
+          }
+        ],
+        "unresolved_tokens": [],
+        "fallback_applied": true,
+        "fallback_requested_types": [
+          "inbound_shipment"
+        ],
+        "fallback_types_found": [
+          "product"
+        ],
+        "fallback_per_token": true,
+        "fallback_match_mode": "or",
+        "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+        "gate_passed": false,
+        "require_specific": true,
+        "resolved_company": "mocha",
+        "company_team": null,
+        "resolved_companies": [
+          "mocha"
+        ],
+        "routing_brand": null,
+        "routing_brand_source": null,
+        "routing_companies": [
+          {
+            "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+            "company_name": "Mocha",
+            "brand_code": null,
+            "codes": [
+              "IBKS7245-NG-SS",
+              "IBKS7245-NG-BL"
+            ]
+          }
+        ],
+        "routing_company": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+        "access_denied_levels": [],
+        "access_notice": "",
+        "brand_gate_empty": false,
+        "brand_unheld": false,
+        "gate_reason": "'incoming' ambiguous (no single exact match); user must pick",
+        "gate_clarification": "incoming search needs to be more specific. Multiple matches found. Please choose:\n1. IBKS7245-NG-SS\n2. IBKS7245-NG-BL",
+        "compatible_entities": [
+          {
+            "uuid": "441f6dd6-4459-4788-8031-087ae4c51fef",
+            "entity_type": "product",
+            "code": "IBKS7245-NG-SS"
+          },
+          {
+            "uuid": "70c695aa-d814-472d-be75-dcc2ed15a1d7",
+            "entity_type": "product",
+            "code": "IBKS7245-NG-BL"
+          }
+        ],
+        "gate_debug": {
+          "domain": "incoming",
+          "allowed_lookup": [
+            "product",
+            "inbound_shipment",
+            "category",
+            "brand"
+          ],
+          "entities_count": 2
+        },
+        "escalate_message": "incoming search needs to be more specific. Multiple matches found. Please choose:\n1. IBKS7245-NG-SS - no incoming\n2. IBKS7245-NG-BL - has incoming",
+        "is_clarification": false
+      }
+    }
+  ],
+  "runIndex": 0,
+  "execution": {
+    "id": "13484252"
+  },
+  "ran": [
+    "When Executed by Another Workflow",
+    "redis-pop-main-message-list",
+    "if-audio-in",
+    "tf-message",
+    "sorento-sub-respond-findcontact-respond",
+    "if-transcribed-confirm",
+    "is-human-intervened",
+    "if-message-is-audio",
+    "get-session-vars",
+    "Call 'sub-query-reformulator'",
+    "check-access",
+    "If5",
+    "If2",
+    "If-ideate",
+    "If10",
+    "is-escalation-declined",
+    "If9",
+    "If1",
+    "not-supported-domain",
+    "If",
+    "If7",
+    "resolve-entity",
+    "disallowed-entity-gate",
+    "If3",
+    "If-incoming-picker",
+    "probe-incoming",
+    "annotate-incoming-picker",
+    "build-suggest-offer",
+    "tag-not-found",
+    "escalate-catalog",
+    "cs-offer-gate",
+    "compile-current-state",
+    "crossdomain-compose",
+    "sorento-sub-respond-sendmsg-respond2",
+    "Execution Data",
+    "attach-merge",
+    "if-got-attachments",
+    "save-session-vars",
+    "Call 'sub-respond-save-message-redis'2"
+  ]
+}

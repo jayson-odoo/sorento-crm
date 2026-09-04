@@ -75,6 +75,15 @@ class Settings(BaseSettings):
     # call is skipped with a warning and the resolve is unaffected.
     n8n_close_convo_webhook_url: str | None = None
 
+    # Chatbot turn engine: run the ported business lane (resolve + gate, S6a) in process.
+    # OFF by default, and that default is the strangler's whole point (D7). Until the n8n
+    # edits in documentation/plans/chatbot/n8n-changes.md section S6a are made, n8n STILL
+    # calls `sub-resolve-and-gate` itself, so turning this on runs the resolver twice per
+    # business turn - including the spec-search model call. Enable it in one environment to
+    # gather shadow evidence, confirm `delegate_payload` matches what n8n produced, then
+    # make the n8n edit and leave it on. CHATBOT_BUSINESS_LANE_ENABLED.
+    chatbot_business_lane_enabled: bool = False
+
     # External API Access
     external_api_key: str | None = None  # API key for external parties to access endpoints
     # When set, X-API-Key auth resolves RBAC as this users row (required for MCP/n8n read tools).
