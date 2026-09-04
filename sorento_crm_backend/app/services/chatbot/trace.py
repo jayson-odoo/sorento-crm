@@ -31,17 +31,35 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _cap(raw: Any) -> Any:
+# The whole ENVELOPE and the whole RESPONSE, capped the same way and for the same reason:
+# `chatbot.turns` is written once per customer message forever, and one media-heavy
+# envelope or one result set of ten thousand rows would otherwise sit in the row for the
+# life of the table. Larger than the trace's per-stage cap because both are load-bearing -
+# a duplicate delivery replays `response`, and Retry re-injects `envelope` - so the cap has
+# to be a guardrail against the pathological case, not a routine truncation.
+#
+# Twice the endpoint's 256 KB body limit on purpose: a body the route ACCEPTED must never
+# come back capped, or Retry would re-inject a note. This only ever fires on a document the
+# engine grew itself (a huge result set) or on an internal caller that skipped the route.
+DOCUMENT_BYTE_CAP = 524_288
+
+
+def cap_document(value: Any, *, limit: int = DOCUMENT_BYTE_CAP) -> Any:
+    """`_cap` for a whole stored document. Over the limit, a note that names the size."""
+    return _cap(value, limit=limit)
+
+
+def _cap(raw: Any, *, limit: int = RAW_BYTE_CAP) -> Any:
     if raw is None:
         return None
     try:
         encoded = json.dumps(raw, default=str)
     except Exception:  # noqa: BLE001 - a trace must never fail the turn
         return {"note": "payload is not JSON-serialisable"}
-    if len(encoded) <= RAW_BYTE_CAP:
+    if len(encoded) <= limit:
         return json.loads(encoded)
     return {
-        "note": f"payload omitted: {len(encoded)} bytes exceeds the {RAW_BYTE_CAP} byte cap",
+        "note": f"payload omitted: {len(encoded)} bytes exceeds the {limit} byte cap",
     }
 
 
@@ -126,6 +144,13 @@ def lane_words(branch_kind: str | None, domain_hint: str | None = None) -> str:
     return base
 
 
+MAX_ENTITY_CHARS = 40
+
+
+def _clip(value: str) -> str:
+    return value if len(value) <= MAX_ENTITY_CHARS else value[: MAX_ENTITY_CHARS - 1] + "\u2026"
+
+
 def understood_summary(qf: dict[str, Any]) -> str:
     """"Understood as a business query about product SRTWC8517, dealer tier"."""
     message_type = (qf.get("message_type") or "unknown").replace("_", " ")
@@ -134,8 +159,10 @@ def understood_summary(qf: dict[str, Any]) -> str:
     if domain:
         parts.append(f"about {str(domain).replace('_', ' ')}")
     entities = qf.get("entities") if isinstance(qf.get("entities"), list) else []
+    # Truncated: an entity's `raw` is CUSTOMER TEXT, and an unbounded one turns a one-line
+    # summary into a paragraph on the trace screen (and a long row in the turn record).
     named = [
-        str(e.get("canonical_code") or e.get("raw"))
+        _clip(str(e.get("canonical_code") or e.get("raw")))
         for e in entities
         if isinstance(e, dict) and (e.get("canonical_code") or e.get("raw"))
     ][:3]

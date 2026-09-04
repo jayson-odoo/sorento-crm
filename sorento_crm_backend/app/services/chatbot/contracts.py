@@ -298,6 +298,10 @@ class SessionVars(BaseModel):
     pending: Pending | None = None
 
 
+# The widths the `chatbot.turns` columns actually have. Validated on the way IN so an
+# over-long identifier is a 422 naming the field, never a truncation error at insert.
+MAX_MESSAGE_ID_LENGTH = 128
+
 # --------------------------------------------------------------------------- #
 # Transport (the plan's "Transport contract with n8n")
 # --------------------------------------------------------------------------- #
@@ -321,6 +325,26 @@ class Envelope(BaseModel):
     mode: str | None = None
     scope: str | None = None
     ingress: IngressKind = "webhook"
+    # Gate 4 (shadow mode). Same reason as `messageId`: it lands in a VARCHAR(128).
+    shadow_of: str | None = Field(default=None, max_length=128)
+
+    @field_validator("message")
+    @classmethod
+    def _identifiers_must_fit_their_columns(cls, message: dict[str, Any]) -> dict[str, Any]:
+        """`messageId` is stored in a VARCHAR(128); an over-long one is the CALLER's bug.
+
+        Without this the insert raises a `StringDataRightTruncation` deep in the engine and
+        the caller sees a 500 - indistinguishable from the CRM being down, and n8n retries
+        it. 422 naming the field says which byte to fix.
+        """
+        inner = message.get("message")
+        message_id = inner.get("messageId") if isinstance(inner, dict) else None
+        if message_id is not None and len(str(message_id)) > MAX_MESSAGE_ID_LENGTH:
+            raise ValueError(
+                f"message.message.messageId is longer than {MAX_MESSAGE_ID_LENGTH} "
+                "characters, which is the width of the column it is stored in"
+            )
+        return message
 
     @field_validator("contact")
     @classmethod
@@ -378,6 +402,10 @@ class TurnResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     turn_id: str
+    # The ENGINE's dry-run verdict, not an echo of the request: `is_test`, `test_run_id`
+    # and a non-live `mode` all produce it (D14), and n8n gates its egress on this rather
+    # than on re-deriving the same rule from the envelope it sent.
+    is_test: bool = False
     ctx: dict[str, Any] | None = None
     item: dict[str, Any] | None = None
     branch_kind: BranchKind | None = None
