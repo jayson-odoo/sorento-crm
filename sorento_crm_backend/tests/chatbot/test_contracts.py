@@ -11,6 +11,7 @@ statement is exactly as much drift as a second `Literal`.
 """
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -70,21 +71,44 @@ def _package_sources() -> list[Path]:
 
 
 def test_no_second_copy_of_any_vocabulary_lives_in_the_package() -> None:
-    """A module that re-lists a whole vocabulary is a second source of truth (H28)."""
+    """A module that RE-ENUMERATES a whole vocabulary is a second source of truth (H28).
+
+    "Re-enumerates" means a set / list / tuple literal of plain strings whose members
+    cover a whole vocabulary. Two things are deliberately NOT flagged, because neither is
+    a second declaration:
+
+    * a decision ladder naming each member in its own comparison (`route.py` must say
+      `access_denied` somewhere - that is the code, not a copy of the list);
+    * a MAPPING keyed by a vocabulary (`DOMAIN_BLOCKED_HINTS`, `AXIS_BY_DOMAIN`) - a
+      per-member table is the point, and its keys drifting from the enum is what the
+      other tests in this file are for.
+
+    A module that legitimately needs a wider or narrower set derives it from the tuple in
+    `contracts.py` (`frozenset(ENTITY_HINTS) | {...}`), which is exactly what this
+    forces.
+    """
     offenders: list[str] = []
     for path in _package_sources():
-        source = path.read_text(encoding="utf-8")
-        # Comments quote member names freely and that is fine; only code counts.
-        code = "\n".join(
-            line for line in source.splitlines() if not line.lstrip().startswith("#")
-        )
-        quoted = set(re.findall(r"['\"]([a-z_]+)['\"]", code))
-        for name, values in VOCABULARIES.items():
-            if len(values) >= 3 and set(values) <= quoted:
-                offenders.append(f"{path.relative_to(BACKEND_ROOT).as_posix()} re-lists {name}")
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.Set, ast.List, ast.Tuple)):
+                continue
+            members = {
+                el.value
+                for el in node.elts
+                if isinstance(el, ast.Constant) and isinstance(el.value, str)
+            }
+            if not members:
+                continue
+            for name, values in VOCABULARIES.items():
+                if len(values) >= 3 and set(values) <= members:
+                    offenders.append(
+                        f"{path.relative_to(BACKEND_ROOT).as_posix()}:{node.lineno} "
+                        f"re-enumerates {name}"
+                    )
     assert not offenders, (
-        "duplicated enum vocabularies (H28) - import the Literal from contracts.py: "
-        + "; ".join(sorted(offenders))
+        "duplicated enum vocabularies (H28) - derive from the tuple in contracts.py: "
+        + "; ".join(sorted(set(offenders)))
     )
 
 

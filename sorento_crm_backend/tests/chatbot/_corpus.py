@@ -31,10 +31,10 @@ from pathlib import Path
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 VENDORED_ROOT = BACKEND_ROOT / "tests" / "fixtures" / "chatbot" / "nodes"
 
-# The n8n checkout is a sibling of the monorepo root, which is the backend's grandparent.
-_DEFAULT_CORPUS = (
-    BACKEND_ROOT.parent.parent / "sorento_crm_n8n" / "n8n-workflows-init" / "tests" / "fixtures"
-)
+# The n8n checkout is a sibling of the monorepo root - but a lane runs from a git
+# worktree several directories deeper, so the sibling is found by walking up rather than
+# by counting parents (which is how this silently skipped in every worktree).
+_CORPUS_SUFFIX = Path("sorento_crm_n8n") / "n8n-workflows-init" / "tests" / "fixtures"
 
 # Which capture slugs hold each ported node. A node can live under more than one slug
 # (the live spine and the fail-closed clone capture the same node names), so the loader
@@ -44,6 +44,20 @@ NODE_SLUGS: dict[str, tuple[str, ...]] = {
     "build-ctx": ("clone-spine-RS", "spine-rs-1a", "live-spine-sorento-consume-main"),
     "output_exchange": ("sub-semantic-parser",),
     "suggest-follow-up": ("sub-semantic-parser",),
+}
+
+
+# Captures taken against a node body that has since been REPLACED in the export. These
+# are not divergences (nothing about the port disagrees with what ships) and they do not
+# belong in `divergences.py`, which is reserved for deliberate hazard fixes. They are the
+# "fixture staleness" risk the plan names: verify exports before vendoring, and exclude
+# what grades a body that no longer exists. n8n's own `_all-nodes.test.js` never graded
+# these either - it runs the live spine, not `clone-spine-RS`.
+STALE_FIXTURES: dict[tuple[str, str], str] = {
+    ("build-ctx", "rs2-01-notsupported"): "RS-2 capture, predates the RS-4 `media` key",
+    ("build-ctx", "rs2-02-escalation"): "RS-2 capture, predates the RS-4 `media` key",
+    ("build-ctx", "rs2-03-happy"): "RS-2 capture, predates the RS-4 `media` key",
+    ("build-ctx", "rs2-04-access-denied"): "RS-2 capture, predates the RS-4 `media` key",
 }
 
 
@@ -84,8 +98,14 @@ class Fixture:
 def corpus_root() -> Path | None:
     """The full n8n corpus root, or None when this checkout has no sibling n8n repo."""
     raw = os.environ.get("CHATBOT_FIXTURES_DIR")
-    root = Path(raw).expanduser() if raw else _DEFAULT_CORPUS
-    return root if (root / "nodes").is_dir() else None
+    if raw:
+        root = Path(raw).expanduser()
+        return root if (root / "nodes").is_dir() else None
+    for ancestor in BACKEND_ROOT.parents:
+        candidate = ancestor / _CORPUS_SUFFIX
+        if (candidate / "nodes").is_dir():
+            return candidate
+    return None
 
 
 def corpus_skip_reason() -> str:
@@ -100,6 +120,8 @@ def _load_dir(node: str, directory: Path, prefix: str = "") -> list[Fixture]:
         return []
     out: list[Fixture] = []
     for path in sorted(directory.glob("*.json")):
+        if (node, path.stem) in STALE_FIXTURES:
+            continue
         with path.open(encoding="utf-8") as fh:
             data = json.load(fh)
         out.append(Fixture(node=node, name=f"{prefix}{path.stem}", path=path, data=data))
