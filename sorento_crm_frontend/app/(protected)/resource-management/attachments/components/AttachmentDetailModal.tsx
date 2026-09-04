@@ -216,10 +216,10 @@ function LinkagesTable({
         getRowId={(row) => row.id}
         listingKey={`resource.attachments.view::modal-linkages-${type}`}
         emptyTitle={emptyMessage}
-        // SF-1 (M5 run 3 review): this grid renders inside DialogContent's
-        // own scrolling body (max-h-[90vh] overflow-hidden with an
-        // overflow-y-auto body), so the grid must not add a SECOND bounded
-        // scrollport nested inside it - same defect db7718a29 fixed elsewhere.
+        // SF-1 (M5 run 3 review): this grid renders inside DialogContent,
+        // which caps its own height and scrolls its body, so the grid must
+        // not add a SECOND bounded scrollport nested inside it - same defect
+        // db7718a29 fixed elsewhere.
         scrollerMaxHeight={false}
         toolbar={
           onLink ? (
