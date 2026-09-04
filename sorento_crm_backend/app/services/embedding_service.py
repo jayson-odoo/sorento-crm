@@ -223,6 +223,70 @@ class EmbeddingReadService:
         )
         return rows
 
+    def search_tool_chunks(
+        self,
+        query_embedding: list[float],
+        *,
+        source_type: str,
+        limit: int,
+        domain: Optional[str] = None,
+    ) -> list[dict[str, Any]]:
+        """Nearest chunk per `source_id`, for the chatbot's tool search (H53).
+
+        This is `sub-get-rag`'s pgvector query, moved into the service layer so no SQL
+        leaves it. Kept as its own method rather than folded into ``search_current``
+        because the two ask different questions and the differences are all deliberate:
+
+        * DISTINCT ON (source_id) - one row per tool, its nearest chunk. ``search_current``
+          returns chunks, and a tool with six chunks would crowd out five other tools
+          before the caller ever sees them.
+        * ``$4`` LIKE on ``source_id`` - the domain filter, NULL meaning no filter.
+        * no ``embedding_documents`` join - a tool row is registry metadata, not a
+          document, and requiring ``is_active`` would drop every tool.
+        * no company predicate - MCP tool definitions are global, and there is no
+          per-company variant of ``crm_master_products_list`` to leak. ``search_current``'s
+          company filter exists for business rows, which these are not.
+
+        Returns raw ``{id, source_id, source_type, similarity}`` dicts, exactly what the
+        n8n node emitted, because its consumer (the chatbot's ``collapse_tool_rows``) is a
+        ported node body graded against captures of that shape.
+        """
+        distance = EmbeddingChunk.embedding.cosine_distance(query_embedding)
+        filters = [
+            EmbeddingChunk.source_type == source_type,
+            EmbeddingChunk.is_current.is_(True),
+        ]
+        if domain:
+            filters.append(EmbeddingChunk.source_id.like(f"%{domain}%"))
+        inner = (
+            self.db.query(
+                EmbeddingChunk.id.label("id"),
+                EmbeddingChunk.source_id.label("source_id"),
+                EmbeddingChunk.source_type.label("source_type"),
+                (1 - distance).label("similarity"),
+                distance.label("distance"),
+            )
+            .filter(and_(*filters))
+            .distinct(EmbeddingChunk.source_id)
+            .order_by(EmbeddingChunk.source_id, distance.asc())
+            .subquery()
+        )
+        rows = (
+            self.db.query(inner)
+            .order_by(inner.c.distance.asc())
+            .limit(max(1, int(limit)))
+            .all()
+        )
+        return [
+            {
+                "id": str(r.id),
+                "source_id": r.source_id,
+                "source_type": r.source_type,
+                "similarity": float(r.similarity),
+            }
+            for r in rows
+        ]
+
     def queue_metrics(self) -> dict[str, int]:
         rows = (
             self.db.query(EmbeddingQueue.status, func.count(EmbeddingQueue.id))
