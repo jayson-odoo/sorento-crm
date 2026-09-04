@@ -133,6 +133,10 @@ class TestUpdate:
         assert db.query(Integration).one().credentials_json == before
         assert row.name == "esb-renamed"
 
+    # #631: asserts 'new' not in Fernet ciphertext; the ciphertext is random
+    # base64 and can contain the plaintext substring by chance (~1 in a few
+    # thousand runs) - CI shard 2 hit it on PR #625.
+    @pytest.mark.flaky(reruns=2, reruns_delay=1)
     def test_supplying_credentials_replaces_them(self, svc, db, principal):
         row = svc.create(
             name="esb",

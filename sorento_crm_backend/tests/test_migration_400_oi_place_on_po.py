@@ -129,6 +129,11 @@ def test_a_table_that_already_carries_the_columns_is_left_alone(db):
     assert {"po_ref", "po_line_id"} <= _columns(db)
 
 
+# #633: DeadlockDetected under xdist - this test alters the real
+# projects.order_inquiry_rows table (inside a rolled-back transaction) while
+# sibling xdist workers hold locks on the same table; hit CI shard 2 on PR
+# #632.
+@pytest.mark.flaky(reruns=2, reruns_delay=1)
 def test_downgrade_drops_the_index_the_fk_and_the_columns_only_if_present(db):
     assert {"po_ref", "po_line_id"} <= _columns(db)
 
