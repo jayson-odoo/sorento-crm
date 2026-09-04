@@ -90,6 +90,17 @@
   --duration-slow: 300ms;
 
   /**
+   * M5-05: the DEFAULT bound `DataGridScroller` gives its scrollport, so the
+   * default `headerSticky: true` has something to stick inside. Starting
+   * value, not a measured one: `100dvh` minus room for the three shell layers
+   * a list page stacks above the grid - the app header/topbar, the list
+   * card's own header (title + toolbar), and the pager below the grid. A list
+   * that needs a different amount overrides per-list with
+   * `tableLayout.scrollerMaxHeight` (a class string, or `false` to opt out).
+   */
+  --grid-max-h: calc(100dvh - 20rem);
+
+  /**
    * SCM health-state ramp (light) — diverging, accessible, NEVER hue-alone.
    * Every state is always paired in the UI with an icon + label + the sign of
    * net position; colour is a secondary cue. `-solid` = accent bar / icon / number

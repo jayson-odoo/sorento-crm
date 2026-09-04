@@ -162,6 +162,18 @@ export interface DataGridProps<TData extends object> {
     columnsMovable?: boolean;
     columnsDraggable?: boolean;
     rowsDraggable?: boolean;
+    /**
+     * The vertical scrollport `DataGridScroller` gives its scroller div (M5-05).
+     *
+     * Defaults to the `--grid-max-h` token (`css/config.reui.css`), which is
+     * what makes `headerSticky` observable - a sticky header needs a bounded
+     * ancestor to stick INSIDE. A string overrides it with the caller's own
+     * Tailwind max-height class (a list already wrapping the grid in its own
+     * bounded viewport passes its own class here instead, never both).
+     * `false` removes the bound entirely (an unbounded list inside a page that
+     * scrolls on its own, e.g. embedded in a dialog with its own scroll area).
+     */
+    scrollerMaxHeight?: string | false;
   };
   tableClassNames?: {
     base?: string;
@@ -244,13 +256,11 @@ function DataGrid<TData extends object>({
       rowBorder: true,
       rowRounded: false,
       stripped: false,
-      // NOT true by default (UAC S1-07's sticky clause is deferred to S4): the
-      // grid's own `overflow-x-auto` scroller is the scrollport and never scrolls
-      // vertically, so a default sticky header sticks to nothing - while the 29
-      // lists that get one today, from their own bounded-height ScrollArea, gained
-      // a competing sticky context above them. A real sticky header needs the grid
-      // to own a bounded height, which is S4's layout work.
-      headerSticky: false,
+      // Absolute rule (user ruling, M5-05): every table is a DataGrid with a
+      // sticky header by default. `DataGridScroller`'s own default max-height
+      // (`scrollerMaxHeight`, driven by `--grid-max-h`) is what makes this
+      // observable - a sticky header needs a bounded ancestor to stick inside.
+      headerSticky: true,
       headerBackground: true,
       headerBorder: true,
       width: 'fixed',
@@ -258,7 +268,11 @@ function DataGrid<TData extends object>({
       columnsVisibility: true,
       columnsResizable: true,
       columnsPinnable: false,
-      columnsMovable: false,
+      // Absolute rule (user ruling, M5-05): "Move to Left/Right" on every
+      // column header by default (31 lists already opted in). Self-contained -
+      // it drives `table.setColumnOrder` from the header's own dropdown, so it
+      // needs no DnD provider beyond what `columnsDraggable` already brings.
+      columnsMovable: true,
       // Enable column drag + drop reordering directly in the table header.
       columnsDraggable: true,
       rowsDraggable: false,

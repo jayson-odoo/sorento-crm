@@ -507,18 +507,15 @@ describe('DataGrid defaults (S1-07)', () => {
   });
 
   /*
-    S1-07's "the header is sticky by default" clause is DEFERRED to S4.
-
-    Turning it on here was inert and actively harmful. `overflow-x-auto` on the
-    new scroller makes that div the scrollport, and it never scrolls vertically,
-    so `sticky top-0` on the thead has nothing to stick against - while the 29
-    lists that DO get a sticky header today (their own bounded-height ScrollArea)
-    had a second, competing sticky context introduced above them. A sticky header
-    needs the grid to own a bounded height, which is S4's mobile/layout work.
+    S1-07's "the header is sticky by default" clause landed as M5-05's
+    absolute rule: `DataGridScroller` now gives every grid a bounded default
+    max-height (`--grid-max-h`) so `sticky top-0` on the thead has an ancestor
+    to stick against, and is the ONE scrollport for both axes - see
+    `data-grid.defaults.test.tsx` for the full coverage of both defaults.
   */
-  it('S1-07: the header is not sticky unless the list asks (S4 defers the default)', () => {
+  it('M5-05: the header is sticky by default, with no tableLayout prop', () => {
     render(<Harness />);
-    expect(document.querySelector('thead')).not.toHaveClass('sticky');
+    expect(document.querySelector('thead')).toHaveClass('sticky');
   });
 
   it('S1-07: a list that asks for a sticky header still gets one', () => {

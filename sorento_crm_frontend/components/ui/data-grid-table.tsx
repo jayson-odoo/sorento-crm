@@ -941,6 +941,20 @@ export function moveColumnKeepingGroups(
  */
 function DataGridScroller({ children }: { children: ReactNode }) {
   const { ref, isFading } = useHorizontalOverflow<HTMLDivElement>();
+  const { props } = useDataGrid();
+
+  // The default keeps `headerSticky` observable: a sticky header needs a
+  // bounded ancestor to stick inside, and this scroller is the ONE scrollport
+  // for both axes (S1-05), so the bound has to live here rather than on a
+  // second wrapper. `false` opts a list out entirely (it already lives inside
+  // a bounded viewport of its own); a string swaps in the caller's class.
+  const scrollerMaxHeight = props.tableLayout?.scrollerMaxHeight;
+  const verticalScrollClasses =
+    scrollerMaxHeight === false
+      ? ''
+      : typeof scrollerMaxHeight === 'string'
+        ? scrollerMaxHeight
+        : 'max-h-(--grid-max-h) overflow-y-auto';
 
   return (
     <div className="relative min-w-0">
@@ -948,7 +962,7 @@ function DataGridScroller({ children }: { children: ReactNode }) {
         ref={ref}
         data-slot="data-grid-scroller"
         data-fade={isFading}
-        className="min-w-0 overflow-x-auto overscroll-x-contain"
+        className={cn('min-w-0 overflow-x-auto overscroll-x-contain', verticalScrollClasses)}
       >
         {children}
       </div>
