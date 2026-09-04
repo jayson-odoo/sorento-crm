@@ -217,6 +217,8 @@ function BlocksTable({ row }: { row: ContainerRequestRow }) {
       rows={blocks}
       getRowId={(b, i) => `${b.pi_number}-${b.block_index ?? 0}-${i}`}
       emptyMessage="No invoice on this plan names this product."
+      // Always rendered inside PlanRowDialog's own DialogBody (overflow-y-auto).
+      scrollerMaxHeight={false}
     />
   );
 }

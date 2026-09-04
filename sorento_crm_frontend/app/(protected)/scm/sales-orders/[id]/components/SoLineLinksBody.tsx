@@ -101,6 +101,8 @@ export function SoLineLinksBody({ links }: { links: SalesOrderLineLink[] }) {
       rows={links}
       getRowId={(link, index) => `${link.kind}-${link.document}-${index}`}
       emptyMessage="Not linked."
+      // Always rendered inside PlanRowDialog's own DialogBody (overflow-y-auto).
+      scrollerMaxHeight={false}
     />
   );
 }

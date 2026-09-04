@@ -68,6 +68,8 @@ export function OrderInquiryMatrixCellDrilldown({
                 .join(' ')
             }
             pageSize={10}
+            // The DialogBody above already owns the scroll viewport (overflow-y-auto).
+            scrollerMaxHeight={false}
           />
         </DialogBody>
       </DialogContent>

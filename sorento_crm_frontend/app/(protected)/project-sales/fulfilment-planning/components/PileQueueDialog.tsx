@@ -299,6 +299,8 @@ export function PileQueueDialog({
                 // where the running total passes what the pile holds, which is the one row the
                 // reader came for.
                 pageSize={500}
+                // The DialogBody above already owns the scroll viewport (overflow-y-auto).
+                scrollerMaxHeight={false}
               />
               {/* Said once, at the bottom, because it is a fact about the QUEUE rather than
                   about any row: a line a confirmed decision covers is not in it. */}

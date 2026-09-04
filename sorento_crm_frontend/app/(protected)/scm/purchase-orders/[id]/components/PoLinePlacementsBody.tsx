@@ -201,6 +201,8 @@ export function PoLinePlacementsBody({ allocation }: { allocation: PurchaseOrder
         rows={rows}
         getRowId={(r) => r.key}
         emptyMessage="Nothing is placed on this line."
+        // Always rendered inside PlanRowDialog's own DialogBody (overflow-y-auto).
+        scrollerMaxHeight={false}
       />
       <p className="border-t pt-2 text-2xs text-muted-foreground">
         {`Outstanding ${fmtInt(allocation.outstanding)} · Placed ${fmtInt(placedQtyOf(allocation))} · Free ${fmtInt(allocation.free)}`}

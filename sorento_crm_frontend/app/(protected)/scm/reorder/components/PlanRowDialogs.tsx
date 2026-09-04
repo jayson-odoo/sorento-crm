@@ -166,7 +166,13 @@ function DrillTable<TRow extends object>({
       recordCount={rows.length}
       isLoading={Boolean(isLoading)}
       listingKey={null}
-      tableLayout={{ width: 'fixed', columnsResizable: true }}
+      tableLayout={{
+        width: 'fixed',
+        columnsResizable: true,
+        // Every caller of this local DrillTable renders inside PlanRowDialog's own
+        // DialogBody (overflow-y-auto) - M5-05's default max-height would double-bound it.
+        scrollerMaxHeight: false,
+      }}
       emptyMessage={emptyMessage}
     >
       <DataGridTable />
@@ -534,7 +540,12 @@ function OnHandTable({ line }: { line: PlanLine }) {
         recordCount={rows.length}
         isLoading={stock.isLoading}
         listingKey={null}
-        tableLayout={{ width: 'fixed', columnsResizable: true }}
+        tableLayout={{
+          width: 'fixed',
+          columnsResizable: true,
+          // Always rendered inside PlanRowDialog's own DialogBody (overflow-y-auto).
+          scrollerMaxHeight: false,
+        }}
         onRowClick={(loc) => setOpenRow((cur) => (cur === loc.warehouse_id ? null : loc.warehouse_id))}
         emptyMessage="No site pool holds this product."
       >

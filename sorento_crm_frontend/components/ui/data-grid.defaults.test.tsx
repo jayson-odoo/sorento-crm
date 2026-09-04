@@ -83,6 +83,18 @@ describe('DataGrid defaults the two absolute list rules (M5-05)', () => {
     expect(thead.className).toContain('top-0');
   });
 
+  it('sticks the header on the CORNER z-step, not the one a pinned body cell uses (S3)', () => {
+    // A pinned column's own cell uses `--z-sticky-content` (`data-grid-table.tsx`
+    // `getPinningStyles`). If the header used the same step, a frozen column on any of
+    // the 30 grids with `columnsPinnable: true` would paint over the sticky header
+    // instead of scrolling under it.
+    const { container } = render(<Harness />);
+    const thead = container.querySelector('thead')!;
+
+    expect(thead.className).toContain('z-(--z-sticky-content-corner)');
+    expect(thead.className).not.toContain('z-(--z-sticky-content)');
+  });
+
   it('resolves columnsMovable and columnsResizable true with no tableLayout prop', () => {
     render(<Harness />);
     const probe = screen.getByTestId('layout-probe');

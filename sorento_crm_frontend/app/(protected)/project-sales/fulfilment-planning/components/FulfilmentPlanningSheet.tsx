@@ -466,6 +466,9 @@ export function FulfilmentPlanningSheet({
                   searchOf={(line) =>
                     [line.product_code, line.description].filter(Boolean).join(' ')
                   }
+                  // The SheetBody above already owns the scroll viewport (overflow-y-auto
+                  // is its own default, not this className).
+                  scrollerMaxHeight={false}
                 />
               </section>
 

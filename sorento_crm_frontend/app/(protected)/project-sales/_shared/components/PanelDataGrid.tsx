@@ -63,6 +63,7 @@ export function PanelDataGrid<TRow extends object>({
   expanded,
   onExpandedChange,
   pageSize = 10,
+  scrollerMaxHeight,
 }: {
   /**
    * A plain heading, or a heading with an embedded link (e.g. the record's own number).
@@ -139,6 +140,14 @@ export function PanelDataGrid<TRow extends object>({
   expanded?: ExpandedState;
   onExpandedChange?: OnChangeFn<ExpandedState>;
   pageSize?: number;
+  /**
+   * Pass `false` when the caller already renders this inside a `DialogBody` or
+   * `SheetBody` that owns its own `overflow-y-auto` viewport (B2, M5 review run 1) -
+   * without it the grid's own M5-05 bounded scroller nests a second scrollport
+   * inside the first. Omit it for a plain detail-page tab panel, which wants the
+   * default bounded, sticky-header scroller like every other list.
+   */
+  scrollerMaxHeight?: string | false;
 }) {
   const [pagination, setPagination] = React.useState<PaginationState>({
     pageIndex: 0,
@@ -188,7 +197,15 @@ export function PanelDataGrid<TRow extends object>({
       recordCount={filtered.length}
       isLoading={isLoading}
       listingKey={listingKey}
-      tableLayout={{ width: 'fixed', columnsResizable: true }}
+      tableLayout={{
+        width: 'fixed',
+        columnsResizable: true,
+        // Most callers are a plain detail-page tab and want M5-05's own bounded,
+        // sticky-header scroller. A caller embedded in a `DialogBody`/`SheetBody`
+        // that already owns the scroll viewport passes `false` here instead, or
+        // that ancestor's own `overflow-y-auto` would double-bound it.
+        scrollerMaxHeight,
+      }}
       onRowClick={onRowClick}
       renderGroupHeader={renderGroupHeader as never}
     >

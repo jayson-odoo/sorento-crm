@@ -1262,6 +1262,8 @@ export function BoardCellBreakdownDialog({
                 }
                 emptyBody="Nothing in the selection is outstanding for this product by this date."
                 pageSize={25}
+                // The DialogBody above already owns the scroll viewport (overflow-y-auto).
+                scrollerMaxHeight={false}
               />
             </TabsContent>
           </Tabs>

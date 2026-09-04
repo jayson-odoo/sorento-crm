@@ -281,8 +281,13 @@ function DataGrid<TData extends object>({
       base: '',
       header: '',
       headerRow: '',
+      // `-corner`, not the plain `--z-sticky-content` a pinned body cell uses (S3, M5
+      // review run 1): on any grid with `columnsPinnable: true` the two shared the same
+      // step, so a frozen column painted OVER the sticky header instead of under it. The
+      // header pins on an axis a body cell does not (it is sticky for every column, not
+      // just a pinned one), so it needs the step reserved for double-pinned cells.
       headerSticky:
-        'sticky top-0 z-(--z-sticky-content) bg-background/90 backdrop-blur-xs',
+        'sticky top-0 z-(--z-sticky-content-corner) bg-background/90 backdrop-blur-xs',
       body: '',
       bodyRow: '',
       footer: '',
