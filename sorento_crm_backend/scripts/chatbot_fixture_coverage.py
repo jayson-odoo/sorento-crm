@@ -50,11 +50,35 @@ CAPTURES_PER_BRANCH = 5
 CAPTURE_REPORT: dict[str, dict] = {
     "spine-rs-1a": {
         "version": "51f7b0d2",
-        "version_pool": 567,
-        "scanned": 567,
+        # Re-scanned 5 Sep: the on-version pool had grown from 567 to 581 and all 581
+        # were captured (the batch also took 8 `media-gate` items, which is where the
+        # media-shaped worlds come from; `media-gate` is not a ported node, so it adds
+        # no cell of its own).
+        "version_pool": 581,
+        "scanned": 581,
         "all_versions": 946,
-        "captured_on": "2026-09-04",
+        "captured_on": "2026-09-05",
         "nodes": ("route-turn", "build-ctx"),
+    },
+    # The tail's own workflow, captured for the first time on 5 Sep. This is the pool
+    # that matters for S2: `sub-output` runs the body the port implements, so unlike the
+    # spine slugs it grades the port against what SHIPS rather than against an older
+    # deployment. 907 executions since 1 Sep, 760 of them on the current version; all 760
+    # were scanned, which is what earns `exhausted` for the arms that still read zero.
+    "sub-output-live": {
+        "version": "c32698c1",
+        "version_pool": 760,
+        "scanned": 760,
+        "all_versions": 907,
+        "captured_on": "2026-09-05",
+        "nodes": (
+            "compile-current-state",
+            "crossdomain-compose",
+            "build-outcome",
+            "escalate-catalog",
+            "cs-roster-plan",
+            "build-cs-member-offer",
+        ),
     },
     "sub-semantic-parser": {
         "version": "ab3ec985",
@@ -74,6 +98,30 @@ CAPTURE_REPORT: dict[str, dict] = {
     # (not_found) 1, `customer-picker` 2, `resource_attachment` 2, `promotion` 3,
     # `tier-gate` 3. `build-ctx` is deliberately NOT listed: it already has a pool under
     # `spine-rs-1a`, and the one capture of it here only adds to that count.
+    "sub-fetch-results-live": {
+        "version": "live-5sep",
+        "version_pool": 772,
+        "scanned": 772,
+        "all_versions": 772,
+        "captured_on": "2026-09-05",
+        "nodes": ("tool-filter", "tier-probe-plan", "tier-probe-collect", "fetch-result"),
+    },
+    "sub-get-results": {
+        "version": "125e5c32",
+        "version_pool": 365,
+        "scanned": 365,
+        "all_versions": 365,
+        "captured_on": "2026-09-05",
+        "nodes": ("entity-ids-transformer", "output-structurer"),
+    },
+    "sub-get-rag-live": {
+        "version": "live-5sep",
+        "version_pool": 862,
+        "scanned": 862,
+        "all_versions": 1050,
+        "captured_on": "2026-09-05",
+        "nodes": ("Code_in_JavaScript", "Code_in_JavaScript1"),
+    },
     "sub-resolve-and-gate-rs": {
         "version": "4f367b1c",
         "version_pool": 682,
@@ -93,6 +141,21 @@ CAPTURE_REPORT: dict[str, dict] = {
             "sub-resolve-and-gate",
         ),
     },
+    # `sub-casual-llm` (`4dPJ8ykop8VIpddY`), the low_signal lane's own sub. Every
+    # execution on the current version was scanned, so a cell still under the bar is
+    # exhausted, not short: that traffic does not exist. The thin ones and their real
+    # pools: `business_query` (a bare continuation, session vars CARRIED) 3, `unknown` 0,
+    # `confirmation` 0, and `mark-casual-error` 0 - the error arm has not fired once since
+    # 1 Sep, which is the same "0 is the correct number" statement the two H1 stock arms
+    # make below, reached by luck rather than by typo.
+    "sub-casual-llm-live": {
+        "version": "08bf56a5",
+        "version_pool": 13,
+        "scanned": 13,
+        "all_versions": 13,
+        "captured_on": "2026-09-05",
+        "nodes": ("construct-user-prompt", "mark-casual-error"),
+    },
 }
 
 # Branches that CANNOT be captured because live never reaches them. H1: the spine tests
@@ -102,6 +165,10 @@ CAPTURE_REPORT: dict[str, dict] = {
 DEAD_BY_VOCABULARY: dict[tuple[str, str], str] = {
     ("route-turn", "demand_qty"): "H1: live tests `stock_check`, the parser emits `check_stock`",
     ("route-turn", "stock_denied"): "H1: live tests `stock_check`, the parser emits `check_stock`",
+    # The same H1 typo one node downstream: `route-turn` never emits `demand_qty`, so
+    # `escalate-catalog`'s own `demand_qty` arm has never been reached either. Its copy is
+    # unit-tested instead (`tests/chatbot/test_tail_units.py`).
+    ("escalate-catalog", "demand_qty"): "H1: the route-turn arm that feeds it is dead",
 }
 
 
@@ -143,6 +210,13 @@ def _expected_branch_kind(fixture: _corpus.Fixture) -> str | None:
 # turns on: `ALLOWED` / `ALLOWS_EMPTY` / `REQUIRED_TYPES` / `REQUIRE_SPECIFIC_DOMAINS` are
 # all keyed by domain, so "five captures of `incoming`" says something and "five captures"
 # says nothing.
+# `fetch-result` is cut by the ARM it took, the vocabulary its own `_fetch_arm` declares.
+_FETCH_ARM_CUT_NODES = frozenset({"fetch-result"})
+
+# The tool the turn selected: what actually varies `entity-ids-transformer`'s date/order
+# params and `output-structurer`'s presenter shape, and the axis H49 is written in.
+_TOOL_CUT_NODES = frozenset({"tool-filter", "entity-ids-transformer", "output-structurer"})
+
 _DOMAIN_CUT_NODES = frozenset(
     {
         "disallowed-entity-gate",
@@ -180,20 +254,88 @@ def _expected_domain(fixture: _corpus.Fixture) -> str | None:
     return None
 
 
-def _branch_of(fixture: _corpus.Fixture) -> str:
-    """A coverage CELL for one fixture.
+# Nodes cut by `branch_kind` rather than by domain: their code path IS the arm. The tail
+# pair is `escalate-catalog` (a nine-arm switch) and `build-outcome` (which forwards the
+# item the arm produced).
+_BRANCH_KIND_NODES = ("route-turn", "escalate-catalog", "build-outcome")
+# Nodes cut by the turn's DOMAIN, because they have no branch vocabulary of their own and
+# the domain is what actually varies the path through them.
+_DOMAIN_NODES = (
+    "output_exchange",
+    "suggest-follow-up",
+    "compile-current-state",
+    "crossdomain-compose",
+)
+# The CS roster pair turns on ONE axis and it is not the domain: how many companies the
+# offer spans, and whether anybody was in it. Cutting them by `all` hid three zeros that
+# matter - the multi-company grouped renderer, the shared-member dedupe and the
+# empty-roster fallback are the three arms with no capture at all, and a single `all`
+# cell reading "met" said the opposite.
+_ROSTER_NODES = ("cs-roster-plan", "build-cs-member-offer")
 
-    `route-turn` is cut by the arm it decided, which is the vocabulary gate 0 is written
-    in. The other nodes have no branch vocabulary of their own, so they are cut by the
-    turn's DOMAIN, which is what actually varies the code path through them.
+
+def _session_variables(fixture: _corpus.Fixture) -> dict:
+    """`variables`, through either output shape a capture can carry.
+
+    The live spine's `compile-current-state` predates RS-3 half H2 and emits the patch
+    bare; the body the export ships re-seals it as `{reply: {..., session_patch}}`.
     """
-    if fixture.node == "route-turn":
-        return _expected_branch_kind(fixture) or "unknown"
-    if fixture.node in ("output_exchange", "suggest-follow-up"):
+    for item in fixture.expected:
+        body = item.get("json") or {}
+        if "reply" in body:
+            body = (body.get("reply") or {}).get("session_patch") or {}
+        variables = body.get("variables")
+        if isinstance(variables, dict):
+            return variables
+    return {}
+
+
+def _roster_cell(fixture: _corpus.Fixture) -> str:
+    """`single_company` / `multi_company` / `empty_roster` for the CS roster pair."""
+    items = fixture.expected
+    if fixture.node == "cs-roster-plan":
+        return "multi_company" if len(items) > 1 else "single_company"
+    body = (items[0] or {}).get("json") or {} if items else {}
+    if not (body.get("cs_last_result_set") or []):
+        return "empty_roster"
+    return "multi_company" if len(body.get("routing_companies") or []) > 1 else "single_company"
+
+
+def _expected_tool(fixture: _corpus.Fixture) -> str | None:
+    """Which MCP tool this capture selected, wherever the node records it."""
+    for item in fixture.expected:
+        body = item.get("json") or {}
+        name = body.get("name") or (body.get("_tool_pick") or {}).get("chosen")
+        if name:
+            return str(name)
+    trigger = (fixture.ctx.get("When Executed by Another Workflow") or [{}])[0].get("json") or {}
+    tool = trigger.get("tool")
+    return str(tool).strip() if tool else None
+
+
+def _branch_of(fixture: _corpus.Fixture) -> str:
+    """A coverage CELL for one fixture."""
+    if fixture.node in _ROSTER_NODES:
+        return _roster_cell(fixture)
+    if fixture.node in _BRANCH_KIND_NODES:
+        # `build-outcome` FORWARDS the item, so the arm is on its input as well as its
+        # output; `escalate-catalog` stamps its answer onto the same item it received.
+        kind = _expected_branch_kind(fixture)
+        if kind:
+            return kind
+        for item in fixture.input:
+            kind = (item.get("json") or {}).get("branch_kind")
+            if kind:
+                return str(kind)
+        return "no_branch_kind" if fixture.node != "route-turn" else "unknown"
+    if fixture.node in _DOMAIN_NODES:
         for item in fixture.expected:
             output = (item.get("json") or {}).get("output")
             if isinstance(output, dict):
                 return str(output.get("domain_hint") or "no_domain")
+        variables = _session_variables(fixture)
+        if variables:
+            return str(variables.get("domain_hint") or "no_domain")
         return "unknown"
     if fixture.node in _EXIT_CUT_NODES:
         for item in fixture.expected:
@@ -206,6 +348,14 @@ def _branch_of(fixture: _corpus.Fixture) -> str:
         for item in fixture.expected:
             return "tier_ask" if (item.get("json") or {}).get("tier_ask") else "tier_proceed"
         return "unknown"
+    if fixture.node in _FETCH_ARM_CUT_NODES:
+        for item in fixture.expected:
+            arm = (item.get("json") or {}).get("_fetch_arm")
+            if arm:
+                return str(arm)
+        return "unknown"
+    if fixture.node in _TOOL_CUT_NODES:
+        return _expected_tool(fixture) or "no_tool"
     if fixture.node in _DOMAIN_CUT_NODES:
         return _expected_domain(fixture) or "no_domain"
     return "all"
@@ -215,6 +365,46 @@ def _provenance(fixture: _corpus.Fixture) -> str:
     """`runData` (a real execution said so) vs anything else (a frozen body run)."""
     source = fixture.data.get("source") or {}
     return str(source.get("expected_from") or "body-run")
+
+
+def blocking_cells(data: dict) -> list[str]:
+    """`node/branch (n of N)` for every cell gate 0 blocks on.
+
+    Exposed as data, not only as a markdown line, so `test_coverage_fresh.py` can PIN the
+    set rather than assert "nothing blocks". A slice whose captures are outstanding is a
+    real state - the pinned list is what makes it auditable and what makes a NEW short
+    cell a failure instead of one more line in a table nobody diffs.
+    """
+    out: list[str] = []
+    for node in sorted(data["rows"]):
+        for branch in sorted(data["rows"][node]):
+            real = data["rows"][node][branch].get("runData", 0)
+            _, blocks = _cell_state(node, branch, real)
+            if blocks:
+                out.append(f"{node}/{branch} ({real} of {CAPTURES_PER_BRANCH})")
+    return out
+
+
+def world_matrix() -> dict:
+    """The world corpus, counted by branch kind and by shape (AC-009).
+
+    Worlds are DERIVED from spine captures rather than captured, so this is a projection
+    of the same corpus the node matrix above counts - which is the point: growing the
+    node corpus grows the world corpus for free.
+    """
+    from tests.chatbot import worlds as worlds_mod
+
+    derived = worlds_mod.derive_worlds()
+    chains = worlds_mod.multi_turn_worlds(derived)
+    matrix = worlds_mod.matrix(derived)
+    return {
+        "total": len(derived),
+        "ungradeable": sum(1 for world in derived if world.missing_inputs),
+        "chains": len(chains),
+        "chain_turns": sum(len(chain.turns) for chain in chains),
+        "branch_kind": matrix["branch_kind"],
+        "shape": {shape: matrix["shape"].get(shape, 0) for shape in worlds_mod.SHAPES},
+    }
 
 
 def collect() -> dict:
@@ -263,6 +453,7 @@ def collect() -> dict:
         "corpus_root": "$CHATBOT_FIXTURES_DIR"
         if _corpus.corpus_root() is not None
         else "(absent - vendored subset only)",
+        "worlds": world_matrix(),
     }
 
 
@@ -325,6 +516,33 @@ def render(data: dict) -> str:
             + ", ".join(f"`{n}`" for n in report["nodes"])
             + " |"
         )
+    lines.append("")
+
+    # -- worlds (AC-009) ---------------------------------------------------------------- #
+    worlds = data["worlds"]
+    lines.append("## World replay (AC-009)")
+    lines.append("")
+    lines.append(
+        "A WORLD is one whole captured turn replayed through `run_turn` + `complete_turn` "
+        "with the parser, the access check and the CS roster read stubbed from that "
+        "execution's own node outputs. Worlds are DERIVED from spine captures, not "
+        "captured separately - a spine capture already carries every node output of its "
+        "execution - so growing the node corpus grows this one for free."
+    )
+    lines.append("")
+    lines.append(
+        f"**{worlds['total']} worlds** ({worlds['ungradeable']} of them ungradeable in this "
+        "corpus: a spine-only capture whose resolver and entity gate ran inside a sub the "
+        f"fixture never recorded). **{worlds['chains']} multi-turn chains** covering "
+        f"{worlds['chain_turns']} turns, each replayed on the CRM's OWN written memory."
+    )
+    lines.append("")
+    lines.append("| axis | value | worlds |")
+    lines.append("| --- | --- | ---: |")
+    for kind, count in worlds["branch_kind"].items():
+        lines.append(f"| branch kind | `{kind}` | {count} |")
+    for shape, count in worlds["shape"].items():
+        lines.append(f"| shape | `{shape}` | {count} |")
     lines.append("")
 
     lines.append("## Per node")

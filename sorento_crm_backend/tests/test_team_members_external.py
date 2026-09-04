@@ -36,7 +36,7 @@ MEMBERS = [
 ]
 
 
-@patch("app.api.v1.external.team_members.AccessAgentService")
+@patch("app.services.team_roster_service.AccessAgentService")
 def test_list_members_by_agent_and_team_code(mock_access, client: TestClient):
     svc = mock_access.return_value
     svc.get_agent_id_by_code.return_value = "agent-1"
@@ -56,7 +56,7 @@ def test_list_members_by_agent_and_team_code(mock_access, client: TestClient):
     )
 
 
-@patch("app.api.v1.external.team_members.AccessAgentService")
+@patch("app.services.team_roster_service.AccessAgentService")
 def test_list_members_by_team_id_no_agent(mock_access, client: TestClient):
     svc = mock_access.return_value
     svc.list_active_team_members_detail.return_value = MEMBERS
@@ -71,14 +71,14 @@ def test_list_members_by_team_id_no_agent(mock_access, client: TestClient):
     svc.get_agent_id_by_code.assert_not_called()
 
 
-@patch("app.api.v1.external.team_members.AccessAgentService")
+@patch("app.services.team_roster_service.AccessAgentService")
 def test_team_code_without_agent_returns_400(mock_access, client: TestClient):
     r = client.get("/api/v1/external/team-members", params={"team_code": "marketing"})
     assert r.status_code == 400
     assert "agent" in r.json()["detail"].lower()
 
 
-@patch("app.api.v1.external.team_members.AccessAgentService")
+@patch("app.services.team_roster_service.AccessAgentService")
 def test_unknown_agent_code_returns_404(mock_access, client: TestClient):
     mock_access.return_value.get_agent_id_by_code.return_value = None
     r = client.get(
@@ -89,7 +89,7 @@ def test_unknown_agent_code_returns_404(mock_access, client: TestClient):
     assert "no agent" in r.json()["detail"].lower()
 
 
-@patch("app.api.v1.external.team_members.AccessAgentService")
+@patch("app.services.team_roster_service.AccessAgentService")
 def test_tier_passed_through_for_multi_tier_team_code(mock_access, client: TestClient):
     svc = mock_access.return_value
     svc.get_agent_id_by_code.return_value = "agent-1"

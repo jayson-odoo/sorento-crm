@@ -55,6 +55,20 @@ class TurnTrace:
         self._started_perf: float | None = None
         self._started_iso: str | None = None
 
+    @classmethod
+    def resume(cls, records: Any) -> "TurnTrace":
+        """Continue the trace a delegated turn already started (S2's `/complete`).
+
+        The head wrote `received` through `routed` and closed the row; the tail appends
+        `replied` and `remembered` to the SAME array, so the screen renders one timeline
+        rather than two half-turns the operator has to join up mentally.
+        """
+        trace = cls()
+        if isinstance(records, list):
+            trace._records = [r for r in records if isinstance(r, dict)]
+        trace.start()
+        return trace
+
     def start(self) -> None:
         """Mark the beginning of the next stage. Idempotent within a stage."""
         self._started_perf = time.perf_counter()
@@ -170,3 +184,56 @@ def routed_why(branch_kind: str, qf: dict[str, Any], access_allowed: bool) -> st
         return "Routed by the escalation confirmation the customer gave."
     access_words = "access allowed" if access_allowed else "access refused"
     return f"Routed to the {lane_words(branch_kind).lower()}: {access_words}, no escalation asked."
+
+
+def replied_summary(reply: dict[str, Any], branch_kind: str | None) -> str:
+    """"Replied with a 6-row list and 2 quick replies." - what was actually sent."""
+    rows = len((reply.get("session_patch") or {}).get("variables", {}).get("last_result_set") or [])
+    quick = reply.get("quick_replies")
+    quick_count = len([q for q in str(quick).split(",") if q.strip()]) if quick else 0
+    parts = [f"Replied on the {lane_words(branch_kind).lower()} lane"]
+    if rows:
+        parts.append(f"with {rows} row{'s' if rows != 1 else ''} the customer can pick from")
+    if quick_count:
+        parts.append(f"and {quick_count} quick repl{'ies' if quick_count != 1 else 'y'}")
+    return " ".join(parts) + "."
+
+
+# Keys whose value is machinery rather than memory. They are still PERSISTED (R2 keeps
+# every key); they are simply not worth a row on a screen whose whole point is "what will
+# the bot carry into the next turn".
+_MEMORY_NOISE: frozenset[str] = frozenset({"response", "user_goal"})
+
+
+def memory_delta(*, before: dict[str, Any], after: dict[str, Any]) -> dict[str, list[str]]:
+    """Kept / New / Cleared session keys (AC-254), from the two states themselves.
+
+    A key is CLEARED when it had a meaningful value and now has none - `None`, `[]`, `{}`
+    or `""` all count, because "the bot no longer remembers the picker" is the operator's
+    question and an empty list is the same answer as a missing key.
+    """
+
+    def _has(state: dict[str, Any], key: str) -> bool:
+        value = state.get(key)
+        return not (value is None or value == [] or value == {} or value == "")
+
+    keys = (set(before) | set(after)) - _MEMORY_NOISE
+    kept, new, cleared = [], [], []
+    for key in sorted(keys):
+        had, has = _has(before, key), _has(after, key)
+        if had and has:
+            kept.append(key)
+        elif has:
+            new.append(key)
+        elif had:
+            cleared.append(key)
+    return {"kept": kept, "new": new, "cleared": cleared}
+
+
+def remembered_summary(delta: dict[str, list[str]], *, dry_run: bool) -> str:
+    """"Remembered 4 things, learned 2, forgot 1." / the dry-run form."""
+    lead = "Would remember" if dry_run else "Remembered"
+    return (
+        f"{lead} {len(delta['kept'])} thing{'s' if len(delta['kept']) != 1 else ''} from "
+        f"before, learned {len(delta['new'])}, forgot {len(delta['cleared'])}."
+    )

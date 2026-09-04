@@ -28,11 +28,10 @@ logger = logging.getLogger(__name__)
 
 PROMPT_KEY = "chatbot_semantic_parser"
 
-# The parser's own error reply, byte-identical to what the spine sends today when
-# `sub-query-reformulator` fails (`sub-error-logger`).
-PARSER_ERROR_REPLY = (
-    "Sorry, I ran into a problem understanding that. Please try again in a moment."
-)
+# The parser's own error reply. ONE declaration, in `app/services/chatbot_reply_copy.py`
+# with the rest of the bot's fixed sentences, because the ENDPOINT sends the same string
+# when the TAIL fails and it cannot import this package (AC-002).
+from app.services.chatbot_reply_copy import CHATBOT_TURN_ERROR_REPLY as PARSER_ERROR_REPLY
 
 PARSER_MAX_TOKENS = 2048
 

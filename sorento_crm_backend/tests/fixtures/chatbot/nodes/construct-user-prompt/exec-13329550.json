@@ -1,0 +1,1015 @@
+{
+  "source": {
+    "execution_id": "13329550",
+    "workflow_id": "9qVyfUxmRQqrpGRMDLRuz",
+    "node": "construct-user-prompt",
+    "captured_at": "2026-08-22T12:01:57+00:00",
+    "expected_from": "runData"
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "test": null,
+          "test_run_id": null,
+          "started_at": null,
+          "contact": "900000013"
+        }
+      }
+    ],
+    "redis-pop-main-message-list": [
+      {
+        "json": {
+          "message": {
+            "message": {
+              "event_type": "message.received",
+              "event_id": "603b7d6f-cbba-424f-a3a7-a2bc49ee7418",
+              "contact": {
+                "id": 900000013,
+                "firstName": "<redacted>",
+                "lastName": "<redacted>",
+                "phone": "<redacted>",
+                "email": "<redacted>",
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": "<redacted>",
+                  "lastName": "<redacted>",
+                  "email": "<redacted>"
+                },
+                "created_at": 1782546255
+              },
+              "message": {
+                "messageId": 1787295527000000,
+                "channelMessageId": "wamid.HBgLNjAxNjIyOTExNzgVAgASGCBBQzBGNUFEODA5MTlDNjA1NThENDIzMkQ2RTc4NjU4NAA=",
+                "contactId": 900000013,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1787295527000,
+                "message": {
+                  "type": "text",
+                  "text": "bd402 detail"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 41\"},\"wa_id\":\"60100000011\",\"user_id\":\"MY.900000031\",\"firstName\":\"Person 41\",\"lastName\":\"\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "contact": {
+              "id": 900000013,
+              "firstName": "<redacted>",
+              "lastName": "<redacted>",
+              "phone": "<redacted>",
+              "email": "<redacted>",
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/b2916c77-57c7-4f05-8565-3f100bcf0577"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": "New Lead",
+              "created_at": 1782546255
+            }
+          }
+        }
+      }
+    ],
+    "if-audio-in": [],
+    "tf-message": [
+      {
+        "json": {
+          "event_type": "message.received",
+          "event_id": "603b7d6f-cbba-424f-a3a7-a2bc49ee7418",
+          "contact": {
+            "id": 900000013,
+            "firstName": "<redacted>",
+            "lastName": "<redacted>",
+            "phone": "<redacted>",
+            "email": "<redacted>",
+            "language": null,
+            "profilePic": null,
+            "countryCode": "MY",
+            "status": "open",
+            "assignee": {
+              "id": null,
+              "firstName": "<redacted>",
+              "lastName": "<redacted>",
+              "email": "<redacted>"
+            },
+            "created_at": 1782546255
+          },
+          "message": {
+            "messageId": 1787295527000000,
+            "channelMessageId": "wamid.HBgLNjAxNjIyOTExNzgVAgASGCBBQzBGNUFEODA5MTlDNjA1NThENDIzMkQ2RTc4NjU4NAA=",
+            "contactId": 900000013,
+            "channelId": 453209,
+            "traffic": "incoming",
+            "timestamp": 1787295527000,
+            "message": {
+              "type": "text",
+              "text": "bd402 detail"
+            }
+          },
+          "channel": {
+            "id": 453209,
+            "name": "Internal (+60 11-1673 1179)",
+            "source": "whatsapp_business",
+            "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 41\"},\"wa_id\":\"60100000011\",\"user_id\":\"MY.900000031\",\"firstName\":\"Person 41\",\"lastName\":\"\"}}",
+            "created_at": 1767682908
+          },
+          "sender": {
+            "source": "contact",
+            "userId": null,
+            "teamId": null,
+            "workflowId": null,
+            "broadcastHistoryId": null
+          }
+        }
+      }
+    ],
+    "sorento-sub-respond-findcontact-respond": [
+      {
+        "json": {
+          "id": 900000013,
+          "firstName": "<redacted>",
+          "lastName": "<redacted>",
+          "phone": "<redacted>",
+          "email": "<redacted>",
+          "language": null,
+          "profilePic": null,
+          "locale": null,
+          "countryCode": "MY",
+          "status": "open",
+          "isBlocked": false,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": null
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "backend_id",
+              "value": "https://fe-sorento.foundryx.my/user-management/contacts/b2916c77-57c7-4f05-8565-3f100bcf0577"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "tags": [
+            "imported_20260627_150636"
+          ],
+          "assignee": null,
+          "lifecycle": "New Lead",
+          "created_at": 1782546255
+        }
+      }
+    ],
+    "if-transcribed-confirm": [],
+    "is-human-intervened": [
+      {
+        "json": {
+          "id": 900000013,
+          "firstName": "<redacted>",
+          "lastName": "<redacted>",
+          "phone": "<redacted>",
+          "email": "<redacted>",
+          "language": null,
+          "profilePic": null,
+          "locale": null,
+          "countryCode": "MY",
+          "status": "open",
+          "isBlocked": false,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": null
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "backend_id",
+              "value": "https://fe-sorento.foundryx.my/user-management/contacts/b2916c77-57c7-4f05-8565-3f100bcf0577"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "tags": [
+            "imported_20260627_150636"
+          ],
+          "assignee": null,
+          "lifecycle": "New Lead",
+          "created_at": 1782546255
+        }
+      }
+    ],
+    "if-message-is-audio": [],
+    "get-session-vars": [
+      {
+        "json": {
+          "respond_io_id": "900000013",
+          "session_vars": {
+            "variables": {
+              "response": "text"
+            },
+            "user_response": "text"
+          }
+        }
+      }
+    ],
+    "Call 'sub-query-reformulator'": [
+      {
+        "json": {
+          "output": {
+            "message_type": "unknown",
+            "intent_hint": null,
+            "domain_hint": null,
+            "scope_intent": null,
+            "is_affirmative": null,
+            "user_goal": "trying to ask about bd402 detail",
+            "access_levels": [],
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "bd402",
+                "hint": "product",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "entity_op": "replace_combine",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "customer_service",
+              "suggested_agent": "general_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "domain_signal_source": "intent_none",
+            "scope_exclusive_applied": false,
+            "entity_op_applied": "replace_combine",
+            "query_brands": []
+          },
+          "_parser_raw": {
+            "message_type": "unknown",
+            "intent_hint": null,
+            "domain_hint": null,
+            "scope_intent": null,
+            "is_affirmative": null,
+            "user_goal": "trying to ask about bd402 detail",
+            "access_levels": [],
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "bd402",
+                "hint": "product",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "entity_op": "replace_combine",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": null,
+              "suggested_agent": null
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            }
+          }
+        }
+      }
+    ],
+    "check-access": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "General Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null
+        }
+      }
+    ],
+    "If5": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "General Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null
+        }
+      }
+    ],
+    "If2": [],
+    "If-ideate": [],
+    "If10": [],
+    "is-escalation-declined": [],
+    "If9": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "General Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null
+        }
+      }
+    ],
+    "resolve-entity-clarification": [
+      {
+        "json": {
+          "tokens": [
+            "bd402"
+          ],
+          "elapsed_ms": 139.8,
+          "resolutions": [
+            {
+              "token": "bd402",
+              "resolved": true,
+              "ambiguous": false,
+              "matches": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "SRTSCBD402",
+                  "uuid": "2e6835c5-9dd3-4d11-98a4-76d22dde8d16",
+                  "match_field": "product_code",
+                  "match_tier": "substring",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "product_name": "SRTSCBD402",
+                    "is_active": true,
+                    "brand": {
+                      "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                      "brand_code": "SORENTO",
+                      "brand_name": "SORENTO"
+                    }
+                  }
+                }
+              ],
+              "alternatives": []
+            }
+          ],
+          "unresolved_tokens": []
+        }
+      }
+    ],
+    "construct-user-prompt": [
+      {
+        "json": {
+          "message_type": "unknown",
+          "intent_hint": null,
+          "domain_hint": null,
+          "session_vars": {},
+          "entities": [
+            {
+              "entity_type": "product",
+              "canonical_code": "SRTSCBD402"
+            }
+          ],
+          "user_goal": "trying to ask about bd402 detail"
+        }
+      }
+    ],
+    "OpenAI Chat Model": [],
+    "Basic LLM Chain": [
+      {
+        "json": {
+          "text": "{\n  \"response\": \"Could you please specify what details about the BD402 you are interested in?\"\n}"
+        }
+      }
+    ],
+    "central-exchange": [
+      {
+        "json": {
+          "response": "Could you please specify what details about the BD402 you are interested in?"
+        }
+      }
+    ],
+    "dym-transform-partial": [
+      {
+        "json": {
+          "response": "Could you please specify what details about the BD402 you are interested in?",
+          "dym_probe_entities": [],
+          "dym_candidate_codes": [],
+          "dym_excluded_codes": [],
+          "dym_capped_codes": [],
+          "probe_cap_applied": false,
+          "probe_tool": null,
+          "probe_noun": null,
+          "probe_predicate": null,
+          "probe_needed": false,
+          "probe_skip_reason": "domain_not_enabled",
+          "probe_lane": "d1",
+          "_dym_probe_input": true
+        }
+      }
+    ],
+    "dym-gate-partial": [],
+    "compile-current-state": [
+      {
+        "json": {
+          "variables": {
+            "message_type": "unknown",
+            "intent_hint": null,
+            "domain_hint": null,
+            "user_goal": "trying to ask about bd402 detail",
+            "query_brands": [],
+            "access_levels": [],
+            "entities": [
+              {
+                "raw": "bd402",
+                "hint": "product",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "routing": {
+              "suggested_team": "customer_service",
+              "suggested_agent": "general_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "response": "Could you please specify what details about the BD402 you are interested in?",
+            "last_result_set": [],
+            "selection_context": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "date_mode": null,
+            "match_mode": "and",
+            "contains_flyer": false,
+            "dym_offer": null,
+            "dym_candidates": [],
+            "ideation": null,
+            "routing_roster_plan": null,
+            "routing_brand": null,
+            "routing_brand_source": null,
+            "routing_company": null,
+            "routing_companies": null
+          },
+          "user_response": "Could you please specify what details about the BD402 you are interested in?"
+        }
+      }
+    ],
+    "crossdomain-compose": [
+      {
+        "json": {
+          "variables": {
+            "message_type": "unknown",
+            "intent_hint": null,
+            "domain_hint": null,
+            "user_goal": "trying to ask about bd402 detail",
+            "query_brands": [],
+            "access_levels": [],
+            "entities": [
+              {
+                "raw": "bd402",
+                "hint": "product",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "routing": {
+              "suggested_team": "customer_service",
+              "suggested_agent": "general_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "response": "Could you please specify what details about the BD402 you are interested in?",
+            "last_result_set": [],
+            "selection_context": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "date_mode": null,
+            "match_mode": "and",
+            "contains_flyer": false,
+            "dym_offer": null,
+            "dym_candidates": [],
+            "ideation": null,
+            "routing_roster_plan": null,
+            "routing_brand": null,
+            "routing_brand_source": null,
+            "routing_company": null,
+            "routing_companies": null
+          },
+          "user_response": "Could you please specify what details about the BD402 you are interested in?"
+        }
+      }
+    ],
+    "sorento-sub-respond-sendmsg-respond2": [
+      {
+        "json": {
+          "success": true
+        }
+      }
+    ],
+    "Execution Data": [
+      {
+        "json": {
+          "success": true
+        }
+      }
+    ],
+    "attach-merge": [
+      {
+        "json": {
+          "attachments": []
+        }
+      }
+    ],
+    "if-got-attachments": [],
+    "save-session-vars": [
+      {
+        "json": {
+          "respond_io_id": "900000013",
+          "session_vars": {
+            "variables": {
+              "message_type": "unknown",
+              "intent_hint": null,
+              "domain_hint": null,
+              "user_goal": "trying to ask about bd402 detail",
+              "query_brands": [],
+              "access_levels": [],
+              "entities": [
+                {
+                  "raw": "bd402",
+                  "hint": "product",
+                  "canonical_code": null,
+                  "current_message": true,
+                  "confident": true
+                }
+              ],
+              "routing": {
+                "suggested_team": "customer_service",
+                "suggested_agent": "general_enquiries"
+              },
+              "escalation": {
+                "is_escalation_confirmation": false
+              },
+              "response": "Could you please specify what details about the BD402 you are interested in?",
+              "last_result_set": [],
+              "selection_context": null,
+              "date_filter_start": null,
+              "date_filter_end": null,
+              "date_mode": null,
+              "match_mode": "and",
+              "contains_flyer": false,
+              "dym_offer": null,
+              "dym_candidates": [],
+              "ideation": null,
+              "routing_roster_plan": null,
+              "routing_brand": null,
+              "routing_brand_source": null,
+              "routing_company": null,
+              "routing_companies": null
+            },
+            "user_response": "Could you please specify what details about the BD402 you are interested in?"
+          }
+        }
+      }
+    ],
+    "Call 'sub-respond-save-message-redis'2": [
+      {
+        "json": {
+          "contact_id": 900000013,
+          "phone_number": "<redacted>",
+          "message": "bd402 detail",
+          "sent_at": 1787295545460,
+          "turn_id": "13329550",
+          "data": "{\"contact_id\":\"900000013\",\"phone_number\":\"+60100000011\",\"message\":\"bd402 detail\",\"sent_at\":1787295527000,\"first_name\":\"Person 42\",\"last_name\":null,\"reply_to_message_id\":null,\"reply_to_message\":null,\"type\":\"incoming\",\"message_id\":\"1787295527000000\",\"turn_id\":\"13329550\",\"state_trace\":{\"v\":1,\"before\":{\"response\":\"text\"},\"parser_raw\":{\"message_type\":\"unknown\",\"intent_hint\":null,\"domain_hint\":null,\"scope_intent\":null,\"is_affirmative\":null,\"user_goal\":\"trying to ask about bd402 detail\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[{\"raw\":\"bd402\",\"hint\":\"product\",\"canonical_code\":null,\"current_message\":true,\"confident\":true}],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":null,\"suggested_agent\":null},\"escalation\":{\"is_escalation_confirmation\":false}},\"parser_applied\":{\"message_type\":\"unknown\",\"intent_hint\":null,\"domain_hint\":null,\"scope_intent\":null,\"is_affirmative\":null,\"user_goal\":\"trying to ask about bd402 detail\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[{\"raw\":\"bd402\",\"hint\":\"product\",\"canonical_code\":null,\"current_message\":true,\"confident\":true}],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":\"customer_service\",\"suggested_agent\":\"general_enquiries\"},\"escalation\":{\"is_escalation_confirmation\":false},\"domain_signal_source\":\"intent_none\",\"scope_exclusive_applied\":false,\"entity_op_applied\":\"replace_combine\",\"query_brands\":[]},\"after\":{\"message_type\":\"unknown\",\"intent_hint\":null,\"domain_hint\":null,\"user_goal\":\"trying to ask about bd402 detail\",\"query_brands\":[],\"access_levels\":[],\"entities\":[{\"raw\":\"bd402\",\"hint\":\"product\",\"canonical_code\":null,\"current_message\":true,\"confident\":true}],\"routing\":{\"suggested_team\":\"customer_service\",\"suggested_agent\":\"general_enquiries\"},\"escalation\":{\"is_escalation_confirmation\":false},\"response\":\"Could you please specify what details about the BD402 you are interested in?\",\"last_result_set\":{\"n\":0,\"first\":null},\"selection_context\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"date_mode\":null,\"match_mode\":\"and\",\"contains_flyer\":false,\"dym_offer\":null,\"dym_candidates\":{\"n\":0,\"first\":null},\"ideation\":null,\"routing_roster_plan\":null,\"routing_brand\":null,\"routing_brand_source\":null,\"routing_company\":null,\"routing_companies\":null}}}"
+        }
+      }
+    ],
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 900000013,
+              "firstName": "<redacted>",
+              "lastName": "<redacted>",
+              "phone": "<redacted>",
+              "email": "<redacted>",
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/b2916c77-57c7-4f05-8565-3f100bcf0577"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": "New Lead",
+              "created_at": 1782546255
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "603b7d6f-cbba-424f-a3a7-a2bc49ee7418",
+              "contact": {
+                "id": 900000013,
+                "firstName": "<redacted>",
+                "lastName": "<redacted>",
+                "phone": "<redacted>",
+                "email": "<redacted>",
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": "<redacted>",
+                  "lastName": "<redacted>",
+                  "email": "<redacted>"
+                },
+                "created_at": 1782546255
+              },
+              "message": {
+                "messageId": 1787295527000000,
+                "channelMessageId": "wamid.HBgLNjAxNjIyOTExNzgVAgASGCBBQzBGNUFEODA5MTlDNjA1NThENDIzMkQ2RTc4NjU4NAA=",
+                "contactId": 900000013,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1787295527000,
+                "message": {
+                  "type": "text",
+                  "text": "bd402 detail"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 41\"},\"wa_id\":\"60100000011\",\"user_id\":\"MY.900000031\",\"firstName\":\"Person 41\",\"lastName\":\"\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000013",
+              "session_vars": {
+                "variables": {
+                  "response": "text"
+                },
+                "user_response": "text"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "unknown",
+                "intent_hint": null,
+                "domain_hint": null,
+                "scope_intent": null,
+                "is_affirmative": null,
+                "user_goal": "trying to ask about bd402 detail",
+                "access_levels": [],
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "bd402",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "customer_service",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_none",
+                "scope_exclusive_applied": false,
+                "entity_op_applied": "replace_combine",
+                "query_brands": []
+              },
+              "_parser_raw": {
+                "message_type": "unknown",
+                "intent_hint": null,
+                "domain_hint": null,
+                "scope_intent": null,
+                "is_affirmative": null,
+                "user_goal": "trying to ask about bd402 detail",
+                "access_levels": [],
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "bd402",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": null,
+                  "suggested_agent": null
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "General Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            }
+          }
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "tokens": [
+          "bd402"
+        ],
+        "elapsed_ms": 139.8,
+        "resolutions": [
+          {
+            "token": "bd402",
+            "resolved": true,
+            "ambiguous": false,
+            "matches": [
+              {
+                "entity_type": "product",
+                "canonical_code": "SRTSCBD402",
+                "uuid": "2e6835c5-9dd3-4d11-98a4-76d22dde8d16",
+                "match_field": "product_code",
+                "match_tier": "substring",
+                "similarity": null,
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "product_name": "SRTSCBD402",
+                  "is_active": true,
+                  "brand": {
+                    "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                    "brand_code": "SORENTO",
+                    "brand_name": "SORENTO"
+                  }
+                }
+              }
+            ],
+            "alternatives": []
+          }
+        ],
+        "unresolved_tokens": []
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "message_type": "unknown",
+        "intent_hint": null,
+        "domain_hint": null,
+        "session_vars": {},
+        "entities": [
+          {
+            "entity_type": "product",
+            "canonical_code": "SRTSCBD402"
+          }
+        ],
+        "user_goal": "trying to ask about bd402 detail"
+      }
+    }
+  ],
+  "runIndex": 0,
+  "execution": {
+    "id": "13329550"
+  },
+  "ran": [
+    "When Executed by Another Workflow",
+    "redis-pop-main-message-list",
+    "if-audio-in",
+    "tf-message",
+    "sorento-sub-respond-findcontact-respond",
+    "if-transcribed-confirm",
+    "is-human-intervened",
+    "if-message-is-audio",
+    "get-session-vars",
+    "Call 'sub-query-reformulator'",
+    "check-access",
+    "If5",
+    "If2",
+    "If-ideate",
+    "If10",
+    "is-escalation-declined",
+    "If9",
+    "resolve-entity-clarification",
+    "construct-user-prompt",
+    "OpenAI Chat Model",
+    "Basic LLM Chain",
+    "central-exchange",
+    "dym-transform-partial",
+    "dym-gate-partial",
+    "compile-current-state",
+    "crossdomain-compose",
+    "sorento-sub-respond-sendmsg-respond2",
+    "Execution Data",
+    "attach-merge",
+    "if-got-attachments",
+    "save-session-vars",
+    "Call 'sub-respond-save-message-redis'2"
+  ]
+}

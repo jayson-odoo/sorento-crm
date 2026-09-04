@@ -1,6 +1,6 @@
 # PLAN - Chatbot Turn Engine: n8n business logic moves into the CRM
 
-Status: S0 + S1 IMPLEMENTED on lane feat/chatbot-turn-engine (4 Sep 2026); approved "ok good to go", 6 review rounds, D1 to D16; re-ported onto the LIVE n8n body 5 Sep (see S1 "pending re-port"); S1b DELIVERED 5 Sep (-40.0% prompt, published unlabelled, promote is the owner's call); S6a MERGED 5 Sep, behind `CHATBOT_BUSINESS_LANE_ENABLED` (default off) until the n8n edit in `n8n-changes.md` S6a is made
+Status: S0 + S1 IMPLEMENTED on lane feat/chatbot-turn-engine (4 Sep 2026); approved "ok good to go", 6 review rounds, D1 to D16; re-ported onto the LIVE n8n body 5 Sep (see S1 "pending re-port"); S1b DELIVERED 5 Sep (-40.0% prompt, published unlabelled, promote is the owner's call); S2 (the tail) MERGED 5 Sep; S6a MERGED 5 Sep, behind `CHATBOT_BUSINESS_LANE_ENABLED` (default off) until the n8n edit in `n8n-changes.md` S6a is made
 UAC: `documentation/plans/chatbot/chatbot-turn-engine-acceptance-criteria.md`
 Classification: **MODULE** (`chatbot`), own Postgres schema `chatbot` (D12)
 Owner decisions: D1 to D13 in the UAC; rulings R1 to R6 in the UAC
@@ -145,6 +145,20 @@ result_set}`, `send_attachments {attachments_src, reply}`, `assign_conversation
 Every action carries `dry_run` (true on test envelopes, D14) so the clone's `test-guard`
 records instead of sends, exactly as today.
 
+**D14's input half (O2, AC-112).** A dry-run envelope may also carry three optional harness
+keys, and the engine honours them ONLY on a dry run: `mock_reformulator_output` replaces the
+parser call (no provider is asked; the mock goes through the same `post_process` +
+`suggest_follow_up` a real emission does, so the harness exercises the code instead of
+bypassing it, and a malformed mock is a failed `understood` stage exactly like a malformed
+model answer), while `previous_conversation_state` and `referenced_result_set` replace the
+stored memory for that turn and are never written back. They are `Envelope` EXTRAS rather
+than declared fields on purpose: a harness contract that a live producer should have no
+reason to reach for. On a live envelope all three are ignored and listed in the `received`
+record's `harness_keys_ignored` (empty list when there are none), so a stray key is visible
+rather than silently answering a real customer from a mock. Tests are named after the n8n
+guards they replace: `TestHarnessInjectionsG6` (reformulator bypass),
+`TestHarnessInjectionsG8` (session injection).
+
 **Why not an outbound webhook (rejected at review round 3):** a fixed CRM-to-n8n URL would
 decide egress on the CRM side, so a chat-console or clone turn would push to the live sender.
 Returning the data keeps egress with the caller and keeps the harness's containment model
@@ -225,6 +239,14 @@ picker_families_carried, routing_roster_plan, routing_brand, routing_brand_sourc
 routing_company, routing_companies`, plus the new `pending {kind, team?, domain?}` marker
 (R3). `extra = "forbid"` still matters: it is what stops harness keys leaking into customer
 sessions (H15). `is_active` stays a phantom read (the parser port reads it as null).
+
+**`pending` is written for ONE kind at S2, and that is deliberate** (amended 5 Sep 2026).
+`PendingKind` declares five, but the other four (`team_clarify`, `company_clarify`,
+`tier_ask`, `member_offer`) already have a structured reader today - `selection_context`
+plus `last_result_set`, which the parser post-processor reads without touching text. Only
+`escalation_offer` replaces a TEXT read (`output_exchange._offer_is_open`), so only it is
+written; writing a marker nobody reads would be machinery for a hypothetical. S5 writes
+the clarify kinds when its escalation lane needs them.
 Top-level siblings `user_response` and `quick_reply` persist as today. The ideation service
 keeps writing `ideation` through the same store (already in-process, already the CRM).
 
@@ -238,7 +260,7 @@ inventoried during S1 and listed here with its disposition:
 | site | what it matches | disposition |
 |---|---|---|
 | `output_exchange.js` `offeredEscalation` regex over previous `response` | "would you like me to escalate" | replaced by `pending.kind = escalation_offer` (R3, S1/S2) |
-| `crossdomain-compose.js` `isAnswered` regex over previous `response` | "Previous turn (" | replaced by `pending.kind`/`last_answer_domain` (R3, S2) |
+| `crossdomain-compose.js` `isAnswered` regex over previous `response` | "Previous turn (" | replaced at S2 by a VALUE, not a session key: `CompiledState.answered_domain`. The question is "did THIS turn's business-summary arm run", which never crosses a turn boundary, so the compiler hands the answer down instead of persisting one. `last_answer_domain` is therefore NOT a session key (amended 5 Sep 2026) |
 | `route-turn.js` `tierRepick` | bare digit or exact menu word in the raw message | reproduced (owner's own Fix 6 rule; exact match, not fuzzy); candidate to move into the parser as `tier_pick` after parity |
 | `escalation-context.js` `_CO_ALIASES` company name / code match | company name or alias in `escalation.company_pick` | reproduced; the parser already emits `company_pick`, the alias table is a STOPGAP mirror, candidate to delete once the parser output is trusted |
 | `output_exchange.js` `domain_switched_by_keyword` and sibling keyword checks | domain keywords in the raw message | reproduced for parity; listed as divergence candidates for the parser prompt (backlog issue) |
@@ -258,6 +280,7 @@ previous reply. A reviewer finding one is a merge blocker.
 | respond.io `space_id` | default respond workspace row (`respond_workspaces.space_id`) | already the integration's home; kills the hard-coded `364817` |
 | unsupported domains | `system_settings.chatbot_unsupported_domains` (JSON, default the two today) | the one list the owner has changed; column, not table (CLAUDE.md "both dict builders") |
 | stock denial lanes | `system_settings.chatbot_stock_denial_enabled` (bool, default false) | R1: the corrected vocabulary turns two never-tested lanes on; a data switch with a test, not a surprise |
+| which lanes the CRM may FINISH | `system_settings.chatbot_completed_lanes` (JSON array of `branch_kind`, default `[]`) | S4: `CRM_COMPLETED_BRANCH_KINDS` says what the CODE can complete, this says what it MAY, and both are required. Without it a lane starts answering the moment it deploys and the n8n edit has to land in the same window or the lane runs twice. With it, deploy / compare / switch on / cut n8n are four separate reversible steps, one lane at a time (AC-308) |
 | worker offload, wait | env `CHATBOT_TURN_ON_WORKER` (off), `CHATBOT_TURN_WAIT_SECONDS` (60), `WORKER_QUEUES` | ops, not owner |
 
 ### Test strategy (the reason for the port)
@@ -497,6 +520,20 @@ eight agree on every key. Capturing real Malay turns is a backlog item.
 (110), `copy.py` (escalate-catalog 104, registry keys), CS member offer (23 + 163, team
 members in-process). `engine.complete_turn` writes session vars via
 `overwrite_for_contact` and closes the turn. R2 drops, R3 marker written.
+
+**Landed 5 Sep 2026**, with four shape notes worth carrying forward:
+`tail/member_offer.py` holds `cs-roster-plan` + the roster read + `build-cs-member-offer`;
+the roster read is `app/services/team_roster_service.list_team_roster`, EXTRACTED from
+`app/api/v1/external/team_members.py` so the endpoint n8n still uses and the tail resolve
+the same pool (an id offered by one must be accepted by next-assignee, which is the
+endpoint's own stated contract). `compile_current_state` returns a `CompiledState`, not a
+bare item: `item` is what the corpus grades and `answered_domain` is what replaces
+`crossdomain-compose`'s regex. And `copy.py` reads its strings from
+`app/services/chatbot_reply_copy.py`, OUTSIDE the package, because `ai_prompt_registry` is
+core and core must not import the module (AC-002). Fourth, `/complete` refuses any turn
+that is not `delegated` with a 409 and closes every tail failure `failed` at `remembered`:
+without the guard a FAILED turn could be completed, which wrote a fabricated reply into
+the customer's session and overwrote the R4 / H32 failure record with `done`.
 n8n: `sub-output` body + `save-session-vars` replaced by `/complete` (AC-207). After this PR
 the CRM is the only session writer on the turn path (AC-207 grep is the proof).
 Parity gate: AC-202, AC-204, AC-205, AC-208.
@@ -526,6 +563,31 @@ through `MCPRuntimeClient` like every business tool. `chatbot_unsupported_domain
 `lanes/casual.py`: resolve-for-prompt (in-process), `construct-user-prompt` port, prompt key
 `chatbot_clarifier`, `central-exchange` fence-stripping. Error = failed turn + today's text
 (AC-403). n8n: three nodes deleted (AC-404).
+
+**Delivered 5 Sep 2026.** Two decisions worth recording, because neither is in the UAC and
+both change what an operator sees:
+
+1. **A lane setup failure is the LANE's failure, not the engine's.** `resolve_for_prompt`,
+   `construct_user_prompt` and `resolve_clarifier_config` all exist to make the clarifier
+   call possible, so a missing AI-assistant config or API key is the same customer-visible
+   event as the call itself failing: the lane cannot answer. All three are therefore inside
+   the lane's own `try`, and the turn fails at `stage = casual_llm` with `branch_kind` still
+   `low_signal` and today's `sub-error-logger` text (AC-403). Letting them reach
+   `run_turn`'s catch-all instead would null the branch kind and send the PARSER's error
+   reply, which is a different lane's words for a different failure. Two pre-existing tests
+   (`test_trace_legibility::test_low_signal`, `test_s6a_gate_dry_run_and_seams[low_signal]`)
+   assert the branch kind survives, and both were red until this was folded in.
+2. **A successful turn ends at `remembered`, not `casual_llm`.** The lane runs S2's tail
+   (`complete_turn`: outcome -> compile-state -> compose -> session write), so it closes
+   where every other completed lane closes. `casual_llm` is the FAILURE stage only. The row
+   passes through `delegated` / `routed` first, which is not bookkeeping: it is the state
+   the turn is genuinely in while the clarifier runs, it is what `complete_turn` refuses to
+   run without, and it is what the trace screen should show if the process dies mid-call.
+   The item handed to the tail is `sub-answer`'s own output shape
+   (`{...central-exchange, outcome_fragment}`), NOT `route-turn`'s item - hand it the latter
+   and the entry gate runs `escalate-catalog`, which has no case for `low_signal`, produces
+   an empty `response`, and wins the compile-state ladder over `central-exchange`. The reply
+   comes out blank. Measured, not reasoned: the first wiring did exactly that.
 
 ### S5 - Escalation (400 lines)
 
