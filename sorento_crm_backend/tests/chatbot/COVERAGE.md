@@ -20,7 +20,7 @@ A branch under the bar is `exhausted` - not short - only when EVERY execution on
 | node | fixtures | real captures | vendored (always run) |
 | --- | ---: | ---: | ---: |
 | `build-ctx` | 114 | 114 | 6 |
-| `output_exchange` | 320 | 244 | 98 |
+| `output_exchange` | 306 | 249 | 79 |
 | `route-turn` | 116 | 116 | 14 |
 | `suggest-follow-up` | 242 | 242 | 16 |
 
@@ -30,13 +30,13 @@ A branch under the bar is `exhausted` - not short - only when EVERY execution on
 | --- | --- | ---: | ---: | --- |
 | `build-ctx` | `all` | 114 | 0 | met |
 | `output_exchange` | `incoming` | 65 | 6 | met |
-| `output_exchange` | `inventory` | 119 | 9 | met |
-| `output_exchange` | `master_products` | 4 | 13 | exhausted (4) |
-| `output_exchange` | `no_domain` | 8 | 15 | met |
+| `output_exchange` | `inventory` | 119 | 8 | met |
+| `output_exchange` | `master_products` | 4 | 12 | exhausted (4) |
+| `output_exchange` | `no_domain` | 12 | 0 | met |
 | `output_exchange` | `order` | 28 | 8 | met |
-| `output_exchange` | `portal_link` | 0 | 1 | exhausted (0) |
-| `output_exchange` | `product_attachment` | 20 | 6 | met |
+| `output_exchange` | `product_attachment` | 20 | 5 | met |
 | `output_exchange` | `promotion` | 0 | 18 | exhausted (0) |
+| `output_exchange` | `resource_attachment` | 1 | 0 | exhausted (1) |
 | `route-turn` | `access_denied` | 1 | 0 | exhausted (1) |
 | `route-turn` | `business_query` | 87 | 0 | met |
 | `route-turn` | `check_promotion` | 1 | 0 | exhausted (1) |
@@ -62,6 +62,6 @@ A branch under the bar is `exhausted` - not short - only when EVERY execution on
 
 **Not blocked.** Every cell is either met, exhausted in a fully-scanned pool, or dead by vocabulary.
 
-Exhausted (13), under the bar with no more traffic to capture: output_exchange/master_products (4), output_exchange/portal_link (0), output_exchange/promotion (0), route-turn/access_denied (1), route-turn/check_promotion (1), route-turn/clarify_menu (0), route-turn/escalate_offer (0), route-turn/escalation_declined (4), route-turn/ideate (0), route-turn/not_supported (1), route-turn/offer_hold (0), suggest-follow-up/master_products (4), suggest-follow-up/resource_attachment (1).
+Exhausted (13), under the bar with no more traffic to capture: output_exchange/master_products (4), output_exchange/promotion (0), output_exchange/resource_attachment (1), route-turn/access_denied (1), route-turn/check_promotion (1), route-turn/clarify_menu (0), route-turn/escalate_offer (0), route-turn/escalation_declined (4), route-turn/ideate (0), route-turn/not_supported (1), route-turn/offer_hold (0), suggest-follow-up/master_products (4), suggest-follow-up/resource_attachment (1).
 
 Dead by vocabulary, 0 captures is the correct number: route-turn/demand_qty, route-turn/stock_denied. These are covered by unit tests behind `chatbot_stock_denial_enabled` (AC-306, R1), never by a capture.

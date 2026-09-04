@@ -62,6 +62,9 @@ class ParserConfig:
 def _build_json_schema() -> dict[str, Any]:
     """The strict 26-key `ParseOutput` schema the provider is held to (AC-105).
 
+    26 top-level keys, and `routing` carries exactly two members. That is what the LIVE
+    parser emits: every one of the 488 captured raw emissions has this shape.
+
     Built from the prompt's own OUTPUT block. `additionalProperties: false` is what makes
     "exactly these keys, no others" a provider guarantee instead of an instruction, and
     every key is `required` so a silently missing one is a validation failure rather than
@@ -123,9 +126,13 @@ def _build_json_schema() -> dict[str, Any]:
                 "properties": {
                     "suggested_team": string_or_null,
                     "suggested_agent": string_or_null,
-                    "team_source": string_or_null,
                 },
-                "required": ["suggested_team", "suggested_agent", "team_source"],
+                # NO `team_source`. It is not a live key: the live `sub-semantic-parser`
+                # system message never asks for it and not one of the 488 captured
+                # emissions carries it. It belongs to the UNPROMOTED B-TEAM-1' lane change
+                # (plan, S1 "pending re-port"), and declaring it `required` here would make
+                # the CRM the only deployment that forces the model to invent one.
+                "required": ["suggested_team", "suggested_agent"],
             },
             "escalation": {
                 "type": "object",

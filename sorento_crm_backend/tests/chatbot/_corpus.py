@@ -47,52 +47,71 @@ NODE_SLUGS: dict[str, tuple[str, ...]] = {
 }
 
 
-# Captures taken against a node body that is NOT the one the export ships. These are not
-# divergences - nothing about the port disagrees with what ships - and they do not belong
-# in `divergences.py`, which is reserved for deliberate hazard fixes. They are the
-# "fixture staleness" risk the plan names.
+# Fixtures pinned to a node body that is NOT the one production runs. They are not
+# divergences - nothing about the port disagrees with the live body - and they do not
+# belong in `divergences.py`, which is reserved for deliberate hazard fixes.
 #
-# **A version id is not sufficient evidence.** The five `parser-*` entries below carry the
-# SAME `source.workflow_version` as the export (`ab3ec985`), and still disagree; the
-# workflow is flagged `locally_edited` in its own MANIFEST, so a deployed edit reached the
-# running body without moving the id. The evidence used instead is direct and reproducible:
-# the exported `output_exchange.js` was run against each of these fixtures through the n8n
-# repo's own harness (`tests/harness/n8n-shim.js`), and IT produces what the Python port
-# produces, character for character, not what the fixture expects. The port is faithful to
-# the body that ships; the fixture grades a different one.
+# **What changed on 5 Sep 2026.** The port was made from the working-tree EXPORT of
+# `sub-semantic-parser`, whose MANIFEST is flagged `locally_edited`. The n8n partner
+# session then fetched the LIVE body read-only: 1,881 lines, sha `a837333a13a2`, saved at
+# `output_exchange.live.js` in that session's scratchpad with
+# `output_exchange.LIVE-vs-WORKTREE.diff` beside it. The export carries an UNPROMOTED lane
+# change (B-TEAM-1': `routing.team_source`, a 4-rank team ladder replacing the
+# `?? 'customer_service'` default, a `resource_attachment` routing row, a pending
+# `team_clarify` completion block, and a state-only company-pick resolver with the
+# deterministic word-match tier deleted; +241/-83 over 10 hunks). `head/output_exchange.py`
+# was re-ported onto the LIVE body, and the five `parser-*` entries that used to sit here
+# all replay EQUAL again - they were LIVE-faithful captures being graded against the wrong
+# body, which is exactly the tell.
+#
+# **A version id is not sufficient evidence, and neither is an assertion.** The 19 entries
+# below are the mirror image of the old five, and the evidence for each is mechanical and
+# reproducible: the pre-re-port Python (`git show <the S1 commit>:...output_exchange.py`,
+# faithful to the EXPORT) reproduces each fixture's `expected` exactly, and the live-
+# faithful body does not. 19 of 19, with no "neither matches" residue. They are hand-built
+# pins authored alongside the unpromoted change, not captures of a real execution, so there
+# is no production turn they describe. Retire each one when the owner promotes the
+# escalation-routing lane's B3 step and the port follows (plan, S1 "pending re-port").
 #
 # They are SKIPPED, not dropped: `test_replay.py` emits one skip per entry with its reason,
 # so `pytest -rs` and the summary count show exactly how much of the corpus is not being
-# graded. Re-capture against the current export retires an entry.
+# graded.
+_UNPROMOTED = (
+    "pins the UNPROMOTED B-TEAM-1' export body, not the live one; the pre-re-port port "
+    "reproduces it exactly and the live-faithful port does not (see the header note)"
+)
+
 STALE_FIXTURES: dict[tuple[str, str], str] = {
     ("build-ctx", "rs2-01-notsupported"): "RS-2 capture, predates the RS-4 `media` key",
     ("build-ctx", "rs2-02-escalation"): "RS-2 capture, predates the RS-4 `media` key",
     ("build-ctx", "rs2-03-happy"): "RS-2 capture, predates the RS-4 `media` key",
     ("build-ctx", "rs2-04-access-denied"): "RS-2 capture, predates the RS-4 `media` key",
-    # Routing-ladder rank differences. The exported body agrees with the port (verified
-    # through the n8n harness), so the deployed body that produced these differed.
-    ("output_exchange", "parser-15024720"): (
-        "exported output_exchange.js emits suggested_team null, the fixture expects "
-        "'purchasing' (the LLM's own team with no team_source); verified against the "
-        "export via the n8n harness"
-    ),
-    ("output_exchange", "parser-15130185"): (
-        "exported body emits suggested_team null, fixture expects 'marketing_product'; "
-        "same routing-ladder rank difference as parser-15024720"
-    ),
-    ("output_exchange", "parser-15151918"): (
-        "exported body emits suggested_team null, fixture expects 'warehouse'; same "
-        "routing-ladder rank difference as parser-15024720"
-    ),
-    ("output_exchange", "parser-15158411"): (
-        "exported body emits suggested_team null, fixture expects 'warehouse'; same "
-        "routing-ladder rank difference as parser-15024720"
-    ),
-    ("output_exchange", "parser-15164413"): (
-        "exported body derives marketing_product/general_enquiries from the turn's own "
-        "resource_attachment domain, fixture expects the PRIOR turn's "
-        "purchasing/incoming_stock_enquiries carried forward"
-    ),
+    # Hand-built pins for the unpromoted lane change. EVERY real capture in the corpus is
+    # graded; not one `parser-*` / `exec-*` fixture is excluded.
+    **{
+        ("output_exchange", name): _UNPROMOTED
+        for name in (
+            "casual-without-offer-engagement-wipes-entities",
+            "date-filter-gated-records-null-domain",
+            "escalation-offer-confirm-decline-and-pick",
+            "legacy-suffixed-promotion-team-normalised-from-prior",
+            "literal-string-null-hints-coerced",
+            "member-offer-bare-number-reply",
+            "member-offer-clarification-counts-as-a-new-query",
+            "member-offer-long-reply-is-not-digit-scanned",
+            "member-offer-ordinal-numeral-2nd",
+            "member-offer-ordinal-word-first",
+            "member-offer-ordinal-word-second",
+            "member-offer-ordinal-word-third",
+            "member-offer-precedence-arms",
+            "menu-label-stock-enquiry",
+            "pending-pick-from-a-single-row-roster",
+            "request-for-help-llm-team-wins",
+            "resource-attachment-corrected-when-product-present",
+            "routing-domains-multi-item",
+            "tier-offer-out-of-range-position-is-not-a-pick",
+        )
+    },
 }
 
 

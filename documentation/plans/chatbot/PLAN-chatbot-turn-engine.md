@@ -1,6 +1,6 @@
 # PLAN - Chatbot Turn Engine: n8n business logic moves into the CRM
 
-Status: S0 + S1 IMPLEMENTED on lane feat/chatbot-turn-engine (4 Sep 2026); approved "ok good to go", 6 review rounds, D1 to D16; S1b next
+Status: S0 + S1 IMPLEMENTED on lane feat/chatbot-turn-engine (4 Sep 2026); approved "ok good to go", 6 review rounds, D1 to D16; re-ported onto the LIVE n8n body 5 Sep (see S1 "pending re-port"); S1b next
 UAC: `documentation/plans/chatbot/chatbot-turn-engine-acceptance-criteria.md`
 Classification: **MODULE** (`chatbot`), own Postgres schema `chatbot` (D12)
 Owner decisions: D1 to D13 in the UAC; rulings R1 to R6 in the UAC
@@ -242,6 +242,9 @@ inventoried during S1 and listed here with its disposition:
 | `route-turn.js` `tierRepick` | bare digit or exact menu word in the raw message | reproduced (owner's own Fix 6 rule; exact match, not fuzzy); candidate to move into the parser as `tier_pick` after parity |
 | `escalation-context.js` `_CO_ALIASES` company name / code match | company name or alias in `escalation.company_pick` | reproduced; the parser already emits `company_pick`, the alias table is a STOPGAP mirror, candidate to delete once the parser output is trusted |
 | `output_exchange.js` `domain_switched_by_keyword` and sibling keyword checks | domain keywords in the raw message | reproduced for parity; listed as divergence candidates for the parser prompt (backlog issue) |
+| `output_exchange.js` `_coCompanyPick` deterministic tier | the reply minus fillers, word-boundary matched against the offered company pool; refused by a negator or a product-code-like token | reproduced (5 Sep re-port): the LIVE body still has it. The export's rev 8 deletes it and hands the whole job to the prompt, but rev 8 is the unpromoted B-TEAM-1' change, so parity keeps the tier until the owner promotes it |
+| `output_exchange.js` member-offer `extract()` + `_ORD` | a bare number or an ordinal WORD in the raw reply | reproduced; the same shape as `route-turn.js` `tierRepick` and inventoried with it |
+| `output_exchange.js` `_statedTiers` / `_statedBrands` | tier and brand words in the raw message (English and Malay literals only) | reproduced. The prompt is what covers every other language, which is why the ACCESS LEVELS vocabulary cannot move out of it |
 
 Rule for new code in the package: no regex or substring match over `ctx.text` or over a
 previous reply. A reviewer finding one is a merge blocker.
@@ -384,6 +387,47 @@ item shape). `engine.run_turn` up to routing; `delegate.py` returns the n8n enve
 Human-intervened check becomes an `update_contact_fields` action (AC-108). Audio-not-patched
 becomes a failed turn (AC-107). R3 reader accepts both forms. R5 fail-loud.
 n8n: replace five spine nodes with one `httpRequest` + two re-emitters (AC-110).
+
+#### S1 pending re-port: B-TEAM-1' (added 5 Sep 2026)
+
+**The port was made from the working-tree EXPORT, and the export is not what production
+runs.** The n8n partner session fetched the LIVE `sub-semantic-parser` read-only and the
+two bodies differ:
+
+| | live | working-tree export |
+|---|---|---|
+| `output_exchange.js` | 1,881 lines, sha `a837333a13a2` | 2,043 lines, MANIFEST `locally_edited` |
+| system message | 46,942 chars, sha256 `90c0741997...bdf87b66` | 49,318 chars |
+
+The extra material is one unpromoted lane change, **B-TEAM-1'** (+241/-83 over 10 hunks):
+`routing.team_source`, a 4-rank team ladder replacing the `?? 'customer_service'` default,
+a `resource_attachment` row in `deriveRouting`, a pending `team_clarify` completion block,
+and a state-only company-pick resolver with the deterministic word-match tier deleted.
+
+`head/output_exchange.py`, `head/parser.py`'s `ParseOutput` schema and
+`chatbot_parser_prompt.py` are now faithful to the LIVE body. Evidence, both directions:
+
+* the five `parser-*` fixtures that sat in `STALE_FIXTURES` because the port emitted a null
+  team where they expect `purchasing` / `marketing_product` / `warehouse` now replay EQUAL,
+  and their entries are retired. They were live-faithful captures graded against the wrong
+  body, which is what a stale-fixture list looks like when the port is the stale side;
+* the 19 hand-built fixtures that now fail are reproduced EXACTLY by the pre-re-port Python
+  and by nothing else (19 of 19, no residue). They pin the unpromoted body, so they take
+  those entries instead. **Every real capture in the corpus is graded; not one `parser-*` or
+  `exec-*` fixture is excluded.**
+
+**Re-port B-TEAM-1' when the owner promotes the escalation-routing lane's B3 step**, and
+retire the 19 entries in the same change. Diffs:
+`output_exchange.LIVE-vs-WORKTREE.diff` and `output_exchange.HEAD-vs-LIVE.diff` in the n8n
+session scratchpad (`.../11a092cf-e08a-4fa0-b142-99499e993633/scratchpad/`), beside
+`output_exchange.live.js` and `sub-semantic-parser.systemMessage.live.txt`. Nothing goes in
+`divergences.py`: this is parity with production, not a deliberate hazard fix.
+
+One consequence worth stating, because it reads as a regression and is not: with the live
+body the LLM's own `suggested_team` is used ONLY on a `request_for_help` turn, and every
+other turn falls through `deriveRouting` -> prior state -> the hard `customer_service`
+default. This body therefore never emits a null team, and `resource_attachment` routes by
+the prior-state carry rather than to `marketing_product`.
 
 **The Switch on `duplicate` must sit BEFORE the `build-ctx` / `route-turn` re-emitters.**
 A duplicate delivery (D15) returns the FIRST turn's stored answer, and a duplicate of a
