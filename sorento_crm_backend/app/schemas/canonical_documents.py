@@ -29,11 +29,15 @@ from __future__ import annotations
 
 from datetime import date
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Annotated, Any, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.canonical_masters import _Canonical
+
+#: Each entry of `from_so_numbers` (V4) - length-capped like every other
+#: document number on this surface, never a full row on its own.
+_SoNumber = Annotated[str, Field(max_length=100)]
 
 
 class _CanonicalLine(BaseModel):
@@ -89,6 +93,18 @@ class CanonicalPurchaseOrderLine(_CanonicalLine):
     unit_cost: Optional[Decimal] = None
     currency: Optional[str] = Field(None, max_length=3)
     expected_date: Optional[date] = None
+    # V4 (plan section 2.5): the sales orders the ESB already knows this
+    # purchase line is FOR. `str_strip_whitespace` (the model config above)
+    # already strips each entry; blank ones are dropped here rather than
+    # rejected - an ESB that sends `["SO-A", ""]` names one real number, not
+    # a bad one. Absent or `[]` both mean "nothing to claim" (schema pin,
+    # AC-V4 tests) - never a trigger of its own.
+    from_so_numbers: Optional[list[_SoNumber]] = None
+
+    @field_validator("from_so_numbers")
+    @classmethod
+    def _drop_blank_so_numbers(cls, value: Optional[list[str]]) -> Optional[list[str]]:
+        return [v for v in value if v] if value is not None else None
 
 
 class _CanonicalDocument(_Canonical):
@@ -174,6 +190,16 @@ class CanonicalShippingOrderLine(_CanonicalLine):
     qty_received: Optional[Decimal] = Field(Decimal("0"), ge=0)
     unit_cost: Optional[Decimal] = None
     expected_date: Optional[date] = None
+    # V4, same rule as `CanonicalPurchaseOrderLine.from_so_numbers` - a
+    # shipping-order line dedicates against a sales order exactly as a
+    # purchase-order line does (`resolve()` decides which purchase table by
+    # `spo_number`'s own family, not by which entity pushed the claim).
+    from_so_numbers: Optional[list[_SoNumber]] = None
+
+    @field_validator("from_so_numbers")
+    @classmethod
+    def _drop_blank_so_numbers(cls, value: Optional[list[str]]) -> Optional[list[str]]:
+        return [v for v in value if v] if value is not None else None
 
 
 class CanonicalShippingOrder(_CanonicalDocument):
@@ -181,8 +207,8 @@ class CanonicalShippingOrder(_CanonicalDocument):
 
     Unlike a sales or purchase order, this shape addresses no header table -
     `spo_number` and `spo_line_number` together ARE the identity of the rows
-    it writes (D3). `from_so_numbers` is deliberately absent here: claiming a
-    sales order against a shipping-order line is S4 work.
+    it writes (D3). `from_so_numbers` (V4) lives on the LINE, the same as a
+    purchase-order line's - see `CanonicalShippingOrderLine`.
     """
 
     spo_number: str = Field(..., min_length=1, max_length=100)

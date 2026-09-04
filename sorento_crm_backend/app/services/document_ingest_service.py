@@ -89,6 +89,7 @@ from app.services.master_ingest_service import (
     _field_errors,
     _value_changed,
 )
+from app.services.scm import order_link_service
 from app.services.scm.customer_label import normalize_debtor_code
 from app.services.scm.demand_class import classify_document
 # `DEFAULT_PO_CURRENCY` is the upload's own rule (D1's CNY fill) - imported
@@ -455,6 +456,8 @@ class DocumentIngestService(MasterRefResolver):
         self.db.flush()
 
         line_counts = self._sync_lines(spec, header, line_values)
+        if spec.entity_type == "purchase_orders":
+            self._write_order_link_claims(header, payload)
         self.refs.link(
             entity_type=spec.entity_type,
             entity_id=str(header.id),
@@ -463,6 +466,71 @@ class DocumentIngestService(MasterRefResolver):
             integration_id=self.integration_id,
         )
         return outcome, str(header.id), diff, warnings, line_counts
+
+    def _write_order_link_claims(self, header: Any, payload: Any) -> None:
+        """V4 (plan section 2.5): a PO line dedicating its purchase against
+        sales orders the ESB already knows the numbers of.
+
+        Runs AFTER the lines are flushed, so every line named has a real id
+        to claim against. Inside the SAME record savepoint as everything
+        else in `_apply` - a dry run rolls this back with the rest of the
+        record, never a special case of its own (AC-V4-4).
+        """
+        wanted = [
+            (line.source_ref, [n for n in (line.from_so_numbers or []) if n])
+            for line in payload.lines
+            if getattr(line, "from_so_numbers", None)
+        ]
+        if not wanted:
+            return
+
+        refs = [source_ref for source_ref, _ in wanted]
+        rows = (
+            self.db.query(PurchaseOrderLine)
+            .filter(
+                PurchaseOrderLine.purchase_order_id == str(header.id),
+                PurchaseOrderLine.source_ref.in_(refs),
+            )
+            .all()
+        )
+        rows_by_ref = {row.source_ref: row for row in rows}
+        product_ids = {row.product_id for row in rows if row.product_id}
+        codes = (
+            dict(
+                self.db.query(Product.id, Product.product_code)
+                .filter(Product.id.in_(product_ids))
+                .all()
+            )
+            if product_ids
+            else {}
+        )
+
+        seen: set[tuple[str, str, Optional[str]]] = set()
+        so_numbers: set[str] = set()
+        for source_ref, numbers in wanted:
+            row = rows_by_ref.get(source_ref)
+            if row is None:
+                continue
+            item_code = codes.get(row.product_id)
+            for number in numbers:
+                key = (number, payload.po_number, item_code)
+                if key in seen:
+                    continue
+                seen.add(key)
+                order_link_service.claim_book_pairing(
+                    self.db,
+                    company_id=self.company_id,
+                    so_number=number,
+                    po_number=payload.po_number,
+                    item_code=item_code,
+                    source=order_link_service.SOURCE_AUTOCOUNT,
+                    po_line_id=str(row.id),
+                )
+                so_numbers.add(number)
+
+        if so_numbers:
+            self.db.flush()
+            order_link_service.resolve(self.db, so_numbers=so_numbers)
 
     def _status(self, spec: DocumentSpec, canonical: str) -> str:
         """The stored status for a canonical word.

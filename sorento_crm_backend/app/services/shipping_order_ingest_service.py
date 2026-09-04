@@ -75,6 +75,7 @@ from app.services.master_ingest_service import (
     _field_errors,
 )
 from app.services.master_ref_resolver import MasterRefResolver
+from app.services.scm import order_link_service
 from app.services.scm.outstanding_import_service import DEFAULT_PO_CURRENCY
 
 logger = logging.getLogger(__name__)
@@ -288,7 +289,72 @@ class ShippingOrderIngestService(MasterRefResolver):
             row.line_status = LINE_CLOSED
             counts["cancelled"] += 1
         self.db.flush()
+        self._write_order_link_claims(payload)
         return _Verdict(outcome=outcome, warnings=warnings, line_counts=counts)
+
+    def _write_order_link_claims(self, payload: CanonicalShippingOrder) -> None:
+        """V4 (plan section 2.5), the shipping-order side of
+        `DocumentIngestService._write_order_link_claims` - see that
+        docstring for the shared rule. Runs after every row is flushed, so
+        it queries by `source_doc_ref` rather than holding onto row objects
+        built mid-`_apply` (some are new, some adopted, some merely updated).
+        """
+        wanted = [
+            (line.source_ref, [n for n in (line.from_so_numbers or []) if n])
+            for line in payload.lines
+            if getattr(line, "from_so_numbers", None)
+        ]
+        if not wanted:
+            return
+
+        refs = [source_ref for source_ref, _ in wanted]
+        rows = (
+            self.db.query(SPOAllocation)
+            .filter(
+                SPOAllocation.company_id == self.company_id,
+                SPOAllocation.source_doc_ref == payload.source_ref,
+                SPOAllocation.source_ref.in_(refs),
+            )
+            .all()
+        )
+        rows_by_ref = {row.source_ref: row for row in rows}
+        product_ids = {row.product_id for row in rows if row.product_id}
+        codes = (
+            dict(
+                self.db.query(Product.id, Product.product_code)
+                .filter(Product.id.in_(product_ids))
+                .all()
+            )
+            if product_ids
+            else {}
+        )
+
+        seen: set[tuple[str, str, Optional[str]]] = set()
+        so_numbers: set[str] = set()
+        for source_ref, numbers in wanted:
+            row = rows_by_ref.get(source_ref)
+            if row is None:
+                continue
+            item_code = codes.get(row.product_id)
+            for number in numbers:
+                key = (number, payload.spo_number, item_code)
+                if key in seen:
+                    continue
+                seen.add(key)
+                order_link_service.claim_book_pairing(
+                    self.db,
+                    company_id=self.company_id,
+                    so_number=number,
+                    po_number=payload.spo_number,
+                    item_code=item_code,
+                    source=order_link_service.SOURCE_AUTOCOUNT,
+                    spo_allocation_id=str(row.id),
+                )
+                so_numbers.add(number)
+
+        if so_numbers:
+            self.db.flush()
+            order_link_service.resolve(self.db, so_numbers=so_numbers)
 
     def _existing_rows(self, payload: CanonicalShippingOrder) -> list[SPOAllocation]:
         """This document's rows: by DocKey, or by DocNo when none carries one yet."""
