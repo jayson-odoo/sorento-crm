@@ -1,0 +1,1037 @@
+{
+  "source": {
+    "execution_id": "14518702",
+    "workflow_id": "Gg6aFxwMIkea062g",
+    "workflow_version": "6ba3984a-34e3-4a7b-ab18-addcd579e8b2",
+    "node": "escalation-context",
+    "captured_at": "2026-08-30T12:23:10+00:00",
+    "expected_from": "runData",
+    "dedupe_sig": "81ce488a8423c0fa385d082a52945bdfa07ced5450c94b78b6a7c3d885d01e5e",
+    "dev_contact": true
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": "900000009",
+              "chat_id": "rs51-chat-fixed-20260830",
+              "firstName": "Person 12",
+              "lastName": "",
+              "phone": "+60100000046",
+              "countryCode": "MY",
+              "status": "open",
+              "custom_fields": [
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": "true"
+                }
+              ]
+            },
+            "text": {
+              "event_type": "message.received",
+              "contact": {
+                "id": "900000009",
+                "chat_id": "rs51-chat-fixed-20260830",
+                "firstName": "Person 12",
+                "lastName": "",
+                "phone": "+60100000046",
+                "countryCode": "MY",
+                "status": "open",
+                "custom_fields": [
+                  {
+                    "name": "is_human_intervened",
+                    "value": "false"
+                  },
+                  {
+                    "name": "is_allowed_stock",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_allowed_voice",
+                    "value": "true"
+                  }
+                ]
+              },
+              "message": {
+                "messageId": 1788092467626,
+                "contactId": "900000009",
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788092467626,
+                "message": {
+                  "type": "text",
+                  "text": "yes"
+                }
+              }
+            },
+            "session": {
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "customer_service",
+                    "suggested_agent": "order_enquiries"
+                  },
+                  "entities": [
+                    {
+                      "raw": "CHIN CHUN HARDWARE SDN BHD",
+                      "hint": "customer",
+                      "uuid": "060f4eaf-88ca-486a-a203-b0b61eeb9cd8",
+                      "ordinal": 1,
+                      "canonical_code": "300-C043",
+                      "current_message": false
+                    },
+                    {
+                      "raw": "srtwc286",
+                      "hint": "product",
+                      "confident": true,
+                      "canonical_code": null,
+                      "current_message": false
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Customer: CHIN CHUN HARDWARE SDN BHD\nProduct: srtwc286\nDates: 01/09/2026 to 30/09/2026\n\nHere's what you want:\n\u2022 customer: CHIN CHUN HARDWARE SDN BHD - [A/C I] (Mocha) (+4 more)\n\u2022 product: SRTWC286-SH-200 (Sorento) (+9 more)\n\nBut no order from 01/09/2026 to 30/09/2026 matched these - checked in Mocha and Sorento. Reply 'all dates' to search without the date filter, or would you like me to escalate to customer service team?\n\nPlease choose who to route to (reply with the number):\n*Mocha:*\n1. Person 126\n2. Person 127\n3. Person 128\n*Sorento:*\n4. Person 21\n5. Person 22\n6. Person 26\n7. Person 28\n8. Person 29\n9. Person 30\n\nIf you have no preference, reply with the company name (*Mocha* / *Sorento*) and we'll assign accordingly.",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to narrow the previous results to September only",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "order",
+                  "intent_hint": "check_order",
+                  "message_type": "business_query",
+                  "query_brands": [],
+                  "access_levels": [],
+                  "routing_brand": "sorento",
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": "2026-09-30",
+                  "last_result_set": [
+                    {
+                      "idx": 1,
+                      "uuid": "3a66bad8-1bee-4834-b486-4d9332887409",
+                      "label": "Person 126",
+                      "companies": [
+                        "Mocha"
+                      ],
+                      "brand_code": null,
+                      "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                      "company_ids": [
+                        "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2"
+                      ],
+                      "company_name": "Mocha",
+                      "respond_user_id": "1177529"
+                    },
+                    {
+                      "idx": 2,
+                      "uuid": "450e8690-cf73-4706-a5e3-f3b248515cba",
+                      "label": "Person 127",
+                      "companies": [
+                        "Mocha"
+                      ],
+                      "brand_code": null,
+                      "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                      "company_ids": [
+                        "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2"
+                      ],
+                      "company_name": "Mocha",
+                      "respond_user_id": "1177427"
+                    },
+                    {
+                      "idx": 3,
+                      "uuid": "730049fc-2181-4792-9f06-4e9a3c7e6b7e",
+                      "label": "Person 128",
+                      "companies": [
+                        "Mocha"
+                      ],
+                      "brand_code": null,
+                      "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                      "company_ids": [
+                        "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2"
+                      ],
+                      "company_name": "Mocha",
+                      "respond_user_id": "1177418"
+                    },
+                    {
+                      "idx": 4,
+                      "uuid": "0d69dfb7-dcf7-41fe-8457-f45897895182",
+                      "label": "Person 21",
+                      "companies": [
+                        "Sorento"
+                      ],
+                      "brand_code": "sorento",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_ids": [
+                        "00000000-0000-0000-0000-000000000001"
+                      ],
+                      "company_name": "Sorento",
+                      "respond_user_id": "1144607"
+                    },
+                    {
+                      "idx": 5,
+                      "uuid": "12246ae8-59e0-46a1-9cf0-fd80f45c1db9",
+                      "label": "Person 22",
+                      "companies": [
+                        "Sorento"
+                      ],
+                      "brand_code": "sorento",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_ids": [
+                        "00000000-0000-0000-0000-000000000001"
+                      ],
+                      "company_name": "Sorento",
+                      "respond_user_id": "1144556"
+                    },
+                    {
+                      "idx": 6,
+                      "uuid": "70578600-0cc5-4040-ac81-c27bb31e917b",
+                      "label": "Person 26",
+                      "companies": [
+                        "Sorento"
+                      ],
+                      "brand_code": "sorento",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_ids": [
+                        "00000000-0000-0000-0000-000000000001"
+                      ],
+                      "company_name": "Sorento",
+                      "respond_user_id": "1144561"
+                    },
+                    {
+                      "idx": 7,
+                      "uuid": "a41fbc80-db8c-4c4d-bbe1-7006fb438a06",
+                      "label": "Person 28",
+                      "companies": [
+                        "Sorento"
+                      ],
+                      "brand_code": "sorento",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_ids": [
+                        "00000000-0000-0000-0000-000000000001"
+                      ],
+                      "company_name": "Sorento",
+                      "respond_user_id": "1144558"
+                    },
+                    {
+                      "idx": 8,
+                      "uuid": "b69bb614-afed-49a2-ae1f-f0351c325bfd",
+                      "label": "Person 29",
+                      "companies": [
+                        "Sorento"
+                      ],
+                      "brand_code": "sorento",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_ids": [
+                        "00000000-0000-0000-0000-000000000001"
+                      ],
+                      "company_name": "Sorento",
+                      "respond_user_id": "1144554"
+                    },
+                    {
+                      "idx": 9,
+                      "uuid": "c483d959-f8b5-488a-bb9d-168fa0292d75",
+                      "label": "Person 30",
+                      "companies": [
+                        "Sorento"
+                      ],
+                      "brand_code": "sorento",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_ids": [
+                        "00000000-0000-0000-0000-000000000001"
+                      ],
+                      "company_name": "Sorento",
+                      "respond_user_id": "1144604"
+                    }
+                  ],
+                  "picker_families": {
+                    "CHIN CHUN HARDWARE": [
+                      "060f4eaf-88ca-486a-a203-b0b61eeb9cd8",
+                      "a6a2f62a-eeef-48b0-a032-aa926de57199",
+                      "b7289132-29f0-47af-8da5-7726705a3cd4",
+                      "e8ef061b-3937-4b23-8c06-c8d8ddc784c5",
+                      "8690d69e-a4f6-4889-9c4f-f15a3e820538",
+                      "78dab676-49c4-476f-a406-5644cf81f014",
+                      "3ebe7f85-3798-42b3-8c89-e11ac5056c1e",
+                      "5098abb5-f272-46d5-b294-d960edaed139",
+                      "93523e28-2de4-4c03-9853-5a81f0e3996c",
+                      "40e82632-0086-4b51-913b-3c7144373134",
+                      "40e82632-0086-4b51-913b-3c7144373134",
+                      "78dab676-49c4-476f-a406-5644cf81f014"
+                    ],
+                    "CHIN CHUN HARDWARE AND TIMBER TRADING": [
+                      "fa32b334-fc47-4bec-96db-f0f59a4bcb0f",
+                      "70cf8cc0-88c2-4a7a-bc5b-3f7ee3804e52",
+                      "b72c62bc-6dc2-4ecf-98c2-f23d5ab8c4f1"
+                    ]
+                  },
+                  "routing_company": null,
+                  "date_filter_start": "2026-09-01",
+                  "routing_companies": [
+                    {
+                      "codes": [
+                        "300-C043"
+                      ],
+                      "labels": [
+                        "CHIN CHUN HARDWARE SDN BHD - [A/C I]",
+                        "CHIN CHUN HOMEMART SDN BHD - [A/C I]"
+                      ],
+                      "brand_code": null,
+                      "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                      "company_name": "Mocha"
+                    },
+                    {
+                      "codes": [
+                        "300-C043",
+                        "SRTWC286-SH-200",
+                        "SRTWC286-SH-P",
+                        "SRTWC286-SH-PP",
+                        "SRTWC286-SH",
+                        "SRTWC286-SH-UF",
+                        "SRTWC286-SH-NEW-150",
+                        "SRTWC286-SH-150",
+                        "SRTWC286-SH-NEW-P",
+                        "SRTWC286-SH-NEW-200",
+                        "SRTWC286-SH-NEW"
+                      ],
+                      "labels": [
+                        "CHIN CHUN HARDWARE SDN BHD [A/C I]",
+                        "CHIN CHUN HARDWARE SDN BHD",
+                        "CHIN CHUN HOMEMART SDN BHD",
+                        "SRTWC286-SH-200",
+                        "SRTWC286-SH-P",
+                        "SRTWC286-SH-PP",
+                        "SRTWC286-SH",
+                        "SRTWC286-SH-UF",
+                        "SRTWC286-SH-NEW-150",
+                        "SRTWC286-SH-150",
+                        "SRTWC286-SH-NEW-P",
+                        "SRTWC286-SH-NEW-200",
+                        "SRTWC286-SH-NEW"
+                      ],
+                      "brand_code": "sorento",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "selection_context": "member_offer",
+                  "routing_roster_plan": [
+                    {
+                      "plan_idx": 0,
+                      "brand_code": null,
+                      "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                      "company_name": "Mocha"
+                    },
+                    {
+                      "plan_idx": 1,
+                      "brand_code": "sorento",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "requested_attributes": [
+                    "delivery"
+                  ],
+                  "routing_brand_source": "resolved",
+                  "picker_families_carried": true
+                },
+                "user_response": "Customer: CHIN CHUN HARDWARE SDN BHD\nProduct: srtwc286\nDates: 01/09/2026 to 30/09/2026\n\nHere's what you want:\n\u2022 customer: CHIN CHUN HARDWARE SDN BHD - [A/C I] (Mocha) (+4 more)\n\u2022 product: SRTWC286-SH-200 (Sorento) (+9 more)\n\nBut no order from 01/09/2026 to 30/09/2026 matched these - checked in Mocha and Sorento. Reply 'all dates' to search without the date filter, or would you like me to escalate to customer service team?\n\nPlease choose who to route to (reply with the number):\n*Mocha:*\n1. Person 126\n2. Person 127\n3. Person 128\n*Sorento:*\n4. Person 21\n5. Person 22\n6. Person 26\n7. Person 28\n8. Person 29\n9. Person 30\n\nIf you have no preference, reply with the company name (*Mocha* / *Sorento*) and we'll assign accordingly."
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "casual",
+                "intent_hint": null,
+                "domain_hint": null,
+                "scope_intent": null,
+                "is_affirmative": true,
+                "user_goal": "trying to agree",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "CHIN CHUN HARDWARE SDN BHD",
+                    "hint": "customer",
+                    "uuid": "060f4eaf-88ca-486a-a203-b0b61eeb9cd8",
+                    "ordinal": 1,
+                    "canonical_code": "300-C043",
+                    "current_message": false
+                  },
+                  {
+                    "raw": "srtwc286",
+                    "hint": "product",
+                    "confident": true,
+                    "canonical_code": null,
+                    "current_message": false
+                  }
+                ],
+                "entity_op": "reuse",
+                "scope_exclusive": false,
+                "requested_attributes": [
+                  "delivery"
+                ],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "customer_service",
+                  "suggested_agent": "order_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": true
+                },
+                "domain_signal_source": "intent_none",
+                "entity_op_applied": "reuse",
+                "query_brands": [],
+                "member_pick_context": true,
+                "date_filter_gated": null,
+                "_pending_pick": true
+              },
+              "_parser_raw": {
+                "message_type": "casual",
+                "intent_hint": null,
+                "domain_hint": null,
+                "scope_intent": null,
+                "is_affirmative": true,
+                "user_goal": "trying to agree",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [],
+                "entity_op": "reuse",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": null,
+                  "suggested_agent": null
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "Order Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null
+          },
+          "item": {
+            "allowed": true,
+            "decision": "allow",
+            "agent_name": "Order Enquiries",
+            "attributes": null,
+            "all_attributes_allowed": null,
+            "branch_kind": "out_of_scope"
+          },
+          "is_test": true,
+          "test_run_id": "rs51-t4-clarify"
+        }
+      }
+    ],
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": "900000009",
+              "chat_id": "rs51-chat-fixed-20260830",
+              "firstName": "Person 12",
+              "lastName": "",
+              "phone": "+60100000046",
+              "countryCode": "MY",
+              "status": "open",
+              "custom_fields": [
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": "true"
+                }
+              ]
+            },
+            "text": {
+              "event_type": "message.received",
+              "contact": {
+                "id": "900000009",
+                "chat_id": "rs51-chat-fixed-20260830",
+                "firstName": "Person 12",
+                "lastName": "",
+                "phone": "+60100000046",
+                "countryCode": "MY",
+                "status": "open",
+                "custom_fields": [
+                  {
+                    "name": "is_human_intervened",
+                    "value": "false"
+                  },
+                  {
+                    "name": "is_allowed_stock",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_allowed_voice",
+                    "value": "true"
+                  }
+                ]
+              },
+              "message": {
+                "messageId": 1788092467626,
+                "contactId": "900000009",
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788092467626,
+                "message": {
+                  "type": "text",
+                  "text": "yes"
+                }
+              }
+            },
+            "session": {
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "customer_service",
+                    "suggested_agent": "order_enquiries"
+                  },
+                  "entities": [
+                    {
+                      "raw": "CHIN CHUN HARDWARE SDN BHD",
+                      "hint": "customer",
+                      "uuid": "060f4eaf-88ca-486a-a203-b0b61eeb9cd8",
+                      "ordinal": 1,
+                      "canonical_code": "300-C043",
+                      "current_message": false
+                    },
+                    {
+                      "raw": "srtwc286",
+                      "hint": "product",
+                      "confident": true,
+                      "canonical_code": null,
+                      "current_message": false
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Customer: CHIN CHUN HARDWARE SDN BHD\nProduct: srtwc286\nDates: 01/09/2026 to 30/09/2026\n\nHere's what you want:\n\u2022 customer: CHIN CHUN HARDWARE SDN BHD - [A/C I] (Mocha) (+4 more)\n\u2022 product: SRTWC286-SH-200 (Sorento) (+9 more)\n\nBut no order from 01/09/2026 to 30/09/2026 matched these - checked in Mocha and Sorento. Reply 'all dates' to search without the date filter, or would you like me to escalate to customer service team?\n\nPlease choose who to route to (reply with the number):\n*Mocha:*\n1. Person 126\n2. Person 127\n3. Person 128\n*Sorento:*\n4. Person 21\n5. Person 22\n6. Person 26\n7. Person 28\n8. Person 29\n9. Person 30\n\nIf you have no preference, reply with the company name (*Mocha* / *Sorento*) and we'll assign accordingly.",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to narrow the previous results to September only",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "order",
+                  "intent_hint": "check_order",
+                  "message_type": "business_query",
+                  "query_brands": [],
+                  "access_levels": [],
+                  "routing_brand": "sorento",
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": "2026-09-30",
+                  "last_result_set": [
+                    {
+                      "idx": 1,
+                      "uuid": "3a66bad8-1bee-4834-b486-4d9332887409",
+                      "label": "Person 126",
+                      "companies": [
+                        "Mocha"
+                      ],
+                      "brand_code": null,
+                      "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                      "company_ids": [
+                        "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2"
+                      ],
+                      "company_name": "Mocha",
+                      "respond_user_id": "1177529"
+                    },
+                    {
+                      "idx": 2,
+                      "uuid": "450e8690-cf73-4706-a5e3-f3b248515cba",
+                      "label": "Person 127",
+                      "companies": [
+                        "Mocha"
+                      ],
+                      "brand_code": null,
+                      "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                      "company_ids": [
+                        "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2"
+                      ],
+                      "company_name": "Mocha",
+                      "respond_user_id": "1177427"
+                    },
+                    {
+                      "idx": 3,
+                      "uuid": "730049fc-2181-4792-9f06-4e9a3c7e6b7e",
+                      "label": "Person 128",
+                      "companies": [
+                        "Mocha"
+                      ],
+                      "brand_code": null,
+                      "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                      "company_ids": [
+                        "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2"
+                      ],
+                      "company_name": "Mocha",
+                      "respond_user_id": "1177418"
+                    },
+                    {
+                      "idx": 4,
+                      "uuid": "0d69dfb7-dcf7-41fe-8457-f45897895182",
+                      "label": "Person 21",
+                      "companies": [
+                        "Sorento"
+                      ],
+                      "brand_code": "sorento",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_ids": [
+                        "00000000-0000-0000-0000-000000000001"
+                      ],
+                      "company_name": "Sorento",
+                      "respond_user_id": "1144607"
+                    },
+                    {
+                      "idx": 5,
+                      "uuid": "12246ae8-59e0-46a1-9cf0-fd80f45c1db9",
+                      "label": "Person 22",
+                      "companies": [
+                        "Sorento"
+                      ],
+                      "brand_code": "sorento",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_ids": [
+                        "00000000-0000-0000-0000-000000000001"
+                      ],
+                      "company_name": "Sorento",
+                      "respond_user_id": "1144556"
+                    },
+                    {
+                      "idx": 6,
+                      "uuid": "70578600-0cc5-4040-ac81-c27bb31e917b",
+                      "label": "Person 26",
+                      "companies": [
+                        "Sorento"
+                      ],
+                      "brand_code": "sorento",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_ids": [
+                        "00000000-0000-0000-0000-000000000001"
+                      ],
+                      "company_name": "Sorento",
+                      "respond_user_id": "1144561"
+                    },
+                    {
+                      "idx": 7,
+                      "uuid": "a41fbc80-db8c-4c4d-bbe1-7006fb438a06",
+                      "label": "Person 28",
+                      "companies": [
+                        "Sorento"
+                      ],
+                      "brand_code": "sorento",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_ids": [
+                        "00000000-0000-0000-0000-000000000001"
+                      ],
+                      "company_name": "Sorento",
+                      "respond_user_id": "1144558"
+                    },
+                    {
+                      "idx": 8,
+                      "uuid": "b69bb614-afed-49a2-ae1f-f0351c325bfd",
+                      "label": "Person 29",
+                      "companies": [
+                        "Sorento"
+                      ],
+                      "brand_code": "sorento",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_ids": [
+                        "00000000-0000-0000-0000-000000000001"
+                      ],
+                      "company_name": "Sorento",
+                      "respond_user_id": "1144554"
+                    },
+                    {
+                      "idx": 9,
+                      "uuid": "c483d959-f8b5-488a-bb9d-168fa0292d75",
+                      "label": "Person 30",
+                      "companies": [
+                        "Sorento"
+                      ],
+                      "brand_code": "sorento",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_ids": [
+                        "00000000-0000-0000-0000-000000000001"
+                      ],
+                      "company_name": "Sorento",
+                      "respond_user_id": "1144604"
+                    }
+                  ],
+                  "picker_families": {
+                    "CHIN CHUN HARDWARE": [
+                      "060f4eaf-88ca-486a-a203-b0b61eeb9cd8",
+                      "a6a2f62a-eeef-48b0-a032-aa926de57199",
+                      "b7289132-29f0-47af-8da5-7726705a3cd4",
+                      "e8ef061b-3937-4b23-8c06-c8d8ddc784c5",
+                      "8690d69e-a4f6-4889-9c4f-f15a3e820538",
+                      "78dab676-49c4-476f-a406-5644cf81f014",
+                      "3ebe7f85-3798-42b3-8c89-e11ac5056c1e",
+                      "5098abb5-f272-46d5-b294-d960edaed139",
+                      "93523e28-2de4-4c03-9853-5a81f0e3996c",
+                      "40e82632-0086-4b51-913b-3c7144373134",
+                      "40e82632-0086-4b51-913b-3c7144373134",
+                      "78dab676-49c4-476f-a406-5644cf81f014"
+                    ],
+                    "CHIN CHUN HARDWARE AND TIMBER TRADING": [
+                      "fa32b334-fc47-4bec-96db-f0f59a4bcb0f",
+                      "70cf8cc0-88c2-4a7a-bc5b-3f7ee3804e52",
+                      "b72c62bc-6dc2-4ecf-98c2-f23d5ab8c4f1"
+                    ]
+                  },
+                  "routing_company": null,
+                  "date_filter_start": "2026-09-01",
+                  "routing_companies": [
+                    {
+                      "codes": [
+                        "300-C043"
+                      ],
+                      "labels": [
+                        "CHIN CHUN HARDWARE SDN BHD - [A/C I]",
+                        "CHIN CHUN HOMEMART SDN BHD - [A/C I]"
+                      ],
+                      "brand_code": null,
+                      "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                      "company_name": "Mocha"
+                    },
+                    {
+                      "codes": [
+                        "300-C043",
+                        "SRTWC286-SH-200",
+                        "SRTWC286-SH-P",
+                        "SRTWC286-SH-PP",
+                        "SRTWC286-SH",
+                        "SRTWC286-SH-UF",
+                        "SRTWC286-SH-NEW-150",
+                        "SRTWC286-SH-150",
+                        "SRTWC286-SH-NEW-P",
+                        "SRTWC286-SH-NEW-200",
+                        "SRTWC286-SH-NEW"
+                      ],
+                      "labels": [
+                        "CHIN CHUN HARDWARE SDN BHD [A/C I]",
+                        "CHIN CHUN HARDWARE SDN BHD",
+                        "CHIN CHUN HOMEMART SDN BHD",
+                        "SRTWC286-SH-200",
+                        "SRTWC286-SH-P",
+                        "SRTWC286-SH-PP",
+                        "SRTWC286-SH",
+                        "SRTWC286-SH-UF",
+                        "SRTWC286-SH-NEW-150",
+                        "SRTWC286-SH-150",
+                        "SRTWC286-SH-NEW-P",
+                        "SRTWC286-SH-NEW-200",
+                        "SRTWC286-SH-NEW"
+                      ],
+                      "brand_code": "sorento",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "selection_context": "member_offer",
+                  "routing_roster_plan": [
+                    {
+                      "plan_idx": 0,
+                      "brand_code": null,
+                      "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                      "company_name": "Mocha"
+                    },
+                    {
+                      "plan_idx": 1,
+                      "brand_code": "sorento",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "requested_attributes": [
+                    "delivery"
+                  ],
+                  "routing_brand_source": "resolved",
+                  "picker_families_carried": true
+                },
+                "user_response": "Customer: CHIN CHUN HARDWARE SDN BHD\nProduct: srtwc286\nDates: 01/09/2026 to 30/09/2026\n\nHere's what you want:\n\u2022 customer: CHIN CHUN HARDWARE SDN BHD - [A/C I] (Mocha) (+4 more)\n\u2022 product: SRTWC286-SH-200 (Sorento) (+9 more)\n\nBut no order from 01/09/2026 to 30/09/2026 matched these - checked in Mocha and Sorento. Reply 'all dates' to search without the date filter, or would you like me to escalate to customer service team?\n\nPlease choose who to route to (reply with the number):\n*Mocha:*\n1. Person 126\n2. Person 127\n3. Person 128\n*Sorento:*\n4. Person 21\n5. Person 22\n6. Person 26\n7. Person 28\n8. Person 29\n9. Person 30\n\nIf you have no preference, reply with the company name (*Mocha* / *Sorento*) and we'll assign accordingly."
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "casual",
+                "intent_hint": null,
+                "domain_hint": null,
+                "scope_intent": null,
+                "is_affirmative": true,
+                "user_goal": "trying to agree",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "CHIN CHUN HARDWARE SDN BHD",
+                    "hint": "customer",
+                    "uuid": "060f4eaf-88ca-486a-a203-b0b61eeb9cd8",
+                    "ordinal": 1,
+                    "canonical_code": "300-C043",
+                    "current_message": false
+                  },
+                  {
+                    "raw": "srtwc286",
+                    "hint": "product",
+                    "confident": true,
+                    "canonical_code": null,
+                    "current_message": false
+                  }
+                ],
+                "entity_op": "reuse",
+                "scope_exclusive": false,
+                "requested_attributes": [
+                  "delivery"
+                ],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "customer_service",
+                  "suggested_agent": "order_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": true
+                },
+                "domain_signal_source": "intent_none",
+                "entity_op_applied": "reuse",
+                "query_brands": [],
+                "member_pick_context": true,
+                "date_filter_gated": null,
+                "_pending_pick": true
+              },
+              "_parser_raw": {
+                "message_type": "casual",
+                "intent_hint": null,
+                "domain_hint": null,
+                "scope_intent": null,
+                "is_affirmative": true,
+                "user_goal": "trying to agree",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [],
+                "entity_op": "reuse",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": null,
+                  "suggested_agent": null
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "Order Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null
+          }
+        }
+      }
+    ],
+    "escalation-input": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "Order Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null,
+          "branch_kind": "out_of_scope"
+        }
+      }
+    ],
+    "escalation-context": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "Order Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null,
+          "branch_kind": "out_of_scope",
+          "brand_code": null,
+          "company_id": null,
+          "company_name": null,
+          "routing_source": "multi_company_unpicked",
+          "team": "customer_service"
+        }
+      }
+    ],
+    "clarify-company-gate": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "Order Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null,
+          "branch_kind": "out_of_scope",
+          "brand_code": null,
+          "company_id": null,
+          "company_name": null,
+          "routing_source": "multi_company_unpicked",
+          "team": "customer_service"
+        }
+      }
+    ],
+    "clarify-company-reply": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "Order Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null,
+          "branch_kind": "out_of_scope",
+          "brand_code": null,
+          "company_id": null,
+          "company_name": null,
+          "routing_source": "multi_company_unpicked",
+          "team": "customer_service",
+          "clarify_company": true,
+          "clarify_text": "Both *Mocha* and *Sorento* teams are listed - reply a number, a name, or the company (*Mocha* / *Sorento*) and I'll assign automatically."
+        }
+      }
+    ],
+    "escalation-result": [
+      {
+        "json": {
+          "arm": "clarify",
+          "clarify": {
+            "allowed": true,
+            "decision": "allow",
+            "agent_name": "Order Enquiries",
+            "attributes": null,
+            "all_attributes_allowed": null,
+            "branch_kind": "out_of_scope",
+            "brand_code": null,
+            "company_id": null,
+            "company_name": null,
+            "routing_source": "multi_company_unpicked",
+            "team": "customer_service",
+            "clarify_company": true,
+            "clarify_text": "Both *Mocha* and *Sorento* teams are listed - reply a number, a name, or the company (*Mocha* / *Sorento*) and I'll assign automatically."
+          }
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "allowed": true,
+        "decision": "allow",
+        "agent_name": "Order Enquiries",
+        "attributes": null,
+        "all_attributes_allowed": null,
+        "branch_kind": "out_of_scope"
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "allowed": true,
+        "decision": "allow",
+        "agent_name": "Order Enquiries",
+        "attributes": null,
+        "all_attributes_allowed": null,
+        "branch_kind": "out_of_scope",
+        "brand_code": null,
+        "company_id": null,
+        "company_name": null,
+        "routing_source": "multi_company_unpicked",
+        "team": "customer_service"
+      }
+    }
+  ],
+  "runIndex": 0,
+  "execution": {
+    "id": "14518702"
+  },
+  "ran": [
+    "When Executed by Another Workflow",
+    "build-ctx",
+    "escalation-input",
+    "escalation-context",
+    "clarify-company-gate",
+    "clarify-company-reply",
+    "escalation-result"
+  ]
+}
