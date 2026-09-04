@@ -190,6 +190,10 @@ const BODY_ONLY_SEGMENTS: Record<string, string> = {
   'marketing-management/campaigns': 'headerless - no PageHeader anywhere, own page or parent layout',
   'store-admin/dashboard': 'headerless - no PageHeader anywhere, own page or parent layout',
   'store-admin/inventory/all-products': 'headerless - no PageHeader anywhere, own page or parent layout',
+  'system-management/mcp-tools':
+    "headerless - no PageHeader anywhere; McpToolsList titles itself with a CardTitle, not a route header",
+  'user-management/settings/notifications':
+    'parent layout.tsx renders PageHeader ("Settings") for every settings page',
 };
 
 /**
@@ -236,7 +240,14 @@ describe('every DataGrid list segment has a loading.tsx (M5-01)', () => {
     // (deleted 5 detail routes with no DataGrid of their own, added 12 real list
     // routes the run-2 walk missed); +1 manual bodyOnly override
     // (`user-management/contacts/[id]`) that the predicate itself does not find.
-    expect(requiredSegmentNames.length).toBe(130);
+    // M5 run 3: the DataGrid migration batch (attachments, complaints, procurement,
+    // orders line tables) turned 10 more segments into list segments the walk now
+    // finds - the procurement purchase-request/sponsorship-form forms, three
+    // system-management pages, tickets, and settings/notifications. Two of the
+    // ten (`system-management/mcp-tools`, `user-management/settings/notifications`)
+    // are also added to BODY_ONLY_SEGMENTS below, which does not change this count
+    // - both were already found by the walk itself. Total: 139.
+    expect(requiredSegmentNames.length).toBe(139);
 
     for (const name of requiredSegmentNames) {
       const dir = path.join(PROTECTED_ROOT, name);

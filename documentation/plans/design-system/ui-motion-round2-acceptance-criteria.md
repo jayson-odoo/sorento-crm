@@ -257,6 +257,26 @@ Baseline measured on `origin/main` e1adad4d2, 2 Sep 2026.
   file's `ListPageSkeleton`. Ruling: keep `ListPageSkeleton` here - the route has a real list
   view behind the toggle and the skeleton is content-shaped enough for either - rather than
   building a per-view skeleton for one route; noted, no code change.
+  **Fixed (M5 run 3):** the DataGrid migration batch that landed on this branch (attachments,
+  complaints, procurement, orders line tables on `DataGrid`) turned 10 more segments into list
+  segments the walk now finds - `procurement-management/purchase-requests/new`,
+  `procurement-management/purchase-requests/[id]/edit`,
+  `procurement-management/sponsorship-forms/new`,
+  `procurement-management/sponsorship-forms/[id]/edit` (all four get `SectionSkeleton rows={6}`:
+  `PurchaseRequestForm` puts a line-items DataGrid inside a multi-field form, not a list page, and
+  each page draws its own `PageHeader` directly, so neither `ListPageSkeleton` nor its `bodyOnly`
+  variant fits), `system-management/app-store/bundles` and `system-management/email-event-configs`
+  (default `ListPageSkeleton` - real lists with their own `PageHeader`), `system-management/health`
+  (`SectionSkeleton rows={6}` - `HealthDashboard` is a stack of status cards, one of which holds a
+  DataGrid; the grid is a section, not the whole page), `system-management/mcp-tools`
+  (`ListPageSkeleton bodyOnly` - headerless, `McpToolsList` titles itself with a `CardTitle`, not a
+  route header), `ticket-management/tickets` (default `ListPageSkeleton`), and
+  `user-management/settings/notifications` (`ListPageSkeleton bodyOnly` - `user-management/
+  settings/layout.tsx` already renders the `PageHeader` for every settings page, same reason
+  `settings/portal-revisions` is `bodyOnly`). `BODY_ONLY_SEGMENTS` gained the latter two entries;
+  the required-segment total moves from 130 to **139** (two of the ten were already counted by the
+  walk before this run - being added to `BODY_ONLY_SEGMENTS` only changes their shape, not the
+  count).
 - **M5-02** `[vitest]` Zero non-demo files render the string `Loading...` or `Loading…`
   (baseline 50).
   **Shipped (M5 run 2):** `app/(protected)/loading-strings.inventory.test.ts`; proved red at 50,
