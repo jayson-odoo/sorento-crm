@@ -3,8 +3,12 @@
 Two sources, always both:
 
 * the VENDORED subset under ``tests/fixtures/chatbot/nodes/<node>/*.json`` - committed,
-  under 3 MB, one fixture per node per branch kind plus the regression guards and the
-  named canaries. It runs everywhere, CI included, and it is what makes a red replay a
+  about 3.5 MB, one fixture per node per branch kind plus the regression guards and the
+  named canaries. It grew past the original 3 MB note at S6a and the reason is worth
+  stating: a resolve+gate capture carries the WHOLE resolver response in its `ctx`, and
+  the `offer` exit carries it four times over (the item, `gate`, `ctx_resolved` and
+  `ctx_resolved.ctx.gate`), so the single smallest capture of that arm is 430 KB. The
+  alternative was to stop grading the arm in CI, which is worse. It runs everywhere, CI included, and it is what makes a red replay a
   merge blocker rather than a local curiosity.
 * the FULL corpus in the sibling n8n checkout, pointed at by ``CHATBOT_FIXTURES_DIR``
   (default ``../../sorento_crm_n8n/n8n-workflows-init/tests/fixtures`` relative to the
@@ -44,7 +48,76 @@ NODE_SLUGS: dict[str, tuple[str, ...]] = {
     "build-ctx": ("clone-spine-RS", "spine-rs-1a", "live-spine-sorento-consume-main"),
     "output_exchange": ("sub-semantic-parser",),
     "suggest-follow-up": ("sub-semantic-parser",),
+    # S6a - the business lane's resolve + gate. Two slugs that DO carry directories with
+    # these names are deliberately absent, because the node they captured is not this one:
+    # `sub-answer-rs/disallowed-entity-gate` and `sub-fetch-results-rs/{tier-gate,
+    # build-ctx-resolved}` are RS-8 name-preserving STAND-INS (`return [{json: $json.gate}]`
+    # and friends), whose input is their sub's trigger and whose expected is a re-emission.
+    # Measured: the stand-in's expected has the gate's keys and its input has none of them.
+    "disallowed-entity-gate": (
+        "sub-resolve-and-gate-rs",
+        "live-spine-sorento-consume-main",
+        "clone-spine-RS",
+    ),
+    "tier-gate": ("sub-resolve-and-gate-rs", "live-spine-sorento-consume-main", "clone-spine-RS"),
+    "build-ctx-resolved": ("sub-resolve-and-gate-rs", "clone-spine-RS"),
+    "annotate-incoming-picker": ("sub-resolve-and-gate-rs", "live-spine-sorento-consume-main"),
+    "annotate-customer-picker": ("live-spine-sorento-consume-main",),
+    "resolve-exit-continue": ("sub-resolve-and-gate-rs",),
+    "resolve-exit-offer": ("sub-resolve-and-gate-rs",),
+    "resolve-exit-not-found": ("sub-resolve-and-gate-rs",),
+    "item": ("sub-resolve-and-gate-rs",),
+    # Synthetic: the WHOLE sub replayed from a captured trigger, graded against the exit
+    # arm's own capture. It reuses the `resolve-exit-*` directories rather than having one
+    # of its own, so no fixture is invented - see `sub_run_fixtures()`.
+    "sub-resolve-and-gate": (),
 }
+
+# Output keys the SHIPPING node body emits that the body every capture was taken against
+# could not. NOT divergences - the port agrees with the export, and the fixture grades an
+# older body - and not staleness either, because everything else about the capture still
+# grades: the whole rest of the item is compared as normal.
+#
+# Evidence, direct and reproducible (n8n repo `git show <rev>:...`):
+#
+# * every `sub-resolve-and-gate*` capture carries `workflow_version` 70fa92bf, and the
+#   export ships 43a37c05; every `live-spine-sorento-consume-main` capture ran the spine's
+#   own 934-line copy of the gate;
+# * `f1cee5b` (2026-08-31) is that 934-line body, `a4da785` + `f4c8f02` (2026-09-01) are
+#   the two commits that added these keys - `out.specific_options` (RS-9 Fix 5) and
+#   `tier_pick_domain` (RS-9 Fix 8);
+# * diffing the two bodies gives FIVE changes, and only these two are unconditional. The
+#   other three (a `company` key inside `specific_options`, the F16 company-suffixed label,
+#   and the `_dfSpecAnswered` refinement of the dropped-filter gate) are reachable only
+#   through inputs the older captures do not contain, and the replay run proves it: 212 of
+#   212 gate captures and 7 of 7 tier-gate captures differ from the port by these keys and
+#   NOTHING else.
+#
+# Because the keys are ungradeable by any capture, they carry unit coverage of their own in
+# `tests/chatbot/test_resolve_gate_unit.py` rather than being trusted.
+CAPTURE_BODY_ADDITIONS: dict[str, tuple[str, ...]] = {
+    "disallowed-entity-gate": ("specific_options",),
+    "tier-gate": ("tier_pick_domain",),
+    # The whole-sub replay carries both, nested in the exit item's contract fields.
+    "sub-resolve-and-gate": ("specific_options", "tier_pick_domain"),
+}
+
+
+def strip_body_additions(value, node: str):
+    """Drop the keys the capture's body version could not emit, at every depth.
+
+    Recursive because the exit arms carry the gate's and tier-gate's items nested under
+    `gate` / `ctx_resolved` / `tier_gate`, so a top-level-only strip would leave the same
+    delta three levels down and grade nothing.
+    """
+    keys = CAPTURE_BODY_ADDITIONS.get(node, ())
+    if not keys:
+        return value
+    if isinstance(value, dict):
+        return {k: strip_body_additions(v, node) for k, v in value.items() if k not in keys}
+    if isinstance(value, list):
+        return [strip_body_additions(v, node) for v in value]
+    return value
 
 
 # Captures taken against a node body that is NOT the one the export ships. These are not
@@ -204,4 +277,44 @@ def declared_branches(node: str) -> tuple[str, ...]:
         from app.services.chatbot.contracts import BRANCH_KINDS
 
         return BRANCH_KINDS
+    if node in ("sub-resolve-and-gate", "resolve-exit-access-ask"):
+        # The sub's exits ARE a closed vocabulary (`resolve-arm`'s four Switch arms), and
+        # one of them - `access_ask` - has never been captured in any slug. Seeded so that
+        # reads as a zero rather than as an absent row.
+        from app.services.chatbot.contracts import EXIT_KINDS
+
+        return EXIT_KINDS
     return ()
+
+
+# The `resolve-exit-*` directories every whole-sub replay is built from. One capture per
+# exit arm per turn, and each one carries the trigger, the resolver response and any probe
+# response in its own `ctx`, so the sub can be run end to end with nothing stubbed by hand.
+SUB_RUN_SOURCE_NODES = (
+    "resolve-exit-continue",
+    "resolve-exit-offer",
+    "resolve-exit-not-found",
+    "resolve-exit-access-ask",
+)
+
+
+def sub_run_fixtures(*, vendored_only: bool) -> list[Fixture]:
+    """Every `resolve-exit-*` capture, relabelled as a whole-sub replay.
+
+    `node` is rewritten to `sub-resolve-and-gate` so the divergence register and the
+    body-addition strip key on the thing being graded (the sub) rather than on the
+    directory the JSON happens to live in.
+    """
+    out: list[Fixture] = []
+    for node in SUB_RUN_SOURCE_NODES:
+        source = vendored(node) if vendored_only else full_corpus(node)
+        for fixture in source:
+            out.append(
+                Fixture(
+                    node="sub-resolve-and-gate",
+                    name=f"{node}/{fixture.name}",
+                    path=fixture.path,
+                    data=fixture.data,
+                )
+            )
+    return out
