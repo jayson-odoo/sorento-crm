@@ -2,6 +2,8 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
+import type { ColumnDef } from '@tanstack/react-table';
+import { useReactTable, getCoreRowModel } from '@tanstack/react-table';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
 import { Pencil, Plus, Trash2 } from 'lucide-react';
@@ -19,14 +21,9 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { DataGrid } from '@/components/ui/data-grid';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridTable } from '@/components/ui/data-grid-table';
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -188,6 +185,94 @@ export default function ModuleBundlesAdmin() {
 
   const busy = createMut.isPending || updateMut.isPending || deleteMut.isPending;
 
+  const bundleColumns = useMemo<ColumnDef<ModuleBundleDTO>[]>(
+    () => [
+      {
+        accessorKey: 'sort_order',
+        header: ({ column }) => <DataGridColumnHeader title="Order" column={column} />,
+        cell: ({ row }) => (
+          <span className="text-muted-foreground font-mono text-xs">
+            {row.original.sort_order ?? '-'}
+          </span>
+        ),
+        size: 90,
+        meta: { headerTitle: 'Order' },
+      },
+      {
+        accessorKey: 'bundle_key',
+        header: ({ column }) => <DataGridColumnHeader title="Key" column={column} />,
+        cell: ({ row }) => <span className="font-mono text-xs">{row.original.bundle_key}</span>,
+        size: 200,
+        meta: { headerTitle: 'Key' },
+      },
+      {
+        accessorKey: 'display_name',
+        header: ({ column }) => <DataGridColumnHeader title="Display name" column={column} />,
+        cell: ({ row }) => (
+          <span className="truncate" title={row.original.display_name}>
+            {row.original.display_name}
+          </span>
+        ),
+        size: 240,
+        meta: { headerTitle: 'Display name' },
+      },
+      {
+        id: 'module_count',
+        accessorFn: (row) => row.module_keys.length,
+        header: ({ column }) => <DataGridColumnHeader title="Modules" column={column} />,
+        cell: ({ row }) => row.original.module_keys.length,
+        size: 100,
+        meta: { headerTitle: 'Modules' },
+      },
+      {
+        id: 'actions',
+        header: () => <span className="sr-only">Actions</span>,
+        cell: ({ row }) => (
+          <div className="flex justify-end gap-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label="Edit"
+              onClick={(e) => {
+                e.stopPropagation();
+                openEdit(row.original);
+              }}
+              disabled={busy}
+            >
+              <Pencil className="size-4" />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label="Delete"
+              onClick={(e) => {
+                e.stopPropagation();
+                setDeleteTarget(row.original);
+              }}
+              disabled={busy}
+            >
+              <Trash2 className="size-4 text-destructive" />
+            </Button>
+          </div>
+        ),
+        size: 120,
+        enableResizing: false,
+        meta: { headerTitle: 'Actions' },
+      },
+    ],
+    [busy],
+  );
+
+  const bundlesTable = useReactTable({
+    columns: bundleColumns,
+    data: bundlesQuery.data ?? [],
+    getRowId: (row) => row.bundle_key,
+    getCoreRowModel: getCoreRowModel(),
+    columnResizeMode: 'onChange',
+  });
+
   if (!canManage) {
     return (
       <Card className="border-amber-200 bg-amber-50/50 dark:bg-amber-950/20">
@@ -225,51 +310,14 @@ export default function ModuleBundlesAdmin() {
           ) : bundlesQuery.error ? (
             <p className="text-sm text-destructive">Failed to load bundles.</p>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-24">Order</TableHead>
-                  <TableHead>Key</TableHead>
-                  <TableHead>Display name</TableHead>
-                  <TableHead className="text-right">Modules</TableHead>
-                  <TableHead className="w-[120px]" />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {(bundlesQuery.data ?? []).map((b) => (
-                  <TableRow key={b.bundle_key}>
-                    <TableCell className="text-muted-foreground font-mono text-xs">
-                      {b.sort_order ?? '-'}
-                    </TableCell>
-                    <TableCell className="font-mono text-xs">{b.bundle_key}</TableCell>
-                    <TableCell>{b.display_name}</TableCell>
-                    <TableCell className="text-right">{b.module_keys.length}</TableCell>
-                    <TableCell className="text-right space-x-1">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        aria-label="Edit"
-                        onClick={() => openEdit(b)}
-                        disabled={busy}
-                      >
-                        <Pencil className="size-4" />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        aria-label="Delete"
-                        onClick={() => setDeleteTarget(b)}
-                        disabled={busy}
-                      >
-                        <Trash2 className="size-4 text-destructive" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <DataGrid
+              table={bundlesTable}
+              recordCount={(bundlesQuery.data ?? []).length}
+              listingKey="system.modules.manage::bundles"
+              tableLayout={{ width: 'fixed', columnsResizable: true }}
+            >
+              <DataGridTable />
+            </DataGrid>
           )}
         </CardContent>
       </Card>

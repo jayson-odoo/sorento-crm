@@ -1,26 +1,24 @@
 'use client';
 
-import { Fragment, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
+import type { ColumnDef, ExpandedState } from '@tanstack/react-table';
+import { useReactTable, getCoreRowModel, getExpandedRowModel } from '@tanstack/react-table';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { DataGrid } from '@/components/ui/data-grid';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridTable } from '@/components/ui/data-grid-table';
 import { useHealthSummary } from '../hooks/useHealth';
 import type {
   AuditActivityHealth,
   FailureSignature,
   EmailOutboxHealth,
   ImportsHealth,
+  IntegrationChannelHealth,
   IntegrationsHealth,
   ScheduledTasksHealth,
 } from '../types/health.types';
@@ -234,6 +232,52 @@ function ScheduledTasksCard({ data }: { data: ScheduledTasksHealth | null }) {
   );
 }
 
+/**
+ * The causes, inline. A count tells you something broke; this tells you what,
+ * without a round-trip to the logs page.
+ *
+ * Rendered via `DataGridTable`'s `meta.expandedContent` (M5-06), one column's worth,
+ * seeded permanently open for every channel that has causes - there is no toggle
+ * here, so nothing ever collapses it once mounted.
+ */
+function IntegrationFailuresList({
+  channel,
+  failures,
+  range,
+}: {
+  channel: string;
+  failures: FailureSignature[];
+  range: { date_from?: string; date_to?: string };
+}) {
+  if (failures.length === 0) return null;
+  return (
+    <ul className="space-y-1 pl-2" data-testid={`health-integration-failures-${channel}`}>
+      {failures.map((f) => (
+        <li key={`${f.status_code ?? 'none'}:${f.signature}`}>
+          <Link
+            href={failureCauseHref(channel, f, range)}
+            data-testid={`health-integration-failure-link-${channel}-${f.status_code ?? 'none'}`}
+            title={`View the ${f.count} log(s) for this cause\n\n${f.sample_message}`}
+            className="flex items-start gap-2 rounded px-1 py-0.5 text-xs text-muted-foreground hover:bg-muted focus-visible:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <Badge variant="destructive" appearance="light" size="sm">
+              {f.count}×
+            </Badge>
+            {f.status_code !== null && (
+              <Badge variant="secondary" appearance="light" size="sm">
+                {f.status_code}
+              </Badge>
+            )}
+            <span className="min-w-0 flex-1 truncate underline-offset-2 hover:underline">
+              {f.sample_message}
+            </span>
+          </Link>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function IntegrationsCard({
   data,
   range,
@@ -242,7 +286,118 @@ function IntegrationsCard({
   /** The window the dashboard is showing, so drill-downs match the counts. */
   range: { date_from?: string; date_to?: string };
 }) {
-  const channels = data?.channels ?? [];
+  const channels = useMemo(() => data?.channels ?? [], [data]);
+
+  // Every channel with causes starts expanded, permanently - there is no
+  // toggle, so nothing ever calls `onExpandedChange` to collapse it.
+  const expanded = useMemo<ExpandedState>(
+    () =>
+      Object.fromEntries(
+        channels
+          .filter((c) => (c.top_failures ?? []).length > 0)
+          .map((c) => [c.channel, true]),
+      ),
+    [channels],
+  );
+
+  const columns = useMemo<ColumnDef<IntegrationChannelHealth>[]>(
+    () => [
+      {
+        accessorKey: 'channel',
+        header: ({ column }) => <DataGridColumnHeader title="Channel" column={column} />,
+        cell: ({ row }) => (
+          <span className="truncate" title={row.original.channel}>
+            {row.original.channel}
+          </span>
+        ),
+        size: 180,
+        meta: {
+          headerTitle: 'Channel',
+          expandedContent: (row: IntegrationChannelHealth) => (
+            <IntegrationFailuresList
+              channel={row.channel}
+              failures={row.top_failures ?? []}
+              range={range}
+            />
+          ),
+        },
+      },
+      {
+        accessorKey: 'success',
+        header: ({ column }) => <DataGridColumnHeader title="Success" column={column} />,
+        cell: ({ row }) => <span className="block text-right">{row.original.success}</span>,
+        size: 100,
+        meta: { headerTitle: 'Success' },
+      },
+      {
+        accessorKey: 'failed',
+        header: ({ column }) => <DataGridColumnHeader title="Failed" column={column} />,
+        cell: ({ row }) => (
+          <div className="text-right">
+            {row.original.failed > 0 ? (
+              <Link
+                href={integrationFailedHref(row.original.channel, range)}
+                data-testid={`health-integration-failed-link-${row.original.channel}`}
+                className="cursor-pointer font-medium text-destructive underline-offset-2 hover:underline focus-visible:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
+                title={`View ${row.original.failed} failed ${row.original.channel} log(s) in the selected window`}
+              >
+                {row.original.failed}
+              </Link>
+            ) : (
+              row.original.failed
+            )}
+          </div>
+        ),
+        size: 100,
+        meta: { headerTitle: 'Failed' },
+      },
+      {
+        accessorKey: 'benign',
+        header: ({ column }) => <DataGridColumnHeader title="Benign" column={column} />,
+        cell: ({ row }) => (
+          <div className="text-right text-muted-foreground">
+            {row.original.benign > 0 ? (
+              <span title="Expected outcome logged as a failure - not an incident">
+                {row.original.benign}
+              </span>
+            ) : (
+              row.original.benign
+            )}
+          </div>
+        ),
+        size: 100,
+        meta: { headerTitle: 'Benign' },
+      },
+      {
+        accessorKey: 'in_flight',
+        header: ({ column }) => <DataGridColumnHeader title="In flight" column={column} />,
+        cell: ({ row }) => (
+          <span className="block text-right text-muted-foreground">{row.original.in_flight}</span>
+        ),
+        size: 100,
+        meta: { headerTitle: 'In flight' },
+      },
+      {
+        accessorKey: 'total',
+        header: ({ column }) => <DataGridColumnHeader title="Total" column={column} />,
+        cell: ({ row }) => <span className="block text-right">{row.original.total}</span>,
+        size: 100,
+        meta: { headerTitle: 'Total' },
+      },
+    ],
+    [range],
+  );
+
+  const table = useReactTable({
+    columns,
+    data: channels,
+    getRowId: (row) => row.channel,
+    state: { expanded },
+    getCoreRowModel: getCoreRowModel(),
+    getExpandedRowModel: getExpandedRowModel(),
+    columnResizeMode: 'onChange',
+  });
+
   return (
     <Card>
       <CardHeader>
@@ -254,94 +409,13 @@ function IntegrationsCard({
         ) : channels.length === 0 ? (
           <SectionEmpty message="No integration activity in the last 24 hours." />
         ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Channel</TableHead>
-                <TableHead className="text-right">Success</TableHead>
-                <TableHead className="text-right">Failed</TableHead>
-                <TableHead className="text-right" title="Logged as a failure but expected - e.g. an idempotency race">
-                  Benign
-                </TableHead>
-                <TableHead className="text-right" title="Still in progress (pending/processing)">
-                  In flight
-                </TableHead>
-                <TableHead className="text-right">Total</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {channels.map((c) => (
-                <Fragment key={c.channel}>
-                  <TableRow className={c.top_failures?.length ? 'border-b-0' : undefined}>
-                    <TableCell className="max-w-40 truncate" title={c.channel}>
-                      {c.channel}
-                    </TableCell>
-                    <TableCell className="text-right">{c.success}</TableCell>
-                    <TableCell className="text-right">
-                      {c.failed > 0 ? (
-                        <Link
-                          href={integrationFailedHref(c.channel, range)}
-                          data-testid={`health-integration-failed-link-${c.channel}`}
-                          className="cursor-pointer font-medium text-destructive underline-offset-2 hover:underline focus-visible:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
-                          title={`View ${c.failed} failed ${c.channel} log(s) in the selected window`}
-                        >
-                          {c.failed}
-                        </Link>
-                      ) : (
-                        c.failed
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right text-muted-foreground">
-                      {c.benign > 0 ? (
-                        <span title="Expected outcome logged as a failure - not an incident">
-                          {c.benign}
-                        </span>
-                      ) : (
-                        c.benign
-                      )}
-                    </TableCell>
-                    <TableCell className="text-right text-muted-foreground">{c.in_flight}</TableCell>
-                    <TableCell className="text-right">{c.total}</TableCell>
-                  </TableRow>
-                  {/* The causes, inline. A count tells you something broke; this
-                      tells you what, without a round-trip to the logs page. */}
-                  {(c.top_failures ?? []).length > 0 && (
-                    <TableRow className="hover:bg-transparent">
-                      <TableCell colSpan={6} className="pt-0">
-                        <ul
-                          className="space-y-1 pl-2"
-                          data-testid={`health-integration-failures-${c.channel}`}
-                        >
-                          {c.top_failures.map((f) => (
-                            <li key={`${f.status_code ?? 'none'}:${f.signature}`}>
-                              <Link
-                                href={failureCauseHref(c.channel, f, range)}
-                                data-testid={`health-integration-failure-link-${c.channel}-${f.status_code ?? 'none'}`}
-                                title={`View the ${f.count} log(s) for this cause\n\n${f.sample_message}`}
-                                className="flex items-start gap-2 rounded px-1 py-0.5 text-xs text-muted-foreground hover:bg-muted focus-visible:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                              >
-                                <Badge variant="destructive" appearance="light" size="sm">
-                                  {f.count}×
-                                </Badge>
-                                {f.status_code !== null && (
-                                  <Badge variant="secondary" appearance="light" size="sm">
-                                    {f.status_code}
-                                  </Badge>
-                                )}
-                                <span className="min-w-0 flex-1 truncate underline-offset-2 hover:underline">
-                                  {f.sample_message}
-                                </span>
-                              </Link>
-                            </li>
-                          ))}
-                        </ul>
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </Fragment>
-              ))}
-            </TableBody>
-          </Table>
+          <DataGrid
+            table={table}
+            recordCount={channels.length}
+            tableLayout={{ width: 'fixed', columnsResizable: true }}
+          >
+            <DataGridTable />
+          </DataGrid>
         )}
       </CardContent>
     </Card>

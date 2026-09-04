@@ -1,19 +1,16 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import type { ColumnDef } from '@tanstack/react-table';
+import { useReactTable, getCoreRowModel } from '@tanstack/react-table';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { DataGrid } from '@/components/ui/data-grid';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridTable } from '@/components/ui/data-grid-table';
 import {
   useEmailEventConfigs,
   useUpdateEmailEventConfig,
@@ -56,6 +53,156 @@ export default function EmailEventConfigsTable() {
     }));
   }
 
+  const columns = useMemo<ColumnDef<EmailEventConfig>[]>(
+    () => [
+      {
+        id: 'event',
+        accessorFn: (row) => row.display_name,
+        header: ({ column }) => <DataGridColumnHeader title="Event" column={column} />,
+        cell: ({ row }) => (
+          <div>
+            <div className="font-medium">{row.original.display_name}</div>
+            <div className="font-mono text-xs text-muted-foreground">{row.original.event_key}</div>
+            {row.original.description && (
+              <div className="text-xs text-muted-foreground mt-1 max-w-[480px]">
+                {row.original.description}
+              </div>
+            )}
+          </div>
+        ),
+        size: 260,
+        meta: { headerTitle: 'Event' },
+      },
+      {
+        id: 'enabled',
+        accessorFn: (row) => row.enabled,
+        header: ({ column }) => <DataGridColumnHeader title="Enabled" column={column} />,
+        cell: ({ row }) => (
+          <Switch
+            checked={row.original.enabled}
+            onCheckedChange={(checked) =>
+              updateMut.mutate({
+                event_key: row.original.event_key,
+                payload: { enabled: checked },
+              })
+            }
+          />
+        ),
+        size: 110,
+        meta: { headerTitle: 'Enabled' },
+      },
+      {
+        id: 'rate_per_window_override',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Rate / window override" column={column} />
+        ),
+        cell: ({ row }) => {
+          const draft = getDraft(row.original);
+          return (
+            <Input
+              placeholder="default"
+              value={draft.rate_per_window_override}
+              onChange={(e) =>
+                setDraftField(row.original.event_key, 'rate_per_window_override', e.target.value)
+              }
+            />
+          );
+        },
+        size: 150,
+        meta: { headerTitle: 'Rate / window override' },
+      },
+      {
+        id: 'window_seconds_override',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Window seconds override" column={column} />
+        ),
+        cell: ({ row }) => {
+          const draft = getDraft(row.original);
+          return (
+            <Input
+              placeholder="default"
+              value={draft.window_seconds_override}
+              onChange={(e) =>
+                setDraftField(row.original.event_key, 'window_seconds_override', e.target.value)
+              }
+            />
+          );
+        },
+        size: 150,
+        meta: { headerTitle: 'Window seconds override' },
+      },
+      {
+        id: 'coalesce_window_seconds_override',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Coalesce seconds override" column={column} />
+        ),
+        cell: ({ row }) => {
+          const draft = getDraft(row.original);
+          return (
+            <Input
+              placeholder="default"
+              value={draft.coalesce_window_seconds_override}
+              onChange={(e) =>
+                setDraftField(
+                  row.original.event_key,
+                  'coalesce_window_seconds_override',
+                  e.target.value,
+                )
+              }
+            />
+          );
+        },
+        size: 170,
+        meta: { headerTitle: 'Coalesce seconds override' },
+      },
+      {
+        id: 'actions',
+        header: () => <span className="sr-only">Actions</span>,
+        cell: ({ row }) => {
+          const draft = getDraft(row.original);
+          return (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={updateMut.isPending}
+              onClick={() => {
+                const r = _toIntOrNull(draft.rate_per_window_override);
+                const w = _toIntOrNull(draft.window_seconds_override);
+                const c = _toIntOrNull(draft.coalesce_window_seconds_override);
+                updateMut.mutate({
+                  event_key: row.original.event_key,
+                  payload: {
+                    rate_per_window_override: r ?? null,
+                    window_seconds_override: w ?? null,
+                    coalesce_window_seconds_override: c ?? null,
+                  },
+                });
+              }}
+            >
+              Save overrides
+            </Button>
+          );
+        },
+        size: 130,
+        enableResizing: false,
+        meta: { headerTitle: 'Actions' },
+      },
+    ],
+    // getDraft/setDraftField close over `drafts` and are redefined every render,
+    // same as the raw table's per-render `.map()` this replaces - listing `drafts`
+    // is what actually drives a recompute.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [drafts, updateMut],
+  );
+
+  const table = useReactTable({
+    columns,
+    data: data ?? [],
+    getRowId: (row) => row.event_key,
+    getCoreRowModel: getCoreRowModel(),
+    columnResizeMode: 'onChange',
+  });
+
   return (
     <Card>
       <CardHeader>
@@ -69,102 +216,14 @@ export default function EmailEventConfigsTable() {
         {isLoading ? (
           <Skeleton className="h-64 w-full" />
         ) : (
-          <div className="overflow-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-[260px]">Event</TableHead>
-                  <TableHead className="w-[110px]">Enabled</TableHead>
-                  <TableHead className="w-[150px]">Rate / window override</TableHead>
-                  <TableHead className="w-[150px]">Window seconds override</TableHead>
-                  <TableHead className="w-[170px]">Coalesce seconds override</TableHead>
-                  <TableHead className="w-[120px]">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {(data ?? []).map((row) => {
-                  const draft = getDraft(row);
-                  return (
-                    <TableRow key={row.event_key}>
-                      <TableCell>
-                        <div className="font-medium">{row.display_name}</div>
-                        <div className="font-mono text-xs text-muted-foreground">{row.event_key}</div>
-                        {row.description && (
-                          <div className="text-xs text-muted-foreground mt-1 max-w-[480px]">
-                            {row.description}
-                          </div>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <Switch
-                          checked={row.enabled}
-                          onCheckedChange={(checked) =>
-                            updateMut.mutate({
-                              event_key: row.event_key,
-                              payload: { enabled: checked },
-                            })
-                          }
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Input
-                          placeholder="default"
-                          value={draft.rate_per_window_override}
-                          onChange={(e) =>
-                            setDraftField(row.event_key, 'rate_per_window_override', e.target.value)
-                          }
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Input
-                          placeholder="default"
-                          value={draft.window_seconds_override}
-                          onChange={(e) =>
-                            setDraftField(row.event_key, 'window_seconds_override', e.target.value)
-                          }
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Input
-                          placeholder="default"
-                          value={draft.coalesce_window_seconds_override}
-                          onChange={(e) =>
-                            setDraftField(
-                              row.event_key,
-                              'coalesce_window_seconds_override',
-                              e.target.value,
-                            )
-                          }
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          disabled={updateMut.isPending}
-                          onClick={() => {
-                            const r = _toIntOrNull(draft.rate_per_window_override);
-                            const w = _toIntOrNull(draft.window_seconds_override);
-                            const c = _toIntOrNull(draft.coalesce_window_seconds_override);
-                            updateMut.mutate({
-                              event_key: row.event_key,
-                              payload: {
-                                rate_per_window_override: r ?? null,
-                                window_seconds_override: w ?? null,
-                                coalesce_window_seconds_override: c ?? null,
-                              },
-                            });
-                          }}
-                        >
-                          Save overrides
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </div>
+          <DataGrid
+            table={table}
+            recordCount={(data ?? []).length}
+            listingKey="system.email_event_configs.view"
+            tableLayout={{ width: 'fixed', columnsResizable: true }}
+          >
+            <DataGridTable />
+          </DataGrid>
         )}
       </CardContent>
     </Card>
