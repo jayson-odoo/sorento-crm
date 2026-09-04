@@ -169,3 +169,108 @@ the workflow JSON from before step 2; that is the actual rollback artefact.
 - **`resolve-entity` carries `retryOnFail` in n8n and the port has no retry.** A transient
   resolver failure that n8n survived is a shadow-lane failure here. Named in the plan's S6a
   section; the shadow window is what says whether it matters.
+
+---
+
+## S6b - `sub-fetch-results`, `sub-get-rag` and `sub-get-results` move into the CRM
+
+**CRM side (shipped, inert by default).** The fetch step is
+`app/services/chatbot/lanes/business/fetch.py` plus `run_fetch`, behind the SAME
+`CHATBOT_BUSINESS_LANE_ENABLED` flag S6a introduced. Nothing new to turn on: a turn that
+does not run S6a's resolve+gate never reaches the fetch either.
+
+Three subs are replaced at once because they are one straight line in n8n:
+`sub-fetch-results` calls `sub-get-rag` for the tool and `sub-get-results` for the answer,
+and neither is called from anywhere else on the turn path.
+
+### What the CRM does instead
+
+| n8n | CRM |
+| --- | --- |
+| `Execute 'sub-get-rag'` -> `HTTP Request` (embeddings) -> `Execute a SQL query` (pgvector) -> two Code nodes | `FetchServices.embed` + `EmbeddingReadService.search_tool_chunks` + `fetch.collapse_tool_rows` |
+| `tool-filter` | `fetch.tool_filter` -> `ToolPick(items, outcome)` |
+| `if-tier-ask` / `tier-probe-plan` / `tier-probe` / `tier-probe-collect` / `if-tier-has-any` | `fetch.tier_probe_plan` / `tier_probe_collect`, dispatched by `run_fetch` |
+| `Call 'sub-get-results'` -> `entity-ids-transformer` -> `MCP Client1` -> `output-structurer` | `fetch.entity_ids_transformer` -> `FetchServices.mcp_call` -> `fetch.output_structurer` |
+| `fetch-result` | `fetch.fetch_result` |
+
+**Two things stop being n8n's problem, and both are catalogued hazards.** `sub-get-rag`
+holds a POSTGRES CREDENTIAL and runs a hand-written pgvector query against production
+(H53); the CRM does the same read through `EmbeddingReadService`, so that credential can be
+removed from the n8n instance entirely once the sub is unpublished. And `MCP Client` /
+`MCP Client1` both hard-code a raw IP endpoint (H52); the CRM reads
+`settings.ai_assistant_mcp_url`, so moving the MCP server is a config change rather than a
+workflow promote.
+
+### Step 1 - shadow window
+
+Same shape as S6a's, and it runs on the same flag, so in practice S6a's window IS this
+window once S6b is deployed: compare `delegate_payload.fetch` against what
+`Call 'sub-fetch-results'` returned on the same turn.
+
+**Precondition for step 2:** zero `looked_up` failures, and the picked TOOL identical on
+every turn. The tool is the thing to watch rather than the rendered text: an embedding
+model or a tool-registry change moves the pick, and a different tool is a different answer.
+
+### Step 2 - the wiring change, in `sub-main-processing` (`53RxDSON8P3QSN22`)
+
+1. **Add** a trigger input `fetch_payload` (type object) beside `resolve_payload` (S6a).
+2. **Replace the body of `fetch-result-clean`** - already the node that strips `tool` and
+   `tier_probe` back off before `validator` sees them - so it reads the trigger instead of
+   the call:
+
+   ```js
+   const j = $('When Executed by Another Workflow').first().json.fetch_payload;
+   const { tool, tier_probe, _fetch_arm, ...rest } = j;
+   return [{ json: rest }];
+   ```
+
+3. **Repoint `build-result`**, which reads `$("Call 'sub-fetch-results'").first().json.{tool,tier_probe}`
+   BY NAME, to the same trigger key. This is the one by-name read in this cut and it is the
+   one a rewire does not redirect.
+4. **Delete** `Call 'sub-fetch-results'` and `fetch-arm` (the Switch on `_fetch_arm`);
+   `run_fetch` has already taken that decision and the CRM returns the arm it chose. Wire
+   `ef2-gate`'s converged output straight to `fetch-result-clean`.
+
+**`access-level-choice-message` STAYS** and keeps its `fetch-arm` predecessor edge replaced
+by a small If on `fetch_payload._fetch_arm === 'tier-ask'`: S6b decides the arm, S6c renders
+its copy, and deleting the renderer now would take the tier ask down between the two slices.
+
+### Step 3 - unpublish
+
+`sub-fetch-results` (`8Nlm3XmY4dJvBrPO`), `sub-get-rag` (`tWP33QOFT7SxThfT`) and
+`sub-get-results` (`rysSPgUssLDf6xJc`) are unpublished only after a week with no rollback.
+**`sub-get-results` is called from FOUR places, not one** - the two S6a pickers'
+`probe-incoming` / `probe-customer-orders`, `tier-probe`, and the answer path - so it can be
+unpublished only when S6a's probes are also in-process (they are today's known S6b
+dependency, see the S6a section's "Not covered"). Until then it stays published and the two
+picker probes keep calling it.
+
+### Rollback
+
+Turn `CHATBOT_BUSINESS_LANE_ENABLED` off: with no `resolve_payload` there is no
+`fetch_payload` either, and both arms fall back together. After step 2 has landed the
+rollback is re-adding `Call 'sub-fetch-results'` and repointing `build-result` - keep the
+workflow JSON from before that edit, which is the actual rollback artefact.
+
+### H49, and why there is no per-tool branch
+
+`crm_order_management_orders_by_product_list` has never been selected in ANY capture graded
+so far - 39 `tool-filter` captures on the live sub, plus the earlier fork's. The port
+therefore carries no branch keyed on that tool. What it DOES carry is the JS's own
+`DATE_PARAMS` and `ORDER_TOOLS` lookup tables, verbatim including that tool's row: those are
+tables, not branches, and dropping a row would be a silent behaviour change on the day the
+tool is first picked. The measurement that would justify an actual branch has not been
+taken, and the module's docstring says so.
+
+### Not covered by this slice
+
+- **The picker probes still need S6a's seam filled.** `run_fetch` supplies the answer path's
+  MCP call; `probe-incoming` / `probe-customer-orders` are the SAME `sub-get-results` call
+  with different arguments, and S6a's `services._probe` still raises. Wiring it to
+  `entity_ids_transformer` + `mcp_call` is a small follow-up and is what lets `sub-get-results`
+  be unpublished.
+- **`fetch-result`'s `result` arm does not render an answer.** S6c owns `validator`,
+  `promo-picker` and `build-result`; until then the turn still delegates to n8n's business
+  lane with the fetch output attached, so nothing is re-fetched.
+- **The orphaned `AI Agent` + `MCP Client` tool nodes in `sub-get-results` are NOT ported**
+  and never ran in the capture pool (H7). They are deleted with the sub.
