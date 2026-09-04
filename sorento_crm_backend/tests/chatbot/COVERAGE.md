@@ -23,46 +23,51 @@ A branch under the bar is `exhausted` - not short - only when EVERY execution on
 | node | fixtures | real captures | vendored (always run) |
 | --- | ---: | ---: | ---: |
 | `annotate-customer-picker` | 4 | 4 | 1 |
-| `annotate-incoming-picker` | 6 | 3 | 2 |
+| `annotate-incoming-picker` | 8 | 5 | 2 |
 | `build-ctx` | 114 | 114 | 6 |
-| `build-ctx-resolved` | 12 | 12 | 2 |
-| `central-exchange` | 13 | 13 | 2 |
+| `build-ctx-resolved` | 41 | 41 | 2 |
+| `central-exchange` | 49 | 49 | 2 |
 | `construct-user-prompt` | 3 | 3 | 3 |
-| `disallowed-entity-gate` | 215 | 150 | 6 |
-| `item` | 10 | 10 | 1 |
+| `disallowed-entity-gate` | 242 | 177 | 6 |
+| `item` | 11 | 11 | 1 |
 | `output_exchange` | 325 | 249 | 98 |
 | `resolve-exit-continue` | 6 | 6 | 1 |
-| `resolve-exit-not-found` | 3 | 3 | 2 |
-| `resolve-exit-offer` | 3 | 3 | 1 |
+| `resolve-exit-not-found` | 11 | 11 | 2 |
+| `resolve-exit-offer` | 7 | 7 | 1 |
 | `route-turn` | 116 | 116 | 14 |
-| `sub-resolve-and-gate` | 14 | 14 | 4 |
+| `sub-resolve-and-gate` | 28 | 28 | 4 |
 | `suggest-follow-up` | 242 | 242 | 16 |
-| `tier-gate` | 7 | 7 | 2 |
+| `tier-gate` | 9 | 9 | 2 |
 
 ## Per branch
 
 | node | branch | real captures | other | gate 0 |
 | --- | --- | ---: | ---: | --- |
 | `annotate-customer-picker` | `order` | 4 | 0 | exhausted (4) |
-| `annotate-incoming-picker` | `incoming` | 3 | 3 | exhausted (3) |
+| `annotate-incoming-picker` | `incoming` | 5 | 3 | met |
 | `build-ctx` | `all` | 114 | 0 | met |
-| `build-ctx-resolved` | `incoming` | 4 | 0 | exhausted (4) |
-| `build-ctx-resolved` | `inventory` | 3 | 0 | exhausted (3) |
-| `build-ctx-resolved` | `master_products` | 2 | 0 | exhausted (2) |
-| `build-ctx-resolved` | `promotion` | 3 | 0 | exhausted (3) |
-| `central-exchange` | `all` | 13 | 0 | met |
+| `build-ctx-resolved` | `forms` | 1 | 0 | exhausted (1) |
+| `build-ctx-resolved` | `incoming` | 11 | 0 | met |
+| `build-ctx-resolved` | `inventory` | 7 | 0 | met |
+| `build-ctx-resolved` | `master_products` | 6 | 0 | met |
+| `build-ctx-resolved` | `order` | 5 | 0 | met |
+| `build-ctx-resolved` | `portal_link` | 1 | 0 | exhausted (1) |
+| `build-ctx-resolved` | `product_attachment` | 2 | 0 | exhausted (2) |
+| `build-ctx-resolved` | `promotion` | 6 | 0 | met |
+| `build-ctx-resolved` | `resource_attachment` | 2 | 0 | exhausted (2) |
+| `central-exchange` | `all` | 49 | 0 | met |
 | `construct-user-prompt` | `all` | 3 | 0 | SHORT |
-| `disallowed-entity-gate` | `forms` | 2 | 1 | exhausted (2) |
-| `disallowed-entity-gate` | `incoming` | 48 | 23 | met |
-| `disallowed-entity-gate` | `inventory` | 40 | 6 | met |
-| `disallowed-entity-gate` | `master_products` | 11 | 2 | met |
+| `disallowed-entity-gate` | `forms` | 3 | 1 | exhausted (3) |
+| `disallowed-entity-gate` | `incoming` | 55 | 23 | met |
+| `disallowed-entity-gate` | `inventory` | 44 | 6 | met |
+| `disallowed-entity-gate` | `master_products` | 14 | 2 | met |
 | `disallowed-entity-gate` | `no_domain` | 0 | 1 | exhausted (0) |
-| `disallowed-entity-gate` | `order` | 18 | 5 | met |
+| `disallowed-entity-gate` | `order` | 23 | 5 | met |
 | `disallowed-entity-gate` | `portal_link` | 1 | 2 | exhausted (1) |
-| `disallowed-entity-gate` | `product_attachment` | 12 | 14 | met |
-| `disallowed-entity-gate` | `promotion` | 16 | 11 | met |
-| `disallowed-entity-gate` | `resource_attachment` | 2 | 0 | exhausted (2) |
-| `item` | `no_domain` | 10 | 0 | met |
+| `disallowed-entity-gate` | `product_attachment` | 14 | 14 | met |
+| `disallowed-entity-gate` | `promotion` | 19 | 11 | met |
+| `disallowed-entity-gate` | `resource_attachment` | 4 | 0 | exhausted (4) |
+| `item` | `no_domain` | 11 | 0 | met |
 | `output_exchange` | `incoming` | 65 | 6 | met |
 | `output_exchange` | `inventory` | 119 | 9 | met |
 | `output_exchange` | `master_products` | 4 | 13 | exhausted (4) |
@@ -73,8 +78,8 @@ A branch under the bar is `exhausted` - not short - only when EVERY execution on
 | `output_exchange` | `promotion` | 0 | 18 | exhausted (0) |
 | `output_exchange` | `resource_attachment` | 1 | 0 | exhausted (1) |
 | `resolve-exit-continue` | `continue` | 6 | 0 | met |
-| `resolve-exit-not-found` | `not_found` | 3 | 0 | exhausted (3) |
-| `resolve-exit-offer` | `offer` | 3 | 0 | exhausted (3) |
+| `resolve-exit-not-found` | `not_found` | 11 | 0 | met |
+| `resolve-exit-offer` | `offer` | 7 | 0 | met |
 | `route-turn` | `access_denied` | 1 | 0 | exhausted (1) |
 | `route-turn` | `business_query` | 87 | 0 | met |
 | `route-turn` | `check_promotion` | 1 | 0 | exhausted (1) |
@@ -90,8 +95,8 @@ A branch under the bar is `exhausted` - not short - only when EVERY execution on
 | `route-turn` | `stock_denied` | 0 | 0 | dead by vocabulary |
 | `sub-resolve-and-gate` | `access_ask` | 0 | 0 | exhausted (0) |
 | `sub-resolve-and-gate` | `continue` | 7 | 0 | met |
-| `sub-resolve-and-gate` | `not_found` | 4 | 0 | exhausted (4) |
-| `sub-resolve-and-gate` | `offer` | 3 | 0 | exhausted (3) |
+| `sub-resolve-and-gate` | `not_found` | 13 | 0 | met |
+| `sub-resolve-and-gate` | `offer` | 8 | 0 | met |
 | `suggest-follow-up` | `incoming` | 63 | 0 | met |
 | `suggest-follow-up` | `inventory` | 120 | 0 | met |
 | `suggest-follow-up` | `master_products` | 4 | 0 | exhausted (4) |
@@ -99,12 +104,13 @@ A branch under the bar is `exhausted` - not short - only when EVERY execution on
 | `suggest-follow-up` | `order` | 23 | 0 | met |
 | `suggest-follow-up` | `product_attachment` | 20 | 0 | met |
 | `suggest-follow-up` | `resource_attachment` | 1 | 0 | exhausted (1) |
-| `tier-gate` | `tier_ask` | 7 | 0 | met |
+| `tier-gate` | `tier_ask` | 8 | 0 | met |
+| `tier-gate` | `tier_proceed` | 1 | 0 | exhausted (1) |
 
 ## Gate 0 status
 
 **BLOCKED: 1 cell(s) short in a pool that was not fully scanned.** Capture more turns for: construct-user-prompt/all (3 of 5).
 
-Exhausted (29), under the bar with no more traffic to capture: annotate-customer-picker/order (4), annotate-incoming-picker/incoming (3), build-ctx-resolved/incoming (4), build-ctx-resolved/inventory (3), build-ctx-resolved/master_products (2), build-ctx-resolved/promotion (3), disallowed-entity-gate/forms (2), disallowed-entity-gate/no_domain (0), disallowed-entity-gate/portal_link (1), disallowed-entity-gate/resource_attachment (2), output_exchange/master_products (4), output_exchange/portal_link (0), output_exchange/promotion (0), output_exchange/resource_attachment (1), resolve-exit-not-found/not_found (3), resolve-exit-offer/offer (3), route-turn/access_denied (1), route-turn/check_promotion (1), route-turn/clarify_menu (0), route-turn/escalate_offer (0), route-turn/escalation_declined (4), route-turn/ideate (0), route-turn/not_supported (1), route-turn/offer_hold (0), sub-resolve-and-gate/access_ask (0), sub-resolve-and-gate/not_found (4), sub-resolve-and-gate/offer (3), suggest-follow-up/master_products (4), suggest-follow-up/resource_attachment (1).
+Exhausted (25), under the bar with no more traffic to capture: annotate-customer-picker/order (4), build-ctx-resolved/forms (1), build-ctx-resolved/portal_link (1), build-ctx-resolved/product_attachment (2), build-ctx-resolved/resource_attachment (2), disallowed-entity-gate/forms (3), disallowed-entity-gate/no_domain (0), disallowed-entity-gate/portal_link (1), disallowed-entity-gate/resource_attachment (4), output_exchange/master_products (4), output_exchange/portal_link (0), output_exchange/promotion (0), output_exchange/resource_attachment (1), route-turn/access_denied (1), route-turn/check_promotion (1), route-turn/clarify_menu (0), route-turn/escalate_offer (0), route-turn/escalation_declined (4), route-turn/ideate (0), route-turn/not_supported (1), route-turn/offer_hold (0), sub-resolve-and-gate/access_ask (0), suggest-follow-up/master_products (4), suggest-follow-up/resource_attachment (1), tier-gate/tier_proceed (1).
 
 Dead by vocabulary, 0 captures is the correct number: route-turn/demand_qty, route-turn/stock_denied. These are covered by unit tests behind `chatbot_stock_denial_enabled` (AC-306, R1), never by a capture.

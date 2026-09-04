@@ -98,7 +98,11 @@ NODE_SLUGS: dict[str, tuple[str, ...]] = {
     # graded (`runData`) mismatch is `sub-send-attachments-rs/rs51-02-withattach`, whose
     # `input` is `[{"json": {}}]` while its `expected` is a fully composed answer - the
     # signature of a node reading something other than its own input.
-    "central-exchange": ("live-spine-sorento-consume-main", "sub-answer-rs"),
+    "central-exchange": (
+        "live-spine-sorento-consume-main",
+        "sub-answer-live",
+        "sub-answer-rs",
+    ),
     "resolve-exit-offer": ("sub-resolve-and-gate-rs",),
     "resolve-exit-not-found": ("sub-resolve-and-gate-rs",),
     "item": ("sub-resolve-and-gate-rs",),
