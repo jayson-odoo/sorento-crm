@@ -237,4 +237,19 @@ def declared_branches(node: str) -> tuple[str, ...]:
         from app.services.chatbot.contracts import BRANCH_KINDS
 
         return BRANCH_KINDS
+    if node == "escalate-catalog":
+        # The nine arms of its own `switch`. Seeded so a copy arm nobody has captured is
+        # a visible zero rather than an absent row - which for a node whose whole job is
+        # customer-facing wording is exactly the cell that matters.
+        return (
+            "not_found",
+            "access_choice",
+            "demand_qty",
+            "not_supported",
+            "clarify_menu",
+            "escalate_offer",
+            "out_of_scope",
+            "escalation_declined",
+            "offer_hold",
+        )
     return ()

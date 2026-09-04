@@ -65,6 +65,17 @@ DIVERGENCES: list[Divergence] = [
 ]
 
 
+# World-level deltas: session keys a WORLD is allowed to differ on, per world id, with
+# the reason. Deliberately per-world and per-KEY rather than a blanket skip - a world that
+# is allowed to differ everywhere proves nothing, and the point of a world is that the
+# wiring produced the same reply and the same memory as the execution it was derived from.
+#
+# `pending` is dropped for every world without an entry here: it is the R3 marker the JS
+# had no equivalent of, already registered as a field-scoped divergence for the node
+# replay above.
+WORLD_DELTAS: dict[str, tuple[str, ...]] = {}
+
+
 def find(node: str, fixture: str) -> Divergence | None:
     """The registered divergence covering this replay, or None."""
     for d in DIVERGENCES:

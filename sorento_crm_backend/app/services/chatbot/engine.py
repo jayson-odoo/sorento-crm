@@ -725,3 +725,281 @@ def _current_date_directive() -> str:
         f"{_WEEKDAYS[now_myt.weekday()]}, {now_myt.day:02d} "
         f"{_MONTHS[now_myt.month - 1]} {now_myt.year}"
     )
+
+
+# --------------------------------------------------------------------------- #
+# The tail (S2). `complete_turn` is the second half of a delegated turn: the lane
+# ran in n8n, and everything from "what did it build" to "what do we remember"
+# happens here (AC-201).
+# --------------------------------------------------------------------------- #
+
+# What `sub-output`'s trigger declares, minus `item` and `ctx`. Every one is nullable and
+# every one is a producer's whole output, verbatim, so the tail's by-name reads become
+# named arguments (D1: the sub-workflow boundary was transport).
+FRAGMENT_FIELDS: tuple[str, ...] = (
+    "result",
+    "resolved",
+    "gate",
+    "offer_hold",
+    "suggest_offer",
+    "not_found",
+    "incoming_picker",
+    "access_choice",
+    "crossdomain_render",
+    "answer",
+    "clarify",
+)
+
+
+class CompleteResult:
+    """What the `/complete` endpoint serialises."""
+
+    __slots__ = ("turn_id", "reply", "actions", "session_patch", "status", "stage", "error")
+
+    def __init__(self, **kwargs: Any) -> None:
+        for slot in self.__slots__:
+            setattr(self, slot, kwargs.get(slot))
+        if self.actions is None:
+            self.actions = []
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "turn_id": self.turn_id,
+            "reply": self.reply,
+            "actions": self.actions,
+            "session_patch": self.session_patch,
+        }
+
+
+def _load_turn(db: Session, turn_id: str) -> ChatbotTurn | None:
+    return db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).first()
+
+
+def _attachments_src(answer: Any) -> Any:
+    """`send-attachments`'s own frozen expression, as a value.
+
+    n8n reads `$("Call 'sub-answer'").first().json.outcome_fragment['central-exchange']`
+    by name, which is why the attachment lane survived every rewiring. The CRM hands the
+    same value back on `reply.attachments_src` so the node reads one field instead.
+    """
+    fragment = jsc.get(answer, "outcome_fragment")
+    return jsc.get(fragment, "central-exchange") if isinstance(fragment, dict) else None
+
+
+def complete_turn(  # noqa: PLR0915 - one linear pipeline, and the order IS the contract
+    turn_id: str,
+    fragments: dict[str, Any],
+    *,
+    session_factory: SessionFactory,
+) -> CompleteResult:
+    """Run the tail of one turn: outcome -> member offer -> state -> compose -> persist.
+
+    `fragments` is the `sub-output` trigger contract: `item` plus the eleven nullable
+    producer outputs, plus an optional `ctx` override. `ctx` normally comes off the turn
+    row, which is where `/turn` persisted it - one less thing for the caller to keep
+    consistent, and the only thing that makes a retry from the trace screen possible.
+
+    **Dry run writes NOTHING (D14, AC-702's shape).** `is_test` was decided on the
+    envelope at `/turn` and is read off the row here, so a console or clone turn cannot
+    become a live write by calling a different URL. The response carries the would-be
+    `session_patch` instead.
+
+    **The session write is validated BEFORE it happens.** `SessionVars(extra="forbid")`
+    is what stops a harness key leaking into a customer's session (H15, AC-203), and it
+    has to raise before `overwrite_for_contact`, not after.
+    """
+    from app.services.chatbot import copy as copy_mod
+    from app.services.chatbot.contracts import SessionVars
+    from app.services.chatbot.tail import compose as compose_mod
+    from app.services.chatbot.tail import member_offer as member_mod
+    from app.services.chatbot.tail import outcome as outcome_mod
+    from app.services.chatbot.tail.compile_state import compile_current_state
+
+    item = fragments.get("item") or {}
+    values = {name: fragments.get(name) for name in FRAGMENT_FIELDS}
+
+    with _session(session_factory) as db:
+        row = _load_turn(db, turn_id)
+        if row is None:
+            raise LookupError(f"chatbot turn {turn_id} not found")
+        if row.status == "done" and isinstance(row.response, dict):
+            # Idempotent, the same shape D15 gives a duplicate delivery: the tail already
+            # ran and the caller already has an answer it must not send twice.
+            stored = row.response
+            return CompleteResult(
+                turn_id=turn_id,
+                reply=stored.get("reply"),
+                actions=stored.get("actions") or [],
+                session_patch=None,
+                status=row.status,
+                stage=row.stage,
+            )
+        contact_respond_id = row.contact_respond_id
+        dry_run = bool(row.is_test)
+        stored_response = row.response if isinstance(row.response, dict) else {}
+        ctx = fragments.get("ctx") or stored_response.get("ctx") or {}
+        branch_kind = row.branch_kind
+        prior_actions = list(stored_response.get("actions") or [])
+        turn_trace = trace_mod.TurnTrace.resume(row.trace)
+        canned = copy_mod.resolve(db)
+
+        # -- what this branch built ---------------------------------------- #
+        producers: dict[str, Any] = {}
+        for name, field in outcome_mod.CARRIER_FIELDS.items():
+            if values.get(field) is not None:
+                producers[name] = values[field]
+
+        outcome_input: dict[str, Any] = dict(item)
+        # `entry-gate`: the escalate catalog runs only when the lane stamped a branch
+        # kind on the item. Everything else goes straight to the outcome hub.
+        if jsc.js_string(jsc.get(item, "branch_kind") or "") != "":
+            catalog = outcome_mod.escalate_catalog(
+                item,
+                ctx,
+                canned,
+                not_found=values["not_found"],
+                incoming_picker=values["incoming_picker"],
+                access_choice=values["access_choice"],
+                suggest_offer=values["suggest_offer"],
+                gate=values["gate"],
+                offer_hold=values["offer_hold"],
+            )
+            producers["escalate-catalog"] = catalog
+            outcome_input = catalog
+            if outcome_mod.cs_offer_gate(catalog, ctx, values["gate"]):
+                plan = member_mod.cs_roster_plan(values["gate"])
+                rosters = member_mod.fetch_rosters(db, plan, ctx)
+                offer = member_mod.build_cs_member_offer(catalog, plan, rosters)
+                producers["cs-roster-plan"] = plan
+                producers["build-cs-member-offer"] = offer
+                outcome_input = offer
+
+        outcome_items = outcome_mod.build_outcome([{"json": outcome_input}], producers)
+
+        # -- what to say, and what to remember ------------------------------ #
+        compiled = compile_current_state(
+            outcome_items[0]["json"],
+            ctx,
+            resolved=values["resolved"],
+            gate=values["gate"],
+            execution_id=turn_id,
+        )
+        composed = compose_mod.crossdomain_compose(
+            compiled.item,
+            result=values["result"],
+            answered=compiled.answered_domain is not None,
+        )
+        sealed = composed.get("reply") or {}
+        session_patch = sealed.get("session_patch") or {}
+        variables = session_patch.get("variables") or {}
+
+        turn_trace.record(
+            "replied",
+            summary=trace_mod.replied_summary(sealed, branch_kind),
+            why="The reply is composed from what the lane built, never from the customer's words.",
+            facts={
+                "lane": branch_kind,
+                "quick_replies": bool(sealed.get("quick_replies")),
+                "rows_offered": len(variables.get("last_result_set") or []),
+                "cross_domain_block": composed is not compiled.item,
+            },
+            raw={"reply": sealed},
+        )
+
+        # AC-203 / H15: the allowlist is checked BEFORE anything is written. A key the
+        # compiler should not be writing fails the turn here rather than landing in a
+        # real customer's session, where nothing would ever notice it.
+        SessionVars(**variables)
+
+        # `ctx.session` is `get-session-vars`'s own body, so the previous variables sit
+        # one level in. Same accessor the compiler uses, so "kept" on the trace screen and
+        # "carried" in the compiler can never disagree about what was there before.
+        remembered = trace_mod.memory_delta(
+            before=jsc.get(jsc.get(jsc.get(ctx, "session"), "session_vars"), "variables") or {},
+            after=variables,
+        )
+        if not dry_run:
+            from app.services.conversation_variables_service import overwrite_for_contact
+
+            overwrite_for_contact(db, respond_io_id=contact_respond_id, state=session_patch)
+            _log_session_write(db, turn_id=turn_id, contact_respond_id=contact_respond_id)
+        turn_trace.record(
+            "remembered",
+            summary=trace_mod.remembered_summary(remembered, dry_run=dry_run),
+            why=(
+                "Nothing was written: this is a test turn (D14)."
+                if dry_run
+                else "The CRM is the only writer of the conversation state on the turn path (D2)."
+            ),
+            facts={
+                "kept": len(remembered["kept"]),
+                "new": len(remembered["new"]),
+                "cleared": len(remembered["cleared"]),
+                "dry_run": dry_run,
+            },
+            raw={"session_patch": session_patch},
+        )
+
+        reply = {
+            "text": sealed.get("text"),
+            "quick_replies": sealed.get("quick_replies"),
+            # What `sub-sendmsg` and `send-attachments` reach for by name today, handed
+            # back as fields so their expressions become one read each (AC-207).
+            "result_set": variables.get("last_result_set"),
+            "attachments_src": _attachments_src(values["answer"]),
+        }
+        _close_turn(
+            db,
+            turn_id,
+            status="done",
+            stage="remembered",
+            branch_kind=branch_kind,
+            error=None,
+            records=turn_trace.records,
+            response={
+                **stored_response,
+                "reply": reply,
+                "actions": prior_actions,
+            },
+        )
+
+    return CompleteResult(
+        turn_id=turn_id,
+        reply=reply,
+        actions=prior_actions,
+        # D14: the would-be patch, so a console or clone turn can be inspected without
+        # anything having been written.
+        session_patch=session_patch if dry_run else None,
+        status="done",
+        stage="remembered",
+    )
+
+
+def _log_session_write(db: Session, *, turn_id: str, contact_respond_id: str) -> None:
+    """AC-206: the session write is logged where n8n's PUT used to be logged.
+
+    Best-effort by the layering rule - a post-commit side effect never raises, because
+    the write it describes has already happened and failing here would report a turn that
+    did not answer when it did.
+    """
+    try:
+        from app.schemas.integration import IntegrationLogCreate
+        from app.services.integration_service import IntegrationLogService
+
+        IntegrationLogService(db).create_integration_log(
+            IntegrationLogCreate(
+                integration_channel="n8n",
+                business_table="respond_contacts.session_vars",
+                business_id=turn_id,
+                external_reference=contact_respond_id,
+                direction="inbound",
+                endpoint=f"/api/v1/external/chat/turn/{turn_id}/complete",
+                http_method="POST",
+                status_code=200,
+                status="success",
+            )
+        )
+    except Exception as log_error:  # noqa: BLE001
+        logger.warning(
+            "Failed to log the chatbot session write for turn %s: %s", turn_id, log_error
+        )

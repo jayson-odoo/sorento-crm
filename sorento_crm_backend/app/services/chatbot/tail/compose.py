@@ -23,7 +23,7 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from app.services.chatbot import jsc
-from app.services.chatbot.tail.compile_state import sanitize_em_dash, seal
+from app.services.chatbot.tail.compile_state import sanitize_em_dash, seal, strip_undefined
 
 # Earliest wins, matched case-insensitively.
 MARKERS = (
@@ -136,8 +136,11 @@ def crossdomain_compose(
     sanitize_em_dash(out)
     # Re-SEAL rather than write `text` / `quick_replies` by hand: `out` is the edited
     # patch and the two views are derived from it, so an appender that forgets one of
-    # them is not expressible.
-    return {"reply": seal(out)}
+    # them is not expressible. Stripped at the same boundary the compiler strips at: this
+    # is a serialised n8n item, so a `quick_reply` the turn never set is an ABSENT key,
+    # not a sentinel - and the sentinel is not JSON, so it would fail the turn row's own
+    # write on the way past.
+    return strip_undefined({"reply": seal(out)})
 
 
 def _deep_copy(value: Any) -> Any:

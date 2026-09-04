@@ -390,6 +390,58 @@ class TurnResponse(BaseModel):
     duplicate: bool = False
 
 
+class CompleteRequest(BaseModel):
+    """`POST /api/v1/external/chat/turn/{turn_id}/complete` body (AC-201).
+
+    The `sub-output` trigger contract, unchanged: `item` plus the eleven nullable
+    producer outputs the sub's RS-9 carrier stubs re-emit today. Each value is a
+    producer's WHOLE output, verbatim, because the tail's by-name reads dig into it
+    (`result.result.xd.block`, `answer.outcome_fragment['central-exchange']`) and
+    reshaping it here would move the very bytes the replay corpus grades.
+
+    `ctx` is optional: `/turn` already persisted it on the row, which is where the tail
+    reads it from. Accepting it anyway means the n8n node can keep sending exactly what
+    it sends today - a caller that has to DELETE a field to be accepted is a caller that
+    breaks on the next deploy.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    item: dict[str, Any]
+    ctx: dict[str, Any] | None = None
+    result: dict[str, Any] | None = None
+    resolved: dict[str, Any] | None = None
+    gate: dict[str, Any] | None = None
+    offer_hold: dict[str, Any] | None = None
+    suggest_offer: dict[str, Any] | None = None
+    not_found: dict[str, Any] | None = None
+    incoming_picker: dict[str, Any] | None = None
+    access_choice: dict[str, Any] | None = None
+    crossdomain_render: dict[str, Any] | None = None
+    answer: dict[str, Any] | None = None
+    clarify: dict[str, Any] | None = None
+
+
+class CompleteResponse(BaseModel):
+    """`POST .../complete` 200 body.
+
+    `reply` is `{text, quick_replies, result_set, attachments_src}` - the four values
+    `sub-sendmsg` and `send-attachments` reach for by name today, so each of their
+    expressions becomes one read (AC-207). A plain dict for the same reason `Reply` is
+    not modelled above: `result_set` is whatever the lane produced, and `response_model`
+    silently DROPS anything a model does not declare.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    turn_id: str
+    reply: dict[str, Any] | None = None
+    actions: list[dict[str, Any]] = Field(default_factory=list)
+    # D14: populated on a dry run only, so a console or clone turn can be inspected
+    # without anything having been written.
+    session_patch: dict[str, Any] | None = None
+
+
 # Which branch kinds still hand back to an n8n lane. After S1 that is all of them: the
 # head decides and n8n answers. Each later slice REMOVES entries here (S3 takes eight,
 # S4 one, S5 one, S6 three), and S7 empties it and deletes `delegate` entirely. Derived

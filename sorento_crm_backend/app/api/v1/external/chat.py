@@ -39,8 +39,13 @@ from sqlalchemy.orm import Session
 from app.database import SessionLocal, get_db
 from app.dependencies import get_external_api_user
 from app.schemas.integration import IntegrationLogCreate
-from app.services.chatbot import run_turn
-from app.services.chatbot.contracts import TurnRequest, TurnResponse
+from app.services.chatbot import complete_turn, run_turn
+from app.services.chatbot.contracts import (
+    CompleteRequest,
+    CompleteResponse,
+    TurnRequest,
+    TurnResponse,
+)
 from app.services.integration_service import IntegrationLogService
 
 logger = logging.getLogger(__name__)
@@ -108,6 +113,93 @@ def chat_turn(
     except Exception as log_error:  # noqa: BLE001
         logger.warning(
             "Failed to create integration log for chatbot turn: %s", log_error, exc_info=True
+        )
+
+    if to_reraise is not None:
+        raise to_reraise
+
+    assert response_payload is not None
+    return response_payload
+
+
+@router.post(
+    "/turn/{turn_id}/complete",
+    response_model=CompleteResponse,
+    status_code=status.HTTP_200_OK,
+)
+def chat_turn_complete(
+    turn_id: str,
+    payload: CompleteRequest,
+    request: Request,
+    current_user: dict = Depends(get_external_api_user),
+    db: Session = Depends(get_db),
+):
+    """Run the tail of a delegated turn and return `{reply, actions}` (AC-201).
+
+    The lane ran in n8n and handed back what it built; everything from build-outcome to
+    the session write happens here, and after this ships the CRM is the ONLY writer of
+    `respond_contacts.session_vars` on the turn path (D2, AC-207).
+
+    Same session seam as `/turn`: the engine takes `SessionLocal` because it opens and
+    closes its own sessions (and, from S2, makes a roster read between them), while `db`
+    is the request session and is used only for the integration log.
+    """
+    _ = current_user
+
+    response_status = status.HTTP_200_OK
+    error_message: str | None = None
+    response_payload: CompleteResponse | None = None
+    to_reraise: HTTPException | None = None
+
+    try:
+        result = complete_turn(
+            turn_id,
+            payload.model_dump(mode="json"),
+            session_factory=SessionLocal,
+        )
+        response_payload = CompleteResponse(**result.as_dict())
+    except LookupError as missing:
+        # An unknown turn id is the caller pointing at a turn that never existed (or was
+        # pruned), not an outage. 404 says which, so the operator reading the n8n run
+        # does not go looking for a backend fault.
+        response_status = status.HTTP_404_NOT_FOUND
+        error_message = str(missing)
+        to_reraise = HTTPException(status_code=response_status, detail=error_message)
+    except HTTPException as http_exc:
+        response_status = http_exc.status_code
+        error_message = str(http_exc.detail)
+        to_reraise = http_exc
+    except Exception as exc:  # noqa: BLE001 - log then surface a clean 500
+        logger.exception("chatbot turn %s failed to complete: %s", turn_id, exc)
+        response_status = status.HTTP_500_INTERNAL_SERVER_ERROR
+        error_message = "Failed to complete chatbot turn."
+        to_reraise = HTTPException(status_code=response_status, detail=error_message)
+
+    try:
+        request_headers = dict(request.headers)
+        if "x-api-key" in request_headers:
+            request_headers["x-api-key"] = "***"
+        IntegrationLogService(db).create_integration_log(
+            IntegrationLogCreate(
+                integration_channel="n8n",
+                business_table="chatbot.turns",
+                business_id=turn_id,
+                external_reference=turn_id,
+                direction="inbound",
+                endpoint=str(request.url.path),
+                http_method=request.method,
+                request_headers=json.dumps(request_headers),
+                request_payload=payload.model_dump_json(),
+                status_code=response_status,
+                status="success" if response_status < 400 else "failed",
+                error_message=error_message,
+            )
+        )
+    except Exception as log_error:  # noqa: BLE001
+        logger.warning(
+            "Failed to create integration log for chatbot turn completion: %s",
+            log_error,
+            exc_info=True,
         )
 
     if to_reraise is not None:

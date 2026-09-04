@@ -73,6 +73,10 @@ CAPTURE_REPORT: dict[str, dict] = {
 DEAD_BY_VOCABULARY: dict[tuple[str, str], str] = {
     ("route-turn", "demand_qty"): "H1: live tests `stock_check`, the parser emits `check_stock`",
     ("route-turn", "stock_denied"): "H1: live tests `stock_check`, the parser emits `check_stock`",
+    # The same H1 typo one node downstream: `route-turn` never emits `demand_qty`, so
+    # `escalate-catalog`'s own `demand_qty` arm has never been reached either. Its copy is
+    # unit-tested instead (`tests/chatbot/test_tail_units.py`).
+    ("escalate-catalog", "demand_qty"): "H1: the route-turn arm that feeds it is dead",
 }
 
 
@@ -110,20 +114,57 @@ def _expected_branch_kind(fixture: _corpus.Fixture) -> str | None:
     return None
 
 
-def _branch_of(fixture: _corpus.Fixture) -> str:
-    """A coverage CELL for one fixture.
+# Nodes cut by `branch_kind` rather than by domain: their code path IS the arm. The tail
+# pair is `escalate-catalog` (a nine-arm switch) and `build-outcome` (which forwards the
+# item the arm produced).
+_BRANCH_KIND_NODES = ("route-turn", "escalate-catalog", "build-outcome")
+# Nodes cut by the turn's DOMAIN, because they have no branch vocabulary of their own and
+# the domain is what actually varies the path through them.
+_DOMAIN_NODES = (
+    "output_exchange",
+    "suggest-follow-up",
+    "compile-current-state",
+    "crossdomain-compose",
+)
 
-    `route-turn` is cut by the arm it decided, which is the vocabulary gate 0 is written
-    in. The other nodes have no branch vocabulary of their own, so they are cut by the
-    turn's DOMAIN, which is what actually varies the code path through them.
+
+def _session_variables(fixture: _corpus.Fixture) -> dict:
+    """`variables`, through either output shape a capture can carry.
+
+    The live spine's `compile-current-state` predates RS-3 half H2 and emits the patch
+    bare; the body the export ships re-seals it as `{reply: {..., session_patch}}`.
     """
-    if fixture.node == "route-turn":
-        return _expected_branch_kind(fixture) or "unknown"
-    if fixture.node in ("output_exchange", "suggest-follow-up"):
+    for item in fixture.expected:
+        body = item.get("json") or {}
+        if "reply" in body:
+            body = (body.get("reply") or {}).get("session_patch") or {}
+        variables = body.get("variables")
+        if isinstance(variables, dict):
+            return variables
+    return {}
+
+
+def _branch_of(fixture: _corpus.Fixture) -> str:
+    """A coverage CELL for one fixture."""
+    if fixture.node in _BRANCH_KIND_NODES:
+        # `build-outcome` FORWARDS the item, so the arm is on its input as well as its
+        # output; `escalate-catalog` stamps its answer onto the same item it received.
+        kind = _expected_branch_kind(fixture)
+        if kind:
+            return kind
+        for item in fixture.input:
+            kind = (item.get("json") or {}).get("branch_kind")
+            if kind:
+                return str(kind)
+        return "no_branch_kind" if fixture.node != "route-turn" else "unknown"
+    if fixture.node in _DOMAIN_NODES:
         for item in fixture.expected:
             output = (item.get("json") or {}).get("output")
             if isinstance(output, dict):
                 return str(output.get("domain_hint") or "no_domain")
+        variables = _session_variables(fixture)
+        if variables:
+            return str(variables.get("domain_hint") or "no_domain")
         return "unknown"
     return "all"
 
