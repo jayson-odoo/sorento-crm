@@ -13,11 +13,13 @@ n8n node whose by-name reads it reproduces)**:
 `app/services/chatbot/lanes/business/answer.py`
     validator(result, *, semantic_parser, not_allowed_check_stock=False) -> dict
     promo_picker(item, *, parser, resolved) -> dict
-    crossdomain_zeroset(item, *, parser, resolved, session) -> dict
+    crossdomain_zeroset(item, *, parser, resolved, session_block) -> dict
     crossdomain_probe_args(zeroset, *, parser, entities_names, contact_id, space_id) -> dict
     crossdomain_render(probe_result, *, zeroset, validator) -> dict
-    run_crossdomain(validator_result, *, parser, resolved, session, entities_names,
+    run_crossdomain(validator_result, *, parser, resolved, session_block, entities_names,
                     services, contact_id, space_id, dry_run=False) -> dict
+        # `session_block` is `ctx.session` (get-session-vars' own response shape), never a
+        # database session - named to hold against `test_no_answer_lane_function_takes_a_db_session`
     build_result(item, *, validator, promo, zeroset, tool=None, tier_probe=None,
                  crossdomain_render=None) -> dict
     not_found_error_message(item, *, parser, resolved, gate) -> dict
@@ -229,6 +231,19 @@ def _rt(value: Any) -> Any:
     return _corpus.json_round_trip(value)
 
 
+def _wrap(result: Any) -> list:
+    """`tests/harness/n8n-shim.js`'s own `normalizeReturn`: a Code node returning a
+    plain object produces exactly ONE item (`[{"json": result}]`, `test_replay.py`'s
+    own shape); returning `None`/`undefined` produces ZERO items - n8n's shim treats a
+    null return as "no items", not an error (measured live, exec 14126032), which is
+    also why `_corpus.Fixture.expected` folds a fixture's `"expected": null` to `[]`
+    (`self.data.get("expected") or []`). Every `_run_*` below returns through this so
+    `_replay` compares two item LISTS, matching every captured `expected` array."""
+    if result is None:
+        return []
+    return [{"json": result}]
+
+
 # --------------------------------------------------------------------------- #
 # AC-608: one runner per ported node, named exactly like `test_replay.py`'s. Only a
 # REAL capture (`source.expected_from == "runData"`) grades the port - see `_corpus.py`.
@@ -239,31 +254,37 @@ def _run_validator(fixture: _corpus.Fixture) -> Any:
     from app.services.chatbot.lanes.business.answer import validator
 
     edit_fields2 = _named(fixture, "Edit Fields2")
-    return validator(
-        _rt(_input_json(fixture)),
-        semantic_parser=_rt(_bc_ctx(fixture).get("parse") or {}),
-        not_allowed_check_stock=bool((edit_fields2 or {}).get("not_allowed_check_stock")),
+    return _wrap(
+        validator(
+            _rt(_input_json(fixture)),
+            semantic_parser=_rt(_bc_ctx(fixture).get("parse") or {}),
+            not_allowed_check_stock=bool((edit_fields2 or {}).get("not_allowed_check_stock")),
+        )
     )
 
 
 def _run_promo_picker(fixture: _corpus.Fixture) -> Any:
     from app.services.chatbot.lanes.business.answer import promo_picker
 
-    return promo_picker(
-        _rt(_input_json(fixture)),
-        parser=_rt(_parser_output(fixture)),
-        resolved=_rt(_resolved(fixture)),
+    return _wrap(
+        promo_picker(
+            _rt(_input_json(fixture)),
+            parser=_rt(_parser_output(fixture)),
+            resolved=_rt(_resolved(fixture)),
+        )
     )
 
 
 def _run_crossdomain_zeroset(fixture: _corpus.Fixture) -> Any:
     from app.services.chatbot.lanes.business.answer import crossdomain_zeroset
 
-    return crossdomain_zeroset(
-        _rt(_input_json(fixture)),
-        parser=_rt(_parser_output(fixture)),
-        resolved=_rt(_resolved(fixture)),
-        session=_rt(_session_block(fixture)),
+    return _wrap(
+        crossdomain_zeroset(
+            _rt(_input_json(fixture)),
+            parser=_rt(_parser_output(fixture)),
+            resolved=_rt(_resolved(fixture)),
+            session_block=_rt(_session_block(fixture)),
+        )
     )
 
 
@@ -271,10 +292,12 @@ def _run_crossdomain_render(fixture: _corpus.Fixture) -> Any:
     from app.services.chatbot.lanes.business.answer import crossdomain_render
 
     zeroset = _named(fixture, "crossdomain-zeroset") or {}
-    return crossdomain_render(
-        _rt(_input_json(fixture)),
-        zeroset=_rt(zeroset.get("_xd") or {}),
-        validator=_rt(_named(fixture, "validator") or {}),
+    return _wrap(
+        crossdomain_render(
+            _rt(_input_json(fixture)),
+            zeroset=_rt(zeroset.get("_xd") or {}),
+            validator=_rt(_named(fixture, "validator") or {}),
+        )
     )
 
 
@@ -285,34 +308,40 @@ def _run_build_result(fixture: _corpus.Fixture) -> Any:
     tool = (call or {}).get("tool") if call is not None else _named(fixture, "tool-filter")
     tier_probe = (call or {}).get("tier_probe") if call is not None else None
     crossdomain_render = _named(fixture, "crossdomain-render")
-    return build_result(
-        _rt(_input_json(fixture)),
-        validator=_rt(_named(fixture, "validator") or {}),
-        promo=_rt(_named(fixture, "promo-picker") or {}),
-        zeroset=_rt(_named(fixture, "crossdomain-zeroset") or {}),
-        tool=_rt(tool) if tool is not None else None,
-        tier_probe=_rt(tier_probe) if tier_probe is not None else None,
-        crossdomain_render=_rt(crossdomain_render) if crossdomain_render is not None else None,
+    return _wrap(
+        build_result(
+            _rt(_input_json(fixture)),
+            validator=_rt(_named(fixture, "validator") or {}),
+            promo=_rt(_named(fixture, "promo-picker") or {}),
+            zeroset=_rt(_named(fixture, "crossdomain-zeroset") or {}),
+            tool=_rt(tool) if tool is not None else None,
+            tier_probe=_rt(tier_probe) if tier_probe is not None else None,
+            crossdomain_render=_rt(crossdomain_render) if crossdomain_render is not None else None,
+        )
     )
 
 
 def _run_not_found_error_message(fixture: _corpus.Fixture) -> Any:
     from app.services.chatbot.lanes.business.answer import not_found_error_message
 
-    return not_found_error_message(
-        _rt(_input_json(fixture)),
-        parser=_rt(_parser_output(fixture)),
-        resolved=_rt(_resolved(fixture)),
-        gate=_rt(_gate(fixture)),
+    return _wrap(
+        not_found_error_message(
+            _rt(_input_json(fixture)),
+            parser=_rt(_parser_output(fixture)),
+            resolved=_rt(_resolved(fixture)),
+            gate=_rt(_gate(fixture)),
+        )
     )
 
 
 def _run_access_level_choice_message(fixture: _corpus.Fixture) -> Any:
     from app.services.chatbot.lanes.business.answer import access_level_choice_message
 
-    return access_level_choice_message(
-        _rt(_input_json(fixture)),
-        parser=_rt(_parser_output(fixture)),
+    return _wrap(
+        access_level_choice_message(
+            _rt(_input_json(fixture)),
+            parser=_rt(_parser_output(fixture)),
+        )
     )
 
 
@@ -322,14 +351,16 @@ def _run_build_suggest_offer(fixture: _corpus.Fixture) -> Any:
     dym_annotate = _named(fixture, "dym-annotate")
     sibling_probe = _named(fixture, "sibling-probe")
     sibling_transform = _named(fixture, "sibling-transform")
-    return build_suggest_offer(
-        _rt(_input_json(fixture)),
-        parser=_rt(_parser_output(fixture)),
-        resolved=_rt(_resolved(fixture)),
-        gate=_rt(_gate(fixture)),
-        dym_annotate=_rt(dym_annotate) if dym_annotate is not None else None,
-        sibling_probe=_rt(sibling_probe) if sibling_probe is not None else None,
-        sibling_transform=_rt(sibling_transform) if sibling_transform is not None else None,
+    return _wrap(
+        build_suggest_offer(
+            _rt(_input_json(fixture)),
+            parser=_rt(_parser_output(fixture)),
+            resolved=_rt(_resolved(fixture)),
+            gate=_rt(_gate(fixture)),
+            dym_annotate=_rt(dym_annotate) if dym_annotate is not None else None,
+            sibling_probe=_rt(sibling_probe) if sibling_probe is not None else None,
+            sibling_transform=_rt(sibling_transform) if sibling_transform is not None else None,
+        )
     )
 
 
@@ -340,23 +371,25 @@ def _run_answer_input(fixture: _corpus.Fixture) -> Any:
     from app.services.chatbot.lanes.business.sub_answer import answer_input
 
     trigger = fixture.first("When Executed by Another Workflow")
-    return answer_input(_rt(trigger))
+    return _wrap(answer_input(_rt(trigger)))
 
 
 def _run_central_exchange(fixture: _corpus.Fixture) -> Any:
     from app.services.chatbot.lanes.business.sub_answer import central_exchange
 
-    return central_exchange(_rt(_input_json(fixture)))
+    return _wrap(central_exchange(_rt(_input_json(fixture))))
 
 
 def _run_miss_roster_check(fixture: _corpus.Fixture) -> Any:
     from app.services.chatbot.lanes.business.sub_answer import miss_roster_check
 
     build_result_out = _named(fixture, "build-result") or {}
-    return miss_roster_check(
-        _rt(_input_json(fixture)),
-        build_result=_rt(build_result_out.get("result") or {}),
-        parser=_rt(_parser_output(fixture)),
+    return _wrap(
+        miss_roster_check(
+            _rt(_input_json(fixture)),
+            build_result=_rt(build_result_out.get("result") or {}),
+            parser=_rt(_parser_output(fixture)),
+        )
     )
 
 
@@ -365,22 +398,26 @@ def _run_miss_roster_plan(fixture: _corpus.Fixture) -> Any:
 
     build_result_out = _named(fixture, "build-result") or {}
     central_exchange = _named(fixture, "central-exchange")
-    return miss_roster_plan(
-        _rt(_input_json(fixture)),
-        build_result=_rt(build_result_out.get("result") or {}),
-        parser=_rt(_parser_output(fixture)),
-        gate=_rt(_gate(fixture)),
-        central_exchange=_rt(central_exchange) if central_exchange is not None else None,
+    return _wrap(
+        miss_roster_plan(
+            _rt(_input_json(fixture)),
+            build_result=_rt(build_result_out.get("result") or {}),
+            parser=_rt(_parser_output(fixture)),
+            gate=_rt(_gate(fixture)),
+            central_exchange=_rt(central_exchange) if central_exchange is not None else None,
+        )
     )
 
 
 def _run_build_miss_member_offer(fixture: _corpus.Fixture) -> Any:
     from app.services.chatbot.lanes.business.sub_answer import build_miss_member_offer
 
-    return build_miss_member_offer(
-        _rt(_input_json(fixture)),
-        central_exchange=_rt(_named(fixture, "central-exchange") or {}),
-        roster_plan=_rt(_named(fixture, "miss-roster-plan") or {}),
+    return _wrap(
+        build_miss_member_offer(
+            _rt(_input_json(fixture)),
+            central_exchange=_rt(_named(fixture, "central-exchange") or {}),
+            roster_plan=_rt(_named(fixture, "miss-roster-plan") or {}),
+        )
     )
 
 
@@ -388,19 +425,21 @@ def _run_dym_transform_partial(fixture: _corpus.Fixture) -> Any:
     from app.services.chatbot.lanes.business.sub_answer import dym_transform_partial
 
     central_exchange = _named(fixture, "central-exchange")
-    return dym_transform_partial(
-        _rt(_input_json(fixture)),
-        parser=_rt(_parser_output(fixture)),
-        gate=_rt(_gate(fixture)),
-        resolved=_rt(_resolved(fixture)),
-        central_exchange=_rt(central_exchange) if central_exchange is not None else None,
+    return _wrap(
+        dym_transform_partial(
+            _rt(_input_json(fixture)),
+            parser=_rt(_parser_output(fixture)),
+            gate=_rt(_gate(fixture)),
+            resolved=_rt(_resolved(fixture)),
+            central_exchange=_rt(central_exchange) if central_exchange is not None else None,
+        )
     )
 
 
 def _run_dym_annotate_partial(fixture: _corpus.Fixture) -> Any:
     from app.services.chatbot.lanes.business.sub_answer import dym_annotate_partial
 
-    return dym_annotate_partial(_rt(_input_json(fixture)))
+    return _wrap(dym_annotate_partial(_rt(_input_json(fixture))))
 
 
 def _run_answer_result(fixture: _corpus.Fixture) -> Any:
@@ -409,30 +448,53 @@ def _run_answer_result(fixture: _corpus.Fixture) -> Any:
     central_exchange = _named(fixture, "central-exchange")
     member_offer = _named(fixture, "build-miss-member-offer")
     dym_annotate_partial = _named(fixture, "dym-annotate-partial")
-    return answer_result(
-        _rt(_input_json(fixture)),
-        central_exchange=_rt(central_exchange) if central_exchange is not None else None,
-        member_offer=_rt(member_offer) if member_offer is not None else None,
-        dym_annotate_partial=_rt(dym_annotate_partial) if dym_annotate_partial is not None else None,
+    return _wrap(
+        answer_result(
+            _rt(_input_json(fixture)),
+            central_exchange=_rt(central_exchange) if central_exchange is not None else None,
+            member_offer=_rt(member_offer) if member_offer is not None else None,
+            dym_annotate_partial=(
+                _rt(dym_annotate_partial) if dym_annotate_partial is not None else None
+            ),
+        )
     )
 
 
 def _run_dym_transform(fixture: _corpus.Fixture) -> Any:
+    """Same `input: null` / `expected: null` pair as `dym-annotate` on the SAME 5
+    captures (measured: `clone-spine-RS/rs7-precond-t1/t2/t3`,
+    `sub-miss-suggest-rs/rs7-t2-d2-reqspec/rs7-t3-promodym` all carry it here too) -
+    `dym-transform` is upstream of `dym-annotate` in the same turn, so if it never ran
+    neither did its successor. Checked before the import for the same reason."""
+    if not fixture.input:
+        return _wrap(None)
     from app.services.chatbot.lanes.business.miss_suggest import dym_transform
 
     central_exchange = _named(fixture, "central-exchange")
-    return dym_transform(
-        _rt(_input_json(fixture)),
-        parser=_rt(_parser_output(fixture)),
-        resolved=_rt(_resolved(fixture)),
-        central_exchange=_rt(central_exchange) if central_exchange is not None else None,
+    return _wrap(
+        dym_transform(
+            _rt(_input_json(fixture)),
+            parser=_rt(_parser_output(fixture)),
+            resolved=_rt(_resolved(fixture)),
+            central_exchange=_rt(central_exchange) if central_exchange is not None else None,
+        )
     )
 
 
 def _run_dym_annotate(fixture: _corpus.Fixture) -> Any:
+    """5 captures (`clone-spine-RS/rs7-precond-t1/t2/t3`,
+    `sub-miss-suggest-rs/rs7-t2-d2-reqspec/rs7-t3-promodym`) carry `input: null` AND
+    `expected: null` together - n8n gave this node ZERO input items in that real
+    execution, so its body never ran at all (a Code node with no input items produces
+    no output items; `normalizeReturn`'s null branch is the SAME "no items" case, not
+    an error). Reproduced by not calling the port at all rather than feeding it a
+    fabricated empty dict `fixture.input` was never handed - checked BEFORE the import
+    so these 5 grade even before `dym_annotate` itself exists."""
+    if not fixture.input:
+        return _wrap(None)
     from app.services.chatbot.lanes.business.miss_suggest import dym_annotate
 
-    return dym_annotate(_rt(_input_json(fixture)))
+    return _wrap(dym_annotate(_rt(_input_json(fixture))))
 
 
 def _run_miss_suggest_result(fixture: _corpus.Fixture) -> Any:
@@ -446,11 +508,13 @@ def _run_miss_suggest_result(fixture: _corpus.Fixture) -> Any:
     dym_annotate = _named(fixture, "dym-annotate")
     sibling_transform = _named(fixture, "sibling-transform")
     sibling_probe = _named(fixture, "sibling-probe")
-    return miss_suggest_result(
-        _rt(_input_json(fixture)),
-        dym_annotate=_rt(dym_annotate) if dym_annotate is not None else None,
-        sibling_transform=_rt(sibling_transform) if sibling_transform is not None else None,
-        sibling_probe=_rt(sibling_probe) if sibling_probe is not None else None,
+    return _wrap(
+        miss_suggest_result(
+            _rt(_input_json(fixture)),
+            dym_annotate=_rt(dym_annotate) if dym_annotate is not None else None,
+            sibling_transform=_rt(sibling_transform) if sibling_transform is not None else None,
+            sibling_probe=_rt(sibling_probe) if sibling_probe is not None else None,
+        )
     )
 
 
@@ -770,14 +834,14 @@ class TestCrossdomainProbe:
                 }
             ]
         }
-        session = {"session_vars": {"variables": {}}}
+        session_block = {"session_vars": {"variables": {}}}
         validator_result = {
             "answers": [{"fields": [{"label": "Product Code", "value": "SRTOTHER"}]}],
             "response": "Some other stock line.",
         }
 
         zeroset = crossdomain_zeroset(
-            validator_result, parser=parser, resolved=resolved, session=session
+            validator_result, parser=parser, resolved=resolved, session_block=session_block
         )
         assert zeroset["_xd"]["active"] is True, "SRTWC8517 was asked for but never returned"
 
@@ -792,7 +856,7 @@ class TestCrossdomainProbe:
             validator_result,
             parser=parser,
             resolved=resolved,
-            session=session,
+            session_block=session_block,
             entities_names=None,
             services=services,
             contact_id="164838271",
@@ -1139,7 +1203,7 @@ class TestH22H23DymOfferDomainCleared:
 
         parser = {"message_type": "business_query", "domain_hint": "inventory"}
         resolved = {}
-        session = {
+        session_block = {
             "session_vars": {
                 "variables": {"dym_offer": {"domain": "promotion", "picked": ["SRT-OLD-PICK"]}}
             }
@@ -1147,7 +1211,7 @@ class TestH22H23DymOfferDomainCleared:
         validator_result = {"answers": [], "response": "no rows"}
 
         out = crossdomain_zeroset(
-            validator_result, parser=parser, resolved=resolved, session=session
+            validator_result, parser=parser, resolved=resolved, session_block=session_block
         )
         requested = out["_xd"]["requested"]
         assert "SRT-OLD-PICK" not in requested, (
@@ -1160,7 +1224,7 @@ class TestH22H23DymOfferDomainCleared:
 
         parser = {"message_type": "business_query", "domain_hint": "inventory"}
         resolved = {}
-        session = {
+        session_block = {
             "session_vars": {
                 "variables": {"dym_offer": {"domain": "inventory", "picked": ["SRT-SAME-DOMAIN"]}}
             }
@@ -1168,7 +1232,7 @@ class TestH22H23DymOfferDomainCleared:
         validator_result = {"answers": [], "response": "no rows"}
 
         out = crossdomain_zeroset(
-            validator_result, parser=parser, resolved=resolved, session=session
+            validator_result, parser=parser, resolved=resolved, session_block=session_block
         )
         requested = out["_xd"]["requested"]
         assert "SRT-SAME-DOMAIN" in requested
@@ -1232,10 +1296,10 @@ class TestD14DryRunReadsButWritesNothing:
                 }
             ]
         }
-        session = {"session_vars": {"variables": {}}}
+        session_block = {"session_vars": {"variables": {}}}
         validator_result = {"answers": [], "response": "no rows"}
         zeroset = crossdomain_zeroset(
-            validator_result, parser=parser, resolved=resolved, session=session
+            validator_result, parser=parser, resolved=resolved, session_block=session_block
         )
         assert zeroset["_xd"]["active"] is True
 
@@ -1248,7 +1312,7 @@ class TestD14DryRunReadsButWritesNothing:
             validator_result,
             parser=parser,
             resolved=resolved,
-            session=session,
+            session_block=session_block,
             entities_names=None,
             services=services,
             contact_id="1",
