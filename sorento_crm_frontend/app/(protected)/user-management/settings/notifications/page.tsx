@@ -79,6 +79,18 @@ const notificationSettings = [
 
 type NotificationSettingRow = (typeof notificationSettings)[number];
 
+/**
+ * The grid's rows, built ONCE. `data={[...notificationSettings]}` inline handed
+ * TanStack a new array identity on every render, and TanStack reads `data` by
+ * identity: with `autoResetPageIndex` on it reset the page, which set state,
+ * which re-rendered, which built another array. The tab pegged a core on load,
+ * with a clean console (M5 run 2 evidence, finding 1) - measured at ~400 renders
+ * and ~6,000 DOM mutations a second with no interaction at all, which is why the
+ * checkbox looked like the culprit. This list never changes, so it is built once
+ * and the loop has nothing to feed on.
+ */
+const NOTIFICATION_ROWS: NotificationSettingRow[] = [...notificationSettings];
+
 const NotificationSettingsPage = () => {
   const queryClient = useQueryClient();
   const { settings, roles } = useSettings();
@@ -310,7 +322,7 @@ const NotificationSettingsPage = () => {
 
   const table = useReactTable({
     columns,
-    data: [...notificationSettings],
+    data: NOTIFICATION_ROWS,
     getRowId: (row) => row.label,
     getCoreRowModel: getCoreRowModel(),
     columnResizeMode: 'onChange',
