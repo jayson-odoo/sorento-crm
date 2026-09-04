@@ -96,6 +96,7 @@ For any development task, Claude boots and owns the local stack as **background 
 - **Remote testing (laptop over Tailscale / LAN):** FE `.env.local` leaves `NEXT_PUBLIC_API_URL` UNSET and sets `FASTAPI_INTERNAL_URL=http://localhost:<be port>`, `AUTH_TRUST_HOST=true`, `NEXT_DEV_ALLOWED_ORIGINS=tehs-mac-mini,*.ts.net,<tailscale ip>`. Browser calls then stay relative and `next.config.mjs` proxies `/api/v1` to the lane backend, so `http://<tailscale name or ip>:<fe port>` works with no tunnel and no CORS entry. A `NEXT_PUBLIC_*` value is inlined into the browser bundle, so `localhost:8000` there means the LAPTOP, not the Mini. Env or `next.config.mjs` edits need a dev-server restart.
 - FE edits hot-reload - no action needed, and no rebuild (see "Frontend dev loop" for the build rule).
 - Backend changes need no action beyond confirming uvicorn's reload log line - **except** edits to `app/tasks/*` (RQ tasks), which require restarting the Worker session.
+- **Pre-push hook mirrors CI's fast gates (alembic heads, py3.12 compile, touched vitest, dash guard) locally.** Install once per clone: `git config core.hooksPath scripts/git-hooks` (see `scripts/git-hooks/README.md`; bypass with `SKIP_PREPUSH=1 git push`).
 
 ## Architecture
 
