@@ -38,6 +38,9 @@ logger = logging.getLogger(__name__)
 
 Lane = Literal["sub_answer", "miss_suggest"]
 
+# "the caller said nothing", which is not the same as "the caller said None".
+_UNSET: Any = object()
+
 
 def dispatch(result: dict[str, Any] | None) -> Lane:
     """`If6`: `validator.has_result` AND `validator.is_valid`, both STRICT booleans.
@@ -281,7 +284,7 @@ def access_level_choice_message(
     item: dict[str, Any] | None,
     *,
     parser: dict[str, Any] | None,
-    tier_availability: Any = None,
+    tier_availability: Any = _UNSET,
 ) -> dict[str, Any]:
     """The tier ask, reached on `If4` FALSE: either no access at all, or a pick is needed.
 
@@ -315,7 +318,15 @@ def access_level_choice_message(
         # "not determined" and renders exactly as before, with no annotation. The
         # all-empty case never reaches here: `if-tier-has-any` sends it down the answer
         # lane so the customer gets the real not-found instead of a list of dead options.
-        avail = tier_availability if jsc.truthy(tier_availability) else None
+        # n8n reads `$('tier-probe-collect').tier_availability`. On this lane that value is
+        # ALREADY on the item: `tier_probe_collect` writes it and `fetch-result` spreads it
+        # through, which is why the by-name read has an item-level equivalent at all. The
+        # parameter stays for a caller holding the collect node's own output; unset means
+        # "read it off the item", and only an explicit None means "not determined".
+        resolved_avail = (
+            out.get("tier_availability") if tier_availability is _UNSET else tier_availability
+        )
+        avail = resolved_avail if jsc.truthy(resolved_avail) else None
         # D16: name the thing being asked about, so the question cannot read as being
         # about nothing. Echo what the customer TYPED, never a canonical code - one raw
         # token can resolve to two products, and naming one would claim we searched
