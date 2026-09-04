@@ -14,7 +14,13 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
+
+from app.models.base import set_company_scope
+from app.services.company_routing_service import resolve_routing_company
+from app.services.market_segment_service import MarketSegmentService
+from app.services.user_service import AccessAgentService
 
 
 def list_team_roster(
@@ -38,13 +44,12 @@ def list_team_roster(
     what the endpoint surfaces and what the chatbot's roster fetch degrades on (n8n's
     `onError: continueRegularOutput`, one company's failure never costs the whole offer).
     """
-    from fastapi import HTTPException
-
+    # LOCAL on purpose, and the only one: `_resolve_round_robin_team_id` still lives in
+    # the next-assignee ROUTER, so importing it at module level would make a service
+    # import an api module at import time. Moving it out is the right fix and is a
+    # different change from this extraction; until then the cycle is broken here rather
+    # than pretended away.
     from app.api.v1.external.next_assignee import _resolve_round_robin_team_id
-    from app.models.base import set_company_scope
-    from app.services.company_routing_service import resolve_routing_company
-    from app.services.market_segment_service import MarketSegmentService
-    from app.services.user_service import AccessAgentService
 
     service = AccessAgentService(db)
 
