@@ -63,6 +63,70 @@ DIVERGENCES: list[Divergence] = [
             ("variables", "pending"),  # a pre-RS-3 capture, unwrapped by the runner
         ),
     ),
+    # ------------------------------------------------------------------ #
+    # S6c.
+    # ------------------------------------------------------------------ #
+    Divergence(
+        node="build-suggest-offer",
+        fixture="exec-14001140",
+        hazard="D4 (AC-607) - the offer's identity is the TURN id",
+        reason=(
+            "the did-you-mean offer stamps `$execution.id` as its identity, and in the CRM "
+            "that identity is the turn id. The offer only has to be stable WITHIN the "
+            "session, so the successor is correct, but the value can never equal a captured "
+            "n8n execution id - the same permanent difference already registered for the "
+            "world replay as `worlds.WORLD_DROP_PATHS = (('dym_offer', 'id'),)`. This is "
+            "the ONE graded `build-suggest-offer` capture whose only disagreement is that "
+            "id (measured: 19 of 19 equal once the turn id is supplied), so the entry is "
+            "per-fixture rather than node-wide - a node-wide one would pass every other "
+            "capture unread."
+        ),
+        strip_paths=((("dym_offer", "id")),),
+    ),
+    *(
+        Divergence(
+            node="dym-transform",
+            fixture=name,
+            hazard="capture predates the body (S6a's CAPTURE_BODY_ADDITIONS class)",
+            reason=(
+                "the LIVE SPINE ships a STALE inline copy of `dym-transform` (421 lines, "
+                "pre-Fix-4) while `sub-miss-suggest-live@f42de9c6` ships the 561-line body "
+                "this port was made from and the 33 `sub-miss-suggest-live` captures were "
+                "graded against. The three keys Fix 4 added - `dym_candidate_uuids`, "
+                "`dym_probe_row_keys`, `probe_uuid_keyed` - do not exist in the older body, "
+                "so this capture's `expected` cannot carry them. Measured: they are the "
+                "ONLY disagreement on all three of these captures, and every other key is "
+                "byte-equal. Retire the entry when the spine's inline copy is re-captured "
+                "against the shipping body."
+            ),
+            strip_paths=(
+                ("dym_candidate_uuids",),
+                ("dym_probe_row_keys",),
+                ("probe_uuid_keyed",),
+            ),
+        )
+        for name in ("exec-13462354", "exec-13469053", "exec-13479632")
+    ),
+    Divergence(
+        node="dym-annotate",
+        fixture="exec-13469053",
+        hazard="capture predates the body (S6a's CAPTURE_BODY_ADDITIONS class)",
+        reason=(
+            "the same stale-spine pair as the three `dym-transform` entries above: the live "
+            "spine's inline `dym-annotate` is 169 lines (pre-Fix-4 / F1 / F8) while "
+            "`sub-miss-suggest-live@f42de9c6` ships the 247-line body this port was made "
+            "from. The older body emits neither `dym_ambiguous_codes` nor "
+            "`dym_ambiguous_uuids` and stamps no `key_mode` on `dym_probe_meta`. Measured: "
+            "those three keys are the ONLY disagreement, and the other 15 graded "
+            "`dym-annotate` captures are byte-equal once the node's two by-name upstreams "
+            "are supplied. Retire the entry when the spine's inline copy is re-captured."
+        ),
+        strip_paths=(
+            ("dym_ambiguous_codes",),
+            ("dym_ambiguous_uuids",),
+            ("dym_probe_meta", "key_mode"),
+        ),
+    ),
 ]
 
 

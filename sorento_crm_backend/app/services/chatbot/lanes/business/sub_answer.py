@@ -19,6 +19,7 @@ import re
 from typing import Any
 
 from app.services.chatbot import jsc
+from app.services.chatbot.lanes.business.miss_suggest import _annotate, _dym_plan
 
 logger = logging.getLogger(__name__)
 
@@ -286,3 +287,246 @@ def miss_roster_check(
             parser=parser if isinstance(parser, dict) else {},
         ),
     }
+
+
+def miss_roster_plan(
+    item: dict[str, Any] | None,
+    *,
+    build_result: dict[str, Any] | None,
+    parser: dict[str, Any] | None,
+    gate: dict[str, Any] | None,
+    central_exchange: Any = None,
+) -> dict[str, Any]:
+    """`miss-roster-plan`: ONE item for the MISS company on an answered turn.
+
+    A company the envelope says was queried (`lookup_companies`) but that contributed no
+    answer. `miss_roster_check` has already verified the shape with the SAME derivation and
+    the SAME lane table, which is why `MISS_ROSTER_LANE` is declared once above.
+
+    TWO DELIBERATE NARROWINGS vs the clone body this was promoted from:
+
+    1. `members: False` on EVERY lane row. The members arm is not deployed on live, so a
+       `True` row would route a turn at a node that does not exist. The consequence, and the
+       reason this is a data flag rather than deleted code: `build_miss_member_offer`'s plain
+       arm keys on every plan item being `members is False`, so `miss_member_offer` can never
+       be emitted and the tail's one `last_result_set` CONCATENATION is unreachable by
+       construction.
+    2. EXACTLY ONE miss company, or nothing. Two or more would persist a multi-entry
+       `routing_roster_plan`, which the escalation lane turns into
+       `routing_source: 'multi_company_unpicked'` with a null company and hands to a real
+       round-robin assign on a pool the customer never picked. The gate that suppresses that
+       assign is not on live, so multi-miss is capped HERE and degrades to a sentinel.
+
+    `team` is stamped from the PARSER's own `suggested_team`, never a hard-coded row field: a
+    row may carry TWO routing pairs (product attachments ride marketing for photo asks and
+    purchasing certification for certificate asks), and a hard-coded team would tell a
+    certificates ask "marketing_product team".
+    """
+    # `$('central-exchange').first().json` - the answered envelope. The node has no fallback
+    # for it in n8n (an unexecuted upstream would take the whole turn down); here the item is
+    # the same object on the one wiring that reaches this node, so it stands in.
+    env = central_exchange if isinstance(central_exchange, dict) else (
+        item if isinstance(item, dict) else {}
+    )
+    result = build_result if isinstance(build_result, dict) else {}
+    q = parser if isinstance(parser, dict) else {}
+    g = gate if isinstance(gate, dict) else {}
+
+    # WRAPPED like every other upstream read: a Code node that throws takes the WHOLE turn
+    # down, and an unreadable tool means lane None, which is the same fail-closed shape an
+    # off-lane tool already produces (members False, team null, never a roster fetch).
+    tool = jsc.js_string(
+        jsc.get(jsc.get(result, "tool") or {}, "name") or ""
+    ).strip()
+    lane = MISS_ROSTER_LANE.get(tool) if tool else None
+    team = jsc.js_string(jsc.get(jsc.get(q, "routing") or {}, "suggested_team") or "").strip() or None
+
+    lookup_companies = jsc.array(jsc.get(env, "lookup_companies"))
+    answers = jsc.array(jsc.get(env, "answers"))
+    answered: set[str] = set()
+    for answer in answers:
+        field = (
+            jsc.find(
+                jsc.get(answer, "fields"),
+                lambda x: jsc.truthy(x)
+                and jsc.get(x, "key") == "company_name"
+                and jsc.truthy(jsc.get(x, "value")),
+            )
+            if jsc.truthy(answer) and isinstance(jsc.get(answer, "fields"), list)
+            else None
+        )
+        if jsc.truthy(field):
+            answered.add(jsc.js_string(jsc.get(field, "value")).lower().strip())
+
+    routing_companies = jsc.array(jsc.get(g, "routing_companies"))
+    miss = [
+        c
+        for c in lookup_companies
+        if jsc.truthy(c)
+        and jsc.truthy(jsc.get(c, "name"))
+        and jsc.js_string(jsc.get(c, "name")).lower().strip() not in answered
+    ]
+
+    if len(miss) != 1:
+        # The single-miss cap AND the impossible gate/plan divergence both degrade to ONE
+        # null-company sentinel; `build_miss_member_offer` drops it and the turn is untouched.
+        return {
+            "plan_idx": 0,
+            "company_id": None,
+            "company_name": None,
+            "brand_code": None,
+            "codes": [],
+            "multi_company": False,
+            "companies": [],
+            "team": None,
+            "members": False,
+            "_miss_plan_empty": True,
+        }
+
+    company = miss[0]
+    match = jsc.find(
+        routing_companies,
+        lambda x: jsc.truthy(x)
+        and (
+            (
+                jsc.truthy(jsc.get(x, "company_id"))
+                and jsc.truthy(jsc.get(company, "id"))
+                and jsc.get(x, "company_id") == jsc.get(company, "id")
+            )
+            or (
+                jsc.truthy(jsc.get(x, "company_name"))
+                and jsc.truthy(jsc.get(company, "name"))
+                and jsc.js_string(jsc.get(x, "company_name")).lower().strip()
+                == jsc.js_string(jsc.get(company, "name")).lower().strip()
+            )
+        ),
+    )
+    match = match if jsc.truthy(match) else None
+    brand_code = jsc.get(match, "brand_code") if match is not None else None
+    codes = jsc.get(match, "codes") if match is not None else None
+    return {
+        "plan_idx": 0,
+        "company_id": jsc.get(company, "id") if jsc.truthy(jsc.get(company, "id")) else None,
+        "company_name": jsc.get(company, "name") if jsc.truthy(jsc.get(company, "name")) else None,
+        "brand_code": brand_code if jsc.truthy(brand_code) else None,
+        "codes": codes if isinstance(codes, list) else [],
+        "multi_company": False,
+        "companies": [
+            jsc.get(x, "name") for x in miss if jsc.truthy(jsc.get(x, "name"))
+        ],
+        "team": team if lane else None,
+        "members": bool(lane and lane["members"] is True),
+    }
+
+
+def build_miss_member_offer(
+    item: dict[str, Any] | None,
+    *,
+    central_exchange: dict[str, Any] | None,
+    roster_plan: Any = None,
+) -> dict[str, Any]:
+    """`build-miss-member-offer`: keep the found results, offer escalation for the miss.
+
+    TWO arms exist in this body and on LIVE only ONE is reachable.
+
+    * PLAIN arm (the arm that ships): the plan's items arrive directly, no roster was
+      fetched, no picker is rendered. Output is the answered envelope plus
+      `miss_plain_offer: true` and the plan identity carrying the lane `team`; the tail
+      appends the frozen phrase.
+    * MEMBERS arm: retained but UNREACHABLE, through two independent barriers, either
+      sufficient on its own. (a) `miss-roster-plan` stamps `members: false` on every row, so
+      the plain arm returns first; (b) even bypassing (a), this node's input is the plan's own
+      items, not http fullResponse items, so the roster parse yields zero members and the
+      guard returns the untouched envelope. It is kept rather than deleted so that promoting
+      the feature is a wiring + flag change with the rendering already reviewed.
+
+    Zero members, or ANY surprise, means envelope passthrough exactly.
+    """
+    env = central_exchange if isinstance(central_exchange, dict) else {}
+    passthrough = {**env}
+    try:
+        plan = [roster_plan] if isinstance(roster_plan, dict) else []
+        real = [
+            p
+            for p in plan
+            if jsc.truthy(p)
+            and jsc.get(p, "_miss_plan_empty") is not True
+            and (jsc.truthy(jsc.get(p, "company_id")) or jsc.truthy(jsc.get(p, "company_name")))
+        ]
+        if real and all(jsc.get(p, "members") is False for p in real):
+            plan_out = [
+                {
+                    "plan_idx": p.get("plan_idx") if jsc.get(p, "plan_idx") is not None else index,
+                    "company_id": jsc.get(p, "company_id") if jsc.truthy(jsc.get(p, "company_id")) else None,
+                    "company_name": jsc.get(p, "company_name")
+                    if jsc.truthy(jsc.get(p, "company_name"))
+                    else None,
+                    "brand_code": jsc.get(p, "brand_code") if jsc.truthy(jsc.get(p, "brand_code")) else None,
+                    "team": jsc.get(p, "team")
+                    if isinstance(jsc.get(p, "team"), str) and jsc.truthy(jsc.get(p, "team"))
+                    else None,
+                }
+                for index, p in enumerate(real)
+            ]
+            return {**env, "miss_plain_offer": True, "miss_roster_plan": plan_out}
+        # MEMBERS arm. `$input` here is the plan's own items, so `rosterAt` finds neither a
+        # `body` array nor a bare array and yields zero members - the guard below returns the
+        # untouched envelope, which is the second of the two barriers named above.
+        return passthrough
+    except Exception:  # noqa: BLE001 - the JS's own catch: any surprise leaves the turn untouched
+        return passthrough
+
+
+def dym_transform_partial(
+    item: dict[str, Any] | None,
+    *,
+    parser: Any,
+    gate: Any,
+    resolved: Any,
+    central_exchange: Any = None,
+) -> dict[str, Any]:
+    """`dym-transform-partial` (409 lines): the RESULTS lane's did-you-mean probe planner.
+
+    The same body as `sub-miss-suggest`'s `dym-transform`, deployed a second time - so it is
+    the same function, called with `variant="partial"`. Everything the two bodies differ on is
+    named at its branch in `miss_suggest._dym_plan`; nothing about the difference is
+    reconstructed here.
+
+    `central_exchange` is the lane DETECTOR, not a payload: one body is deployed to every
+    lane, so the lane is detected rather than configured, and `central-exchange` is the direct
+    upstream of this deployment.
+    """
+    return _dym_plan(
+        item,
+        parser=parser,
+        resolved=resolved,
+        gate=gate,
+        partial_lane=central_exchange is not None,
+        variant="partial",
+    )
+
+
+def dym_annotate_partial(
+    item: dict[str, Any] | None,
+    *,
+    payload: Any = None,
+    transform: Any = None,
+) -> dict[str, Any]:
+    """`dym-annotate-partial` (144 lines): the RESULTS lane's copy of the annotator.
+
+    Two literals differ between the two deployed copies and nothing else does - the payload
+    source is `central-exchange` here (`not-found-error-message` on the miss lane) and the
+    planner is `dym-transform-partial`. Both are parameters, for the same reason every other
+    by-name read in this package is one.
+
+    This copy predates Fix 4, so it has neither the uuid keying nor D18's promotion arm; that
+    is why `dym-transform` gates uuid keying OFF for the `partial` lane. Widening it needs
+    both bodies changed in the same commit, or the probe and the annotator silently desync.
+    """
+    return _annotate(
+        item,
+        payload=payload,
+        transform=transform if transform is not None else item,
+        probe_items=None,
+        full=False,
+    )

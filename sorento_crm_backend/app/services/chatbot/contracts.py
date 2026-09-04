@@ -498,7 +498,9 @@ class CompleteResponse(BaseModel):
 # head decides and n8n answers. Each later slice REMOVES entries here (S3 takes eight,
 # S4 one, S5 one, S6 three), and S7 empties it and deletes `delegate` entirely. Derived
 # from BRANCH_KINDS minus what the CRM already completes, so the two can never disagree.
-CRM_COMPLETED_BRANCH_KINDS: frozenset[str] = frozenset({"low_signal"})
+CRM_COMPLETED_BRANCH_KINDS: frozenset[str] = frozenset(
+    {"low_signal", "business_query", "check_promotion", "stock_denied"}
+)
 # `DELEGATED_BRANCH_KINDS` used to be the complement of the set above and is GONE: with
 # `system_settings.chatbot_completed_lanes` in the decision, "delegated" is no longer a
 # property of the build at all - the same kind delegates or completes depending on data -

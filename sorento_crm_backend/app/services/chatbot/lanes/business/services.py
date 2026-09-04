@@ -251,7 +251,7 @@ def _tool_search(db: Session) -> ToolSearchFn:
     return call
 
 
-def _mcp_call(db: Session) -> McpCallFn:
+def _mcp_call(db: Session | None = None) -> McpCallFn:
     def call(name: str, args: dict[str, Any]) -> Any:
         """One MCP tool call at the CONFIGURED url (H52, D10).
 
@@ -297,6 +297,30 @@ def _family_fetch(db: Session) -> FamilyFetchFn:
 def production_answer_services(db: Session) -> AnswerServices:
     """S6c's bundle. The probe is the SAME MCP client the fetch step uses (H52, D10)."""
     return AnswerServices(mcp_probe=_mcp_call(db), family_fetch=_family_fetch(db))
+
+
+def answer_services_for(session_factory: Any) -> AnswerServices:
+    """S6c's bundle, bound to a session FACTORY rather than to a live session.
+
+    The answer lane makes two MCP probes and a products read, and the capacity rule says no
+    database session is held across either. `production_answer_services(db)` binds
+    `family_fetch` to the caller's session, which is right for a caller that already has one
+    open and wrong for this lane, whose whole point is that it runs with none. So the family
+    read opens its OWN short session and closes it again; the probe seam needs no session at
+    all (`_mcp_call` never touches its parameter).
+
+    The wider "every bundle takes a factory" change is deliberately NOT made here - only the
+    ONE bundle whose caller holds no session needs it today, and the rest have no such caller.
+    """
+
+    def family_fetch(query: str) -> Any:
+        db = session_factory()
+        try:
+            return _family_fetch(db)(query)
+        finally:
+            db.close()
+
+    return AnswerServices(mcp_probe=_mcp_call(None), family_fetch=family_fetch)
 
 
 def fetch_services(db: Session) -> FetchServices:

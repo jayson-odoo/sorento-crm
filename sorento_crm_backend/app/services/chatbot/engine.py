@@ -711,6 +711,9 @@ def _run_stages(  # noqa: PLR0915
         settings_row = _settings_row(db)
         stock_denial_enabled = _stock_denial_enabled(db, settings_row)
         enabled_lanes = _enabled_lanes(db, settings_row)
+        # D5, once per turn: the respond workspace's own `space_id`, never n8n's hard-coded
+        # 364817. Read HERE because S6c's probes run after this session has closed.
+        space_id_for_turn = business_services.fetch_space_id(db)
         branch_kind, tier_stamp = decide(ctx, stock_denial_enabled=stock_denial_enabled)
         item = _stamp_item(access, branch_kind, tier_stamp)
 
@@ -776,6 +779,12 @@ def _run_stages(  # noqa: PLR0915
 
         delegate_payload: dict[str, Any] | None = None
         lane_error_text: str | None = None
+        # S6c: does the CRM FINISH this business turn, or hand the payload back to n8n?
+        # Both switches are required, and they are independent on purpose:
+        # `CHATBOT_BUSINESS_LANE_ENABLED` says the lane may RUN (S6a's shadow switch), and
+        # `system_settings.chatbot_completed_lanes` says this arm may ANSWER. Deploy,
+        # compare, switch on, cut n8n stays four reversible steps.
+        business_completes = False
         if business.handles(branch_kind) and _business_lane_enabled():
             stage[0] = "looked_up"
             try:
@@ -833,7 +842,12 @@ def _run_stages(  # noqa: PLR0915
                 # The other three exits are answers in their own right: `access_ask`
                 # needs a tier from the customer, `not_found` and `offer` have nothing
                 # to look up. Only `continue` means "the gate is satisfied, go read".
-                if payload.get("_exit_kind") == "continue":
+                if payload.get("_exit_kind") != "continue":
+                    # S6c: those three exits ARE answers, so the answer half runs on them
+                    # straight away - `access_level_choice_message` for the tier ask, the
+                    # gate's own picker for `offer`, the miss lane for `not_found`.
+                    business_completes = completes_here
+                else:
                     try:
                         fetch_fragment = business.run_fetch(
                             payload,
@@ -876,6 +890,7 @@ def _run_stages(  # noqa: PLR0915
                                 raw={"fetch": fetch_fragment.get("fetch")},
                             )
                         else:
+                            business_completes = completes_here
                             turn_trace.record(
                                 "looked_up",
                                 summary=trace_mod.looked_up_summary(fetch_fragment)
@@ -908,7 +923,10 @@ def _run_stages(  # noqa: PLR0915
         # `_close_turn` is write-once). `_run_casual_lane` closes it after the clarifier
         # answers. With the lane switched off there is nothing to wait for and this closes
         # as `delegated`, exactly as it did before S4.
-        if not (branch_kind == "low_signal" and completes_here):
+        if not (
+            (branch_kind == "low_signal" and completes_here)
+            or business_completes
+        ):
             _close_turn(
                 db,
                 turn_id,
@@ -929,6 +947,21 @@ def _run_stages(  # noqa: PLR0915
                     "delegate_error": lane_error_text,
                 },
             )
+
+    if business_completes and not lane_error_text:
+        return _run_business_answer(
+            turn_id=turn_id,
+            ctx=ctx,
+            item=item,
+            branch_kind=branch_kind,
+            actions=actions,
+            payload=delegate_payload or {},
+            dry_run=dry_run,
+            session_factory=session_factory,
+            turn_trace=turn_trace,
+            stage=stage,
+            space_id=space_id_for_turn,
+        )
 
     if branch_kind == "low_signal" and completes_here:
         return _run_casual_lane(
@@ -959,6 +992,109 @@ def _run_stages(  # noqa: PLR0915
         session_patch=None,
         status="delegated" if delegate else "done",
         stage="looked_up" if lane_error_text else "routed",
+    )
+
+
+def _run_business_answer(
+    *,
+    turn_id: str,
+    ctx: dict[str, Any],
+    item: dict[str, Any],
+    branch_kind: str,
+    actions: list[dict[str, Any]],
+    payload: dict[str, Any],
+    dry_run: bool,
+    session_factory: SessionFactory,
+    turn_trace: Any,
+    stage: list[str],
+    space_id: str | None,
+) -> TurnResult:
+    """S6c's handover: the answer half plus the tail, with NO database session open.
+
+    Split out of `_run_stages` for the same reason `_run_casual_lane` is: the capacity rule
+    is visible in the signature rather than in a comment. This takes a `session_factory`,
+    never a `Session`, so the two MCP probes and the family read cannot run with a routing
+    connection held open (the 96/100-connection incident is the evidence).
+
+    A failure here is the LANE's failure, not the engine's, exactly as S4 ruled for the
+    clarifier: the turn keeps its `branch_kind`, fails at `stage = replied` (the answer
+    half is what composes the reply), and the customer gets today's error reply. Letting it reach `run_turn`'s catch-all would null
+    the branch kind and send the PARSER's error text, which is a different lane's words for
+    a different failure.
+    """
+    stage[0] = "replied"
+    close_turn_for_tail(
+        turn_id,
+        session_factory=session_factory,
+        branch_kind=branch_kind,
+        ctx=ctx,
+        item=item,
+        actions=actions,
+        records=turn_trace.records,
+    )
+    try:
+        completed = business.complete_answer(
+            payload,
+            turn_id=turn_id,
+            ctx=ctx,
+            item=item,
+            branch_kind=branch_kind,
+            services=business_services.answer_services_for(session_factory),
+            session_factory=session_factory,
+            space_id=space_id,
+            dry_run=dry_run,
+        )
+    except Exception as exc:  # noqa: BLE001 - the lane's failure, with the lane's reply
+        logger.exception("chatbot turn %s: business answer failed", turn_id)
+        failed = f"{type(exc).__name__}: {exc}"
+        reply = {"text": GENERIC_ERROR_REPLY, "quick_replies": []}
+        answer_actions = [
+            *actions,
+            {
+                "kind": "send_message",
+                "text": GENERIC_ERROR_REPLY,
+                "quick_replies": [],
+                "dry_run": dry_run,
+            },
+        ]
+        with _session(session_factory) as db:
+            _close_turn(
+                db,
+                turn_id,
+                status="failed",
+                stage="replied",
+                branch_kind=branch_kind,
+                error=failed,
+                records=turn_trace.records,
+                response={"ctx": ctx, "item": item, "actions": answer_actions, "reply": reply},
+            )
+        return TurnResult(
+            turn_id=turn_id,
+            ctx=ctx,
+            item=item,
+            branch_kind=branch_kind,
+            delegate=None,
+            reply=reply,
+            actions=answer_actions,
+            session_patch=None,
+            status="failed",
+            stage="replied",
+            error=failed,
+        )
+
+    return TurnResult(
+        turn_id=turn_id,
+        ctx=ctx,
+        item=item,
+        branch_kind=branch_kind,
+        delegate=None,
+        reply=completed.get("reply"),
+        actions=completed.get("actions") or [],
+        # D14: on a dry run the tail wrote nothing and hands back what it WOULD have
+        # written, so a console or clone turn can be inspected.
+        session_patch=completed.get("session_patch"),
+        status=completed.get("status") or "done",
+        stage=completed.get("stage") or "remembered",
     )
 
 
@@ -1280,6 +1416,38 @@ def _current_date_directive() -> str:
 # What `sub-output`'s trigger declares, minus `item` and `ctx`. Every one is nullable and
 # every one is a producer's whole output, verbatim, so the tail's by-name reads become
 # named arguments (D1: the sub-workflow boundary was transport).
+def close_turn_for_tail(
+    turn_id: str,
+    *,
+    session_factory: SessionFactory,
+    branch_kind: str,
+    ctx: dict[str, Any],
+    item: dict[str, Any],
+    actions: list[dict[str, Any]],
+    records: list[dict[str, Any]],
+) -> None:
+    """Close the row `delegated` at `routed`, the state `complete_turn` refuses to run without.
+
+    Extracted so a lane that finishes in process (S4's `low_signal`, S6c's three business
+    arms) can hand over to the tail without importing `_close_turn`'s private shape or
+    opening its own session in the middle of a lane. Not bookkeeping: it is the state the
+    turn is genuinely in while the tail has not folded the lane's result in yet, it is what
+    the trace screen should show if the process dies between the two, and it puts this
+    turn's actions on the row before the tail reads `prior_actions` off it (D15).
+    """
+    with _session(session_factory) as db:
+        _close_turn(
+            db,
+            turn_id,
+            status="delegated",
+            stage="routed",
+            branch_kind=branch_kind,
+            error=None,
+            records=records,
+            response={"ctx": ctx, "item": item, "actions": actions},
+        )
+
+
 FRAGMENT_FIELDS: tuple[str, ...] = (
     "result",
     "resolved",
