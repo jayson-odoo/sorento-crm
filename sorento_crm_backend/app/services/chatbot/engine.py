@@ -735,17 +735,14 @@ def _run_stages(  # noqa: PLR0915
         settings_row = _settings_row(db)
         stock_denial_enabled = _stock_denial_enabled(db, settings_row)
         enabled_lanes = _enabled_lanes(db, settings_row)
-        # AC-304: the configured unsupported-domain list is passed ONLY when the owner has
-        # set one. Unset means "use route's own default", and saying that by NOT passing
-        # the argument keeps `decide`'s call shape exactly what it was - which matters
-        # because `test_s6a_gate_dry_run_and_seams.py` substitutes `decide` with a
-        # two-argument stub, and a kwarg it does not accept would turn every one of those
-        # turns into a failed turn instead of the seam that test is about.
-        configured_domains = _unsupported_domains(settings_row)
+        # AC-304: the configured unsupported-domain list, or None when the owner has set
+        # none. `route.decide` owns the fallback to the two literals the JS hard-codes, so
+        # None travels as an argument rather than as an absent one - one call shape, and
+        # the default lives in exactly one file.
         branch_kind, tier_stamp = decide(
             ctx,
             stock_denial_enabled=stock_denial_enabled,
-            **({} if configured_domains is None else {"unsupported_domains": configured_domains}),
+            unsupported_domains=_unsupported_domains(settings_row),
         )
         item = _stamp_item(access, branch_kind, tier_stamp)
 
