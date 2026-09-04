@@ -1,0 +1,693 @@
+{
+  "source": {
+    "execution_id": "14875614",
+    "workflow_id": "fr2u3e6FKg52cPvK",
+    "workflow_version": "bac9613b-644a-456b-a17d-f0815672b8cd",
+    "node": "escalation-context",
+    "captured_at": "2026-09-04T19:58:23+00:00",
+    "expected_from": "runData",
+    "dedupe_sig": "8e6789724a45610d6bed62fc59b835f3acb58d5c0e033819f91a4f05c3aeb1c2"
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 900000076,
+              "firstName": "Person 105",
+              "lastName": null,
+              "phone": "+60100000038",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/108318f6-e3ba-42f9-893b-9f8d010f6cb1"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260510_200514",
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": "New Lead",
+              "created_at": 1775531831
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "906bdf5f-7b9a-4e04-9915-2d8178f6c7dc",
+              "contact": {
+                "id": 900000076,
+                "firstName": "Person 105",
+                "lastName": "",
+                "phone": "+60100000038",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1775531831
+              },
+              "message": {
+                "messageId": 1788330087000000,
+                "channelMessageId": "wamid.HBgLNjAxODI5MDE3NjYVAgASGBYzRUIwRTk4QjQwRUM2RjEzQTJCNTRCAA==",
+                "contactId": 900000076,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788330087000,
+                "message": {
+                  "type": "text",
+                  "text": "escalate to marketing for srtsc07 full height"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": null,
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000076",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "marketing_product",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "entities": [
+                    {
+                      "raw": "technical drawing",
+                      "hint": "attachment_type",
+                      "confident": true,
+                      "canonical_code": "Technical Specifications",
+                      "current_message": true
+                    },
+                    {
+                      "raw": "srtsc07",
+                      "hint": "product",
+                      "confident": true,
+                      "canonical_code": null,
+                      "current_message": true
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Previous turn (product_attachment): returned 1 records",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to get the technical drawing for srtsc07",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "product_attachment",
+                  "intent_hint": "check_product_attachment",
+                  "message_type": "business_query",
+                  "query_brands": [],
+                  "access_levels": [],
+                  "routing_brand": "sorento",
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [
+                    {
+                      "idx": 1,
+                      "uuid": null,
+                      "label": "SRTSC07",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    }
+                  ],
+                  "routing_company": "00000000-0000-0000-0000-000000000001",
+                  "date_filter_start": null,
+                  "routing_companies": [
+                    {
+                      "codes": [
+                        "SRTSC07"
+                      ],
+                      "labels": [
+                        "SRTSC07"
+                      ],
+                      "brand_code": "sorento",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "selection_context": null,
+                  "routing_roster_plan": null,
+                  "requested_attributes": [],
+                  "routing_brand_source": "resolved"
+                },
+                "user_response": "I have attached the file(s) below.\n\n1. *Product Code:* SRTSC07\n*Attachment Type:* Technical Specifications\n*File Name:* SRTSC07_TD.jpg\n\n_Data last updated: 25/05/2026 16:09:34_"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "request_for_help",
+                "intent_hint": "check_product",
+                "domain_hint": "master_products",
+                "scope_intent": null,
+                "is_affirmative": true,
+                "user_goal": "trying to escalate to marketing for SRtsc07 full height",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "srtsc07",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [
+                  "dimension"
+                ],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "purchasing_product",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_explicit",
+                "scope_exclusive_applied": false,
+                "entity_op_applied": "replace_combine",
+                "query_brands": [],
+                "entities_filtered": true,
+                "entities_emptied_by_filter": false,
+                "broaden_dropped": [
+                  "attachment_type:technical drawing"
+                ]
+              },
+              "_parser_raw": {
+                "message_type": "request_for_help",
+                "intent_hint": "check_product",
+                "domain_hint": "master_products",
+                "scope_intent": null,
+                "is_affirmative": true,
+                "user_goal": "trying to escalate to marketing for SRtsc07 full height",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "srtsc07",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [
+                  "dimension"
+                ],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "purchasing_product",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "General Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null
+          },
+          "item": {
+            "allowed": true,
+            "decision": "allow",
+            "agent_name": "General Enquiries",
+            "attributes": null,
+            "all_attributes_allowed": null,
+            "branch_kind": "out_of_scope"
+          },
+          "is_test": false
+        }
+      }
+    ],
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 900000076,
+              "firstName": "Person 105",
+              "lastName": null,
+              "phone": "+60100000038",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/108318f6-e3ba-42f9-893b-9f8d010f6cb1"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260510_200514",
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": "New Lead",
+              "created_at": 1775531831
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "906bdf5f-7b9a-4e04-9915-2d8178f6c7dc",
+              "contact": {
+                "id": 900000076,
+                "firstName": "Person 105",
+                "lastName": "",
+                "phone": "+60100000038",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1775531831
+              },
+              "message": {
+                "messageId": 1788330087000000,
+                "channelMessageId": "wamid.HBgLNjAxODI5MDE3NjYVAgASGBYzRUIwRTk4QjQwRUM2RjEzQTJCNTRCAA==",
+                "contactId": 900000076,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788330087000,
+                "message": {
+                  "type": "text",
+                  "text": "escalate to marketing for srtsc07 full height"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": null,
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000076",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "marketing_product",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "entities": [
+                    {
+                      "raw": "technical drawing",
+                      "hint": "attachment_type",
+                      "confident": true,
+                      "canonical_code": "Technical Specifications",
+                      "current_message": true
+                    },
+                    {
+                      "raw": "srtsc07",
+                      "hint": "product",
+                      "confident": true,
+                      "canonical_code": null,
+                      "current_message": true
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Previous turn (product_attachment): returned 1 records",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to get the technical drawing for srtsc07",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "product_attachment",
+                  "intent_hint": "check_product_attachment",
+                  "message_type": "business_query",
+                  "query_brands": [],
+                  "access_levels": [],
+                  "routing_brand": "sorento",
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [
+                    {
+                      "idx": 1,
+                      "uuid": null,
+                      "label": "SRTSC07",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    }
+                  ],
+                  "routing_company": "00000000-0000-0000-0000-000000000001",
+                  "date_filter_start": null,
+                  "routing_companies": [
+                    {
+                      "codes": [
+                        "SRTSC07"
+                      ],
+                      "labels": [
+                        "SRTSC07"
+                      ],
+                      "brand_code": "sorento",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "selection_context": null,
+                  "routing_roster_plan": null,
+                  "requested_attributes": [],
+                  "routing_brand_source": "resolved"
+                },
+                "user_response": "I have attached the file(s) below.\n\n1. *Product Code:* SRTSC07\n*Attachment Type:* Technical Specifications\n*File Name:* SRTSC07_TD.jpg\n\n_Data last updated: 25/05/2026 16:09:34_"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "request_for_help",
+                "intent_hint": "check_product",
+                "domain_hint": "master_products",
+                "scope_intent": null,
+                "is_affirmative": true,
+                "user_goal": "trying to escalate to marketing for SRtsc07 full height",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "srtsc07",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [
+                  "dimension"
+                ],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "purchasing_product",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_explicit",
+                "scope_exclusive_applied": false,
+                "entity_op_applied": "replace_combine",
+                "query_brands": [],
+                "entities_filtered": true,
+                "entities_emptied_by_filter": false,
+                "broaden_dropped": [
+                  "attachment_type:technical drawing"
+                ]
+              },
+              "_parser_raw": {
+                "message_type": "request_for_help",
+                "intent_hint": "check_product",
+                "domain_hint": "master_products",
+                "scope_intent": null,
+                "is_affirmative": true,
+                "user_goal": "trying to escalate to marketing for SRtsc07 full height",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "srtsc07",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [
+                  "dimension"
+                ],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "purchasing_product",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "General Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null
+          }
+        }
+      }
+    ],
+    "escalation-input": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "General Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null,
+          "branch_kind": "out_of_scope"
+        }
+      }
+    ],
+    "escalation-context": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "General Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null,
+          "branch_kind": "out_of_scope",
+          "brand_code": null,
+          "company_id": null,
+          "company_name": null,
+          "routing_source": "none",
+          "team": "purchasing_product"
+        }
+      }
+    ],
+    "clarify-company-gate": [],
+    "Call 'sub-human-intervention'": [
+      {
+        "json": {
+          "success": true
+        }
+      }
+    ],
+    "escalation-result": [
+      {
+        "json": {
+          "arm": "human-intervention",
+          "clarify": null
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "allowed": true,
+        "decision": "allow",
+        "agent_name": "General Enquiries",
+        "attributes": null,
+        "all_attributes_allowed": null,
+        "branch_kind": "out_of_scope"
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "allowed": true,
+        "decision": "allow",
+        "agent_name": "General Enquiries",
+        "attributes": null,
+        "all_attributes_allowed": null,
+        "branch_kind": "out_of_scope",
+        "brand_code": null,
+        "company_id": null,
+        "company_name": null,
+        "routing_source": "none",
+        "team": "purchasing_product"
+      }
+    }
+  ],
+  "runIndex": 0,
+  "execution": {
+    "id": "14875614"
+  },
+  "ran": [
+    "When Executed by Another Workflow",
+    "build-ctx",
+    "escalation-input",
+    "escalation-context",
+    "clarify-company-gate",
+    "Call 'sub-human-intervention'",
+    "escalation-result"
+  ]
+}

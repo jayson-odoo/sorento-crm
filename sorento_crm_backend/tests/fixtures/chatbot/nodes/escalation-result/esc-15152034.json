@@ -1,0 +1,763 @@
+{
+  "source": {
+    "execution_id": "15152034",
+    "workflow_id": "fr2u3e6FKg52cPvK",
+    "workflow_version": "bac9613b-644a-456b-a17d-f0815672b8cd",
+    "node": "escalation-result",
+    "captured_at": "2026-09-04T19:58:20+00:00",
+    "expected_from": "runData",
+    "dedupe_sig": "8e6789724a45610d6bed62fc59b835f3acb58d5c0e033819f91a4f05c3aeb1c2"
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 900000027,
+              "firstName": "Person 22",
+              "lastName": "Person 35",
+              "phone": "+60100000012",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/8e356ced-3f59-4147-abfd-8f795a5ab56e"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260510_200514",
+                "imported_20260627_150636"
+              ],
+              "assignee": {
+                "id": 900000028,
+                "firstName": "Person 36",
+                "lastName": null,
+                "email": "person6@example.com"
+              },
+              "lifecycle": "New Lead",
+              "created_at": 1775526458
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "9fc97aca-a485-4279-83b0-0581fba4ff48",
+              "contact": {
+                "id": 900000027,
+                "firstName": "Person 22",
+                "lastName": "Person 35",
+                "phone": "+60100000012",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": 900000028,
+                  "email": "person6@example.com",
+                  "firstName": "Person 36",
+                  "lastName": null,
+                  "role": "user"
+                },
+                "created_at": 1775526458
+              },
+              "message": {
+                "messageId": 1788512487000000,
+                "channelMessageId": "wamid.HBgLNjAxNjIyODExNzkVAgASGCBBNURERDBDQTY5MDA0MDNGNTEyNjg0RDIyMThCNjk2MAA=",
+                "contactId": 900000027,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788512487000,
+                "message": {
+                  "type": "text",
+                  "text": "yes cwb247"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": null,
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000027",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "warehouse",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "entities": [
+                    {
+                      "raw": "cabana",
+                      "hint": "promotion",
+                      "confident": true,
+                      "canonical_code": null,
+                      "current_message": true
+                    },
+                    {
+                      "raw": "cwb 247 basin",
+                      "hint": "product",
+                      "confident": true,
+                      "canonical_code": null,
+                      "current_message": true
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Here's what you want:\n\u2022 product: Cabana wash basin. Ceramic. 395 x 395 x 155 mm. (+8 more)\n\nCouldn't find: \"cwb 247 basin\" (product).\n\nBut no inventory matched these. Would you like me to escalate to warehouse team?",
+                  "date_mode": null,
+                  "dym_offer": {
+                    "id": "15151886",
+                    "ttl": 1,
+                    "domain": "inventory",
+                    "picked": [],
+                    "candidates": [
+                      {
+                        "code": "CWB242",
+                        "uuid": "edb2117e-a412-476f-85f1-02d25dc017e0",
+                        "for_raw": "cwb247",
+                        "for_hint": "product",
+                        "entity_type": "product",
+                        "for_canonical": null
+                      },
+                      {
+                        "code": "CGB247",
+                        "uuid": "0de9d323-1daf-4802-ab35-14c0af49297c",
+                        "for_raw": "cwb247",
+                        "for_hint": "product",
+                        "entity_type": "product",
+                        "for_canonical": null
+                      },
+                      {
+                        "code": "MWB247",
+                        "uuid": "7233e8b4-6f8a-45a5-99a5-0eb4ddf219a3",
+                        "for_raw": "cwb247",
+                        "for_hint": "product",
+                        "entity_type": "product",
+                        "for_canonical": null
+                      }
+                    ]
+                  },
+                  "user_goal": "trying to check stock for cabana cwb 247 basin",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "inventory",
+                  "intent_hint": "check_stock",
+                  "message_type": "business_query",
+                  "query_brands": [
+                    "cabana"
+                  ],
+                  "access_levels": [],
+                  "routing_brand": null,
+                  "contains_flyer": false,
+                  "dym_candidates": [
+                    {
+                      "code": "CWB242",
+                      "uuid": "edb2117e-a412-476f-85f1-02d25dc017e0",
+                      "for_raw": "cwb247",
+                      "for_hint": "product",
+                      "entity_type": "product",
+                      "for_canonical": null
+                    },
+                    {
+                      "code": "CGB247",
+                      "uuid": "0de9d323-1daf-4802-ab35-14c0af49297c",
+                      "for_raw": "cwb247",
+                      "for_hint": "product",
+                      "entity_type": "product",
+                      "for_canonical": null
+                    },
+                    {
+                      "code": "MWB247",
+                      "uuid": "7233e8b4-6f8a-45a5-99a5-0eb4ddf219a3",
+                      "for_raw": "cwb247",
+                      "for_hint": "product",
+                      "entity_type": "product",
+                      "for_canonical": null
+                    }
+                  ],
+                  "date_filter_end": null,
+                  "last_result_set": [],
+                  "routing_company": null,
+                  "date_filter_start": null,
+                  "routing_companies": null,
+                  "selection_context": null,
+                  "routing_roster_plan": null,
+                  "requested_attributes": [],
+                  "routing_brand_source": null
+                },
+                "user_response": "Here's what you want:\n\u2022 product: Cabana wash basin. Ceramic. 395 x 395 x 155 mm. (+8 more)\n\nCouldn't find: \"cwb 247 basin\" (product).\n\nBut no inventory matched these. Would you like me to escalate to warehouse team?"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "check_stock",
+                "domain_hint": "inventory",
+                "scope_intent": null,
+                "is_affirmative": true,
+                "user_goal": "trying to check stock for cwb247",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "cwb247",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  },
+                  {
+                    "raw": "cabana",
+                    "hint": "promotion",
+                    "confident": true,
+                    "canonical_code": null,
+                    "current_message": false
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "warehouse",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": true
+                },
+                "domain_signal_source": "intent_explicit",
+                "scope_exclusive_applied": false,
+                "entity_op_applied": "replace_combine",
+                "query_brands": [],
+                "entities_filtered": false,
+                "entities_emptied_by_filter": false
+              },
+              "_parser_raw": {
+                "message_type": "business_query",
+                "intent_hint": "check_stock",
+                "domain_hint": "inventory",
+                "scope_intent": null,
+                "is_affirmative": true,
+                "user_goal": "trying to check stock for cwb247",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "cwb247",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "warehouse",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "General Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null
+          },
+          "item": {
+            "allowed": true,
+            "decision": "allow",
+            "agent_name": "General Enquiries",
+            "attributes": null,
+            "all_attributes_allowed": null,
+            "branch_kind": "out_of_scope"
+          },
+          "is_test": false
+        }
+      }
+    ],
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 900000027,
+              "firstName": "Person 22",
+              "lastName": "Person 35",
+              "phone": "+60100000012",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/8e356ced-3f59-4147-abfd-8f795a5ab56e"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260510_200514",
+                "imported_20260627_150636"
+              ],
+              "assignee": {
+                "id": 900000028,
+                "firstName": "Person 36",
+                "lastName": null,
+                "email": "person6@example.com"
+              },
+              "lifecycle": "New Lead",
+              "created_at": 1775526458
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "9fc97aca-a485-4279-83b0-0581fba4ff48",
+              "contact": {
+                "id": 900000027,
+                "firstName": "Person 22",
+                "lastName": "Person 35",
+                "phone": "+60100000012",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": 900000028,
+                  "email": "person6@example.com",
+                  "firstName": "Person 36",
+                  "lastName": null,
+                  "role": "user"
+                },
+                "created_at": 1775526458
+              },
+              "message": {
+                "messageId": 1788512487000000,
+                "channelMessageId": "wamid.HBgLNjAxNjIyODExNzkVAgASGCBBNURERDBDQTY5MDA0MDNGNTEyNjg0RDIyMThCNjk2MAA=",
+                "contactId": 900000027,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788512487000,
+                "message": {
+                  "type": "text",
+                  "text": "yes cwb247"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": null,
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000027",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "warehouse",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "entities": [
+                    {
+                      "raw": "cabana",
+                      "hint": "promotion",
+                      "confident": true,
+                      "canonical_code": null,
+                      "current_message": true
+                    },
+                    {
+                      "raw": "cwb 247 basin",
+                      "hint": "product",
+                      "confident": true,
+                      "canonical_code": null,
+                      "current_message": true
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Here's what you want:\n\u2022 product: Cabana wash basin. Ceramic. 395 x 395 x 155 mm. (+8 more)\n\nCouldn't find: \"cwb 247 basin\" (product).\n\nBut no inventory matched these. Would you like me to escalate to warehouse team?",
+                  "date_mode": null,
+                  "dym_offer": {
+                    "id": "15151886",
+                    "ttl": 1,
+                    "domain": "inventory",
+                    "picked": [],
+                    "candidates": [
+                      {
+                        "code": "CWB242",
+                        "uuid": "edb2117e-a412-476f-85f1-02d25dc017e0",
+                        "for_raw": "cwb247",
+                        "for_hint": "product",
+                        "entity_type": "product",
+                        "for_canonical": null
+                      },
+                      {
+                        "code": "CGB247",
+                        "uuid": "0de9d323-1daf-4802-ab35-14c0af49297c",
+                        "for_raw": "cwb247",
+                        "for_hint": "product",
+                        "entity_type": "product",
+                        "for_canonical": null
+                      },
+                      {
+                        "code": "MWB247",
+                        "uuid": "7233e8b4-6f8a-45a5-99a5-0eb4ddf219a3",
+                        "for_raw": "cwb247",
+                        "for_hint": "product",
+                        "entity_type": "product",
+                        "for_canonical": null
+                      }
+                    ]
+                  },
+                  "user_goal": "trying to check stock for cabana cwb 247 basin",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "inventory",
+                  "intent_hint": "check_stock",
+                  "message_type": "business_query",
+                  "query_brands": [
+                    "cabana"
+                  ],
+                  "access_levels": [],
+                  "routing_brand": null,
+                  "contains_flyer": false,
+                  "dym_candidates": [
+                    {
+                      "code": "CWB242",
+                      "uuid": "edb2117e-a412-476f-85f1-02d25dc017e0",
+                      "for_raw": "cwb247",
+                      "for_hint": "product",
+                      "entity_type": "product",
+                      "for_canonical": null
+                    },
+                    {
+                      "code": "CGB247",
+                      "uuid": "0de9d323-1daf-4802-ab35-14c0af49297c",
+                      "for_raw": "cwb247",
+                      "for_hint": "product",
+                      "entity_type": "product",
+                      "for_canonical": null
+                    },
+                    {
+                      "code": "MWB247",
+                      "uuid": "7233e8b4-6f8a-45a5-99a5-0eb4ddf219a3",
+                      "for_raw": "cwb247",
+                      "for_hint": "product",
+                      "entity_type": "product",
+                      "for_canonical": null
+                    }
+                  ],
+                  "date_filter_end": null,
+                  "last_result_set": [],
+                  "routing_company": null,
+                  "date_filter_start": null,
+                  "routing_companies": null,
+                  "selection_context": null,
+                  "routing_roster_plan": null,
+                  "requested_attributes": [],
+                  "routing_brand_source": null
+                },
+                "user_response": "Here's what you want:\n\u2022 product: Cabana wash basin. Ceramic. 395 x 395 x 155 mm. (+8 more)\n\nCouldn't find: \"cwb 247 basin\" (product).\n\nBut no inventory matched these. Would you like me to escalate to warehouse team?"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "check_stock",
+                "domain_hint": "inventory",
+                "scope_intent": null,
+                "is_affirmative": true,
+                "user_goal": "trying to check stock for cwb247",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "cwb247",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  },
+                  {
+                    "raw": "cabana",
+                    "hint": "promotion",
+                    "confident": true,
+                    "canonical_code": null,
+                    "current_message": false
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "warehouse",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": true
+                },
+                "domain_signal_source": "intent_explicit",
+                "scope_exclusive_applied": false,
+                "entity_op_applied": "replace_combine",
+                "query_brands": [],
+                "entities_filtered": false,
+                "entities_emptied_by_filter": false
+              },
+              "_parser_raw": {
+                "message_type": "business_query",
+                "intent_hint": "check_stock",
+                "domain_hint": "inventory",
+                "scope_intent": null,
+                "is_affirmative": true,
+                "user_goal": "trying to check stock for cwb247",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "cwb247",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "warehouse",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "General Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null
+          }
+        }
+      }
+    ],
+    "escalation-input": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "General Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null,
+          "branch_kind": "out_of_scope"
+        }
+      }
+    ],
+    "escalation-context": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "General Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null,
+          "branch_kind": "out_of_scope",
+          "brand_code": null,
+          "company_id": null,
+          "company_name": null,
+          "routing_source": "prior_state_no_company",
+          "team": "warehouse"
+        }
+      }
+    ],
+    "clarify-company-gate": [],
+    "Call 'sub-human-intervention'": [
+      {
+        "json": {
+          "success": true
+        }
+      }
+    ],
+    "escalation-result": [
+      {
+        "json": {
+          "arm": "human-intervention",
+          "clarify": null
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "success": true
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "arm": "human-intervention",
+        "clarify": null
+      }
+    }
+  ],
+  "runIndex": 0,
+  "execution": {
+    "id": "15152034"
+  },
+  "ran": [
+    "When Executed by Another Workflow",
+    "build-ctx",
+    "escalation-input",
+    "escalation-context",
+    "clarify-company-gate",
+    "Call 'sub-human-intervention'",
+    "escalation-result"
+  ]
+}

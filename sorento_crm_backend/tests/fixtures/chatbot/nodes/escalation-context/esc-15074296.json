@@ -1,13 +1,12 @@
 {
   "source": {
-    "execution_id": "14518300",
-    "workflow_id": "Gg6aFxwMIkea062g",
-    "workflow_version": "6ba3984a-34e3-4a7b-ab18-addcd579e8b2",
+    "execution_id": "15074296",
+    "workflow_id": "fr2u3e6FKg52cPvK",
+    "workflow_version": "bac9613b-644a-456b-a17d-f0815672b8cd",
     "node": "escalation-context",
-    "captured_at": "2026-08-30T12:23:10+00:00",
+    "captured_at": "2026-09-04T19:58:22+00:00",
     "expected_from": "runData",
-    "dedupe_sig": "8e6789724a45610d6bed62fc59b835f3acb58d5c0e033819f91a4f05c3aeb1c2",
-    "dev_contact": true
+    "dedupe_sig": "8e6789724a45610d6bed62fc59b835f3acb58d5c0e033819f91a4f05c3aeb1c2"
   },
   "ctx": {
     "When Executed by Another Workflow": [
@@ -15,167 +14,177 @@
         "json": {
           "ctx": {
             "contact": {
-              "id": "900000009",
-              "firstName": "Person 12",
-              "lastName": "",
-              "phone": "+60100000046",
+              "id": 900000076,
+              "firstName": "Person 105",
+              "lastName": null,
+              "phone": "+60100000038",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
               "countryCode": "MY",
               "status": "open",
+              "isBlocked": false,
               "custom_fields": [
                 {
-                  "name": "is_human_intervened",
-                  "value": "false"
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
                 },
                 {
                   "name": "is_allowed_stock",
                   "value": "true"
                 },
                 {
-                  "name": "is_allowed_voice",
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/108318f6-e3ba-42f9-893b-9f8d010f6cb1"
+                },
+                {
+                  "name": "is_allowed_ai",
                   "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
                 }
-              ]
+              ],
+              "tags": [
+                "imported_20260510_200514",
+                "imported_20260627_150636"
+              ],
+              "assignee": {
+                "id": 900000023,
+                "firstName": "Person 32",
+                "lastName": "Person 2",
+                "email": "person4@example.com"
+              },
+              "lifecycle": "New Lead",
+              "created_at": 1775531831
             },
             "text": {
               "event_type": "message.received",
+              "event_id": "9765b3ea-4fff-4298-bee0-d9a6e23b391e",
               "contact": {
-                "id": "900000009",
-                "firstName": "Person 12",
+                "id": 900000076,
+                "firstName": "Person 105",
                 "lastName": "",
-                "phone": "+60100000046",
+                "phone": "+60100000038",
+                "email": null,
+                "language": null,
+                "profilePic": null,
                 "countryCode": "MY",
                 "status": "open",
-                "custom_fields": [
-                  {
-                    "name": "is_human_intervened",
-                    "value": "false"
-                  },
-                  {
-                    "name": "is_allowed_stock",
-                    "value": "true"
-                  },
-                  {
-                    "name": "is_allowed_voice",
-                    "value": "true"
-                  }
-                ]
+                "assignee": {
+                  "id": 900000023,
+                  "email": "person4@example.com",
+                  "firstName": "Person 32",
+                  "lastName": "Person 2",
+                  "role": "user"
+                },
+                "created_at": 1775531831
               },
               "message": {
-                "messageId": 1788092216985,
-                "contactId": "900000009",
+                "messageId": 1788461145000000,
+                "channelMessageId": "wamid.HBgLNjAxODI5MDE3NjYVAgASGBYzRUIwNDA3QUYzRDNCMDBEM0U2RkMyAA==",
+                "contactId": 900000076,
                 "channelId": 453209,
                 "traffic": "incoming",
-                "timestamp": 1788092216985,
+                "timestamp": 1788461145000,
                 "message": {
                   "type": "text",
-                  "text": "This is urgent, I really need to speak to a human agent right now, please connect me to customer service"
+                  "text": "YES ESCALTE"
                 }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": null,
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
               }
             },
             "session": {
-              "respond_io_id": "900000009",
+              "respond_io_id": "900000076",
               "session_vars": {
                 "variables": {
                   "routing": {
-                    "suggested_team": "marketing_promotion",
+                    "suggested_team": "marketing_product",
                     "suggested_agent": "general_enquiries"
                   },
                   "entities": [
                     {
-                      "raw": "srtwc286",
+                      "raw": "technical drawing",
+                      "hint": "attachment_type",
+                      "confident": true,
+                      "canonical_code": "Technical Specifications",
+                      "current_message": true
+                    },
+                    {
+                      "raw": "SRT1000-CR",
                       "hint": "product",
                       "confident": true,
                       "canonical_code": null,
-                      "current_message": false
+                      "current_message": true
                     }
                   ],
                   "ideation": null,
-                  "response": "Previous turn (promotion): returned 1 records",
+                  "response": "Here's what you want:\n\u2022 attachment_type: Technical Specifications\n\u2022 product: SRT1000-CR\n\nBut no technical drawing matched these. Would you like me to escalate to marketing product team?",
                   "date_mode": null,
                   "dym_offer": null,
-                  "user_goal": "trying to select the first result",
+                  "user_goal": "trying to get the technical drawing for SRT1000-CR",
                   "escalation": {
                     "is_escalation_confirmation": false
                   },
                   "match_mode": "and",
-                  "domain_hint": "promotion",
-                  "intent_hint": "check_promotion",
+                  "domain_hint": "product_attachment",
+                  "intent_hint": "check_product_attachment",
                   "message_type": "business_query",
-                  "query_brands": [
-                    "sorento"
-                  ],
-                  "access_levels": [
-                    "dealer"
-                  ],
+                  "query_brands": [],
+                  "access_levels": [],
                   "routing_brand": "sorento",
                   "contains_flyer": false,
                   "dym_candidates": [],
                   "date_filter_end": null,
-                  "last_result_set": [
-                    {
-                      "idx": 1,
-                      "uuid": null,
-                      "label": "UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf",
-                      "value": "UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf",
-                      "filename": "UPDATED SORENTO A3 FLYER  2026 (DEALER)_21072026.pdf",
-                      "entity_type": "promotion"
-                    },
-                    {
-                      "idx": 2,
-                      "uuid": null,
-                      "label": "SORENTO A3 FLYER_DEALER USE_11062026.pdf",
-                      "value": "SORENTO A3 FLYER_DEALER USE_11062026.pdf",
-                      "filename": "SORENTO A3 FLYER_DEALER USE_11062026.pdf",
-                      "entity_type": "promotion"
-                    },
-                    {
-                      "idx": 3,
-                      "uuid": null,
-                      "label": "JULY SORENTO WATER CLOSET PROMO_06072026 DEALER.pdf",
-                      "value": "JULY SORENTO WATER CLOSET PROMO_06072026 DEALER.pdf",
-                      "filename": "JULY SORENTO WATER CLOSET PROMO_06072026 DEALER.pdf",
-                      "entity_type": "promotion"
-                    }
-                  ],
+                  "last_result_set": [],
                   "routing_company": "00000000-0000-0000-0000-000000000001",
                   "date_filter_start": null,
                   "routing_companies": [
                     {
                       "codes": [
-                        "SRTWC286-SH-200",
-                        "SRTWC286-SH-P",
-                        "SRTWC286-SH-PP",
-                        "SRTWC286-SH",
-                        "SRTWC286-SH-UF",
-                        "SRTWC286-SH-NEW-150",
-                        "SRTWC286-SH-150",
-                        "SRTWC286-SH-NEW-P",
-                        "SRTWC286-SH-NEW-200",
-                        "SRTWC286-SH-NEW"
+                        "SRT1000-CR"
                       ],
                       "labels": [
-                        "SRTWC286-SH-200",
-                        "SRTWC286-SH-P",
-                        "SRTWC286-SH-PP",
-                        "SRTWC286-SH",
-                        "SRTWC286-SH-UF",
-                        "SRTWC286-SH-NEW-150",
-                        "SRTWC286-SH-150",
-                        "SRTWC286-SH-NEW-P",
-                        "SRTWC286-SH-NEW-200",
-                        "SRTWC286-SH-NEW"
+                        "SRT1000-CR"
                       ],
                       "brand_code": "sorento",
                       "company_id": "00000000-0000-0000-0000-000000000001",
                       "company_name": "Sorento"
                     }
                   ],
-                  "selection_context": "suggest_offer",
+                  "selection_context": null,
                   "routing_roster_plan": null,
                   "requested_attributes": [],
                   "routing_brand_source": "resolved"
                 },
-                "user_response": "I have attached the file(s) below.\n\n1. *Promotion:* UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf\n*Start Date:* 2026-06-01\n*End Date:* 2026-09-30"
+                "user_response": "Here's what you want:\n\u2022 attachment_type: Technical Specifications\n\u2022 product: SRT1000-CR\n\nBut no technical drawing matched these. Would you like me to escalate to marketing product team?"
               }
             },
             "parse": {
@@ -184,11 +193,9 @@
                 "intent_hint": null,
                 "domain_hint": null,
                 "scope_intent": null,
-                "is_affirmative": null,
-                "user_goal": "trying to speak to a human agent and connect with customer service",
-                "access_levels": [
-                  "dealer"
-                ],
+                "is_affirmative": true,
+                "user_goal": "trying to escalate the request to the team",
+                "access_levels": [],
                 "broaden_axis": null,
                 "date_mode": null,
                 "date_filter_start": null,
@@ -197,7 +204,14 @@
                 "demand_qty": null,
                 "entities": [
                   {
-                    "raw": "srtwc286",
+                    "raw": "Technical Specifications",
+                    "hint": "attachment_type",
+                    "confident": true,
+                    "canonical_code": "Technical Specifications",
+                    "current_message": false
+                  },
+                  {
+                    "raw": "SRT1000-CR",
                     "hint": "product",
                     "confident": true,
                     "canonical_code": null,
@@ -215,29 +229,23 @@
                 "order_status": null,
                 "correction": false,
                 "routing": {
-                  "suggested_team": "customer_service",
-                  "suggested_agent": "order_enquiries"
+                  "suggested_team": "marketing_product",
+                  "suggested_agent": "general_enquiries"
                 },
                 "escalation": {
-                  "is_escalation_confirmation": false
+                  "is_escalation_confirmation": true
                 },
                 "domain_signal_source": "intent_none",
                 "entity_op_applied": "reuse",
-                "query_brands": [
-                  "sorento"
-                ],
-                "_query_brands_carried": true,
-                "_tier_carried": true,
-                "_pending_pick": true,
-                "suggest_pick_context": true
+                "query_brands": []
               },
               "_parser_raw": {
                 "message_type": "request_for_help",
                 "intent_hint": null,
                 "domain_hint": null,
                 "scope_intent": null,
-                "is_affirmative": null,
-                "user_goal": "trying to speak to a human agent and connect with customer service",
+                "is_affirmative": true,
+                "user_goal": "trying to escalate the request to the team",
                 "access_levels": [],
                 "broaden_axis": null,
                 "date_mode": null,
@@ -257,8 +265,8 @@
                 "order_status": null,
                 "correction": false,
                 "routing": {
-                  "suggested_team": "customer_service",
-                  "suggested_agent": "order_enquiries"
+                  "suggested_team": null,
+                  "suggested_agent": null
                 },
                 "escalation": {
                   "is_escalation_confirmation": false,
@@ -269,7 +277,7 @@
             "access": {
               "allowed": true,
               "decision": "allow",
-              "agent_name": "Order Enquiries",
+              "agent_name": "General Enquiries",
               "attributes": null,
               "all_attributes_allowed": null
             },
@@ -278,13 +286,12 @@
           "item": {
             "allowed": true,
             "decision": "allow",
-            "agent_name": "Order Enquiries",
+            "agent_name": "General Enquiries",
             "attributes": null,
             "all_attributes_allowed": null,
             "branch_kind": "out_of_scope"
           },
-          "is_test": true,
-          "test_run_id": "rs51-03-escalation"
+          "is_test": false
         }
       }
     ],
@@ -293,167 +300,177 @@
         "json": {
           "ctx": {
             "contact": {
-              "id": "900000009",
-              "firstName": "Person 12",
-              "lastName": "",
-              "phone": "+60100000046",
+              "id": 900000076,
+              "firstName": "Person 105",
+              "lastName": null,
+              "phone": "+60100000038",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
               "countryCode": "MY",
               "status": "open",
+              "isBlocked": false,
               "custom_fields": [
                 {
-                  "name": "is_human_intervened",
-                  "value": "false"
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
                 },
                 {
                   "name": "is_allowed_stock",
                   "value": "true"
                 },
                 {
-                  "name": "is_allowed_voice",
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/108318f6-e3ba-42f9-893b-9f8d010f6cb1"
+                },
+                {
+                  "name": "is_allowed_ai",
                   "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
                 }
-              ]
+              ],
+              "tags": [
+                "imported_20260510_200514",
+                "imported_20260627_150636"
+              ],
+              "assignee": {
+                "id": 900000023,
+                "firstName": "Person 32",
+                "lastName": "Person 2",
+                "email": "person4@example.com"
+              },
+              "lifecycle": "New Lead",
+              "created_at": 1775531831
             },
             "text": {
               "event_type": "message.received",
+              "event_id": "9765b3ea-4fff-4298-bee0-d9a6e23b391e",
               "contact": {
-                "id": "900000009",
-                "firstName": "Person 12",
+                "id": 900000076,
+                "firstName": "Person 105",
                 "lastName": "",
-                "phone": "+60100000046",
+                "phone": "+60100000038",
+                "email": null,
+                "language": null,
+                "profilePic": null,
                 "countryCode": "MY",
                 "status": "open",
-                "custom_fields": [
-                  {
-                    "name": "is_human_intervened",
-                    "value": "false"
-                  },
-                  {
-                    "name": "is_allowed_stock",
-                    "value": "true"
-                  },
-                  {
-                    "name": "is_allowed_voice",
-                    "value": "true"
-                  }
-                ]
+                "assignee": {
+                  "id": 900000023,
+                  "email": "person4@example.com",
+                  "firstName": "Person 32",
+                  "lastName": "Person 2",
+                  "role": "user"
+                },
+                "created_at": 1775531831
               },
               "message": {
-                "messageId": 1788092216985,
-                "contactId": "900000009",
+                "messageId": 1788461145000000,
+                "channelMessageId": "wamid.HBgLNjAxODI5MDE3NjYVAgASGBYzRUIwNDA3QUYzRDNCMDBEM0U2RkMyAA==",
+                "contactId": 900000076,
                 "channelId": 453209,
                 "traffic": "incoming",
-                "timestamp": 1788092216985,
+                "timestamp": 1788461145000,
                 "message": {
                   "type": "text",
-                  "text": "This is urgent, I really need to speak to a human agent right now, please connect me to customer service"
+                  "text": "YES ESCALTE"
                 }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": null,
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
               }
             },
             "session": {
-              "respond_io_id": "900000009",
+              "respond_io_id": "900000076",
               "session_vars": {
                 "variables": {
                   "routing": {
-                    "suggested_team": "marketing_promotion",
+                    "suggested_team": "marketing_product",
                     "suggested_agent": "general_enquiries"
                   },
                   "entities": [
                     {
-                      "raw": "srtwc286",
+                      "raw": "technical drawing",
+                      "hint": "attachment_type",
+                      "confident": true,
+                      "canonical_code": "Technical Specifications",
+                      "current_message": true
+                    },
+                    {
+                      "raw": "SRT1000-CR",
                       "hint": "product",
                       "confident": true,
                       "canonical_code": null,
-                      "current_message": false
+                      "current_message": true
                     }
                   ],
                   "ideation": null,
-                  "response": "Previous turn (promotion): returned 1 records",
+                  "response": "Here's what you want:\n\u2022 attachment_type: Technical Specifications\n\u2022 product: SRT1000-CR\n\nBut no technical drawing matched these. Would you like me to escalate to marketing product team?",
                   "date_mode": null,
                   "dym_offer": null,
-                  "user_goal": "trying to select the first result",
+                  "user_goal": "trying to get the technical drawing for SRT1000-CR",
                   "escalation": {
                     "is_escalation_confirmation": false
                   },
                   "match_mode": "and",
-                  "domain_hint": "promotion",
-                  "intent_hint": "check_promotion",
+                  "domain_hint": "product_attachment",
+                  "intent_hint": "check_product_attachment",
                   "message_type": "business_query",
-                  "query_brands": [
-                    "sorento"
-                  ],
-                  "access_levels": [
-                    "dealer"
-                  ],
+                  "query_brands": [],
+                  "access_levels": [],
                   "routing_brand": "sorento",
                   "contains_flyer": false,
                   "dym_candidates": [],
                   "date_filter_end": null,
-                  "last_result_set": [
-                    {
-                      "idx": 1,
-                      "uuid": null,
-                      "label": "UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf",
-                      "value": "UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf",
-                      "filename": "UPDATED SORENTO A3 FLYER  2026 (DEALER)_21072026.pdf",
-                      "entity_type": "promotion"
-                    },
-                    {
-                      "idx": 2,
-                      "uuid": null,
-                      "label": "SORENTO A3 FLYER_DEALER USE_11062026.pdf",
-                      "value": "SORENTO A3 FLYER_DEALER USE_11062026.pdf",
-                      "filename": "SORENTO A3 FLYER_DEALER USE_11062026.pdf",
-                      "entity_type": "promotion"
-                    },
-                    {
-                      "idx": 3,
-                      "uuid": null,
-                      "label": "JULY SORENTO WATER CLOSET PROMO_06072026 DEALER.pdf",
-                      "value": "JULY SORENTO WATER CLOSET PROMO_06072026 DEALER.pdf",
-                      "filename": "JULY SORENTO WATER CLOSET PROMO_06072026 DEALER.pdf",
-                      "entity_type": "promotion"
-                    }
-                  ],
+                  "last_result_set": [],
                   "routing_company": "00000000-0000-0000-0000-000000000001",
                   "date_filter_start": null,
                   "routing_companies": [
                     {
                       "codes": [
-                        "SRTWC286-SH-200",
-                        "SRTWC286-SH-P",
-                        "SRTWC286-SH-PP",
-                        "SRTWC286-SH",
-                        "SRTWC286-SH-UF",
-                        "SRTWC286-SH-NEW-150",
-                        "SRTWC286-SH-150",
-                        "SRTWC286-SH-NEW-P",
-                        "SRTWC286-SH-NEW-200",
-                        "SRTWC286-SH-NEW"
+                        "SRT1000-CR"
                       ],
                       "labels": [
-                        "SRTWC286-SH-200",
-                        "SRTWC286-SH-P",
-                        "SRTWC286-SH-PP",
-                        "SRTWC286-SH",
-                        "SRTWC286-SH-UF",
-                        "SRTWC286-SH-NEW-150",
-                        "SRTWC286-SH-150",
-                        "SRTWC286-SH-NEW-P",
-                        "SRTWC286-SH-NEW-200",
-                        "SRTWC286-SH-NEW"
+                        "SRT1000-CR"
                       ],
                       "brand_code": "sorento",
                       "company_id": "00000000-0000-0000-0000-000000000001",
                       "company_name": "Sorento"
                     }
                   ],
-                  "selection_context": "suggest_offer",
+                  "selection_context": null,
                   "routing_roster_plan": null,
                   "requested_attributes": [],
                   "routing_brand_source": "resolved"
                 },
-                "user_response": "I have attached the file(s) below.\n\n1. *Promotion:* UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf\n*Start Date:* 2026-06-01\n*End Date:* 2026-09-30"
+                "user_response": "Here's what you want:\n\u2022 attachment_type: Technical Specifications\n\u2022 product: SRT1000-CR\n\nBut no technical drawing matched these. Would you like me to escalate to marketing product team?"
               }
             },
             "parse": {
@@ -462,11 +479,9 @@
                 "intent_hint": null,
                 "domain_hint": null,
                 "scope_intent": null,
-                "is_affirmative": null,
-                "user_goal": "trying to speak to a human agent and connect with customer service",
-                "access_levels": [
-                  "dealer"
-                ],
+                "is_affirmative": true,
+                "user_goal": "trying to escalate the request to the team",
+                "access_levels": [],
                 "broaden_axis": null,
                 "date_mode": null,
                 "date_filter_start": null,
@@ -475,7 +490,14 @@
                 "demand_qty": null,
                 "entities": [
                   {
-                    "raw": "srtwc286",
+                    "raw": "Technical Specifications",
+                    "hint": "attachment_type",
+                    "confident": true,
+                    "canonical_code": "Technical Specifications",
+                    "current_message": false
+                  },
+                  {
+                    "raw": "SRT1000-CR",
                     "hint": "product",
                     "confident": true,
                     "canonical_code": null,
@@ -493,29 +515,23 @@
                 "order_status": null,
                 "correction": false,
                 "routing": {
-                  "suggested_team": "customer_service",
-                  "suggested_agent": "order_enquiries"
+                  "suggested_team": "marketing_product",
+                  "suggested_agent": "general_enquiries"
                 },
                 "escalation": {
-                  "is_escalation_confirmation": false
+                  "is_escalation_confirmation": true
                 },
                 "domain_signal_source": "intent_none",
                 "entity_op_applied": "reuse",
-                "query_brands": [
-                  "sorento"
-                ],
-                "_query_brands_carried": true,
-                "_tier_carried": true,
-                "_pending_pick": true,
-                "suggest_pick_context": true
+                "query_brands": []
               },
               "_parser_raw": {
                 "message_type": "request_for_help",
                 "intent_hint": null,
                 "domain_hint": null,
                 "scope_intent": null,
-                "is_affirmative": null,
-                "user_goal": "trying to speak to a human agent and connect with customer service",
+                "is_affirmative": true,
+                "user_goal": "trying to escalate the request to the team",
                 "access_levels": [],
                 "broaden_axis": null,
                 "date_mode": null,
@@ -535,8 +551,8 @@
                 "order_status": null,
                 "correction": false,
                 "routing": {
-                  "suggested_team": "customer_service",
-                  "suggested_agent": "order_enquiries"
+                  "suggested_team": null,
+                  "suggested_agent": null
                 },
                 "escalation": {
                   "is_escalation_confirmation": false,
@@ -547,7 +563,7 @@
             "access": {
               "allowed": true,
               "decision": "allow",
-              "agent_name": "Order Enquiries",
+              "agent_name": "General Enquiries",
               "attributes": null,
               "all_attributes_allowed": null
             },
@@ -561,7 +577,7 @@
         "json": {
           "allowed": true,
           "decision": "allow",
-          "agent_name": "Order Enquiries",
+          "agent_name": "General Enquiries",
           "attributes": null,
           "all_attributes_allowed": null,
           "branch_kind": "out_of_scope"
@@ -573,15 +589,15 @@
         "json": {
           "allowed": true,
           "decision": "allow",
-          "agent_name": "Order Enquiries",
+          "agent_name": "General Enquiries",
           "attributes": null,
           "all_attributes_allowed": null,
           "branch_kind": "out_of_scope",
           "brand_code": "sorento",
-          "company_id": null,
-          "company_name": null,
-          "routing_source": "stated_brand",
-          "team": "customer_service"
+          "company_id": "00000000-0000-0000-0000-000000000001",
+          "company_name": "Sorento",
+          "routing_source": "prior_state",
+          "team": "marketing_product"
         }
       }
     ],
@@ -589,41 +605,7 @@
     "Call 'sub-human-intervention'": [
       {
         "json": {
-          "contact_id": "900000009",
-          "agent": "order_enquiries",
-          "team": "customer_service",
-          "contact_phone_number": "+60100000046",
-          "message_id": 1788092216985,
-          "is_test": true,
-          "test_run_id": "rs51-03-escalation",
-          "input_message": "This is urgent, I really need to speak to a human agent right now, please connect me to customer service",
-          "started_at": null,
-          "contact": {
-            "id": "900000009",
-            "firstName": "Person 12",
-            "lastName": "",
-            "phone": "+60100000046",
-            "countryCode": "MY",
-            "status": "open",
-            "custom_fields": [
-              {
-                "name": "is_human_intervened",
-                "value": "false"
-              },
-              {
-                "name": "is_allowed_stock",
-                "value": "true"
-              },
-              {
-                "name": "is_allowed_voice",
-                "value": "true"
-              }
-            ]
-          },
-          "explicit_assignee_id": "",
-          "turn_id": "14518300",
-          "brand_code": "sorento",
-          "company_id": ""
+          "success": true
         }
       }
     ],
@@ -641,7 +623,7 @@
       "json": {
         "allowed": true,
         "decision": "allow",
-        "agent_name": "Order Enquiries",
+        "agent_name": "General Enquiries",
         "attributes": null,
         "all_attributes_allowed": null,
         "branch_kind": "out_of_scope"
@@ -653,21 +635,21 @@
       "json": {
         "allowed": true,
         "decision": "allow",
-        "agent_name": "Order Enquiries",
+        "agent_name": "General Enquiries",
         "attributes": null,
         "all_attributes_allowed": null,
         "branch_kind": "out_of_scope",
         "brand_code": "sorento",
-        "company_id": null,
-        "company_name": null,
-        "routing_source": "stated_brand",
-        "team": "customer_service"
+        "company_id": "00000000-0000-0000-0000-000000000001",
+        "company_name": "Sorento",
+        "routing_source": "prior_state",
+        "team": "marketing_product"
       }
     }
   ],
   "runIndex": 0,
   "execution": {
-    "id": "14518300"
+    "id": "15074296"
   },
   "ran": [
     "When Executed by Another Workflow",

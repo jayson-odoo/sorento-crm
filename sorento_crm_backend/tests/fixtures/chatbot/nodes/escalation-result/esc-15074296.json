@@ -1,0 +1,649 @@
+{
+  "source": {
+    "execution_id": "15074296",
+    "workflow_id": "fr2u3e6FKg52cPvK",
+    "workflow_version": "bac9613b-644a-456b-a17d-f0815672b8cd",
+    "node": "escalation-result",
+    "captured_at": "2026-09-04T19:58:22+00:00",
+    "expected_from": "runData",
+    "dedupe_sig": "8e6789724a45610d6bed62fc59b835f3acb58d5c0e033819f91a4f05c3aeb1c2"
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 900000076,
+              "firstName": "Person 105",
+              "lastName": null,
+              "phone": "+60100000038",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/108318f6-e3ba-42f9-893b-9f8d010f6cb1"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260510_200514",
+                "imported_20260627_150636"
+              ],
+              "assignee": {
+                "id": 900000023,
+                "firstName": "Person 32",
+                "lastName": "Person 2",
+                "email": "person4@example.com"
+              },
+              "lifecycle": "New Lead",
+              "created_at": 1775531831
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "9765b3ea-4fff-4298-bee0-d9a6e23b391e",
+              "contact": {
+                "id": 900000076,
+                "firstName": "Person 105",
+                "lastName": "",
+                "phone": "+60100000038",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": 900000023,
+                  "email": "person4@example.com",
+                  "firstName": "Person 32",
+                  "lastName": "Person 2",
+                  "role": "user"
+                },
+                "created_at": 1775531831
+              },
+              "message": {
+                "messageId": 1788461145000000,
+                "channelMessageId": "wamid.HBgLNjAxODI5MDE3NjYVAgASGBYzRUIwNDA3QUYzRDNCMDBEM0U2RkMyAA==",
+                "contactId": 900000076,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788461145000,
+                "message": {
+                  "type": "text",
+                  "text": "YES ESCALTE"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": null,
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000076",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "marketing_product",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "entities": [
+                    {
+                      "raw": "technical drawing",
+                      "hint": "attachment_type",
+                      "confident": true,
+                      "canonical_code": "Technical Specifications",
+                      "current_message": true
+                    },
+                    {
+                      "raw": "SRT1000-CR",
+                      "hint": "product",
+                      "confident": true,
+                      "canonical_code": null,
+                      "current_message": true
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Here's what you want:\n\u2022 attachment_type: Technical Specifications\n\u2022 product: SRT1000-CR\n\nBut no technical drawing matched these. Would you like me to escalate to marketing product team?",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to get the technical drawing for SRT1000-CR",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "product_attachment",
+                  "intent_hint": "check_product_attachment",
+                  "message_type": "business_query",
+                  "query_brands": [],
+                  "access_levels": [],
+                  "routing_brand": "sorento",
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [],
+                  "routing_company": "00000000-0000-0000-0000-000000000001",
+                  "date_filter_start": null,
+                  "routing_companies": [
+                    {
+                      "codes": [
+                        "SRT1000-CR"
+                      ],
+                      "labels": [
+                        "SRT1000-CR"
+                      ],
+                      "brand_code": "sorento",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "selection_context": null,
+                  "routing_roster_plan": null,
+                  "requested_attributes": [],
+                  "routing_brand_source": "resolved"
+                },
+                "user_response": "Here's what you want:\n\u2022 attachment_type: Technical Specifications\n\u2022 product: SRT1000-CR\n\nBut no technical drawing matched these. Would you like me to escalate to marketing product team?"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "request_for_help",
+                "intent_hint": null,
+                "domain_hint": null,
+                "scope_intent": null,
+                "is_affirmative": true,
+                "user_goal": "trying to escalate the request to the team",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "Technical Specifications",
+                    "hint": "attachment_type",
+                    "confident": true,
+                    "canonical_code": "Technical Specifications",
+                    "current_message": false
+                  },
+                  {
+                    "raw": "SRT1000-CR",
+                    "hint": "product",
+                    "confident": true,
+                    "canonical_code": null,
+                    "current_message": false
+                  }
+                ],
+                "entity_op": "reuse",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "marketing_product",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": true
+                },
+                "domain_signal_source": "intent_none",
+                "entity_op_applied": "reuse",
+                "query_brands": []
+              },
+              "_parser_raw": {
+                "message_type": "request_for_help",
+                "intent_hint": null,
+                "domain_hint": null,
+                "scope_intent": null,
+                "is_affirmative": true,
+                "user_goal": "trying to escalate the request to the team",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [],
+                "entity_op": "reuse",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": null,
+                  "suggested_agent": null
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "General Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null
+          },
+          "item": {
+            "allowed": true,
+            "decision": "allow",
+            "agent_name": "General Enquiries",
+            "attributes": null,
+            "all_attributes_allowed": null,
+            "branch_kind": "out_of_scope"
+          },
+          "is_test": false
+        }
+      }
+    ],
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 900000076,
+              "firstName": "Person 105",
+              "lastName": null,
+              "phone": "+60100000038",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/108318f6-e3ba-42f9-893b-9f8d010f6cb1"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260510_200514",
+                "imported_20260627_150636"
+              ],
+              "assignee": {
+                "id": 900000023,
+                "firstName": "Person 32",
+                "lastName": "Person 2",
+                "email": "person4@example.com"
+              },
+              "lifecycle": "New Lead",
+              "created_at": 1775531831
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "9765b3ea-4fff-4298-bee0-d9a6e23b391e",
+              "contact": {
+                "id": 900000076,
+                "firstName": "Person 105",
+                "lastName": "",
+                "phone": "+60100000038",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": 900000023,
+                  "email": "person4@example.com",
+                  "firstName": "Person 32",
+                  "lastName": "Person 2",
+                  "role": "user"
+                },
+                "created_at": 1775531831
+              },
+              "message": {
+                "messageId": 1788461145000000,
+                "channelMessageId": "wamid.HBgLNjAxODI5MDE3NjYVAgASGBYzRUIwNDA3QUYzRDNCMDBEM0U2RkMyAA==",
+                "contactId": 900000076,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788461145000,
+                "message": {
+                  "type": "text",
+                  "text": "YES ESCALTE"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": null,
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000076",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "marketing_product",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "entities": [
+                    {
+                      "raw": "technical drawing",
+                      "hint": "attachment_type",
+                      "confident": true,
+                      "canonical_code": "Technical Specifications",
+                      "current_message": true
+                    },
+                    {
+                      "raw": "SRT1000-CR",
+                      "hint": "product",
+                      "confident": true,
+                      "canonical_code": null,
+                      "current_message": true
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Here's what you want:\n\u2022 attachment_type: Technical Specifications\n\u2022 product: SRT1000-CR\n\nBut no technical drawing matched these. Would you like me to escalate to marketing product team?",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to get the technical drawing for SRT1000-CR",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "product_attachment",
+                  "intent_hint": "check_product_attachment",
+                  "message_type": "business_query",
+                  "query_brands": [],
+                  "access_levels": [],
+                  "routing_brand": "sorento",
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [],
+                  "routing_company": "00000000-0000-0000-0000-000000000001",
+                  "date_filter_start": null,
+                  "routing_companies": [
+                    {
+                      "codes": [
+                        "SRT1000-CR"
+                      ],
+                      "labels": [
+                        "SRT1000-CR"
+                      ],
+                      "brand_code": "sorento",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "selection_context": null,
+                  "routing_roster_plan": null,
+                  "requested_attributes": [],
+                  "routing_brand_source": "resolved"
+                },
+                "user_response": "Here's what you want:\n\u2022 attachment_type: Technical Specifications\n\u2022 product: SRT1000-CR\n\nBut no technical drawing matched these. Would you like me to escalate to marketing product team?"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "request_for_help",
+                "intent_hint": null,
+                "domain_hint": null,
+                "scope_intent": null,
+                "is_affirmative": true,
+                "user_goal": "trying to escalate the request to the team",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "Technical Specifications",
+                    "hint": "attachment_type",
+                    "confident": true,
+                    "canonical_code": "Technical Specifications",
+                    "current_message": false
+                  },
+                  {
+                    "raw": "SRT1000-CR",
+                    "hint": "product",
+                    "confident": true,
+                    "canonical_code": null,
+                    "current_message": false
+                  }
+                ],
+                "entity_op": "reuse",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "marketing_product",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": true
+                },
+                "domain_signal_source": "intent_none",
+                "entity_op_applied": "reuse",
+                "query_brands": []
+              },
+              "_parser_raw": {
+                "message_type": "request_for_help",
+                "intent_hint": null,
+                "domain_hint": null,
+                "scope_intent": null,
+                "is_affirmative": true,
+                "user_goal": "trying to escalate the request to the team",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [],
+                "entity_op": "reuse",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": null,
+                  "suggested_agent": null
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "General Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null
+          }
+        }
+      }
+    ],
+    "escalation-input": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "General Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null,
+          "branch_kind": "out_of_scope"
+        }
+      }
+    ],
+    "escalation-context": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "General Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null,
+          "branch_kind": "out_of_scope",
+          "brand_code": "sorento",
+          "company_id": "00000000-0000-0000-0000-000000000001",
+          "company_name": "Sorento",
+          "routing_source": "prior_state",
+          "team": "marketing_product"
+        }
+      }
+    ],
+    "clarify-company-gate": [],
+    "Call 'sub-human-intervention'": [
+      {
+        "json": {
+          "success": true
+        }
+      }
+    ],
+    "escalation-result": [
+      {
+        "json": {
+          "arm": "human-intervention",
+          "clarify": null
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "success": true
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "arm": "human-intervention",
+        "clarify": null
+      }
+    }
+  ],
+  "runIndex": 0,
+  "execution": {
+    "id": "15074296"
+  },
+  "ran": [
+    "When Executed by Another Workflow",
+    "build-ctx",
+    "escalation-input",
+    "escalation-context",
+    "clarify-company-gate",
+    "Call 'sub-human-intervention'",
+    "escalation-result"
+  ]
+}

@@ -1,0 +1,671 @@
+{
+  "source": {
+    "execution_id": "15130274",
+    "workflow_id": "fr2u3e6FKg52cPvK",
+    "workflow_version": "bac9613b-644a-456b-a17d-f0815672b8cd",
+    "node": "escalation-context",
+    "captured_at": "2026-09-04T19:58:22+00:00",
+    "expected_from": "runData",
+    "dedupe_sig": "8e6789724a45610d6bed62fc59b835f3acb58d5c0e033819f91a4f05c3aeb1c2"
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 900000029,
+              "firstName": "Person 37",
+              "lastName": null,
+              "phone": "+60100000013",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/b2916c77-57c7-4f05-8565-3f100bcf0577"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": "New Lead",
+              "created_at": 1782546255
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "2974d275-e22b-4135-97d7-f0773933153b",
+              "contact": {
+                "id": 900000029,
+                "firstName": "Person 37",
+                "lastName": "",
+                "phone": "+60100000013",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1782546255
+              },
+              "message": {
+                "messageId": 1788498284000000,
+                "channelMessageId": "wamid.HBgLNjAxNjIyOTExNzgVAgASGCBBQzNCQjAxMkQ2NTQyRjZDRUQ1QjYyOTkyMjk5OEQ0MgA=",
+                "contactId": 900000029,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788498284000,
+                "message": {
+                  "type": "text",
+                  "text": "OK"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 38\"},\"wa_id\":\"60100000013\",\"user_id\":\"MY.900000030\",\"firstName\":\"Person 38\",\"lastName\":\"\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000029",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "purchasing_certification",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "entities": [
+                    {
+                      "raw": "MWC6603",
+                      "hint": "product",
+                      "confident": true,
+                      "canonical_code": null,
+                      "current_message": true
+                    },
+                    {
+                      "raw": "certificate",
+                      "hint": "attachment_type",
+                      "confident": true,
+                      "canonical_code": "Certification",
+                      "current_message": true
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Here's what you want:\n\u2022 product: MWC6603-S8 (Mocha), MWC6603-S8 (Sorento)\n\u2022 attachment_type: Certification\n\nBut no certificate matched these - checked in Mocha and Sorento. Would you like me to escalate to purchasing certification team?",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to check the certificate for MWC6603",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "product_attachment",
+                  "intent_hint": "check_product_attachment",
+                  "message_type": "business_query",
+                  "query_brands": [],
+                  "access_levels": [],
+                  "routing_brand": "mocha",
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [],
+                  "routing_company": null,
+                  "date_filter_start": null,
+                  "routing_companies": [
+                    {
+                      "codes": [
+                        "MWC6603-S8"
+                      ],
+                      "labels": [
+                        "MWC6603-S8"
+                      ],
+                      "brand_code": null,
+                      "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                      "company_name": "Mocha"
+                    },
+                    {
+                      "codes": [
+                        "MWC6603-S8"
+                      ],
+                      "labels": [
+                        "MWC6603-S8"
+                      ],
+                      "brand_code": "mocha",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "selection_context": null,
+                  "routing_roster_plan": null,
+                  "requested_attributes": [],
+                  "routing_brand_source": "resolved"
+                },
+                "user_response": "Here's what you want:\n\u2022 product: MWC6603-S8 (Mocha), MWC6603-S8 (Sorento)\n\u2022 attachment_type: Certification\n\nBut no certificate matched these - checked in Mocha and Sorento. Would you like me to escalate to purchasing certification team?"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "casual",
+                "intent_hint": null,
+                "domain_hint": null,
+                "scope_intent": null,
+                "is_affirmative": true,
+                "user_goal": "trying to agree to the escalation offer",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "MWC6603",
+                    "hint": "product",
+                    "confident": true,
+                    "canonical_code": null,
+                    "current_message": false
+                  },
+                  {
+                    "raw": "Certification",
+                    "hint": "attachment_type",
+                    "confident": true,
+                    "canonical_code": "Certification",
+                    "current_message": false
+                  }
+                ],
+                "entity_op": "reuse",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "purchasing_certification",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": true
+                },
+                "domain_signal_source": "intent_none",
+                "entity_op_applied": "reuse",
+                "query_brands": []
+              },
+              "_parser_raw": {
+                "message_type": "casual",
+                "intent_hint": null,
+                "domain_hint": null,
+                "scope_intent": null,
+                "is_affirmative": true,
+                "user_goal": "trying to agree to the escalation offer",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [],
+                "entity_op": "reuse",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": null,
+                  "suggested_agent": null
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "General Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null
+          },
+          "item": {
+            "allowed": true,
+            "decision": "allow",
+            "agent_name": "General Enquiries",
+            "attributes": null,
+            "all_attributes_allowed": null,
+            "branch_kind": "out_of_scope"
+          },
+          "is_test": false
+        }
+      }
+    ],
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 900000029,
+              "firstName": "Person 37",
+              "lastName": null,
+              "phone": "+60100000013",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/b2916c77-57c7-4f05-8565-3f100bcf0577"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": "New Lead",
+              "created_at": 1782546255
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "2974d275-e22b-4135-97d7-f0773933153b",
+              "contact": {
+                "id": 900000029,
+                "firstName": "Person 37",
+                "lastName": "",
+                "phone": "+60100000013",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1782546255
+              },
+              "message": {
+                "messageId": 1788498284000000,
+                "channelMessageId": "wamid.HBgLNjAxNjIyOTExNzgVAgASGCBBQzNCQjAxMkQ2NTQyRjZDRUQ1QjYyOTkyMjk5OEQ0MgA=",
+                "contactId": 900000029,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788498284000,
+                "message": {
+                  "type": "text",
+                  "text": "OK"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 38\"},\"wa_id\":\"60100000013\",\"user_id\":\"MY.900000030\",\"firstName\":\"Person 38\",\"lastName\":\"\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000029",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "purchasing_certification",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "entities": [
+                    {
+                      "raw": "MWC6603",
+                      "hint": "product",
+                      "confident": true,
+                      "canonical_code": null,
+                      "current_message": true
+                    },
+                    {
+                      "raw": "certificate",
+                      "hint": "attachment_type",
+                      "confident": true,
+                      "canonical_code": "Certification",
+                      "current_message": true
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Here's what you want:\n\u2022 product: MWC6603-S8 (Mocha), MWC6603-S8 (Sorento)\n\u2022 attachment_type: Certification\n\nBut no certificate matched these - checked in Mocha and Sorento. Would you like me to escalate to purchasing certification team?",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to check the certificate for MWC6603",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "product_attachment",
+                  "intent_hint": "check_product_attachment",
+                  "message_type": "business_query",
+                  "query_brands": [],
+                  "access_levels": [],
+                  "routing_brand": "mocha",
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [],
+                  "routing_company": null,
+                  "date_filter_start": null,
+                  "routing_companies": [
+                    {
+                      "codes": [
+                        "MWC6603-S8"
+                      ],
+                      "labels": [
+                        "MWC6603-S8"
+                      ],
+                      "brand_code": null,
+                      "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                      "company_name": "Mocha"
+                    },
+                    {
+                      "codes": [
+                        "MWC6603-S8"
+                      ],
+                      "labels": [
+                        "MWC6603-S8"
+                      ],
+                      "brand_code": "mocha",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "selection_context": null,
+                  "routing_roster_plan": null,
+                  "requested_attributes": [],
+                  "routing_brand_source": "resolved"
+                },
+                "user_response": "Here's what you want:\n\u2022 product: MWC6603-S8 (Mocha), MWC6603-S8 (Sorento)\n\u2022 attachment_type: Certification\n\nBut no certificate matched these - checked in Mocha and Sorento. Would you like me to escalate to purchasing certification team?"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "casual",
+                "intent_hint": null,
+                "domain_hint": null,
+                "scope_intent": null,
+                "is_affirmative": true,
+                "user_goal": "trying to agree to the escalation offer",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "MWC6603",
+                    "hint": "product",
+                    "confident": true,
+                    "canonical_code": null,
+                    "current_message": false
+                  },
+                  {
+                    "raw": "Certification",
+                    "hint": "attachment_type",
+                    "confident": true,
+                    "canonical_code": "Certification",
+                    "current_message": false
+                  }
+                ],
+                "entity_op": "reuse",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "purchasing_certification",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": true
+                },
+                "domain_signal_source": "intent_none",
+                "entity_op_applied": "reuse",
+                "query_brands": []
+              },
+              "_parser_raw": {
+                "message_type": "casual",
+                "intent_hint": null,
+                "domain_hint": null,
+                "scope_intent": null,
+                "is_affirmative": true,
+                "user_goal": "trying to agree to the escalation offer",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [],
+                "entity_op": "reuse",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": null,
+                  "suggested_agent": null
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "General Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null
+          }
+        }
+      }
+    ],
+    "escalation-input": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "General Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null,
+          "branch_kind": "out_of_scope"
+        }
+      }
+    ],
+    "escalation-context": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "General Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null,
+          "branch_kind": "out_of_scope",
+          "brand_code": null,
+          "company_id": null,
+          "company_name": null,
+          "routing_source": "multi_company_unpicked",
+          "team": "purchasing_certification"
+        }
+      }
+    ],
+    "clarify-company-gate": [],
+    "Call 'sub-human-intervention'": [
+      {
+        "json": {
+          "success": true
+        }
+      }
+    ],
+    "escalation-result": [
+      {
+        "json": {
+          "arm": "human-intervention",
+          "clarify": null
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "allowed": true,
+        "decision": "allow",
+        "agent_name": "General Enquiries",
+        "attributes": null,
+        "all_attributes_allowed": null,
+        "branch_kind": "out_of_scope"
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "allowed": true,
+        "decision": "allow",
+        "agent_name": "General Enquiries",
+        "attributes": null,
+        "all_attributes_allowed": null,
+        "branch_kind": "out_of_scope",
+        "brand_code": null,
+        "company_id": null,
+        "company_name": null,
+        "routing_source": "multi_company_unpicked",
+        "team": "purchasing_certification"
+      }
+    }
+  ],
+  "runIndex": 0,
+  "execution": {
+    "id": "15130274"
+  },
+  "ran": [
+    "When Executed by Another Workflow",
+    "build-ctx",
+    "escalation-input",
+    "escalation-context",
+    "clarify-company-gate",
+    "Call 'sub-human-intervention'",
+    "escalation-result"
+  ]
+}
