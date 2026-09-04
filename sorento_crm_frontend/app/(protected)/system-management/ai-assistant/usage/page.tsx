@@ -38,6 +38,7 @@ const FEATURE_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
   { value: 'ai_assistant', label: 'AI Assistant (chat)' },
   { value: 'ai_extract', label: 'AI Extract (portal forms)' },
   { value: 'ai_document_extract', label: 'Document reading (PO, delivery schedule)' },
+  { value: 'chatbot_parser', label: 'Chatbot (understanding a WhatsApp message)' },
 ];
 
 // One place, so a new feature cannot appear in the filter but read as a dash in the table.
@@ -45,6 +46,7 @@ const FEATURE_LABELS: Readonly<Record<string, string>> = {
   ai_assistant: 'AI Assistant',
   ai_extract: 'AI Extract',
   ai_document_extract: 'Document reading',
+  chatbot_parser: 'Chatbot parser',
 };
 
 const PERMISSION = 'system.ai_assistant_settings.view';
