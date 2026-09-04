@@ -58,6 +58,23 @@ _CODE_COLUMNS: dict[type, Any] = {
 }
 
 
+def dedupe_warnings(warnings: list[str]) -> list[str]:
+    """Order-preserving de-duplication for a record's warning list.
+
+    A document with several lines resolves the same master more than once - a
+    `SO` naming two lines with no `warehouse_ref` would otherwise carry
+    `warehouse_unresolved` twice for one fact. The ESB reads warnings as a
+    SET, and a duplicate is noise a caller has to de-duplicate itself.
+    """
+    seen: set[str] = set()
+    out: list[str] = []
+    for w in warnings:
+        if w not in seen:
+            seen.add(w)
+            out.append(w)
+    return out
+
+
 class MasterRefResolver:
     """Base class providing the ref/code/name/back-create ladder.
 
@@ -121,7 +138,7 @@ class MasterRefResolver:
         )
         if mine is None:
             raise ReferenceConflict(
-                f"{subject} is linked to a record in another company",
+                f"{subject} is already claimed outside this company anchor",
                 field_name=field_name,
             )
 
@@ -156,10 +173,15 @@ class MasterRefResolver:
             try:
                 return self._resolve_ref(ref_field, ref, model)
             except MissingReference:
-                if model is Warehouse:
-                    warnings.append(WARN_WAREHOUSE_UNRESOLVED)
-                    return None
+                # B1 fix: a sent ref that fails falls through to code/name
+                # exactly like every other model - warehouse's ONLY difference
+                # is that it never raises once every avenue is exhausted
+                # (below), not that it gives up on a sent ref without trying
+                # the code it was ALSO sent (AC-V1-3/5 apply to it too).
                 if not code and not name:
+                    if model is Warehouse:
+                        warnings.append(WARN_WAREHOUSE_UNRESOLVED)
+                        return None
                     raise
 
         entity_id = self._resolve_by_fallback(model, code, name, warnings)
@@ -168,16 +190,26 @@ class MasterRefResolver:
                 # The ref did not resolve above, but the row it names now
                 # exists (or was just found by code/name) - register it so
                 # the NEXT push is a step-1 ref match (D1).
-                self.refs.link(
-                    entity_type=model.__tablename__,
-                    entity_id=entity_id,
-                    source_ref=ref,
-                    integration_id=self.integration_id,
-                )
+                try:
+                    self.refs.link(
+                        entity_type=model.__tablename__,
+                        entity_id=entity_id,
+                        source_ref=ref,
+                        integration_id=self.integration_id,
+                    )
+                except ReferenceConflict as exc:
+                    # `refs.link` itself always raises under `source_ref`
+                    # (the pre-v2 default) - re-filed under the master field
+                    # this rung is resolving, so the verdict names WHICH
+                    # reference conflicted rather than a fixed generic key.
+                    raise ReferenceConflict(str(exc), field_name=ref_field) from exc
             return entity_id
 
         if model is Warehouse:
-            warnings.append(WARN_WAREHOUSE_UNRESOLVED)
+            # B1 fix: nothing to warn about when nothing was SENT for it - an
+            # optional warehouse nobody named is not an unresolved one.
+            if ref or code:
+                warnings.append(WARN_WAREHOUSE_UNRESOLVED)
             return None
         if model is Product:
             raise MissingReference(code_field if code else ref_field, code or ref)
@@ -235,7 +267,9 @@ class MasterRefResolver:
             # D2: only when BOTH are sent - the unique index is on the pair,
             # and a code-only row would collide with a later named one.
             if code and name:
-                customer = customer_back_create.get_or_create(self.db, code=code, name=name)
+                customer = customer_back_create.get_or_create(
+                    self.db, code=code, name=name, company_id=self.company_id
+                )
                 if customer is not None:
                     warnings.append(WARN_CUSTOMER_CREATED)
                     return str(customer.id)

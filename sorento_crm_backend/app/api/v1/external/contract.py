@@ -18,14 +18,13 @@ from app.api.v1.external.ingest import CONTRACT_VERSION, SUPPORTED_ENTITIES
 
 router = APIRouter()
 
-# `shipping_orders` (S3) is a real member of `ingest.SUPPORTED_ENTITIES` now -
-# it has no `DOCUMENT_SPECS` entry (there is no header table for it, see plan
-# section 0), but `SHIPPING_ORDER_ENTITIES` folds it in there, so nothing is
-# added on top here any more.
-CONTRACT_ENTITIES = SUPPORTED_ENTITIES
-
 
 @router.get("")
 def get_contract():
-    """Version and entity list the ESB gates its integration on."""
-    return {"version": CONTRACT_VERSION, "entities": sorted(CONTRACT_ENTITIES)}
+    """Version and entity list the ESB gates its integration on.
+
+    `SUPPORTED_ENTITIES` directly (review nit) - `shipping_orders` (S3) is
+    already a real member of it (folded in by `SHIPPING_ORDER_ENTITIES`), so
+    a second, contract-local alias for the same set had nothing left to add.
+    """
+    return {"version": CONTRACT_VERSION, "entities": sorted(SUPPORTED_ENTITIES)}

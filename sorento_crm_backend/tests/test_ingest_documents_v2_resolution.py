@@ -426,7 +426,7 @@ class TestCrossCompanyRefStillFails:
 
         entry = res.json()["records"][0]
         assert entry["outcome"] == "failed", res.text
-        assert "another company" in entry["errors"].get("customer_ref", "")
+        assert "outside this company anchor" in entry["errors"].get("customer_ref", "")
         assert env.header("sales_orders", record["source_ref"]) is None
 
     def test_a_supplier_ref_into_another_company_still_fails_with_the_new_fields_present(
@@ -441,7 +441,7 @@ class TestCrossCompanyRefStillFails:
 
         entry = res.json()["records"][0]
         assert entry["outcome"] == "failed", res.text
-        assert "another company" in entry["errors"].get("supplier_ref", "")
+        assert "outside this company anchor" in entry["errors"].get("supplier_ref", "")
         assert env.header("purchase_orders", record["source_ref"]) is None
 
 

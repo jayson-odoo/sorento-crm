@@ -99,7 +99,7 @@ class CanonicalPurchaseOrderLine(_CanonicalLine):
     # rejected - an ESB that sends `["SO-A", ""]` names one real number, not
     # a bad one. Absent or `[]` both mean "nothing to claim" (schema pin,
     # AC-V4 tests) - never a trigger of its own.
-    from_so_numbers: Optional[list[_SoNumber]] = None
+    from_so_numbers: Optional[list[_SoNumber]] = Field(None, max_length=50)
 
     @field_validator("from_so_numbers")
     @classmethod
@@ -117,7 +117,10 @@ class _CanonicalDocument(_Canonical):
     # rather than `list[_CanonicalLine]` only because a mutable field's type is
     # invariant, so a narrowing subclass would be an override error for a
     # relationship that is correct.
-    lines: list[Any] = Field(default_factory=list)
+    # `max_length` (SEC5): a cap on the CARDINALITY of the list, not on any one
+    # line's own size - an unbounded array is the DOS surface a length limit
+    # elsewhere on the line does not close.
+    lines: list[Any] = Field(default_factory=list, max_length=2000)
 
     @model_validator(mode="after")
     def _line_refs_are_unique(self):
@@ -153,7 +156,9 @@ class CanonicalSalesOrder(_CanonicalDocument):
     # `sales_orders.debtor_code` whenever sent, ref or no ref (D9); a customer
     # is back-created only when BOTH are present (D2) - the unique index is on
     # the pair, and a code-only row would collide with a later named one.
-    customer_code: Optional[str] = Field(None, max_length=100)
+    # `max_length=50` (SEC4): matches `customers.customer_code`'s own
+    # `String(50)` column - a longer value can only ever fail at INSERT.
+    customer_code: Optional[str] = Field(None, max_length=50)
     customer_name: Optional[str] = Field(None, max_length=255)
     sales_agent_ref: Optional[str] = Field(None, max_length=255)
     agent_code: Optional[str] = Field(None, max_length=100)
@@ -166,7 +171,7 @@ class CanonicalSalesOrder(_CanonicalDocument):
     doc_date: Optional[date] = None
     requested_delivery_date: Optional[date] = None
     internal_note: Optional[str] = None
-    lines: list[CanonicalSalesOrderLine] = Field(default_factory=list)
+    lines: list[CanonicalSalesOrderLine] = Field(default_factory=list, max_length=2000)
 
 
 class CanonicalPurchaseOrder(_CanonicalDocument):
@@ -175,13 +180,15 @@ class CanonicalPurchaseOrder(_CanonicalDocument):
     # v2 code/name fallback (D1). `agent_code` is accepted for symmetry with
     # the sales-order shape but IGNORED here: a purchase order has no agent FK,
     # and there is nowhere on `purchase_orders` for it to land.
-    supplier_code: Optional[str] = Field(None, max_length=100)
+    # `max_length=50` (SEC4): matches `suppliers.supplier_code`'s own
+    # `String(50)` column.
+    supplier_code: Optional[str] = Field(None, max_length=50)
     supplier_name: Optional[str] = Field(None, max_length=255)
     agent_code: Optional[str] = Field(None, max_length=100)
     issue_date: Optional[date] = None
     expected_date: Optional[date] = None
     currency: Optional[str] = Field(None, max_length=3)
-    lines: list[CanonicalPurchaseOrderLine] = Field(default_factory=list)
+    lines: list[CanonicalPurchaseOrderLine] = Field(default_factory=list, max_length=2000)
 
 
 class CanonicalShippingOrderLine(_CanonicalLine):
@@ -194,7 +201,7 @@ class CanonicalShippingOrderLine(_CanonicalLine):
     # shipping-order line dedicates against a sales order exactly as a
     # purchase-order line does (`resolve()` decides which purchase table by
     # `spo_number`'s own family, not by which entity pushed the claim).
-    from_so_numbers: Optional[list[_SoNumber]] = None
+    from_so_numbers: Optional[list[_SoNumber]] = Field(None, max_length=50)
 
     @field_validator("from_so_numbers")
     @classmethod
@@ -211,9 +218,14 @@ class CanonicalShippingOrder(_CanonicalDocument):
     purchase-order line's - see `CanonicalShippingOrderLine`.
     """
 
-    spo_number: str = Field(..., min_length=1, max_length=100)
+    # `max_length=50` (review nit): matches `spo_allocations.spo_number`'s own
+    # `String(50)` column - `sales_orders.so_number`/`purchase_orders.po_number`
+    # are `String(100)`, which is why only THIS number is narrower.
+    spo_number: str = Field(..., min_length=1, max_length=50)
     supplier_ref: Optional[str] = Field(None, max_length=255)
-    supplier_code: Optional[str] = Field(None, max_length=100)
+    # `max_length=50` (SEC4): matches `suppliers.supplier_code`'s own
+    # `String(50)` column.
+    supplier_code: Optional[str] = Field(None, max_length=50)
     supplier_name: Optional[str] = Field(None, max_length=255)
     # Accepted for symmetry with the other two documents but IGNORED here -
     # same reason as `CanonicalPurchaseOrder.agent_code`.
@@ -221,4 +233,4 @@ class CanonicalShippingOrder(_CanonicalDocument):
     issue_date: Optional[date] = None
     expected_date: Optional[date] = None
     currency: Optional[str] = Field(None, max_length=3)
-    lines: list[CanonicalShippingOrderLine] = Field(default_factory=list)
+    lines: list[CanonicalShippingOrderLine] = Field(default_factory=list, max_length=2000)

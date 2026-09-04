@@ -22,7 +22,7 @@ import re
 from typing import Optional
 
 from sqlalchemy import func
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import DataError, IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.procurement import Supplier
@@ -84,9 +84,13 @@ def back_create_supplier(db: Session, *, code: str, name: str, party: type = Sup
             created = party(**{code_col: code, name_col: name, "is_active": True})
             db.add(created)
             db.flush()
-    except IntegrityError:
+    except (IntegrityError, DataError):
+        # SEC4: a `DataError` here means the code or name does not fit its
+        # column (e.g. a value too long for `VARCHAR(50)`) - left unresolved
+        # the same as a colliding code, never a 500.
         logger.warning(
-            "could not back-create %s %r from a purchase upload (the code already exists)",
+            "could not back-create %s %r from a purchase upload "
+            "(the code already exists, or the value does not fit the column)",
             party.__name__.lower(), code)
         return None
     return created

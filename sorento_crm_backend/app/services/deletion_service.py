@@ -47,6 +47,7 @@ from app.services.dependent_probe import is_referenced, referrers_of, relation_n
 from app.services.document_ingest_service import CANCELLED, DOCUMENT_SPECS
 from app.services.integration_reference_service import IntegrationReferenceService
 from app.services.master_ingest_service import (
+    INTERNAL_ERROR_MESSAGE,
     UnsupportedIngestEntity,
     _is_company_scoped,
 )
@@ -239,17 +240,19 @@ class DeletionService:
                 DeletionOutcome.DEACTIVATED if any_referenced else DeletionOutcome.DELETED
             )
             return DeletionRecordResult(source_ref=ref, outcome=outcome)
-        except Exception as exc:  # noqa: BLE001 - one record's failure, not the batch's
+        except Exception:  # noqa: BLE001 - one record's failure, not the batch's
             if savepoint.is_active:
                 savepoint.rollback()
+            # SEC3: never echo a non-domain exception's own message - it
+            # routinely quotes SQL, a table/column name or a raw UUID.
             logger.warning(
-                "deletion.record_failed entity=%s source_ref=%s error=%s",
+                "deletion.record_failed entity=%s source_ref=%s",
                 SHIPPING_ORDERS_ENTITY,
                 ref,
-                exc,
+                exc_info=True,
             )
             return DeletionRecordResult(
-                source_ref=ref, outcome=DeletionOutcome.FAILED, errors={"_": str(exc)}
+                source_ref=ref, outcome=DeletionOutcome.FAILED, errors={"_": INTERNAL_ERROR_MESSAGE}
             )
 
     # ------------------------------------------------------------- one record
@@ -300,20 +303,22 @@ class DeletionService:
                 outcome=DeletionOutcome.DEACTIVATED,
                 entity_id=str(entity_id),
             )
-        except Exception as exc:  # noqa: BLE001 - one record's failure, not the batch's
+        except Exception:  # noqa: BLE001 - one record's failure, not the batch's
             if savepoint.is_active:
                 savepoint.rollback()
+            # SEC3: never echo a non-domain exception's own message - it
+            # routinely quotes SQL, a table/column name or a raw UUID.
             logger.warning(
-                "deletion.record_failed entity=%s source_ref=%s error=%s",
+                "deletion.record_failed entity=%s source_ref=%s",
                 entity_type,
                 ref,
-                exc,
+                exc_info=True,
             )
             return DeletionRecordResult(
                 source_ref=ref,
                 outcome=DeletionOutcome.FAILED,
                 entity_id=str(entity_id) if entity_id else None,
-                errors={"_": str(exc)},
+                errors={"_": INTERNAL_ERROR_MESSAGE},
             )
 
     def _in_anchor_company(self, entity_type: str, entity_id: str) -> bool:

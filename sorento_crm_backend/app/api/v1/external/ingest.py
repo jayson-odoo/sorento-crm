@@ -31,6 +31,7 @@ would cost it a second round trip. See ``company_anchor.py``.
 from __future__ import annotations
 
 import logging
+from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, Path, Query, status
 from sqlalchemy.orm import Session
@@ -131,7 +132,9 @@ SUPPORTED_ENTITIES = set(ENTITY_SPECS) | set(DOCUMENT_ENTITIES) | set(SHIPPING_O
 CONTRACT_VERSION = 2
 
 
-def _run_document_hooks(db: Session, entity: str, service) -> None:
+def _run_document_hooks(
+    db: Session, entity: str, service, *, actor: Optional[str]
+) -> None:
     """D7/S5 (plan section 2.6): post-write reactions, non-dry only.
 
     Runs AFTER the batch's own `db.commit()` - every hook here reacts to a
@@ -142,18 +145,23 @@ def _run_document_hooks(db: Session, entity: str, service) -> None:
     and one reaction's failure must not roll back a sibling reaction that
     already committed.
 
+    `actor` (N1 review fix) is the calling principal's own user id - the
+    integration's `act_as_user_id`, resolved once by `get_external_api_user`
+    - threaded through to whichever hook records who/what caused the
+    reaction, the same attribution an interactive user's action gets.
+
     Only `sales_orders` and `purchase_orders` react here - a shipping order's
     lines are closed-by-absence WITHIN the pushed document only (D7); the
     book-wide reconciliation the upload does is the ESB's own deletion call,
     not a hook on this route.
     """
     if entity == "sales_orders":
-        _run_plan_exception_hook(db, service)
+        _run_plan_exception_hook(db, service, actor=actor)
     elif entity == "purchase_orders":
-        _run_supersede_and_relink_hooks(db, service)
+        _run_supersede_and_relink_hooks(db, service, actor=actor)
 
 
-def _run_plan_exception_hook(db: Session, service) -> None:
+def _run_plan_exception_hook(db: Session, service, *, actor: Optional[str]) -> None:
     """AC-V5-1: a before/after plan-exception batch over this push's products.
 
     `before` is `service.plan_exception_before` - captured INSIDE the service,
@@ -185,7 +193,7 @@ def _run_plan_exception_hook(db: Session, service) -> None:
             # through unchanged rather than recounted from the exceptions).
             delta_count=len(service.written_header_ids),
             source_documents=sorted(service.so_numbers),
-            actor=None,
+            actor=actor,
         )
         db.commit()
     except Exception:  # noqa: BLE001 - best-effort, the ingest already succeeded
@@ -193,7 +201,7 @@ def _run_plan_exception_hook(db: Session, service) -> None:
         logger.warning("ingest.plan_exception_hook_failed", exc_info=True)
 
 
-def _run_supersede_and_relink_hooks(db: Session, service) -> None:
+def _run_supersede_and_relink_hooks(db: Session, service, *, actor: Optional[str]) -> None:
     """AC-V5-2: retire CRM-raised POs this push confirms, then relink placements.
 
     Two hooks, two try/except blocks, two commits - not one wrapping both -
@@ -213,7 +221,7 @@ def _run_supersede_and_relink_hooks(db: Session, service) -> None:
             with db.begin_nested():
                 ProjectOrderInquiryService(db).relink_to_matching_lines(
                     list(service.written_header_ids),
-                    actor_user_id=None,
+                    actor_user_id=actor,
                     trigger="autocount_ingest",
                 )
             db.commit()
@@ -317,7 +325,9 @@ async def ingest_masters(
         # and `ShippingOrderIngestService` carry none of the attributes these
         # read, so only a `DocumentIngestService` batch reaches this.
         if isinstance(service, DocumentIngestService):
-            _run_document_hooks(db, entity, service)
+            _run_document_hooks(
+                db, entity, service, actor=current_user.get("id")
+            )
 
     logger.info(
         "ingest.batch entity=%s integration=%s company=%s dry_run=%s "

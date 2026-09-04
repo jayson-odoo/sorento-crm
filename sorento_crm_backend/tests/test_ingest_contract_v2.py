@@ -283,6 +283,21 @@ class TestGoldenV1Payloads:
         assert got_line["qty_ordered"] == 4
         assert got_line["qty_received"] == 4
 
+    def test_a_v1_line_with_no_warehouse_at_all_carries_no_warnings(self, env):
+        """B1 (review round 1 fix): `warehouse_unresolved` must fire only when a
+        `warehouse_ref`/`warehouse_code` was actually SENT and failed to
+        resolve - a v1 line that never mentions a warehouse at all is not an
+        unresolved one, and the verdict must have no `warnings` key at all
+        (same omit-when-empty rule `errors` follows)."""
+        line = _po_line(env, unit_cost="9.99")
+        record = _po_record(env, lines=[line], supplier_ref=env.supplier_ref)
+
+        res = env.post(INGEST_PO, [record])
+
+        entry = res.json()["records"][0]
+        assert entry["outcome"] == "created", res.text
+        assert "warnings" not in entry, entry
+
 
 # ==================================================== AC-V3-1 migration 472 slugs
 _MIG_472_PATH = os.path.join(
@@ -408,3 +423,92 @@ class TestClaimSourceAutocount:
         from app.services.scm import order_link_service
 
         assert order_link_service.SOURCE_AUTOCOUNT == "autocount"
+
+
+# ============================================ S9 migration 473 constraint apply
+_MIG_473_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "alembic",
+    "versions",
+    "473_scm_claim_autocount_source.py",
+)
+
+
+def _load_migration_473():
+    """Loaded fresh per call - same reason `_load_migration_472` is."""
+    spec = importlib.util.spec_from_file_location("mig_473_claim_source", _MIG_473_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class TestMigration473WidensTheSourceCheck:
+    """S9 (review round 1 fix): the migration BODY, on the real check constraint.
+
+    A real connection inside a rolled-back transaction (`TestMigration472Slugs`'s
+    own `bind` fixture pattern, not `blank_session()`'s scratch schema): a
+    scratch schema is built via `create_all` off the CURRENT models, so it
+    already carries the NEW (post-473) constraint text before any migration
+    ever runs as DDL against it - only a real connection can be walked
+    BACKWARDS to the OLD constraint text first, the way this test needs to.
+    """
+
+    @pytest.fixture()
+    def bind(self):
+        connection = engine.connect()
+        transaction = connection.begin()
+        try:
+            yield connection
+        finally:
+            transaction.rollback()
+            connection.close()
+
+    def test_apply_widens_an_old_constraint_and_an_autocount_claim_then_inserts(
+        self, bind
+    ):
+        mig = _load_migration_473()
+        # Simulate pre-473: drop whatever is there now and restore the OLD
+        # (narrower) text, `IF EXISTS` for the same idempotency reason the
+        # migration's own `apply()` uses.
+        bind.execute(
+            text(
+                "ALTER TABLE scm.order_link_claim DROP CONSTRAINT IF EXISTS "
+                "ck_scm_order_link_claim_source"
+            )
+        )
+        bind.execute(text(f"ALTER TABLE scm.order_link_claim ADD CONSTRAINT "
+                           f"ck_scm_order_link_claim_source CHECK ({mig._OLD})"))
+
+        mig.apply(bind)
+
+        claim_id = str(uuid.uuid4())
+        bind.execute(
+            text(
+                "INSERT INTO scm.order_link_claim "
+                "(id, company_id, so_number, po_number, source, claimed_at) "
+                "VALUES (:id, :company_id, :so_number, :po_number, 'autocount', now())"
+            ),
+            {
+                "id": claim_id,
+                "company_id": DEFAULT_COMPANY_ID,
+                "so_number": f"{MARKER}-SO-{uuid.uuid4().hex[:8]}",
+                "po_number": f"{MARKER}-PO-{uuid.uuid4().hex[:8]}",
+            },
+        )
+        stored = bind.execute(
+            text("SELECT source FROM scm.order_link_claim WHERE id = :id"),
+            {"id": claim_id},
+        ).scalar()
+        assert stored == "autocount"
+
+    def test_apply_is_idempotent_against_a_schema_already_carrying_the_new_text(
+        self, bind
+    ):
+        """The `IF EXISTS` nit: re-running `apply()` on a schema that already
+        has the widened constraint (the normal case, since `create_all`
+        converges the shared dev DB ahead of any migration ever running as
+        DDL) must not raise."""
+        mig = _load_migration_473()
+
+        mig.apply(bind)
+        mig.apply(bind)  # must not raise on the second run

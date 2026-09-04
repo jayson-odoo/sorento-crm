@@ -33,7 +33,14 @@ _NEW = (
 
 
 def apply(bind) -> None:
-    bind.execute(sa.text(f"ALTER TABLE scm.order_link_claim DROP CONSTRAINT {_CONSTRAINT}"))
+    # `IF EXISTS` (review nit): idempotent against a schema that reached this
+    # constraint text a different way (e.g. `create_all` from a model that
+    # already lists `autocount` - see `sorento_crm_backend/CLAUDE.md`'s note
+    # on the shared dev DB) - re-running this migration then adds the same
+    # CHECK rather than failing on a DROP of a constraint already gone.
+    bind.execute(
+        sa.text(f"ALTER TABLE scm.order_link_claim DROP CONSTRAINT IF EXISTS {_CONSTRAINT}")
+    )
     bind.execute(
         sa.text(f"ALTER TABLE scm.order_link_claim ADD CONSTRAINT {_CONSTRAINT} CHECK ({_NEW})")
     )
@@ -46,7 +53,9 @@ def revert(bind) -> None:
     bind.execute(
         sa.text("UPDATE scm.order_link_claim SET source = 'manual' WHERE source = 'autocount'")
     )
-    bind.execute(sa.text(f"ALTER TABLE scm.order_link_claim DROP CONSTRAINT {_CONSTRAINT}"))
+    bind.execute(
+        sa.text(f"ALTER TABLE scm.order_link_claim DROP CONSTRAINT IF EXISTS {_CONSTRAINT}")
+    )
     bind.execute(
         sa.text(f"ALTER TABLE scm.order_link_claim ADD CONSTRAINT {_CONSTRAINT} CHECK ({_OLD})")
     )

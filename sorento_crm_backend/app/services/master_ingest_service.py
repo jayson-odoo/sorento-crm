@@ -76,6 +76,18 @@ from app.services.scm.sales_agent_service import normalize_code as _normalize_ag
 
 logger = logging.getLogger(__name__)
 
+#: SEC3 (review round 1). The verdict body is read by the ESB and logged
+#: wherever it forwards; a non-domain exception's own `str(exc)` routinely
+#: quotes the failed SQL statement, a table/column name, or a raw UUID -
+#: an internal detail an external caller has no business seeing. Every
+#: generic `except Exception` across the three ingest surfaces and the
+#: deletion service returns this fixed string instead and logs the real one
+#: with `exc_info=True`. A DOMAIN exception (`MissingReference`,
+#: `ReferenceConflict`, `_UnknownStatus`, a pydantic `ValidationError`) is
+#: authored FOR the caller and keeps its own message - only the catch-all
+#: is sanitised.
+INTERNAL_ERROR_MESSAGE = "internal error; see server logs"
+
 
 class UnsupportedIngestEntity(ValueError):
     """Raised for an entity this endpoint does not ingest."""

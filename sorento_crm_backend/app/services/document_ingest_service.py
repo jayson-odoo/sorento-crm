@@ -63,6 +63,7 @@ from decimal import Decimal
 from typing import Any, Optional
 
 from pydantic import BaseModel, ValidationError
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.inventory import Warehouse
@@ -79,8 +80,13 @@ from app.services.integration_reference_service import (
 # `MasterRefResolver` is the ref/code/name/back-create ladder (D1/D2/D10),
 # shared with `ShippingOrderIngestService` (S3) - lifted out in S3 rather than
 # duplicated, see that module's docstring.
-from app.services.master_ref_resolver import WARN_UNCLASSIFIED_DEMAND, MasterRefResolver
+from app.services.master_ref_resolver import (
+    WARN_UNCLASSIFIED_DEMAND,
+    MasterRefResolver,
+    dedupe_warnings,
+)
 from app.services.master_ingest_service import (
+    INTERNAL_ERROR_MESSAGE,
     IngestOutcome,
     IngestResult,
     MissingReference,
@@ -337,13 +343,12 @@ class DocumentIngestService(MasterRefResolver):
         # what `supersede_crm_raised_pos` (the extracted shared function) wants.
         self.po_supersede_triples: set[tuple[str, str, str]] = set()
         # sales_orders only: the BEFORE half of the route's plan-exception hook
-        # (AC-V5-1), keyed by product id. Captured per record, the first time
-        # THIS BATCH touches a product and before anything is written for it
-        # (`_capture_plan_exception_before`) - the same "read the old position
-        # while it is still the one in the database" rule
+        # (AC-V5-1), keyed by product id. Captured ONCE for the whole batch,
+        # before the record loop runs (`ingest()` calls
+        # `_capture_plan_exception_before`, S6 review fix) - the same "read
+        # the old position while it is still the one in the database" rule
         # `outstanding_import_service.apply` follows for its own
-        # `before_positions`, generalised across a multi-record batch by never
-        # overwriting a product already captured.
+        # `before_positions`.
         self.plan_exception_before: dict[str, Any] = {}
 
     # --------------------------------------------------------------- the batch
@@ -359,6 +364,14 @@ class DocumentIngestService(MasterRefResolver):
 
         result = IngestResult(dry_run=dry_run)
         self._dry_run = dry_run
+        # S6 review fix: ONE plan-exception BEFORE snapshot for the whole
+        # batch, taken before any record writes anything - not one per
+        # record, which cost `plan_exception_service.snapshot` a query per
+        # sales order in a busy batch for no reason (every snapshot in one
+        # batch is read before ANY of them has written anything, so there is
+        # nothing for a second one to see that the first one did not).
+        if spec.entity_type == "sales_orders":
+            self._capture_plan_exception_before(records)
         try:
             for raw in records:
                 result.records.append(self._ingest_one(spec, raw))
@@ -384,9 +397,17 @@ class DocumentIngestService(MasterRefResolver):
                 outcome=IngestOutcome.FAILED,
                 errors=_field_errors(exc),
             )
-        except TypeError as exc:
+        except TypeError:
+            logger.warning(
+                "ingest.document_malformed entity=%s source_ref=%s",
+                spec.entity_type,
+                source_ref,
+                exc_info=True,
+            )
             return RecordResult(
-                source_ref=source_ref, outcome=IngestOutcome.FAILED, errors={"_": str(exc)}
+                source_ref=source_ref,
+                outcome=IngestOutcome.FAILED,
+                errors={"_": INTERNAL_ERROR_MESSAGE},
             )
 
         # D5: an `SPO-` numbered document pushed as a purchase order is refused
@@ -435,18 +456,20 @@ class DocumentIngestService(MasterRefResolver):
                 outcome=IngestOutcome.FAILED,
                 errors={"status": str(exc)},
             )
-        except Exception as exc:  # noqa: BLE001 - one document's failure, not the file's
+        except Exception:  # noqa: BLE001 - one document's failure, not the file's
             savepoint.rollback()
+            # SEC3: never echo a non-domain exception's own message - it
+            # routinely quotes SQL, a table/column name or a raw UUID.
             logger.warning(
-                "ingest.document_failed entity=%s source_ref=%s error=%s",
+                "ingest.document_failed entity=%s source_ref=%s",
                 spec.entity_type,
                 payload.source_ref,
-                exc,
+                exc_info=True,
             )
             return RecordResult(
                 source_ref=payload.source_ref,
                 outcome=IngestOutcome.FAILED,
-                errors={"_": str(exc)},
+                errors={"_": INTERNAL_ERROR_MESSAGE},
             )
 
     # ------------------------------------------------------------ one document
@@ -480,13 +503,6 @@ class DocumentIngestService(MasterRefResolver):
             self._line_values(spec, line, index, status, warnings)
             for index, line in enumerate(payload.lines)
         ]
-        # D7/S5: the BEFORE snapshot, taken here because this is the last point
-        # before ANY write for this record - `header` is not yet `db.add()`-ed
-        # (a CREATE) and `_sync_lines` has not run - and it must be per-product
-        # rather than per-record, since a busy batch names the same product on
-        # more than one line.
-        if spec.entity_type == "sales_orders":
-            self._capture_plan_exception_before(line_values)
 
         # Only an update overwrites anything, and only a dry run needs to say so.
         diff = (
@@ -514,32 +530,64 @@ class DocumentIngestService(MasterRefResolver):
         # this line and never pollutes the batch-level state the route's hooks
         # read after `ingest()` returns.
         self._record_hook_state(spec, header, payload, header_values, line_values)
-        return outcome, str(header.id), diff, warnings, line_counts
+        return outcome, str(header.id), diff, dedupe_warnings(warnings), line_counts
 
-    def _capture_plan_exception_before(self, line_values: list[dict[str, Any]]) -> None:
-        """The BEFORE half of AC-V5-1, one snapshot per product, first-touch-wins.
+    def _capture_plan_exception_before(self, records: list[dict]) -> None:
+        """The BEFORE half of AC-V5-1 - ONE snapshot for the WHOLE batch (S6
+        review fix), taken before the record loop runs (so genuinely before
+        anything in the batch has written) rather than once per record.
 
-        Best-effort like the upload's own equivalent: a defect here must cost
-        the route's plan-exception hook (which simply has less to compare
-        against), never this record - a document ingest is not the operation
-        this diff is FOR.
+        Product ids are pre-resolved CHEAPLY rather than by running the real
+        ladder a second time: a `product_ref` resolves through the same
+        `IntegrationReferenceService.resolve` the ladder itself calls first
+        (a plain read, no back-create - products are never back-created
+        anyway), and every `product_code` in the batch resolves through ONE
+        query rather than one per line. Best-effort like the upload's own
+        equivalent: a defect here must cost the route's plan-exception hook
+        (which simply has less to compare against), never any record in the
+        batch - a document ingest is not the operation this diff is FOR.
         """
-        new_ids = [
-            str(values["product_id"])
-            for values in line_values
-            if values.get("product_id")
-            and str(values["product_id"]) not in self.plan_exception_before
-        ]
-        if not new_ids:
+        product_ids: set[str] = set()
+        codes: set[str] = set()
+        for raw in records:
+            if not isinstance(raw, dict):
+                continue
+            for line in raw.get("lines") or []:
+                if not isinstance(line, dict):
+                    continue
+                ref = line.get("product_ref")
+                if ref:
+                    resolved = self.refs.resolve(entity_type="products", source_ref=ref)
+                    if resolved:
+                        product_ids.add(str(resolved))
+                    continue
+                code = (line.get("product_code") or "").strip()
+                if code:
+                    codes.add(code)
+
+        if codes:
+            rows = (
+                self.db.query(Product.id)
+                .filter(
+                    func.upper(func.btrim(Product.product_code)).in_(
+                        [c.upper() for c in codes]
+                    ),
+                    Product.company_id == self.company_id,
+                )
+                .all()
+            )
+            product_ids.update(str(row[0]) for row in rows)
+
+        if not product_ids:
             return
         try:
             self.plan_exception_before.update(
-                plan_exception_service.snapshot(self.db, new_ids)
+                plan_exception_service.snapshot(self.db, list(product_ids))
             )
         except Exception:  # noqa: BLE001 - best-effort, see docstring
             logger.warning(
                 "ingest.plan_exception_before_snapshot_failed product_ids=%s",
-                new_ids,
+                sorted(product_ids),
                 exc_info=True,
             )
 
@@ -577,7 +625,10 @@ class DocumentIngestService(MasterRefResolver):
         Runs AFTER the lines are flushed, so every line named has a real id
         to claim against. Inside the SAME record savepoint as everything
         else in `_apply` - a dry run rolls this back with the rest of the
-        record, never a special case of its own (AC-V4-4).
+        record, never a special case of its own (AC-V4-4). The actual
+        claim-writing loop is `order_link_service.write_claims_for_lines`
+        (S7 dedup), shared with `ShippingOrderIngestService`'s own line
+        claims - only the row fetch differs between the two.
         """
         wanted = [
             (line.source_ref, [n for n in (line.from_so_numbers or []) if n])
@@ -596,44 +647,14 @@ class DocumentIngestService(MasterRefResolver):
             )
             .all()
         )
-        rows_by_ref = {row.source_ref: row for row in rows}
-        product_ids = {row.product_id for row in rows if row.product_id}
-        codes = (
-            dict(
-                self.db.query(Product.id, Product.product_code)
-                .filter(Product.id.in_(product_ids))
-                .all()
-            )
-            if product_ids
-            else {}
+        order_link_service.write_claims_for_lines(
+            self.db,
+            company_id=self.company_id,
+            document_number=payload.po_number,
+            rows=rows,
+            wanted=wanted,
+            id_attr="po_line_id",
         )
-
-        seen: set[tuple[str, str, Optional[str]]] = set()
-        so_numbers: set[str] = set()
-        for source_ref, numbers in wanted:
-            row = rows_by_ref.get(source_ref)
-            if row is None:
-                continue
-            item_code = codes.get(row.product_id)
-            for number in numbers:
-                key = (number, payload.po_number, item_code)
-                if key in seen:
-                    continue
-                seen.add(key)
-                order_link_service.claim_book_pairing(
-                    self.db,
-                    company_id=self.company_id,
-                    so_number=number,
-                    po_number=payload.po_number,
-                    item_code=item_code,
-                    source=order_link_service.SOURCE_AUTOCOUNT,
-                    po_line_id=str(row.id),
-                )
-                so_numbers.add(number)
-
-        if so_numbers:
-            self.db.flush()
-            order_link_service.resolve(self.db, so_numbers=so_numbers)
 
     def _status(self, spec: DocumentSpec, canonical: str) -> str:
         """The stored status for a canonical word.
@@ -885,11 +906,19 @@ class DocumentIngestService(MasterRefResolver):
         # happen, but the original code guarded it) - a leftover like any
         # other, never a D11 adoption candidate since it already has A ref.
         dup_ref: list[Any] = []
+        # S4 review fix: a ref-less row this system already cancelled - by an
+        # earlier absence, or the deletion endpoint - is not a live xlsx-era
+        # adoption candidate any more; matching a NEW DtlKey onto it would
+        # resurrect demand that was correctly retired. It still falls through
+        # to the leftover sweep below unchanged.
+        already_cancelled: list[Any] = []
         for row in existing:
             if row.source_ref and row.source_ref not in by_ref:
                 by_ref[row.source_ref] = row
             elif row.source_ref:
                 dup_ref.append(row)
+            elif row.line_status == CANCELLED:
+                already_cancelled.append(row)
             else:
                 pool.append(row)
 
@@ -922,7 +951,7 @@ class DocumentIngestService(MasterRefResolver):
             counts["created"] += 1
 
         line_table = spec.line_model.__tablename__
-        for row in [*by_ref.values(), *pool, *dup_ref]:
+        for row in [*by_ref.values(), *pool, *dup_ref, *already_cancelled]:
             if is_referenced(self.db, line_table, row.id):
                 # Quantities and prices are left exactly as they were: this row
                 # is now evidence of what a transfer moved or a plan was built

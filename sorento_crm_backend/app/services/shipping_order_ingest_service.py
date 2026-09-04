@@ -55,7 +55,7 @@ from decimal import Decimal
 from typing import Any, Optional
 
 from pydantic import ValidationError
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
 from app.models.inventory import Warehouse
@@ -68,13 +68,14 @@ from app.services.integration_reference_service import (
     ReferenceConflict,
 )
 from app.services.master_ingest_service import (
+    INTERNAL_ERROR_MESSAGE,
     IngestOutcome,
     IngestResult,
     MissingReference,
     RecordResult,
     _field_errors,
 )
-from app.services.master_ref_resolver import MasterRefResolver
+from app.services.master_ref_resolver import MasterRefResolver, dedupe_warnings
 from app.services.scm import order_link_service
 from app.services.scm.outstanding_import_service import DEFAULT_PO_CURRENCY
 
@@ -99,16 +100,36 @@ RECEIPT_FULLY_RECEIVED = "fully_received"
 STATUS_WORDS = frozenset({"open", "partial", "fulfilled", "closed", "cancelled"})
 
 
+def _round_qty(value: Optional[Decimal]) -> int:
+    """A canonical line quantity as a whole number, half-up (S3 review fix).
+
+    `allocated_quantity`/`quantity_received` are INTEGER columns; the ESB's
+    own figures are `Decimal` and occasionally fractional (a pack count, a
+    weight-based line). `int(round(x))` is the exact technique
+    `outstanding_import_service._spo_quantities` already uses for the same
+    two columns, reused here rather than restated so the two channels that
+    write this table cannot round differently.
+    """
+    return int(round(float(value or 0)))
+
+
 def _document_status(rows: list[SPOAllocation]) -> Optional[str]:
     """Live-derived canonical status for a read-back (AC-V3-6).
 
     There is no header status to read, so the answer is computed off what the
-    rows currently show - the same three-way ladder a document's OWN status
-    starts from before cancellation enters it: nothing received is `open`,
-    everything received is `fulfilled`, anything in between is `partial`.
+    rows currently show. `closed` first (S5 review fix): every row closed -
+    the whole-document shape a `cancelled` push (or a fully-superseded
+    document) leaves behind - must read back `closed`, never re-derived as
+    `open`/`fulfilled` from quantities that are no longer the reason the
+    lines are closed. Short of that, the same three-way ladder a document's
+    OWN status starts from before cancellation enters it: nothing received
+    is `open`, everything received is `fulfilled`, anything in between is
+    `partial`.
     """
     if not rows:
         return None
+    if all(r.line_status == LINE_CLOSED for r in rows):
+        return "closed"
     ordered = sum(int(r.allocated_quantity or 0) for r in rows)
     received = sum(int(r.quantity_received or 0) for r in rows)
     if ordered > 0 and received >= ordered:
@@ -129,13 +150,10 @@ class ShippingOrderIngestService(MasterRefResolver):
     """Same constructor and ``ingest()``/``RecordResult`` contract as its siblings.
 
     Subclasses `MasterRefResolver` for the ref/code/name/back-create ladder,
-    shared with `DocumentIngestService` rather than duplicated.
+    shared with `DocumentIngestService` rather than duplicated. No `__init__`
+    of its own (review nit) - `MasterRefResolver.__init__` already has the
+    exact signature this class needs.
     """
-
-    def __init__(
-        self, db: Session, integration_id: Optional[str] = None, *, company_id: str
-    ):
-        super().__init__(db, integration_id, company_id=company_id)
 
     # --------------------------------------------------------------- the batch
     def ingest(
@@ -164,8 +182,16 @@ class ShippingOrderIngestService(MasterRefResolver):
                 errors=_field_errors(exc),
             )
         except TypeError as exc:
+            logger.warning(
+                "ingest.document_malformed entity=%s source_ref=%s",
+                SHIPPING_ORDERS_ENTITY,
+                source_ref,
+                exc_info=True,
+            )
             return RecordResult(
-                source_ref=source_ref, outcome=IngestOutcome.FAILED, errors={"_": str(exc)}
+                source_ref=source_ref,
+                outcome=IngestOutcome.FAILED,
+                errors={"_": INTERNAL_ERROR_MESSAGE},
             )
 
         status_word = (payload.status or "").strip().lower()
@@ -211,22 +237,29 @@ class ShippingOrderIngestService(MasterRefResolver):
                 outcome=IngestOutcome.FAILED,
                 errors={exc.field_name: str(exc)},
             )
-        except Exception as exc:  # noqa: BLE001 - one document's failure, not the file's
+        except Exception:  # noqa: BLE001 - one document's failure, not the file's
             savepoint.rollback()
+            # SEC3: never echo a non-domain exception's own message - it
+            # routinely quotes SQL, a table/column name or a raw UUID.
             logger.warning(
-                "ingest.document_failed entity=%s source_ref=%s error=%s",
+                "ingest.document_failed entity=%s source_ref=%s",
                 SHIPPING_ORDERS_ENTITY,
                 payload.source_ref,
-                exc,
+                exc_info=True,
             )
             return RecordResult(
                 source_ref=payload.source_ref,
                 outcome=IngestOutcome.FAILED,
-                errors={"_": str(exc)},
+                errors={"_": INTERNAL_ERROR_MESSAGE},
             )
 
     # ------------------------------------------------------------ one document
     def _apply(self, payload: CanonicalShippingOrder, force_closed: bool) -> _Verdict:
+        # S2 review fix: refused before anything else - a conflicting OPEN
+        # claim on this spo_number is a fact about the DOCUMENT, not about
+        # any one reference on it, so it is checked before the ladder runs.
+        self._guard_spo_number_conflict(payload)
+
         # EVERYTHING is resolved before ANYTHING is written - same rule as
         # `DocumentIngestService._apply`, for the same reason: an unresolved
         # reference has to leave the database exactly as it found it.
@@ -249,7 +282,7 @@ class ShippingOrderIngestService(MasterRefResolver):
 
         rows = self._existing_rows(payload)
         outcome = IngestOutcome.UPDATED if rows else IngestOutcome.CREATED
-        by_ref, pool, dup_ref = self._split_rows(rows)
+        by_ref, pool, already_closed = self._split_rows(rows)
 
         counts = {"adopted": 0, "created": 0, "updated": 0, "deleted": 0, "cancelled": 0}
 
@@ -265,7 +298,13 @@ class ShippingOrderIngestService(MasterRefResolver):
         if unmatched and pool:
             self._adopt_lines(unmatched, pool, counts, force_closed)
 
-        next_number = max([r.spo_line_number or 0 for r in rows], default=0)
+        # S1 review fix: the NEXT number is the highest across every row this
+        # `spo_number` has EVER carried, not just the rows THIS DocKey's own
+        # query matched (`rows`, above, deliberately excludes another
+        # DocKey's rows). A delete-and-recreate under a fresh DocKey - the
+        # old one's rows now all closed, so S2's guard let this push through
+        # - must not reuse a line number the retired DocKey already claimed.
+        next_number = self._max_line_number(payload)
         for values in unmatched:
             next_number += 1
             row = SPOAllocation(
@@ -284,13 +323,15 @@ class ShippingOrderIngestService(MasterRefResolver):
         # will restate later, and a claim or a picking line can point at ANY
         # of them; explicit removal is the deletion endpoint's job
         # (`DeletionService._delete_shipping_order`), not a side effect of a
-        # re-push that simply stopped naming a line this time.
-        for row in [*by_ref.values(), *pool, *dup_ref]:
+        # re-push that simply stopped naming a line this time. `already_closed`
+        # (S4) rows fall through here unchanged - they were excluded only
+        # from adoption CANDIDACY, not from this sweep.
+        for row in [*by_ref.values(), *pool, *already_closed]:
             row.line_status = LINE_CLOSED
             counts["cancelled"] += 1
         self.db.flush()
         self._write_order_link_claims(payload)
-        return _Verdict(outcome=outcome, warnings=warnings, line_counts=counts)
+        return _Verdict(outcome=outcome, warnings=dedupe_warnings(warnings), line_counts=counts)
 
     def _write_order_link_claims(self, payload: CanonicalShippingOrder) -> None:
         """V4 (plan section 2.5), the shipping-order side of
@@ -298,6 +339,9 @@ class ShippingOrderIngestService(MasterRefResolver):
         docstring for the shared rule. Runs after every row is flushed, so
         it queries by `source_doc_ref` rather than holding onto row objects
         built mid-`_apply` (some are new, some adopted, some merely updated).
+        The claim-writing loop itself is `order_link_service
+        .write_claims_for_lines` (S7 dedup), shared with
+        `DocumentIngestService`'s own line claims.
         """
         wanted = [
             (line.source_ref, [n for n in (line.from_so_numbers or []) if n])
@@ -317,44 +361,40 @@ class ShippingOrderIngestService(MasterRefResolver):
             )
             .all()
         )
-        rows_by_ref = {row.source_ref: row for row in rows}
-        product_ids = {row.product_id for row in rows if row.product_id}
-        codes = (
-            dict(
-                self.db.query(Product.id, Product.product_code)
-                .filter(Product.id.in_(product_ids))
-                .all()
-            )
-            if product_ids
-            else {}
+        order_link_service.write_claims_for_lines(
+            self.db,
+            company_id=self.company_id,
+            document_number=payload.spo_number,
+            rows=rows,
+            wanted=wanted,
+            id_attr="spo_allocation_id",
         )
 
-        seen: set[tuple[str, str, Optional[str]]] = set()
-        so_numbers: set[str] = set()
-        for source_ref, numbers in wanted:
-            row = rows_by_ref.get(source_ref)
-            if row is None:
-                continue
-            item_code = codes.get(row.product_id)
-            for number in numbers:
-                key = (number, payload.spo_number, item_code)
-                if key in seen:
-                    continue
-                seen.add(key)
-                order_link_service.claim_book_pairing(
-                    self.db,
-                    company_id=self.company_id,
-                    so_number=number,
-                    po_number=payload.spo_number,
-                    item_code=item_code,
-                    source=order_link_service.SOURCE_AUTOCOUNT,
-                    spo_allocation_id=str(row.id),
-                )
-                so_numbers.add(number)
-
-        if so_numbers:
-            self.db.flush()
-            order_link_service.resolve(self.db, so_numbers=so_numbers)
+    def _guard_spo_number_conflict(self, payload: CanonicalShippingOrder) -> None:
+        """S2 review fix: refuse a push whose `spo_number` still has OPEN rows
+        under a DIFFERENT DocKey - mirrors `DocumentIngestService._header`'s
+        "two AutoCount documents claiming one Sorento order" guard for a
+        document adopted by number. Rows that are all CLOSED under an old
+        DocKey do NOT block - that is the delete-and-recreate path, where a
+        fresh DocKey continues a number a since-retired DocKey used - they
+        only count toward `_max_line_number` below.
+        """
+        conflict = (
+            self.db.query(SPOAllocation.id)
+            .filter(
+                SPOAllocation.company_id == self.company_id,
+                SPOAllocation.spo_number == payload.spo_number,
+                SPOAllocation.line_status == LINE_OPEN,
+                SPOAllocation.source_doc_ref.isnot(None),
+                SPOAllocation.source_doc_ref != payload.source_ref,
+            )
+            .first()
+        )
+        if conflict is not None:
+            raise ReferenceConflict(
+                f"spo_number {payload.spo_number!r} is already linked to another source",
+                field_name="spo_number",
+            )
 
     def _existing_rows(self, payload: CanonicalShippingOrder) -> list[SPOAllocation]:
         """This document's rows: by DocKey, or by DocNo when none carries one yet."""
@@ -373,23 +413,49 @@ class ShippingOrderIngestService(MasterRefResolver):
             .all()
         )
 
+    def _max_line_number(self, payload: CanonicalShippingOrder) -> int:
+        """S1 review fix: the highest `spo_line_number` across EVERY row this
+        `spo_number` has ever carried in this company - not just the rows
+        `_existing_rows` matched for THIS DocKey, which deliberately excludes
+        another DocKey's rows even when S2's guard has let them stay (all
+        closed, under a retired DocKey).
+        """
+        return (
+            self.db.query(func.max(SPOAllocation.spo_line_number))
+            .filter(
+                SPOAllocation.company_id == self.company_id,
+                SPOAllocation.spo_number == payload.spo_number,
+            )
+            .scalar()
+            or 0
+        )
+
     def _split_rows(
         self, rows: list[SPOAllocation]
     ) -> tuple[dict[str, SPOAllocation], list[SPOAllocation], list[SPOAllocation]]:
+        """`(by_ref, pool, already_closed)`.
+
+        A second row sharing one `source_ref` cannot happen - the partial
+        unique index on `(company_id, source_ref)` forbids it - so there is
+        no third "duplicate ref" bucket to defend against here.
+
+        `already_closed` (S4 review fix): a ref-less row this system already
+        closed - by an earlier absence, or the deletion endpoint - is not a
+        live xlsx-era adoption candidate any more; matching a NEW DtlKey onto
+        it would resurrect demand that was correctly retired. It still flows
+        into `_apply`'s final leftover sweep unchanged.
+        """
         by_ref: dict[str, SPOAllocation] = {}
         pool: list[SPOAllocation] = []
-        # A second row sharing a ref another row already claims cannot happen
-        # under the partial unique index, but the ladder below defends the
-        # invariant rather than assuming the constraint always wins the race.
-        dup_ref: list[SPOAllocation] = []
+        already_closed: list[SPOAllocation] = []
         for row in rows:
-            if row.source_ref and row.source_ref not in by_ref:
+            if row.source_ref:
                 by_ref[row.source_ref] = row
-            elif row.source_ref:
-                dup_ref.append(row)
+            elif row.line_status == LINE_CLOSED:
+                already_closed.append(row)
             else:
                 pool.append(row)
-        return by_ref, pool, dup_ref
+        return by_ref, pool, already_closed
 
     def _line_values(
         self,
@@ -420,16 +486,22 @@ class ShippingOrderIngestService(MasterRefResolver):
         )
         location_code = self._location_code(warehouse_id, line.warehouse_code)
 
-        ordered = line.qty_ordered or Decimal("0")
-        received = line.qty_received or Decimal("0")
+        # S3 review fix: round, half-up, exactly the way
+        # `outstanding_import_service._spo_quantities` does for the same two
+        # INTEGER columns - `int(Decimal("10.6"))` truncates to 10, silently
+        # dropping outstanding demand a book that states a fractional pack
+        # count actually named. Outstanding is computed off the ROUNDED
+        # whole numbers, same as `_spo_quantities`'s own caller does.
+        ordered = _round_qty(line.qty_ordered)
+        received = _round_qty(line.qty_received)
         outstanding = ordered - received
 
         return {
             "product_id": product_id,
             "warehouse_id": warehouse_id,
             "location_code": location_code,
-            "allocated_quantity": int(ordered),
-            "quantity_received": int(received),
+            "allocated_quantity": ordered,
+            "quantity_received": received,
             "unit_cost": line.unit_cost,
             # A line's own date, when sent, is more specific than the
             # document's - falling back to it keeps every row dated even when

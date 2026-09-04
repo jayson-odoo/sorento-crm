@@ -797,7 +797,7 @@ class TestAdoption:
 
         entry = res.json()["records"][0]
         assert entry["outcome"] == "failed", res.text
-        assert "another company" in entry["errors"]["source_ref"]
+        assert "outside this company anchor" in entry["errors"]["source_ref"]
         assert env.so_lines(theirs.id) == []
 
 
@@ -878,7 +878,7 @@ class TestUnresolvedReferences:
 
         entry = res.json()["records"][0]
         assert entry["outcome"] == "failed", res.text
-        assert "another company" in str(entry["errors"])
+        assert "outside this company anchor" in str(entry["errors"])
         assert env.counts()["so"] == 0
 
 
