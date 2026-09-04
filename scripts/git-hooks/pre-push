@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+# Repo pre-push hook: mirrors the cheap/fast gates from
+# .github/workflows/deploy.yml locally, so a push that would go red on the
+# fast gate never leaves the machine. See scripts/git-hooks/README.md.
+#
+# Bypass: SKIP_PREPUSH=1 git push, or git push --no-verify.
+set -euo pipefail
+
+BYPASS_HINT="pre-push: bypass with 'SKIP_PREPUSH=1 git push' or 'git push --no-verify'"
+
+if [ "${SKIP_PREPUSH:-0}" = "1" ]; then
+  echo "pre-push: skipped (SKIP_PREPUSH=1)"
+  exit 0
+fi
+
+# Drain the ref lines git pipes in ("<local ref> <local sha> <remote ref>
+# <remote sha>" per line) - we gate on HEAD's diff against origin/main
+# rather than per-ref, but stdin still needs consuming so git doesn't hang.
+cat >/dev/null || true
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+SECONDS=0
+FAILED=0
+
+ok() { echo "pre-push: $1 ok"; }
+fail() { echo "pre-push: $1 FAIL"; FAILED=1; }
+
+# --- a. fetch origin/main -----------------------------------------------
+if git fetch -q origin main; then
+  ok fetch
+else
+  echo "pre-push: fetch WARN (offline? using the local origin/main ref)"
+fi
+
+if ! git rev-parse --verify -q origin/main >/dev/null; then
+  fail "alembic-heads (no local origin/main ref - fetch once with network up)"
+else
+  # --- b. single alembic head, combined with origin/main -----------------
+  if python3 "$REPO_ROOT/scripts/git-hooks/check_alembic_heads.py"; then
+    ok alembic-heads
+  else
+    fail alembic-heads
+  fi
+fi
+
+# --- c. py_compile changed .py files under Python 3.12 -------------------
+PY312=""
+if command -v python3.12 >/dev/null 2>&1; then
+  PY312="$(command -v python3.12)"
+elif [ -x "$HOME/.local/bin/python3.12" ]; then
+  PY312="$HOME/.local/bin/python3.12"
+fi
+
+if [ -z "$PY312" ]; then
+  echo "pre-push: py3.12 compile skipped (no python3.12)"
+else
+  COMPILE_FAILED=0
+  CHANGED_PY="$(git diff --name-only origin/main...HEAD -- '*.py' || true)"
+  if [ -n "$CHANGED_PY" ]; then
+    while IFS= read -r f; do
+      [ -z "$f" ] && continue
+      [ -f "$f" ] || continue
+      if ! "$PY312" -m py_compile "$f"; then
+        COMPILE_FAILED=1
+      fi
+    done <<EOF
+$CHANGED_PY
+EOF
+  fi
+  if [ "$COMPILE_FAILED" = "1" ]; then
+    fail "py3.12-compile"
+  else
+    ok "py3.12-compile"
+  fi
+fi
+
+# --- d. vitest on touched test files --------------------------------------
+CHANGED_FE="$(git diff --name-only origin/main...HEAD -- 'sorento_crm_frontend/*' || true)"
+
+VITEST_LIST=""
+UI_TOUCHED=0
+if [ -n "$CHANGED_FE" ]; then
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    case "$f" in
+      *.test.ts|*.test.tsx)
+        [ -f "$f" ] && VITEST_LIST="$VITEST_LIST
+$f"
+        ;;
+    esac
+    case "$f" in
+      sorento_crm_frontend/components/ui/*) UI_TOUCHED=1 ;;
+    esac
+  done <<EOF
+$CHANGED_FE
+EOF
+fi
+
+if [ "$UI_TOUCHED" = "1" ]; then
+  for f in "$REPO_ROOT"/sorento_crm_frontend/components/ui/*.inventory.test.ts; do
+    [ -f "$f" ] || continue
+    VITEST_LIST="$VITEST_LIST
+${f#"$REPO_ROOT"/sorento_crm_frontend/}"
+  done
+fi
+
+# de-dupe and drop the leading blank line the accumulation above leaves
+VITEST_LIST="$(printf '%s\n' "$VITEST_LIST" | sed '/^$/d' | sort -u)"
+
+if [ -n "$VITEST_LIST" ]; then
+  REL_LIST=""
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    case "$f" in
+      sorento_crm_frontend/*) REL_LIST="$REL_LIST
+${f#sorento_crm_frontend/}" ;;
+      *) REL_LIST="$REL_LIST
+$f" ;;
+    esac
+  done <<EOF
+$VITEST_LIST
+EOF
+  REL_LIST="$(printf '%s\n' "$REL_LIST" | sed '/^$/d' | sort -u)"
+
+  echo "pre-push: vitest-touched running: $(printf '%s ' $REL_LIST)"
+  if (cd "$REPO_ROOT/sorento_crm_frontend" && npx vitest run $REL_LIST); then
+    ok "vitest-touched"
+  else
+    fail "vitest-touched"
+  fi
+else
+  echo "pre-push: vitest-touched skipped (no touched *.test.ts(x))"
+fi
+
+# --- e. em-dash / en-dash guard on added lines ----------------------------
+DASH_HITS="$(git diff --unified=0 origin/main...HEAD -- \
+    . \
+    ':(exclude)*.svg' \
+    ':(exclude)*.json' \
+    ':(exclude)*.lock' \
+    ':(exclude)package-lock.json' \
+  | awk '
+      /^\+\+\+ / { file=$0; sub(/^\+\+\+ b\//, "", file); next }
+      /^@@ / {
+        line = $0
+        sub(/^@@ -[0-9]+(,[0-9]+)? \+/, "", line)
+        sub(/[, ].*$/, "", line)
+        newline = line + 0
+        next
+      }
+      /^\+/ && !/^\+\+\+/ {
+        if (index($0, "\342\200\224") || index($0, "\342\200\223")) {
+          print file ":" newline ": " substr($0, 2)
+        }
+        newline++
+        next
+      }
+    ' || true)"
+
+if [ -n "$DASH_HITS" ]; then
+  fail "dash-guard"
+  echo "$DASH_HITS" | sed 's/^/pre-push:   /'
+else
+  ok "dash-guard"
+fi
+
+echo "pre-push: done in ${SECONDS}s"
+if [ "$FAILED" = "1" ]; then
+  echo "$BYPASS_HINT"
+  exit 1
+fi
+exit 0

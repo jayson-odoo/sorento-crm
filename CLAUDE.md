@@ -96,6 +96,7 @@ For any development task, Claude boots and owns the local stack as **background 
 - **Remote testing (laptop over Tailscale / LAN):** FE `.env.local` leaves `NEXT_PUBLIC_API_URL` UNSET and sets `FASTAPI_INTERNAL_URL=http://localhost:<be port>`, `AUTH_TRUST_HOST=true`, `NEXT_DEV_ALLOWED_ORIGINS=tehs-mac-mini,*.ts.net,<tailscale ip>`. Browser calls then stay relative and `next.config.mjs` proxies `/api/v1` to the lane backend, so `http://<tailscale name or ip>:<fe port>` works with no tunnel and no CORS entry. A `NEXT_PUBLIC_*` value is inlined into the browser bundle, so `localhost:8000` there means the LAPTOP, not the Mini. Env or `next.config.mjs` edits need a dev-server restart.
 - FE edits hot-reload - no action needed, and no rebuild (see "Frontend dev loop" for the build rule).
 - Backend changes need no action beyond confirming uvicorn's reload log line - **except** edits to `app/tasks/*` (RQ tasks), which require restarting the Worker session.
+- **Pre-push hook mirrors CI's fast gates (alembic heads, py3.12 compile, touched vitest, dash guard) locally.** Install once per clone: `git config core.hooksPath scripts/git-hooks` (see `scripts/git-hooks/README.md`; bypass with `SKIP_PREPUSH=1 git push`).
 
 ## Architecture
 
@@ -297,7 +298,7 @@ spawn a build "for handoff" on your own initiative.
 
 ## Lessons learned
 
-**Full log: `LESSONS-LEARNT.md` (88 entries).** Read it when a bug's cause is not obvious, before
+**Full log: `LESSONS-LEARNT.md` (79 entries).** Read it when a bug's cause is not obvious, before
 touching the worker, migrations, tests-in-CI, or anything Respond.io / Outline / storage related.
 When a lesson's cause is fixed in code, retire the entry rather than leaving it to accumulate.
 
@@ -320,7 +321,7 @@ Reference docs this file defers to, so nothing is stated twice:
 | Doc | Holds |
 | --- | --- |
 | `PRINCIPLES.md` | The binding contract: methodology, DoD gate, design mandates, layering, hard-fail rules. **Governs on conflict.** |
-| `LESSONS-LEARNT.md` | 88 gotchas. Read before debugging anything non-obvious. |
+| `LESSONS-LEARNT.md` | 79 gotchas. Read before debugging anything non-obvious. |
 | `documentation/agents/browser-verification.md` | Full agent-browser policy + command table. |
 | `documentation/reference/ADR-PRODUCT-STANDARDS.md` | CRUD/UX standard in full. |
 | `documentation/reference/DESIGN-LANGUAGE.md` | Tokens, motion presets, primitives roster, external-skill precedence. |

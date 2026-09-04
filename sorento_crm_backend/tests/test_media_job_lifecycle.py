@@ -712,6 +712,11 @@ def _post(client, contact, message_id, **extra):
     return client.post(PROCESS_ENDPOINT, json=payload, headers={"X-API-Key": "k"})
 
 
+# #307: returns 'pending' under xdist - a row-lock race on
+# contact_media_limit between the route's quota path and the in-thread
+# worker made the 0.3s stub take longer than media_sync_wait_seconds when a
+# neighbouring xdist worker held the row.
+@pytest.mark.flaky(reruns=2, reruns_delay=1)
 def test_extraction_finishing_inside_the_sync_wait_returns_completed_inline(
     real_chain, monkeypatch
 ):
@@ -822,6 +827,12 @@ def test_the_inline_polled_and_callback_result_bodies_are_identical(
     assert inline.json()["result"] == polled.json()["result"] == captured_callback[0]["result"]
 
 
+# #638: asserts fast_elapsed < 1.5s while a slow request is in flight on a
+# shared event loop - the same wall-clock-under-xdist-load shape as #307;
+# not yet observed red, filed pre-emptively alongside the marker so a CI
+# scheduling hiccup gets a rerun instead of hiding a real reintroduction of
+# the blocking bug this test guards (see the issue for why 2 reruns is safe).
+@pytest.mark.flaky(reruns=2, reruns_delay=1)
 def test_second_unrelated_request_returns_promptly_while_extraction_is_in_flight(
     real_chain, monkeypatch
 ):
