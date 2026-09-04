@@ -1,8 +1,9 @@
 """The `ideate` lane: ideation is an MCP TOOL, not a special case (D6, AC-303).
 
 The owner said it twice - "ideation should be at the MCP side" - so this lane does what
-every business tool does: it calls `crm_ideation_turn` through the same in-process
-`MCPRuntimeClient` the AI assistant uses (D10), with exactly the arguments
+every business tool does: it calls `crm_ideation_turn` through the same
+`MCPRuntimeClient` the AI assistant uses (D10) - an HTTP JSON-RPC client against the
+configured MCP server, not an in-process call - with exactly the arguments
 `ideate-turn-http` sends today. Nothing here knows that ideation is different from a stock
 lookup, which is the whole point: the day a second write tool arrives it needs no lane.
 
@@ -69,7 +70,7 @@ def build_arguments(ctx: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def call_ideation_tool(**kwargs: Any) -> dict[str, Any]:
-    """Call `crm_ideation_turn` through the in-process MCP client (D6, D10).
+    """Call `crm_ideation_turn` through the MCP client (D6, D10).
 
     A SEAM, deliberately: every test in the suite patches this one name, so nothing below
     it has to be mocked and no test reaches a live MCP server. The tool returns its result

@@ -14,8 +14,10 @@ Two things, one migration, because both are what the S3 lanes read on their firs
 `chatbot_completed_lanes` is NOT here: S4 owns that column and adds it in
 `477_chatbot_lanes`, which this chains onto. One switch, one migration.
 
-BACKFILL, not seed-if-absent: a JSONB column added to an existing row is NULL until
-something writes it, and every reader would then fall back rather than read.
+BACKFILL: `ADD COLUMN ... NOT NULL DEFAULT` fills every existing row in the same
+statement, so the settings singleton reads the two literals immediately rather than
+falling back. That IS the backfill; there is no follow-up UPDATE, because a NOT NULL
+column cannot hold the NULL such an UPDATE would look for.
 
 Revision ID: 478_chatbot_s3_copy
 Revises: 477_chatbot_lanes
@@ -48,12 +50,6 @@ def upgrade() -> None:
                 server_default=_UNSUPPORTED_DEFAULT,
             ),
         )
-
-    # Idempotent "set where wrong", so a prior bad run is repaired as well as a fresh add.
-    op.execute(
-        "UPDATE system_settings SET chatbot_unsupported_domains = "
-        f"'{_UNSUPPORTED_DEFAULT}'::jsonb WHERE chatbot_unsupported_domains IS NULL"
-    )
 
     # Every registered key at v1 from its fallback, `production` pointing at it. Idempotent
     # and covers the whole registry, so the new keys land and nothing else moves.

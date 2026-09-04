@@ -414,7 +414,24 @@ Runs after S1 parity is green and before S1 promotes, in the same lane.
   response, and identifies the turn from `(ctx.contact.id, ctx.text.message.messageId)` -
   the pair `chatbot.turns` is already UNIQUE on (D15) - taking the HIGHEST attempt. It
   requires `delegated`: 404 with a sentence when no row matches, 409
-  `CHATBOT_TURN_NOT_DELEGATED` otherwise, both BEFORE the tail runs.
+  `CHATBOT_TURN_NOT_DELEGATED` otherwise, both BEFORE the tail runs, and both writing an
+  `integration_log` like every other call to this endpoint.
+
+  **Three amendments, all agreed with the n8n side (5 Sep 2026):**
+
+  - **`done` WITH a stored response is not refused**; it falls through to
+    `complete_turn`'s replay branch and returns the answer already composed (D15's
+    duplicate-delivery shape). 409 is for a turn with neither a lane result to fold in nor
+    an answer to replay - `processing`, `failed`, or `done` with nothing stored.
+  - **Both routes answer with `is_test`** (the ROW's, decided on the envelope at `/turn`),
+    so the caller's test-guard logs what it recorded instead of sent without carrying the
+    head's answer across two calls.
+  - **A tail that RAISES is still a 200 answer**: `reply = {text: <today's error reply>,
+    quick_replies: null, result_set: null, attachments_src: null}` AND
+    `actions = [{kind: send_message, text: <the same>, quick_replies: null,
+    result_set: null, dry_run: <the row's is_test>}]`, never a null reply or an empty
+    action list - the executor executes `actions` and nothing else. The row is still
+    `failed` at `remembered` with the reason on it.
 
   The reason is the n8n side's, and it keeps their cut inside one workflow: `sub-output`
   holds the `ctx` but not the turn id (the id lives on the spine, two workflows up), so
@@ -531,8 +548,10 @@ endpoint over `chatbot.turns.trace`. Lands after S2 so the head and tail both wr
     the parser's `suggested_agent` with em-dashes folded to hyphens) and
     `chatbot_reply_offer_hold` (+ `_no_companies`, because a pool with no names gets a
     DIFFERENT clause rather than an empty parenthetical). Seeded by migration
-    `477_chatbot_lanes`. Eleven keys now, and `{{companies}}` is finally used - by the
-    offer-hold clause, which is the only canned string that names a pool.
+    `478_chatbot_s3_copy` (S4's `477_chatbot_lanes` seeds no copy; it adds the
+    `chatbot_completed_lanes` switch, and 478 chains onto it). Eleven keys now, and
+    `{{companies}}` is finally used - by the offer-hold clause, which is the only canned
+    string that names a pool.
 - AC-303 `[BE][T]` Given `domain_hint == 'ideate'`, when the head runs, then the engine calls
   MCP tool `crm_ideation_turn` (via `MCPRuntimeClient`) with the same arguments
   `ideate-turn-http` sends today (including `media_selection` derivation from

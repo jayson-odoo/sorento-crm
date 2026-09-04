@@ -416,17 +416,26 @@ exported before it, which is why step 4 waits for a week of step 3.
 5. DELETE the `route` Switch outputs for the eight kinds. What remains is
    `check_promotion`, `stock_denied`, `business_query`, `out_of_scope` and `low_signal` -
    the five S4 to S6 still own.
-6. DELETE the nodes those outputs fed, now unreachable: `tag-access-denied`,
-   `tag-escalate-offer`, `tag-escalation-declined`, `tag-clarify-menu`,
-   `tag-not-supported`, `tag-demand-qty`, `tag-offer-hold`, `If-ideate`,
-   `ideate-turn-http`, `build-ideate-reply`, `offer-hold-reply`.
+6. DELETE the nodes those outputs fed, now unreachable. **Five, not eleven** - read off
+   the live export (`n8n-workflows-init/export/spine-rs-1a/TOPOLOGY.md`, 50 nodes) rather
+   than off the earlier draft of this list, which named seven `tag-*` / `If-*` nodes the
+   spine does not have:
+   - `sorento-sub-respond-sendmsg-respond5` - `route[0]` (`access_denied`) goes STRAIGHT
+     to it, with no tag node in between. Its `message` expression IS the access-denied
+     reply, and the CRM composes that string now.
+   - `ideate-turn-http` and `build-ideate-reply` - `route[3]`, in that order.
+   - `offer-hold-reply` and `tag-offer-hold` - `route[4]`, in that order. The Set is what
+     strips the item to `{branch_kind}` before `Call 'sub-output'6`.
+
+   The other five kinds (`escalate_offer`, `escalation_declined`, `clarify_menu`,
+   `not_supported`, `demand_qty`) have NO node of their own: their outputs go straight to
+   `Call 'sub-output'6`, which stays for the lanes that still delegate. `route-turn`'s own
+   `TAG_ONLY` set is where their `{branch_kind}`-only item comes from, and that code moves
+   with the lane, not with a node.
 7. `Edit Fields2` STAYS. It carries `not_allowed_check_stock: true` onto the
    `stock_denied` item, and that lane still delegates - but the CRM now stamps the same
    field itself (`_stamp_item`), so the node is a no-op that can go with the rest of the
    business lane at S6.
-
-`sorento-sub-respond-sendmsg-respond5` goes with `tag-access-denied`: its `message`
-expression IS the access-denied reply, and the CRM composes that string now.
 
 ### AC-305's proof
 

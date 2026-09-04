@@ -250,3 +250,51 @@ class TestTheSettingsSurface:
         from app.api.v1.user_management.settings import AppConfigResponse
 
         assert "chatbot_completed_lanes" not in AppConfigResponse.model_fields
+
+
+class TestAnExplicitNullResetsRatherThanCrashes:
+    """`chatbot_*` settings columns are NOT NULL, and the PUT takes `Optional[...]`.
+
+    `model_dump(exclude_unset=True)` keeps a key the caller sent AS null, so a body that
+    says `{"chatbot_completed_lanes": null}` used to reach `setattr` and 500 at commit on
+    a not-null violation. The caller's meaning is "reset it", so that is what it does -
+    and the reset value is the column's own default, never a null write.
+    """
+
+    @pytest.fixture()
+    def db(self):
+        from tests._pg_fixture import blank_session
+
+        with blank_session() as session:
+            yield session
+
+    @pytest.mark.parametrize(
+        "column,expected",
+        [
+            ("chatbot_completed_lanes", []),
+            ("chatbot_unsupported_domains", ["goods_receive", "spo_allocation"]),
+            ("chatbot_stock_denial_enabled", False),
+        ],
+    )
+    def test_an_explicit_null_resets_the_column_to_its_default(self, db, column, expected):
+        from app.api.v1.user_management.settings import (
+            SystemSettingUpdate,
+            _update_general_settings_impl,
+        )
+        from app.models.user import SystemSetting
+
+        db.add(SystemSetting(id="ss-null-reset"))
+        db.commit()
+        row = db.query(SystemSetting).first()
+        setattr(row, column, ["escalate_offer"] if isinstance(expected, list) else True)
+        db.commit()
+
+        payload = SystemSettingUpdate(**{column: None})
+        assert column in payload.model_dump(exclude_unset=True), (
+            "the guard is only needed because an explicit null SURVIVES exclude_unset"
+        )
+
+        result = _update_general_settings_impl(payload, db)
+
+        assert result["message"] == "General settings updated successfully"
+        assert getattr(db.query(SystemSetting).first(), column) == expected

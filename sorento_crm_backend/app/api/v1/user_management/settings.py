@@ -536,6 +536,20 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
                 ),
             )
 
+    # The chatbot columns are NOT NULL with a default, so an explicit `null` in the body
+    # means "reset to the default" - not a null write. Without this the loop below sends
+    # NULL into a NOT NULL column and the PUT 500s at commit, which reads to the caller as
+    # an outage rather than as the clear it asked for. The defaults repeat
+    # `SystemSetting`'s own (`app/models/user.py`), which is the source of truth.
+    _CHATBOT_COLUMN_DEFAULTS: dict[str, object] = {
+        "chatbot_unsupported_domains": ["goods_receive", "spo_allocation"],
+        "chatbot_completed_lanes": [],
+        "chatbot_stock_denial_enabled": False,
+    }
+    for column, default in _CHATBOT_COLUMN_DEFAULTS.items():
+        if column in update_data and update_data[column] is None:
+            update_data[column] = list(default) if isinstance(default, list) else default
+
     for key, value in update_data.items():
         setattr(settings, key, value)
     db.commit()

@@ -1,16 +1,20 @@
 """The eight branch kinds the CRM finishes itself (S3, AC-301).
 
-n8n answers these with a `tag-*` Set, `escalate-catalog` and the shared compile/send path.
-The CRM already has all three - `route.decide` stamps the tag, `tail/outcome.escalate_catalog`
-is the catalog, and the S2 tail is the compile path - so this module is small on purpose:
-it builds the `sub-output` FRAGMENTS each lane would have handed the tail, and the tail
-runs unchanged. No second pipeline, no second copy of the reply ladder.
+n8n answers six of them with `escalate-catalog` and the shared compile/send path, reached
+straight off the `route` Switch (`route-turn`'s own `TAG_ONLY` set is what reduces five of
+those items to `{branch_kind}`; only `offer_hold` has a Set node of its own,
+`tag-offer-hold`). The CRM already has every piece - `route.decide` stamps the item,
+`tail/outcome.escalate_catalog` is the catalog, and the S2 tail is the compile path - so
+this module is small on purpose: it builds the `sub-output` FRAGMENTS each lane would have
+handed the tail, and the tail runs unchanged. No second pipeline, no second copy of the
+reply ladder.
 
 Two of the eight are not catalog arms and are handled here:
 
-* **`access_denied`** never reaches `compile-current-state` at all. n8n's
-  `tag-access-denied` goes straight to `sorento-sub-respond-sendmsg-respond5`, whose
-  `message` expression IS the whole reply - so the CRM composes that one string and skips
+* **`access_denied`** never reaches `compile-current-state` at all. The `route` Switch's
+  `access_denied` output goes STRAIGHT to `sorento-sub-respond-sendmsg-respond5` (no tag
+  node on that arm), whose `message` expression IS the whole reply - so the CRM composes
+  that one string and skips
   the tail. That is not an optimisation: a contact who is not allowed the agent must not
   have the turn written into their memory, and running the tail would write it.
 * **`offer_hold`** has no canned text. `offer-hold-reply.js` COMPOSES the clarify ask from
@@ -117,6 +121,17 @@ def fragments_for(
     stamped, and `offer_hold` is the one producer output a canned lane supplies (the
     catalog reads `clarify_text` off it by reference). The other eleven trigger fields are
     null on every canned lane, because none of them runs a resolver, a gate or a fetch.
+
+    **`offer_hold` hands the tail the FULL stamp where n8n hands it `{branch_kind}`.**
+    `offer_hold` is not in `route-turn`'s `TAG_ONLY` set, so its item carries `ctx.access`
+    plus the tier stamp; n8n then runs it through `tag-offer-hold`, a Set that assigns
+    `branch_kind` alone and therefore drops everything else before `Call 'sub-output'6`.
+    Kept rather than reproduced because the difference is additive and measured to be
+    inert: the item is only spread by `escalate-catalog` (`out = dict(item)`), and
+    `compile-current-state` reads exactly four keys off that fragment (`response`,
+    `manualResponse`, `includeResponse`, `is_escalate_offer`), none of which an access
+    stamp carries. Reproducing the Set would mean the trace screen showed an item the
+    router never emitted. Revisit if a tail node ever reads the fragment by spread.
     """
     fragments: dict[str, Any] = {"item": dict(item)}
     if branch_kind == "offer_hold":

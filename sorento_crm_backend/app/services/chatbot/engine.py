@@ -63,7 +63,6 @@ AUDIO_NOT_PATCHED_ERROR = (
 GENERIC_ERROR_REPLY = parser.PARSER_ERROR_REPLY
 
 
-
 class TurnResult:
     """What the endpoint serialises. A plain object so the route stays a thin adapter."""
 
@@ -1405,15 +1404,15 @@ def run_tail(
     which half of the migration answered it.
 
     `write_session` is the ONE thing a caller may vary, and it is not a dry-run flag:
-    `access_denied` answers WITHOUT the tail's write on a live turn (n8n's own
-    `tag-access-denied` never reaches `compile-current-state`), and a contact refused the
+    `access_denied` answers WITHOUT the tail's write on a live turn (n8n's `route[0]`
+    goes straight to the send node and never reaches `compile-current-state`), and a
+    contact refused the
     agent must not have the turn written into their memory. `dry_run` suppresses the write
     for a different reason (D14) and both suppress it independently.
 
     Returns `(reply, session_patch)`. Raises before writing anything when the compiled
     variables carry a key outside the allowlist (AC-203).
     """
-    from app.services.chatbot import copy as copy_mod  # noqa: F401 - documents the seam
     from app.services.chatbot.contracts import SessionVars
     from app.services.chatbot.tail import compose as compose_mod
     from app.services.chatbot.tail import member_offer as member_mod
@@ -1584,9 +1583,10 @@ def _complete_canned_lane(
 
     Two shapes, and the split is n8n's own graph rather than a convenience:
 
-    * **`access_denied`** is answered by the SEND NODE's own expression - n8n's
-      `tag-access-denied` goes straight to `sorento-sub-respond-sendmsg-respond5` and
-      never reaches `compile-current-state`. So the CRM composes that one string and runs
+    * **`access_denied`** is answered by the SEND NODE's own expression - the `route`
+      Switch's `access_denied` output goes STRAIGHT to
+      `sorento-sub-respond-sendmsg-respond5` (there is no tag node on that arm) and never
+      reaches `compile-current-state`. So the CRM composes that one string and runs
       no tail: a contact who is not allowed the agent must not have the turn written into
       their memory, and running the tail would write it.
     * **everything else** builds the `sub-output` fragments its lane would have handed the
