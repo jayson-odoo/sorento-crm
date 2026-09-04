@@ -27,6 +27,13 @@ n8n node whose by-name reads it reproduces)**:
     dispatch(result) -> Literal["sub_answer", "miss_suggest"]           # If6
     aggregate_response_intro(result) -> list[str]                       # Aggregate1
     exclude_already_shown(candidates, *, shown_codes) -> list           # H45
+    completed_lanes(db) -> list[str]              # system_settings.chatbot_completed_lanes, default []
+    lane_disposition(branch_kind, *, completed_lanes) -> Literal["complete", "delegate"]
+
+`app/services/chatbot/lanes/business/__init__.py` (new seam beside `run_until_exit`)
+    complete_answer(...) -> {"reply": dict, "actions": list}   # engine.run_turn calls this
+        when `lane_disposition(branch_kind, completed_lanes=completed_lanes(db)) == "complete"`,
+        and sets `delegate = None` from its `{reply, actions}` return instead of delegating.
 
 `app/services/chatbot/lanes/business/sub_answer.py`
     answer_input(trigger) -> dict                                        # raises if trigger.item is not an object
@@ -67,6 +74,12 @@ from typing import Any
 import pytest
 
 from tests.chatbot import _corpus, divergences
+from tests.chatbot.test_engine import (  # noqa: F401  - fixtures used by name (S6a precedent)
+    _envelope,
+    seeded,
+    stub_access,
+    stub_parser,
+)
 
 # --------------------------------------------------------------------------- #
 # Fixture loading, LOCAL to this file rather than added to the shared
@@ -558,6 +571,165 @@ class TestIf6Dispatch:
         assert dispatch(result) == "miss_suggest"
         assert aggregate_response_intro(result) == ["No stock records found for: SRTWC8517."]
         assert aggregate_response_intro({"response_intro": None}) == []
+
+
+# --------------------------------------------------------------------------- #
+# Coordinator note: the CRM completes `business_query` / `check_promotion` /
+# `stock_denied` end to end ONLY when that branch kind is in
+# `system_settings.chatbot_completed_lanes` (a JSON list column, default `[]` - new,
+# beside `chatbot_stock_denial_enabled` from S3). With the default (empty list) the
+# business lane still runs up to S6a's delegate seam
+# (`settings.chatbot_business_lane_enabled`) and delegates with `delegate_payload`
+# attached, exactly as `test_s6a_gate_dry_run_and_seams.py` already covers - this is
+# the SAME decision, gated by a second, independent flag rather than replacing the
+# first. `answer.completed_lanes(db)` mirrors `engine._stock_denial_enabled`'s own
+# `getattr(row, ..., default)` idiom (LESSONS: a new system_settings column needs the
+# two manual dict builders too, but that is the FE-facing settings read, not this
+# turn-time gate). `answer.lane_disposition` is the pure predicate; the engine-level
+# tests below pin the NEW seam `lanes.business.complete_answer` engine.py calls when
+# the branch is completed - the coder is free to refine that function's internals, but
+# `run_turn` must call it and use its `{reply, actions}` return.
+# --------------------------------------------------------------------------- #
+
+
+class TestChatbotCompletedLanesGate:
+    def test_lane_disposition_is_delegate_by_default(self) -> None:
+        from app.services.chatbot.lanes.business.answer import lane_disposition
+
+        for branch_kind in ("business_query", "check_promotion", "stock_denied"):
+            assert lane_disposition(branch_kind, completed_lanes=[]) == "delegate"
+
+    def test_lane_disposition_completes_only_the_seeded_kinds(self) -> None:
+        from app.services.chatbot.lanes.business.answer import lane_disposition
+
+        assert lane_disposition("business_query", completed_lanes=["business_query"]) == "complete"
+        # check_promotion is NOT in the seeded list - it still delegates.
+        assert lane_disposition("check_promotion", completed_lanes=["business_query"]) == "delegate"
+
+    def test_completed_lanes_reads_the_system_settings_column_default_empty(
+        self, session_factory, system_settings_row
+    ) -> None:
+        from app.services.chatbot.lanes.business.answer import completed_lanes
+
+        db = session_factory()
+        assert completed_lanes(db) == []
+
+    def test_completed_lanes_reads_the_seeded_list(self, session_factory, system_settings_row) -> None:
+        """Same idiom as `test_engine.py`'s `test_flipped_on_the_same_contact_is_denied`
+        (R1's `chatbot_stock_denial_enabled` flip): re-query the row on a FRESH session
+        rather than re-attaching the fixture's own instance, which is still bound to the
+        session that created it."""
+        from app.models.user import SystemSetting
+        from app.services.chatbot.lanes.business.answer import completed_lanes
+
+        db = session_factory()
+        setting = db.query(SystemSetting).filter(SystemSetting.id == system_settings_row.id).one()
+        setting.chatbot_completed_lanes = ["business_query", "check_promotion"]
+        db.commit()
+
+        assert completed_lanes(session_factory()) == ["business_query", "check_promotion"]
+
+
+class TestChatbotCompletedLanesEngineWiring:
+    """`engine.run_turn`, on Postgres, exactly like `test_s6a_gate_dry_run_and_seams.py`
+    (same fixtures: `session_factory`, `seeded`, `stub_parser`, `stub_access`, plus
+    `system_settings_row` from `conftest.py`)."""
+
+    @staticmethod
+    def _stub_bundle(calls: list[str]):
+        from app.services.chatbot.lanes.business.services import ResolveGateServices
+
+        def _access_types(*, contact_id, space_id):
+            calls.append("access_types")
+            return [{"name": "Sorento Dealer"}]
+
+        def _resolve_entity(body):
+            calls.append("resolve_entity")
+            return {"tokens": [], "resolutions": [], "unresolved_tokens": []}
+
+        def _probe(**kwargs):
+            calls.append("probe")
+            return None
+
+        return ResolveGateServices(
+            access_types=_access_types, resolve_entity=_resolve_entity, probe=_probe
+        )
+
+    def test_default_completed_lanes_still_delegates_with_payload(
+        self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
+    ) -> None:
+        """One case proving the default (`chatbot_completed_lanes` unset, i.e. `[]`)
+        still delegates - the S6c completion gate is ADDITIVE to S6a's existing
+        `chatbot_business_lane_enabled` seam, never a silent behaviour change for an
+        install that has not opted a lane in yet."""
+        from app.config import settings
+        from app.services.chatbot import engine as engine_mod
+        from tests.chatbot.test_engine import _envelope
+
+        monkeypatch.setattr(settings, "chatbot_business_lane_enabled", True)
+        calls: list[str] = []
+        bundle = self._stub_bundle(calls)
+        monkeypatch.setattr(
+            engine_mod.business_services,
+            "production_services",
+            lambda db, *, space_id=None: bundle,
+        )
+        monkeypatch.setattr(
+            engine_mod, "decide", lambda ctx, *, stock_denial_enabled: ("business_query", {})
+        )
+        stub_parser()
+        stub_access()
+
+        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
+
+        assert result.branch_kind == "business_query"
+        assert result.delegate == "business_query"
+        assert result.delegate_payload is not None
+        assert result.delegate_payload["_exit_kind"] in ("continue", "access_ask", "not_found", "offer")
+
+    def test_seeded_completed_lane_finishes_the_turn_without_delegating(
+        self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
+    ) -> None:
+        from app.config import settings
+        from app.models.user import SystemSetting
+        from app.services.chatbot import engine as engine_mod
+        from tests.chatbot.test_engine import _envelope
+
+        db = session_factory()
+        setting = db.query(SystemSetting).filter(SystemSetting.id == system_settings_row.id).one()
+        setting.chatbot_completed_lanes = ["business_query"]
+        db.commit()
+
+        monkeypatch.setattr(settings, "chatbot_business_lane_enabled", True)
+        bundle = self._stub_bundle([])
+        monkeypatch.setattr(
+            engine_mod.business_services,
+            "production_services",
+            lambda db, *, space_id=None: bundle,
+        )
+        monkeypatch.setattr(
+            engine_mod, "decide", lambda ctx, *, stock_denial_enabled: ("business_query", {})
+        )
+        canned_reply = {"text": "Here is what I found.", "quick_replies": []}
+        canned_actions = [{"kind": "send_message", "text": "Here is what I found."}]
+        monkeypatch.setattr(
+            engine_mod.business,
+            "complete_answer",
+            lambda *args, **kwargs: {"reply": canned_reply, "actions": canned_actions},
+            raising=False,
+        )
+        stub_parser()
+        stub_access()
+
+        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
+
+        assert result.branch_kind == "business_query"
+        assert result.delegate is None, (
+            "chatbot_completed_lanes named business_query - the turn must finish itself, "
+            f"not hand back to n8n (got delegate={result.delegate!r})"
+        )
+        assert result.reply == canned_reply
+        assert result.actions == canned_actions
 
 
 # --------------------------------------------------------------------------- #
