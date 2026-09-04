@@ -16,6 +16,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.services.chatbot import jsc
+
 # --------------------------------------------------------------------------- #
 # Parser vocabularies (AC-109). Values are the parser prompt's own OUTPUT block.
 # --------------------------------------------------------------------------- #
@@ -184,6 +186,50 @@ ActionKind = Literal[ACTION_KINDS]  # type: ignore[valid-type]
 # it; it exists so a trace row can say where a duplicate came from.
 INGRESS_KINDS = ("webhook", "poller", "retry", "console")
 IngressKind = Literal[INGRESS_KINDS]  # type: ignore[valid-type]
+
+# The business lane's resolve+gate exits (S6a). Taken from the four `resolve-exit-*`
+# bodies' own `_exit_kind` literals, in the order `sub-main-processing`'s `resolve-arm`
+# Switch tests them - NOT guessed, because that Switch is what routes on the value and a
+# fifth word here would be an arm nothing is wired to.
+EXIT_KINDS = ("continue", "access_ask", "not_found", "offer")
+ExitKind = Literal[EXIT_KINDS]  # type: ignore[valid-type]
+
+# The six named contract fields every `resolve-exit-*` arm adds beside `_exit_kind`, in
+# the order the bodies list them. `sub-main-processing`'s stand-in chain reads exactly
+# these - `resolve-gate` / `aggregate-gate` / `annotate-incoming-gate` test them for
+# `!== null`, and the `resolve-entity` / `disallowed-entity-gate` / `build-ctx-resolved` /
+# `Aggregate` / `tier-gate` / `annotate-incoming-picker` stand-ins re-emit them - so a
+# missing key is an n8n node that silently stops executing, not a missing field.
+EXIT_CONTRACT_FIELDS = (
+    "resolved",
+    "gate",
+    "ctx_resolved",
+    "aggregate",
+    "tier_gate",
+    "annotate_incoming",
+)
+
+# `requested_attributes`' timeline sentinel (H46). `output-structurer` reads it as
+# `.some(k => String(k ?? '').trim() === '__all__')` - CONTAINS the sentinel, not IS it
+# alone - and a review once called that guard redundant because every mutation it was
+# tested against emitted the sentinel by itself. Declared here, with `is_timeline` beside
+# it, so S6b's port consumes the one reading instead of re-deriving it.
+TIMELINE_SENTINEL = "__all__"
+
+
+def is_timeline(requested_attributes: Any) -> bool:
+    """`_isTimeline`: does `requested_attributes` CONTAIN the sentinel (H46)?
+
+    Mixed emission (`['__all__', 'gatepass_date']`) is timeline mode, exactly as it is in
+    n8n. The parser is *instructed* to emit the sentinel alone, but an instruction is not
+    an invariant, and reading this as equality would flip a real turn's behaviour.
+    """
+    if not isinstance(requested_attributes, list):
+        return False
+    return any(
+        jsc.js_string("" if key is None else key).strip() == TIMELINE_SENTINEL
+        for key in requested_attributes
+    )
 
 # `pending` marker kinds (R3). These replace the two frozen string contracts the JS
 # matched with a regex over the previous reply.
@@ -387,7 +433,65 @@ class TurnResponse(BaseModel):
     # differs per kind and `response_model` silently DROPS anything undeclared.
     actions: list[dict[str, Any]] = Field(default_factory=list)
     session_patch: dict[str, Any] | None = None
+    # S6a: the business lane's resolve+gate result, i.e. exactly the item
+    # `sub-resolve-and-gate` used to return. `delegate` names the lane; this is what that
+    # lane resumes on, and n8n's `resolve-item` re-emits it verbatim into `resolve-arm`.
+    # Null on every arm the CRM does not run the lane for, and it disappears at S6c when
+    # the CRM finishes the turn itself.
+    delegate_payload: dict[str, Any] | None = None
     duplicate: bool = False
+
+
+class CompleteRequest(BaseModel):
+    """`POST /api/v1/external/chat/turn/{turn_id}/complete` body (AC-201).
+
+    The `sub-output` trigger contract, unchanged: `item` plus the eleven nullable
+    producer outputs the sub's RS-9 carrier stubs re-emit today. Each value is a
+    producer's WHOLE output, verbatim, because the tail's by-name reads dig into it
+    (`result.result.xd.block`, `answer.outcome_fragment['central-exchange']`) and
+    reshaping it here would move the very bytes the replay corpus grades.
+
+    `ctx` is optional: `/turn` already persisted it on the row, which is where the tail
+    reads it from. Accepting it anyway means the n8n node can keep sending exactly what
+    it sends today - a caller that has to DELETE a field to be accepted is a caller that
+    breaks on the next deploy.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    item: dict[str, Any]
+    ctx: dict[str, Any] | None = None
+    result: dict[str, Any] | None = None
+    resolved: dict[str, Any] | None = None
+    gate: dict[str, Any] | None = None
+    offer_hold: dict[str, Any] | None = None
+    suggest_offer: dict[str, Any] | None = None
+    not_found: dict[str, Any] | None = None
+    incoming_picker: dict[str, Any] | None = None
+    access_choice: dict[str, Any] | None = None
+    crossdomain_render: dict[str, Any] | None = None
+    answer: dict[str, Any] | None = None
+    clarify: dict[str, Any] | None = None
+
+
+class CompleteResponse(BaseModel):
+    """`POST .../complete` 200 body.
+
+    `reply` is `{text, quick_replies, result_set, attachments_src}` - the four values
+    `sub-sendmsg` and `send-attachments` reach for by name today, so each of their
+    expressions becomes one read (AC-207). A plain dict for the same reason `Reply` is
+    not modelled above: `result_set` is whatever the lane produced, and `response_model`
+    silently DROPS anything a model does not declare.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    turn_id: str
+    reply: dict[str, Any] | None = None
+    actions: list[dict[str, Any]] = Field(default_factory=list)
+    # D14: populated on a dry run only, so a console or clone turn can be inspected
+    # without anything having been written.
+    session_patch: dict[str, Any] | None = None
 
 
 # Which branch kinds still hand back to an n8n lane. After S1 that is all of them: the
