@@ -54,6 +54,12 @@ export type BranchKind =
  * does not build prose of its own out of `facts`.
  */
 export interface TurnTraceRecord {
+  /**
+   * `note` is something that happened TO the turn rather than a step it ran - today, an
+   * operator asking for a retry. Absent on every stage record. The timeline renders notes
+   * as footer lines, because a note drawn as a ninth stage row reads as a bug.
+   */
+  kind?: 'note';
   stage: TurnStage;
   status: TraceStatus;
   started_at: string;
@@ -100,18 +106,19 @@ export interface ChatbotTurn {
   retry_requested_at?: string | null;
   trace: TurnTraceRecord[];
   response: TurnResponseBody | null;
-  /**
-   * True when this delivery was a repeat of a respond message already turned into a turn
-   * (the webhook producer and the failover poller are two injectors of one message).
-   * Derived by the endpoint, not a column.
-   */
-  duplicate?: boolean;
 }
 
 export interface ChatbotTurnListResponse {
   items: ChatbotTurn[];
   /** Opaque; absent when there is no further page. */
   next_cursor?: string | null;
+  /**
+   * Whether Retry is wired in this environment at all (it deliberately is not, locally).
+   * Rides the list because the screen needs it at the same moment it needs the turns, and
+   * because a button that always 409s is what teaches an operator to distrust a screen.
+   */
+  retry_available?: boolean;
+  retry_unavailable_reason?: string | null;
 }
 
 export interface ChatbotTurnFilters {
@@ -146,13 +153,4 @@ export interface RetryTurnResponse {
   turn_id: string;
   /** What the RE-INJECTED turn will carry. The retried row keeps its own attempt. */
   attempt: number;
-}
-
-/**
- * Whether Retry can work in this environment. Read so the button can be disabled with a
- * reason rather than offering an action that always 409s.
- */
-export interface RetryAvailability {
-  available: boolean;
-  reason: string | null;
 }

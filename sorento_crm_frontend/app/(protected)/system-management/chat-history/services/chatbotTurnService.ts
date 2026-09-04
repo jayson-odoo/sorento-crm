@@ -47,12 +47,17 @@
  *         "response": { "ctx": {...}, "item": {...}, "actions": [...] } | null
  *       }
  *     ],
- *     "next_cursor": "<opaque>" | null
+ *     "next_cursor": "<opaque>" | null,
+ *     "retry_available": true,
+ *     "retry_unavailable_reason": "<sentence>" | null
  *   }
  *
  * GET /api/v1/system/chatbot/turns/failed-contacts?from=&to=
  *   Permission: `system.chat_history.view`. Feeds the LIST's "Failed turns only"
- *   filter (AC-255). An aggregate, not a page of turns: the question is "which
+ *   filter (AC-255): the contacts it names are sent back to
+ *   `GET /api/v1/system/chat-history` as repeated `contact_id`, so the page, the total
+ *   and the pager all describe the filtered set. A range is required and defaults to the
+ *   last 7 days; the roster is capped at 200 contacts. An aggregate, not a page of turns: the question is "which
  *   contacts are worth opening", which is tens of rows, and grouping every turn in
  *   the browser would be both expensive and wrong across a page boundary.
  *   200 -> { "items": [{ contact_respond_id, last_failed_stage, last_failed_at, count }] }
@@ -67,12 +72,10 @@
  *   502 when the ingress refuses; the row is left unchanged.
  *   200 -> { "turn_id": "<uuid>", "attempt": 2 }   // what the RE-INJECTED turn carries
  *
- * GET /api/v1/system/chatbot/retry-availability
- *   Permission: `system.chat_history.view`.
- *   200 -> { "available": boolean, "reason": "<sentence>" | null }
- *   Read so the UI can DISABLE Retry with the reason rather than offer a button that
- *   always 409s - one teaches an operator to distrust the screen, the other tells them
- *   it is an environment thing.
+ * Whether Retry works in this environment at all rides the LIST response
+ * (`retry_available`, `retry_unavailable_reason`), so the UI can DISABLE the button with
+ * the reason rather than offer one that always 409s. It is one boolean the screen needs at
+ * the same moment it needs the turns, which is why it is not a route of its own.
  *
  * Two properties the UI depends on and the endpoint owes:
  *
@@ -93,7 +96,6 @@ import type {
   ChatbotTurnListResponse,
   FailedContactListResponse,
   FailedContactFilters,
-  RetryAvailability,
   RetryTurnResponse,
 } from '../types/chatbotTurn.types';
 
@@ -139,15 +141,6 @@ export async function retryChatbotTurn(turnId: string): Promise<RetryTurnRespons
     method: 'POST',
   });
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to retry turn'));
-  return response.json();
-}
-
-/** Whether Retry can work in this environment at all, so the button can say so. */
-export async function getRetryAvailability(): Promise<RetryAvailability> {
-  const response = await apiFetch('/api/v1/system/chatbot/retry-availability');
-  if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Failed to check retry availability'));
-  }
   return response.json();
 }
 

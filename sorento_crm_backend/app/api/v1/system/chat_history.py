@@ -42,7 +42,11 @@ router = APIRouter()
 def list_chat_messages(
     date_from: Optional[datetime] = Query(None),
     date_to: Optional[datetime] = Query(None),
-    contact_id: Optional[str] = Query(None),
+    # Repeatable. One value is the ordinary "this contact's messages"; several is S2b's
+    # "Failed turns only", where the turn aggregate has already named the contacts whose
+    # turns failed and the list asks the server for their messages - so the page, the
+    # total and the pager all describe the filtered set.
+    contact_id: Optional[list[str]] = Query(None),
     direction: Optional[str] = Query(None, pattern="^(incoming|outgoing)$"),
     # The DataGrid sends its free-text box as `query`; `search` is accepted too.
     query: Optional[str] = Query(None),

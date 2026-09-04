@@ -6,7 +6,6 @@ import { toast } from '@/lib/toast';
 import {
   getChatbotTurns,
   getFailedChatbotContacts,
-  getRetryAvailability,
   indexTurnsByMessageId,
   retryChatbotTurn,
 } from '../services/chatbotTurnService';
@@ -24,6 +23,11 @@ export const CHATBOT_TURNS_KEY = ['chatbot-turns'] as const;
 export function useChatbotTurns(contactId: string | null) {
   const query = useQuery({
     queryKey: [...CHATBOT_TURNS_KEY, contactId],
+    // 200 is the endpoint's maximum page, and one page is the whole answer here: the
+    // drawer renders ONE contact's transcript, and a conversation with more than 200 turns
+    // is a different screen (the list, filtered to that contact). Deliberately not paged -
+    // a "load more" inside a transcript would page the traces out of step with the
+    // messages they hang off.
     queryFn: () => getChatbotTurns({ contact_respond_id: contactId as string, limit: 200 }),
     enabled: Boolean(contactId),
     staleTime: 15_000,
@@ -34,7 +38,13 @@ export function useChatbotTurns(contactId: string | null) {
     [query.data],
   );
 
-  return { ...query, byMessageId };
+  // Whether Retry can work in this environment at all. It rides the list rather than a
+  // route of its own: the screen needs it at the same moment it needs the turns.
+  const retryUnavailableReason = query.data?.retry_available
+    ? null
+    : (query.data?.retry_unavailable_reason ?? null);
+
+  return { ...query, byMessageId, retryUnavailableReason };
 }
 
 /**
@@ -63,22 +73,11 @@ export function useFailedChatbotContacts(filters: FailedContactFilters, enabled:
     return map;
   }, [query.data]);
 
-  return { ...query, byContactId };
-}
+  // The ids the LIST filters on, server-side. The map above is what the row badge reads;
+  // this is what the query sends, and they must come from the same answer.
+  const contactIds = useMemo(() => [...byContactId.keys()], [byContactId]);
 
-/**
- * Whether Retry is wired in this environment (it is deliberately not, locally).
- *
- * Read once per screen rather than per turn: it is an environment fact, not a per-row
- * one, and the answer is the same for every button on the page.
- */
-export function useRetryAvailability(enabled: boolean = true) {
-  return useQuery({
-    queryKey: [...CHATBOT_TURNS_KEY, 'retry-availability'],
-    queryFn: getRetryAvailability,
-    enabled,
-    staleTime: 5 * 60_000,
-  });
+  return { ...query, byContactId, contactIds };
 }
 
 /**

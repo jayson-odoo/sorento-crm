@@ -136,6 +136,24 @@ export type TimelineRow =
   | { kind: 'not-reached'; labels: string[] };
 
 /**
+ * The records that are STEPS the turn ran.
+ *
+ * A note (an operator asking for a retry) is written into the same array by the endpoint,
+ * carrying the stage the turn stopped at so it sorts with the failure it belongs to. Drawn
+ * in the timeline it appeared as a second "Sent" row, which reads as a rendering fault
+ * rather than as a record of what someone did, so notes come out here and the panel prints
+ * them under the timeline instead.
+ */
+export function stageRecords(turn: ChatbotTurn): TurnTraceRecord[] {
+  return turn.trace.filter((record) => record.kind !== 'note');
+}
+
+/** The notes, oldest first. Rendered as footer lines, never as timeline rows. */
+export function turnNotes(turn: ChatbotTurn): TurnTraceRecord[] {
+  return turn.trace.filter((record) => record.kind === 'note');
+}
+
+/**
  * AC-252, and the one place the mockup and the AC had to be reconciled.
  *
  * The AC says a stage that did not run is "omitted, not greyed", and the mockup collapses
@@ -151,9 +169,10 @@ export type TimelineRow =
  */
 export function buildTimeline(turn: ChatbotTurn): TimelineRow[] {
   const rows: TimelineRow[] = [];
-  const present = new Set(turn.trace.map((r) => r.stage));
+  const stages = stageRecords(turn);
+  const present = new Set(stages.map((r) => r.stage));
 
-  for (const record of turn.trace) {
+  for (const record of stages) {
     rows.push({ kind: 'stage', record, label: stageLabel(record.stage) });
   }
 
@@ -162,9 +181,9 @@ export function buildTimeline(turn: ChatbotTurn): TimelineRow[] {
   // Everything between the failed stage and the last stage that DID run. `sent` usually
   // still runs on a failed turn (the customer gets the error reply), so the collapsed row
   // belongs in the middle, not at the end.
-  const failedAt = turn.trace.findIndex((r) => r.status === 'failed');
+  const failedAt = stages.findIndex((r) => r.status === 'failed');
   if (failedAt === -1) return rows;
-  const failedStage = turn.trace[failedAt].stage;
+  const failedStage = stages[failedAt].stage;
   const notReached = TURN_STAGES.filter(
     (stage) =>
       TURN_STAGES.indexOf(stage) > TURN_STAGES.indexOf(failedStage) && !present.has(stage),

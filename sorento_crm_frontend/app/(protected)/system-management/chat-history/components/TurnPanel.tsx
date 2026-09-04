@@ -17,6 +17,7 @@ import {
   shortTurnId,
   turnDuration,
   turnHeadline,
+  turnNotes,
 } from '../turnPresentation';
 import type { ChatbotTurn, TurnTraceRecord } from '../types/chatbotTurn.types';
 
@@ -80,11 +81,6 @@ export function TurnPanel({
             attempt {turn.attempt}
           </Badge>
         )}
-        {turn.duplicate && (
-          <Badge variant="secondary" appearance="light" size="sm">
-            repeat delivery
-          </Badge>
-        )}
         {turn.is_test && (
           <Badge variant="secondary" appearance="light" size="sm">
             test
@@ -93,6 +89,12 @@ export function TurnPanel({
         {duration && (
           <span className="text-xs text-muted-foreground tabular-nums">{duration}</span>
         )}
+        {/* The mockup's id chip: an operator quoting a turn to an engineer needs the handle
+            without expanding the panel. Short, never the bare UUID (the full one is on the
+            Copy button inside). */}
+        <span className="text-2xs text-muted-foreground/80 tabular-nums">
+          #{shortTurnId(turn.id)}
+        </span>
         <span className="ms-auto flex items-center gap-1 text-xs text-muted-foreground">
           {open ? 'hide' : 'details'}
           {open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
@@ -116,6 +118,7 @@ export function TurnPanel({
               ),
             )}
           </ol>
+          <TurnNotes turn={turn} />
           <TurnFooter turn={turn} />
         </div>
       )}
@@ -298,13 +301,39 @@ function CopyTurnId({ id }: { id: string }) {
   );
 }
 
+/**
+ * Things that happened TO the turn, under the timeline it did not take part in.
+ *
+ * Today that is one line: an operator asked for a retry. It carries the stage the turn
+ * stopped at so the endpoint could file it with the failure, which is exactly why it must
+ * NOT be drawn as a timeline row - a second "Sent" row reads as a rendering fault.
+ */
+function TurnNotes({ turn }: { turn: ChatbotTurn }) {
+  const notes = useMemo(() => turnNotes(turn), [turn]);
+  if (notes.length === 0) return null;
+  return (
+    <div className="mt-1 space-y-1" data-testid="turn-notes">
+      {notes.map((note, i) => (
+        <p key={`note-${i}`} className="text-2xs text-muted-foreground">
+          {note.summary}
+        </p>
+      ))}
+    </div>
+  );
+}
+
 /** AC-253's technical half: every stage's raw payload, in the existing searchable viewer. */
 function TurnFooter({ turn }: { turn: ChatbotTurn }) {
   const [showRaw, setShowRaw] = useState(false);
   const raw = useMemo(
     () =>
       JSON.stringify(
-        turn.trace.map((r) => ({ stage: r.stage, status: r.status, ms: r.ms, raw: r.raw })),
+        turn.trace.map((r) => ({
+          stage: r.kind === 'note' ? `note (${r.stage})` : r.stage,
+          status: r.status,
+          ms: r.ms,
+          raw: r.raw,
+        })),
         null,
         2,
       ),

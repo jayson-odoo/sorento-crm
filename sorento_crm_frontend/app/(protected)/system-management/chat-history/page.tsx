@@ -83,7 +83,7 @@ export default function ChatHistoryPage() {
   const [sorting, setSorting] = useState<SortingState>([{ id: 'sent_at', desc: true }]);
   const [selected, setSelected] = useState<ChatMessageRow | null>(null);
 
-  const filters: ChatHistoryFilters = useMemo(
+  const range: ChatHistoryFilters = useMemo(
     () => ({
       date_from: dateFrom ? new Date(dateFrom).toISOString() : undefined,
       date_to: dateTo ? new Date(dateTo).toISOString() : undefined,
@@ -92,6 +92,29 @@ export default function ChatHistoryPage() {
     }),
     [dateFrom, dateTo, direction, breachedOnly],
   );
+
+  // AC-255. Only fetched when the filter is on: an aggregate over the whole turn table
+  // behind a toggle most operators never touch would be a page-load cost for nothing.
+  const {
+    byContactId: failedByContact,
+    contactIds: failedContactIds,
+    isLoading: failedLoading,
+    isSuccess: failedLoaded,
+  } = useFailedChatbotContacts({ from: range.date_from, to: range.date_to }, failedTurnsOnly);
+
+  // AC-255. The turn aggregate names the contacts; the LIST is then narrowed on the
+  // SERVER by sending them back as repeated `contact_id`. Filtering the fetched page in
+  // the browser instead left the pager counting rows it had just hidden and the empty
+  // state claiming nothing failed when the failures were simply on page two.
+  const filters: ChatHistoryFilters = useMemo(
+    () => (failedTurnsOnly ? { ...range, contact_id: failedContactIds } : range),
+    [range, failedTurnsOnly, failedContactIds],
+  );
+
+  // With the filter on there is nothing to ask for until the aggregate has answered, and
+  // an empty answer means an empty list - NOT an unfiltered one, which is what sending no
+  // `contact_id` would mean to the endpoint.
+  const listEnabled = !failedTurnsOnly || (failedLoaded && failedContactIds.length > 0);
 
   const { data, isLoading, isPlaceholderData } = useQuery({
     ...LIST_QUERY_OPTIONS,
@@ -105,30 +128,15 @@ export default function ChatHistoryPage() {
         query: searchQuery || undefined,
         group_by: groupBy === 'none' ? undefined : groupBy,
       }),
+    enabled: listEnabled,
     staleTime: 15_000,
   });
-
-  // AC-255. Only fetched when the filter is on: an aggregate over the whole turn table
-  // behind a toggle most operators never touch would be a page-load cost for nothing.
-  const { byContactId: failedByContact, isLoading: failedLoading } = useFailedChatbotContacts(
-    { from: filters.date_from, to: filters.date_to },
-    failedTurnsOnly,
-  );
 
   const exportMutation = useExportChatHistory();
 
   const resetPage = () => setPagination((p) => ({ ...p, pageIndex: 0 }));
 
-  // The SERVER decided which contacts have a failed turn; this narrows the page to them.
-  // Done here rather than as a query param because the chat-history list is paged over
-  // MESSAGES and the failure is a property of the CONTACT - joining the two server-side
-  // would mean teaching that endpoint about turns, which is the coupling the separate
-  // aggregate exists to avoid.
-  const rows = useMemo(() => {
-    const all = data?.data ?? [];
-    if (!failedTurnsOnly) return all;
-    return all.filter((row) => failedByContact.has(row.contact_id));
-  }, [data, failedTurnsOnly, failedByContact]);
+  const rows = useMemo(() => (listEnabled ? (data?.data ?? []) : []), [data, listEnabled]);
 
   const columns = useMemo<ColumnDef<ChatMessageRow>[]>(
     () => [
@@ -218,7 +226,7 @@ export default function ChatHistoryPage() {
   const table = useReactTable({
     columns,
     data: rows,
-    pageCount: Math.ceil((data?.pagination.total ?? 0) / pagination.pageSize),
+    pageCount: Math.ceil((listEnabled ? (data?.pagination.total ?? 0) : 0) / pagination.pageSize),
     getRowId: (row) => String(row.id),
     state: { pagination, sorting },
     columnResizeMode: 'onChange',
@@ -387,8 +395,8 @@ export default function ChatHistoryPage() {
       <Container>
         <DataGrid
           table={table}
-          recordCount={data?.pagination.total ?? 0}
-          isLoading={isLoading}
+          recordCount={listEnabled ? (data?.pagination.total ?? 0) : 0}
+          isLoading={isLoading || (failedTurnsOnly && failedLoading)}
           isPlaceholderData={isPlaceholderData}
           onRowClick={(row: ChatMessageRow) => setSelected(row)}
           standardToolbar={false}
