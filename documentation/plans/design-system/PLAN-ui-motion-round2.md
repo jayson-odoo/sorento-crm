@@ -14,8 +14,14 @@ Issues: M4 #512, M1 #513, M2 #514, M3 #515, M5 #516, M6 #517, M7 #518. M1-M3 and
 M5 run 1 of 3 done (`feat/motion2-M5-shells-and-list-rules`): M5-05 (sticky header, movable
 columns, bounded scroller as `DataGrid` defaults), M5-06 (raw-table guardrail, red-proved with
 27 offenders, all allowlisted - no migration yet, that is run 3), M5-07 (Back to list restores
-the row, `from=`), M5-08 (docs). M5-01..M5-04 (loading/error/not-found shells) and the run-3
-raw-table migration are still open.
+the row, `from=`), M5-08 (docs). M5 run 2 of 3 done (same branch): M5-01 (loading.tsx inventory
+widened from S7-04's hard-coded ten to a walk, 113 segments added, 123 of 123 covered), M5-02
+(zero bare `Loading...`/`Loading…` strings, 50 files fixed, new shared `SectionSkeleton`
+primitive), M5-03 (`ListPageSkeleton` row/header geometry now matches `data-grid-table.tsx`
+exactly; its title/crumb order was corrected against the real `PageHeader.tsx` DOM order rather
+than the brief's assumed one - see the coder's note in the commit and in the UAC), M5-04
+(`app/(protected)/error.tsx` + `not-found.tsx`, render inside the shell). Only the run-3
+raw-table migration is still open.
 **UAC:** `documentation/plans/design-system/ui-motion-round2-acceptance-criteria.md`
 **Audit reports:** session scratchpad `audit-A-existing-motion.md` (36 rows, `/review-animations`
 verdict Block, narrow), `audit-B-opportunities.md` (6 survivors, 10 rejects),

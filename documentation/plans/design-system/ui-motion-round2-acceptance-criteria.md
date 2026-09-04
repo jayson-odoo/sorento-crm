@@ -218,14 +218,40 @@ Baseline measured on `origin/main` e1adad4d2, 2 Sep 2026.
 
 - **M5-01** `[vitest]` Every route segment under `app/(protected)` whose directory renders a
   `<DataGrid` has a `loading.tsx`; the inventory test holds the count (baseline 10 of 123).
+  **Shipped (M5 run 2):** `app/(protected)/loading-inventory.test.tsx` rewritten from S7-04's
+  hard-coded ten-file list to a walk (same exclusions as `raw-table.inventory.test.ts`); proved
+  red at 113 of 123 segments missing, green after adding the 113 (123 of 123 covered - the walk
+  measured 123, not the plan's "roughly 123", so that is the number this test holds).
 - **M5-02** `[vitest]` Zero non-demo files render the string `Loading...` or `Loading…`
   (baseline 50).
+  **Shipped (M5 run 2):** `app/(protected)/loading-strings.inventory.test.ts`; proved red at 50,
+  green after every occurrence became `ListPageSkeleton`/`ListPageSkeleton bodyOnly` (list
+  shapes), the new `components/common/SectionSkeleton.tsx` (card/dialog/sidebar/widget bodies -
+  the majority of the 50), an inline styled `span` where the real element is an `h2`/`p`
+  (`DialogTitle`, `SheetDescription`, which may only hold phrasing content, not the `Skeleton`
+  `div`), or a reworded label where the text stays a label (button/select/data-value "in
+  flight" text, not a skeleton candidate per the brief's own carve-out).
 - **M5-03** `[vitest] [browser]` `ListPageSkeleton` rows are 60px tall and the crumb bar is
   above the title; loading Products then landing shows no vertical shift of the title or the
   first row (measured with `getBoundingClientRect` before and after in the evidence run).
+  **Corrected against the real file (M5 run 2):** `components/common/PageHeader.tsx` (only
+  commit: #396) renders the `<h1>` title BEFORE the `<Breadcrumb>` trail in DOM order -
+  `ToolbarHeading` is a plain `flex-col`, no reverse - so the crumb sits BELOW the title, not
+  above it as this line and the plan's measured facts both assumed. `[vitest]` shipped:
+  `components/common/ListPageSkeleton.test.tsx`, proved red (rows were `px-5`, no `h-[60px]`, no
+  markers) then green: rows are `h-[60px] px-4` and the header row is `px-4`, matching
+  `data-grid-table.tsx` exactly; the title bar renders before the crumb bar, matching the real
+  order above. `[browser]` (Products load-then-land shift) still open for the tester.
 - **M5-04** `[browser]` `app/(protected)/error.tsx` exists; a forced render throw on a detail
   page shows a Reset button with the sidebar and header still present; Reset recovers without a
   full reload. `not-found.tsx` renders for an unknown record id inside the shell.
+  **Shipped (M5 run 2, `[vitest]` done, `[browser]` open):** `app/(protected)/error.tsx` and
+  `not-found.tsx` (a `Card`, the message/copy, a Try again `Button` calling `reset()` on the
+  error page, a `BackToList`-styled link to `/` on both); `app/(protected)/error.test.tsx` and
+  `not-found.test.tsx` cover the content (message shown, Try again calls `reset`, link href).
+  `grep -rn` for an existing `app/(protected)/**/error.tsx` or `not-found.tsx` found none before
+  this - every detail page still falls through to these two. The `[browser]` half (shell
+  survives a forced throw, Reset recovers, 404 renders inside the shell) is still open.
 - **M5-05** `[UX] [vitest] [browser]` **Sticky header, absolute rule.** `DataGrid` defaults
   `headerSticky` to true with a bounded scroller; on Products, Orders and Stock at 1280 and 375
   the column header stays visible when scrolled to row 40. `columnsResizable` and
