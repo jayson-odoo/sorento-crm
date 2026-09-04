@@ -1,0 +1,199 @@
+{
+  "source": {
+    "hand_crafted": true,
+    "expected_from": "reasoned",
+    "reasoned_from": "contract",
+    "rationale": "One candidate is still a disambiguation: the customer must confirm it, so selection_context is set and the single row is numbered. The guard is 'more than zero', not 'more than one'.",
+    "amended": [
+      {
+        "at": "2026-08-26T13:01:29Z",
+        "to_version": "74ef5116-ac62-435f-a506-02a751070588",
+        "reason": "baseline catch-up re-pin to live 74ef5116 (other lanes; see commit body)",
+        "paths": [
+          "[0].json.variables.requested_attributes",
+          "[0].json.variables.picker_last_result_set",
+          "[0].json.variables.picker_domain",
+          "[0].json.variables.picker_selection_context"
+        ]
+      }
+    ]
+  },
+  "ctx": {
+    "Call 'sub-query-reformulator'": [
+      {
+        "json": {
+          "output": {
+            "message_type": "business_query",
+            "intent_hint": "check_incoming",
+            "domain_hint": "incoming",
+            "routing": {
+              "suggested_team": "purchasing"
+            },
+            "escalation": {}
+          }
+        }
+      }
+    ],
+    "sorento-sub-respond-findcontact-respond": [
+      {
+        "json": {
+          "id": 900000003
+        }
+      }
+    ],
+    "escalate-catalog": [
+      {
+        "json": {
+          "response": "Would you like me to escalate to warehouse team?",
+          "manualResponse": false,
+          "includeResponse": true
+        }
+      }
+    ],
+    "disallowed-entity-gate": [
+      {
+        "json": {
+          "require_specific": true,
+          "compatible_entities": [
+            {
+              "uuid": "u1",
+              "entity_type": "product",
+              "code": "MHS1542-CR"
+            }
+          ]
+        }
+      }
+    ],
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 900000003
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "check_incoming",
+                "domain_hint": "incoming",
+                "routing": {
+                  "suggested_team": "purchasing"
+                },
+                "escalation": {}
+              }
+            }
+          }
+        }
+      }
+    ],
+    "build-outcome": [
+      {
+        "json": {
+          "branch_kind": "not_found",
+          "outcome": {
+            "build-ideate-reply": null,
+            "build-suggest-offer": null,
+            "build-cs-member-offer": null,
+            "escalate-catalog": {
+              "response": "Would you like me to escalate to warehouse team?",
+              "manualResponse": false,
+              "includeResponse": true
+            },
+            "central-exchange": null,
+            "access-level-choice-message": null,
+            "promo-picker": null,
+            "validator": null,
+            "crossdomain-zeroset": null,
+            "build-miss-member-offer": null,
+            "dym-annotate-partial": null,
+            "dym-annotate": null,
+            "clarify-company-reply": null,
+            "offer-hold-reply": null,
+            "cs-roster-plan": null
+          }
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "branch_kind": "not_found",
+        "outcome": {
+          "build-ideate-reply": null,
+          "build-suggest-offer": null,
+          "build-cs-member-offer": null,
+          "escalate-catalog": {
+            "response": "Would you like me to escalate to warehouse team?",
+            "manualResponse": false,
+            "includeResponse": true
+          },
+          "central-exchange": null,
+          "access-level-choice-message": null,
+          "promo-picker": null,
+          "validator": null,
+          "crossdomain-zeroset": null,
+          "build-miss-member-offer": null,
+          "dym-annotate-partial": null,
+          "dym-annotate": null,
+          "clarify-company-reply": null,
+          "offer-hold-reply": null,
+          "cs-roster-plan": null
+        }
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "variables": {
+          "message_type": "business_query",
+          "intent_hint": "check_incoming",
+          "domain_hint": "incoming",
+          "entities": [],
+          "routing": {
+            "suggested_team": "purchasing"
+          },
+          "escalation": {},
+          "response": "Previous turn (incoming): returned 1 records",
+          "last_result_set": [
+            {
+              "idx": 1,
+              "uuid": "u1",
+              "label": "MHS1542-CR",
+              "entity_type": "product",
+              "product": "MHS1542-CR",
+              "attachment_type": null,
+              "filename": null
+            }
+          ],
+          "selection_context": "disambiguation",
+          "requested_attributes": [],
+          "dym_offer": null,
+          "dym_candidates": [],
+          "ideation": null,
+          "picker_last_result_set": [
+            {
+              "idx": 1,
+              "uuid": "u1",
+              "label": "MHS1542-CR",
+              "entity_type": "product",
+              "product": "MHS1542-CR",
+              "attachment_type": null,
+              "filename": null
+            }
+          ],
+          "picker_domain": "incoming",
+          "picker_selection_context": "disambiguation",
+          "routing_roster_plan": null,
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_company": null,
+          "routing_companies": null
+        },
+        "user_response": "Would you like me to escalate to warehouse team?"
+      }
+    }
+  ],
+  "runIndex": 0
+}

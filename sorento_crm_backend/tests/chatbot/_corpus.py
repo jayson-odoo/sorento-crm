@@ -44,6 +44,15 @@ NODE_SLUGS: dict[str, tuple[str, ...]] = {
     "build-ctx": ("clone-spine-RS", "spine-rs-1a", "live-spine-sorento-consume-main"),
     "output_exchange": ("sub-semantic-parser",),
     "suggest-follow-up": ("sub-semantic-parser",),
+    # S2, the tail. `clone-sub-output` is the RS-9 split-out sub; the two spine slugs
+    # captured the same node names before and after the split, which is why the loader
+    # unions them and prefixes each id with its slug.
+    "build-outcome": ("clone-sub-output", "clone-spine-RS"),
+    "escalate-catalog": ("live-spine-sorento-consume-main", "clone-spine-RS"),
+    "cs-roster-plan": ("live-spine-sorento-consume-main",),
+    "build-cs-member-offer": ("live-spine-sorento-consume-main",),
+    "compile-current-state": ("live-spine-sorento-consume-main", "clone-spine-RS"),
+    "crossdomain-compose": ("live-spine-sorento-consume-main", "clone-spine-RS"),
 }
 
 
@@ -87,6 +96,30 @@ STALE_FIXTURES: dict[tuple[str, str], str] = {
     ("output_exchange", "parser-15158411"): (
         "exported body emits suggested_team null, fixture expects 'warehouse'; same "
         "routing-ladder rank difference as parser-15024720"
+    ),
+    # S2, the tail. Six captures that predate the RS-9 "Fix 6" tier-menu block (owner
+    # decision, 2026-09-01). The block is a pure ADDITION in the body the export ships -
+    # visible as a `>`-only hunk in `diff live-spine.../compile-current-state.js
+    # sub-output-live/compile-current-state.js` - so these captures were graded against a
+    # body that could not write `tier_menu` at all. Nothing about the port disagrees with
+    # what ships; re-capturing an access-choice turn retires all six.
+    ("compile-current-state", "exec-14087671"): (
+        "captured before the RS-9 Fix 6 tier_menu block; the live body has no such block"
+    ),
+    ("compile-current-state", "exec-14113654"): (
+        "captured before the RS-9 Fix 6 tier_menu block; the live body has no such block"
+    ),
+    ("compile-current-state", "exec-14120751"): (
+        "captured before the RS-9 Fix 6 tier_menu block; the live body has no such block"
+    ),
+    ("compile-current-state", "hand-tier-ask-roster-and-null-quick-reply"): (
+        "hand-built against the live body, which has no RS-9 Fix 6 tier_menu block"
+    ),
+    ("compile-current-state", "rs34-04-accesschoice"): (
+        "clone capture at workflow version 38cb225d, before the tier_menu block landed"
+    ),
+    ("compile-current-state", "rs6-02-accesschoice"): (
+        "clone capture at workflow version 15495426, before the tier_menu block landed"
     ),
     ("output_exchange", "parser-15164413"): (
         "exported body derives marketing_product/general_enquiries from the turn's own "

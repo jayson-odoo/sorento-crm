@@ -1,0 +1,208 @@
+{
+  "source": {
+    "hand_crafted": true,
+    "expected_from": "reasoned",
+    "reasoned_from": "contract",
+    "rationale": "The resource_attachment tip is conditional on the customer actually asking for a CATALOGUE — the regex matches 'katalog' as well as 'catalog', over the reconciled entity raws. A resource_attachment answer for anything else gets no tip.",
+    "amended": [
+      {
+        "at": "2026-08-26T13:01:29Z",
+        "to_version": "74ef5116-ac62-435f-a506-02a751070588",
+        "reason": "baseline catch-up re-pin to live 74ef5116 (other lanes; see commit body)",
+        "paths": [
+          "[0].json.variables.requested_attributes"
+        ]
+      }
+    ]
+  },
+  "ctx": {
+    "Call 'sub-query-reformulator'": [
+      {
+        "json": {
+          "output": {
+            "message_type": "business_query",
+            "intent_hint": "get_attachment",
+            "domain_hint": "resource_attachment",
+            "entities": [
+              {
+                "raw": "katalog",
+                "hint": "attachment_type"
+              }
+            ],
+            "routing": {
+              "suggested_team": "sales"
+            },
+            "escalation": {}
+          }
+        }
+      }
+    ],
+    "sorento-sub-respond-findcontact-respond": [
+      {
+        "json": {
+          "id": 900000003
+        }
+      }
+    ],
+    "central-exchange": [
+      {
+        "json": {
+          "response": "Here's the catalogue.",
+          "items": [
+            {
+              "title": "Catalogue 2026"
+            }
+          ]
+        }
+      }
+    ],
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 900000003
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "get_attachment",
+                "domain_hint": "resource_attachment",
+                "entities": [
+                  {
+                    "raw": "katalog",
+                    "hint": "attachment_type"
+                  }
+                ],
+                "routing": {
+                  "suggested_team": "sales"
+                },
+                "escalation": {}
+              }
+            }
+          }
+        }
+      }
+    ],
+    "build-outcome": [
+      {
+        "json": {
+          "response": "Here's the catalogue.",
+          "outcome": {
+            "build-ideate-reply": null,
+            "build-suggest-offer": null,
+            "build-cs-member-offer": null,
+            "escalate-catalog": null,
+            "central-exchange": {
+              "response": "Here's the catalogue.",
+              "items": [
+                {
+                  "title": "Catalogue 2026"
+                }
+              ]
+            },
+            "access-level-choice-message": null,
+            "promo-picker": null,
+            "validator": null,
+            "crossdomain-zeroset": null,
+            "build-miss-member-offer": null,
+            "dym-annotate-partial": null,
+            "dym-annotate": null,
+            "clarify-company-reply": null,
+            "offer-hold-reply": null,
+            "cs-roster-plan": null
+          }
+        }
+      }
+    ],
+    "miss-roster-check": [
+      {
+        "json": {
+          "response": "Here's the catalogue.",
+          "items": [
+            {
+              "title": "Catalogue 2026"
+            }
+          ],
+          "_offer": false
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "response": "Here's the catalogue.",
+        "outcome": {
+          "build-ideate-reply": null,
+          "build-suggest-offer": null,
+          "build-cs-member-offer": null,
+          "escalate-catalog": null,
+          "central-exchange": {
+            "response": "Here's the catalogue.",
+            "items": [
+              {
+                "title": "Catalogue 2026"
+              }
+            ]
+          },
+          "access-level-choice-message": null,
+          "promo-picker": null,
+          "validator": null,
+          "crossdomain-zeroset": null,
+          "build-miss-member-offer": null,
+          "dym-annotate-partial": null,
+          "dym-annotate": null,
+          "clarify-company-reply": null,
+          "offer-hold-reply": null,
+          "cs-roster-plan": null
+        }
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "variables": {
+          "message_type": "business_query",
+          "intent_hint": "get_attachment",
+          "domain_hint": "resource_attachment",
+          "entities": [
+            {
+              "raw": "katalog",
+              "hint": "attachment_type"
+            }
+          ],
+          "routing": {
+            "suggested_team": "sales"
+          },
+          "escalation": {},
+          "response": "Previous turn (resource_attachment): returned 1 records",
+          "last_result_set": [
+            {
+              "idx": 1,
+              "uuid": null,
+              "label": "Catalogue 2026",
+              "entity_type": null,
+              "product": null,
+              "attachment_type": null,
+              "filename": null
+            }
+          ],
+          "selection_context": null,
+          "requested_attributes": [],
+          "dym_offer": null,
+          "dym_candidates": [],
+          "ideation": null,
+          "routing_roster_plan": null,
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_company": null,
+          "routing_companies": null
+        },
+        "user_response": "Here's the catalogue.\n\nTip: looking for a specific detail like material or finish? Search the *product code* inside the catalogue and you'll find all its attributes there 👍"
+      }
+    }
+  ],
+  "runIndex": 0
+}

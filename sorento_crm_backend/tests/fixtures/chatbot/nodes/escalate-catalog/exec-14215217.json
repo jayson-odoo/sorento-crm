@@ -1,0 +1,631 @@
+{
+  "source": {
+    "execution_id": "14215217",
+    "workflow_id": "9qVyfUxmRQqrpGRMDLRuz",
+    "workflow_version": "c9fe3e68-b732-460d-b968-c1b4a5e5f038",
+    "node": "escalate-catalog",
+    "captured_at": "2026-08-29T10:33:03+00:00",
+    "expected_from": "runData",
+    "dedupe_sig": "701c4330c05ffe3343f186b49f10c395149f1323c12e3adcb3076abd6caa775c"
+  },
+  "ctx": {
+    "tf-message": [
+      {
+        "json": {
+          "event_type": "message.received",
+          "event_id": "9e8f8658-41da-4c77-8486-3b6dc43c67be",
+          "contact": {
+            "id": 900000046,
+            "firstName": "Person 73",
+            "lastName": "Person 74",
+            "phone": "+60100000025",
+            "email": null,
+            "language": null,
+            "profilePic": null,
+            "countryCode": "MY",
+            "status": "open",
+            "assignee": {
+              "id": null,
+              "firstName": null,
+              "lastName": null,
+              "email": null
+            },
+            "created_at": 1783314654
+          },
+          "message": {
+            "messageId": 1787886308000000,
+            "channelMessageId": "wamid.HBgLNjAxNjQzNzkwODgVAgASGBYzRUIwRTFFOTRBQTI2ODBBOTlENkM5AA==",
+            "contactId": 900000046,
+            "channelId": 453209,
+            "traffic": "incoming",
+            "timestamp": 1787886308000,
+            "message": {
+              "type": "text",
+              "text": "no"
+            }
+          },
+          "channel": {
+            "id": 453209,
+            "name": "Internal (+60 11-1673 1179)",
+            "source": "whatsapp_business",
+            "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 21\"},\"wa_id\":\"60100000025\",\"user_id\":\"MY.900000047\",\"firstName\":\"Person 73\",\"lastName\":\"Person 74\"}}",
+            "created_at": 1767682908
+          },
+          "sender": {
+            "source": "contact",
+            "userId": null,
+            "teamId": null,
+            "workflowId": null,
+            "broadcastHistoryId": null
+          }
+        }
+      }
+    ],
+    "sorento-sub-respond-findcontact-respond": [
+      {
+        "json": {
+          "id": 900000046,
+          "firstName": "Person 73",
+          "lastName": "Person 74",
+          "phone": "+60100000025",
+          "email": null,
+          "language": null,
+          "profilePic": null,
+          "locale": null,
+          "countryCode": "MY",
+          "status": "open",
+          "isBlocked": false,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": null
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": null
+            },
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "backend_id",
+              "value": "https://fe-sorento.foundryx.my/user-management/contacts/2fc90f1e-297a-4a5e-94ad-380bf62e2f5b"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "tags": [],
+          "assignee": null,
+          "lifecycle": "New Lead",
+          "created_at": 1783314654
+        }
+      }
+    ],
+    "get-session-vars": [
+      {
+        "json": {
+          "respond_io_id": "900000046",
+          "session_vars": {
+            "variables": {
+              "routing": {
+                "suggested_team": "purchasing",
+                "suggested_agent": "incoming_stock_enquiries"
+              },
+              "entities": [
+                {
+                  "raw": "SRT8308",
+                  "hint": "product",
+                  "confident": true,
+                  "canonical_code": "SRT8308",
+                  "current_message": true
+                }
+              ],
+              "ideation": null,
+              "response": "Here's what you want:\n\u2022 product: SRT8308\n\nBut no incoming matched these. Would you like me to escalate to purchasing team?",
+              "date_mode": null,
+              "dym_offer": null,
+              "user_goal": "trying to check incoming status for SRT8308",
+              "escalation": {
+                "is_escalation_confirmation": false
+              },
+              "match_mode": "and",
+              "domain_hint": "incoming",
+              "intent_hint": "check_incoming",
+              "message_type": "business_query",
+              "query_brands": [],
+              "access_levels": [],
+              "routing_brand": "sorento",
+              "contains_flyer": false,
+              "dym_candidates": [],
+              "date_filter_end": null,
+              "last_result_set": [],
+              "routing_company": "00000000-0000-0000-0000-000000000001",
+              "date_filter_start": null,
+              "routing_companies": [
+                {
+                  "codes": [
+                    "SRT8308"
+                  ],
+                  "labels": [
+                    "SRT8308"
+                  ],
+                  "brand_code": "sorento",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento"
+                }
+              ],
+              "selection_context": null,
+              "routing_roster_plan": null,
+              "requested_attributes": [],
+              "routing_brand_source": "resolved"
+            },
+            "user_response": "Here's what you want:\n\u2022 product: SRT8308\n\nBut no incoming matched these. Would you like me to escalate to purchasing team?"
+          }
+        }
+      }
+    ],
+    "Call 'sub-query-reformulator'": [
+      {
+        "json": {
+          "output": {
+            "message_type": "casual",
+            "intent_hint": null,
+            "domain_hint": null,
+            "scope_intent": null,
+            "is_affirmative": false,
+            "user_goal": "trying to decline the escalation offer",
+            "access_levels": [],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "SRT8308",
+                "hint": "product",
+                "confident": true,
+                "canonical_code": "SRT8308",
+                "current_message": false
+              }
+            ],
+            "entity_op": "reuse",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "purchasing",
+              "suggested_agent": "incoming_stock_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false,
+              "escalation_declined": true
+            },
+            "domain_signal_source": "intent_none",
+            "entity_op_applied": "reuse",
+            "query_brands": []
+          },
+          "_parser_raw": {
+            "message_type": "casual",
+            "intent_hint": null,
+            "domain_hint": null,
+            "scope_intent": null,
+            "is_affirmative": false,
+            "user_goal": "trying to decline the escalation offer",
+            "access_levels": [],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [],
+            "entity_op": "reuse",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": null,
+              "suggested_agent": null
+            },
+            "escalation": {
+              "is_escalation_confirmation": false,
+              "company_pick": null
+            }
+          }
+        }
+      }
+    ],
+    "check-access": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "Incoming Stock Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null
+        }
+      }
+    ],
+    "If5": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "Incoming Stock Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null
+        }
+      }
+    ],
+    "If2": [],
+    "If-ideate": [],
+    "offer-hold-gate": [],
+    "If10": [],
+    "is-escalation-declined": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "Incoming Stock Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null
+        }
+      }
+    ],
+    "tag-escalation-declined": [
+      {
+        "json": {
+          "branch_kind": "escalation_declined"
+        }
+      }
+    ],
+    "escalate-catalog": [
+      {
+        "json": {
+          "branch_kind": "escalation_declined",
+          "response": "Escalation declined.",
+          "manualResponse": true,
+          "includeResponse": true,
+          "is_escalate_offer": false
+        }
+      }
+    ],
+    "cs-offer-gate": [],
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 900000046,
+              "firstName": "Person 73",
+              "lastName": "Person 74",
+              "phone": "+60100000025",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": null
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/2fc90f1e-297a-4a5e-94ad-380bf62e2f5b"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [],
+              "assignee": null,
+              "lifecycle": "New Lead",
+              "created_at": 1783314654
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "9e8f8658-41da-4c77-8486-3b6dc43c67be",
+              "contact": {
+                "id": 900000046,
+                "firstName": "Person 73",
+                "lastName": "Person 74",
+                "phone": "+60100000025",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1783314654
+              },
+              "message": {
+                "messageId": 1787886308000000,
+                "channelMessageId": "wamid.HBgLNjAxNjQzNzkwODgVAgASGBYzRUIwRTFFOTRBQTI2ODBBOTlENkM5AA==",
+                "contactId": 900000046,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1787886308000,
+                "message": {
+                  "type": "text",
+                  "text": "no"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 21\"},\"wa_id\":\"60100000025\",\"user_id\":\"MY.900000047\",\"firstName\":\"Person 73\",\"lastName\":\"Person 74\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000046",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "purchasing",
+                    "suggested_agent": "incoming_stock_enquiries"
+                  },
+                  "entities": [
+                    {
+                      "raw": "SRT8308",
+                      "hint": "product",
+                      "confident": true,
+                      "canonical_code": "SRT8308",
+                      "current_message": true
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Here's what you want:\n\u2022 product: SRT8308\n\nBut no incoming matched these. Would you like me to escalate to purchasing team?",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to check incoming status for SRT8308",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "incoming",
+                  "intent_hint": "check_incoming",
+                  "message_type": "business_query",
+                  "query_brands": [],
+                  "access_levels": [],
+                  "routing_brand": "sorento",
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [],
+                  "routing_company": "00000000-0000-0000-0000-000000000001",
+                  "date_filter_start": null,
+                  "routing_companies": [
+                    {
+                      "codes": [
+                        "SRT8308"
+                      ],
+                      "labels": [
+                        "SRT8308"
+                      ],
+                      "brand_code": "sorento",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "selection_context": null,
+                  "routing_roster_plan": null,
+                  "requested_attributes": [],
+                  "routing_brand_source": "resolved"
+                },
+                "user_response": "Here's what you want:\n\u2022 product: SRT8308\n\nBut no incoming matched these. Would you like me to escalate to purchasing team?"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "casual",
+                "intent_hint": null,
+                "domain_hint": null,
+                "scope_intent": null,
+                "is_affirmative": false,
+                "user_goal": "trying to decline the escalation offer",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "SRT8308",
+                    "hint": "product",
+                    "confident": true,
+                    "canonical_code": "SRT8308",
+                    "current_message": false
+                  }
+                ],
+                "entity_op": "reuse",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "purchasing",
+                  "suggested_agent": "incoming_stock_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "escalation_declined": true
+                },
+                "domain_signal_source": "intent_none",
+                "entity_op_applied": "reuse",
+                "query_brands": []
+              },
+              "_parser_raw": {
+                "message_type": "casual",
+                "intent_hint": null,
+                "domain_hint": null,
+                "scope_intent": null,
+                "is_affirmative": false,
+                "user_goal": "trying to decline the escalation offer",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [],
+                "entity_op": "reuse",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": null,
+                  "suggested_agent": null
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "Incoming Stock Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            }
+          }
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "branch_kind": "escalation_declined"
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "branch_kind": "escalation_declined",
+        "response": "Escalation declined.",
+        "manualResponse": true,
+        "includeResponse": true,
+        "is_escalate_offer": false
+      }
+    }
+  ],
+  "runIndex": 0,
+  "execution": {
+    "id": "14215217"
+  },
+  "ran": [
+    "When Executed by Another Workflow",
+    "redis-pop-main-message-list",
+    "detect-media",
+    "if-media-in",
+    "tf-message",
+    "sorento-sub-respond-findcontact-respond",
+    "if-transcribed-confirm",
+    "is-human-intervened",
+    "if-message-is-audio",
+    "get-session-vars",
+    "Call 'sub-query-reformulator'",
+    "check-access",
+    "If5",
+    "If2",
+    "If-ideate",
+    "offer-hold-gate",
+    "If10",
+    "is-escalation-declined",
+    "tag-escalation-declined",
+    "escalate-catalog",
+    "cs-offer-gate",
+    "compile-current-state",
+    "crossdomain-compose",
+    "sorento-sub-respond-sendmsg-respond2",
+    "Execution Data",
+    "attach-merge",
+    "if-got-attachments",
+    "save-session-vars",
+    "Call 'sub-respond-save-message-redis'2"
+  ]
+}

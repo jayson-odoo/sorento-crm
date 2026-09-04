@@ -1,0 +1,191 @@
+{
+  "source": {
+    "hand_crafted": true,
+    "expected_from": "reasoned",
+    "reasoned_from": "contract",
+    "rationale": "One character of reply is still a reply: the guard is 'not empty', not 'longer than one', so the disclaimer is appended.",
+    "amended": [
+      {
+        "at": "2026-08-26T13:01:29Z",
+        "to_version": "74ef5116-ac62-435f-a506-02a751070588",
+        "reason": "baseline catch-up re-pin to live 74ef5116 (other lanes; see commit body)",
+        "paths": [
+          "[0].json.variables.requested_attributes"
+        ]
+      }
+    ]
+  },
+  "ctx": {
+    "Call 'sub-query-reformulator'": [
+      {
+        "json": {
+          "output": {
+            "message_type": "business_query",
+            "intent_hint": "product_info",
+            "domain_hint": "master_products",
+            "routing": {
+              "suggested_team": "sales"
+            },
+            "escalation": {}
+          }
+        }
+      }
+    ],
+    "sorento-sub-respond-findcontact-respond": [
+      {
+        "json": {
+          "id": 900000003
+        }
+      }
+    ],
+    "central-exchange": [
+      {
+        "json": {
+          "response": "X",
+          "items": [
+            {
+              "title": "MHS1542-CR"
+            }
+          ]
+        }
+      }
+    ],
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 900000003
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "product_info",
+                "domain_hint": "master_products",
+                "routing": {
+                  "suggested_team": "sales"
+                },
+                "escalation": {}
+              }
+            }
+          }
+        }
+      }
+    ],
+    "build-outcome": [
+      {
+        "json": {
+          "response": "X",
+          "outcome": {
+            "build-ideate-reply": null,
+            "build-suggest-offer": null,
+            "build-cs-member-offer": null,
+            "escalate-catalog": null,
+            "central-exchange": {
+              "response": "X",
+              "items": [
+                {
+                  "title": "MHS1542-CR"
+                }
+              ]
+            },
+            "access-level-choice-message": null,
+            "promo-picker": null,
+            "validator": null,
+            "crossdomain-zeroset": null,
+            "build-miss-member-offer": null,
+            "dym-annotate-partial": null,
+            "dym-annotate": null,
+            "clarify-company-reply": null,
+            "offer-hold-reply": null,
+            "cs-roster-plan": null
+          }
+        }
+      }
+    ],
+    "miss-roster-check": [
+      {
+        "json": {
+          "response": "X",
+          "items": [
+            {
+              "title": "MHS1542-CR"
+            }
+          ],
+          "_offer": false
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "response": "X",
+        "outcome": {
+          "build-ideate-reply": null,
+          "build-suggest-offer": null,
+          "build-cs-member-offer": null,
+          "escalate-catalog": null,
+          "central-exchange": {
+            "response": "X",
+            "items": [
+              {
+                "title": "MHS1542-CR"
+              }
+            ]
+          },
+          "access-level-choice-message": null,
+          "promo-picker": null,
+          "validator": null,
+          "crossdomain-zeroset": null,
+          "build-miss-member-offer": null,
+          "dym-annotate-partial": null,
+          "dym-annotate": null,
+          "clarify-company-reply": null,
+          "offer-hold-reply": null,
+          "cs-roster-plan": null
+        }
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "variables": {
+          "message_type": "business_query",
+          "intent_hint": "product_info",
+          "domain_hint": "master_products",
+          "entities": [],
+          "routing": {
+            "suggested_team": "sales"
+          },
+          "escalation": {},
+          "response": "Previous turn (master_products): returned 1 records",
+          "last_result_set": [
+            {
+              "idx": 1,
+              "uuid": null,
+              "label": "MHS1542-CR",
+              "entity_type": null,
+              "product": null,
+              "attachment_type": null,
+              "filename": null
+            }
+          ],
+          "selection_context": null,
+          "requested_attributes": [],
+          "dym_offer": null,
+          "dym_candidates": [],
+          "ideation": null,
+          "routing_roster_plan": null,
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_company": null,
+          "routing_companies": null
+        },
+        "user_response": "X\n\nP/S: if the spec you're after isn't shown above, just ask me for the *product catalogue* and I'll pull it up for you 😊"
+      }
+    }
+  ],
+  "runIndex": 0
+}

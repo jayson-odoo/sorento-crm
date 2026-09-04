@@ -22,11 +22,47 @@ class Divergence:
     fixture: str | None
     hazard: str
     reason: str
+    # A FIELD-scoped divergence: these paths are removed from both sides before the
+    # comparison, and everything else must still be byte-equal. A blanket entry (empty
+    # tuple) passes the whole fixture, which is right for a hazard that changes a node's
+    # whole contract and WRONG for one that adds a key - the blanket form would make the
+    # gate vacuous for that node forever. `path` is walked inside each item's `json`.
+    strip_paths: tuple[tuple[str, ...], ...] = ()
 
 
-# S1 ships parity: nothing is registered yet. Every entry added here must name a hazard
-# id from the plan's hazard table and be traceable to an AC.
-DIVERGENCES: list[Divergence] = []
+# Every entry must name a hazard id from the plan's hazard table and be traceable to an
+# AC. S1 shipped with none; S2 adds exactly the one AC-202 authorises.
+DIVERGENCES: list[Divergence] = [
+    Divergence(
+        node="compile-current-state",
+        fixture="b56-roster-turn",
+        hazard="H29 (AC-205)",
+        reason=(
+            "born roster beats carried picker. The capture IS the defect: on clone exec "
+            "14400735 the turn rendered a nine-member CS roster and persisted the "
+            "PREVIOUS turn's three-row customer picker with selection_context "
+            "'disambiguation', so the next '1' re-ran the order query and the escalation "
+            "was dropped. The body the export ships carries the fix "
+            "(`_cpOfferBornThisTurn`); this capture predates it. Pinned by "
+            "tests/chatbot/test_tail_units.py::TestBornRosterWins."
+        ),
+    ),
+    Divergence(
+        node="compile-current-state",
+        fixture=None,
+        hazard="H13/H14 (R3)",
+        reason=(
+            "the port writes the `pending` marker the JS had no equivalent of, so the "
+            "next turn can ask 'is an escalation offer open?' of state instead of of the "
+            "bot's own previous words (D11). Field-scoped: every other byte of the "
+            "session patch is still compared, and AC-203's own test asserts the marker."
+        ),
+        strip_paths=(
+            ("reply", "session_patch", "variables", "pending"),  # the shipping seal
+            ("variables", "pending"),  # a pre-RS-3 capture, unwrapped by the runner
+        ),
+    ),
+]
 
 
 def find(node: str, fixture: str) -> Divergence | None:
@@ -35,3 +71,15 @@ def find(node: str, fixture: str) -> Divergence | None:
         if d.node == node and (d.fixture is None or d.fixture == fixture):
             return d
     return None
+
+
+def strip(items: list, paths: tuple[tuple[str, ...], ...]) -> list:
+    """Remove each path from every item's `json`. A path that is not there is a no-op."""
+    for item in items:
+        for path in paths:
+            node = item.get("json") if isinstance(item, dict) else None
+            for key in path[:-1]:
+                node = node.get(key) if isinstance(node, dict) else None
+            if isinstance(node, dict):
+                node.pop(path[-1], None)
+    return items

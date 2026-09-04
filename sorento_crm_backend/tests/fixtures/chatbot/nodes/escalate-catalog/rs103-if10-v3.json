@@ -1,0 +1,2320 @@
+{
+  "ctx": {
+    "Call 'sub-query-reformulator'": [
+      {
+        "json": {
+          "output": {
+            "access_levels": [],
+            "correction": true,
+            "demand_qty": null,
+            "domain_hint": "master_products",
+            "dym_offer_pick_code": null,
+            "dym_pick_applied": false,
+            "entities": [],
+            "escalation": {
+              "escalation_declined": false,
+              "is_escalation_confirmation": false,
+              "member_reprompt": null,
+              "offer_hold": false,
+              "preferred_assignee_id": null,
+              "retarget_team": false
+            },
+            "intent_hint": "check_product",
+            "member_pick_context": false,
+            "message_type": "unknown",
+            "query_brands": [],
+            "routing": {
+              "suggested_agent": "general_enquiries",
+              "suggested_team": "customer_service"
+            },
+            "suggest_pick_context": false,
+            "user_goal": "placeholder"
+          }
+        }
+      }
+    ],
+    "Call 'sub-respond-save-message-redis'2": [
+      {
+        "json": {
+          "contact_id": 900000009,
+          "data": "{\"contact_id\":\"900000009\",\"phone_number\":\"+60100000010\",\"message\":\"wait that's wrong\",\"sent_at\":1787999362,\"first_name\":\"Person 12\",\"last_name\":\"Person 125\",\"reply_to_message_id\":null,\"reply_to_message\":null,\"type\":\"incoming\",\"message_id\":\"1787999362187\",\"turn_id\":\"14382012\",\"state_trace\":{\"v\":1,\"before\":{\"routing\":{\"suggested_team\":\"purchasing\",\"suggested_agent\":\"incoming_stock_enquiries\"},\"entities\":[{\"raw\":\"CMAU4318062\",\"hint\":\"inbound_shipment\",\"confident\":true,\"canonical_code\":null,\"current_message\":true}],\"ideation\":null,\"response\":\"Previous turn (incoming): returned 52 records\",\"date_mode\":null,\"dym_offer\":null,\"user_goal\":\"trying to check incoming shipment CMAU4318062\",\"escalation\":{\"is_escalation_confirmation\":false},\"match_mode\":\"and\",\"domain_hint\":\"incoming\",\"intent_hint\":\"check_incoming\",\"message_type\":\"business_query\",\"query_brands\":[],\"access_levels\":[],\"routing_brand\":null,\"contains_flyer\":false,\"dym_candidates\":{\"n\":0,\"first\":null},\"date_filter_end\":null,\"last_result_set\":{\"n\":52,\"first\":\"CB310-CR-L\"},\"routing_company\":null,\"date_filter_start\":null,\"routing_companies\":[{\"codes\":[],\"labels\":[],\"brand_code\":null,\"company_id\":\"38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2\",\"company_name\":\"Mocha\"},{\"codes\":[],\"labels\":[],\"brand_code\":null,\"company_id\":\"00000000-0000-0000-0000-000000000001\",\"company_name\":\"Sorento\"}],\"selection_context\":null,\"routing_roster_plan\":null,\"requested_attributes\":[],\"routing_brand_source\":null},\"parser_raw\":null,\"parser_applied\":{\"message_type\":\"unknown\",\"intent_hint\":\"check_product\",\"domain_hint\":\"master_products\",\"user_goal\":\"placeholder\",\"query_brands\":[],\"access_levels\":[],\"entities\":[],\"routing\":{\"suggested_team\":\"customer_service\",\"suggested_agent\":\"general_enquiries\"},\"escalation\":{\"is_escalation_confirmation\":false,\"escalation_declined\":false,\"retarget_team\":false,\"offer_hold\":false,\"member_reprompt\":null,\"preferred_assignee_id\":null},\"correction\":true,\"demand_qty\":null,\"member_pick_context\":false,\"suggest_pick_context\":false,\"dym_pick_applied\":false,\"dym_offer_pick_code\":null},\"after\":{\"message_type\":\"unknown\",\"intent_hint\":\"check_product\",\"domain_hint\":\"master_products\",\"user_goal\":\"placeholder\",\"query_brands\":[],\"access_levels\":[],\"entities\":[],\"routing\":{\"suggested_team\":\"customer_service\",\"suggested_agent\":\"general_enquiries\"},\"escalation\":{\"is_escalation_confirmation\":false,\"escalation_declined\":false,\"retarget_team\":false,\"offer_hold\":false,\"member_reprompt\":null,\"preferred_assignee_id\":null},\"response\":\"I am sorry the provided answer does not meet your requirements. Would you like me to escalate to customer service team?\",\"last_result_set\":{\"n\":0,\"first\":null},\"selection_context\":null,\"requested_attributes\":[],\"dym_offer\":null,\"dym_candidates\":{\"n\":0,\"first\":null},\"ideation\":null,\"routing_roster_plan\":null,\"routing_brand\":null,\"routing_brand_source\":null,\"routing_company\":null,\"routing_companies\":null}}}",
+          "message": "wait that's wrong",
+          "phone_number": "+60100000010",
+          "sent_at": 1787999363212,
+          "turn_id": "14382012"
+        }
+      }
+    ],
+    "Execution Data": [
+      {
+        "json": {
+          "success": true
+        }
+      }
+    ],
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "contact": 437264483,
+          "started_at": "2026-08-29T06:29:22.354-04:00",
+          "test": "obs",
+          "test_run_id": "rs103-if10-v3"
+        }
+      }
+    ],
+    "attach-merge": [
+      {
+        "json": {
+          "attachments": []
+        }
+      }
+    ],
+    "check-access": [
+      {
+        "json": {
+          "agent_name": "General Enquiries",
+          "all_attributes_allowed": null,
+          "allowed": true,
+          "attributes": null,
+          "decision": "allow"
+        }
+      }
+    ],
+    "compile-current-state": [
+      {
+        "json": {
+          "user_response": "I am sorry the provided answer does not meet your requirements. Would you like me to escalate to customer service team?",
+          "variables": {
+            "access_levels": [],
+            "domain_hint": "master_products",
+            "dym_candidates": [],
+            "dym_offer": null,
+            "entities": [],
+            "escalation": {
+              "escalation_declined": false,
+              "is_escalation_confirmation": false,
+              "member_reprompt": null,
+              "offer_hold": false,
+              "preferred_assignee_id": null,
+              "retarget_team": false
+            },
+            "ideation": null,
+            "intent_hint": "check_product",
+            "last_result_set": [],
+            "message_type": "unknown",
+            "query_brands": [],
+            "requested_attributes": [],
+            "response": "I am sorry the provided answer does not meet your requirements. Would you like me to escalate to customer service team?",
+            "routing": {
+              "suggested_agent": "general_enquiries",
+              "suggested_team": "customer_service"
+            },
+            "routing_brand": null,
+            "routing_brand_source": null,
+            "routing_companies": null,
+            "routing_company": null,
+            "routing_roster_plan": null,
+            "selection_context": null,
+            "user_goal": "placeholder"
+          }
+        }
+      }
+    ],
+    "crossdomain-compose": [
+      {
+        "json": {
+          "user_response": "I am sorry the provided answer does not meet your requirements. Would you like me to escalate to customer service team?",
+          "variables": {
+            "access_levels": [],
+            "domain_hint": "master_products",
+            "dym_candidates": [],
+            "dym_offer": null,
+            "entities": [],
+            "escalation": {
+              "escalation_declined": false,
+              "is_escalation_confirmation": false,
+              "member_reprompt": null,
+              "offer_hold": false,
+              "preferred_assignee_id": null,
+              "retarget_team": false
+            },
+            "ideation": null,
+            "intent_hint": "check_product",
+            "last_result_set": [],
+            "message_type": "unknown",
+            "query_brands": [],
+            "requested_attributes": [],
+            "response": "I am sorry the provided answer does not meet your requirements. Would you like me to escalate to customer service team?",
+            "routing": {
+              "suggested_agent": "general_enquiries",
+              "suggested_team": "customer_service"
+            },
+            "routing_brand": null,
+            "routing_brand_source": null,
+            "routing_companies": null,
+            "routing_company": null,
+            "routing_roster_plan": null,
+            "selection_context": null,
+            "user_goal": "placeholder"
+          }
+        }
+      }
+    ],
+    "cs-offer-gate": [],
+    "detect-media": [
+      {
+        "json": {
+          "_media": {
+            "attachment_type": null,
+            "bytes": null,
+            "caption": "wait that's wrong",
+            "duration_ms": null,
+            "duration_source": null,
+            "media_url": null,
+            "message_id": "1787999362187",
+            "mime_type": null,
+            "modality": null,
+            "respond_io_id": "900000009",
+            "scope": null,
+            "test_run_id": "rs103-if10-v3"
+          },
+          "message": {
+            "contact": {
+              "countryCode": "MY",
+              "custom_fields": [
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                }
+              ],
+              "firstName": "Person 12",
+              "id": 900000009,
+              "lastName": "Person 125",
+              "phone": "+60100000010",
+              "status": "open"
+            },
+            "message": {
+              "contact": {
+                "countryCode": "MY",
+                "custom_fields": [
+                  {
+                    "name": "is_human_intervened",
+                    "value": "false"
+                  },
+                  {
+                    "name": "is_allowed_stock",
+                    "value": "true"
+                  }
+                ],
+                "firstName": "Person 12",
+                "id": 900000009,
+                "lastName": "Person 125",
+                "phone": "+60100000010",
+                "status": "open"
+              },
+              "event_type": "message.received",
+              "message": {
+                "channelId": 453209,
+                "contactId": 900000009,
+                "message": {
+                  "text": "wait that's wrong",
+                  "type": "text"
+                },
+                "messageId": 1787999362187,
+                "timestamp": 1787999362187,
+                "traffic": "incoming"
+              }
+            },
+            "mock_reformulator_output": {
+              "access_levels": [],
+              "correction": true,
+              "demand_qty": null,
+              "domain_hint": "master_products",
+              "dym_offer_pick_code": null,
+              "dym_pick_applied": false,
+              "entities": [],
+              "escalation": {
+                "escalation_declined": false,
+                "is_escalation_confirmation": false,
+                "member_reprompt": null,
+                "offer_hold": false,
+                "preferred_assignee_id": null,
+                "retarget_team": false
+              },
+              "intent_hint": "check_product",
+              "member_pick_context": false,
+              "message_type": "unknown",
+              "query_brands": [],
+              "routing": {
+                "suggested_agent": "general_enquiries",
+                "suggested_team": "customer_service"
+              },
+              "suggest_pick_context": false,
+              "user_goal": "placeholder"
+            },
+            "mode": "uac",
+            "test_run_id": "rs103-if10-v3"
+          }
+        }
+      }
+    ],
+    "escalate-catalog": [
+      {
+        "json": {
+          "branch_kind": "escalate_offer",
+          "includeResponse": true,
+          "is_escalate_offer": true,
+          "manualResponse": true,
+          "response": "I am sorry the provided answer does not meet your requirements. Would you like me to escalate to customer service team?"
+        }
+      }
+    ],
+    "get-session-vars": [
+      {
+        "json": {
+          "respond_io_id": "900000009",
+          "session_vars": {
+            "user_response": "I have attached the file(s) below.\n\n1. *Company:* Sorento\n*Product Code:* CB310-CR-L\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 600\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n2. *Company:* Sorento\n*Product Code:* CB474-BL\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 210\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n3. *Company:* Sorento\n*Product Code:* CB474-GM\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 390\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n4. *Company:* Sorento\n*Product Code:* CB6406\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 864\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n5. *Company:* Sorento\n*Product Code:* CB6408\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 300\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n6. *Company:* Sorento\n*Product Code:* CB6622-PP\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 4200\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n7. *Company:* Sorento\n*Product Code:* CB6633\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 3000\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n8. *Company:* Sorento\n*Product Code:* CB6633-PP\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 4000\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n9. *Company:* Sorento\n*Product Code:* CB720-BL\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 200\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n10. *Company:* Sorento\n*Product Code:* CB720-GM\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 100\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n11. *Company:* Sorento\n*Product Code:* CB781-GM\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 240\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n12. *Company:* Sorento\n*Product Code:* SRT346-ST-HP\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 200\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n13. *Company:* Sorento\n*Product Code:* SRT359C\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 20\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n14. *Company:* Sorento\n*Product Code:* SRT360-HP\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 210\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n15. *Company:* Sorento\n*Product Code:* SRT364-HP\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 210\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n16. *Company:* Sorento\n*Product Code:* SRT385-5\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 95\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n17. *Company:* Sorento\n*Product Code:* SRT392-12\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 320\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n18. *Company:* Sorento\n*Product Code:* SRT392-47\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 1\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n19. *Company:* Sorento\n*Product Code:* SRT393-18\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 300\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n20. *Company:* Sorento\n*Product Code:* SRT5734-WH\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 60\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n21. *Company:* Sorento\n*Product Code:* SRT6531-GM-DIY\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 40\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n22. *Company:* Sorento\n*Product Code:* SRT6532-BL-DIY\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 320\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n23. *Company:* Sorento\n*Product Code:* SRT6534-DIY\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 120\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n24. *Company:* Sorento\n*Product Code:* SRT6534-GM-DIY\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 60\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n25. *Company:* Sorento\n*Product Code:* SRT6536-DIY\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 280\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n26. *Company:* Sorento\n*Product Code:* SRT6538-DIY\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 520\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n27. *Company:* Sorento\n*Product Code:* SRT6538-GM-DIY\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 200\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n28. *Company:* Sorento\n*Product Code:* SRT6542-DIY\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 200\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n29. *Company:* Sorento\n*Product Code:* SRT6544-DIY\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 120\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n30. *Company:* Sorento\n*Product Code:* SRT6545-BL-DIY\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 240\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n31. *Company:* Sorento\n*Product Code:* SRT6630\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 1500\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n32. *Company:* Sorento\n*Product Code:* SRT6641\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 510\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n33. *Company:* Sorento\n*Product Code:* SRT6643-GM\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 511\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n34. *Company:* Sorento\n*Product Code:* SRT6651-GM\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 150\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n35. *Company:* Sorento\n*Product Code:* SRTA8046\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 720\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n36. *Company:* Mocha\n*Product Code:* FG121\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 59\n*Warehouse Allocations:* MOCHA-WH (59)\n\n37. *Company:* Mocha\n*Product Code:* M441\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 400\n*Warehouse Allocations:* MOCHA-WH (401)\n\n38. *Company:* Mocha\n*Product Code:* M449-75-BL\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 300\n*Warehouse Allocations:* MOCHA-WH (300)\n\n39. *Company:* Mocha\n*Product Code:* M449-75-GM\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 200\n*Warehouse Allocations:* MOCHA-WH (200)\n\n40. *Company:* Mocha\n*Product Code:* M464-75-BL\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 50\n*Warehouse Allocations:* MOCHA-WH (50)\n\n41. *Company:* Mocha\n*Product Code:* M475-75-CR\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 200\n*Warehouse Allocations:* MOCHA-WH (200)\n\n42. *Company:* Mocha\n*Product Code:* M483-BL\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 150\n*Warehouse Allocations:* MOCHA-WH (150)\n\n43. *Company:* Mocha\n*Product Code:* M486-75-GM\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 380\n*Warehouse Allocations:* MOCHA-WH (380)\n\n44. *Company:* Mocha\n*Product Code:* M488-75-BL\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 200\n*Warehouse Allocations:* MOCHA-WH (200)\n\n45. *Company:* Mocha\n*Product Code:* M488-75-GM\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 200\n*Warehouse Allocations:* MOCHA-WH (200)\n\n46. *Company:* Mocha\n*Product Code:* M497-BL\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 160\n*Warehouse Allocations:* MOCHA-WH (160)\n\n47. *Company:* Mocha\n*Product Code:* M497-GM\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 80\n*Warehouse Allocations:* MOCHA-WH (81)\n\n48. *Company:* Mocha\n*Product Code:* M8010-1-BL\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 200\n*Warehouse Allocations:* MOCHA-WH (200)\n\n49. *Company:* Mocha\n*Product Code:* M8010-3-GM\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 240\n*Warehouse Allocations:* MOCHA-WH (240)\n\n50. *Company:* Mocha\n*Product Code:* MFG6644-PP\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 1200\n*Warehouse Allocations:* MOCHA-WH (1200)\n\n51. *Company:* Mocha\n*Product Code:* MFG6651-DIY\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 200\n*Warehouse Allocations:* MOCHA-WH (200)\n\n52. *Company:* Mocha\n*Product Code:* MFG6661-PP\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 300\n*Warehouse Allocations:* MOCHA-WH (300)",
+            "variables": {
+              "access_levels": [],
+              "contains_flyer": false,
+              "date_filter_end": null,
+              "date_filter_start": null,
+              "date_mode": null,
+              "domain_hint": "incoming",
+              "dym_candidates": [],
+              "dym_offer": null,
+              "entities": [
+                {
+                  "canonical_code": null,
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "inbound_shipment",
+                  "raw": "CMAU4318062"
+                }
+              ],
+              "escalation": {
+                "is_escalation_confirmation": false
+              },
+              "ideation": null,
+              "intent_hint": "check_incoming",
+              "last_result_set": [
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 1,
+                  "label": "CB310-CR-L",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 2,
+                  "label": "CB474-BL",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 3,
+                  "label": "CB474-GM",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 4,
+                  "label": "CB6406",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 5,
+                  "label": "CB6408",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 6,
+                  "label": "CB6622-PP",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 7,
+                  "label": "CB6633",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 8,
+                  "label": "CB6633-PP",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 9,
+                  "label": "CB720-BL",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 10,
+                  "label": "CB720-GM",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 11,
+                  "label": "CB781-GM",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 12,
+                  "label": "SRT346-ST-HP",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 13,
+                  "label": "SRT359C",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 14,
+                  "label": "SRT360-HP",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 15,
+                  "label": "SRT364-HP",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 16,
+                  "label": "SRT385-5",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 17,
+                  "label": "SRT392-12",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 18,
+                  "label": "SRT392-47",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 19,
+                  "label": "SRT393-18",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 20,
+                  "label": "SRT5734-WH",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 21,
+                  "label": "SRT6531-GM-DIY",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 22,
+                  "label": "SRT6532-BL-DIY",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 23,
+                  "label": "SRT6534-DIY",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 24,
+                  "label": "SRT6534-GM-DIY",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 25,
+                  "label": "SRT6536-DIY",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 26,
+                  "label": "SRT6538-DIY",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 27,
+                  "label": "SRT6538-GM-DIY",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 28,
+                  "label": "SRT6542-DIY",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 29,
+                  "label": "SRT6544-DIY",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 30,
+                  "label": "SRT6545-BL-DIY",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 31,
+                  "label": "SRT6630",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 32,
+                  "label": "SRT6641",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 33,
+                  "label": "SRT6643-GM",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 34,
+                  "label": "SRT6651-GM",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 35,
+                  "label": "SRTA8046",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 36,
+                  "label": "FG121",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 37,
+                  "label": "M441",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 38,
+                  "label": "M449-75-BL",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 39,
+                  "label": "M449-75-GM",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 40,
+                  "label": "M464-75-BL",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 41,
+                  "label": "M475-75-CR",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 42,
+                  "label": "M483-BL",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 43,
+                  "label": "M486-75-GM",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 44,
+                  "label": "M488-75-BL",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 45,
+                  "label": "M488-75-GM",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 46,
+                  "label": "M497-BL",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 47,
+                  "label": "M497-GM",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 48,
+                  "label": "M8010-1-BL",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 49,
+                  "label": "M8010-3-GM",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 50,
+                  "label": "MFG6644-PP",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 51,
+                  "label": "MFG6651-DIY",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 52,
+                  "label": "MFG6661-PP",
+                  "product": null,
+                  "uuid": null
+                }
+              ],
+              "match_mode": "and",
+              "message_type": "business_query",
+              "query_brands": [],
+              "requested_attributes": [],
+              "response": "Previous turn (incoming): returned 52 records",
+              "routing": {
+                "suggested_agent": "incoming_stock_enquiries",
+                "suggested_team": "purchasing"
+              },
+              "routing_brand": null,
+              "routing_brand_source": null,
+              "routing_companies": [
+                {
+                  "brand_code": null,
+                  "codes": [],
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "labels": []
+                },
+                {
+                  "brand_code": null,
+                  "codes": [],
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "labels": []
+                }
+              ],
+              "routing_company": null,
+              "routing_roster_plan": null,
+              "selection_context": null,
+              "user_goal": "trying to check incoming shipment CMAU4318062"
+            }
+          }
+        }
+      }
+    ],
+    "get-session-vars-http": [
+      {
+        "json": {
+          "respond_io_id": "900000009",
+          "session_vars": {
+            "user_response": "I have attached the file(s) below.\n\n1. *Company:* Sorento\n*Product Code:* CB310-CR-L\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 600\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n2. *Company:* Sorento\n*Product Code:* CB474-BL\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 210\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n3. *Company:* Sorento\n*Product Code:* CB474-GM\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 390\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n4. *Company:* Sorento\n*Product Code:* CB6406\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 864\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n5. *Company:* Sorento\n*Product Code:* CB6408\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 300\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n6. *Company:* Sorento\n*Product Code:* CB6622-PP\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 4200\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n7. *Company:* Sorento\n*Product Code:* CB6633\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 3000\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n8. *Company:* Sorento\n*Product Code:* CB6633-PP\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 4000\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n9. *Company:* Sorento\n*Product Code:* CB720-BL\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 200\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n10. *Company:* Sorento\n*Product Code:* CB720-GM\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 100\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n11. *Company:* Sorento\n*Product Code:* CB781-GM\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 240\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n12. *Company:* Sorento\n*Product Code:* SRT346-ST-HP\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 200\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n13. *Company:* Sorento\n*Product Code:* SRT359C\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 20\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n14. *Company:* Sorento\n*Product Code:* SRT360-HP\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 210\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n15. *Company:* Sorento\n*Product Code:* SRT364-HP\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 210\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n16. *Company:* Sorento\n*Product Code:* SRT385-5\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 95\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n17. *Company:* Sorento\n*Product Code:* SRT392-12\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 320\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n18. *Company:* Sorento\n*Product Code:* SRT392-47\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 1\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n19. *Company:* Sorento\n*Product Code:* SRT393-18\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 300\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n20. *Company:* Sorento\n*Product Code:* SRT5734-WH\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 60\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n21. *Company:* Sorento\n*Product Code:* SRT6531-GM-DIY\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 40\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n22. *Company:* Sorento\n*Product Code:* SRT6532-BL-DIY\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 320\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n23. *Company:* Sorento\n*Product Code:* SRT6534-DIY\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 120\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n24. *Company:* Sorento\n*Product Code:* SRT6534-GM-DIY\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 60\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n25. *Company:* Sorento\n*Product Code:* SRT6536-DIY\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 280\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n26. *Company:* Sorento\n*Product Code:* SRT6538-DIY\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 520\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n27. *Company:* Sorento\n*Product Code:* SRT6538-GM-DIY\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 200\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n28. *Company:* Sorento\n*Product Code:* SRT6542-DIY\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 200\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n29. *Company:* Sorento\n*Product Code:* SRT6544-DIY\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 120\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n30. *Company:* Sorento\n*Product Code:* SRT6545-BL-DIY\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 240\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n31. *Company:* Sorento\n*Product Code:* SRT6630\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 1500\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n32. *Company:* Sorento\n*Product Code:* SRT6641\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 510\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n33. *Company:* Sorento\n*Product Code:* SRT6643-GM\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 511\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n34. *Company:* Sorento\n*Product Code:* SRT6651-GM\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 150\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n35. *Company:* Sorento\n*Product Code:* SRTA8046\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 720\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n36. *Company:* Mocha\n*Product Code:* FG121\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 59\n*Warehouse Allocations:* MOCHA-WH (59)\n\n37. *Company:* Mocha\n*Product Code:* M441\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 400\n*Warehouse Allocations:* MOCHA-WH (401)\n\n38. *Company:* Mocha\n*Product Code:* M449-75-BL\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 300\n*Warehouse Allocations:* MOCHA-WH (300)\n\n39. *Company:* Mocha\n*Product Code:* M449-75-GM\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 200\n*Warehouse Allocations:* MOCHA-WH (200)\n\n40. *Company:* Mocha\n*Product Code:* M464-75-BL\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 50\n*Warehouse Allocations:* MOCHA-WH (50)\n\n41. *Company:* Mocha\n*Product Code:* M475-75-CR\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 200\n*Warehouse Allocations:* MOCHA-WH (200)\n\n42. *Company:* Mocha\n*Product Code:* M483-BL\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 150\n*Warehouse Allocations:* MOCHA-WH (150)\n\n43. *Company:* Mocha\n*Product Code:* M486-75-GM\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 380\n*Warehouse Allocations:* MOCHA-WH (380)\n\n44. *Company:* Mocha\n*Product Code:* M488-75-BL\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 200\n*Warehouse Allocations:* MOCHA-WH (200)\n\n45. *Company:* Mocha\n*Product Code:* M488-75-GM\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 200\n*Warehouse Allocations:* MOCHA-WH (200)\n\n46. *Company:* Mocha\n*Product Code:* M497-BL\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 160\n*Warehouse Allocations:* MOCHA-WH (160)\n\n47. *Company:* Mocha\n*Product Code:* M497-GM\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 80\n*Warehouse Allocations:* MOCHA-WH (81)\n\n48. *Company:* Mocha\n*Product Code:* M8010-1-BL\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 200\n*Warehouse Allocations:* MOCHA-WH (200)\n\n49. *Company:* Mocha\n*Product Code:* M8010-3-GM\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 240\n*Warehouse Allocations:* MOCHA-WH (240)\n\n50. *Company:* Mocha\n*Product Code:* MFG6644-PP\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 1200\n*Warehouse Allocations:* MOCHA-WH (1200)\n\n51. *Company:* Mocha\n*Product Code:* MFG6651-DIY\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 200\n*Warehouse Allocations:* MOCHA-WH (200)\n\n52. *Company:* Mocha\n*Product Code:* MFG6661-PP\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 300\n*Warehouse Allocations:* MOCHA-WH (300)",
+            "variables": {
+              "access_levels": [],
+              "contains_flyer": false,
+              "date_filter_end": null,
+              "date_filter_start": null,
+              "date_mode": null,
+              "domain_hint": "incoming",
+              "dym_candidates": [],
+              "dym_offer": null,
+              "entities": [
+                {
+                  "canonical_code": null,
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "inbound_shipment",
+                  "raw": "CMAU4318062"
+                }
+              ],
+              "escalation": {
+                "is_escalation_confirmation": false
+              },
+              "ideation": null,
+              "intent_hint": "check_incoming",
+              "last_result_set": [
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 1,
+                  "label": "CB310-CR-L",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 2,
+                  "label": "CB474-BL",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 3,
+                  "label": "CB474-GM",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 4,
+                  "label": "CB6406",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 5,
+                  "label": "CB6408",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 6,
+                  "label": "CB6622-PP",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 7,
+                  "label": "CB6633",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 8,
+                  "label": "CB6633-PP",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 9,
+                  "label": "CB720-BL",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 10,
+                  "label": "CB720-GM",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 11,
+                  "label": "CB781-GM",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 12,
+                  "label": "SRT346-ST-HP",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 13,
+                  "label": "SRT359C",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 14,
+                  "label": "SRT360-HP",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 15,
+                  "label": "SRT364-HP",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 16,
+                  "label": "SRT385-5",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 17,
+                  "label": "SRT392-12",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 18,
+                  "label": "SRT392-47",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 19,
+                  "label": "SRT393-18",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 20,
+                  "label": "SRT5734-WH",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 21,
+                  "label": "SRT6531-GM-DIY",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 22,
+                  "label": "SRT6532-BL-DIY",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 23,
+                  "label": "SRT6534-DIY",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 24,
+                  "label": "SRT6534-GM-DIY",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 25,
+                  "label": "SRT6536-DIY",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 26,
+                  "label": "SRT6538-DIY",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 27,
+                  "label": "SRT6538-GM-DIY",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 28,
+                  "label": "SRT6542-DIY",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 29,
+                  "label": "SRT6544-DIY",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 30,
+                  "label": "SRT6545-BL-DIY",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 31,
+                  "label": "SRT6630",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 32,
+                  "label": "SRT6641",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 33,
+                  "label": "SRT6643-GM",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 34,
+                  "label": "SRT6651-GM",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 35,
+                  "label": "SRTA8046",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 36,
+                  "label": "FG121",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 37,
+                  "label": "M441",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 38,
+                  "label": "M449-75-BL",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 39,
+                  "label": "M449-75-GM",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 40,
+                  "label": "M464-75-BL",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 41,
+                  "label": "M475-75-CR",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 42,
+                  "label": "M483-BL",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 43,
+                  "label": "M486-75-GM",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 44,
+                  "label": "M488-75-BL",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 45,
+                  "label": "M488-75-GM",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 46,
+                  "label": "M497-BL",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 47,
+                  "label": "M497-GM",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 48,
+                  "label": "M8010-1-BL",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 49,
+                  "label": "M8010-3-GM",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 50,
+                  "label": "MFG6644-PP",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 51,
+                  "label": "MFG6651-DIY",
+                  "product": null,
+                  "uuid": null
+                },
+                {
+                  "attachment_type": null,
+                  "entity_type": null,
+                  "filename": null,
+                  "idx": 52,
+                  "label": "MFG6661-PP",
+                  "product": null,
+                  "uuid": null
+                }
+              ],
+              "match_mode": "and",
+              "message_type": "business_query",
+              "query_brands": [],
+              "requested_attributes": [],
+              "response": "Previous turn (incoming): returned 52 records",
+              "routing": {
+                "suggested_agent": "incoming_stock_enquiries",
+                "suggested_team": "purchasing"
+              },
+              "routing_brand": null,
+              "routing_brand_source": null,
+              "routing_companies": [
+                {
+                  "brand_code": null,
+                  "codes": [],
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "labels": []
+                },
+                {
+                  "brand_code": null,
+                  "codes": [],
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "labels": []
+                }
+              ],
+              "routing_company": null,
+              "routing_roster_plan": null,
+              "selection_context": null,
+              "user_goal": "trying to check incoming shipment CMAU4318062"
+            }
+          }
+        }
+      }
+    ],
+    "guard-d-record": [
+      {
+        "json": {
+          "user_response": "I am sorry the provided answer does not meet your requirements. Would you like me to escalate to customer service team?",
+          "variables": {
+            "access_levels": [],
+            "domain_hint": "master_products",
+            "dym_candidates": [],
+            "dym_offer": null,
+            "entities": [],
+            "escalation": {
+              "escalation_declined": false,
+              "is_escalation_confirmation": false,
+              "member_reprompt": null,
+              "offer_hold": false,
+              "preferred_assignee_id": null,
+              "retarget_team": false
+            },
+            "ideation": null,
+            "intent_hint": "check_product",
+            "last_result_set": [],
+            "message_type": "unknown",
+            "query_brands": [],
+            "requested_attributes": [],
+            "response": "I am sorry the provided answer does not meet your requirements. Would you like me to escalate to customer service team?",
+            "routing": {
+              "suggested_agent": "general_enquiries",
+              "suggested_team": "customer_service"
+            },
+            "routing_brand": null,
+            "routing_brand_source": null,
+            "routing_companies": null,
+            "routing_company": null,
+            "routing_roster_plan": null,
+            "selection_context": null,
+            "user_goal": "placeholder"
+          }
+        }
+      }
+    ],
+    "guard-h-record": [
+      {
+        "json": {
+          "countryCode": "MY",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            }
+          ],
+          "firstName": "Person 12",
+          "id": 900000009,
+          "lastName": "Person 125",
+          "phone": "+60100000010",
+          "status": "open"
+        }
+      }
+    ],
+    "if-got-attachments": [],
+    "if-media-in": [],
+    "if-message-is-audio": [],
+    "if-transcribed-confirm": [],
+    "is-access-allowed": [
+      {
+        "json": {
+          "agent_name": "General Enquiries",
+          "all_attributes_allowed": null,
+          "allowed": true,
+          "attributes": null,
+          "decision": "allow"
+        }
+      }
+    ],
+    "is-explicit-correction": [
+      {
+        "json": {
+          "agent_name": "General Enquiries",
+          "all_attributes_allowed": null,
+          "allowed": true,
+          "attributes": null,
+          "decision": "allow"
+        }
+      }
+    ],
+    "is-human-intervened": [
+      {
+        "json": {
+          "countryCode": "MY",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            }
+          ],
+          "firstName": "Person 12",
+          "id": 900000009,
+          "lastName": "Person 125",
+          "phone": "+60100000010",
+          "status": "open"
+        }
+      }
+    ],
+    "is-ideate-domain": [],
+    "offer-hold-gate": [],
+    "pg-upsert-session": [
+      {
+        "json": {
+          "success": true
+        }
+      }
+    ],
+    "redis-pop-main-message-list": [
+      {
+        "json": {
+          "message": {
+            "contact": {
+              "countryCode": "MY",
+              "custom_fields": [
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                }
+              ],
+              "firstName": "Person 12",
+              "id": 900000009,
+              "lastName": "Person 125",
+              "phone": "+60100000010",
+              "status": "open"
+            },
+            "message": {
+              "contact": {
+                "countryCode": "MY",
+                "custom_fields": [
+                  {
+                    "name": "is_human_intervened",
+                    "value": "false"
+                  },
+                  {
+                    "name": "is_allowed_stock",
+                    "value": "true"
+                  }
+                ],
+                "firstName": "Person 12",
+                "id": 900000009,
+                "lastName": "Person 125",
+                "phone": "+60100000010",
+                "status": "open"
+              },
+              "event_type": "message.received",
+              "message": {
+                "channelId": 453209,
+                "contactId": 900000009,
+                "message": {
+                  "text": "wait that's wrong",
+                  "type": "text"
+                },
+                "messageId": 1787999362187,
+                "timestamp": 1787999362187,
+                "traffic": "incoming"
+              }
+            },
+            "mock_reformulator_output": {
+              "access_levels": [],
+              "correction": true,
+              "demand_qty": null,
+              "domain_hint": "master_products",
+              "dym_offer_pick_code": null,
+              "dym_pick_applied": false,
+              "entities": [],
+              "escalation": {
+                "escalation_declined": false,
+                "is_escalation_confirmation": false,
+                "member_reprompt": null,
+                "offer_hold": false,
+                "preferred_assignee_id": null,
+                "retarget_team": false
+              },
+              "intent_hint": "check_product",
+              "member_pick_context": false,
+              "message_type": "unknown",
+              "query_brands": [],
+              "routing": {
+                "suggested_agent": "general_enquiries",
+                "suggested_team": "customer_service"
+              },
+              "suggest_pick_context": false,
+              "user_goal": "placeholder"
+            },
+            "mode": "uac",
+            "test_run_id": "rs103-if10-v3"
+          }
+        }
+      }
+    ],
+    "sim-inject-gate": [],
+    "sorento-sub-respond-findcontact-respond": [
+      {
+        "json": {
+          "countryCode": "MY",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            }
+          ],
+          "firstName": "Person 12",
+          "id": 900000009,
+          "lastName": "Person 125",
+          "phone": "+60100000010",
+          "status": "open"
+        }
+      }
+    ],
+    "sorento-sub-respond-sendmsg-respond2": [
+      {
+        "json": {
+          "success": true
+        }
+      }
+    ],
+    "tag-escalate-offer": [
+      {
+        "json": {
+          "branch_kind": "escalate_offer"
+        }
+      }
+    ],
+    "tf-message": [
+      {
+        "json": {
+          "contact": {
+            "countryCode": "MY",
+            "custom_fields": [
+              {
+                "name": "is_human_intervened",
+                "value": "false"
+              },
+              {
+                "name": "is_allowed_stock",
+                "value": "true"
+              }
+            ],
+            "firstName": "Person 12",
+            "id": 900000009,
+            "lastName": "Person 125",
+            "phone": "+60100000010",
+            "status": "open"
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 900000009,
+            "message": {
+              "text": "wait that's wrong",
+              "type": "text"
+            },
+            "messageId": 1787999362187,
+            "timestamp": 1787999362187,
+            "traffic": "incoming"
+          }
+        }
+      }
+    ],
+    "wants-escalation-or-help": [],
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "countryCode": "MY",
+              "custom_fields": [
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                }
+              ],
+              "firstName": "Person 12",
+              "id": 900000009,
+              "lastName": "Person 125",
+              "phone": "+60100000010",
+              "status": "open"
+            },
+            "text": {
+              "contact": {
+                "countryCode": "MY",
+                "custom_fields": [
+                  {
+                    "name": "is_human_intervened",
+                    "value": "false"
+                  },
+                  {
+                    "name": "is_allowed_stock",
+                    "value": "true"
+                  }
+                ],
+                "firstName": "Person 12",
+                "id": 900000009,
+                "lastName": "Person 125",
+                "phone": "+60100000010",
+                "status": "open"
+              },
+              "event_type": "message.received",
+              "message": {
+                "channelId": 453209,
+                "contactId": 900000009,
+                "message": {
+                  "text": "wait that's wrong",
+                  "type": "text"
+                },
+                "messageId": 1787999362187,
+                "timestamp": 1787999362187,
+                "traffic": "incoming"
+              }
+            },
+            "session": {
+              "respond_io_id": "900000009",
+              "session_vars": {
+                "user_response": "I have attached the file(s) below.\n\n1. *Company:* Sorento\n*Product Code:* CB310-CR-L\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 600\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n2. *Company:* Sorento\n*Product Code:* CB474-BL\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 210\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n3. *Company:* Sorento\n*Product Code:* CB474-GM\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 390\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n4. *Company:* Sorento\n*Product Code:* CB6406\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 864\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n5. *Company:* Sorento\n*Product Code:* CB6408\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 300\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n6. *Company:* Sorento\n*Product Code:* CB6622-PP\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 4200\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n7. *Company:* Sorento\n*Product Code:* CB6633\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 3000\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n8. *Company:* Sorento\n*Product Code:* CB6633-PP\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 4000\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n9. *Company:* Sorento\n*Product Code:* CB720-BL\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 200\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n10. *Company:* Sorento\n*Product Code:* CB720-GM\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 100\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n11. *Company:* Sorento\n*Product Code:* CB781-GM\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 240\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n12. *Company:* Sorento\n*Product Code:* SRT346-ST-HP\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 200\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n13. *Company:* Sorento\n*Product Code:* SRT359C\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 20\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n14. *Company:* Sorento\n*Product Code:* SRT360-HP\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 210\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n15. *Company:* Sorento\n*Product Code:* SRT364-HP\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 210\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n16. *Company:* Sorento\n*Product Code:* SRT385-5\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 95\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n17. *Company:* Sorento\n*Product Code:* SRT392-12\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 320\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n18. *Company:* Sorento\n*Product Code:* SRT392-47\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 1\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n19. *Company:* Sorento\n*Product Code:* SRT393-18\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 300\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n20. *Company:* Sorento\n*Product Code:* SRT5734-WH\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 60\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n21. *Company:* Sorento\n*Product Code:* SRT6531-GM-DIY\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 40\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n22. *Company:* Sorento\n*Product Code:* SRT6532-BL-DIY\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 320\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n23. *Company:* Sorento\n*Product Code:* SRT6534-DIY\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 120\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n24. *Company:* Sorento\n*Product Code:* SRT6534-GM-DIY\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 60\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n25. *Company:* Sorento\n*Product Code:* SRT6536-DIY\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 280\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n26. *Company:* Sorento\n*Product Code:* SRT6538-DIY\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 520\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n27. *Company:* Sorento\n*Product Code:* SRT6538-GM-DIY\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 200\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n28. *Company:* Sorento\n*Product Code:* SRT6542-DIY\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 200\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n29. *Company:* Sorento\n*Product Code:* SRT6544-DIY\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 120\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n30. *Company:* Sorento\n*Product Code:* SRT6545-BL-DIY\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 240\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n31. *Company:* Sorento\n*Product Code:* SRT6630\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 1500\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n32. *Company:* Sorento\n*Product Code:* SRT6641\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 510\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n33. *Company:* Sorento\n*Product Code:* SRT6643-GM\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 511\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n34. *Company:* Sorento\n*Product Code:* SRT6651-GM\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 150\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n35. *Company:* Sorento\n*Product Code:* SRTA8046\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 720\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n36. *Company:* Mocha\n*Product Code:* FG121\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 59\n*Warehouse Allocations:* MOCHA-WH (59)\n\n37. *Company:* Mocha\n*Product Code:* M441\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 400\n*Warehouse Allocations:* MOCHA-WH (401)\n\n38. *Company:* Mocha\n*Product Code:* M449-75-BL\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 300\n*Warehouse Allocations:* MOCHA-WH (300)\n\n39. *Company:* Mocha\n*Product Code:* M449-75-GM\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 200\n*Warehouse Allocations:* MOCHA-WH (200)\n\n40. *Company:* Mocha\n*Product Code:* M464-75-BL\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 50\n*Warehouse Allocations:* MOCHA-WH (50)\n\n41. *Company:* Mocha\n*Product Code:* M475-75-CR\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 200\n*Warehouse Allocations:* MOCHA-WH (200)\n\n42. *Company:* Mocha\n*Product Code:* M483-BL\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 150\n*Warehouse Allocations:* MOCHA-WH (150)\n\n43. *Company:* Mocha\n*Product Code:* M486-75-GM\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 380\n*Warehouse Allocations:* MOCHA-WH (380)\n\n44. *Company:* Mocha\n*Product Code:* M488-75-BL\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 200\n*Warehouse Allocations:* MOCHA-WH (200)\n\n45. *Company:* Mocha\n*Product Code:* M488-75-GM\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 200\n*Warehouse Allocations:* MOCHA-WH (200)\n\n46. *Company:* Mocha\n*Product Code:* M497-BL\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 160\n*Warehouse Allocations:* MOCHA-WH (160)\n\n47. *Company:* Mocha\n*Product Code:* M497-GM\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 80\n*Warehouse Allocations:* MOCHA-WH (81)\n\n48. *Company:* Mocha\n*Product Code:* M8010-1-BL\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 200\n*Warehouse Allocations:* MOCHA-WH (200)\n\n49. *Company:* Mocha\n*Product Code:* M8010-3-GM\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 240\n*Warehouse Allocations:* MOCHA-WH (240)\n\n50. *Company:* Mocha\n*Product Code:* MFG6644-PP\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 1200\n*Warehouse Allocations:* MOCHA-WH (1200)\n\n51. *Company:* Mocha\n*Product Code:* MFG6651-DIY\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 200\n*Warehouse Allocations:* MOCHA-WH (200)\n\n52. *Company:* Mocha\n*Product Code:* MFG6661-PP\n*Container:* CMAU4318062\n*ETA:* 2026-08-29\n*Incoming Quantity:* 300\n*Warehouse Allocations:* MOCHA-WH (300)",
+                "variables": {
+                  "access_levels": [],
+                  "contains_flyer": false,
+                  "date_filter_end": null,
+                  "date_filter_start": null,
+                  "date_mode": null,
+                  "domain_hint": "incoming",
+                  "dym_candidates": [],
+                  "dym_offer": null,
+                  "entities": [
+                    {
+                      "canonical_code": null,
+                      "confident": true,
+                      "current_message": true,
+                      "hint": "inbound_shipment",
+                      "raw": "CMAU4318062"
+                    }
+                  ],
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "ideation": null,
+                  "intent_hint": "check_incoming",
+                  "last_result_set": [
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 1,
+                      "label": "CB310-CR-L",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 2,
+                      "label": "CB474-BL",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 3,
+                      "label": "CB474-GM",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 4,
+                      "label": "CB6406",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 5,
+                      "label": "CB6408",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 6,
+                      "label": "CB6622-PP",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 7,
+                      "label": "CB6633",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 8,
+                      "label": "CB6633-PP",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 9,
+                      "label": "CB720-BL",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 10,
+                      "label": "CB720-GM",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 11,
+                      "label": "CB781-GM",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 12,
+                      "label": "SRT346-ST-HP",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 13,
+                      "label": "SRT359C",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 14,
+                      "label": "SRT360-HP",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 15,
+                      "label": "SRT364-HP",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 16,
+                      "label": "SRT385-5",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 17,
+                      "label": "SRT392-12",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 18,
+                      "label": "SRT392-47",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 19,
+                      "label": "SRT393-18",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 20,
+                      "label": "SRT5734-WH",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 21,
+                      "label": "SRT6531-GM-DIY",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 22,
+                      "label": "SRT6532-BL-DIY",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 23,
+                      "label": "SRT6534-DIY",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 24,
+                      "label": "SRT6534-GM-DIY",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 25,
+                      "label": "SRT6536-DIY",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 26,
+                      "label": "SRT6538-DIY",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 27,
+                      "label": "SRT6538-GM-DIY",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 28,
+                      "label": "SRT6542-DIY",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 29,
+                      "label": "SRT6544-DIY",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 30,
+                      "label": "SRT6545-BL-DIY",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 31,
+                      "label": "SRT6630",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 32,
+                      "label": "SRT6641",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 33,
+                      "label": "SRT6643-GM",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 34,
+                      "label": "SRT6651-GM",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 35,
+                      "label": "SRTA8046",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 36,
+                      "label": "FG121",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 37,
+                      "label": "M441",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 38,
+                      "label": "M449-75-BL",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 39,
+                      "label": "M449-75-GM",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 40,
+                      "label": "M464-75-BL",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 41,
+                      "label": "M475-75-CR",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 42,
+                      "label": "M483-BL",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 43,
+                      "label": "M486-75-GM",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 44,
+                      "label": "M488-75-BL",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 45,
+                      "label": "M488-75-GM",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 46,
+                      "label": "M497-BL",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 47,
+                      "label": "M497-GM",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 48,
+                      "label": "M8010-1-BL",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 49,
+                      "label": "M8010-3-GM",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 50,
+                      "label": "MFG6644-PP",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 51,
+                      "label": "MFG6651-DIY",
+                      "product": null,
+                      "uuid": null
+                    },
+                    {
+                      "attachment_type": null,
+                      "entity_type": null,
+                      "filename": null,
+                      "idx": 52,
+                      "label": "MFG6661-PP",
+                      "product": null,
+                      "uuid": null
+                    }
+                  ],
+                  "match_mode": "and",
+                  "message_type": "business_query",
+                  "query_brands": [],
+                  "requested_attributes": [],
+                  "response": "Previous turn (incoming): returned 52 records",
+                  "routing": {
+                    "suggested_agent": "incoming_stock_enquiries",
+                    "suggested_team": "purchasing"
+                  },
+                  "routing_brand": null,
+                  "routing_brand_source": null,
+                  "routing_companies": [
+                    {
+                      "brand_code": null,
+                      "codes": [],
+                      "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                      "company_name": "Mocha",
+                      "labels": []
+                    },
+                    {
+                      "brand_code": null,
+                      "codes": [],
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento",
+                      "labels": []
+                    }
+                  ],
+                  "routing_company": null,
+                  "routing_roster_plan": null,
+                  "selection_context": null,
+                  "user_goal": "trying to check incoming shipment CMAU4318062"
+                }
+              }
+            },
+            "parse": {
+              "output": {
+                "access_levels": [],
+                "correction": true,
+                "demand_qty": null,
+                "domain_hint": "master_products",
+                "dym_offer_pick_code": null,
+                "dym_pick_applied": false,
+                "entities": [],
+                "escalation": {
+                  "escalation_declined": false,
+                  "is_escalation_confirmation": false,
+                  "member_reprompt": null,
+                  "offer_hold": false,
+                  "preferred_assignee_id": null,
+                  "retarget_team": false
+                },
+                "intent_hint": "check_product",
+                "member_pick_context": false,
+                "message_type": "unknown",
+                "query_brands": [],
+                "routing": {
+                  "suggested_agent": "general_enquiries",
+                  "suggested_team": "customer_service"
+                },
+                "suggest_pick_context": false,
+                "user_goal": "placeholder"
+              }
+            },
+            "access": {
+              "agent_name": "General Enquiries",
+              "all_attributes_allowed": null,
+              "allowed": true,
+              "attributes": null,
+              "decision": "allow"
+            }
+          }
+        }
+      }
+    ]
+  },
+  "execution": {
+    "id": "14382012"
+  },
+  "expected": [
+    {
+      "json": {
+        "branch_kind": "escalate_offer",
+        "includeResponse": true,
+        "is_escalate_offer": true,
+        "manualResponse": true,
+        "response": "I am sorry the provided answer does not meet your requirements. Would you like me to escalate to customer service team?"
+      }
+    }
+  ],
+  "input": [
+    {
+      "json": {
+        "branch_kind": "escalate_offer"
+      }
+    }
+  ],
+  "ran": [
+    "When Executed by Another Workflow",
+    "redis-pop-main-message-list",
+    "detect-media",
+    "if-media-in",
+    "tf-message",
+    "sorento-sub-respond-findcontact-respond",
+    "if-transcribed-confirm",
+    "is-human-intervened",
+    "if-message-is-audio",
+    "sim-inject-gate",
+    "get-session-vars-http",
+    "get-session-vars",
+    "Call 'sub-query-reformulator'",
+    "check-access",
+    "build-ctx",
+    "is-access-allowed",
+    "wants-escalation-or-help",
+    "is-ideate-domain",
+    "offer-hold-gate",
+    "is-explicit-correction",
+    "tag-escalate-offer",
+    "escalate-catalog",
+    "cs-offer-gate",
+    "build-outcome",
+    "compile-current-state",
+    "crossdomain-compose",
+    "sorento-sub-respond-sendmsg-respond2",
+    "Execution Data",
+    "attach-merge",
+    "if-got-attachments",
+    "pg-upsert-session",
+    "guard-d-record",
+    "Call 'sub-respond-save-message-redis'2",
+    "guard-h-record"
+  ],
+  "runIndex": 0,
+  "source": {
+    "captured_at": "2026-08-29T10:33:50+00:00",
+    "dedupe_sig": "f27c5cce9474d379ba3abd87ce2e8cef3ed0afaf3139bbfd2b7bb4002ef36737",
+    "dev_contact": true,
+    "execution_id": "14382012",
+    "expected_from": "runData",
+    "node": "escalate-catalog",
+    "workflow_id": "Hnd4S8SVH6pftjxs",
+    "workflow_version": "3db14b3a-4228-417f-b7b8-39276cbf4f2b"
+  }
+}

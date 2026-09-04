@@ -1,0 +1,2202 @@
+{
+  "source": {
+    "execution_id": "13984349",
+    "workflow_id": "9qVyfUxmRQqrpGRMDLRuz",
+    "node": "cs-roster-plan",
+    "captured_at": "2026-08-26T13:01:45+00:00",
+    "expected_from": "runData"
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "test": null,
+          "test_run_id": null,
+          "started_at": null,
+          "contact": "445239390"
+        }
+      }
+    ],
+    "redis-pop-main-message-list": [
+      {
+        "json": {
+          "message": {
+            "message": {
+              "event_type": "message.received",
+              "event_id": "e243e56c-a072-4fec-b851-1695545bb009",
+              "contact": {
+                "id": 900000014,
+                "firstName": "Person 18",
+                "lastName": "Person 19",
+                "phone": "+60100000007",
+                "email": "person4@example.com",
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1778415976
+              },
+              "message": {
+                "messageId": 1787730621000000,
+                "channelMessageId": "wamid.HBgLNjAxNDkzNjExNzgVAgASGBYzRUIwNTEyNThCRDA1NzlBODlENUU3AA==",
+                "contactId": 900000014,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1787730621000,
+                "message": {
+                  "type": "text",
+                  "text": "driver haqem for date 25/08/2026 ?"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 20\"},\"wa_id\":\"60100000007\",\"user_id\":\"MY.900000015\",\"firstName\":\"Person 18\",\"lastName\":\"Person 6\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "contact": {
+              "id": 900000014,
+              "firstName": "Person 18",
+              "lastName": "Person 19",
+              "phone": "+60100000007",
+              "email": "person4@example.com",
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": null
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/de238698-9415-4f5d-b423-6c67aaec2653"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260510_200514",
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": "New Lead",
+              "created_at": 1778415976
+            }
+          }
+        }
+      }
+    ],
+    "detect-media": [
+      {
+        "json": {
+          "message": {
+            "message": {
+              "event_type": "message.received",
+              "event_id": "e243e56c-a072-4fec-b851-1695545bb009",
+              "contact": {
+                "id": 900000014,
+                "firstName": "Person 18",
+                "lastName": "Person 19",
+                "phone": "+60100000007",
+                "email": "person4@example.com",
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1778415976
+              },
+              "message": {
+                "messageId": 1787730621000000,
+                "channelMessageId": "wamid.HBgLNjAxNDkzNjExNzgVAgASGBYzRUIwNTEyNThCRDA1NzlBODlENUU3AA==",
+                "contactId": 900000014,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1787730621000,
+                "message": {
+                  "type": "text",
+                  "text": "driver haqem for date 25/08/2026 ?"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 20\"},\"wa_id\":\"60100000007\",\"user_id\":\"MY.900000015\",\"firstName\":\"Person 18\",\"lastName\":\"Person 6\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "contact": {
+              "id": 900000014,
+              "firstName": "Person 18",
+              "lastName": "Person 19",
+              "phone": "+60100000007",
+              "email": "person4@example.com",
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": null
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/de238698-9415-4f5d-b423-6c67aaec2653"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260510_200514",
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": "New Lead",
+              "created_at": 1778415976
+            }
+          },
+          "_media": {
+            "modality": null,
+            "attachment_type": null,
+            "media_url": null,
+            "mime_type": null,
+            "caption": "driver haqem for date 25/08/2026 ?",
+            "bytes": null,
+            "duration_ms": null,
+            "duration_source": null,
+            "message_id": null,
+            "respond_io_id": "900000014",
+            "test_run_id": null,
+            "scope": null
+          }
+        }
+      }
+    ],
+    "if-media-in": [],
+    "tf-message": [
+      {
+        "json": {
+          "event_type": "message.received",
+          "event_id": "e243e56c-a072-4fec-b851-1695545bb009",
+          "contact": {
+            "id": 900000014,
+            "firstName": "Person 18",
+            "lastName": "Person 19",
+            "phone": "+60100000007",
+            "email": "person4@example.com",
+            "language": null,
+            "profilePic": null,
+            "countryCode": "MY",
+            "status": "open",
+            "assignee": {
+              "id": null,
+              "firstName": null,
+              "lastName": null,
+              "email": null
+            },
+            "created_at": 1778415976
+          },
+          "message": {
+            "messageId": 1787730621000000,
+            "channelMessageId": "wamid.HBgLNjAxNDkzNjExNzgVAgASGBYzRUIwNTEyNThCRDA1NzlBODlENUU3AA==",
+            "contactId": 900000014,
+            "channelId": 453209,
+            "traffic": "incoming",
+            "timestamp": 1787730621000,
+            "message": {
+              "type": "text",
+              "text": "driver haqem for date 25/08/2026 ?"
+            }
+          },
+          "channel": {
+            "id": 453209,
+            "name": "Internal (+60 11-1673 1179)",
+            "source": "whatsapp_business",
+            "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 20\"},\"wa_id\":\"60100000007\",\"user_id\":\"MY.900000015\",\"firstName\":\"Person 18\",\"lastName\":\"Person 6\"}}",
+            "created_at": 1767682908
+          },
+          "sender": {
+            "source": "contact",
+            "userId": null,
+            "teamId": null,
+            "workflowId": null,
+            "broadcastHistoryId": null
+          }
+        }
+      }
+    ],
+    "sorento-sub-respond-findcontact-respond": [
+      {
+        "json": {
+          "id": 900000014,
+          "firstName": "Person 18",
+          "lastName": "Person 19",
+          "phone": "+60100000007",
+          "email": "person4@example.com",
+          "language": null,
+          "profilePic": null,
+          "locale": null,
+          "countryCode": "MY",
+          "status": "open",
+          "isBlocked": false,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": null
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_human_intervened",
+              "value": null
+            },
+            {
+              "name": "backend_id",
+              "value": "https://fe-sorento.foundryx.my/user-management/contacts/de238698-9415-4f5d-b423-6c67aaec2653"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "tags": [
+            "imported_20260510_200514",
+            "imported_20260627_150636"
+          ],
+          "assignee": null,
+          "lifecycle": "New Lead",
+          "created_at": 1778415976
+        }
+      }
+    ],
+    "if-transcribed-confirm": [],
+    "is-human-intervened": [
+      {
+        "json": {
+          "id": 900000014,
+          "firstName": "Person 18",
+          "lastName": "Person 19",
+          "phone": "+60100000007",
+          "email": "person4@example.com",
+          "language": null,
+          "profilePic": null,
+          "locale": null,
+          "countryCode": "MY",
+          "status": "open",
+          "isBlocked": false,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": null
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_human_intervened",
+              "value": null
+            },
+            {
+              "name": "backend_id",
+              "value": "https://fe-sorento.foundryx.my/user-management/contacts/de238698-9415-4f5d-b423-6c67aaec2653"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "tags": [
+            "imported_20260510_200514",
+            "imported_20260627_150636"
+          ],
+          "assignee": null,
+          "lifecycle": "New Lead",
+          "created_at": 1778415976
+        }
+      }
+    ],
+    "if-message-is-audio": [],
+    "get-session-vars": [
+      {
+        "json": {
+          "respond_io_id": "900000014",
+          "session_vars": {
+            "variables": {
+              "routing": {
+                "suggested_team": "customer_service",
+                "suggested_agent": "order_enquiries"
+              },
+              "entities": [
+                {
+                  "raw": "Haqem",
+                  "hint": "customer",
+                  "confident": true,
+                  "canonical_code": null,
+                  "current_message": false
+                }
+              ],
+              "ideation": null,
+              "response": "Escalation declined.",
+              "date_mode": null,
+              "dym_offer": null,
+              "user_goal": "trying to decline the escalation offer",
+              "escalation": {
+                "escalation_declined": true,
+                "is_escalation_confirmation": false
+              },
+              "match_mode": "and",
+              "domain_hint": null,
+              "intent_hint": null,
+              "message_type": "casual",
+              "query_brands": [],
+              "access_levels": [],
+              "routing_brand": null,
+              "contains_flyer": false,
+              "dym_candidates": [],
+              "date_filter_end": null,
+              "last_result_set": [],
+              "routing_company": "00000000-0000-0000-0000-000000000001",
+              "date_filter_start": null,
+              "routing_companies": [
+                {
+                  "codes": [
+                    "PS202608-0382"
+                  ],
+                  "labels": [
+                    "PS202608-0382"
+                  ],
+                  "brand_code": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento"
+                }
+              ],
+              "selection_context": null,
+              "routing_roster_plan": [
+                {
+                  "plan_idx": 0,
+                  "brand_code": null,
+                  "company_id": null,
+                  "company_name": null
+                }
+              ],
+              "routing_brand_source": null
+            },
+            "user_response": "Escalation declined."
+          }
+        }
+      }
+    ],
+    "Call 'sub-query-reformulator'": [
+      {
+        "json": {
+          "output": {
+            "message_type": "business_query",
+            "intent_hint": "check_order",
+            "domain_hint": "order",
+            "scope_intent": "specific",
+            "is_affirmative": null,
+            "user_goal": "trying to check the delivery order for driver haqem on 2026-08-25",
+            "access_levels": [],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": "2026-08-25",
+            "date_filter_end": "2026-08-25",
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "driver haqem",
+                "hint": "transporter",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "entity_op": "replace_combine",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "customer_service",
+              "suggested_agent": "order_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "domain_signal_source": "intent_explicit",
+            "scope_exclusive_applied": false,
+            "entity_op_applied": "replace_combine",
+            "query_brands": [],
+            "entities_filtered": false,
+            "entities_emptied_by_filter": false
+          },
+          "_parser_raw": {
+            "message_type": "business_query",
+            "intent_hint": "check_order",
+            "domain_hint": "order",
+            "scope_intent": "specific",
+            "is_affirmative": null,
+            "user_goal": "trying to check the delivery order for driver haqem on 2026-08-25",
+            "access_levels": [],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": "2026-08-25",
+            "date_filter_end": "2026-08-25",
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "driver haqem",
+                "hint": "transporter",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "entity_op": "replace_combine",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "customer_service",
+              "suggested_agent": "order_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false,
+              "company_pick": null
+            }
+          }
+        }
+      }
+    ],
+    "check-access": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "Order Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null
+        }
+      }
+    ],
+    "If5": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "Order Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null
+        }
+      }
+    ],
+    "If2": [],
+    "If-ideate": [],
+    "offer-hold-gate": [],
+    "If10": [],
+    "is-escalation-declined": [],
+    "If9": [],
+    "If1": [],
+    "not-supported-domain": [],
+    "If": [],
+    "If7": [],
+    "resolve-entity": [
+      {
+        "json": {
+          "tokens": [
+            "driver haqem"
+          ],
+          "elapsed_ms": 220.84,
+          "resolutions": [
+            {
+              "token": "driver haqem",
+              "resolved": false,
+              "ambiguous": false,
+              "matches": [],
+              "alternatives": []
+            }
+          ],
+          "unresolved_tokens": [
+            "driver haqem"
+          ],
+          "fallback_match_mode": "or",
+          "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens."
+        }
+      }
+    ],
+    "disallowed-entity-gate": [
+      {
+        "json": {
+          "tokens": [
+            "driver haqem"
+          ],
+          "elapsed_ms": 220.84,
+          "resolutions": [
+            {
+              "token": "driver haqem",
+              "resolved": false,
+              "ambiguous": false,
+              "matches": [],
+              "alternatives": []
+            }
+          ],
+          "unresolved_tokens": [
+            "driver haqem"
+          ],
+          "fallback_match_mode": "or",
+          "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+          "gate_passed": false,
+          "require_specific": false,
+          "resolved_company": null,
+          "company_team": null,
+          "resolved_companies": [],
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_companies": [],
+          "routing_company": null,
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "no entities and 'order' requires a scoping entity",
+          "gate_clarification": "",
+          "compatible_entities": [],
+          "gate_debug": {
+            "domain": "order",
+            "allowed_lookup": [
+              "order",
+              "customer_order",
+              "transporter",
+              "customer",
+              "product"
+            ],
+            "entities_count": 0
+          }
+        }
+      }
+    ],
+    "If3": [
+      {
+        "json": {
+          "tokens": [
+            "driver haqem"
+          ],
+          "elapsed_ms": 220.84,
+          "resolutions": [
+            {
+              "token": "driver haqem",
+              "resolved": false,
+              "ambiguous": false,
+              "matches": [],
+              "alternatives": []
+            }
+          ],
+          "unresolved_tokens": [
+            "driver haqem"
+          ],
+          "fallback_match_mode": "or",
+          "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+          "gate_passed": false,
+          "require_specific": false,
+          "resolved_company": null,
+          "company_team": null,
+          "resolved_companies": [],
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_companies": [],
+          "routing_company": null,
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "no entities and 'order' requires a scoping entity",
+          "gate_clarification": "",
+          "compatible_entities": [],
+          "gate_debug": {
+            "domain": "order",
+            "allowed_lookup": [
+              "order",
+              "customer_order",
+              "transporter",
+              "customer",
+              "product"
+            ],
+            "entities_count": 0
+          }
+        }
+      }
+    ],
+    "If-incoming-picker": [],
+    "If-customer-picker": [],
+    "not-found-error-message": [
+      {
+        "json": {
+          "tokens": [
+            "driver haqem"
+          ],
+          "elapsed_ms": 220.84,
+          "resolutions": [
+            {
+              "token": "driver haqem",
+              "resolved": false,
+              "ambiguous": false,
+              "matches": [],
+              "alternatives": []
+            }
+          ],
+          "unresolved_tokens": [
+            "driver haqem"
+          ],
+          "fallback_match_mode": "or",
+          "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+          "gate_passed": false,
+          "require_specific": false,
+          "resolved_company": null,
+          "company_team": null,
+          "resolved_companies": [],
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_companies": [],
+          "routing_company": null,
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "no entities and 'order' requires a scoping entity",
+          "gate_clarification": "",
+          "compatible_entities": [],
+          "gate_debug": {
+            "domain": "order",
+            "allowed_lookup": [
+              "order",
+              "customer_order",
+              "transporter",
+              "customer",
+              "product"
+            ],
+            "entities_count": 0
+          },
+          "escalate_message": "Couldn't find: \"driver haqem\" (transporter). Would you like me to escalate to customer service team?",
+          "is_clarification": false,
+          "found_summary": ""
+        }
+      }
+    ],
+    "sibling-gate": [],
+    "dym-transform": [
+      {
+        "json": {
+          "tokens": [
+            "driver haqem"
+          ],
+          "elapsed_ms": 220.84,
+          "resolutions": [
+            {
+              "token": "driver haqem",
+              "resolved": false,
+              "ambiguous": false,
+              "matches": [],
+              "alternatives": []
+            }
+          ],
+          "unresolved_tokens": [
+            "driver haqem"
+          ],
+          "fallback_match_mode": "or",
+          "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+          "gate_passed": false,
+          "require_specific": false,
+          "resolved_company": null,
+          "company_team": null,
+          "resolved_companies": [],
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_companies": [],
+          "routing_company": null,
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "no entities and 'order' requires a scoping entity",
+          "gate_clarification": "",
+          "compatible_entities": [],
+          "gate_debug": {
+            "domain": "order",
+            "allowed_lookup": [
+              "order",
+              "customer_order",
+              "transporter",
+              "customer",
+              "product"
+            ],
+            "entities_count": 0
+          },
+          "escalate_message": "Couldn't find: \"driver haqem\" (transporter). Would you like me to escalate to customer service team?",
+          "is_clarification": false,
+          "found_summary": "",
+          "dym_probe_entities": [],
+          "dym_candidate_codes": [],
+          "dym_excluded_codes": [],
+          "dym_capped_codes": [],
+          "probe_cap_applied": false,
+          "probe_tool": null,
+          "probe_noun": null,
+          "probe_predicate": null,
+          "probe_needed": false,
+          "probe_skip_reason": "domain_not_enabled",
+          "probe_lane": "d1",
+          "_dym_probe_input": true
+        }
+      }
+    ],
+    "dym-gate": [],
+    "build-suggest-offer": [
+      {
+        "json": {
+          "tokens": [
+            "driver haqem"
+          ],
+          "elapsed_ms": 220.84,
+          "resolutions": [
+            {
+              "token": "driver haqem",
+              "resolved": false,
+              "ambiguous": false,
+              "matches": [],
+              "alternatives": []
+            }
+          ],
+          "unresolved_tokens": [
+            "driver haqem"
+          ],
+          "fallback_match_mode": "or",
+          "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+          "gate_passed": false,
+          "require_specific": false,
+          "resolved_company": null,
+          "company_team": null,
+          "resolved_companies": [],
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_companies": [],
+          "routing_company": null,
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "no entities and 'order' requires a scoping entity",
+          "gate_clarification": "",
+          "compatible_entities": [],
+          "gate_debug": {
+            "domain": "order",
+            "allowed_lookup": [
+              "order",
+              "customer_order",
+              "transporter",
+              "customer",
+              "product"
+            ],
+            "entities_count": 0
+          },
+          "escalate_message": "Couldn't find: \"driver haqem\" (transporter). Would you like me to escalate to customer service team?",
+          "is_clarification": false,
+          "found_summary": "",
+          "suggest_offer": false
+        }
+      }
+    ],
+    "tag-not-found": [
+      {
+        "json": {
+          "branch_kind": "not_found"
+        }
+      }
+    ],
+    "escalate-catalog": [
+      {
+        "json": {
+          "branch_kind": "not_found",
+          "response": "Couldn't find: \"driver haqem\" (transporter). Would you like me to escalate to customer service team?",
+          "manualResponse": true,
+          "includeResponse": true,
+          "is_escalate_offer": true
+        }
+      }
+    ],
+    "cs-offer-gate": [
+      {
+        "json": {
+          "branch_kind": "not_found",
+          "response": "Couldn't find: \"driver haqem\" (transporter). Would you like me to escalate to customer service team?",
+          "manualResponse": true,
+          "includeResponse": true,
+          "is_escalate_offer": true
+        }
+      }
+    ],
+    "cs-roster-plan": [
+      {
+        "json": {
+          "plan_idx": 0,
+          "company_id": null,
+          "company_name": null,
+          "brand_code": null,
+          "codes": [],
+          "labels": [],
+          "multi_company": false,
+          "companies": []
+        }
+      }
+    ],
+    "get-cs-members": [
+      {
+        "json": {
+          "body": [
+            {
+              "user_id": "0d69dfb7-dcf7-41fe-8457-f45897895182",
+              "name": "Person 21",
+              "respond_user_id": "1144607",
+              "email": "person5@example.com",
+              "sort_order": null
+            },
+            {
+              "user_id": "12246ae8-59e0-46a1-9cf0-fd80f45c1db9",
+              "name": "Person 22",
+              "respond_user_id": "1144556",
+              "email": "person6@example.com",
+              "sort_order": null
+            },
+            {
+              "user_id": "4dbed5e6-3be2-47a7-9d17-233d3df25d3f",
+              "name": "Person 23",
+              "respond_user_id": "1136807",
+              "email": "person7@example.com",
+              "sort_order": null
+            },
+            {
+              "user_id": "5eec9b80-d431-4e7e-a352-a1e753fc6a7e",
+              "name": "Person 24",
+              "respond_user_id": "1136805",
+              "email": "person8@example.com",
+              "sort_order": null
+            },
+            {
+              "user_id": "642699bd-cb2e-44a1-9aa8-9a05b21275e2",
+              "name": "Person 25",
+              "respond_user_id": "1136799",
+              "email": "person9@example.com",
+              "sort_order": null
+            },
+            {
+              "user_id": "70578600-0cc5-4040-ac81-c27bb31e917b",
+              "name": "Person 26",
+              "respond_user_id": "1144561",
+              "email": "person10@example.com",
+              "sort_order": null
+            },
+            {
+              "user_id": "8c41264e-896f-44e8-91f0-14c39a9432e5",
+              "name": "Person 27",
+              "respond_user_id": "1136808",
+              "email": "person11@example.com",
+              "sort_order": null
+            },
+            {
+              "user_id": "a41fbc80-db8c-4c4d-bbe1-7006fb438a06",
+              "name": "Person 28",
+              "respond_user_id": "1144558",
+              "email": "person12@example.com",
+              "sort_order": null
+            },
+            {
+              "user_id": "b69bb614-afed-49a2-ae1f-f0351c325bfd",
+              "name": "Person 29",
+              "respond_user_id": "1144554",
+              "email": "person13@example.com",
+              "sort_order": null
+            },
+            {
+              "user_id": "c483d959-f8b5-488a-bb9d-168fa0292d75",
+              "name": "Person 30",
+              "respond_user_id": "1144604",
+              "email": "person14@example.com",
+              "sort_order": null
+            }
+          ],
+          "headers": {
+            "server": "nginx/1.24.0 (Ubuntu)",
+            "date": "Wed, 26 Aug 2026 07:50:29 GMT",
+            "content-type": "application/json",
+            "transfer-encoding": "chunked",
+            "connection": "close",
+            "x-trace-id": "1757f8fbec884fe1",
+            "vary": "Accept-Encoding",
+            "x-frame-options": "SAMEORIGIN",
+            "x-content-type-options": "nosniff",
+            "x-xss-protection": "1; mode=block"
+          },
+          "statusCode": 200,
+          "statusMessage": "OK"
+        }
+      }
+    ],
+    "build-cs-member-offer": [
+      {
+        "json": {
+          "branch_kind": "not_found",
+          "response": "Couldn't find: \"driver haqem\" (transporter). Would you like me to escalate to customer service team?\n\nPlease choose who to route to (reply with the number):\n1. Person 21\n2. Person 22\n3. Person 23\n4. Person 24\n5. Person 25\n6. Person 26\n7. Person 27\n8. Person 28\n9. Person 29\n10. Person 30\n\nIf you have no preference, just reply 'yes' and we'll assign automatically.",
+          "manualResponse": true,
+          "includeResponse": true,
+          "is_escalate_offer": true,
+          "routing_companies": [
+            {
+              "plan_idx": 0,
+              "company_id": null,
+              "company_name": null,
+              "brand_code": null,
+              "codes": [],
+              "labels": [],
+              "multi_company": false,
+              "companies": []
+            }
+          ],
+          "cs_multi_close": null,
+          "cs_offer_company": null,
+          "member_offer": true,
+          "selection_context": "member_offer",
+          "cs_last_result_set": [
+            {
+              "idx": 1,
+              "label": "Person 21",
+              "uuid": "0d69dfb7-dcf7-41fe-8457-f45897895182",
+              "respond_user_id": "1144607",
+              "company_id": null,
+              "company_name": null,
+              "brand_code": null,
+              "company_ids": [
+                null
+              ],
+              "companies": []
+            },
+            {
+              "idx": 2,
+              "label": "Person 22",
+              "uuid": "12246ae8-59e0-46a1-9cf0-fd80f45c1db9",
+              "respond_user_id": "1144556",
+              "company_id": null,
+              "company_name": null,
+              "brand_code": null,
+              "company_ids": [
+                null
+              ],
+              "companies": []
+            },
+            {
+              "idx": 3,
+              "label": "Person 23",
+              "uuid": "4dbed5e6-3be2-47a7-9d17-233d3df25d3f",
+              "respond_user_id": "1136807",
+              "company_id": null,
+              "company_name": null,
+              "brand_code": null,
+              "company_ids": [
+                null
+              ],
+              "companies": []
+            },
+            {
+              "idx": 4,
+              "label": "Person 24",
+              "uuid": "5eec9b80-d431-4e7e-a352-a1e753fc6a7e",
+              "respond_user_id": "1136805",
+              "company_id": null,
+              "company_name": null,
+              "brand_code": null,
+              "company_ids": [
+                null
+              ],
+              "companies": []
+            },
+            {
+              "idx": 5,
+              "label": "Person 25",
+              "uuid": "642699bd-cb2e-44a1-9aa8-9a05b21275e2",
+              "respond_user_id": "1136799",
+              "company_id": null,
+              "company_name": null,
+              "brand_code": null,
+              "company_ids": [
+                null
+              ],
+              "companies": []
+            },
+            {
+              "idx": 6,
+              "label": "Person 26",
+              "uuid": "70578600-0cc5-4040-ac81-c27bb31e917b",
+              "respond_user_id": "1144561",
+              "company_id": null,
+              "company_name": null,
+              "brand_code": null,
+              "company_ids": [
+                null
+              ],
+              "companies": []
+            },
+            {
+              "idx": 7,
+              "label": "Person 27",
+              "uuid": "8c41264e-896f-44e8-91f0-14c39a9432e5",
+              "respond_user_id": "1136808",
+              "company_id": null,
+              "company_name": null,
+              "brand_code": null,
+              "company_ids": [
+                null
+              ],
+              "companies": []
+            },
+            {
+              "idx": 8,
+              "label": "Person 28",
+              "uuid": "a41fbc80-db8c-4c4d-bbe1-7006fb438a06",
+              "respond_user_id": "1144558",
+              "company_id": null,
+              "company_name": null,
+              "brand_code": null,
+              "company_ids": [
+                null
+              ],
+              "companies": []
+            },
+            {
+              "idx": 9,
+              "label": "Person 29",
+              "uuid": "b69bb614-afed-49a2-ae1f-f0351c325bfd",
+              "respond_user_id": "1144554",
+              "company_id": null,
+              "company_name": null,
+              "brand_code": null,
+              "company_ids": [
+                null
+              ],
+              "companies": []
+            },
+            {
+              "idx": 10,
+              "label": "Person 30",
+              "uuid": "c483d959-f8b5-488a-bb9d-168fa0292d75",
+              "respond_user_id": "1144604",
+              "company_id": null,
+              "company_name": null,
+              "brand_code": null,
+              "company_ids": [
+                null
+              ],
+              "companies": []
+            }
+          ]
+        }
+      }
+    ],
+    "compile-current-state": [
+      {
+        "json": {
+          "variables": {
+            "message_type": "business_query",
+            "intent_hint": "check_order",
+            "domain_hint": "order",
+            "user_goal": "trying to check the delivery order for driver haqem on 2026-08-25",
+            "query_brands": [],
+            "access_levels": [],
+            "entities": [
+              {
+                "raw": "driver haqem",
+                "hint": "transporter",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "routing": {
+              "suggested_team": "customer_service",
+              "suggested_agent": "order_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "response": "Couldn't find: \"driver haqem\" (transporter). Would you like me to escalate to customer service team?\n\nPlease choose who to route to (reply with the number):\n1. Person 21\n2. Person 22\n3. Person 23\n4. Person 24\n5. Person 25\n6. Person 26\n7. Person 27\n8. Person 28\n9. Person 29\n10. Person 30\n\nIf you have no preference, just reply 'yes' and we'll assign automatically.",
+            "last_result_set": [
+              {
+                "idx": 1,
+                "label": "Person 21",
+                "uuid": "0d69dfb7-dcf7-41fe-8457-f45897895182",
+                "respond_user_id": "1144607",
+                "company_id": null,
+                "company_name": null,
+                "brand_code": null,
+                "company_ids": [
+                  null
+                ],
+                "companies": []
+              },
+              {
+                "idx": 2,
+                "label": "Person 22",
+                "uuid": "12246ae8-59e0-46a1-9cf0-fd80f45c1db9",
+                "respond_user_id": "1144556",
+                "company_id": null,
+                "company_name": null,
+                "brand_code": null,
+                "company_ids": [
+                  null
+                ],
+                "companies": []
+              },
+              {
+                "idx": 3,
+                "label": "Person 23",
+                "uuid": "4dbed5e6-3be2-47a7-9d17-233d3df25d3f",
+                "respond_user_id": "1136807",
+                "company_id": null,
+                "company_name": null,
+                "brand_code": null,
+                "company_ids": [
+                  null
+                ],
+                "companies": []
+              },
+              {
+                "idx": 4,
+                "label": "Person 24",
+                "uuid": "5eec9b80-d431-4e7e-a352-a1e753fc6a7e",
+                "respond_user_id": "1136805",
+                "company_id": null,
+                "company_name": null,
+                "brand_code": null,
+                "company_ids": [
+                  null
+                ],
+                "companies": []
+              },
+              {
+                "idx": 5,
+                "label": "Person 25",
+                "uuid": "642699bd-cb2e-44a1-9aa8-9a05b21275e2",
+                "respond_user_id": "1136799",
+                "company_id": null,
+                "company_name": null,
+                "brand_code": null,
+                "company_ids": [
+                  null
+                ],
+                "companies": []
+              },
+              {
+                "idx": 6,
+                "label": "Person 26",
+                "uuid": "70578600-0cc5-4040-ac81-c27bb31e917b",
+                "respond_user_id": "1144561",
+                "company_id": null,
+                "company_name": null,
+                "brand_code": null,
+                "company_ids": [
+                  null
+                ],
+                "companies": []
+              },
+              {
+                "idx": 7,
+                "label": "Person 27",
+                "uuid": "8c41264e-896f-44e8-91f0-14c39a9432e5",
+                "respond_user_id": "1136808",
+                "company_id": null,
+                "company_name": null,
+                "brand_code": null,
+                "company_ids": [
+                  null
+                ],
+                "companies": []
+              },
+              {
+                "idx": 8,
+                "label": "Person 28",
+                "uuid": "a41fbc80-db8c-4c4d-bbe1-7006fb438a06",
+                "respond_user_id": "1144558",
+                "company_id": null,
+                "company_name": null,
+                "brand_code": null,
+                "company_ids": [
+                  null
+                ],
+                "companies": []
+              },
+              {
+                "idx": 9,
+                "label": "Person 29",
+                "uuid": "b69bb614-afed-49a2-ae1f-f0351c325bfd",
+                "respond_user_id": "1144554",
+                "company_id": null,
+                "company_name": null,
+                "brand_code": null,
+                "company_ids": [
+                  null
+                ],
+                "companies": []
+              },
+              {
+                "idx": 10,
+                "label": "Person 30",
+                "uuid": "c483d959-f8b5-488a-bb9d-168fa0292d75",
+                "respond_user_id": "1144604",
+                "company_id": null,
+                "company_name": null,
+                "brand_code": null,
+                "company_ids": [
+                  null
+                ],
+                "companies": []
+              }
+            ],
+            "selection_context": "member_offer",
+            "date_filter_start": "2026-08-25",
+            "date_filter_end": "2026-08-25",
+            "date_mode": null,
+            "match_mode": "and",
+            "contains_flyer": false,
+            "dym_offer": null,
+            "dym_candidates": [],
+            "ideation": null,
+            "routing_roster_plan": [
+              {
+                "plan_idx": 0,
+                "company_id": null,
+                "company_name": null,
+                "brand_code": null
+              }
+            ],
+            "routing_brand": null,
+            "routing_brand_source": null,
+            "routing_company": "00000000-0000-0000-0000-000000000001",
+            "routing_companies": [
+              {
+                "codes": [
+                  "PS202608-0382"
+                ],
+                "labels": [
+                  "PS202608-0382"
+                ],
+                "brand_code": null,
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento"
+              }
+            ]
+          },
+          "user_response": "Couldn't find: \"driver haqem\" (transporter). Would you like me to escalate to customer service team?\n\nPlease choose who to route to (reply with the number):\n1. Person 21\n2. Person 22\n3. Person 23\n4. Person 24\n5. Person 25\n6. Person 26\n7. Person 27\n8. Person 28\n9. Person 29\n10. Person 30\n\nIf you have no preference, just reply 'yes' and we'll assign automatically."
+        }
+      }
+    ],
+    "crossdomain-compose": [
+      {
+        "json": {
+          "variables": {
+            "message_type": "business_query",
+            "intent_hint": "check_order",
+            "domain_hint": "order",
+            "user_goal": "trying to check the delivery order for driver haqem on 2026-08-25",
+            "query_brands": [],
+            "access_levels": [],
+            "entities": [
+              {
+                "raw": "driver haqem",
+                "hint": "transporter",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "routing": {
+              "suggested_team": "customer_service",
+              "suggested_agent": "order_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "response": "Couldn't find: \"driver haqem\" (transporter). Would you like me to escalate to customer service team?\n\nPlease choose who to route to (reply with the number):\n1. Person 21\n2. Person 22\n3. Person 23\n4. Person 24\n5. Person 25\n6. Person 26\n7. Person 27\n8. Person 28\n9. Person 29\n10. Person 30\n\nIf you have no preference, just reply 'yes' and we'll assign automatically.",
+            "last_result_set": [
+              {
+                "idx": 1,
+                "label": "Person 21",
+                "uuid": "0d69dfb7-dcf7-41fe-8457-f45897895182",
+                "respond_user_id": "1144607",
+                "company_id": null,
+                "company_name": null,
+                "brand_code": null,
+                "company_ids": [
+                  null
+                ],
+                "companies": []
+              },
+              {
+                "idx": 2,
+                "label": "Person 22",
+                "uuid": "12246ae8-59e0-46a1-9cf0-fd80f45c1db9",
+                "respond_user_id": "1144556",
+                "company_id": null,
+                "company_name": null,
+                "brand_code": null,
+                "company_ids": [
+                  null
+                ],
+                "companies": []
+              },
+              {
+                "idx": 3,
+                "label": "Person 23",
+                "uuid": "4dbed5e6-3be2-47a7-9d17-233d3df25d3f",
+                "respond_user_id": "1136807",
+                "company_id": null,
+                "company_name": null,
+                "brand_code": null,
+                "company_ids": [
+                  null
+                ],
+                "companies": []
+              },
+              {
+                "idx": 4,
+                "label": "Person 24",
+                "uuid": "5eec9b80-d431-4e7e-a352-a1e753fc6a7e",
+                "respond_user_id": "1136805",
+                "company_id": null,
+                "company_name": null,
+                "brand_code": null,
+                "company_ids": [
+                  null
+                ],
+                "companies": []
+              },
+              {
+                "idx": 5,
+                "label": "Person 25",
+                "uuid": "642699bd-cb2e-44a1-9aa8-9a05b21275e2",
+                "respond_user_id": "1136799",
+                "company_id": null,
+                "company_name": null,
+                "brand_code": null,
+                "company_ids": [
+                  null
+                ],
+                "companies": []
+              },
+              {
+                "idx": 6,
+                "label": "Person 26",
+                "uuid": "70578600-0cc5-4040-ac81-c27bb31e917b",
+                "respond_user_id": "1144561",
+                "company_id": null,
+                "company_name": null,
+                "brand_code": null,
+                "company_ids": [
+                  null
+                ],
+                "companies": []
+              },
+              {
+                "idx": 7,
+                "label": "Person 27",
+                "uuid": "8c41264e-896f-44e8-91f0-14c39a9432e5",
+                "respond_user_id": "1136808",
+                "company_id": null,
+                "company_name": null,
+                "brand_code": null,
+                "company_ids": [
+                  null
+                ],
+                "companies": []
+              },
+              {
+                "idx": 8,
+                "label": "Person 28",
+                "uuid": "a41fbc80-db8c-4c4d-bbe1-7006fb438a06",
+                "respond_user_id": "1144558",
+                "company_id": null,
+                "company_name": null,
+                "brand_code": null,
+                "company_ids": [
+                  null
+                ],
+                "companies": []
+              },
+              {
+                "idx": 9,
+                "label": "Person 29",
+                "uuid": "b69bb614-afed-49a2-ae1f-f0351c325bfd",
+                "respond_user_id": "1144554",
+                "company_id": null,
+                "company_name": null,
+                "brand_code": null,
+                "company_ids": [
+                  null
+                ],
+                "companies": []
+              },
+              {
+                "idx": 10,
+                "label": "Person 30",
+                "uuid": "c483d959-f8b5-488a-bb9d-168fa0292d75",
+                "respond_user_id": "1144604",
+                "company_id": null,
+                "company_name": null,
+                "brand_code": null,
+                "company_ids": [
+                  null
+                ],
+                "companies": []
+              }
+            ],
+            "selection_context": "member_offer",
+            "date_filter_start": "2026-08-25",
+            "date_filter_end": "2026-08-25",
+            "date_mode": null,
+            "match_mode": "and",
+            "contains_flyer": false,
+            "dym_offer": null,
+            "dym_candidates": [],
+            "ideation": null,
+            "routing_roster_plan": [
+              {
+                "plan_idx": 0,
+                "company_id": null,
+                "company_name": null,
+                "brand_code": null
+              }
+            ],
+            "routing_brand": null,
+            "routing_brand_source": null,
+            "routing_company": "00000000-0000-0000-0000-000000000001",
+            "routing_companies": [
+              {
+                "codes": [
+                  "PS202608-0382"
+                ],
+                "labels": [
+                  "PS202608-0382"
+                ],
+                "brand_code": null,
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento"
+              }
+            ]
+          },
+          "user_response": "Couldn't find: \"driver haqem\" (transporter). Would you like me to escalate to customer service team?\n\nPlease choose who to route to (reply with the number):\n1. Person 21\n2. Person 22\n3. Person 23\n4. Person 24\n5. Person 25\n6. Person 26\n7. Person 27\n8. Person 28\n9. Person 29\n10. Person 30\n\nIf you have no preference, just reply 'yes' and we'll assign automatically."
+        }
+      }
+    ],
+    "sorento-sub-respond-sendmsg-respond2": [
+      {
+        "json": {
+          "success": true
+        }
+      }
+    ],
+    "Execution Data": [
+      {
+        "json": {
+          "success": true
+        }
+      }
+    ],
+    "attach-merge": [
+      {
+        "json": {
+          "attachments": []
+        }
+      }
+    ],
+    "if-got-attachments": [],
+    "save-session-vars": [
+      {
+        "json": {
+          "respond_io_id": "900000014",
+          "session_vars": {
+            "variables": {
+              "message_type": "business_query",
+              "intent_hint": "check_order",
+              "domain_hint": "order",
+              "user_goal": "trying to check the delivery order for driver haqem on 2026-08-25",
+              "query_brands": [],
+              "access_levels": [],
+              "entities": [
+                {
+                  "raw": "driver haqem",
+                  "hint": "transporter",
+                  "canonical_code": null,
+                  "current_message": true,
+                  "confident": true
+                }
+              ],
+              "routing": {
+                "suggested_team": "customer_service",
+                "suggested_agent": "order_enquiries"
+              },
+              "escalation": {
+                "is_escalation_confirmation": false
+              },
+              "response": "Couldn't find: \"driver haqem\" (transporter). Would you like me to escalate to customer service team?\n\nPlease choose who to route to (reply with the number):\n1. Person 21\n2. Person 22\n3. Person 23\n4. Person 24\n5. Person 25\n6. Person 26\n7. Person 27\n8. Person 28\n9. Person 29\n10. Person 30\n\nIf you have no preference, just reply 'yes' and we'll assign automatically.",
+              "last_result_set": [
+                {
+                  "idx": 1,
+                  "label": "Person 21",
+                  "uuid": "0d69dfb7-dcf7-41fe-8457-f45897895182",
+                  "respond_user_id": "1144607",
+                  "company_id": null,
+                  "company_name": null,
+                  "brand_code": null,
+                  "company_ids": [
+                    null
+                  ],
+                  "companies": []
+                },
+                {
+                  "idx": 2,
+                  "label": "Person 22",
+                  "uuid": "12246ae8-59e0-46a1-9cf0-fd80f45c1db9",
+                  "respond_user_id": "1144556",
+                  "company_id": null,
+                  "company_name": null,
+                  "brand_code": null,
+                  "company_ids": [
+                    null
+                  ],
+                  "companies": []
+                },
+                {
+                  "idx": 3,
+                  "label": "Person 23",
+                  "uuid": "4dbed5e6-3be2-47a7-9d17-233d3df25d3f",
+                  "respond_user_id": "1136807",
+                  "company_id": null,
+                  "company_name": null,
+                  "brand_code": null,
+                  "company_ids": [
+                    null
+                  ],
+                  "companies": []
+                },
+                {
+                  "idx": 4,
+                  "label": "Person 24",
+                  "uuid": "5eec9b80-d431-4e7e-a352-a1e753fc6a7e",
+                  "respond_user_id": "1136805",
+                  "company_id": null,
+                  "company_name": null,
+                  "brand_code": null,
+                  "company_ids": [
+                    null
+                  ],
+                  "companies": []
+                },
+                {
+                  "idx": 5,
+                  "label": "Person 25",
+                  "uuid": "642699bd-cb2e-44a1-9aa8-9a05b21275e2",
+                  "respond_user_id": "1136799",
+                  "company_id": null,
+                  "company_name": null,
+                  "brand_code": null,
+                  "company_ids": [
+                    null
+                  ],
+                  "companies": []
+                },
+                {
+                  "idx": 6,
+                  "label": "Person 26",
+                  "uuid": "70578600-0cc5-4040-ac81-c27bb31e917b",
+                  "respond_user_id": "1144561",
+                  "company_id": null,
+                  "company_name": null,
+                  "brand_code": null,
+                  "company_ids": [
+                    null
+                  ],
+                  "companies": []
+                },
+                {
+                  "idx": 7,
+                  "label": "Person 27",
+                  "uuid": "8c41264e-896f-44e8-91f0-14c39a9432e5",
+                  "respond_user_id": "1136808",
+                  "company_id": null,
+                  "company_name": null,
+                  "brand_code": null,
+                  "company_ids": [
+                    null
+                  ],
+                  "companies": []
+                },
+                {
+                  "idx": 8,
+                  "label": "Person 28",
+                  "uuid": "a41fbc80-db8c-4c4d-bbe1-7006fb438a06",
+                  "respond_user_id": "1144558",
+                  "company_id": null,
+                  "company_name": null,
+                  "brand_code": null,
+                  "company_ids": [
+                    null
+                  ],
+                  "companies": []
+                },
+                {
+                  "idx": 9,
+                  "label": "Person 29",
+                  "uuid": "b69bb614-afed-49a2-ae1f-f0351c325bfd",
+                  "respond_user_id": "1144554",
+                  "company_id": null,
+                  "company_name": null,
+                  "brand_code": null,
+                  "company_ids": [
+                    null
+                  ],
+                  "companies": []
+                },
+                {
+                  "idx": 10,
+                  "label": "Person 30",
+                  "uuid": "c483d959-f8b5-488a-bb9d-168fa0292d75",
+                  "respond_user_id": "1144604",
+                  "company_id": null,
+                  "company_name": null,
+                  "brand_code": null,
+                  "company_ids": [
+                    null
+                  ],
+                  "companies": []
+                }
+              ],
+              "selection_context": "member_offer",
+              "date_filter_start": "2026-08-25",
+              "date_filter_end": "2026-08-25",
+              "date_mode": null,
+              "match_mode": "and",
+              "contains_flyer": false,
+              "dym_offer": null,
+              "dym_candidates": [],
+              "ideation": null,
+              "routing_roster_plan": [
+                {
+                  "plan_idx": 0,
+                  "company_id": null,
+                  "company_name": null,
+                  "brand_code": null
+                }
+              ],
+              "routing_brand": null,
+              "routing_brand_source": null,
+              "routing_company": "00000000-0000-0000-0000-000000000001",
+              "routing_companies": [
+                {
+                  "codes": [
+                    "PS202608-0382"
+                  ],
+                  "labels": [
+                    "PS202608-0382"
+                  ],
+                  "brand_code": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento"
+                }
+              ]
+            },
+            "user_response": "Couldn't find: \"driver haqem\" (transporter). Would you like me to escalate to customer service team?\n\nPlease choose who to route to (reply with the number):\n1. Person 21\n2. Person 22\n3. Person 23\n4. Person 24\n5. Person 25\n6. Person 26\n7. Person 27\n8. Person 28\n9. Person 29\n10. Person 30\n\nIf you have no preference, just reply 'yes' and we'll assign automatically."
+          }
+        }
+      }
+    ],
+    "Call 'sub-respond-save-message-redis'2": [
+      {
+        "json": {
+          "contact_id": 900000014,
+          "phone_number": "+60100000007",
+          "message": "driver haqem for date 25/08/2026 ?",
+          "sent_at": 1787730629830,
+          "turn_id": "13984349",
+          "data": "{\"contact_id\":\"900000014\",\"phone_number\":\"+60100000007\",\"message\":\"driver haqem for date 25/08/2026 ?\",\"sent_at\":1787730621000,\"first_name\":\"Person 18\",\"last_name\":\"Person 19\",\"reply_to_message_id\":null,\"reply_to_message\":null,\"type\":\"incoming\",\"message_id\":\"1787730621000000\",\"turn_id\":\"13984349\",\"state_trace\":{\"v\":1,\"before\":{\"routing\":{\"suggested_team\":\"customer_service\",\"suggested_agent\":\"order_enquiries\"},\"entities\":[{\"raw\":\"Haqem\",\"hint\":\"customer\",\"confident\":true,\"canonical_code\":null,\"current_message\":false}],\"ideation\":null,\"response\":\"Escalation declined.\",\"date_mode\":null,\"dym_offer\":null,\"user_goal\":\"trying to decline the escalation offer\",\"escalation\":{\"escalation_declined\":true,\"is_escalation_confirmation\":false},\"match_mode\":\"and\",\"domain_hint\":null,\"intent_hint\":null,\"message_type\":\"casual\",\"query_brands\":[],\"access_levels\":[],\"routing_brand\":null,\"contains_flyer\":false,\"dym_candidates\":{\"n\":0,\"first\":null},\"date_filter_end\":null,\"last_result_set\":{\"n\":0,\"first\":null},\"routing_company\":\"00000000-0000-0000-0000-000000000001\",\"date_filter_start\":null,\"routing_companies\":[{\"codes\":[\"PS202608-0382\"],\"labels\":[\"PS202608-0382\"],\"brand_code\":null,\"company_id\":\"00000000-0000-0000-0000-000000000001\",\"company_name\":\"Sorento\"}],\"selection_context\":null,\"routing_roster_plan\":[{\"plan_idx\":0,\"brand_code\":null,\"company_id\":null,\"company_name\":null}],\"routing_brand_source\":null},\"parser_raw\":{\"message_type\":\"business_query\",\"intent_hint\":\"check_order\",\"domain_hint\":\"order\",\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"trying to check the delivery order for driver haqem on 2026-08-25\",\"access_levels\":[],\"broaden_axis\":null,\"date_mode\":null,\"date_filter_start\":\"2026-08-25\",\"date_filter_end\":\"2026-08-25\",\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[{\"raw\":\"driver haqem\",\"hint\":\"transporter\",\"canonical_code\":null,\"current_message\":true,\"confident\":true}],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":\"customer_service\",\"suggested_agent\":\"order_enquiries\"},\"escalation\":{\"is_escalation_confirmation\":false,\"company_pick\":null}},\"parser_applied\":{\"message_type\":\"business_query\",\"intent_hint\":\"check_order\",\"domain_hint\":\"order\",\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"trying to check the delivery order for driver haqem on 2026-08-25\",\"access_levels\":[],\"broaden_axis\":null,\"date_mode\":null,\"date_filter_start\":\"2026-08-25\",\"date_filter_end\":\"2026-08-25\",\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[{\"raw\":\"driver haqem\",\"hint\":\"transporter\",\"canonical_code\":null,\"current_message\":true,\"confident\":true}],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":\"customer_service\",\"suggested_agent\":\"order_enquiries\"},\"escalation\":{\"is_escalation_confirmation\":false},\"domain_signal_source\":\"intent_explicit\",\"scope_exclusive_applied\":false,\"entity_op_applied\":\"replace_combine\",\"query_brands\":[],\"entities_filtered\":false,\"entities_emptied_by_filter\":false},\"after\":{\"message_type\":\"business_query\",\"intent_hint\":\"check_order\",\"domain_hint\":\"order\",\"user_goal\":\"trying to check the delivery order for driver haqem on 2026-08-25\",\"query_brands\":[],\"access_levels\":[],\"entities\":[{\"raw\":\"driver haqem\",\"hint\":\"transporter\",\"canonical_code\":null,\"current_message\":true,\"confident\":true}],\"routing\":{\"suggested_team\":\"customer_service\",\"suggested_agent\":\"order_enquiries\"},\"escalation\":{\"is_escalation_confirmation\":false},\"response\":\"Couldn't find: \\\"driver haqem\\\" (transporter). Would you like me to escalate to customer service team?\\n\\nPlease choose who to route to (reply with the number):\\n1. Person 21\\n2. Person 22\\n3. Person 23\\n4. Person 24\\n5. Person 25\\n6. Person 26\\n7. Person 27\\n8. Person 28\\n9. Person 29\\n10. Person 30\\n\\nIf you have no preference, just reply 'yes' and we'll assign automatically.\",\"last_result_set\":{\"n\":10,\"first\":\"Person 21\"},\"selection_context\":\"member_offer\",\"date_filter_start\":\"2026-08-25\",\"date_filter_end\":\"2026-08-25\",\"date_mode\":null,\"match_mode\":\"and\",\"contains_flyer\":false,\"dym_offer\":null,\"dym_candidates\":{\"n\":0,\"first\":null},\"ideation\":null,\"routing_roster_plan\":[{\"plan_idx\":0,\"company_id\":null,\"company_name\":null,\"brand_code\":null}],\"routing_brand\":null,\"routing_brand_source\":null,\"routing_company\":\"00000000-0000-0000-0000-000000000001\",\"routing_companies\":[{\"codes\":[\"PS202608-0382\"],\"labels\":[\"PS202608-0382\"],\"brand_code\":null,\"company_id\":\"00000000-0000-0000-0000-000000000001\",\"company_name\":\"Sorento\"}]}}}"
+        }
+      }
+    ],
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 900000014,
+              "firstName": "Person 18",
+              "lastName": "Person 19",
+              "phone": "+60100000007",
+              "email": "person4@example.com",
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": null
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/de238698-9415-4f5d-b423-6c67aaec2653"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260510_200514",
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": "New Lead",
+              "created_at": 1778415976
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "e243e56c-a072-4fec-b851-1695545bb009",
+              "contact": {
+                "id": 900000014,
+                "firstName": "Person 18",
+                "lastName": "Person 19",
+                "phone": "+60100000007",
+                "email": "person4@example.com",
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1778415976
+              },
+              "message": {
+                "messageId": 1787730621000000,
+                "channelMessageId": "wamid.HBgLNjAxNDkzNjExNzgVAgASGBYzRUIwNTEyNThCRDA1NzlBODlENUU3AA==",
+                "contactId": 900000014,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1787730621000,
+                "message": {
+                  "type": "text",
+                  "text": "driver haqem for date 25/08/2026 ?"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 20\"},\"wa_id\":\"60100000007\",\"user_id\":\"MY.900000015\",\"firstName\":\"Person 18\",\"lastName\":\"Person 6\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000014",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "customer_service",
+                    "suggested_agent": "order_enquiries"
+                  },
+                  "entities": [
+                    {
+                      "raw": "Haqem",
+                      "hint": "customer",
+                      "confident": true,
+                      "canonical_code": null,
+                      "current_message": false
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Escalation declined.",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to decline the escalation offer",
+                  "escalation": {
+                    "escalation_declined": true,
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": null,
+                  "intent_hint": null,
+                  "message_type": "casual",
+                  "query_brands": [],
+                  "access_levels": [],
+                  "routing_brand": null,
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [],
+                  "routing_company": "00000000-0000-0000-0000-000000000001",
+                  "date_filter_start": null,
+                  "routing_companies": [
+                    {
+                      "codes": [
+                        "PS202608-0382"
+                      ],
+                      "labels": [
+                        "PS202608-0382"
+                      ],
+                      "brand_code": null,
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "selection_context": null,
+                  "routing_roster_plan": [
+                    {
+                      "plan_idx": 0,
+                      "brand_code": null,
+                      "company_id": null,
+                      "company_name": null
+                    }
+                  ],
+                  "routing_brand_source": null
+                },
+                "user_response": "Escalation declined."
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "check_order",
+                "domain_hint": "order",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check the delivery order for driver haqem on 2026-08-25",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": "2026-08-25",
+                "date_filter_end": "2026-08-25",
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "driver haqem",
+                    "hint": "transporter",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "customer_service",
+                  "suggested_agent": "order_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_explicit",
+                "scope_exclusive_applied": false,
+                "entity_op_applied": "replace_combine",
+                "query_brands": [],
+                "entities_filtered": false,
+                "entities_emptied_by_filter": false
+              },
+              "_parser_raw": {
+                "message_type": "business_query",
+                "intent_hint": "check_order",
+                "domain_hint": "order",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check the delivery order for driver haqem on 2026-08-25",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": "2026-08-25",
+                "date_filter_end": "2026-08-25",
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "driver haqem",
+                    "hint": "transporter",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "customer_service",
+                  "suggested_agent": "order_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "Order Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            }
+          }
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "branch_kind": "not_found",
+        "response": "Couldn't find: \"driver haqem\" (transporter). Would you like me to escalate to customer service team?",
+        "manualResponse": true,
+        "includeResponse": true,
+        "is_escalate_offer": true
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "plan_idx": 0,
+        "company_id": null,
+        "company_name": null,
+        "brand_code": null,
+        "codes": [],
+        "labels": [],
+        "multi_company": false,
+        "companies": []
+      }
+    }
+  ],
+  "runIndex": 0,
+  "execution": {
+    "id": "13984349"
+  },
+  "ran": [
+    "When Executed by Another Workflow",
+    "redis-pop-main-message-list",
+    "detect-media",
+    "if-media-in",
+    "tf-message",
+    "sorento-sub-respond-findcontact-respond",
+    "if-transcribed-confirm",
+    "is-human-intervened",
+    "if-message-is-audio",
+    "get-session-vars",
+    "Call 'sub-query-reformulator'",
+    "check-access",
+    "If5",
+    "If2",
+    "If-ideate",
+    "offer-hold-gate",
+    "If10",
+    "is-escalation-declined",
+    "If9",
+    "If1",
+    "not-supported-domain",
+    "If",
+    "If7",
+    "resolve-entity",
+    "disallowed-entity-gate",
+    "If3",
+    "If-incoming-picker",
+    "If-customer-picker",
+    "not-found-error-message",
+    "sibling-gate",
+    "dym-transform",
+    "dym-gate",
+    "build-suggest-offer",
+    "tag-not-found",
+    "escalate-catalog",
+    "cs-offer-gate",
+    "cs-roster-plan",
+    "get-cs-members",
+    "build-cs-member-offer",
+    "compile-current-state",
+    "crossdomain-compose",
+    "sorento-sub-respond-sendmsg-respond2",
+    "Execution Data",
+    "attach-merge",
+    "if-got-attachments",
+    "save-session-vars",
+    "Call 'sub-respond-save-message-redis'2"
+  ]
+}

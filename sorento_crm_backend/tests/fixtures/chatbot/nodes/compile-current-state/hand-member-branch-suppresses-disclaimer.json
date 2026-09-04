@@ -1,0 +1,193 @@
+{
+  "source": {
+    "hand_crafted": true,
+    "expected_from": "reasoned",
+    "reasoned_from": "contract",
+    "rationale": "Same rule for the member-offer branch, whose roster is also a non-empty last_result_set. The row here carries an EMPTY companies[] with a company_id, which is the shape the label builder must read as 'no labels' — an empty array is not a label list.",
+    "amended": [
+      {
+        "at": "2026-08-26T13:01:29Z",
+        "to_version": "74ef5116-ac62-435f-a506-02a751070588",
+        "reason": "baseline catch-up re-pin to live 74ef5116 (other lanes; see commit body)",
+        "paths": [
+          "[0].json.variables.requested_attributes"
+        ]
+      }
+    ]
+  },
+  "ctx": {
+    "Call 'sub-query-reformulator'": [
+      {
+        "json": {
+          "output": {
+            "message_type": "business_query",
+            "intent_hint": "product_info",
+            "domain_hint": "master_products",
+            "routing": {
+              "suggested_team": "sales"
+            },
+            "escalation": {}
+          }
+        }
+      }
+    ],
+    "sorento-sub-respond-findcontact-respond": [
+      {
+        "json": {
+          "id": 900000003
+        }
+      }
+    ],
+    "build-cs-member-offer": [
+      {
+        "json": {
+          "response": "Reply the number or name:\n1. Person 1",
+          "manualResponse": true,
+          "includeResponse": true,
+          "selection_context": "member_offer",
+          "cs_last_result_set": [
+            {
+              "idx": 1,
+              "label": "Person 1",
+              "company_id": "c1",
+              "companies": []
+            }
+          ]
+        }
+      }
+    ],
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 900000003
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "product_info",
+                "domain_hint": "master_products",
+                "routing": {
+                  "suggested_team": "sales"
+                },
+                "escalation": {}
+              }
+            }
+          }
+        }
+      }
+    ],
+    "build-outcome": [
+      {
+        "json": {
+          "branch_kind": "escalate",
+          "outcome": {
+            "build-ideate-reply": null,
+            "build-suggest-offer": null,
+            "build-cs-member-offer": {
+              "response": "Reply the number or name:\n1. Person 1",
+              "manualResponse": true,
+              "includeResponse": true,
+              "selection_context": "member_offer",
+              "cs_last_result_set": [
+                {
+                  "idx": 1,
+                  "label": "Person 1",
+                  "company_id": "c1",
+                  "companies": []
+                }
+              ]
+            },
+            "escalate-catalog": null,
+            "central-exchange": null,
+            "access-level-choice-message": null,
+            "promo-picker": null,
+            "validator": null,
+            "crossdomain-zeroset": null,
+            "build-miss-member-offer": null,
+            "dym-annotate-partial": null,
+            "dym-annotate": null,
+            "clarify-company-reply": null,
+            "offer-hold-reply": null,
+            "cs-roster-plan": null
+          }
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "branch_kind": "escalate",
+        "outcome": {
+          "build-ideate-reply": null,
+          "build-suggest-offer": null,
+          "build-cs-member-offer": {
+            "response": "Reply the number or name:\n1. Person 1",
+            "manualResponse": true,
+            "includeResponse": true,
+            "selection_context": "member_offer",
+            "cs_last_result_set": [
+              {
+                "idx": 1,
+                "label": "Person 1",
+                "company_id": "c1",
+                "companies": []
+              }
+            ]
+          },
+          "escalate-catalog": null,
+          "central-exchange": null,
+          "access-level-choice-message": null,
+          "promo-picker": null,
+          "validator": null,
+          "crossdomain-zeroset": null,
+          "build-miss-member-offer": null,
+          "dym-annotate-partial": null,
+          "dym-annotate": null,
+          "clarify-company-reply": null,
+          "offer-hold-reply": null,
+          "cs-roster-plan": null
+        }
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "variables": {
+          "message_type": "business_query",
+          "intent_hint": "product_info",
+          "domain_hint": "master_products",
+          "entities": [],
+          "routing": {
+            "suggested_team": "sales"
+          },
+          "escalation": {},
+          "response": "Reply the number or name:\n1. Person 1",
+          "last_result_set": [
+            {
+              "idx": 1,
+              "label": "Person 1",
+              "company_id": "c1",
+              "companies": []
+            }
+          ],
+          "selection_context": "member_offer",
+          "requested_attributes": [],
+          "dym_offer": null,
+          "dym_candidates": [],
+          "ideation": null,
+          "routing_roster_plan": null,
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_company": null,
+          "routing_companies": null
+        },
+        "user_response": "Reply the number or name:\n1. Person 1"
+      }
+    }
+  ],
+  "runIndex": 0
+}

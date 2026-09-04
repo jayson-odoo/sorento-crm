@@ -1,0 +1,180 @@
+{
+  "source": {
+    "hand_crafted": true,
+    "expected_from": "reasoned",
+    "reasoned_from": "contract",
+    "rationale": "The ideate branch is the highest-priority manual reply: build-ideate-reply's text goes out verbatim and its ideation POINTER is persisted, instead of the session carry-forward the other arm uses. manualResponse suppresses the compression block, so `response` stays the relayed text.",
+    "reasoned": true,
+    "repinned_at_version": "df165492",
+    "repin_rationale": "RE-PINNED at live df165492 (media-intake promote). Two changes, both re-derived from the new contract: (1) a final em-dash sanitizer deep-walks the returned payload, so every U+2014 in user_response / variables.* folds to a plain hyphen; (2) miss/DYM lines now carry an entity-type suffix ` (<type>)` on the quoted token - resolver PRIMARY (that token's resolution matches[0].entity_type, prettified only when snake_case/kebab), parser `hint` FALLBACK, bare when neither classifies. The new MI-D media-confirm prefix is inert on these fixtures (patch-transcript not executed). Numbering, dym_last_result_set and dym candidates are unchanged.",
+    "amended": [
+      {
+        "at": "2026-08-26T13:01:29Z",
+        "to_version": "74ef5116-ac62-435f-a506-02a751070588",
+        "reason": "baseline catch-up re-pin to live 74ef5116 (other lanes; see commit body)",
+        "paths": [
+          "[0].json.variables.requested_attributes"
+        ]
+      }
+    ]
+  },
+  "ctx": {
+    "Call 'sub-query-reformulator'": [
+      {
+        "json": {
+          "output": {
+            "message_type": "ideation",
+            "intent_hint": "ideate",
+            "domain_hint": null,
+            "routing": {
+              "suggested_team": "sales"
+            },
+            "escalation": {}
+          }
+        }
+      }
+    ],
+    "sorento-sub-respond-findcontact-respond": [
+      {
+        "json": {
+          "id": 900000003
+        }
+      }
+    ],
+    "build-ideate-reply": [
+      {
+        "json": {
+          "response": "Got it — what room is this for?",
+          "manualResponse": true,
+          "includeResponse": true,
+          "ideation": {
+            "draft_id": "d1",
+            "status": "collecting"
+          },
+          "ideate_status": "collecting"
+        }
+      }
+    ],
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 900000003
+            },
+            "parse": {
+              "output": {
+                "message_type": "ideation",
+                "intent_hint": "ideate",
+                "domain_hint": null,
+                "routing": {
+                  "suggested_team": "sales"
+                },
+                "escalation": {}
+              }
+            }
+          }
+        }
+      }
+    ],
+    "build-outcome": [
+      {
+        "json": {
+          "branch_kind": "ideate",
+          "outcome": {
+            "build-ideate-reply": {
+              "response": "Got it — what room is this for?",
+              "manualResponse": true,
+              "includeResponse": true,
+              "ideation": {
+                "draft_id": "d1",
+                "status": "collecting"
+              },
+              "ideate_status": "collecting"
+            },
+            "build-suggest-offer": null,
+            "build-cs-member-offer": null,
+            "escalate-catalog": null,
+            "central-exchange": null,
+            "access-level-choice-message": null,
+            "promo-picker": null,
+            "validator": null,
+            "crossdomain-zeroset": null,
+            "build-miss-member-offer": null,
+            "dym-annotate-partial": null,
+            "dym-annotate": null,
+            "clarify-company-reply": null,
+            "offer-hold-reply": null,
+            "cs-roster-plan": null
+          }
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "branch_kind": "ideate",
+        "outcome": {
+          "build-ideate-reply": {
+            "response": "Got it — what room is this for?",
+            "manualResponse": true,
+            "includeResponse": true,
+            "ideation": {
+              "draft_id": "d1",
+              "status": "collecting"
+            },
+            "ideate_status": "collecting"
+          },
+          "build-suggest-offer": null,
+          "build-cs-member-offer": null,
+          "escalate-catalog": null,
+          "central-exchange": null,
+          "access-level-choice-message": null,
+          "promo-picker": null,
+          "validator": null,
+          "crossdomain-zeroset": null,
+          "build-miss-member-offer": null,
+          "dym-annotate-partial": null,
+          "dym-annotate": null,
+          "clarify-company-reply": null,
+          "offer-hold-reply": null,
+          "cs-roster-plan": null
+        }
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "variables": {
+          "message_type": "ideation",
+          "intent_hint": "ideate",
+          "domain_hint": null,
+          "entities": [],
+          "routing": {
+            "suggested_team": "sales"
+          },
+          "escalation": {},
+          "response": "Got it - what room is this for?",
+          "last_result_set": [],
+          "selection_context": null,
+          "requested_attributes": [],
+          "dym_offer": null,
+          "dym_candidates": [],
+          "ideation": {
+            "draft_id": "d1",
+            "status": "collecting"
+          },
+          "routing_roster_plan": null,
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_company": null,
+          "routing_companies": null
+        },
+        "user_response": "Got it - what room is this for?"
+      }
+    }
+  ],
+  "runIndex": 0
+}

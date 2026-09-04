@@ -1,0 +1,355 @@
+{
+  "source": {
+    "hand_crafted": true,
+    "expected_from": "reasoned",
+    "reasoned_from": "contract",
+    "rationale": "An attachment turn where the parser named no attachment entity AT ALL: the lookup returns nothing and the noun falls back to 'document' rather than dereferencing the missing entity.",
+    "reasoned": true,
+    "repinned_at_version": "df165492",
+    "repin_rationale": "RE-PINNED at live df165492 (media-intake promote). Two changes, both re-derived from the new contract: (1) a final em-dash sanitizer deep-walks the returned payload, so every U+2014 in user_response / variables.* folds to a plain hyphen; (2) miss/DYM lines now carry an entity-type suffix ` (<type>)` on the quoted token - resolver PRIMARY (that token's resolution matches[0].entity_type, prettified only when snake_case/kebab), parser `hint` FALLBACK, bare when neither classifies. The new MI-D media-confirm prefix is inert on these fixtures (patch-transcript not executed). Numbering, dym_last_result_set and dym candidates are unchanged.",
+    "amended": [
+      {
+        "at": "2026-08-26T13:01:29Z",
+        "to_version": "74ef5116-ac62-435f-a506-02a751070588",
+        "reason": "baseline catch-up re-pin to live 74ef5116 (other lanes; see commit body)",
+        "paths": [
+          "[0].json.variables.requested_attributes"
+        ]
+      }
+    ]
+  },
+  "ctx": {
+    "Call 'sub-query-reformulator'": [
+      {
+        "json": {
+          "output": {
+            "message_type": "business_query",
+            "intent_hint": "get_attachment",
+            "domain_hint": "product_attachment",
+            "entities": [
+              {
+                "raw": "MHS1542-CR-DIY",
+                "hint": "product"
+              },
+              {
+                "raw": "IBKS9999",
+                "hint": "product"
+              }
+            ],
+            "routing": {
+              "suggested_team": "sales"
+            },
+            "escalation": {}
+          }
+        }
+      }
+    ],
+    "sorento-sub-respond-findcontact-respond": [
+      {
+        "json": {
+          "id": "437264483"
+        }
+      }
+    ],
+    "central-exchange": [
+      {
+        "json": {
+          "response": "Here is the document.",
+          "items": [
+            {
+              "title": "Catalogue",
+              "attachmentType": "certificates"
+            }
+          ]
+        }
+      }
+    ],
+    "resolve-entity": [
+      {
+        "json": {
+          "resolutions": [
+            {
+              "token": "mhs1542-cr-diy",
+              "resolved": true,
+              "matches": [
+                {
+                  "uuid": "up",
+                  "canonical_code": "MHS1542-CR-DIY",
+                  "entity_type": "product",
+                  "match_tier": "exact"
+                }
+              ]
+            },
+            {
+              "token": "IBKS9999",
+              "resolved": false,
+              "ambiguous": true,
+              "matches": [
+                {
+                  "uuid": "c1",
+                  "canonical_code": "IBKS5245-NG-BL",
+                  "entity_type": "product",
+                  "match_tier": "prefix"
+                }
+              ]
+            }
+          ],
+          "unresolved_tokens": [
+            "IBKS9999"
+          ]
+        }
+      }
+    ],
+    "disallowed-entity-gate": [
+      {
+        "json": {
+          "require_specific": false,
+          "compatible_entities": [
+            {
+              "uuid": "up",
+              "code": "MHS1542-CR-DIY"
+            }
+          ],
+          "gate_debug": {
+            "allowed_lookup": [
+              "product",
+              "attachment",
+              "attachment_type",
+              "category",
+              "brand",
+              "certificate"
+            ]
+          },
+          "resolutions": []
+        }
+      }
+    ],
+    "dym-annotate-partial": [
+      {
+        "json": {
+          "dym_probe_meta": {
+            "ok": true,
+            "probed": [
+              "ibks5245-ng-bl"
+            ]
+          },
+          "dym_available_codes": []
+        }
+      }
+    ],
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": "437264483"
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "get_attachment",
+                "domain_hint": "product_attachment",
+                "entities": [
+                  {
+                    "raw": "MHS1542-CR-DIY",
+                    "hint": "product"
+                  },
+                  {
+                    "raw": "IBKS9999",
+                    "hint": "product"
+                  }
+                ],
+                "routing": {
+                  "suggested_team": "sales"
+                },
+                "escalation": {}
+              }
+            }
+          }
+        }
+      }
+    ],
+    "build-outcome": [
+      {
+        "json": {
+          "response": "Here is the document.",
+          "outcome": {
+            "build-ideate-reply": null,
+            "build-suggest-offer": null,
+            "build-cs-member-offer": null,
+            "escalate-catalog": null,
+            "central-exchange": {
+              "response": "Here is the document.",
+              "items": [
+                {
+                  "title": "Catalogue",
+                  "attachmentType": "certificates"
+                }
+              ]
+            },
+            "access-level-choice-message": null,
+            "promo-picker": null,
+            "validator": null,
+            "crossdomain-zeroset": null,
+            "build-miss-member-offer": null,
+            "dym-annotate-partial": {
+              "dym_probe_meta": {
+                "ok": true,
+                "probed": [
+                  "ibks5245-ng-bl"
+                ]
+              },
+              "dym_available_codes": []
+            },
+            "dym-annotate": null,
+            "clarify-company-reply": null,
+            "offer-hold-reply": null,
+            "cs-roster-plan": null
+          }
+        }
+      }
+    ],
+    "miss-roster-check": [
+      {
+        "json": {
+          "response": "Here is the document.",
+          "items": [
+            {
+              "title": "Catalogue",
+              "attachmentType": "certificates"
+            }
+          ],
+          "_offer": false
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "response": "Here is the document.",
+        "outcome": {
+          "build-ideate-reply": null,
+          "build-suggest-offer": null,
+          "build-cs-member-offer": null,
+          "escalate-catalog": null,
+          "central-exchange": {
+            "response": "Here is the document.",
+            "items": [
+              {
+                "title": "Catalogue",
+                "attachmentType": "certificates"
+              }
+            ]
+          },
+          "access-level-choice-message": null,
+          "promo-picker": null,
+          "validator": null,
+          "crossdomain-zeroset": null,
+          "build-miss-member-offer": null,
+          "dym-annotate-partial": {
+            "dym_probe_meta": {
+              "ok": true,
+              "probed": [
+                "ibks5245-ng-bl"
+              ]
+            },
+            "dym_available_codes": []
+          },
+          "dym-annotate": null,
+          "clarify-company-reply": null,
+          "offer-hold-reply": null,
+          "cs-roster-plan": null
+        }
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "variables": {
+          "message_type": "business_query",
+          "intent_hint": "get_attachment",
+          "domain_hint": "product_attachment",
+          "entities": [
+            {
+              "raw": "MHS1542-CR-DIY",
+              "hint": "product",
+              "canonical_code": "MHS1542-CR-DIY"
+            },
+            {
+              "raw": "IBKS9999",
+              "hint": "product",
+              "canonical_code": "IBKS5245-NG-BL"
+            }
+          ],
+          "routing": {
+            "suggested_team": "sales"
+          },
+          "escalation": {},
+          "response": "Previous turn (product_attachment): returned 1 certificates [1 did-you-mean suggestions active]",
+          "last_result_set": [
+            {
+              "idx": 1,
+              "uuid": null,
+              "label": "Catalogue",
+              "entity_type": null,
+              "product": null,
+              "attachment_type": "certificates",
+              "filename": null
+            }
+          ],
+          "selection_context": null,
+          "requested_attributes": [],
+          "dym_offer": {
+            "id": "test",
+            "domain": "product_attachment",
+            "ttl": 3,
+            "candidates": [
+              {
+                "code": "IBKS5245-NG-BL",
+                "uuid": "c1",
+                "entity_type": "product",
+                "for_raw": "IBKS9999",
+                "for_hint": "product",
+                "for_canonical": null
+              }
+            ],
+            "picked": []
+          },
+          "dym_candidates": [
+            {
+              "code": "IBKS5245-NG-BL",
+              "uuid": "c1",
+              "entity_type": "product",
+              "for_raw": "IBKS9999",
+              "for_hint": "product",
+              "for_canonical": null
+            }
+          ],
+          "ideation": null,
+          "dym_last_result_set": [
+            {
+              "idx": 1,
+              "label": "IBKS5245-NG-BL",
+              "value": "IBKS5245-NG-BL",
+              "product": "IBKS5245-NG-BL",
+              "uuid": "c1",
+              "entity_type": "product",
+              "for_raw": "IBKS9999",
+              "for_hint": "product",
+              "for_canonical": null
+            }
+          ],
+          "routing_roster_plan": null,
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_company": null,
+          "routing_companies": null
+        },
+        "user_response": "Here is the document.\n\nCouldn't find these:\n\"IBKS9999\" (product), did you mean:\n  1. IBKS5245-NG-BL - no document\n\nReply a number to check it, or ask again."
+      }
+    }
+  ],
+  "runIndex": 0
+}

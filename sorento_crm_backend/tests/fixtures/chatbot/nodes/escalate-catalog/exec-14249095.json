@@ -1,0 +1,805 @@
+{
+  "source": {
+    "execution_id": "14249095",
+    "workflow_id": "9qVyfUxmRQqrpGRMDLRuz",
+    "workflow_version": "c9fe3e68-b732-460d-b968-c1b4a5e5f038",
+    "node": "escalate-catalog",
+    "captured_at": "2026-08-29T10:32:39+00:00",
+    "expected_from": "runData",
+    "dedupe_sig": "d5817b656ff73dd958c1574e99dd315d3798b0fe8b451d9040809606596fa5f8"
+  },
+  "ctx": {
+    "tf-message": [
+      {
+        "json": {
+          "event_type": "message.received",
+          "event_id": "bfb80970-7e62-4ac3-8421-3a5402b563cc",
+          "contact": {
+            "id": 900000034,
+            "firstName": "Person 60",
+            "lastName": "Person 61",
+            "phone": "+60100000019",
+            "email": null,
+            "language": null,
+            "profilePic": null,
+            "countryCode": "MY",
+            "status": "open",
+            "assignee": {
+              "id": 900000002,
+              "email": "person1@example.com",
+              "firstName": "Person 2",
+              "lastName": "Person 3",
+              "role": "user"
+            },
+            "created_at": 1782546255
+          },
+          "message": {
+            "messageId": 1787908679000000,
+            "channelMessageId": "wamid.HBgLNjAxNjIyNzE2NzkVAgASGCBBQ0U3QTkzMTc1MUUyQzJEQjc1QTIxQzkxNTI1NjJBRgA=",
+            "contactId": 900000034,
+            "channelId": 453209,
+            "traffic": "incoming",
+            "timestamp": 1787908679000,
+            "message": {
+              "type": "text",
+              "text": "Who is highest order for sorento dealer?"
+            }
+          },
+          "channel": {
+            "id": 453209,
+            "name": "Internal (+60 11-1673 1179)",
+            "source": "whatsapp_business",
+            "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 62\"},\"wa_id\":\"60100000019\",\"user_id\":\"MY.900000035\",\"firstName\":\"Person 6\",\"lastName\":\"Person 60\"}}",
+            "created_at": 1767682908
+          },
+          "sender": {
+            "source": "contact",
+            "userId": null,
+            "teamId": null,
+            "workflowId": null,
+            "broadcastHistoryId": null
+          }
+        }
+      }
+    ],
+    "sorento-sub-respond-findcontact-respond": [
+      {
+        "json": {
+          "id": 900000034,
+          "firstName": "Person 60",
+          "lastName": "Person 61",
+          "phone": "+60100000019",
+          "email": null,
+          "language": null,
+          "profilePic": null,
+          "locale": null,
+          "countryCode": "MY",
+          "status": "open",
+          "isBlocked": false,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": null
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "backend_id",
+              "value": "https://fe-sorento.foundryx.my/user-management/contacts/04ddf73e-3a0e-4914-8b24-18ed8aac06b8"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "tags": [
+            "imported_20260627_150636"
+          ],
+          "assignee": {
+            "id": 900000002,
+            "firstName": "Person 2",
+            "lastName": "Person 3",
+            "email": "person1@example.com"
+          },
+          "lifecycle": "New Lead",
+          "created_at": 1782546255
+        }
+      }
+    ],
+    "get-session-vars": [
+      {
+        "json": {
+          "respond_io_id": "900000034",
+          "session_vars": {
+            "variables": {
+              "routing": {
+                "suggested_team": "purchasing",
+                "suggested_agent": "incoming_stock_enquiries"
+              },
+              "entities": [],
+              "ideation": null,
+              "response": "Informed the user that request is out of scope and will proceed to escalate to the purchasing team",
+              "date_mode": null,
+              "dym_offer": null,
+              "user_goal": "trying to escalate the incoming stock enquiry to the purchasing team",
+              "escalation": {
+                "is_escalation_confirmation": true
+              },
+              "match_mode": "and",
+              "domain_hint": "incoming",
+              "intent_hint": "check_incoming",
+              "message_type": "request_for_help",
+              "query_brands": [],
+              "access_levels": [],
+              "routing_brand": "sorento",
+              "contains_flyer": false,
+              "dym_candidates": [],
+              "date_filter_end": null,
+              "last_result_set": [],
+              "routing_company": "00000000-0000-0000-0000-000000000001",
+              "date_filter_start": null,
+              "routing_companies": [
+                {
+                  "codes": [
+                    "SRTWT6232-GM"
+                  ],
+                  "labels": [
+                    "SRTWT6232-GM"
+                  ],
+                  "brand_code": "sorento",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento"
+                }
+              ],
+              "selection_context": null,
+              "routing_roster_plan": null,
+              "requested_attributes": [
+                "estimated_arrival_date"
+              ],
+              "routing_brand_source": "resolved"
+            }
+          }
+        }
+      }
+    ],
+    "Call 'sub-query-reformulator'": [
+      {
+        "json": {
+          "output": {
+            "message_type": "business_query",
+            "intent_hint": "check_order",
+            "domain_hint": "order",
+            "scope_intent": "specific",
+            "is_affirmative": null,
+            "user_goal": "trying to find which Sorento Dealer customer has the highest order",
+            "access_levels": [
+              "dealer"
+            ],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [],
+            "entity_op": "replace_combine",
+            "scope_exclusive": false,
+            "requested_attributes": [
+              "quantity"
+            ],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "customer_service",
+              "suggested_agent": "order_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "domain_signal_source": "intent_explicit",
+            "scope_exclusive_applied": false,
+            "entity_op_applied": "replace_combine",
+            "query_brands": [
+              "sorento"
+            ],
+            "entities_filtered": true,
+            "entities_emptied_by_filter": true,
+            "broaden_dropped": [
+              "brand:Sorento Dealer"
+            ]
+          },
+          "_parser_raw": {
+            "message_type": "business_query",
+            "intent_hint": "check_order",
+            "domain_hint": "order",
+            "scope_intent": "specific",
+            "is_affirmative": null,
+            "user_goal": "trying to find which Sorento Dealer customer has the highest order",
+            "access_levels": [
+              "Sorento Dealer"
+            ],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "Sorento Dealer",
+                "hint": "brand",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "entity_op": "replace_combine",
+            "scope_exclusive": false,
+            "requested_attributes": [
+              "quantity"
+            ],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "customer_service",
+              "suggested_agent": "order_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false,
+              "company_pick": null
+            }
+          }
+        }
+      }
+    ],
+    "check-access": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "Order Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null
+        }
+      }
+    ],
+    "If5": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "Order Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null
+        }
+      }
+    ],
+    "If2": [],
+    "If-ideate": [],
+    "offer-hold-gate": [],
+    "If10": [],
+    "is-escalation-declined": [],
+    "If9": [],
+    "If1": [],
+    "not-supported-domain": [],
+    "If": [],
+    "If7": [],
+    "resolve-entity": [
+      {
+        "json": {
+          "tokens": [],
+          "elapsed_ms": 0,
+          "resolutions": [],
+          "unresolved_tokens": [],
+          "ambiguous_tokens": []
+        }
+      }
+    ],
+    "disallowed-entity-gate": [
+      {
+        "json": {
+          "tokens": [],
+          "elapsed_ms": 0,
+          "resolutions": [],
+          "unresolved_tokens": [],
+          "ambiguous_tokens": [],
+          "gate_passed": false,
+          "require_specific": false,
+          "resolved_company": null,
+          "company_team": null,
+          "resolved_companies": [],
+          "routing_brand": "sorento",
+          "routing_brand_source": "stated",
+          "routing_companies": [],
+          "routing_company": null,
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "no entities and 'order' requires a scoping entity",
+          "gate_clarification": "",
+          "compatible_entities": [],
+          "gate_debug": {
+            "domain": "order",
+            "allowed_lookup": [
+              "order",
+              "customer_order",
+              "transporter",
+              "customer",
+              "product"
+            ],
+            "entities_count": 0
+          }
+        }
+      }
+    ],
+    "not-found-error-message": [
+      {
+        "json": {
+          "tokens": [],
+          "elapsed_ms": 0,
+          "resolutions": [],
+          "unresolved_tokens": [],
+          "ambiguous_tokens": [],
+          "gate_passed": false,
+          "require_specific": false,
+          "resolved_company": null,
+          "company_team": null,
+          "resolved_companies": [],
+          "routing_brand": "sorento",
+          "routing_brand_source": "stated",
+          "routing_companies": [],
+          "routing_company": null,
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "no entities and 'order' requires a scoping entity",
+          "gate_clarification": "",
+          "compatible_entities": [],
+          "gate_debug": {
+            "domain": "order",
+            "allowed_lookup": [
+              "order",
+              "customer_order",
+              "transporter",
+              "customer",
+              "product"
+            ],
+            "entities_count": 0
+          },
+          "escalate_message": "That would search every delivery order we have - I need at least one filter to narrow it down. Give me an order number, transporter, customer, or date range, and I can look it up.",
+          "is_clarification": true,
+          "found_summary": ""
+        }
+      }
+    ],
+    "build-suggest-offer": [
+      {
+        "json": {
+          "tokens": [],
+          "elapsed_ms": 0,
+          "resolutions": [],
+          "unresolved_tokens": [],
+          "ambiguous_tokens": [],
+          "gate_passed": false,
+          "require_specific": false,
+          "resolved_company": null,
+          "company_team": null,
+          "resolved_companies": [],
+          "routing_brand": "sorento",
+          "routing_brand_source": "stated",
+          "routing_companies": [],
+          "routing_company": null,
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "no entities and 'order' requires a scoping entity",
+          "gate_clarification": "",
+          "compatible_entities": [],
+          "gate_debug": {
+            "domain": "order",
+            "allowed_lookup": [
+              "order",
+              "customer_order",
+              "transporter",
+              "customer",
+              "product"
+            ],
+            "entities_count": 0
+          },
+          "escalate_message": "That would search every delivery order we have - I need at least one filter to narrow it down. Give me an order number, transporter, customer, or date range, and I can look it up.",
+          "is_clarification": true,
+          "found_summary": "",
+          "suggest_offer": false
+        }
+      }
+    ],
+    "tag-not-found": [
+      {
+        "json": {
+          "branch_kind": "not_found"
+        }
+      }
+    ],
+    "escalate-catalog": [
+      {
+        "json": {
+          "branch_kind": "not_found",
+          "response": "That would search every delivery order we have - I need at least one filter to narrow it down. Give me an order number, transporter, customer, or date range, and I can look it up.",
+          "manualResponse": true,
+          "includeResponse": true,
+          "is_escalate_offer": false
+        }
+      }
+    ],
+    "cs-offer-gate": [],
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 900000034,
+              "firstName": "Person 60",
+              "lastName": "Person 61",
+              "phone": "+60100000019",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/04ddf73e-3a0e-4914-8b24-18ed8aac06b8"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260627_150636"
+              ],
+              "assignee": {
+                "id": 900000002,
+                "firstName": "Person 2",
+                "lastName": "Person 3",
+                "email": "person1@example.com"
+              },
+              "lifecycle": "New Lead",
+              "created_at": 1782546255
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "bfb80970-7e62-4ac3-8421-3a5402b563cc",
+              "contact": {
+                "id": 900000034,
+                "firstName": "Person 60",
+                "lastName": "Person 61",
+                "phone": "+60100000019",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": 900000002,
+                  "email": "person1@example.com",
+                  "firstName": "Person 2",
+                  "lastName": "Person 3",
+                  "role": "user"
+                },
+                "created_at": 1782546255
+              },
+              "message": {
+                "messageId": 1787908679000000,
+                "channelMessageId": "wamid.HBgLNjAxNjIyNzE2NzkVAgASGCBBQ0U3QTkzMTc1MUUyQzJEQjc1QTIxQzkxNTI1NjJBRgA=",
+                "contactId": 900000034,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1787908679000,
+                "message": {
+                  "type": "text",
+                  "text": "Who is highest order for sorento dealer?"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 62\"},\"wa_id\":\"60100000019\",\"user_id\":\"MY.900000035\",\"firstName\":\"Person 6\",\"lastName\":\"Person 60\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000034",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "purchasing",
+                    "suggested_agent": "incoming_stock_enquiries"
+                  },
+                  "entities": [],
+                  "ideation": null,
+                  "response": "Informed the user that request is out of scope and will proceed to escalate to the purchasing team",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to escalate the incoming stock enquiry to the purchasing team",
+                  "escalation": {
+                    "is_escalation_confirmation": true
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "incoming",
+                  "intent_hint": "check_incoming",
+                  "message_type": "request_for_help",
+                  "query_brands": [],
+                  "access_levels": [],
+                  "routing_brand": "sorento",
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [],
+                  "routing_company": "00000000-0000-0000-0000-000000000001",
+                  "date_filter_start": null,
+                  "routing_companies": [
+                    {
+                      "codes": [
+                        "SRTWT6232-GM"
+                      ],
+                      "labels": [
+                        "SRTWT6232-GM"
+                      ],
+                      "brand_code": "sorento",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "selection_context": null,
+                  "routing_roster_plan": null,
+                  "requested_attributes": [
+                    "estimated_arrival_date"
+                  ],
+                  "routing_brand_source": "resolved"
+                }
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "check_order",
+                "domain_hint": "order",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to find which Sorento Dealer customer has the highest order",
+                "access_levels": [
+                  "dealer"
+                ],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [
+                  "quantity"
+                ],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "customer_service",
+                  "suggested_agent": "order_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_explicit",
+                "scope_exclusive_applied": false,
+                "entity_op_applied": "replace_combine",
+                "query_brands": [
+                  "sorento"
+                ],
+                "entities_filtered": true,
+                "entities_emptied_by_filter": true,
+                "broaden_dropped": [
+                  "brand:Sorento Dealer"
+                ]
+              },
+              "_parser_raw": {
+                "message_type": "business_query",
+                "intent_hint": "check_order",
+                "domain_hint": "order",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to find which Sorento Dealer customer has the highest order",
+                "access_levels": [
+                  "Sorento Dealer"
+                ],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "Sorento Dealer",
+                    "hint": "brand",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [
+                  "quantity"
+                ],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "customer_service",
+                  "suggested_agent": "order_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "Order Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            }
+          }
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "branch_kind": "not_found"
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "branch_kind": "not_found",
+        "response": "That would search every delivery order we have - I need at least one filter to narrow it down. Give me an order number, transporter, customer, or date range, and I can look it up.",
+        "manualResponse": true,
+        "includeResponse": true,
+        "is_escalate_offer": false
+      }
+    }
+  ],
+  "runIndex": 0,
+  "execution": {
+    "id": "14249095"
+  },
+  "ran": [
+    "When Executed by Another Workflow",
+    "redis-pop-main-message-list",
+    "detect-media",
+    "if-media-in",
+    "tf-message",
+    "sorento-sub-respond-findcontact-respond",
+    "if-transcribed-confirm",
+    "is-human-intervened",
+    "if-message-is-audio",
+    "get-session-vars",
+    "Call 'sub-query-reformulator'",
+    "check-access",
+    "If5",
+    "If2",
+    "If-ideate",
+    "offer-hold-gate",
+    "If10",
+    "is-escalation-declined",
+    "If9",
+    "If1",
+    "not-supported-domain",
+    "If",
+    "If7",
+    "resolve-entity",
+    "disallowed-entity-gate",
+    "If3",
+    "If-incoming-picker",
+    "If-customer-picker",
+    "not-found-error-message",
+    "sibling-gate",
+    "dym-transform",
+    "dym-gate",
+    "build-suggest-offer",
+    "tag-not-found",
+    "escalate-catalog",
+    "cs-offer-gate",
+    "compile-current-state",
+    "crossdomain-compose",
+    "sorento-sub-respond-sendmsg-respond2",
+    "Execution Data",
+    "attach-merge",
+    "if-got-attachments",
+    "save-session-vars",
+    "Call 'sub-respond-save-message-redis'2"
+  ]
+}

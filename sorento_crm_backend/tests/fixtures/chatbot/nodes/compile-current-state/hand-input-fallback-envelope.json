@@ -1,0 +1,174 @@
+{
+  "source": {
+    "hand_crafted": true,
+    "expected_from": "reasoned",
+    "reasoned_from": "contract",
+    "rationale": "The last resort of the same ladder: with none of the three upstream envelopes executed the node reads its OWN input item, which is what keeps the compressed view honest on a lane that reaches compile without central-exchange. Two items in, a two-row roster out.",
+    "amended": [
+      {
+        "at": "2026-08-26T13:01:29Z",
+        "to_version": "74ef5116-ac62-435f-a506-02a751070588",
+        "reason": "baseline catch-up re-pin to live 74ef5116 (other lanes; see commit body)",
+        "paths": [
+          "[0].json.variables.requested_attributes"
+        ]
+      }
+    ]
+  },
+  "ctx": {
+    "Call 'sub-query-reformulator'": [
+      {
+        "json": {
+          "output": {
+            "message_type": "business_query",
+            "intent_hint": "check_incoming",
+            "domain_hint": "incoming",
+            "routing": {
+              "suggested_team": "purchasing"
+            },
+            "escalation": {}
+          }
+        }
+      }
+    ],
+    "sorento-sub-respond-findcontact-respond": [
+      {
+        "json": {
+          "id": 900000003
+        }
+      }
+    ],
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 900000003
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "check_incoming",
+                "domain_hint": "incoming",
+                "routing": {
+                  "suggested_team": "purchasing"
+                },
+                "escalation": {}
+              }
+            }
+          }
+        }
+      }
+    ],
+    "build-outcome": [
+      {
+        "json": {
+          "items": [
+            {
+              "title": "A"
+            },
+            {
+              "title": "B"
+            }
+          ],
+          "outcome": {
+            "build-ideate-reply": null,
+            "build-suggest-offer": null,
+            "build-cs-member-offer": null,
+            "escalate-catalog": null,
+            "central-exchange": null,
+            "access-level-choice-message": null,
+            "promo-picker": null,
+            "validator": null,
+            "crossdomain-zeroset": null,
+            "build-miss-member-offer": null,
+            "dym-annotate-partial": null,
+            "dym-annotate": null,
+            "clarify-company-reply": null,
+            "offer-hold-reply": null,
+            "cs-roster-plan": null
+          }
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "items": [
+          {
+            "title": "A"
+          },
+          {
+            "title": "B"
+          }
+        ],
+        "outcome": {
+          "build-ideate-reply": null,
+          "build-suggest-offer": null,
+          "build-cs-member-offer": null,
+          "escalate-catalog": null,
+          "central-exchange": null,
+          "access-level-choice-message": null,
+          "promo-picker": null,
+          "validator": null,
+          "crossdomain-zeroset": null,
+          "build-miss-member-offer": null,
+          "dym-annotate-partial": null,
+          "dym-annotate": null,
+          "clarify-company-reply": null,
+          "offer-hold-reply": null,
+          "cs-roster-plan": null
+        }
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "variables": {
+          "message_type": "business_query",
+          "intent_hint": "check_incoming",
+          "domain_hint": "incoming",
+          "entities": [],
+          "routing": {
+            "suggested_team": "purchasing"
+          },
+          "escalation": {},
+          "response": "Previous turn (incoming): returned 2 records",
+          "last_result_set": [
+            {
+              "idx": 1,
+              "uuid": null,
+              "label": "A",
+              "entity_type": null,
+              "product": null,
+              "attachment_type": null,
+              "filename": null
+            },
+            {
+              "idx": 2,
+              "uuid": null,
+              "label": "B",
+              "entity_type": null,
+              "product": null,
+              "attachment_type": null,
+              "filename": null
+            }
+          ],
+          "selection_context": null,
+          "requested_attributes": [],
+          "dym_offer": null,
+          "dym_candidates": [],
+          "ideation": null,
+          "routing_roster_plan": null,
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_company": null,
+          "routing_companies": null
+        }
+      }
+    }
+  ],
+  "runIndex": 0
+}

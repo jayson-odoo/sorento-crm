@@ -1,0 +1,1353 @@
+{
+  "source": {
+    "execution_id": "14492977",
+    "workflow_id": "Hnd4S8SVH6pftjxs",
+    "workflow_version": "38cb225d-e33e-4316-84e4-9d48f563fc80",
+    "node": "compile-current-state",
+    "captured_at": "2026-08-30T07:33:44+00:00",
+    "expected_from": "runData",
+    "dedupe_sig": "6ed1be249d8f2d3387adff8bb355a5bf75a6cc6e6322b5287ba7b34d40710a18",
+    "dev_contact": true
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "test": "obs",
+          "test_run_id": "rs34-01-notsupported",
+          "started_at": "2026-08-30T03:27:58.137-04:00",
+          "contact": "900000009"
+        }
+      }
+    ],
+    "redis-pop-main-message-list": [
+      {
+        "json": {
+          "message": {
+            "mode": "uac",
+            "test_run_id": "rs34-01-notsupported",
+            "contact": {
+              "id": "900000009",
+              "firstName": "Person 129",
+              "lastName": "Person 133",
+              "phone": "+60100000046",
+              "countryCode": "MY",
+              "status": "active",
+              "custom_fields": [
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": "true"
+                }
+              ]
+            },
+            "message": {
+              "event_type": "message.received",
+              "contact": {
+                "id": "900000009",
+                "firstName": "Person 129",
+                "lastName": "Person 133",
+                "phone": "+60100000046",
+                "countryCode": "MY",
+                "status": "active",
+                "custom_fields": [
+                  {
+                    "name": "is_human_intervened",
+                    "value": "false"
+                  },
+                  {
+                    "name": "is_allowed_stock",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_allowed_voice",
+                    "value": "true"
+                  }
+                ]
+              },
+              "message": {
+                "messageId": "rs34-01-msg",
+                "contactId": "900000009",
+                "channelId": "whatsapp",
+                "traffic": "incoming",
+                "timestamp": 1788074873620,
+                "message": {
+                  "type": "text",
+                  "text": "We need to do a goods receive for our incoming container, can you help us process the SPO allocation for it?"
+                }
+              }
+            }
+          }
+        }
+      }
+    ],
+    "detect-media": [
+      {
+        "json": {
+          "message": {
+            "mode": "uac",
+            "test_run_id": "rs34-01-notsupported",
+            "contact": {
+              "id": "900000009",
+              "firstName": "Person 129",
+              "lastName": "Person 133",
+              "phone": "+60100000046",
+              "countryCode": "MY",
+              "status": "active",
+              "custom_fields": [
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": "true"
+                }
+              ]
+            },
+            "message": {
+              "event_type": "message.received",
+              "contact": {
+                "id": "900000009",
+                "firstName": "Person 129",
+                "lastName": "Person 133",
+                "phone": "+60100000046",
+                "countryCode": "MY",
+                "status": "active",
+                "custom_fields": [
+                  {
+                    "name": "is_human_intervened",
+                    "value": "false"
+                  },
+                  {
+                    "name": "is_allowed_stock",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_allowed_voice",
+                    "value": "true"
+                  }
+                ]
+              },
+              "message": {
+                "messageId": "rs34-01-msg",
+                "contactId": "900000009",
+                "channelId": "whatsapp",
+                "traffic": "incoming",
+                "timestamp": 1788074873620,
+                "message": {
+                  "type": "text",
+                  "text": "We need to do a goods receive for our incoming container, can you help us process the SPO allocation for it?"
+                }
+              }
+            }
+          },
+          "_media": {
+            "modality": null,
+            "attachment_type": null,
+            "media_url": null,
+            "mime_type": null,
+            "caption": "We need to do a goods receive for our incoming container, can you help us process the SPO allocation for it?",
+            "bytes": null,
+            "duration_ms": null,
+            "duration_source": null,
+            "message_id": "rs34-01-msg",
+            "respond_io_id": "900000009",
+            "test_run_id": "rs34-01-notsupported",
+            "scope": null
+          }
+        }
+      }
+    ],
+    "if-media-in": [],
+    "tf-message": [
+      {
+        "json": {
+          "event_type": "message.received",
+          "contact": {
+            "id": "900000009",
+            "firstName": "Person 129",
+            "lastName": "Person 133",
+            "phone": "+60100000046",
+            "countryCode": "MY",
+            "status": "active",
+            "custom_fields": [
+              {
+                "name": "is_human_intervened",
+                "value": "false"
+              },
+              {
+                "name": "is_allowed_stock",
+                "value": "true"
+              },
+              {
+                "name": "is_allowed_voice",
+                "value": "true"
+              }
+            ]
+          },
+          "message": {
+            "messageId": "rs34-01-msg",
+            "contactId": "900000009",
+            "channelId": "whatsapp",
+            "traffic": "incoming",
+            "timestamp": 1788074873620,
+            "message": {
+              "type": "text",
+              "text": "We need to do a goods receive for our incoming container, can you help us process the SPO allocation for it?"
+            }
+          }
+        }
+      }
+    ],
+    "sorento-sub-respond-findcontact-respond": [
+      {
+        "json": {
+          "id": "900000009",
+          "firstName": "Person 129",
+          "lastName": "Person 133",
+          "phone": "+60100000046",
+          "countryCode": "MY",
+          "status": "active",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ]
+        }
+      }
+    ],
+    "is-human-intervened": [
+      {
+        "json": {
+          "id": "900000009",
+          "firstName": "Person 129",
+          "lastName": "Person 133",
+          "phone": "+60100000046",
+          "countryCode": "MY",
+          "status": "active",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ]
+        }
+      }
+    ],
+    "if-message-is-audio": [],
+    "Call 'sub-respond-save-message-redis'2": [
+      {
+        "json": {
+          "contact_id": "900000009",
+          "phone_number": "+60100000046",
+          "message": "We need to do a goods receive for our incoming container, can you help us process the SPO allocation for it?",
+          "sent_at": 1788074878750,
+          "turn_id": "14492977",
+          "data": "{\"contact_id\":\"900000009\",\"phone_number\":\"+60100000046\",\"message\":\"We need to do a goods receive for our incoming container, can you help us process the SPO allocation for it?\",\"sent_at\":null,\"first_name\":\"Person 129\",\"last_name\":\"Person 133\",\"reply_to_message_id\":null,\"reply_to_message\":null,\"type\":\"incoming\",\"message_id\":\"rs34-01-msg\",\"turn_id\":\"14492977\",\"state_trace\":{\"v\":1,\"before\":null,\"parser_raw\":null,\"parser_applied\":null,\"after\":null}}"
+        }
+      }
+    ],
+    "sim-inject-gate": [],
+    "session-get-gate": [],
+    "get-session-vars-http": [
+      {
+        "json": {
+          "respond_io_id": "900000009",
+          "session_vars": {
+            "variables": {
+              "routing": {
+                "suggested_team": "marketing_promotion",
+                "suggested_agent": "general_enquiries"
+              },
+              "entities": [
+                {
+                  "raw": "srtwc286",
+                  "hint": "product",
+                  "confident": true,
+                  "canonical_code": null,
+                  "current_message": false
+                }
+              ],
+              "ideation": null,
+              "response": "Previous turn (promotion): returned 1 records",
+              "date_mode": null,
+              "dym_offer": null,
+              "user_goal": "trying to select the first result",
+              "escalation": {
+                "is_escalation_confirmation": false
+              },
+              "match_mode": "and",
+              "domain_hint": "promotion",
+              "intent_hint": "check_promotion",
+              "message_type": "business_query",
+              "query_brands": [
+                "sorento"
+              ],
+              "access_levels": [
+                "dealer"
+              ],
+              "routing_brand": "sorento",
+              "contains_flyer": false,
+              "dym_candidates": [],
+              "date_filter_end": null,
+              "last_result_set": [
+                {
+                  "idx": 1,
+                  "uuid": null,
+                  "label": "UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf",
+                  "value": "UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf",
+                  "filename": "UPDATED SORENTO A3 FLYER  2026 (DEALER)_21072026.pdf",
+                  "entity_type": "promotion"
+                },
+                {
+                  "idx": 2,
+                  "uuid": null,
+                  "label": "SORENTO A3 FLYER_DEALER USE_11062026.pdf",
+                  "value": "SORENTO A3 FLYER_DEALER USE_11062026.pdf",
+                  "filename": "SORENTO A3 FLYER_DEALER USE_11062026.pdf",
+                  "entity_type": "promotion"
+                },
+                {
+                  "idx": 3,
+                  "uuid": null,
+                  "label": "JULY SORENTO WATER CLOSET PROMO_06072026 DEALER.pdf",
+                  "value": "JULY SORENTO WATER CLOSET PROMO_06072026 DEALER.pdf",
+                  "filename": "JULY SORENTO WATER CLOSET PROMO_06072026 DEALER.pdf",
+                  "entity_type": "promotion"
+                }
+              ],
+              "routing_company": "00000000-0000-0000-0000-000000000001",
+              "date_filter_start": null,
+              "routing_companies": [
+                {
+                  "codes": [
+                    "SRTWC286-SH-200",
+                    "SRTWC286-SH-P",
+                    "SRTWC286-SH-PP",
+                    "SRTWC286-SH",
+                    "SRTWC286-SH-UF",
+                    "SRTWC286-SH-NEW-150",
+                    "SRTWC286-SH-150",
+                    "SRTWC286-SH-NEW-P",
+                    "SRTWC286-SH-NEW-200",
+                    "SRTWC286-SH-NEW"
+                  ],
+                  "labels": [
+                    "SRTWC286-SH-200",
+                    "SRTWC286-SH-P",
+                    "SRTWC286-SH-PP",
+                    "SRTWC286-SH",
+                    "SRTWC286-SH-UF",
+                    "SRTWC286-SH-NEW-150",
+                    "SRTWC286-SH-150",
+                    "SRTWC286-SH-NEW-P",
+                    "SRTWC286-SH-NEW-200",
+                    "SRTWC286-SH-NEW"
+                  ],
+                  "brand_code": "sorento",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento"
+                }
+              ],
+              "selection_context": "suggest_offer",
+              "routing_roster_plan": null,
+              "requested_attributes": [],
+              "routing_brand_source": "resolved"
+            },
+            "user_response": "I have attached the file(s) below.\n\n1. *Promotion:* UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf\n*Start Date:* 2026-06-01\n*End Date:* 2026-09-30"
+          }
+        }
+      }
+    ],
+    "get-session-vars": [
+      {
+        "json": {
+          "respond_io_id": "900000009",
+          "session_vars": {
+            "variables": {
+              "routing": {
+                "suggested_team": "marketing_promotion",
+                "suggested_agent": "general_enquiries"
+              },
+              "entities": [
+                {
+                  "raw": "srtwc286",
+                  "hint": "product",
+                  "confident": true,
+                  "canonical_code": null,
+                  "current_message": false
+                }
+              ],
+              "ideation": null,
+              "response": "Previous turn (promotion): returned 1 records",
+              "date_mode": null,
+              "dym_offer": null,
+              "user_goal": "trying to select the first result",
+              "escalation": {
+                "is_escalation_confirmation": false
+              },
+              "match_mode": "and",
+              "domain_hint": "promotion",
+              "intent_hint": "check_promotion",
+              "message_type": "business_query",
+              "query_brands": [
+                "sorento"
+              ],
+              "access_levels": [
+                "dealer"
+              ],
+              "routing_brand": "sorento",
+              "contains_flyer": false,
+              "dym_candidates": [],
+              "date_filter_end": null,
+              "last_result_set": [
+                {
+                  "idx": 1,
+                  "uuid": null,
+                  "label": "UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf",
+                  "value": "UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf",
+                  "filename": "UPDATED SORENTO A3 FLYER  2026 (DEALER)_21072026.pdf",
+                  "entity_type": "promotion"
+                },
+                {
+                  "idx": 2,
+                  "uuid": null,
+                  "label": "SORENTO A3 FLYER_DEALER USE_11062026.pdf",
+                  "value": "SORENTO A3 FLYER_DEALER USE_11062026.pdf",
+                  "filename": "SORENTO A3 FLYER_DEALER USE_11062026.pdf",
+                  "entity_type": "promotion"
+                },
+                {
+                  "idx": 3,
+                  "uuid": null,
+                  "label": "JULY SORENTO WATER CLOSET PROMO_06072026 DEALER.pdf",
+                  "value": "JULY SORENTO WATER CLOSET PROMO_06072026 DEALER.pdf",
+                  "filename": "JULY SORENTO WATER CLOSET PROMO_06072026 DEALER.pdf",
+                  "entity_type": "promotion"
+                }
+              ],
+              "routing_company": "00000000-0000-0000-0000-000000000001",
+              "date_filter_start": null,
+              "routing_companies": [
+                {
+                  "codes": [
+                    "SRTWC286-SH-200",
+                    "SRTWC286-SH-P",
+                    "SRTWC286-SH-PP",
+                    "SRTWC286-SH",
+                    "SRTWC286-SH-UF",
+                    "SRTWC286-SH-NEW-150",
+                    "SRTWC286-SH-150",
+                    "SRTWC286-SH-NEW-P",
+                    "SRTWC286-SH-NEW-200",
+                    "SRTWC286-SH-NEW"
+                  ],
+                  "labels": [
+                    "SRTWC286-SH-200",
+                    "SRTWC286-SH-P",
+                    "SRTWC286-SH-PP",
+                    "SRTWC286-SH",
+                    "SRTWC286-SH-UF",
+                    "SRTWC286-SH-NEW-150",
+                    "SRTWC286-SH-150",
+                    "SRTWC286-SH-NEW-P",
+                    "SRTWC286-SH-NEW-200",
+                    "SRTWC286-SH-NEW"
+                  ],
+                  "brand_code": "sorento",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento"
+                }
+              ],
+              "selection_context": "suggest_offer",
+              "routing_roster_plan": null,
+              "requested_attributes": [],
+              "routing_brand_source": "resolved"
+            },
+            "user_response": "I have attached the file(s) below.\n\n1. *Promotion:* UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf\n*Start Date:* 2026-06-01\n*End Date:* 2026-09-30"
+          }
+        }
+      }
+    ],
+    "Call 'sub-query-reformulator'": [
+      {
+        "json": {
+          "output": {
+            "message_type": "business_query",
+            "intent_hint": "check_spo",
+            "domain_hint": "spo_allocation",
+            "scope_intent": null,
+            "is_affirmative": null,
+            "user_goal": "trying to process the SPO allocation for an incoming container and goods receive",
+            "access_levels": [],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [],
+            "entity_op": "replace_combine",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "marketing_promotion",
+              "suggested_agent": "general_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "domain_signal_source": "intent_explicit",
+            "scope_exclusive_applied": false,
+            "entity_op_applied": "replace_combine",
+            "query_brands": [],
+            "entities_filtered": true,
+            "entities_emptied_by_filter": true,
+            "broaden_dropped": [
+              "inbound_shipment:incoming container",
+              "product:srtwc286"
+            ],
+            "_pending_pick": true,
+            "suggest_pick_context": true
+          },
+          "_parser_raw": {
+            "message_type": "business_query",
+            "intent_hint": "check_spo",
+            "domain_hint": "spo_allocation",
+            "scope_intent": null,
+            "is_affirmative": null,
+            "user_goal": "trying to process the SPO allocation for an incoming container and goods receive",
+            "access_levels": [],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "incoming container",
+                "hint": "inbound_shipment",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "entity_op": "replace_combine",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "purchasing",
+              "suggested_agent": "incoming_stock_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false,
+              "company_pick": null
+            }
+          }
+        }
+      }
+    ],
+    "check-access": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "General Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null
+        }
+      }
+    ],
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": "900000009",
+              "firstName": "Person 129",
+              "lastName": "Person 133",
+              "phone": "+60100000046",
+              "countryCode": "MY",
+              "status": "active",
+              "custom_fields": [
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": "true"
+                }
+              ]
+            },
+            "text": {
+              "event_type": "message.received",
+              "contact": {
+                "id": "900000009",
+                "firstName": "Person 129",
+                "lastName": "Person 133",
+                "phone": "+60100000046",
+                "countryCode": "MY",
+                "status": "active",
+                "custom_fields": [
+                  {
+                    "name": "is_human_intervened",
+                    "value": "false"
+                  },
+                  {
+                    "name": "is_allowed_stock",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_allowed_voice",
+                    "value": "true"
+                  }
+                ]
+              },
+              "message": {
+                "messageId": "rs34-01-msg",
+                "contactId": "900000009",
+                "channelId": "whatsapp",
+                "traffic": "incoming",
+                "timestamp": 1788074873620,
+                "message": {
+                  "type": "text",
+                  "text": "We need to do a goods receive for our incoming container, can you help us process the SPO allocation for it?"
+                }
+              }
+            },
+            "session": {
+              "respond_io_id": "900000009",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "marketing_promotion",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "entities": [
+                    {
+                      "raw": "srtwc286",
+                      "hint": "product",
+                      "confident": true,
+                      "canonical_code": null,
+                      "current_message": false
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Previous turn (promotion): returned 1 records",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to select the first result",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "promotion",
+                  "intent_hint": "check_promotion",
+                  "message_type": "business_query",
+                  "query_brands": [
+                    "sorento"
+                  ],
+                  "access_levels": [
+                    "dealer"
+                  ],
+                  "routing_brand": "sorento",
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [
+                    {
+                      "idx": 1,
+                      "uuid": null,
+                      "label": "UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf",
+                      "value": "UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf",
+                      "filename": "UPDATED SORENTO A3 FLYER  2026 (DEALER)_21072026.pdf",
+                      "entity_type": "promotion"
+                    },
+                    {
+                      "idx": 2,
+                      "uuid": null,
+                      "label": "SORENTO A3 FLYER_DEALER USE_11062026.pdf",
+                      "value": "SORENTO A3 FLYER_DEALER USE_11062026.pdf",
+                      "filename": "SORENTO A3 FLYER_DEALER USE_11062026.pdf",
+                      "entity_type": "promotion"
+                    },
+                    {
+                      "idx": 3,
+                      "uuid": null,
+                      "label": "JULY SORENTO WATER CLOSET PROMO_06072026 DEALER.pdf",
+                      "value": "JULY SORENTO WATER CLOSET PROMO_06072026 DEALER.pdf",
+                      "filename": "JULY SORENTO WATER CLOSET PROMO_06072026 DEALER.pdf",
+                      "entity_type": "promotion"
+                    }
+                  ],
+                  "routing_company": "00000000-0000-0000-0000-000000000001",
+                  "date_filter_start": null,
+                  "routing_companies": [
+                    {
+                      "codes": [
+                        "SRTWC286-SH-200",
+                        "SRTWC286-SH-P",
+                        "SRTWC286-SH-PP",
+                        "SRTWC286-SH",
+                        "SRTWC286-SH-UF",
+                        "SRTWC286-SH-NEW-150",
+                        "SRTWC286-SH-150",
+                        "SRTWC286-SH-NEW-P",
+                        "SRTWC286-SH-NEW-200",
+                        "SRTWC286-SH-NEW"
+                      ],
+                      "labels": [
+                        "SRTWC286-SH-200",
+                        "SRTWC286-SH-P",
+                        "SRTWC286-SH-PP",
+                        "SRTWC286-SH",
+                        "SRTWC286-SH-UF",
+                        "SRTWC286-SH-NEW-150",
+                        "SRTWC286-SH-150",
+                        "SRTWC286-SH-NEW-P",
+                        "SRTWC286-SH-NEW-200",
+                        "SRTWC286-SH-NEW"
+                      ],
+                      "brand_code": "sorento",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "selection_context": "suggest_offer",
+                  "routing_roster_plan": null,
+                  "requested_attributes": [],
+                  "routing_brand_source": "resolved"
+                },
+                "user_response": "I have attached the file(s) below.\n\n1. *Promotion:* UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf\n*Start Date:* 2026-06-01\n*End Date:* 2026-09-30"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "check_spo",
+                "domain_hint": "spo_allocation",
+                "scope_intent": null,
+                "is_affirmative": null,
+                "user_goal": "trying to process the SPO allocation for an incoming container and goods receive",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "marketing_promotion",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_explicit",
+                "scope_exclusive_applied": false,
+                "entity_op_applied": "replace_combine",
+                "query_brands": [],
+                "entities_filtered": true,
+                "entities_emptied_by_filter": true,
+                "broaden_dropped": [
+                  "inbound_shipment:incoming container",
+                  "product:srtwc286"
+                ],
+                "_pending_pick": true,
+                "suggest_pick_context": true
+              },
+              "_parser_raw": {
+                "message_type": "business_query",
+                "intent_hint": "check_spo",
+                "domain_hint": "spo_allocation",
+                "scope_intent": null,
+                "is_affirmative": null,
+                "user_goal": "trying to process the SPO allocation for an incoming container and goods receive",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "incoming container",
+                    "hint": "inbound_shipment",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "purchasing",
+                  "suggested_agent": "incoming_stock_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "General Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            }
+          }
+        }
+      }
+    ],
+    "route-turn": [
+      {
+        "json": {
+          "branch_kind": "not_supported"
+        }
+      }
+    ],
+    "route": [],
+    "escalate-catalog": [
+      {
+        "json": {
+          "branch_kind": "not_supported",
+          "response": "Sorry, we don't support direct goods receive & SPO at the moment. You may ask about incoming stock for a specific product or container",
+          "manualResponse": true,
+          "includeResponse": true,
+          "is_escalate_offer": false
+        }
+      }
+    ],
+    "cs-offer-gate": [],
+    "build-outcome": [
+      {
+        "json": {
+          "branch_kind": "not_supported",
+          "response": "Sorry, we don't support direct goods receive & SPO at the moment. You may ask about incoming stock for a specific product or container",
+          "manualResponse": true,
+          "includeResponse": true,
+          "is_escalate_offer": false,
+          "outcome": {
+            "build-ideate-reply": null,
+            "build-suggest-offer": null,
+            "build-cs-member-offer": null,
+            "escalate-catalog": {
+              "branch_kind": "not_supported",
+              "response": "Sorry, we don't support direct goods receive & SPO at the moment. You may ask about incoming stock for a specific product or container",
+              "manualResponse": true,
+              "includeResponse": true,
+              "is_escalate_offer": false
+            },
+            "central-exchange": null,
+            "access-level-choice-message": null,
+            "promo-picker": null,
+            "validator": null,
+            "crossdomain-zeroset": null,
+            "build-miss-member-offer": null,
+            "dym-annotate-partial": null,
+            "dym-annotate": null,
+            "clarify-company-reply": null,
+            "offer-hold-reply": null,
+            "cs-roster-plan": null
+          }
+        }
+      }
+    ],
+    "compile-current-state": [
+      {
+        "json": {
+          "reply": {
+            "text": "Sorry, we don't support direct goods receive & SPO at the moment. You may ask about incoming stock for a specific product or container",
+            "session_patch": {
+              "variables": {
+                "message_type": "business_query",
+                "intent_hint": "check_spo",
+                "domain_hint": "spo_allocation",
+                "user_goal": "trying to process the SPO allocation for an incoming container and goods receive",
+                "query_brands": [],
+                "access_levels": [],
+                "entities": [],
+                "routing": {
+                  "suggested_team": "marketing_promotion",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "response": "Sorry, we don't support direct goods receive & SPO at the moment. You may ask about incoming stock for a specific product or container",
+                "last_result_set": [],
+                "selection_context": null,
+                "date_filter_start": null,
+                "requested_attributes": [],
+                "date_filter_end": null,
+                "date_mode": null,
+                "match_mode": "and",
+                "contains_flyer": false,
+                "dym_offer": null,
+                "dym_candidates": [],
+                "ideation": null,
+                "routing_roster_plan": null,
+                "routing_brand": "sorento",
+                "routing_brand_source": "resolved",
+                "routing_company": "00000000-0000-0000-0000-000000000001",
+                "routing_companies": [
+                  {
+                    "codes": [
+                      "SRTWC286-SH-200",
+                      "SRTWC286-SH-P",
+                      "SRTWC286-SH-PP",
+                      "SRTWC286-SH",
+                      "SRTWC286-SH-UF",
+                      "SRTWC286-SH-NEW-150",
+                      "SRTWC286-SH-150",
+                      "SRTWC286-SH-NEW-P",
+                      "SRTWC286-SH-NEW-200",
+                      "SRTWC286-SH-NEW"
+                    ],
+                    "labels": [
+                      "SRTWC286-SH-200",
+                      "SRTWC286-SH-P",
+                      "SRTWC286-SH-PP",
+                      "SRTWC286-SH",
+                      "SRTWC286-SH-UF",
+                      "SRTWC286-SH-NEW-150",
+                      "SRTWC286-SH-150",
+                      "SRTWC286-SH-NEW-P",
+                      "SRTWC286-SH-NEW-200",
+                      "SRTWC286-SH-NEW"
+                    ],
+                    "brand_code": "sorento",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento"
+                  }
+                ]
+              },
+              "user_response": "Sorry, we don't support direct goods receive & SPO at the moment. You may ask about incoming stock for a specific product or container"
+            }
+          }
+        }
+      }
+    ],
+    "crossdomain-compose": [
+      {
+        "json": {
+          "reply": {
+            "text": "Sorry, we don't support direct goods receive & SPO at the moment. You may ask about incoming stock for a specific product or container",
+            "session_patch": {
+              "variables": {
+                "message_type": "business_query",
+                "intent_hint": "check_spo",
+                "domain_hint": "spo_allocation",
+                "user_goal": "trying to process the SPO allocation for an incoming container and goods receive",
+                "query_brands": [],
+                "access_levels": [],
+                "entities": [],
+                "routing": {
+                  "suggested_team": "marketing_promotion",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "response": "Sorry, we don't support direct goods receive & SPO at the moment. You may ask about incoming stock for a specific product or container",
+                "last_result_set": [],
+                "selection_context": null,
+                "date_filter_start": null,
+                "requested_attributes": [],
+                "date_filter_end": null,
+                "date_mode": null,
+                "match_mode": "and",
+                "contains_flyer": false,
+                "dym_offer": null,
+                "dym_candidates": [],
+                "ideation": null,
+                "routing_roster_plan": null,
+                "routing_brand": "sorento",
+                "routing_brand_source": "resolved",
+                "routing_company": "00000000-0000-0000-0000-000000000001",
+                "routing_companies": [
+                  {
+                    "codes": [
+                      "SRTWC286-SH-200",
+                      "SRTWC286-SH-P",
+                      "SRTWC286-SH-PP",
+                      "SRTWC286-SH",
+                      "SRTWC286-SH-UF",
+                      "SRTWC286-SH-NEW-150",
+                      "SRTWC286-SH-150",
+                      "SRTWC286-SH-NEW-P",
+                      "SRTWC286-SH-NEW-200",
+                      "SRTWC286-SH-NEW"
+                    ],
+                    "labels": [
+                      "SRTWC286-SH-200",
+                      "SRTWC286-SH-P",
+                      "SRTWC286-SH-PP",
+                      "SRTWC286-SH",
+                      "SRTWC286-SH-UF",
+                      "SRTWC286-SH-NEW-150",
+                      "SRTWC286-SH-150",
+                      "SRTWC286-SH-NEW-P",
+                      "SRTWC286-SH-NEW-200",
+                      "SRTWC286-SH-NEW"
+                    ],
+                    "brand_code": "sorento",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento"
+                  }
+                ]
+              },
+              "user_response": "Sorry, we don't support direct goods receive & SPO at the moment. You may ask about incoming stock for a specific product or container"
+            }
+          }
+        }
+      }
+    ],
+    "pg-upsert-session": [
+      {
+        "json": {
+          "success": true
+        }
+      }
+    ],
+    "guard-d-record": [
+      {
+        "json": {
+          "reply": {
+            "text": "Sorry, we don't support direct goods receive & SPO at the moment. You may ask about incoming stock for a specific product or container",
+            "session_patch": {
+              "variables": {
+                "message_type": "business_query",
+                "intent_hint": "check_spo",
+                "domain_hint": "spo_allocation",
+                "user_goal": "trying to process the SPO allocation for an incoming container and goods receive",
+                "query_brands": [],
+                "access_levels": [],
+                "entities": [],
+                "routing": {
+                  "suggested_team": "marketing_promotion",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "response": "Sorry, we don't support direct goods receive & SPO at the moment. You may ask about incoming stock for a specific product or container",
+                "last_result_set": [],
+                "selection_context": null,
+                "date_filter_start": null,
+                "requested_attributes": [],
+                "date_filter_end": null,
+                "date_mode": null,
+                "match_mode": "and",
+                "contains_flyer": false,
+                "dym_offer": null,
+                "dym_candidates": [],
+                "ideation": null,
+                "routing_roster_plan": null,
+                "routing_brand": "sorento",
+                "routing_brand_source": "resolved",
+                "routing_company": "00000000-0000-0000-0000-000000000001",
+                "routing_companies": [
+                  {
+                    "codes": [
+                      "SRTWC286-SH-200",
+                      "SRTWC286-SH-P",
+                      "SRTWC286-SH-PP",
+                      "SRTWC286-SH",
+                      "SRTWC286-SH-UF",
+                      "SRTWC286-SH-NEW-150",
+                      "SRTWC286-SH-150",
+                      "SRTWC286-SH-NEW-P",
+                      "SRTWC286-SH-NEW-200",
+                      "SRTWC286-SH-NEW"
+                    ],
+                    "labels": [
+                      "SRTWC286-SH-200",
+                      "SRTWC286-SH-P",
+                      "SRTWC286-SH-PP",
+                      "SRTWC286-SH",
+                      "SRTWC286-SH-UF",
+                      "SRTWC286-SH-NEW-150",
+                      "SRTWC286-SH-150",
+                      "SRTWC286-SH-NEW-P",
+                      "SRTWC286-SH-NEW-200",
+                      "SRTWC286-SH-NEW"
+                    ],
+                    "brand_code": "sorento",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento"
+                  }
+                ]
+              },
+              "user_response": "Sorry, we don't support direct goods receive & SPO at the moment. You may ask about incoming stock for a specific product or container"
+            }
+          }
+        }
+      }
+    ],
+    "sorento-sub-respond-sendmsg-respond2": [
+      {
+        "json": {
+          "success": true
+        }
+      }
+    ],
+    "Execution Data": [
+      {
+        "json": {
+          "success": true
+        }
+      }
+    ],
+    "attach-merge": [
+      {
+        "json": {
+          "attachments": []
+        }
+      }
+    ],
+    "if-got-attachments": [],
+    "guard-h-record": [
+      {
+        "json": {
+          "id": "900000009",
+          "firstName": "Person 129",
+          "lastName": "Person 133",
+          "phone": "+60100000046",
+          "countryCode": "MY",
+          "status": "active",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "branch_kind": "not_supported",
+        "response": "Sorry, we don't support direct goods receive & SPO at the moment. You may ask about incoming stock for a specific product or container",
+        "manualResponse": true,
+        "includeResponse": true,
+        "is_escalate_offer": false,
+        "outcome": {
+          "build-ideate-reply": null,
+          "build-suggest-offer": null,
+          "build-cs-member-offer": null,
+          "escalate-catalog": {
+            "branch_kind": "not_supported",
+            "response": "Sorry, we don't support direct goods receive & SPO at the moment. You may ask about incoming stock for a specific product or container",
+            "manualResponse": true,
+            "includeResponse": true,
+            "is_escalate_offer": false
+          },
+          "central-exchange": null,
+          "access-level-choice-message": null,
+          "promo-picker": null,
+          "validator": null,
+          "crossdomain-zeroset": null,
+          "build-miss-member-offer": null,
+          "dym-annotate-partial": null,
+          "dym-annotate": null,
+          "clarify-company-reply": null,
+          "offer-hold-reply": null,
+          "cs-roster-plan": null
+        }
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "reply": {
+          "text": "Sorry, we don't support direct goods receive & SPO at the moment. You may ask about incoming stock for a specific product or container",
+          "session_patch": {
+            "variables": {
+              "message_type": "business_query",
+              "intent_hint": "check_spo",
+              "domain_hint": "spo_allocation",
+              "user_goal": "trying to process the SPO allocation for an incoming container and goods receive",
+              "query_brands": [],
+              "access_levels": [],
+              "entities": [],
+              "routing": {
+                "suggested_team": "marketing_promotion",
+                "suggested_agent": "general_enquiries"
+              },
+              "escalation": {
+                "is_escalation_confirmation": false
+              },
+              "response": "Sorry, we don't support direct goods receive & SPO at the moment. You may ask about incoming stock for a specific product or container",
+              "last_result_set": [],
+              "selection_context": null,
+              "date_filter_start": null,
+              "requested_attributes": [],
+              "date_filter_end": null,
+              "date_mode": null,
+              "match_mode": "and",
+              "contains_flyer": false,
+              "dym_offer": null,
+              "dym_candidates": [],
+              "ideation": null,
+              "routing_roster_plan": null,
+              "routing_brand": "sorento",
+              "routing_brand_source": "resolved",
+              "routing_company": "00000000-0000-0000-0000-000000000001",
+              "routing_companies": [
+                {
+                  "codes": [
+                    "SRTWC286-SH-200",
+                    "SRTWC286-SH-P",
+                    "SRTWC286-SH-PP",
+                    "SRTWC286-SH",
+                    "SRTWC286-SH-UF",
+                    "SRTWC286-SH-NEW-150",
+                    "SRTWC286-SH-150",
+                    "SRTWC286-SH-NEW-P",
+                    "SRTWC286-SH-NEW-200",
+                    "SRTWC286-SH-NEW"
+                  ],
+                  "labels": [
+                    "SRTWC286-SH-200",
+                    "SRTWC286-SH-P",
+                    "SRTWC286-SH-PP",
+                    "SRTWC286-SH",
+                    "SRTWC286-SH-UF",
+                    "SRTWC286-SH-NEW-150",
+                    "SRTWC286-SH-150",
+                    "SRTWC286-SH-NEW-P",
+                    "SRTWC286-SH-NEW-200",
+                    "SRTWC286-SH-NEW"
+                  ],
+                  "brand_code": "sorento",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento"
+                }
+              ]
+            },
+            "user_response": "Sorry, we don't support direct goods receive & SPO at the moment. You may ask about incoming stock for a specific product or container"
+          }
+        }
+      }
+    }
+  ],
+  "runIndex": 0,
+  "execution": {
+    "id": "14492977"
+  },
+  "ran": [
+    "When Executed by Another Workflow",
+    "redis-pop-main-message-list",
+    "detect-media",
+    "if-media-in",
+    "tf-message",
+    "sorento-sub-respond-findcontact-respond",
+    "is-human-intervened",
+    "if-message-is-audio",
+    "Call 'sub-respond-save-message-redis'2",
+    "sim-inject-gate",
+    "session-get-gate",
+    "get-session-vars-http",
+    "get-session-vars",
+    "Call 'sub-query-reformulator'",
+    "check-access",
+    "build-ctx",
+    "route-turn",
+    "route",
+    "escalate-catalog",
+    "cs-offer-gate",
+    "build-outcome",
+    "compile-current-state",
+    "crossdomain-compose",
+    "pg-upsert-session",
+    "guard-d-record",
+    "sorento-sub-respond-sendmsg-respond2",
+    "Execution Data",
+    "attach-merge",
+    "if-got-attachments",
+    "guard-h-record"
+  ]
+}
