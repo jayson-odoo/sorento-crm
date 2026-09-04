@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
+import type { ColumnDef } from '@tanstack/react-table';
 import {
   BadgeCheck,
   Boxes,
@@ -36,7 +37,8 @@ import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { formatDate } from '@/lib/helpers';
 import {
   useDownloadAttachment,
@@ -101,97 +103,128 @@ function LinkagesTable({
   const canUnlinkPackingList = true;
   const [manageFieldLinksFor, setManageFieldLinksFor] = useState<string | null>(null);
 
+  const columns = useMemo<ColumnDef<LinkedEntityRef>[]>(
+    () => [
+      {
+        accessorKey: 'name',
+        header: ({ column }) => <DataGridColumnHeader title="Name" column={column} />,
+        cell: ({ row }) => {
+          // Only a SHARED attachment's rows carry a company (R3, S5): a
+          // single-company attachment's items have no company_name and
+          // render exactly as before, no badges anywhere in the row.
+          const outOfScope = row.original.in_scope === false;
+          return (
+            <span className="inline-flex items-center gap-1.5 font-medium">
+              {outOfScope ? (
+                <span className="text-muted-foreground">{row.original.name}</span>
+              ) : (
+                row.original.name
+              )}
+              {row.original.company_name && (
+                <Badge appearance="light" size="sm">
+                  {row.original.company_name}
+                </Badge>
+              )}
+            </span>
+          );
+        },
+        size: 220,
+        meta: { headerTitle: 'Name' },
+      },
+      {
+        id: 'description',
+        accessorFn: (row) => row.description ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Description" column={column} />,
+        cell: ({ row }) => (
+          <span
+            className="text-muted-foreground block max-w-md line-clamp-2"
+            title={row.original.description ?? undefined}
+          >
+            {row.original.description ?? '-'}
+          </span>
+        ),
+        size: 280,
+        meta: { headerTitle: 'Description' },
+      },
+      {
+        id: 'action',
+        header: () => <span className="sr-only">Action</span>,
+        cell: ({ row }) => {
+          const item = row.original;
+          const outOfScope = item.in_scope === false;
+          if (outOfScope) return <span className="text-xs text-muted-foreground">-</span>;
+          return (
+            <div className="flex items-center gap-2">
+              <Link
+                href={`${ENTITY_ROUTES[type].path}/${item.id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-primary hover:underline inline-flex items-center gap-1 text-sm"
+                onClick={(e) => e.stopPropagation()}
+              >
+                View
+                <ExternalLink className="size-3.5 shrink-0" />
+              </Link>
+              {type === 'product' && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setManageFieldLinksFor(item.id);
+                  }}
+                  title="Manage field links"
+                  data-testid={`linkages-manage-field-links-${item.id}`}
+                >
+                  <SlidersHorizontal className="size-3.5" />
+                  Fields
+                </Button>
+              )}
+              {onUnlink && (type === 'packing_list' ? canUnlinkPackingList : canUnlink(item)) && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-destructive hover:text-destructive"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onUnlink(item);
+                  }}
+                >
+                  <Unlink className="size-3.5" />
+                  Unlink
+                </Button>
+              )}
+            </div>
+          );
+        },
+        size: 220,
+        enableResizing: false,
+        meta: { headerTitle: 'Action' },
+      },
+    ],
+    // canUnlink/canUnlinkPackingList are pure functions of `type`, already a dep -
+    // omitted here for the same reason `type` alone already drives their behaviour.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [type, onUnlink],
+  );
+
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        {items.length > 0 ? null : <p className="text-sm text-muted-foreground">{emptyMessage}</p>}
-        {onLink && (
-          <Button variant="outline" size="sm" onClick={onLink}>
-            <Plus className="size-4" />
-            Link
-          </Button>
-        )}
-      </div>
-      {items.length > 0 && (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Description</TableHead>
-              <TableHead className="w-[180px]">Action</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {items.map((item) => {
-              // Only a SHARED attachment's rows carry a company (R3, S5): a
-              // single-company attachment's items have no company_name and
-              // render exactly as before, no badges anywhere in the row.
-              const outOfScope = item.in_scope === false;
-              return (
-                <TableRow key={item.id}>
-                  <TableCell className="font-medium">
-                    <span className="inline-flex items-center gap-1.5">
-                      {outOfScope ? (
-                        <span className="text-muted-foreground">{item.name}</span>
-                      ) : (
-                        item.name
-                      )}
-                      {item.company_name && (
-                        <Badge appearance="light" size="sm">
-                          {item.company_name}
-                        </Badge>
-                      )}
-                    </span>
-                  </TableCell>
-                  <TableCell className="text-muted-foreground max-w-md line-clamp-2" title={item.description ?? undefined}>
-                    {item.description ?? '-'}
-                  </TableCell>
-                  <TableCell>
-                    {outOfScope ? (
-                      <span className="text-xs text-muted-foreground">-</span>
-                    ) : (
-                      <div className="flex items-center gap-2">
-                        <Link
-                          href={`${ENTITY_ROUTES[type].path}/${item.id}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-primary hover:underline inline-flex items-center gap-1 text-sm"
-                        >
-                          View
-                          <ExternalLink className="size-3.5 shrink-0" />
-                        </Link>
-                        {type === 'product' && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => setManageFieldLinksFor(item.id)}
-                            title="Manage field links"
-                            data-testid={`linkages-manage-field-links-${item.id}`}
-                          >
-                            <SlidersHorizontal className="size-3.5" />
-                            Fields
-                          </Button>
-                        )}
-                        {onUnlink && (type === 'packing_list' ? canUnlinkPackingList : canUnlink(item)) && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="text-destructive hover:text-destructive"
-                            onClick={() => onUnlink(item)}
-                          >
-                            <Unlink className="size-3.5" />
-                            Unlink
-                          </Button>
-                        )}
-                      </div>
-                    )}
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
-      )}
+      <PanelDataGrid<LinkedEntityRef>
+        columns={columns}
+        rows={items}
+        getRowId={(row) => row.id}
+        listingKey={`resource.attachments.view::modal-linkages-${type}`}
+        emptyTitle={emptyMessage}
+        toolbar={
+          onLink ? (
+            <Button variant="outline" size="sm" onClick={onLink}>
+              <Plus className="size-4" />
+              Link
+            </Button>
+          ) : undefined
+        }
+      />
       {type === 'product' && manageFieldLinksFor && (
         <ManageFieldLinksDialog
           open={!!manageFieldLinksFor}
