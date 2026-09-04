@@ -81,6 +81,9 @@ read after each recovery.
    watch on every render. Did not have budget in this run to bisect further; flagging as the
    single reproducible, unresolved bug in this table.
 
+   **Fixed by:** `eb15c7672` (hoisted the `useReactTable` `data` array to a module constant;
+   guardrail `data-grid.stable-data.inventory.test.ts` added).
+
 2. **Packing Lists > Proforma invoices tab crashes 100% of the time, on any record.**
    `RangeError: Invalid array length` thrown inside `<DataGridTableDnd>`, caught cleanly by the
    M5-04 error boundary (full shell survives - this is the ONE useful side effect: M5-04 is
@@ -118,6 +121,13 @@ read after each recovery.
      future `paginate={false}` `PanelDataGrid` will hit the same wall the moment its query is
      genuinely still loading with no rows.
 
+   **Fixed by:** `cfbe91c12` (`PanelDataGrid` drops the pagination row model entirely for
+   `paginate={false}` instead of faking `Number.MAX_SAFE_INTEGER`; the skeleton row count goes
+   through `skeletonRowCount()` capped at `SKELETON_ROWS_MAX`, read by all four body render
+   paths). The cap itself landed at 10 first, then was corrected to 100 (the largest page size
+   the grid offers, not the grid's own default) in a follow-up review pass on the same commit
+   range, since a 10-row cap still drew a short skeleton on the 50-row page most lists open at.
+
 3. **B1/B2: the in-app "Back to list" button and the browser's native Back button both fail to
    restore a non-1 page.** The BL-2 review fix (commit `57efda364`) is confirmed working
    correctly at the URL level in both directions - `page`, `limit`, `sort`, `dir` and `from` all
@@ -134,6 +144,11 @@ read after each recovery.
    in disguise - anyone testing M5-07 by starting from a short list, or from page 1 of a long
    one, would see it pass every time. The captain should treat B1/B2 as still open against the
    corrected wording, not fixed by the BL-2 patch that WAS verified working (B4, B5).
+
+   **Fixed by:** `c42c2358b` (`hooks/useResetPageOnFilterChange.ts` compares dependency values
+   instead of counting effect runs, so a mount that restored a page from the URL is not read as a
+   filter change; all 26 URL-driven lists adopted it, the ten hand-rolled `filtersMounted` refs
+   removed).
 
 4. **Sidebar accordion buttons toggle CLOSED on a second click even when read as `aria-expanded:
    "true"` moments earlier**, and clicking an item scrolled below the viewport fold is a silent

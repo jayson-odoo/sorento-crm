@@ -10,8 +10,12 @@
  *
  * A skeleton is a placeholder for what is about to arrive, not a faithful copy of
  * it, so the row count is capped in ONE place - `SKELETON_ROWS_MAX` - and every
- * body render path (plain, column-drag, row-drag) reads it through
- * `skeletonRowCount`.
+ * body render path (plain, column-drag, row-drag, and the drive's own list body)
+ * reads it through `skeletonRowCount`. The cap itself is 100, the LARGEST page
+ * size the grid offers, not the smallest - the first fix for this finding
+ * capped it at 10 (misread as `DEFAULT_PAGE_SIZES[0]`), but most lists open at
+ * 50, so a 10-row skeleton still drew a short card that grew the moment the
+ * page landed, the very layout jump M4 removed.
  */
 import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
@@ -70,12 +74,21 @@ function bodyRows(container: HTMLElement): HTMLElement[] {
 }
 
 describe('skeletonRowCount', () => {
-  it('caps an unbounded page size at SKELETON_ROWS_MAX', () => {
+  it('is the largest page size the DataGrid offers, not the default page', () => {
+    expect(SKELETON_ROWS_MAX).toBe(100);
+  });
+
+  it('caps an unbounded page size at SKELETON_ROWS_MAX (100, not 10)', () => {
+    expect(skeletonRowCount(Number.MAX_SAFE_INTEGER)).toBe(100);
     expect(skeletonRowCount(Number.MAX_SAFE_INTEGER)).toBe(SKELETON_ROWS_MAX);
   });
 
   it('draws exactly the page size when the page is smaller than the cap', () => {
     expect(skeletonRowCount(3)).toBe(3);
+  });
+
+  it('draws the full 50 rows most lists open at, not the old 10-row cap', () => {
+    expect(skeletonRowCount(50)).toBe(50);
   });
 
   it('falls back to the cap for a missing or nonsense page size', () => {
@@ -86,9 +99,10 @@ describe('skeletonRowCount', () => {
 });
 
 describe('DataGridTable loading skeleton with an unbounded page size', () => {
-  it('renders without throwing and draws a bounded number of skeleton rows', () => {
+  it('renders without throwing and draws 100 skeleton rows, not 10', () => {
     const { container } = render(<Harness rows={[]} pageSize={Number.MAX_SAFE_INTEGER} />);
 
+    expect(bodyRows(container)).toHaveLength(100);
     expect(bodyRows(container)).toHaveLength(SKELETON_ROWS_MAX);
   });
 
@@ -96,5 +110,11 @@ describe('DataGridTable loading skeleton with an unbounded page size', () => {
     const { container } = render(<Harness rows={[]} pageSize={3} />);
 
     expect(bodyRows(container)).toHaveLength(3);
+  });
+
+  it('draws the full 50 rows a page opened at 50 asks for', () => {
+    const { container } = render(<Harness rows={[]} pageSize={50} />);
+
+    expect(bodyRows(container)).toHaveLength(50);
   });
 });

@@ -415,6 +415,33 @@ Baseline measured on `origin/main` e1adad4d2, 2 Sep 2026.
   `SourceProformaInvoicesCard.tsx`. `GRNDetail.tsx`'s picking lines and the two react-hook-form
   line tables above were already unaffected - all three render on a plain `DataGrid` with
   `getCoreRowModel` only, no pagination row model at all.
+  **Fix (M5 run 2 evidence, findings 1 and 2):** the SF-8 `paginate={false}` shape crashed every
+  time a caller mounted with rows and column preferences still resolving
+  (`RangeError: Invalid array length`) - Packing Lists > Proforma invoices, 100% reproducible, on
+  every record. Two causes, fixed at both ends. `PanelDataGrid` no longer fakes
+  `Number.MAX_SAFE_INTEGER` as its page size; `paginate={false}` now drops the pagination row model
+  entirely (`getPaginationRowModel` omitted), so `getRowModel()` is the pre-pagination model and no
+  page size is ever read - the same mechanism the two `useFieldArray` line tables already used
+  without incident. `data-grid-table.tsx`'s loading skeleton no longer trusts a truthiness check on
+  `pageSize` either: the row count goes through `skeletonRowCount()`, capped at `SKELETON_ROWS_MAX`
+  and read by all four body render paths (plain, column-drag, row-drag, and the drive's own list
+  body). The cap first landed at 10 (misread as the grid's own default page); a second pass
+  corrected it to 100, the LARGEST page size the grid offers (`DEFAULT_PAGE_SIZES`, `[25, 50,
+  100]`) rather than the smallest, since most lists open at 50 and a cap below the real page size
+  still drew a short skeleton that grew the moment the page landed - the same layout jump M4
+  removed. Separately, Settings > Notifications built its `useReactTable` `data` array inline on
+  every render (`data: [...notificationSettings]`); TanStack reads `data` by identity, so a fresh
+  array every render fed `autoResetPageIndex` a perpetual "something changed" signal - ~400
+  renders and ~6,000 DOM mutations a second with zero interaction, reported as "clicking a
+  checkbox hangs the tab" but reproducible on load alone. Fix: the row array is hoisted to a
+  module constant. Tests: `components/ui/data-grid-table.skeleton.test.tsx` (unbounded page size
+  renders 100 skeleton rows, not 10; a page size of 50 renders exactly 50),
+  `components/common/PanelDataGrid.paginate.test.tsx` (`paginate={false}` renders every row, no
+  pager, no throw while loading), `components/ui/data-grid.stable-data.inventory.test.ts` (the
+  guardrail: no grid anywhere builds its `data` array inline - hoist to a module constant or
+  `useMemo` it), `app/(protected)/user-management/settings/notifications/page.renderLoop.test.tsx`
+  (a `React.Profiler` commit counter proving one click is bounded and Save still carries the
+  toggled value).
 - **M5-07** `[UX] [vitest] [browser]` **Back to list restores the row, absolute rule.** A row
   click appends `from=<row id>` to the detail href; Back, the post-delete push and Edit all
   carry it; on list mount the row with that id is scrolled into view (`block: 'center'`) and
@@ -475,6 +502,31 @@ Baseline measured on `origin/main` e1adad4d2, 2 Sep 2026.
   current page (`page=1`, from table state, overriding the stale `page=2` the URL arrived with); a
   grid whose `rowHref` points outside the current pathname does not call `replaceState` at all. The
   three run-1 tests (call order, middle-click, keyboard Enter) still pass unchanged.
+  **Fix (M5 run 2 evidence, finding 3):** the URL-level rewrite above was proven correct in both
+  directions, but the DataGrid itself never restored the page it named - Products page 2, Back
+  landed on `?page=2...` in the address bar with the footer reading "1 - 50 of 11672" and zero
+  `[data-returned="true"]` rows. `useListStateFromUrl` was not at fault; it restores the page
+  correctly, during the render. Every list also carried a bare
+  `useEffect(() => setPagination(p => ({ ...p, pageIndex: 0 })), [filters])`, and a `useEffect`
+  always runs once after the first commit whether or not anything changed - that mount run stamped
+  page 1 back over the page just restored, on every single list, every single time. Ten more lists
+  carried a hand-rolled `filtersMounted`/`searchMounted` ref instead, which React's StrictMode
+  defeats by running mount effects twice. One shared hook now knows the difference between
+  mounting and changing: `hooks/useResetPageOnFilterChange.ts` compares dependency VALUES rather
+  than counting effect runs, so it resets on an actual filter change and never on mount, StrictMode
+  double-invoke included. All 26 lists that read their state from the URL (§ full list in the
+  hook's own inventory test) now call it; the ten hand-rolled refs are gone. A list that also
+  clears its row selection keeps that in its own separate effect - clearing an already-empty
+  selection on mount is a no-op, so it does not need the mount/change distinction. Products is the
+  one deliberate exception: a HARD reload (`performance.getEntriesByType('navigation')[0].type ===
+  'reload'`) is treated as a clean slate, not a state restore, so `useListStateFromUrl` itself is
+  gated `enabled: !isReload` (`ProductsList.tsx:86-95`) rather than fighting the hook after the
+  fact - a soft in-app navigation back to the list still restores the page normally. Tests:
+  `hooks/useResetPageOnFilterChange.test.tsx` (a harness of the exact list shape: mount-restores-
+  page-2 stays on page 2; a real filter change resets to page 1; StrictMode's double-invoke on
+  mount does not read as a change), `hooks/useResetPageOnFilterChange.inventory.test.ts` (the
+  guardrail across all 26 lists: no bare `useEffect(...pageIndex: 0..., [filters])` and no
+  hand-rolled `filtersMounted`/`searchMounted` ref remains).
 - **M5-08** `[review]` `DESIGN-LANGUAGE.md` sections 4 and 7 and
   `documentation/reference/PR-CHECKLIST.md` state both rules; a new list without them is a
   checklist failure.

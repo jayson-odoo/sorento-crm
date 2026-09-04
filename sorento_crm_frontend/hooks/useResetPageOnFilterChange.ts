@@ -24,6 +24,10 @@
  * must be stable between renders when nothing changed - join an array into a
  * string rather than passing the array, exactly as the hand-rolled versions did,
  * or a fresh identity every render reads as a filter change every render.
+ *
+ * Caveat: a list that rewrites its own URL with both a new filter and a new page
+ * WHILE MOUNTED - not on navigation, in a live effect - would see the filter
+ * change and reset the page it just set. None of the 26 callers does this today.
  */
 
 import { useEffect, useRef, type Dispatch, type SetStateAction } from 'react';
