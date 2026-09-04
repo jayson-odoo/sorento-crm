@@ -47,18 +47,58 @@ NODE_SLUGS: dict[str, tuple[str, ...]] = {
 }
 
 
-# Captures taken against a node body that has since been REPLACED in the export. These
-# are not divergences (nothing about the port disagrees with what ships) and they do not
-# belong in `divergences.py`, which is reserved for deliberate hazard fixes. They are the
-# "fixture staleness" risk the plan names: verify exports before vendoring, and exclude
-# what grades a body that no longer exists. n8n's own `_all-nodes.test.js` never graded
-# these either - it runs the live spine, not `clone-spine-RS`.
+# Captures taken against a node body that is NOT the one the export ships. These are not
+# divergences - nothing about the port disagrees with what ships - and they do not belong
+# in `divergences.py`, which is reserved for deliberate hazard fixes. They are the
+# "fixture staleness" risk the plan names.
+#
+# **A version id is not sufficient evidence.** The five `parser-*` entries below carry the
+# SAME `source.workflow_version` as the export (`ab3ec985`), and still disagree; the
+# workflow is flagged `locally_edited` in its own MANIFEST, so a deployed edit reached the
+# running body without moving the id. The evidence used instead is direct and reproducible:
+# the exported `output_exchange.js` was run against each of these fixtures through the n8n
+# repo's own harness (`tests/harness/n8n-shim.js`), and IT produces what the Python port
+# produces, character for character, not what the fixture expects. The port is faithful to
+# the body that ships; the fixture grades a different one.
+#
+# They are SKIPPED, not dropped: `test_replay.py` emits one skip per entry with its reason,
+# so `pytest -rs` and the summary count show exactly how much of the corpus is not being
+# graded. Re-capture against the current export retires an entry.
 STALE_FIXTURES: dict[tuple[str, str], str] = {
     ("build-ctx", "rs2-01-notsupported"): "RS-2 capture, predates the RS-4 `media` key",
     ("build-ctx", "rs2-02-escalation"): "RS-2 capture, predates the RS-4 `media` key",
     ("build-ctx", "rs2-03-happy"): "RS-2 capture, predates the RS-4 `media` key",
     ("build-ctx", "rs2-04-access-denied"): "RS-2 capture, predates the RS-4 `media` key",
+    # Routing-ladder rank differences. The exported body agrees with the port (verified
+    # through the n8n harness), so the deployed body that produced these differed.
+    ("output_exchange", "parser-15024720"): (
+        "exported output_exchange.js emits suggested_team null, the fixture expects "
+        "'purchasing' (the LLM's own team with no team_source); verified against the "
+        "export via the n8n harness"
+    ),
+    ("output_exchange", "parser-15130185"): (
+        "exported body emits suggested_team null, fixture expects 'marketing_product'; "
+        "same routing-ladder rank difference as parser-15024720"
+    ),
+    ("output_exchange", "parser-15151918"): (
+        "exported body emits suggested_team null, fixture expects 'warehouse'; same "
+        "routing-ladder rank difference as parser-15024720"
+    ),
+    ("output_exchange", "parser-15158411"): (
+        "exported body emits suggested_team null, fixture expects 'warehouse'; same "
+        "routing-ladder rank difference as parser-15024720"
+    ),
+    ("output_exchange", "parser-15164413"): (
+        "exported body derives marketing_product/general_enquiries from the turn's own "
+        "resource_attachment domain, fixture expects the PRIOR turn's "
+        "purchasing/incoming_stock_enquiries carried forward"
+    ),
 }
+
+
+def stale_entries() -> list[tuple[str, str, str]]:
+    """`(node, fixture, reason)` for every registered stale capture, sorted."""
+    return sorted((node, name, reason) for (node, name), reason in STALE_FIXTURES.items())
 
 
 @dataclass(frozen=True)

@@ -1,0 +1,375 @@
+{
+  "source": {
+    "execution_id": "15121349",
+    "workflow_id": "XTODTw-dJcV0uRdC056hG",
+    "workflow_version": "ab3ec985-5371-4ee3-b6e5-8a23e3aef7df",
+    "node": "output_exchange",
+    "captured_at": "2026-09-04T15:04:56+00:00",
+    "expected_from": "runData",
+    "dedupe_sig": "93c5a90b55ec8d0dbe8d60474d84139eed377ecf51565d9051617377574e952f"
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "latest_user_message": "incoming\n\n",
+          "contact_id": 900000020,
+          "previous_conversation_state": {
+            "routing": {
+              "suggested_team": "purchasing",
+              "suggested_agent": "incoming_stock_enquiries"
+            },
+            "entities": [
+              {
+                "raw": "srtwt04a",
+                "hint": "product",
+                "confident": true,
+                "canonical_code": "SRTWT04A",
+                "current_message": true
+              }
+            ],
+            "ideation": null,
+            "response": "Previous turn (incoming): returned 1 records",
+            "date_mode": null,
+            "dym_offer": null,
+            "user_goal": "trying to check incoming for srtwt04a",
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "match_mode": "and",
+            "domain_hint": "incoming",
+            "intent_hint": "check_incoming",
+            "message_type": "business_query",
+            "query_brands": [],
+            "access_levels": [],
+            "routing_brand": "sorento",
+            "contains_flyer": false,
+            "dym_candidates": [],
+            "date_filter_end": null,
+            "last_result_set": [
+              {
+                "idx": 1,
+                "uuid": null,
+                "label": "SRTWT04A",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              }
+            ],
+            "routing_company": "00000000-0000-0000-0000-000000000001",
+            "date_filter_start": null,
+            "routing_companies": [
+              {
+                "codes": [
+                  "SRTWT04A"
+                ],
+                "labels": [
+                  "SRTWT04A"
+                ],
+                "brand_code": "sorento",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento"
+              }
+            ],
+            "selection_context": null,
+            "routing_roster_plan": null,
+            "requested_attributes": [],
+            "routing_brand_source": "resolved"
+          },
+          "is_test": null,
+          "mock_reformulator_output": null
+        }
+      }
+    ],
+    "test-reformulator-bypass": [],
+    "OpenAI Chat Model": [],
+    "AI Agent": [
+      {
+        "json": {
+          "output": "{\"message_type\":\"business_query\",\"intent_hint\":\"check_incoming\",\"domain_hint\":\"incoming\",\"scope_intent\":null,\"is_affirmative\":null,\"user_goal\":\"trying to check incoming shipment status\",\"access_levels\":[],\"broaden_axis\":null,\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[],\"entity_op\":\"reuse\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":\"purchasing\",\"suggested_agent\":\"incoming_stock_enquiries\"},\"escalation\":{\"is_escalation_confirmation\":false,\"company_pick\":null}}"
+        }
+      }
+    ],
+    "output_exchange": [
+      {
+        "json": {
+          "output": {
+            "message_type": "business_query",
+            "intent_hint": "check_incoming",
+            "domain_hint": "incoming",
+            "scope_intent": null,
+            "is_affirmative": null,
+            "user_goal": "trying to check incoming shipment status",
+            "access_levels": [],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "srtwt04a",
+                "hint": "product",
+                "confident": true,
+                "canonical_code": "SRTWT04A",
+                "current_message": false
+              }
+            ],
+            "entity_op": "reuse",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "purchasing",
+              "suggested_agent": "incoming_stock_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "domain_signal_source": "intent_explicit",
+            "entity_op_applied": "reuse",
+            "query_brands": [],
+            "entities_filtered": false,
+            "entities_emptied_by_filter": false,
+            "_pending_pick": true
+          },
+          "_parser_raw": {
+            "message_type": "business_query",
+            "intent_hint": "check_incoming",
+            "domain_hint": "incoming",
+            "scope_intent": null,
+            "is_affirmative": null,
+            "user_goal": "trying to check incoming shipment status",
+            "access_levels": [],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [],
+            "entity_op": "reuse",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "purchasing",
+              "suggested_agent": "incoming_stock_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false,
+              "company_pick": null
+            }
+          }
+        }
+      }
+    ],
+    "suggest-follow-up": [
+      {
+        "json": {
+          "output": {
+            "message_type": "business_query",
+            "intent_hint": "check_incoming",
+            "domain_hint": "incoming",
+            "scope_intent": null,
+            "is_affirmative": null,
+            "user_goal": "trying to check incoming shipment status",
+            "access_levels": [],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "srtwt04a",
+                "hint": "product",
+                "confident": true,
+                "canonical_code": "SRTWT04A",
+                "current_message": false
+              }
+            ],
+            "entity_op": "reuse",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "purchasing",
+              "suggested_agent": "incoming_stock_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "domain_signal_source": "intent_explicit",
+            "entity_op_applied": "reuse",
+            "query_brands": [],
+            "entities_filtered": false,
+            "entities_emptied_by_filter": false,
+            "_pending_pick": true
+          },
+          "_parser_raw": {
+            "message_type": "business_query",
+            "intent_hint": "check_incoming",
+            "domain_hint": "incoming",
+            "scope_intent": null,
+            "is_affirmative": null,
+            "user_goal": "trying to check incoming shipment status",
+            "access_levels": [],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [],
+            "entity_op": "reuse",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "purchasing",
+              "suggested_agent": "incoming_stock_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false,
+              "company_pick": null
+            }
+          }
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "output": "{\"message_type\":\"business_query\",\"intent_hint\":\"check_incoming\",\"domain_hint\":\"incoming\",\"scope_intent\":null,\"is_affirmative\":null,\"user_goal\":\"trying to check incoming shipment status\",\"access_levels\":[],\"broaden_axis\":null,\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[],\"entity_op\":\"reuse\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":\"purchasing\",\"suggested_agent\":\"incoming_stock_enquiries\"},\"escalation\":{\"is_escalation_confirmation\":false,\"company_pick\":null}}"
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "output": {
+          "message_type": "business_query",
+          "intent_hint": "check_incoming",
+          "domain_hint": "incoming",
+          "scope_intent": null,
+          "is_affirmative": null,
+          "user_goal": "trying to check incoming shipment status",
+          "access_levels": [],
+          "broaden_axis": null,
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [
+            {
+              "raw": "srtwt04a",
+              "hint": "product",
+              "confident": true,
+              "canonical_code": "SRTWT04A",
+              "current_message": false
+            }
+          ],
+          "entity_op": "reuse",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": "purchasing",
+            "suggested_agent": "incoming_stock_enquiries"
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          },
+          "domain_signal_source": "intent_explicit",
+          "entity_op_applied": "reuse",
+          "query_brands": [],
+          "entities_filtered": false,
+          "entities_emptied_by_filter": false,
+          "_pending_pick": true
+        },
+        "_parser_raw": {
+          "message_type": "business_query",
+          "intent_hint": "check_incoming",
+          "domain_hint": "incoming",
+          "scope_intent": null,
+          "is_affirmative": null,
+          "user_goal": "trying to check incoming shipment status",
+          "access_levels": [],
+          "broaden_axis": null,
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [],
+          "entity_op": "reuse",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": "purchasing",
+            "suggested_agent": "incoming_stock_enquiries"
+          },
+          "escalation": {
+            "is_escalation_confirmation": false,
+            "company_pick": null
+          }
+        }
+      }
+    }
+  ],
+  "runIndex": 0,
+  "execution": {
+    "id": "15121349"
+  },
+  "ran": [
+    "When Executed by Another Workflow",
+    "test-reformulator-bypass",
+    "OpenAI Chat Model",
+    "AI Agent",
+    "output_exchange",
+    "suggest-follow-up"
+  ]
+}

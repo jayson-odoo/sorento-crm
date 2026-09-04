@@ -1,0 +1,411 @@
+{
+  "source": {
+    "execution_id": "15108007",
+    "workflow_id": "XTODTw-dJcV0uRdC056hG",
+    "workflow_version": "ab3ec985-5371-4ee3-b6e5-8a23e3aef7df",
+    "node": "output_exchange",
+    "captured_at": "2026-09-04T15:05:03+00:00",
+    "expected_from": "runData",
+    "dedupe_sig": "93c5a90b55ec8d0dbe8d60474d84139eed377ecf51565d9051617377574e952f"
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "latest_user_message": "Check PS202609-0080 delivery\n\n",
+          "contact_id": 900000058,
+          "previous_conversation_state": {
+            "routing": {
+              "suggested_team": "warehouse",
+              "suggested_agent": "general_enquiries"
+            },
+            "entities": [
+              {
+                "raw": "SRTSH22612",
+                "hint": "product",
+                "confident": true,
+                "canonical_code": "SRTSH22612",
+                "current_message": true
+              }
+            ],
+            "ideation": null,
+            "response": "Previous turn (inventory): returned 1 records",
+            "date_mode": null,
+            "dym_offer": null,
+            "user_goal": "trying to check stock for SRTSH22612",
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "match_mode": "and",
+            "domain_hint": "inventory",
+            "intent_hint": "check_stock",
+            "message_type": "business_query",
+            "query_brands": [],
+            "access_levels": [],
+            "routing_brand": "sorento",
+            "contains_flyer": false,
+            "dym_candidates": [],
+            "date_filter_end": null,
+            "last_result_set": [
+              {
+                "idx": 1,
+                "uuid": null,
+                "label": "SRTSH22612",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              }
+            ],
+            "routing_company": "00000000-0000-0000-0000-000000000001",
+            "date_filter_start": null,
+            "routing_companies": [
+              {
+                "codes": [
+                  "SRTSH22612"
+                ],
+                "labels": [
+                  "SRTSH22612"
+                ],
+                "brand_code": "sorento",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento"
+              }
+            ],
+            "selection_context": null,
+            "routing_roster_plan": null,
+            "requested_attributes": [],
+            "routing_brand_source": "resolved"
+          },
+          "is_test": null,
+          "mock_reformulator_output": null
+        }
+      }
+    ],
+    "test-reformulator-bypass": [],
+    "OpenAI Chat Model": [],
+    "AI Agent": [
+      {
+        "json": {
+          "output": "{\"message_type\":\"business_query\",\"intent_hint\":\"check_order\",\"domain_hint\":\"order\",\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"trying to check the delivery status for PS202609-0080\",\"access_levels\":[],\"broaden_axis\":null,\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[{\"raw\":\"PS202609-0080\",\"hint\":\"order\",\"canonical_code\":null,\"current_message\":true,\"confident\":true}],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[\"delivery\"],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":\"customer_service\",\"suggested_agent\":\"order_enquiries\"},\"escalation\":{\"is_escalation_confirmation\":false,\"company_pick\":null}}"
+        }
+      }
+    ],
+    "output_exchange": [
+      {
+        "json": {
+          "output": {
+            "message_type": "business_query",
+            "intent_hint": "check_order",
+            "domain_hint": "order",
+            "scope_intent": "specific",
+            "is_affirmative": null,
+            "user_goal": "trying to check the delivery status for PS202609-0080",
+            "access_levels": [],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "PS202609-0080",
+                "hint": "order",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "entity_op": "replace_combine",
+            "scope_exclusive": false,
+            "requested_attributes": [
+              "delivery"
+            ],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "customer_service",
+              "suggested_agent": "order_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "domain_signal_source": "intent_explicit",
+            "scope_exclusive_applied": false,
+            "entity_op_applied": "replace_combine",
+            "query_brands": [],
+            "entities_filtered": false,
+            "entities_emptied_by_filter": false
+          },
+          "_parser_raw": {
+            "message_type": "business_query",
+            "intent_hint": "check_order",
+            "domain_hint": "order",
+            "scope_intent": "specific",
+            "is_affirmative": null,
+            "user_goal": "trying to check the delivery status for PS202609-0080",
+            "access_levels": [],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "PS202609-0080",
+                "hint": "order",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "entity_op": "replace_combine",
+            "scope_exclusive": false,
+            "requested_attributes": [
+              "delivery"
+            ],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "customer_service",
+              "suggested_agent": "order_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false,
+              "company_pick": null
+            }
+          }
+        }
+      }
+    ],
+    "suggest-follow-up": [
+      {
+        "json": {
+          "output": {
+            "message_type": "business_query",
+            "intent_hint": "check_order",
+            "domain_hint": "order",
+            "scope_intent": "specific",
+            "is_affirmative": null,
+            "user_goal": "trying to check the delivery status for PS202609-0080",
+            "access_levels": [],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "PS202609-0080",
+                "hint": "order",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "entity_op": "replace_combine",
+            "scope_exclusive": false,
+            "requested_attributes": [
+              "delivery"
+            ],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "customer_service",
+              "suggested_agent": "order_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "domain_signal_source": "intent_explicit",
+            "scope_exclusive_applied": false,
+            "entity_op_applied": "replace_combine",
+            "query_brands": [],
+            "entities_filtered": false,
+            "entities_emptied_by_filter": false
+          },
+          "_parser_raw": {
+            "message_type": "business_query",
+            "intent_hint": "check_order",
+            "domain_hint": "order",
+            "scope_intent": "specific",
+            "is_affirmative": null,
+            "user_goal": "trying to check the delivery status for PS202609-0080",
+            "access_levels": [],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "PS202609-0080",
+                "hint": "order",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "entity_op": "replace_combine",
+            "scope_exclusive": false,
+            "requested_attributes": [
+              "delivery"
+            ],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "customer_service",
+              "suggested_agent": "order_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false,
+              "company_pick": null
+            }
+          }
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "output": "{\"message_type\":\"business_query\",\"intent_hint\":\"check_order\",\"domain_hint\":\"order\",\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"trying to check the delivery status for PS202609-0080\",\"access_levels\":[],\"broaden_axis\":null,\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[{\"raw\":\"PS202609-0080\",\"hint\":\"order\",\"canonical_code\":null,\"current_message\":true,\"confident\":true}],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[\"delivery\"],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":\"customer_service\",\"suggested_agent\":\"order_enquiries\"},\"escalation\":{\"is_escalation_confirmation\":false,\"company_pick\":null}}"
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "output": {
+          "message_type": "business_query",
+          "intent_hint": "check_order",
+          "domain_hint": "order",
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "trying to check the delivery status for PS202609-0080",
+          "access_levels": [],
+          "broaden_axis": null,
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [
+            {
+              "raw": "PS202609-0080",
+              "hint": "order",
+              "canonical_code": null,
+              "current_message": true,
+              "confident": true
+            }
+          ],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [
+            "delivery"
+          ],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": "customer_service",
+            "suggested_agent": "order_enquiries"
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          },
+          "domain_signal_source": "intent_explicit",
+          "scope_exclusive_applied": false,
+          "entity_op_applied": "replace_combine",
+          "query_brands": [],
+          "entities_filtered": false,
+          "entities_emptied_by_filter": false
+        },
+        "_parser_raw": {
+          "message_type": "business_query",
+          "intent_hint": "check_order",
+          "domain_hint": "order",
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "trying to check the delivery status for PS202609-0080",
+          "access_levels": [],
+          "broaden_axis": null,
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [
+            {
+              "raw": "PS202609-0080",
+              "hint": "order",
+              "canonical_code": null,
+              "current_message": true,
+              "confident": true
+            }
+          ],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [
+            "delivery"
+          ],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": "customer_service",
+            "suggested_agent": "order_enquiries"
+          },
+          "escalation": {
+            "is_escalation_confirmation": false,
+            "company_pick": null
+          }
+        }
+      }
+    }
+  ],
+  "runIndex": 0,
+  "execution": {
+    "id": "15108007"
+  },
+  "ran": [
+    "When Executed by Another Workflow",
+    "test-reformulator-bypass",
+    "OpenAI Chat Model",
+    "AI Agent",
+    "output_exchange",
+    "suggest-follow-up"
+  ]
+}

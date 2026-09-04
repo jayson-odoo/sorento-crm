@@ -1,0 +1,1774 @@
+{
+  "source": {
+    "execution_id": "14999713",
+    "workflow_id": "S4N1LiisAqA4hpMC",
+    "workflow_version": "51f7b0d2-8027-4a7d-920b-6762226dac1f",
+    "node": "route-turn",
+    "captured_at": "2026-09-04T14:58:13+00:00",
+    "expected_from": "runData",
+    "dedupe_sig": "b9ca14b9b480b7536f849722b9faa0a672df5015e33e94769f166c3f9e3384d0"
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "test": null,
+          "test_run_id": null,
+          "started_at": null,
+          "contact": "900000032"
+        }
+      }
+    ],
+    "redis-pop-main-message-list": [
+      {
+        "json": {
+          "message": {
+            "message": {
+              "event_type": "message.received",
+              "event_id": "daccd3b7-569f-4682-ba09-2998eca8cc60",
+              "contact": {
+                "id": 900000032,
+                "firstName": "Person 56",
+                "lastName": "Person 57",
+                "phone": "+60100000018",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1782546255
+              },
+              "message": {
+                "messageId": 1788411753000000,
+                "channelMessageId": "wamid.HBgLNjAxNDkyODk2ODcVAgASGBQzQTFCRkNDNjlBMUJFNDVDRjY5RgA=",
+                "contactId": 900000032,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788411753000,
+                "message": {
+                  "type": "text",
+                  "text": "Cgb1032b promotion"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 59\"},\"wa_id\":\"60100000018\",\"user_id\":\"MY.900000033\",\"firstName\":\"Person 56\",\"lastName\":\"Person 58\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "contact": {
+              "id": 900000032,
+              "firstName": "Person 56",
+              "lastName": "Person 57",
+              "phone": "+60100000018",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/b0d8b35b-95f8-418f-a5a2-991b04a72ea7"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": null,
+              "created_at": 1782546255
+            }
+          }
+        }
+      }
+    ],
+    "media-intake": [
+      {
+        "json": {
+          "handled": false,
+          "item": {
+            "message": {
+              "message": {
+                "event_type": "message.received",
+                "event_id": "daccd3b7-569f-4682-ba09-2998eca8cc60",
+                "contact": {
+                  "id": 900000032,
+                  "firstName": "Person 56",
+                  "lastName": "Person 57",
+                  "phone": "+60100000018",
+                  "email": null,
+                  "language": null,
+                  "profilePic": null,
+                  "countryCode": "MY",
+                  "status": "open",
+                  "assignee": {
+                    "id": null,
+                    "firstName": null,
+                    "lastName": null,
+                    "email": null
+                  },
+                  "created_at": 1782546255
+                },
+                "message": {
+                  "messageId": 1788411753000000,
+                  "channelMessageId": "wamid.HBgLNjAxNDkyODk2ODcVAgASGBQzQTFCRkNDNjlBMUJFNDVDRjY5RgA=",
+                  "contactId": 900000032,
+                  "channelId": 453209,
+                  "traffic": "incoming",
+                  "timestamp": 1788411753000,
+                  "message": {
+                    "type": "text",
+                    "text": "Cgb1032b promotion"
+                  }
+                },
+                "channel": {
+                  "id": 453209,
+                  "name": "Internal (+60 11-1673 1179)",
+                  "source": "whatsapp_business",
+                  "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 59\"},\"wa_id\":\"60100000018\",\"user_id\":\"MY.900000033\",\"firstName\":\"Person 56\",\"lastName\":\"Person 58\"}}",
+                  "created_at": 1767682908
+                },
+                "sender": {
+                  "source": "contact",
+                  "userId": null,
+                  "teamId": null,
+                  "workflowId": null,
+                  "broadcastHistoryId": null
+                }
+              },
+              "contact": {
+                "id": 900000032,
+                "firstName": "Person 56",
+                "lastName": "Person 57",
+                "phone": "+60100000018",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "locale": null,
+                "countryCode": "MY",
+                "status": "open",
+                "isBlocked": false,
+                "custom_fields": [
+                  {
+                    "name": "enquiry_type",
+                    "value": null
+                  },
+                  {
+                    "name": "user_type",
+                    "value": null
+                  },
+                  {
+                    "name": "complaint_id",
+                    "value": null
+                  },
+                  {
+                    "name": "is_allowed_stock",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_human_intervened",
+                    "value": "false"
+                  },
+                  {
+                    "name": "backend_id",
+                    "value": "https://fe-sorento.foundryx.my/user-management/contacts/b0d8b35b-95f8-418f-a5a2-991b04a72ea7"
+                  },
+                  {
+                    "name": "is_allowed_ai",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_allowed_voice",
+                    "value": null
+                  }
+                ],
+                "tags": [
+                  "imported_20260627_150636"
+                ],
+                "assignee": null,
+                "lifecycle": null,
+                "created_at": 1782546255
+              }
+            },
+            "_media": {
+              "modality": null,
+              "attachment_type": null,
+              "media_url": null,
+              "mime_type": null,
+              "caption": "Cgb1032b promotion",
+              "bytes": null,
+              "duration_ms": null,
+              "duration_source": null,
+              "message_id": "1788411753000000",
+              "respond_io_id": "900000032",
+              "test_run_id": null,
+              "scope": null
+            }
+          },
+          "media": null
+        }
+      }
+    ],
+    "media-gate": [
+      {
+        "json": {
+          "message": {
+            "message": {
+              "event_type": "message.received",
+              "event_id": "daccd3b7-569f-4682-ba09-2998eca8cc60",
+              "contact": {
+                "id": 900000032,
+                "firstName": "Person 56",
+                "lastName": "Person 57",
+                "phone": "+60100000018",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1782546255
+              },
+              "message": {
+                "messageId": 1788411753000000,
+                "channelMessageId": "wamid.HBgLNjAxNDkyODk2ODcVAgASGBQzQTFCRkNDNjlBMUJFNDVDRjY5RgA=",
+                "contactId": 900000032,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788411753000,
+                "message": {
+                  "type": "text",
+                  "text": "Cgb1032b promotion"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 59\"},\"wa_id\":\"60100000018\",\"user_id\":\"MY.900000033\",\"firstName\":\"Person 56\",\"lastName\":\"Person 58\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "contact": {
+              "id": 900000032,
+              "firstName": "Person 56",
+              "lastName": "Person 57",
+              "phone": "+60100000018",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/b0d8b35b-95f8-418f-a5a2-991b04a72ea7"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": null,
+              "created_at": 1782546255
+            }
+          },
+          "_media": {
+            "modality": null,
+            "attachment_type": null,
+            "media_url": null,
+            "mime_type": null,
+            "caption": "Cgb1032b promotion",
+            "bytes": null,
+            "duration_ms": null,
+            "duration_source": null,
+            "message_id": "1788411753000000",
+            "respond_io_id": "900000032",
+            "test_run_id": null,
+            "scope": null
+          }
+        }
+      }
+    ],
+    "tf-message": [
+      {
+        "json": {
+          "event_type": "message.received",
+          "event_id": "daccd3b7-569f-4682-ba09-2998eca8cc60",
+          "contact": {
+            "id": 900000032,
+            "firstName": "Person 56",
+            "lastName": "Person 57",
+            "phone": "+60100000018",
+            "email": null,
+            "language": null,
+            "profilePic": null,
+            "countryCode": "MY",
+            "status": "open",
+            "assignee": {
+              "id": null,
+              "firstName": null,
+              "lastName": null,
+              "email": null
+            },
+            "created_at": 1782546255
+          },
+          "message": {
+            "messageId": 1788411753000000,
+            "channelMessageId": "wamid.HBgLNjAxNDkyODk2ODcVAgASGBQzQTFCRkNDNjlBMUJFNDVDRjY5RgA=",
+            "contactId": 900000032,
+            "channelId": 453209,
+            "traffic": "incoming",
+            "timestamp": 1788411753000,
+            "message": {
+              "type": "text",
+              "text": "Cgb1032b promotion"
+            }
+          },
+          "channel": {
+            "id": 453209,
+            "name": "Internal (+60 11-1673 1179)",
+            "source": "whatsapp_business",
+            "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 59\"},\"wa_id\":\"60100000018\",\"user_id\":\"MY.900000033\",\"firstName\":\"Person 56\",\"lastName\":\"Person 58\"}}",
+            "created_at": 1767682908
+          },
+          "sender": {
+            "source": "contact",
+            "userId": null,
+            "teamId": null,
+            "workflowId": null,
+            "broadcastHistoryId": null
+          }
+        }
+      }
+    ],
+    "sorento-sub-respond-findcontact-respond": [
+      {
+        "json": {
+          "id": 900000032,
+          "firstName": "Person 56",
+          "lastName": "Person 57",
+          "phone": "+60100000018",
+          "email": null,
+          "language": null,
+          "profilePic": null,
+          "locale": null,
+          "countryCode": "MY",
+          "status": "open",
+          "isBlocked": false,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": null
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "backend_id",
+              "value": "https://fe-sorento.foundryx.my/user-management/contacts/b0d8b35b-95f8-418f-a5a2-991b04a72ea7"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "tags": [
+            "imported_20260627_150636"
+          ],
+          "assignee": null,
+          "lifecycle": null,
+          "created_at": 1782546255
+        }
+      }
+    ],
+    "Execution Data": [
+      {
+        "json": {
+          "id": 900000032,
+          "firstName": "Person 56",
+          "lastName": "Person 57",
+          "phone": "+60100000018",
+          "email": null,
+          "language": null,
+          "profilePic": null,
+          "locale": null,
+          "countryCode": "MY",
+          "status": "open",
+          "isBlocked": false,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": null
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "backend_id",
+              "value": "https://fe-sorento.foundryx.my/user-management/contacts/b0d8b35b-95f8-418f-a5a2-991b04a72ea7"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "tags": [
+            "imported_20260627_150636"
+          ],
+          "assignee": null,
+          "lifecycle": null,
+          "created_at": 1782546255
+        }
+      }
+    ],
+    "is-human-intervened": [
+      {
+        "json": {
+          "id": 900000032,
+          "firstName": "Person 56",
+          "lastName": "Person 57",
+          "phone": "+60100000018",
+          "email": null,
+          "language": null,
+          "profilePic": null,
+          "locale": null,
+          "countryCode": "MY",
+          "status": "open",
+          "isBlocked": false,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": null
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "backend_id",
+              "value": "https://fe-sorento.foundryx.my/user-management/contacts/b0d8b35b-95f8-418f-a5a2-991b04a72ea7"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "tags": [
+            "imported_20260627_150636"
+          ],
+          "assignee": null,
+          "lifecycle": null,
+          "created_at": 1782546255
+        }
+      }
+    ],
+    "if-message-is-audio": [],
+    "Call 'sub-respond-save-message-redis'2": [
+      {
+        "json": {
+          "contact_id": 900000032,
+          "phone_number": "+60100000018",
+          "message": "Cgb1032b promotion",
+          "sent_at": 1788411758158,
+          "turn_id": "14999713",
+          "data": "{\"contact_id\":\"900000032\",\"phone_number\":\"+60100000018\",\"message\":\"Cgb1032b promotion\",\"sent_at\":1788411753000,\"first_name\":\"Person 56\",\"last_name\":\"Person 57\",\"reply_to_message_id\":null,\"reply_to_message\":null,\"type\":\"incoming\",\"message_id\":\"1788411753000000\",\"turn_id\":\"14999713\",\"state_trace\":{\"v\":1,\"before\":null,\"parser_raw\":null,\"parser_applied\":null,\"after\":null}}"
+        }
+      }
+    ],
+    "get-session-vars": [
+      {
+        "json": {
+          "respond_io_id": "900000032",
+          "session_vars": {
+            "variables": {
+              "routing": {
+                "suggested_team": "warehouse",
+                "suggested_agent": "general_enquiries"
+              },
+              "entities": [
+                {
+                  "raw": "7741",
+                  "hint": "product",
+                  "confident": true,
+                  "canonical_code": null,
+                  "current_message": true
+                }
+              ],
+              "ideation": null,
+              "response": "Previous turn (inventory): returned 12 records",
+              "date_mode": null,
+              "dym_offer": null,
+              "user_goal": "trying to check stock for 7741",
+              "escalation": {
+                "is_escalation_confirmation": false
+              },
+              "match_mode": "and",
+              "domain_hint": "inventory",
+              "intent_hint": "check_stock",
+              "message_type": "business_query",
+              "query_brands": [],
+              "access_levels": [],
+              "routing_brand": "mocha",
+              "contains_flyer": false,
+              "dym_candidates": [],
+              "date_filter_end": null,
+              "last_result_set": [
+                {
+                  "idx": 1,
+                  "uuid": null,
+                  "label": "MCM7741",
+                  "product": null,
+                  "filename": null,
+                  "entity_type": null,
+                  "attachment_type": null
+                },
+                {
+                  "idx": 2,
+                  "uuid": null,
+                  "label": "MCM7741",
+                  "product": null,
+                  "filename": null,
+                  "entity_type": null,
+                  "attachment_type": null
+                },
+                {
+                  "idx": 3,
+                  "uuid": null,
+                  "label": "MCM7741",
+                  "product": null,
+                  "filename": null,
+                  "entity_type": null,
+                  "attachment_type": null
+                },
+                {
+                  "idx": 4,
+                  "uuid": null,
+                  "label": "MCM7741",
+                  "product": null,
+                  "filename": null,
+                  "entity_type": null,
+                  "attachment_type": null
+                },
+                {
+                  "idx": 5,
+                  "uuid": null,
+                  "label": "MCM7741-BL",
+                  "product": null,
+                  "filename": null,
+                  "entity_type": null,
+                  "attachment_type": null
+                },
+                {
+                  "idx": 6,
+                  "uuid": null,
+                  "label": "MCM7741-BL",
+                  "product": null,
+                  "filename": null,
+                  "entity_type": null,
+                  "attachment_type": null
+                },
+                {
+                  "idx": 7,
+                  "uuid": null,
+                  "label": "MCM7741-GD",
+                  "product": null,
+                  "filename": null,
+                  "entity_type": null,
+                  "attachment_type": null
+                },
+                {
+                  "idx": 8,
+                  "uuid": null,
+                  "label": "MCM7741-GD",
+                  "product": null,
+                  "filename": null,
+                  "entity_type": null,
+                  "attachment_type": null
+                },
+                {
+                  "idx": 9,
+                  "uuid": null,
+                  "label": "MCM7741-GM",
+                  "product": null,
+                  "filename": null,
+                  "entity_type": null,
+                  "attachment_type": null
+                },
+                {
+                  "idx": 10,
+                  "uuid": null,
+                  "label": "MCM7741-GM",
+                  "product": null,
+                  "filename": null,
+                  "entity_type": null,
+                  "attachment_type": null
+                },
+                {
+                  "idx": 11,
+                  "uuid": null,
+                  "label": "MCM7741-RG",
+                  "product": null,
+                  "filename": null,
+                  "entity_type": null,
+                  "attachment_type": null
+                },
+                {
+                  "idx": 12,
+                  "uuid": null,
+                  "label": "MCM7741-RG",
+                  "product": null,
+                  "filename": null,
+                  "entity_type": null,
+                  "attachment_type": null
+                }
+              ],
+              "routing_company": null,
+              "date_filter_start": null,
+              "routing_companies": [
+                {
+                  "codes": [
+                    "MCM7741-BL",
+                    "MCM7741-GD",
+                    "MCM7741-GM",
+                    "MCM7741",
+                    "MCM7741-RG"
+                  ],
+                  "labels": [
+                    "MCM7741-BL",
+                    "MCM7741-GD",
+                    "MCM7741-GM",
+                    "MCM7741",
+                    "MCM7741-RG"
+                  ],
+                  "brand_code": null,
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha"
+                },
+                {
+                  "codes": [
+                    "MCM7741-GM",
+                    "MCM7741"
+                  ],
+                  "labels": [
+                    "MCM7741-GM",
+                    "MCM7741"
+                  ],
+                  "brand_code": "mocha",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento"
+                }
+              ],
+              "selection_context": null,
+              "routing_roster_plan": null,
+              "requested_attributes": [],
+              "routing_brand_source": "resolved"
+            },
+            "user_response": "Stock details found for the requested products.\n\n1. *Company:* Sorento\n*Product Code:* MCM7741\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 19\n\n2. *Company:* Sorento\n*Product Code:* MCM7741\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-AM\n*Quantity On Hand:* 13\n\n3. *Company:* Mocha\n*Product Code:* MCM7741\n*Warehouse:* HQ\n*System Location:* HQ\n*Quantity On Hand:* 0\n\n4. *Company:* Mocha\n*Product Code:* MCM7741\n*Warehouse:* MERU\n*System Location:* MOCHA-WH\n*Quantity On Hand:* 1\n\n5. *Company:* Mocha\n*Product Code:* MCM7741-BL\n*Warehouse:* HQ\n*System Location:* HQ\n*Quantity On Hand:* 0\n\n6. *Company:* Mocha\n*Product Code:* MCM7741-BL\n*Warehouse:* MERU\n*System Location:* MOCHA-WH\n*Quantity On Hand:* 0\n\n7. *Company:* Mocha\n*Product Code:* MCM7741-GD\n*Warehouse:* HQ\n*System Location:* HQ\n*Quantity On Hand:* 50\n\n8. *Company:* Mocha\n*Product Code:* MCM7741-GD\n*Warehouse:* MERU\n*System Location:* MOCHA-WH\n*Quantity On Hand:* 68\n\n9. *Company:* Mocha\n*Product Code:* MCM7741-GM\n*Warehouse:* HQ\n*System Location:* HQ\n*Quantity On Hand:* 100\n\n10. *Company:* Mocha\n*Product Code:* MCM7741-GM\n*Warehouse:* MERU\n*System Location:* MOCHA-WH\n*Quantity On Hand:* 80\n\n11. *Company:* Mocha\n*Product Code:* MCM7741-RG\n*Warehouse:* HQ\n*System Location:* HQ\n*Quantity On Hand:* 50\n\n12. *Company:* Mocha\n*Product Code:* MCM7741-RG\n*Warehouse:* MERU\n*System Location:* MOCHA-WH\n*Quantity On Hand:* 57\n\n_Data last updated: 03/09/2026 11:31:14_"
+          }
+        }
+      }
+    ],
+    "Call 'sub-query-reformulator'": [
+      {
+        "json": {
+          "output": {
+            "message_type": "business_query",
+            "intent_hint": "check_promotion",
+            "domain_hint": "promotion",
+            "scope_intent": "specific",
+            "is_affirmative": null,
+            "user_goal": "trying to check the promotion for Cgb1032b",
+            "access_levels": [],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "Cgb1032b",
+                "hint": "product",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "entity_op": "replace_combine",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "marketing_promotion",
+              "suggested_agent": "general_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "domain_signal_source": "intent_explicit",
+            "scope_exclusive_applied": false,
+            "entity_op_applied": "replace_combine",
+            "query_brands": [],
+            "entities_filtered": false,
+            "entities_emptied_by_filter": false
+          },
+          "_parser_raw": {
+            "message_type": "business_query",
+            "intent_hint": "check_promotion",
+            "domain_hint": "promotion",
+            "scope_intent": "specific",
+            "is_affirmative": null,
+            "user_goal": "trying to check the promotion for Cgb1032b",
+            "access_levels": [],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "Cgb1032b",
+                "hint": "product",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "entity_op": "replace_combine",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "marketing_promotion",
+              "suggested_agent": "general_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false,
+              "company_pick": null
+            }
+          }
+        }
+      }
+    ],
+    "check-access": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "General Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null
+        }
+      }
+    ],
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 900000032,
+              "firstName": "Person 56",
+              "lastName": "Person 57",
+              "phone": "+60100000018",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/b0d8b35b-95f8-418f-a5a2-991b04a72ea7"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": null,
+              "created_at": 1782546255
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "daccd3b7-569f-4682-ba09-2998eca8cc60",
+              "contact": {
+                "id": 900000032,
+                "firstName": "Person 56",
+                "lastName": "Person 57",
+                "phone": "+60100000018",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1782546255
+              },
+              "message": {
+                "messageId": 1788411753000000,
+                "channelMessageId": "wamid.HBgLNjAxNDkyODk2ODcVAgASGBQzQTFCRkNDNjlBMUJFNDVDRjY5RgA=",
+                "contactId": 900000032,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788411753000,
+                "message": {
+                  "type": "text",
+                  "text": "Cgb1032b promotion"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 59\"},\"wa_id\":\"60100000018\",\"user_id\":\"MY.900000033\",\"firstName\":\"Person 56\",\"lastName\":\"Person 58\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000032",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "warehouse",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "entities": [
+                    {
+                      "raw": "7741",
+                      "hint": "product",
+                      "confident": true,
+                      "canonical_code": null,
+                      "current_message": true
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Previous turn (inventory): returned 12 records",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to check stock for 7741",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "inventory",
+                  "intent_hint": "check_stock",
+                  "message_type": "business_query",
+                  "query_brands": [],
+                  "access_levels": [],
+                  "routing_brand": "mocha",
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [
+                    {
+                      "idx": 1,
+                      "uuid": null,
+                      "label": "MCM7741",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 2,
+                      "uuid": null,
+                      "label": "MCM7741",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 3,
+                      "uuid": null,
+                      "label": "MCM7741",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 4,
+                      "uuid": null,
+                      "label": "MCM7741",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 5,
+                      "uuid": null,
+                      "label": "MCM7741-BL",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 6,
+                      "uuid": null,
+                      "label": "MCM7741-BL",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 7,
+                      "uuid": null,
+                      "label": "MCM7741-GD",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 8,
+                      "uuid": null,
+                      "label": "MCM7741-GD",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 9,
+                      "uuid": null,
+                      "label": "MCM7741-GM",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 10,
+                      "uuid": null,
+                      "label": "MCM7741-GM",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 11,
+                      "uuid": null,
+                      "label": "MCM7741-RG",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 12,
+                      "uuid": null,
+                      "label": "MCM7741-RG",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    }
+                  ],
+                  "routing_company": null,
+                  "date_filter_start": null,
+                  "routing_companies": [
+                    {
+                      "codes": [
+                        "MCM7741-BL",
+                        "MCM7741-GD",
+                        "MCM7741-GM",
+                        "MCM7741",
+                        "MCM7741-RG"
+                      ],
+                      "labels": [
+                        "MCM7741-BL",
+                        "MCM7741-GD",
+                        "MCM7741-GM",
+                        "MCM7741",
+                        "MCM7741-RG"
+                      ],
+                      "brand_code": null,
+                      "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                      "company_name": "Mocha"
+                    },
+                    {
+                      "codes": [
+                        "MCM7741-GM",
+                        "MCM7741"
+                      ],
+                      "labels": [
+                        "MCM7741-GM",
+                        "MCM7741"
+                      ],
+                      "brand_code": "mocha",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "selection_context": null,
+                  "routing_roster_plan": null,
+                  "requested_attributes": [],
+                  "routing_brand_source": "resolved"
+                },
+                "user_response": "Stock details found for the requested products.\n\n1. *Company:* Sorento\n*Product Code:* MCM7741\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 19\n\n2. *Company:* Sorento\n*Product Code:* MCM7741\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-AM\n*Quantity On Hand:* 13\n\n3. *Company:* Mocha\n*Product Code:* MCM7741\n*Warehouse:* HQ\n*System Location:* HQ\n*Quantity On Hand:* 0\n\n4. *Company:* Mocha\n*Product Code:* MCM7741\n*Warehouse:* MERU\n*System Location:* MOCHA-WH\n*Quantity On Hand:* 1\n\n5. *Company:* Mocha\n*Product Code:* MCM7741-BL\n*Warehouse:* HQ\n*System Location:* HQ\n*Quantity On Hand:* 0\n\n6. *Company:* Mocha\n*Product Code:* MCM7741-BL\n*Warehouse:* MERU\n*System Location:* MOCHA-WH\n*Quantity On Hand:* 0\n\n7. *Company:* Mocha\n*Product Code:* MCM7741-GD\n*Warehouse:* HQ\n*System Location:* HQ\n*Quantity On Hand:* 50\n\n8. *Company:* Mocha\n*Product Code:* MCM7741-GD\n*Warehouse:* MERU\n*System Location:* MOCHA-WH\n*Quantity On Hand:* 68\n\n9. *Company:* Mocha\n*Product Code:* MCM7741-GM\n*Warehouse:* HQ\n*System Location:* HQ\n*Quantity On Hand:* 100\n\n10. *Company:* Mocha\n*Product Code:* MCM7741-GM\n*Warehouse:* MERU\n*System Location:* MOCHA-WH\n*Quantity On Hand:* 80\n\n11. *Company:* Mocha\n*Product Code:* MCM7741-RG\n*Warehouse:* HQ\n*System Location:* HQ\n*Quantity On Hand:* 50\n\n12. *Company:* Mocha\n*Product Code:* MCM7741-RG\n*Warehouse:* MERU\n*System Location:* MOCHA-WH\n*Quantity On Hand:* 57\n\n_Data last updated: 03/09/2026 11:31:14_"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "check_promotion",
+                "domain_hint": "promotion",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check the promotion for Cgb1032b",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "Cgb1032b",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "marketing_promotion",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_explicit",
+                "scope_exclusive_applied": false,
+                "entity_op_applied": "replace_combine",
+                "query_brands": [],
+                "entities_filtered": false,
+                "entities_emptied_by_filter": false
+              },
+              "_parser_raw": {
+                "message_type": "business_query",
+                "intent_hint": "check_promotion",
+                "domain_hint": "promotion",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check the promotion for Cgb1032b",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "Cgb1032b",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "marketing_promotion",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "General Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null
+          }
+        }
+      }
+    ],
+    "route-turn": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "General Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null,
+          "branch_kind": "check_promotion"
+        }
+      }
+    ],
+    "route": [],
+    "tag-entry-access-check": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "General Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null,
+          "branch_kind": "check_promotion",
+          "entry": "access_check"
+        }
+      }
+    ],
+    "Call 'sub-main-processing'": []
+  },
+  "input": [
+    {
+      "json": {
+        "ctx": {
+          "contact": {
+            "id": 900000032,
+            "firstName": "Person 56",
+            "lastName": "Person 57",
+            "phone": "+60100000018",
+            "email": null,
+            "language": null,
+            "profilePic": null,
+            "locale": null,
+            "countryCode": "MY",
+            "status": "open",
+            "isBlocked": false,
+            "custom_fields": [
+              {
+                "name": "enquiry_type",
+                "value": null
+              },
+              {
+                "name": "user_type",
+                "value": null
+              },
+              {
+                "name": "complaint_id",
+                "value": null
+              },
+              {
+                "name": "is_allowed_stock",
+                "value": "true"
+              },
+              {
+                "name": "is_human_intervened",
+                "value": "false"
+              },
+              {
+                "name": "backend_id",
+                "value": "https://fe-sorento.foundryx.my/user-management/contacts/b0d8b35b-95f8-418f-a5a2-991b04a72ea7"
+              },
+              {
+                "name": "is_allowed_ai",
+                "value": "true"
+              },
+              {
+                "name": "is_allowed_voice",
+                "value": null
+              }
+            ],
+            "tags": [
+              "imported_20260627_150636"
+            ],
+            "assignee": null,
+            "lifecycle": null,
+            "created_at": 1782546255
+          },
+          "text": {
+            "event_type": "message.received",
+            "event_id": "daccd3b7-569f-4682-ba09-2998eca8cc60",
+            "contact": {
+              "id": 900000032,
+              "firstName": "Person 56",
+              "lastName": "Person 57",
+              "phone": "+60100000018",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "countryCode": "MY",
+              "status": "open",
+              "assignee": {
+                "id": null,
+                "firstName": null,
+                "lastName": null,
+                "email": null
+              },
+              "created_at": 1782546255
+            },
+            "message": {
+              "messageId": 1788411753000000,
+              "channelMessageId": "wamid.HBgLNjAxNDkyODk2ODcVAgASGBQzQTFCRkNDNjlBMUJFNDVDRjY5RgA=",
+              "contactId": 900000032,
+              "channelId": 453209,
+              "traffic": "incoming",
+              "timestamp": 1788411753000,
+              "message": {
+                "type": "text",
+                "text": "Cgb1032b promotion"
+              }
+            },
+            "channel": {
+              "id": 453209,
+              "name": "Internal (+60 11-1673 1179)",
+              "source": "whatsapp_business",
+              "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 59\"},\"wa_id\":\"60100000018\",\"user_id\":\"MY.900000033\",\"firstName\":\"Person 56\",\"lastName\":\"Person 58\"}}",
+              "created_at": 1767682908
+            },
+            "sender": {
+              "source": "contact",
+              "userId": null,
+              "teamId": null,
+              "workflowId": null,
+              "broadcastHistoryId": null
+            }
+          },
+          "session": {
+            "respond_io_id": "900000032",
+            "session_vars": {
+              "variables": {
+                "routing": {
+                  "suggested_team": "warehouse",
+                  "suggested_agent": "general_enquiries"
+                },
+                "entities": [
+                  {
+                    "raw": "7741",
+                    "hint": "product",
+                    "confident": true,
+                    "canonical_code": null,
+                    "current_message": true
+                  }
+                ],
+                "ideation": null,
+                "response": "Previous turn (inventory): returned 12 records",
+                "date_mode": null,
+                "dym_offer": null,
+                "user_goal": "trying to check stock for 7741",
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "match_mode": "and",
+                "domain_hint": "inventory",
+                "intent_hint": "check_stock",
+                "message_type": "business_query",
+                "query_brands": [],
+                "access_levels": [],
+                "routing_brand": "mocha",
+                "contains_flyer": false,
+                "dym_candidates": [],
+                "date_filter_end": null,
+                "last_result_set": [
+                  {
+                    "idx": 1,
+                    "uuid": null,
+                    "label": "MCM7741",
+                    "product": null,
+                    "filename": null,
+                    "entity_type": null,
+                    "attachment_type": null
+                  },
+                  {
+                    "idx": 2,
+                    "uuid": null,
+                    "label": "MCM7741",
+                    "product": null,
+                    "filename": null,
+                    "entity_type": null,
+                    "attachment_type": null
+                  },
+                  {
+                    "idx": 3,
+                    "uuid": null,
+                    "label": "MCM7741",
+                    "product": null,
+                    "filename": null,
+                    "entity_type": null,
+                    "attachment_type": null
+                  },
+                  {
+                    "idx": 4,
+                    "uuid": null,
+                    "label": "MCM7741",
+                    "product": null,
+                    "filename": null,
+                    "entity_type": null,
+                    "attachment_type": null
+                  },
+                  {
+                    "idx": 5,
+                    "uuid": null,
+                    "label": "MCM7741-BL",
+                    "product": null,
+                    "filename": null,
+                    "entity_type": null,
+                    "attachment_type": null
+                  },
+                  {
+                    "idx": 6,
+                    "uuid": null,
+                    "label": "MCM7741-BL",
+                    "product": null,
+                    "filename": null,
+                    "entity_type": null,
+                    "attachment_type": null
+                  },
+                  {
+                    "idx": 7,
+                    "uuid": null,
+                    "label": "MCM7741-GD",
+                    "product": null,
+                    "filename": null,
+                    "entity_type": null,
+                    "attachment_type": null
+                  },
+                  {
+                    "idx": 8,
+                    "uuid": null,
+                    "label": "MCM7741-GD",
+                    "product": null,
+                    "filename": null,
+                    "entity_type": null,
+                    "attachment_type": null
+                  },
+                  {
+                    "idx": 9,
+                    "uuid": null,
+                    "label": "MCM7741-GM",
+                    "product": null,
+                    "filename": null,
+                    "entity_type": null,
+                    "attachment_type": null
+                  },
+                  {
+                    "idx": 10,
+                    "uuid": null,
+                    "label": "MCM7741-GM",
+                    "product": null,
+                    "filename": null,
+                    "entity_type": null,
+                    "attachment_type": null
+                  },
+                  {
+                    "idx": 11,
+                    "uuid": null,
+                    "label": "MCM7741-RG",
+                    "product": null,
+                    "filename": null,
+                    "entity_type": null,
+                    "attachment_type": null
+                  },
+                  {
+                    "idx": 12,
+                    "uuid": null,
+                    "label": "MCM7741-RG",
+                    "product": null,
+                    "filename": null,
+                    "entity_type": null,
+                    "attachment_type": null
+                  }
+                ],
+                "routing_company": null,
+                "date_filter_start": null,
+                "routing_companies": [
+                  {
+                    "codes": [
+                      "MCM7741-BL",
+                      "MCM7741-GD",
+                      "MCM7741-GM",
+                      "MCM7741",
+                      "MCM7741-RG"
+                    ],
+                    "labels": [
+                      "MCM7741-BL",
+                      "MCM7741-GD",
+                      "MCM7741-GM",
+                      "MCM7741",
+                      "MCM7741-RG"
+                    ],
+                    "brand_code": null,
+                    "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                    "company_name": "Mocha"
+                  },
+                  {
+                    "codes": [
+                      "MCM7741-GM",
+                      "MCM7741"
+                    ],
+                    "labels": [
+                      "MCM7741-GM",
+                      "MCM7741"
+                    ],
+                    "brand_code": "mocha",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento"
+                  }
+                ],
+                "selection_context": null,
+                "routing_roster_plan": null,
+                "requested_attributes": [],
+                "routing_brand_source": "resolved"
+              },
+              "user_response": "Stock details found for the requested products.\n\n1. *Company:* Sorento\n*Product Code:* MCM7741\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 19\n\n2. *Company:* Sorento\n*Product Code:* MCM7741\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-AM\n*Quantity On Hand:* 13\n\n3. *Company:* Mocha\n*Product Code:* MCM7741\n*Warehouse:* HQ\n*System Location:* HQ\n*Quantity On Hand:* 0\n\n4. *Company:* Mocha\n*Product Code:* MCM7741\n*Warehouse:* MERU\n*System Location:* MOCHA-WH\n*Quantity On Hand:* 1\n\n5. *Company:* Mocha\n*Product Code:* MCM7741-BL\n*Warehouse:* HQ\n*System Location:* HQ\n*Quantity On Hand:* 0\n\n6. *Company:* Mocha\n*Product Code:* MCM7741-BL\n*Warehouse:* MERU\n*System Location:* MOCHA-WH\n*Quantity On Hand:* 0\n\n7. *Company:* Mocha\n*Product Code:* MCM7741-GD\n*Warehouse:* HQ\n*System Location:* HQ\n*Quantity On Hand:* 50\n\n8. *Company:* Mocha\n*Product Code:* MCM7741-GD\n*Warehouse:* MERU\n*System Location:* MOCHA-WH\n*Quantity On Hand:* 68\n\n9. *Company:* Mocha\n*Product Code:* MCM7741-GM\n*Warehouse:* HQ\n*System Location:* HQ\n*Quantity On Hand:* 100\n\n10. *Company:* Mocha\n*Product Code:* MCM7741-GM\n*Warehouse:* MERU\n*System Location:* MOCHA-WH\n*Quantity On Hand:* 80\n\n11. *Company:* Mocha\n*Product Code:* MCM7741-RG\n*Warehouse:* HQ\n*System Location:* HQ\n*Quantity On Hand:* 50\n\n12. *Company:* Mocha\n*Product Code:* MCM7741-RG\n*Warehouse:* MERU\n*System Location:* MOCHA-WH\n*Quantity On Hand:* 57\n\n_Data last updated: 03/09/2026 11:31:14_"
+            }
+          },
+          "parse": {
+            "output": {
+              "message_type": "business_query",
+              "intent_hint": "check_promotion",
+              "domain_hint": "promotion",
+              "scope_intent": "specific",
+              "is_affirmative": null,
+              "user_goal": "trying to check the promotion for Cgb1032b",
+              "access_levels": [],
+              "broaden_axis": null,
+              "date_mode": null,
+              "date_filter_start": null,
+              "date_filter_end": null,
+              "match_mode": "and",
+              "demand_qty": null,
+              "entities": [
+                {
+                  "raw": "Cgb1032b",
+                  "hint": "product",
+                  "canonical_code": null,
+                  "current_message": true,
+                  "confident": true
+                }
+              ],
+              "entity_op": "replace_combine",
+              "scope_exclusive": false,
+              "requested_attributes": [],
+              "contains_flyer": false,
+              "reference_positions": [],
+              "reference_target": null,
+              "person_mention": null,
+              "is_active": null,
+              "order_status": null,
+              "correction": false,
+              "routing": {
+                "suggested_team": "marketing_promotion",
+                "suggested_agent": "general_enquiries"
+              },
+              "escalation": {
+                "is_escalation_confirmation": false
+              },
+              "domain_signal_source": "intent_explicit",
+              "scope_exclusive_applied": false,
+              "entity_op_applied": "replace_combine",
+              "query_brands": [],
+              "entities_filtered": false,
+              "entities_emptied_by_filter": false
+            },
+            "_parser_raw": {
+              "message_type": "business_query",
+              "intent_hint": "check_promotion",
+              "domain_hint": "promotion",
+              "scope_intent": "specific",
+              "is_affirmative": null,
+              "user_goal": "trying to check the promotion for Cgb1032b",
+              "access_levels": [],
+              "broaden_axis": null,
+              "date_mode": null,
+              "date_filter_start": null,
+              "date_filter_end": null,
+              "match_mode": "and",
+              "demand_qty": null,
+              "entities": [
+                {
+                  "raw": "Cgb1032b",
+                  "hint": "product",
+                  "canonical_code": null,
+                  "current_message": true,
+                  "confident": true
+                }
+              ],
+              "entity_op": "replace_combine",
+              "scope_exclusive": false,
+              "requested_attributes": [],
+              "contains_flyer": false,
+              "reference_positions": [],
+              "reference_target": null,
+              "person_mention": null,
+              "is_active": null,
+              "order_status": null,
+              "correction": false,
+              "routing": {
+                "suggested_team": "marketing_promotion",
+                "suggested_agent": "general_enquiries"
+              },
+              "escalation": {
+                "is_escalation_confirmation": false,
+                "company_pick": null
+              }
+            }
+          },
+          "access": {
+            "allowed": true,
+            "decision": "allow",
+            "agent_name": "General Enquiries",
+            "attributes": null,
+            "all_attributes_allowed": null
+          },
+          "media": null
+        }
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "allowed": true,
+        "decision": "allow",
+        "agent_name": "General Enquiries",
+        "attributes": null,
+        "all_attributes_allowed": null,
+        "branch_kind": "check_promotion"
+      }
+    }
+  ],
+  "runIndex": 0,
+  "execution": {
+    "id": "14999713"
+  },
+  "ran": [
+    "When Executed by Another Workflow",
+    "redis-pop-main-message-list",
+    "media-intake",
+    "media-gate",
+    "tf-message",
+    "sorento-sub-respond-findcontact-respond",
+    "Execution Data",
+    "is-human-intervened",
+    "if-message-is-audio",
+    "Call 'sub-respond-save-message-redis'2",
+    "get-session-vars",
+    "Call 'sub-query-reformulator'",
+    "check-access",
+    "build-ctx",
+    "route-turn",
+    "route",
+    "tag-entry-access-check",
+    "Call 'sub-main-processing'"
+  ]
+}

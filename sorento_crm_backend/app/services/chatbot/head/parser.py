@@ -34,9 +34,14 @@ PARSER_ERROR_REPLY = (
     "Sorry, I ran into a problem understanding that. Please try again in a moment."
 )
 
-# Bounded by the plan's timeout table: parser 8 s.
-PARSER_TIMEOUT_SECONDS = 8
 PARSER_MAX_TOKENS = 2048
+
+# NOT bounded by a per-call timeout, and deliberately not pretending to be. The plan's
+# timeout table names 8 s for the parser, but `llm_provider.LLMProvider.chat` has no
+# timeout parameter at all - each provider builds its own SDK client - so wiring one means
+# changing that shared signature and all three implementations, which is core work outside
+# this slice. A declared-but-unapplied constant is worse than none: it reads as a
+# guarantee. Follow-up: add `timeout` to `LLMProvider.chat` and pass the plan's value here.
 
 
 class ParserError(RuntimeError):

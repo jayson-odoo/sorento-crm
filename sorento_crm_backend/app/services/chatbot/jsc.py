@@ -63,7 +63,10 @@ def js_string(value: Any) -> str:
     return "[object Object]"
 
 
-_NUMERIC_RE = re.compile(r"^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$")
+# ASCII, like JavaScript's own numeric grammar. Python's `\d` matches every Unicode
+# decimal, so `Number("\uff11")` would be 1 here and NaN in JS - and a full-width digit
+# reaching the member-pick extractor resolves to a real assignment.
+_NUMERIC_RE = re.compile(r"^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$", re.ASCII)
 NAN = float("nan")
 
 

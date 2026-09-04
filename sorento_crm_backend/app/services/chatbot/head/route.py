@@ -18,8 +18,16 @@ R1 (H1) is the one deliberate change and it is a DATA switch, not a code one: n8
 `intent_hint === 'stock_check'` while the parser emits `check_stock`, so the whole
 demand-qty lane is dead by vocabulary (0/150 live fixtures). The port uses the correct
 word, and `stock_denial_enabled` - `system_settings.chatbot_stock_denial_enabled`,
-default FALSE - decides whether the predicate is evaluated at all. Off, the two lanes
-stay exactly as dead as they are today, byte for byte.
+default FALSE - decides whether the predicate is evaluated at all.
+
+**Flag-off is NOT byte-identical, and the difference is worth naming** (review S8). Live
+still EVALUATES its dead predicate, so a contact with no `is_allowed_stock` custom field
+makes `custom_fields.find(...).value` throw and the turn dies; with the flag off the port
+skips the predicate entirely and answers `business_query`. Every contact the corpus has
+carries the field, so no capture shows it - but shadow mode will, as a CRM reply where
+live sent nothing. It is a strict improvement (an answered turn instead of a dropped one)
+and it is recorded in the plan's hazard table on the H1 row rather than left as a
+surprise. With the flag ON the throw is reproduced exactly.
 """
 from __future__ import annotations
 

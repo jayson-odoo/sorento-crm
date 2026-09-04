@@ -1,0 +1,1198 @@
+{
+  "source": {
+    "execution_id": "15145421",
+    "workflow_id": "S4N1LiisAqA4hpMC",
+    "workflow_version": "51f7b0d2-8027-4a7d-920b-6762226dac1f",
+    "node": "route-turn",
+    "captured_at": "2026-09-04T14:57:14+00:00",
+    "expected_from": "runData",
+    "dedupe_sig": "de460a5a58cc0fc50cd6990b0cf97c8c4363744e334dc0deccd11e85ef0c7c53"
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "test": null,
+          "test_run_id": null,
+          "started_at": null,
+          "contact": "900000036"
+        }
+      }
+    ],
+    "redis-pop-main-message-list": [
+      {
+        "json": {
+          "message": {
+            "message": {
+              "event_type": "message.received",
+              "event_id": "f5697c0d-3be2-45a2-9f6f-a2ae150669dc",
+              "contact": {
+                "id": 900000036,
+                "firstName": "Person 63",
+                "lastName": "Person 64",
+                "phone": "+60100000020",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1782546255
+              },
+              "message": {
+                "messageId": 1788508196000000,
+                "channelMessageId": "wamid.HBgLNjAxNjMzNjE2NzkVAgASGBQzQTJFN0E4NUVCNUE2RERCMUU0MAA=",
+                "contactId": 900000036,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788508196000,
+                "message": {
+                  "type": "text",
+                  "text": "if order 2 month can arrive\uff1f"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 63\"},\"wa_id\":\"60100000020\",\"user_id\":\"MY.900000037\",\"firstName\":\"Person 63\",\"lastName\":\"\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "contact": {
+              "id": 900000036,
+              "firstName": "Person 63",
+              "lastName": "Person 64",
+              "phone": "+60100000020",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/45ee5bfe-3229-488c-a424-1bf2ff088702"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": null,
+              "created_at": 1782546255
+            }
+          }
+        }
+      }
+    ],
+    "media-intake": [
+      {
+        "json": {
+          "handled": false,
+          "item": {
+            "message": {
+              "message": {
+                "event_type": "message.received",
+                "event_id": "f5697c0d-3be2-45a2-9f6f-a2ae150669dc",
+                "contact": {
+                  "id": 900000036,
+                  "firstName": "Person 63",
+                  "lastName": "Person 64",
+                  "phone": "+60100000020",
+                  "email": null,
+                  "language": null,
+                  "profilePic": null,
+                  "countryCode": "MY",
+                  "status": "open",
+                  "assignee": {
+                    "id": null,
+                    "firstName": null,
+                    "lastName": null,
+                    "email": null
+                  },
+                  "created_at": 1782546255
+                },
+                "message": {
+                  "messageId": 1788508196000000,
+                  "channelMessageId": "wamid.HBgLNjAxNjMzNjE2NzkVAgASGBQzQTJFN0E4NUVCNUE2RERCMUU0MAA=",
+                  "contactId": 900000036,
+                  "channelId": 453209,
+                  "traffic": "incoming",
+                  "timestamp": 1788508196000,
+                  "message": {
+                    "type": "text",
+                    "text": "if order 2 month can arrive\uff1f"
+                  }
+                },
+                "channel": {
+                  "id": 453209,
+                  "name": "Internal (+60 11-1673 1179)",
+                  "source": "whatsapp_business",
+                  "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 63\"},\"wa_id\":\"60100000020\",\"user_id\":\"MY.900000037\",\"firstName\":\"Person 63\",\"lastName\":\"\"}}",
+                  "created_at": 1767682908
+                },
+                "sender": {
+                  "source": "contact",
+                  "userId": null,
+                  "teamId": null,
+                  "workflowId": null,
+                  "broadcastHistoryId": null
+                }
+              },
+              "contact": {
+                "id": 900000036,
+                "firstName": "Person 63",
+                "lastName": "Person 64",
+                "phone": "+60100000020",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "locale": null,
+                "countryCode": "MY",
+                "status": "open",
+                "isBlocked": false,
+                "custom_fields": [
+                  {
+                    "name": "enquiry_type",
+                    "value": null
+                  },
+                  {
+                    "name": "user_type",
+                    "value": null
+                  },
+                  {
+                    "name": "complaint_id",
+                    "value": null
+                  },
+                  {
+                    "name": "is_allowed_stock",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_human_intervened",
+                    "value": "false"
+                  },
+                  {
+                    "name": "backend_id",
+                    "value": "https://fe-sorento.foundryx.my/user-management/contacts/45ee5bfe-3229-488c-a424-1bf2ff088702"
+                  },
+                  {
+                    "name": "is_allowed_ai",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_allowed_voice",
+                    "value": null
+                  }
+                ],
+                "tags": [
+                  "imported_20260627_150636"
+                ],
+                "assignee": null,
+                "lifecycle": null,
+                "created_at": 1782546255
+              }
+            },
+            "_media": {
+              "modality": null,
+              "attachment_type": null,
+              "media_url": null,
+              "mime_type": null,
+              "caption": "if order 2 month can arrive\uff1f",
+              "bytes": null,
+              "duration_ms": null,
+              "duration_source": null,
+              "message_id": "1788508196000000",
+              "respond_io_id": "900000036",
+              "test_run_id": null,
+              "scope": null
+            }
+          },
+          "media": null
+        }
+      }
+    ],
+    "media-gate": [
+      {
+        "json": {
+          "message": {
+            "message": {
+              "event_type": "message.received",
+              "event_id": "f5697c0d-3be2-45a2-9f6f-a2ae150669dc",
+              "contact": {
+                "id": 900000036,
+                "firstName": "Person 63",
+                "lastName": "Person 64",
+                "phone": "+60100000020",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1782546255
+              },
+              "message": {
+                "messageId": 1788508196000000,
+                "channelMessageId": "wamid.HBgLNjAxNjMzNjE2NzkVAgASGBQzQTJFN0E4NUVCNUE2RERCMUU0MAA=",
+                "contactId": 900000036,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788508196000,
+                "message": {
+                  "type": "text",
+                  "text": "if order 2 month can arrive\uff1f"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 63\"},\"wa_id\":\"60100000020\",\"user_id\":\"MY.900000037\",\"firstName\":\"Person 63\",\"lastName\":\"\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "contact": {
+              "id": 900000036,
+              "firstName": "Person 63",
+              "lastName": "Person 64",
+              "phone": "+60100000020",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/45ee5bfe-3229-488c-a424-1bf2ff088702"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": null,
+              "created_at": 1782546255
+            }
+          },
+          "_media": {
+            "modality": null,
+            "attachment_type": null,
+            "media_url": null,
+            "mime_type": null,
+            "caption": "if order 2 month can arrive\uff1f",
+            "bytes": null,
+            "duration_ms": null,
+            "duration_source": null,
+            "message_id": "1788508196000000",
+            "respond_io_id": "900000036",
+            "test_run_id": null,
+            "scope": null
+          }
+        }
+      }
+    ],
+    "tf-message": [
+      {
+        "json": {
+          "event_type": "message.received",
+          "event_id": "f5697c0d-3be2-45a2-9f6f-a2ae150669dc",
+          "contact": {
+            "id": 900000036,
+            "firstName": "Person 63",
+            "lastName": "Person 64",
+            "phone": "+60100000020",
+            "email": null,
+            "language": null,
+            "profilePic": null,
+            "countryCode": "MY",
+            "status": "open",
+            "assignee": {
+              "id": null,
+              "firstName": null,
+              "lastName": null,
+              "email": null
+            },
+            "created_at": 1782546255
+          },
+          "message": {
+            "messageId": 1788508196000000,
+            "channelMessageId": "wamid.HBgLNjAxNjMzNjE2NzkVAgASGBQzQTJFN0E4NUVCNUE2RERCMUU0MAA=",
+            "contactId": 900000036,
+            "channelId": 453209,
+            "traffic": "incoming",
+            "timestamp": 1788508196000,
+            "message": {
+              "type": "text",
+              "text": "if order 2 month can arrive\uff1f"
+            }
+          },
+          "channel": {
+            "id": 453209,
+            "name": "Internal (+60 11-1673 1179)",
+            "source": "whatsapp_business",
+            "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 63\"},\"wa_id\":\"60100000020\",\"user_id\":\"MY.900000037\",\"firstName\":\"Person 63\",\"lastName\":\"\"}}",
+            "created_at": 1767682908
+          },
+          "sender": {
+            "source": "contact",
+            "userId": null,
+            "teamId": null,
+            "workflowId": null,
+            "broadcastHistoryId": null
+          }
+        }
+      }
+    ],
+    "sorento-sub-respond-findcontact-respond": [
+      {
+        "json": {
+          "id": 900000036,
+          "firstName": "Person 63",
+          "lastName": "Person 64",
+          "phone": "+60100000020",
+          "email": null,
+          "language": null,
+          "profilePic": null,
+          "locale": null,
+          "countryCode": "MY",
+          "status": "open",
+          "isBlocked": false,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": null
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "backend_id",
+              "value": "https://fe-sorento.foundryx.my/user-management/contacts/45ee5bfe-3229-488c-a424-1bf2ff088702"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "tags": [
+            "imported_20260627_150636"
+          ],
+          "assignee": null,
+          "lifecycle": null,
+          "created_at": 1782546255
+        }
+      }
+    ],
+    "Execution Data": [
+      {
+        "json": {
+          "id": 900000036,
+          "firstName": "Person 63",
+          "lastName": "Person 64",
+          "phone": "+60100000020",
+          "email": null,
+          "language": null,
+          "profilePic": null,
+          "locale": null,
+          "countryCode": "MY",
+          "status": "open",
+          "isBlocked": false,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": null
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "backend_id",
+              "value": "https://fe-sorento.foundryx.my/user-management/contacts/45ee5bfe-3229-488c-a424-1bf2ff088702"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "tags": [
+            "imported_20260627_150636"
+          ],
+          "assignee": null,
+          "lifecycle": null,
+          "created_at": 1782546255
+        }
+      }
+    ],
+    "is-human-intervened": [
+      {
+        "json": {
+          "id": 900000036,
+          "firstName": "Person 63",
+          "lastName": "Person 64",
+          "phone": "+60100000020",
+          "email": null,
+          "language": null,
+          "profilePic": null,
+          "locale": null,
+          "countryCode": "MY",
+          "status": "open",
+          "isBlocked": false,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": null
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "backend_id",
+              "value": "https://fe-sorento.foundryx.my/user-management/contacts/45ee5bfe-3229-488c-a424-1bf2ff088702"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "tags": [
+            "imported_20260627_150636"
+          ],
+          "assignee": null,
+          "lifecycle": null,
+          "created_at": 1782546255
+        }
+      }
+    ],
+    "if-message-is-audio": [],
+    "Call 'sub-respond-save-message-redis'2": [
+      {
+        "json": {
+          "contact_id": 900000036,
+          "phone_number": "+60100000020",
+          "message": "if order 2 month can arrive\uff1f",
+          "sent_at": 1788508201202,
+          "turn_id": "15145421",
+          "data": "{\"contact_id\":\"900000036\",\"phone_number\":\"+60100000020\",\"message\":\"if order 2 month can arrive\uff1f\",\"sent_at\":1788508196000,\"first_name\":\"Person 63\",\"last_name\":\"Person 64\",\"reply_to_message_id\":null,\"reply_to_message\":null,\"type\":\"incoming\",\"message_id\":\"1788508196000000\",\"turn_id\":\"15145421\",\"state_trace\":{\"v\":1,\"before\":null,\"parser_raw\":null,\"parser_applied\":null,\"after\":null}}"
+        }
+      }
+    ],
+    "get-session-vars": [
+      {
+        "json": {
+          "respond_io_id": "900000036",
+          "session_vars": {
+            "variables": {
+              "response": "text"
+            },
+            "user_response": "text"
+          }
+        }
+      }
+    ],
+    "Call 'sub-query-reformulator'": [
+      {
+        "json": {
+          "output": {
+            "message_type": "business_query",
+            "intent_hint": "check_incoming",
+            "domain_hint": "incoming",
+            "scope_intent": null,
+            "is_affirmative": null,
+            "user_goal": "trying to check when an incoming order can arrive in 2 months",
+            "access_levels": [],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [],
+            "entity_op": "reuse",
+            "scope_exclusive": false,
+            "requested_attributes": [
+              "estimated_arrival_date"
+            ],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "purchasing",
+              "suggested_agent": "incoming_stock_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "domain_signal_source": "intent_explicit",
+            "entity_op_applied": "reuse",
+            "query_brands": [],
+            "entities_filtered": false,
+            "entities_emptied_by_filter": false,
+            "date_filter_gated": "incoming"
+          },
+          "_parser_raw": {
+            "message_type": "business_query",
+            "intent_hint": "check_incoming",
+            "domain_hint": "incoming",
+            "scope_intent": null,
+            "is_affirmative": null,
+            "user_goal": "trying to check when an incoming order can arrive in 2 months",
+            "access_levels": [],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": "2026-11-04",
+            "date_filter_end": "2026-11-04",
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [],
+            "entity_op": "reuse",
+            "scope_exclusive": false,
+            "requested_attributes": [
+              "estimated_arrival_date"
+            ],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "purchasing",
+              "suggested_agent": "incoming_stock_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false,
+              "company_pick": null
+            }
+          }
+        }
+      }
+    ],
+    "check-access": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "Incoming Stock Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null
+        }
+      }
+    ],
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 900000036,
+              "firstName": "Person 63",
+              "lastName": "Person 64",
+              "phone": "+60100000020",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/45ee5bfe-3229-488c-a424-1bf2ff088702"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": null,
+              "created_at": 1782546255
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "f5697c0d-3be2-45a2-9f6f-a2ae150669dc",
+              "contact": {
+                "id": 900000036,
+                "firstName": "Person 63",
+                "lastName": "Person 64",
+                "phone": "+60100000020",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1782546255
+              },
+              "message": {
+                "messageId": 1788508196000000,
+                "channelMessageId": "wamid.HBgLNjAxNjMzNjE2NzkVAgASGBQzQTJFN0E4NUVCNUE2RERCMUU0MAA=",
+                "contactId": 900000036,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788508196000,
+                "message": {
+                  "type": "text",
+                  "text": "if order 2 month can arrive\uff1f"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 63\"},\"wa_id\":\"60100000020\",\"user_id\":\"MY.900000037\",\"firstName\":\"Person 63\",\"lastName\":\"\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000036",
+              "session_vars": {
+                "variables": {
+                  "response": "text"
+                },
+                "user_response": "text"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "check_incoming",
+                "domain_hint": "incoming",
+                "scope_intent": null,
+                "is_affirmative": null,
+                "user_goal": "trying to check when an incoming order can arrive in 2 months",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [],
+                "entity_op": "reuse",
+                "scope_exclusive": false,
+                "requested_attributes": [
+                  "estimated_arrival_date"
+                ],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "purchasing",
+                  "suggested_agent": "incoming_stock_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_explicit",
+                "entity_op_applied": "reuse",
+                "query_brands": [],
+                "entities_filtered": false,
+                "entities_emptied_by_filter": false,
+                "date_filter_gated": "incoming"
+              },
+              "_parser_raw": {
+                "message_type": "business_query",
+                "intent_hint": "check_incoming",
+                "domain_hint": "incoming",
+                "scope_intent": null,
+                "is_affirmative": null,
+                "user_goal": "trying to check when an incoming order can arrive in 2 months",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": "2026-11-04",
+                "date_filter_end": "2026-11-04",
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [],
+                "entity_op": "reuse",
+                "scope_exclusive": false,
+                "requested_attributes": [
+                  "estimated_arrival_date"
+                ],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "purchasing",
+                  "suggested_agent": "incoming_stock_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "Incoming Stock Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null
+          }
+        }
+      }
+    ],
+    "route-turn": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "Incoming Stock Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null,
+          "branch_kind": "business_query"
+        }
+      }
+    ],
+    "route": [],
+    "tag-entry-resolve": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "Incoming Stock Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null,
+          "branch_kind": "business_query",
+          "entry": "resolve"
+        }
+      }
+    ],
+    "Call 'sub-main-processing'": []
+  },
+  "input": [
+    {
+      "json": {
+        "ctx": {
+          "contact": {
+            "id": 900000036,
+            "firstName": "Person 63",
+            "lastName": "Person 64",
+            "phone": "+60100000020",
+            "email": null,
+            "language": null,
+            "profilePic": null,
+            "locale": null,
+            "countryCode": "MY",
+            "status": "open",
+            "isBlocked": false,
+            "custom_fields": [
+              {
+                "name": "enquiry_type",
+                "value": null
+              },
+              {
+                "name": "user_type",
+                "value": null
+              },
+              {
+                "name": "complaint_id",
+                "value": null
+              },
+              {
+                "name": "is_allowed_stock",
+                "value": "true"
+              },
+              {
+                "name": "is_human_intervened",
+                "value": "false"
+              },
+              {
+                "name": "backend_id",
+                "value": "https://fe-sorento.foundryx.my/user-management/contacts/45ee5bfe-3229-488c-a424-1bf2ff088702"
+              },
+              {
+                "name": "is_allowed_ai",
+                "value": "true"
+              },
+              {
+                "name": "is_allowed_voice",
+                "value": null
+              }
+            ],
+            "tags": [
+              "imported_20260627_150636"
+            ],
+            "assignee": null,
+            "lifecycle": null,
+            "created_at": 1782546255
+          },
+          "text": {
+            "event_type": "message.received",
+            "event_id": "f5697c0d-3be2-45a2-9f6f-a2ae150669dc",
+            "contact": {
+              "id": 900000036,
+              "firstName": "Person 63",
+              "lastName": "Person 64",
+              "phone": "+60100000020",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "countryCode": "MY",
+              "status": "open",
+              "assignee": {
+                "id": null,
+                "firstName": null,
+                "lastName": null,
+                "email": null
+              },
+              "created_at": 1782546255
+            },
+            "message": {
+              "messageId": 1788508196000000,
+              "channelMessageId": "wamid.HBgLNjAxNjMzNjE2NzkVAgASGBQzQTJFN0E4NUVCNUE2RERCMUU0MAA=",
+              "contactId": 900000036,
+              "channelId": 453209,
+              "traffic": "incoming",
+              "timestamp": 1788508196000,
+              "message": {
+                "type": "text",
+                "text": "if order 2 month can arrive\uff1f"
+              }
+            },
+            "channel": {
+              "id": 453209,
+              "name": "Internal (+60 11-1673 1179)",
+              "source": "whatsapp_business",
+              "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 63\"},\"wa_id\":\"60100000020\",\"user_id\":\"MY.900000037\",\"firstName\":\"Person 63\",\"lastName\":\"\"}}",
+              "created_at": 1767682908
+            },
+            "sender": {
+              "source": "contact",
+              "userId": null,
+              "teamId": null,
+              "workflowId": null,
+              "broadcastHistoryId": null
+            }
+          },
+          "session": {
+            "respond_io_id": "900000036",
+            "session_vars": {
+              "variables": {
+                "response": "text"
+              },
+              "user_response": "text"
+            }
+          },
+          "parse": {
+            "output": {
+              "message_type": "business_query",
+              "intent_hint": "check_incoming",
+              "domain_hint": "incoming",
+              "scope_intent": null,
+              "is_affirmative": null,
+              "user_goal": "trying to check when an incoming order can arrive in 2 months",
+              "access_levels": [],
+              "broaden_axis": null,
+              "date_mode": null,
+              "date_filter_start": null,
+              "date_filter_end": null,
+              "match_mode": "and",
+              "demand_qty": null,
+              "entities": [],
+              "entity_op": "reuse",
+              "scope_exclusive": false,
+              "requested_attributes": [
+                "estimated_arrival_date"
+              ],
+              "contains_flyer": false,
+              "reference_positions": [],
+              "reference_target": null,
+              "person_mention": null,
+              "is_active": null,
+              "order_status": null,
+              "correction": false,
+              "routing": {
+                "suggested_team": "purchasing",
+                "suggested_agent": "incoming_stock_enquiries"
+              },
+              "escalation": {
+                "is_escalation_confirmation": false
+              },
+              "domain_signal_source": "intent_explicit",
+              "entity_op_applied": "reuse",
+              "query_brands": [],
+              "entities_filtered": false,
+              "entities_emptied_by_filter": false,
+              "date_filter_gated": "incoming"
+            },
+            "_parser_raw": {
+              "message_type": "business_query",
+              "intent_hint": "check_incoming",
+              "domain_hint": "incoming",
+              "scope_intent": null,
+              "is_affirmative": null,
+              "user_goal": "trying to check when an incoming order can arrive in 2 months",
+              "access_levels": [],
+              "broaden_axis": null,
+              "date_mode": null,
+              "date_filter_start": "2026-11-04",
+              "date_filter_end": "2026-11-04",
+              "match_mode": "and",
+              "demand_qty": null,
+              "entities": [],
+              "entity_op": "reuse",
+              "scope_exclusive": false,
+              "requested_attributes": [
+                "estimated_arrival_date"
+              ],
+              "contains_flyer": false,
+              "reference_positions": [],
+              "reference_target": null,
+              "person_mention": null,
+              "is_active": null,
+              "order_status": null,
+              "correction": false,
+              "routing": {
+                "suggested_team": "purchasing",
+                "suggested_agent": "incoming_stock_enquiries"
+              },
+              "escalation": {
+                "is_escalation_confirmation": false,
+                "company_pick": null
+              }
+            }
+          },
+          "access": {
+            "allowed": true,
+            "decision": "allow",
+            "agent_name": "Incoming Stock Enquiries",
+            "attributes": null,
+            "all_attributes_allowed": null
+          },
+          "media": null
+        }
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "allowed": true,
+        "decision": "allow",
+        "agent_name": "Incoming Stock Enquiries",
+        "attributes": null,
+        "all_attributes_allowed": null,
+        "branch_kind": "business_query"
+      }
+    }
+  ],
+  "runIndex": 0,
+  "execution": {
+    "id": "15145421"
+  },
+  "ran": [
+    "When Executed by Another Workflow",
+    "redis-pop-main-message-list",
+    "media-intake",
+    "media-gate",
+    "tf-message",
+    "sorento-sub-respond-findcontact-respond",
+    "Execution Data",
+    "is-human-intervened",
+    "if-message-is-audio",
+    "Call 'sub-respond-save-message-redis'2",
+    "get-session-vars",
+    "Call 'sub-query-reformulator'",
+    "check-access",
+    "build-ctx",
+    "route-turn",
+    "route",
+    "tag-entry-resolve",
+    "Call 'sub-main-processing'"
+  ]
+}
