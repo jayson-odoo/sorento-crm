@@ -510,16 +510,29 @@ export function partsBreakdown(
 ): SuggestionRow[] {
   const parts: SupplyPart[] = [];
   const why = new Map<SupplyKind, Set<string>>();
+  const lentBy = new Map<SupplyKind, Set<string>>();
   for (const entry of entries) {
+    const ownGroup = groupOf(entry.ownLocation);
     for (const source of entry.parts) {
       const kind = rowOf(source, entry.ownLocation);
       if (!kind) continue;
+      const at = source.location ?? source.source_location ?? null;
       parts.push({
         kind: source.kind,
         rung: rungFor(kind),
         qty: source.qty,
-        location: source.location ?? source.source_location ?? null,
+        location: at,
       });
+      // WHOSE STOCK IT IS (R-M, 3 Sep 2026). Resolved here, per entry, because it is the
+      // CONTRIBUTING LINE's own group that decides it - `DC1-BB` is somebody else's stock
+      // on a `BRW-IB` line and the line's own on a `BRW-BB` one - and the aggregation
+      // below has no line left to ask.
+      const from = groupOf(at);
+      if (ownGroup && from && from !== ownGroup) {
+        const lenders = lentBy.get(kind) ?? new Set<string>();
+        lenders.add(from);
+        lentBy.set(kind, lenders);
+      }
       const reason = (source as { reason?: string | null }).reason;
       if (!reason) continue;
       const seen = why.get(kind) ?? new Set<string>();
@@ -533,12 +546,36 @@ export function partsBreakdown(
     const reasons = [...(why.get(segment.kind) ?? [])];
     return {
       key: segment.kind,
-      label: LABELS[segment.kind],
+      label: labelOf(segment.kind, lentBy.get(segment.kind)),
       qty: segment.qty,
       places: places.get(segment.kind) ?? [],
       ...(reasons.length === 1 ? { note: reasons[0] } : {}),
     };
   });
+}
+
+/**
+ * The card's own words for a row, naming the LENDING GROUP where step 1 drew on one (R-M).
+ *
+ * The board's options row has said "Use IB group stock" since S4
+ * (`front_planning_engine._use_step_label`), and the Suggestion card beside it went on
+ * saying "Use own location" for the same composition - the captain's production cell was a
+ * `BRW-BB` line proposed off `BRW-IB` reading as the line's own stock on one surface and as
+ * IB's on the other. This is that label, spelled exactly as the engine spells it, so the two
+ * surfaces cannot drift again.
+ *
+ * Only the two STEP 1 kinds take it: `own` is the group's floor and `incoming` is its water,
+ * and they are the only rows a group other than the line's own can appear on. Everything
+ * else keeps its fixed word.
+ */
+function labelOf(kind: SupplyKind, lenders?: Set<string>): string {
+  if (!lenders || lenders.size === 0) return LABELS[kind];
+  if (kind !== 'own' && kind !== 'incoming') return LABELS[kind];
+  const named = [...lenders]
+    .sort()
+    .map((group) => `${group} group`)
+    .join(' and ');
+  return kind === 'incoming' ? `Use incoming from ${named}` : `Use ${named} stock`;
 }
 
 /**

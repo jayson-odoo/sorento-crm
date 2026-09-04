@@ -516,20 +516,34 @@ class BoardLineDraft(BaseModel):
     #: them. The board excludes a stale line from Confirm and says so on the pill instead of
     #: posting a decision taken against numbers that have moved.
     stale: bool = False
+    #: WHAT THE ENGINE SUGGESTED at save time (D12, #573, captain ruling): the caller's own
+    #: `sources` for this contribution, echoed back opaque. NOT what `stale` above is
+    #: judged against (S1 still holds - that stays the line's own facts) - this exists so
+    #: the Sales Order page's Suggested column can read a saved-but-unconfirmed line's
+    #: composition, the way an active revision's frozen `proposed_components` already
+    #: lets it read a confirmed one. `None` on a draft saved before D12, or on a save
+    #: nothing was offered for.
+    proposed: Optional[List[BoardSource]] = None
 
 
 class BoardLineDraftBody(BaseModel):
     """`PUT .../fulfilment-planning/lines/{contribution_key}/draft`.
 
-    Carries no `proposed` (S1, code review round 3, captain ruling): a proposal depends on
-    which orders share the board, its granularity and its window, so a save made on one
-    view compared against a proposal computed for another flipped `stale` falsely across
-    views and silently dropped a saved line from Confirm. The server snapshots the LINE's
-    own facts (outstanding qty, required date) at save time instead - `is_stale` is judged
-    on those, never on a proposal.
+    `decision` carries no `proposed` inside IT (S1, code review round 3, captain ruling
+    still holds): a proposal depends on which orders share the board, its granularity and
+    its window, so a save made on one view compared against a proposal computed for
+    another flipped `stale` falsely across views and silently dropped a saved line from
+    Confirm. The server snapshots the LINE's own facts (outstanding qty, required date) at
+    save time instead - `is_stale` is judged on those, never on a proposal.
+
+    `proposed` as a SIBLING field is a DIFFERENT thing (D12, #573): the contribution's own
+    `sources` at save time, carried opaque and read back only by the Sales Order page's
+    `supply_proposed` column - never by `is_stale`. Optional and additive: an older client
+    that never sends it saves exactly as it always has.
     """
 
     decision: Dict[str, Any]
+    proposed: Optional[List[BoardSource]] = None
 
 
 class BoardContribution(BaseModel):
@@ -791,12 +805,22 @@ class StockDetailIncoming(BaseModel):
     supplier_name: Optional[str] = None
     #: The bin it lands at, for the same reason a sales-order row states one.
     location: Optional[str] = None
+    #: The date the DOCUMENT states. Unchanged by R-O: what the paperwork says is a fact,
+    #: and the assumed date travels beside it rather than instead of it.
     expected_date: Optional[date] = None
     spo_qty: str
-    #: Days late, when the promised arrival has passed with nothing received. The service
+    #: Days late, on the outstanding balance of a promised arrival that has passed. The service
     #: has always stated it and the panel has always rendered it; undeclared here, the
     #: response model dropped it on the way out, so every row read as fresh.
     overdue_days: Optional[int] = None
+    #: R-O (3 Sep 2026, #586): the day the WALK plans this late document against -
+    #: `today + overdue_grace_days`. `None` when the document is not late, or when it is so
+    #: late that nothing is assumed about it at all. `response_model` drops an undeclared
+    #: field, so this is named here or the ledger row can never print it.
+    assumed_date: Optional[date] = None
+    #: False when the document is later than `overdue_dead_days` and therefore counts as
+    #: nothing (R31, as R-O leaves it). The row reads "not counted".
+    counted: bool = True
 
 
 class StockDetailHold(BaseModel):

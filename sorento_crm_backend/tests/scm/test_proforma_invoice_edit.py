@@ -2,10 +2,10 @@
 
 The detail screen holds a local draft - a line removed is struck through, a line added is a
 blank row, and nothing reaches the server until Save - so the write it makes is
-`update_invoice`: the number, the container size and the WHOLE line array in one call. Rows
-carrying an id update, rows without one are created, and a line the array no longer names is
-deleted. Sending them one at a time is what left a half-applied invoice on screen when the
-third line was refused.
+`update_invoice`: the number and the WHOLE line array in one call. Rows carrying an id
+update, rows without one are created, and a line the array no longer names is deleted.
+Sending them one at a time is what left a half-applied invoice on screen when the third line
+was refused. No container size here (S5): capacity moved to the shipment.
 
 Also covers the two things that had nowhere to go before: the line's stated weights
 (净重 / 毛重, migration 435) and the list screen's search box.
@@ -17,11 +17,14 @@ the shared `ZZPIV` marker; nothing is borrowed.
 """
 from __future__ import annotations
 
+import uuid
+
 import pytest
 
-from app.models.scm import ContainerSize, ProformaInvoice
+from app.models.scm import ProformaInvoice, SupplierProductCodeAlias
 from app.services.error_handler import AppException
 from app.services.scm import proforma_invoice_service as svc
+from app.services.scm import supplier_code_alias_service
 from tests._pg_fixture import pg_session
 from tests.scm.fixtures.proforma_shapes import kailu_proforma_workbook
 from tests.scm.test_proforma_invoice_adjust import _apply_preloading, _seed_container_sizes
@@ -90,6 +93,261 @@ def test_the_serialized_line_carries_its_weights():
 
         assert out["lines"][0]["net_weight"] == pytest.approx(40)
         assert out["lines"][0]["gross_weight"] == pytest.approx(50)
+
+
+# --------------------------------------------------------------------------------- #
+# AC-B1 / AC-B3 - the edit screen's Product select has an id to show, and Save cannot
+# silently unbind a match it never touched (S2, issue #579)
+# --------------------------------------------------------------------------------- #
+
+
+def test_the_serialized_line_carries_product_id_and_product_set_id():
+    """AC-B1: alongside `product_code` / `set_code`, so the edit screen's Product select has
+    an id to pre-select rather than reading empty on every open."""
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        invoice = _apply_preloading(db, w)[0]
+
+        out = svc.serialize(db, invoice)
+
+        matched = next(ln for ln in out["lines"] if ln["item_code"] == w.code("A"))
+        assert matched["product_id"] == str(w.product("A").id)
+        assert matched["product_set_id"] is None
+
+
+def test_a_line_omitting_the_product_id_key_keeps_its_match():
+    """AC-B3(a) - RED without the fix: the edit screen's Save omits `product_id` on every
+    line the operator did not touch, which is exactly the shape a bare `model_dump()` cannot
+    tell apart from "unbind this". A quantity change on an unrelated line must not sweep
+    every other line's match away with it."""
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        invoice = _apply_preloading(db, w)[0]
+        matched_line = next(
+            ln for ln in _lines(db, invoice.id) if ln.item_code == w.code("A")
+        )
+        assert matched_line.product_id is not None
+
+        draft = _draft_from(_lines(db, invoice.id))
+        for row in draft:
+            row.pop("product_id", None)
+            if row["id"] != str(matched_line.id):
+                row["qty"] = float(row["qty"]) + 1
+
+        out = svc.update_invoice(db, str(invoice.id), lines=draft, actor="Ms Tee")
+
+        after = next(ln for ln in out["lines"] if ln["id"] == str(matched_line.id))
+        assert after["product_id"] == str(matched_line.product_id)
+        assert after["matched"] is True
+
+
+def test_a_line_with_an_explicit_null_product_id_unbinds_it():
+    """AC-B3(b): `product_id: null` sent ON PURPOSE is the operator clearing the select, and
+    that has to actually unbind - the fix for (a) must not swing the other way and ignore a
+    real clear."""
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        invoice = _apply_preloading(db, w)[0]
+        matched_line = next(
+            ln for ln in _lines(db, invoice.id) if ln.item_code == w.code("A")
+        )
+
+        draft = _draft_from(_lines(db, invoice.id))
+        for row in draft:
+            if row["id"] == str(matched_line.id):
+                row["product_id"] = None
+
+        out = svc.update_invoice(db, str(invoice.id), lines=draft, actor="Ms Tee")
+
+        after = next(ln for ln in out["lines"] if ln["id"] == str(matched_line.id))
+        assert after["product_id"] is None
+        assert after["matched"] is False
+        db.refresh(matched_line)
+        assert matched_line.product_id is None
+
+
+def test_a_line_given_a_new_product_id_rebinds_it():
+    """AC-B3(c): picking a different product in edit mode is a real rebind, not just a
+    survive-the-save no-op."""
+    with pg_session() as db:
+        _seed_container_sizes(db)
+        w = World(db)
+        invoice = _apply_preloading(db, w)[0]
+        matched_line = next(
+            ln for ln in _lines(db, invoice.id) if ln.item_code == w.code("A")
+        )
+        other = w.product("ZZ-OTHER")
+        assert str(matched_line.product_id) != str(other.id)
+
+        draft = _draft_from(_lines(db, invoice.id))
+        for row in draft:
+            if row["id"] == str(matched_line.id):
+                row["product_id"] = str(other.id)
+
+        out = svc.update_invoice(db, str(invoice.id), lines=draft, actor="Ms Tee")
+
+        after = next(ln for ln in out["lines"] if ln["id"] == str(matched_line.id))
+        assert after["product_id"] == str(other.id)
+        assert after["product_code"] == other.product_code
+
+
+# --------------------------------------------------------------------------------- #
+# AC-C1 / AC-C2 - a product picked (or cleared) in edit mode is remembered as the
+# supplier's own code alias, the same memory the in-row Match/Change/Forget writes (S3,
+# issue #582, ruling 2 of PLAN-scm-pi-packing-list-feedback-3sep.md)
+# --------------------------------------------------------------------------------- #
+
+
+def _alias(db, supplier_id: str, code: str) -> SupplierProductCodeAlias | None:
+    return (
+        db.query(SupplierProductCodeAlias)
+        .filter(
+            SupplierProductCodeAlias.supplier_id == str(supplier_id),
+            SupplierProductCodeAlias.supplier_code.ilike(code),
+        )
+        .first()
+    )
+
+
+def _upload_kailu(db, w: World, item_code_map: dict | None = None):
+    """The Kailu file. `item_code_map` substitutes a real Sorento code (Kailu writes OUR
+    codes directly, unlike Jinbaichuan's own spelling) with a `w`-scoped one, so the line
+    lands genuinely unmatched rather than exact-matching whatever the shared dev database
+    already holds under that code."""
+    svc.apply(
+        db,
+        kailu_proforma_workbook(item_code_map),
+        supplier_id=str(w.supplier.id),
+        actor="Ms Tee",
+    )
+    return _invoices(db, w)[0]
+
+
+def test_a_changed_product_upserts_a_manual_alias_and_rebinds_every_sibling_line():
+    """AC-C1: the picked product is remembered as a `manual` alias for the supplier's own
+    code, and every OTHER current line of that supplier carrying the same code re-binds -
+    the sibling on the SAME invoice (Kailu states its `SRTWT7443` line twice) and one on a
+    second, unrelated invoice of the same supplier."""
+    with pg_session() as db:
+        w = World(db)
+        code = f"ZZPI-DUP-{w.tag}"
+        invoice_one = _upload_kailu(db, w, {"SRTWT7443": code})
+        # Free the derived number so a second Kailu upload lands as a NEW invoice rather
+        # than a revision of this one - two current invoices of the same supplier, both
+        # carrying a line under `code`.
+        svc.update_invoice(db, str(invoice_one.id), pi_number="ZZPI-ONE")
+        invoice_two = _upload_kailu(db, w, {"SRTWT7443": code})
+        assert str(invoice_two.id) != str(invoice_one.id)
+
+        lines_one = [ln for ln in _lines(db, invoice_one.id) if ln.item_code == code]
+        lines_two = [ln for ln in _lines(db, invoice_two.id) if ln.item_code == code]
+        assert len(lines_one) == 2  # the sibling on the SAME invoice
+        assert len(lines_two) >= 1  # the sibling on the OTHER invoice
+        assert all(ln.product_id is None for ln in lines_one + lines_two)
+        picked_line, sibling_line = lines_one
+        product_a = w.product("A")
+
+        # The real edit screen sends `product_id` ONLY for the line the operator actually
+        # touched (S2, `saveEdit`) - every other row's key is ABSENT, "leave alone", not a
+        # redundant echo of what it already held.
+        draft = _draft_from(_lines(db, invoice_one.id))
+        for row in draft:
+            if row["id"] == str(picked_line.id):
+                row["product_id"] = str(product_a.id)
+            else:
+                row.pop("product_id", None)
+
+        out = svc.update_invoice(db, str(invoice_one.id), lines=draft, actor="Ms Tee")
+
+        after = next(ln for ln in out["lines"] if ln["id"] == str(picked_line.id))
+        assert after["product_id"] == str(product_a.id)
+        assert after["matched"] is True
+
+        alias = _alias(db, w.supplier.id, code)
+        assert alias is not None
+        assert alias.source == "manual"
+        assert str(alias.product_id) == str(product_a.id)
+
+        db.refresh(sibling_line)
+        assert str(sibling_line.product_id) == str(product_a.id)
+        for ln in lines_two:
+            db.refresh(ln)
+            assert str(ln.product_id) == str(product_a.id)
+
+
+def test_clearing_a_line_deletes_its_manual_alias():
+    """AC-C2(a): a `null` sent on purpose unbinds the line, and the manual alias behind it
+    is deleted - the inverse of picking a product in edit mode."""
+    with pg_session() as db:
+        w = World(db)
+        code = f"ZZPI-DUP-{w.tag}"
+        invoice = _upload_kailu(db, w, {"SRTWT7443": code})
+        product_a = w.product("A")
+        supplier_code_alias_service.create(
+            db,
+            supplier_id=str(w.supplier.id),
+            supplier_code=code,
+            product_id=str(product_a.id),
+            actor="setup",
+        )
+        line = next(ln for ln in _lines(db, invoice.id) if ln.item_code == code)
+        assert str(line.product_id) == str(product_a.id)
+
+        draft = _draft_from(_lines(db, invoice.id))
+        for row in draft:
+            if row["id"] == str(line.id):
+                row["product_id"] = None
+            else:
+                row.pop("product_id", None)
+
+        out = svc.update_invoice(db, str(invoice.id), lines=draft, actor="Ms Tee")
+
+        after = next(ln for ln in out["lines"] if ln["id"] == str(line.id))
+        assert after["product_id"] is None
+        assert after["matched"] is False
+        assert _alias(db, w.supplier.id, code) is None
+
+
+def test_clearing_a_line_leaves_an_auto_alias_on_file():
+    """AC-C2(b): a bind the LADDER worked out (source `auto`) is not what the operator's
+    clear is undoing - only a `manual` alias is that operator's own decision to take back."""
+    with pg_session() as db:
+        w = World(db)
+        code = f"ZZPI-DUP2-{w.tag}"
+        invoice = _upload_kailu(db, w, {"SRTWT8203": code})
+        product_b = w.product("B")
+        auto_alias = SupplierProductCodeAlias(
+            id=str(uuid.uuid4()),
+            supplier_id=str(w.supplier.id),
+            supplier_code=code,
+            product_id=str(product_b.id),
+            source="auto",
+            matched_by="separator",
+        )
+        db.add(auto_alias)
+        line = next(ln for ln in _lines(db, invoice.id) if ln.item_code == code)
+        line.product_id = str(product_b.id)
+        db.flush()
+
+        draft = _draft_from(_lines(db, invoice.id))
+        for row in draft:
+            if row["id"] == str(line.id):
+                row["product_id"] = None
+            else:
+                row.pop("product_id", None)
+
+        out = svc.update_invoice(db, str(invoice.id), lines=draft, actor="Ms Tee")
+
+        after = next(ln for ln in out["lines"] if ln["id"] == str(line.id))
+        assert after["product_id"] is None
+
+        still_there = _alias(db, w.supplier.id, code)
+        assert still_there is not None
+        assert still_there.source == "auto"
+        assert str(still_there.product_id) == str(product_b.id)
 
 
 # --------------------------------------------------------------------------------- #
@@ -250,37 +508,15 @@ def test_a_negative_quantity_is_refused_and_nothing_lands():
         assert exc.value.status_code == 422
 
 
-def test_the_container_size_travels_in_the_same_save():
-    with pg_session() as db:
-        _seed_container_sizes(db)
-        w = World(db)
-        invoice = _apply_preloading(db, w)[0]
-        small = db.query(ContainerSize).filter(ContainerSize.code == "20GP").one()
+def test_update_invoice_no_longer_takes_a_container_size():
+    """S5, ruling 1: capacity moved to the shipment. `update_invoice` keeps `pi_number` and
+    `lines` only - a caller still passing `container_size_id` is a programming error, not a
+    422, so it is asserted at the signature rather than the behaviour."""
+    import inspect
 
-        out = svc.update_invoice(
-            db,
-            str(invoice.id),
-            container_size_id=str(small.id),
-            lines=_draft_from(_lines(db, invoice.id)),
-            actor="Ms Tee",
-        )
-
-        assert out["container_size_code"] == "20GP"
-
-
-def test_a_field_the_caller_never_mentions_is_left_alone():
-    """`container_size_id: null` means the tenant default; saying nothing means keep what
-    this invoice already chose. The two must not collapse into one instruction."""
-    with pg_session() as db:
-        _seed_container_sizes(db)
-        w = World(db)
-        invoice = _apply_preloading(db, w)[0]
-        small = db.query(ContainerSize).filter(ContainerSize.code == "20GP").one()
-        svc.set_container_size(db, str(invoice.id), str(small.id))
-
-        out = svc.update_invoice(db, str(invoice.id), pi_number=invoice.pi_number)
-
-        assert out["container_size_code"] == "20GP"
+    params = inspect.signature(svc.update_invoice).parameters
+    assert "container_size_id" not in params
+    assert not hasattr(svc, "set_container_size")
 
 
 # --------------------------------------------------------------------------------- #

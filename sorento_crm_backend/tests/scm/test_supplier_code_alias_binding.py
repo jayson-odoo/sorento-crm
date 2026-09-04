@@ -13,6 +13,7 @@ because the loading plan and the PI convert are read off those rows.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timedelta
 from io import BytesIO
 
 import pytest
@@ -360,6 +361,104 @@ def test_the_supplier_s_aliases_are_listed_with_the_names_a_person_reads():
         assert listed[0]["product_code"] == product.product_code
         assert listed[0]["source"] == "manual"
         assert str(product.id) not in str(listed[0]["product_code"])
+
+
+def test_the_alias_list_is_newest_first_dismissed_included_and_scoped_to_one_supplier():
+    """AC-C5: every alias for the supplier - a dismissal included - ordered `created_at
+    desc`, and a second supplier's ruling never shows up on this one's list."""
+    from app.services.scm import supplier_code_alias_service as alias_svc
+
+    with pg_session() as db:
+        w = World(db)
+        other = World(db)
+        product = w.product("SRTWC8357-RL")
+        now = datetime(2026, 8, 27, 12, 0, 0)
+
+        oldest = SupplierProductCodeAlias(
+            id=_u(), supplier_id=w.supplier.id, supplier_code=w.supplier_code("OLDEST"),
+            product_id=product.id, source="manual", matched_by="manual",
+            created_by="Ms Tee", created_at=now - timedelta(days=2),
+        )
+        middle_dismissed = SupplierProductCodeAlias(
+            id=_u(), supplier_id=w.supplier.id,
+            supplier_code=w.supplier_code("DISMISSED-ONE"), product_id=None,
+            source="dismissed", matched_by="dismissed", created_by="Mr Lim",
+            created_at=now - timedelta(days=1),
+        )
+        newest = SupplierProductCodeAlias(
+            id=_u(), supplier_id=w.supplier.id, supplier_code=w.supplier_code("NEWEST"),
+            product_id=product.id, source="auto", matched_by="token_set",
+            created_by=None, created_at=now,
+        )
+        elsewhere = SupplierProductCodeAlias(
+            id=_u(), supplier_id=other.supplier.id,
+            supplier_code=other.supplier_code("NEWEST"),
+            product_id=other.product("SOMETHING-ELSE").id,
+            source="manual", matched_by="manual", created_by="Ms Tee", created_at=now,
+        )
+        db.add_all([oldest, middle_dismissed, newest, elsewhere])
+        db.flush()
+
+        listed = alias_svc.list_for_supplier(db, str(w.supplier.id))
+
+        assert [row["supplier_code"] for row in listed] == [
+            newest.supplier_code, middle_dismissed.supplier_code, oldest.supplier_code,
+        ]
+        dismissed_row = listed[1]
+        assert dismissed_row["source"] == "dismissed"
+        assert dismissed_row["product_code"] is None
+        assert dismissed_row["set_code"] is None
+        assert dismissed_row["created_by"] == "Mr Lim"
+        # A name, never a UUID (`_actor()` writes it that way; asserted here too, since this
+        # is the surface the screen reads).
+        for row in listed:
+            if row["created_by"]:
+                with pytest.raises(ValueError):
+                    uuid.UUID(row["created_by"])
+
+
+def test_the_alias_route_lists_newest_first_with_every_ac_c5_field(scm_app):
+    """The same rule through the route. No `response_model` guards this endpoint, but the
+    flat shape is asserted at the boundary anyway - it is the whole contract (R16)."""
+    from fastapi.testclient import TestClient
+
+    from tests.scm.test_outstanding_import_routes import as_company_user
+
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+    product = w.product("SRTWC8357-RL")
+    now = datetime(2026, 8, 27, 12, 0, 0)
+    # Alphabetically first, chronologically OLDER - so a route still ordering by
+    # `supplier_code` (the pre-S3 behaviour) would list this FIRST, the wrong way round.
+    old = SupplierProductCodeAlias(
+        id=_u(), supplier_id=w.supplier.id, supplier_code=w.supplier_code("AAA-OLDER"),
+        product_id=product.id, source="manual", matched_by="manual",
+        created_by="Ms Tee", created_at=now - timedelta(days=1),
+    )
+    new = SupplierProductCodeAlias(
+        id=_u(), supplier_id=w.supplier.id, supplier_code=w.supplier_code("ZZZ-NEWER"),
+        product_id=None, source="dismissed", matched_by="dismissed",
+        created_by="Mr Lim", created_at=now,
+    )
+    db.add_all([old, new])
+    db.commit()
+    client = TestClient(app)
+
+    resp = client.get(
+        "/api/v1/scm/supplier-code-aliases", params={"supplier_id": str(w.supplier.id)}
+    )
+
+    assert resp.status_code == 200, resp.text
+    rows = resp.json()["data"]
+    assert [r["supplier_code"] for r in rows] == [new.supplier_code, old.supplier_code]
+    for field in (
+        "id", "supplier_code", "product_code", "product_name", "set_code", "set_name",
+        "source", "matched_by", "created_by", "created_at",
+    ):
+        assert field in rows[0]
+    assert rows[0]["created_by"] == "Mr Lim"
+    assert rows[1]["created_by"] == "Ms Tee"
 
 
 # --------------------------------------------------------------------------------- #
@@ -733,6 +832,20 @@ def test_a_match_with_no_product_is_refused_by_the_database():
             db.flush()
 
 
+def _plan_for(db, w):
+    """A stock-list plan for this supplier, so an upload has somewhere to belong (S6)."""
+    from app.services.scm import loading_plan_service
+
+    return loading_plan_service.create_record(
+        db,
+        supplier_id=str(w.supplier.id),
+        plan_horizon_date=None,
+        document_kind="stock_list",
+        source_attachment_id=None,
+        actor="Ms Tee",
+    )
+
+
 def test_the_dismiss_route_records_it_and_forget_puts_it_back(scm_app):
     from fastapi.testclient import TestClient
 
@@ -742,9 +855,12 @@ def test_the_dismiss_route_records_it_and_forget_puts_it_back(scm_app):
     as_company_user(app, db, gcu, gcuk)
     w = World(db)
     code = w.supplier_code("NOTHING-LIKE-THIS")
+    # Uploaded INTO a plan (S6): the queue route reads a plan's own rows, so a file applied
+    # supplier-wide has no queue to appear on.
+    plan = _plan_for(db, w)
     stock_svc.apply(
         db, _stock_workbook([[code, "mystery", 5, 0, 0.2, None]]),
-        supplier_id=str(w.supplier.id), actor="Ms Tee",
+        supplier_id=str(w.supplier.id), actor="Ms Tee", loading_plan_id=str(plan.id),
     )
     db.commit()
     client = TestClient(app)
@@ -762,7 +878,7 @@ def test_the_dismiss_route_records_it_and_forget_puts_it_back(scm_app):
 
     assert client.get(
         "/api/v1/scm/supplier-code-aliases/unmatched",
-        params={"supplier_id": str(w.supplier.id)},
+        params={"plan_id": str(plan.id)},
     ).json()["data"] == []
     listed = client.get(
         "/api/v1/scm/supplier-code-aliases", params={"supplier_id": str(w.supplier.id)}
@@ -775,7 +891,7 @@ def test_the_dismiss_route_records_it_and_forget_puts_it_back(scm_app):
         r["item_code"]
         for r in client.get(
             "/api/v1/scm/supplier-code-aliases/unmatched",
-            params={"supplier_id": str(w.supplier.id)},
+            params={"plan_id": str(plan.id)},
         ).json()["data"]
     ] == [code]
 
@@ -967,17 +1083,20 @@ def test_the_rematch_route_reports_what_it_bound(scm_app):
     as_company_user(app, db, gcu, gcuk)
     w = World(db)
     code = w.supplier_code("SRTWC8357-RL-300")
+    plan = _plan_for(db, w)
     stock_svc.apply(
         db, _stock_workbook([[code, "toilet", 10, 0, 0.17, None]]),
-        supplier_id=str(w.supplier.id), actor="Ms Tee",
+        supplier_id=str(w.supplier.id), actor="Ms Tee", loading_plan_id=str(plan.id),
     )
     w.product("SRTWC8357-300-RL")
     db.commit()
     client = TestClient(app)
 
+    # The pass is scoped to the PLAN since S6 (AC-C7) - the same scope as the queue beside
+    # the button, so the counts in the toast describe rows this screen can see.
     r = client.post(
         "/api/v1/scm/supplier-code-aliases/rematch",
-        json={"supplier_id": str(w.supplier.id)},
+        json={"plan_id": str(plan.id)},
     )
 
     assert r.status_code == 200, r.text
@@ -990,7 +1109,7 @@ def test_the_rematch_route_reports_what_it_bound(scm_app):
     }
     assert client.get(
         "/api/v1/scm/supplier-code-aliases/unmatched",
-        params={"supplier_id": str(w.supplier.id)},
+        params={"plan_id": str(plan.id)},
     ).json()["data"] == []
 
 
@@ -1006,7 +1125,7 @@ def test_rematching_without_the_write_permission_is_403(scm_app):
 
     r = TestClient(app).post(
         "/api/v1/scm/supplier-code-aliases/rematch",
-        json={"supplier_id": str(w.supplier.id)},
+        json={"plan_id": str(_plan_for(db, w).id)},
     )
 
     assert r.status_code == 403, r.text

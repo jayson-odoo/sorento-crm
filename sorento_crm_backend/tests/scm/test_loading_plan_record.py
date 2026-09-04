@@ -57,6 +57,21 @@ def _world(db) -> World:
     w.supplier.email = f"{MARKER}-supplier@example.test"
     db.flush()
     w.stock("A", packed=50, cbm=0.5)
+    # We BUY this product from this supplier. Since S6 a plan reads its own statement, and
+    # these plans are created with `document_kind: "none"` - so without the sourcing link
+    # there is no membership left to put the product in the plan's universe at all, and
+    # every one of these lifecycle tests would run against an empty grid (AC-E0).
+    from app.models.procurement import ProductSupplier
+
+    db.add(
+        ProductSupplier(
+            id=str(uuid.uuid4()),
+            product_id=w.product("A").id,
+            supplier_id=w.supplier.id,
+            standard_lead_time_days=30,
+        )
+    )
+    db.flush()
     _so(db, w, "A", 20)
     return w
 
@@ -139,6 +154,50 @@ def test_the_document_label_names_the_file_the_plan_was_started_from(scm_app):
 
     assert with_file["document_label"].startswith("Stock list")
     assert without["document_label"] == "No file"
+
+
+def test_the_record_names_the_file_this_plan_was_started_from(scm_app):
+    """BL-3: the record's "View uploaded list" opens the plan's OWN sheet, and the preview
+    picks its viewer off the file name - so `source_attachment_filename` travels with the id.
+
+    It used to read the supplier's LATEST retained sheet instead, whichever plan uploaded it.
+    """
+    from app.models.resources import Attachment
+
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = _world(db)
+    client = TestClient(app)
+    plan = _create(client, str(w.supplier.id), document_kind="stock_list").json()
+    attachment = Attachment(
+        id=str(uuid.uuid4()),
+        original_filename=f"{MARKER}-stock-list.xlsx",
+        stored_filename=f"{MARKER} stock list.xlsx",
+        file_path="s3://test/stock-list.xlsx",
+        entity_type="supplier_stock_list",
+        entity_id=str(w.supplier.id),
+    )
+    db.add(attachment)
+    row = db.query(LoadingPlan).filter(LoadingPlan.id == plan["id"]).one()
+    row.source_attachment_id = str(attachment.id)
+    db.flush()
+
+    record = client.get(f"{PLANS_URL}?status=active&limit=100").json()
+    listed = next(p for p in record["data"] if p["id"] == plan["id"])
+
+    assert listed["source_attachment_id"] == str(attachment.id)
+    assert listed["source_attachment_filename"] == f"{MARKER} stock list.xlsx"
+
+
+def test_a_plan_started_with_no_file_names_none(scm_app):
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = _world(db)
+
+    plan = _create(TestClient(app), str(w.supplier.id), document_kind="none").json()
+
+    assert plan["source_attachment_id"] is None
+    assert plan["source_attachment_filename"] is None
 
 
 def test_creating_a_plan_for_a_supplier_that_does_not_exist_is_a_404(scm_app):
@@ -329,7 +388,11 @@ def test_a_sent_plan_is_cancelled_not_deleted(scm_app):
     r = client.delete(f"{PLANS_URL}/{plan['id']}")
 
     assert r.status_code == 409, r.text
-    assert r.json()["detail"]["code"] == "plan_sent"
+    # `refuse_if_sent` raises `AppException` (S1 phase 2, AC-A7 - shared with the
+    # deferred `loading_plan.delete` record action's `capture`), whose global handler
+    # answers with the code at the TOP level rather than nested under `detail`, the
+    # bare-HTTPException shape this route answered with before.
+    assert r.json()["code"] == "plan_sent"
     assert db.query(LoadingPlan).filter(LoadingPlan.id == plan["id"]).first() is not None
 
 
@@ -374,7 +437,11 @@ def test_a_cancelled_plan_takes_no_more_edits(scm_app):
     r = client.put(f"{PLANS_URL}/{plan['id']}/edits", json={"line_edits": {"x": 1}})
 
     assert r.status_code == 409, r.text
-    assert r.json()["detail"]["code"] == "plan_cancelled"
+    # One 409 shape on this router (SF-5): `AppException`, whose handler puts the code at the
+    # TOP level. `refuse_if_sent` has always answered that way, and a caller reading
+    # `body.code` for one refusal and `body.detail.code` for the other is how a stale tab
+    # ends up showing "something went wrong" instead of the reason.
+    assert r.json()["code"] == "plan_cancelled"
 
 
 def test_saving_edits_requires_the_operator_permission(scm_app):
@@ -484,35 +551,57 @@ def test_the_list_carries_what_the_last_build_asked_for(scm_app):
     assert row["to_request_cbm"] is not None
 
 
-def test_a_newer_stock_list_moves_an_older_plans_numbers_but_not_its_document(scm_app):
-    # AC-A17 / R2, stated in the open: the supplier snapshot is per supplier and replaced
-    # whole, so an older open plan reads what the supplier holds NOW - which is the correct
-    # reading of "what should we ask them for". What must NOT move is which file that plan
-    # says it started from, which is why the snapshot date is pinned at create time.
+def test_a_newer_stock_list_leaves_an_older_plan_exactly_as_it_was(scm_app):
+    # AC-F6 (S6), which SUPERSEDES p4's AC-A17. That line said the opposite - an older plan
+    # read what the supplier holds NOW, because the snapshot was one per supplier and
+    # replaced whole - and the captain ruled against it on 2 Sep: "the data in the plan
+    # should be respective to the plan, not per supplier". Migration 454 stamps every row an
+    # upload writes with the plan it was uploaded into, so a newer list started from a NEW
+    # plan cannot reach this one: not its figures, not its subtitle.
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk)
     w = _world(db)
     client = TestClient(app)
     plan = _create(client, str(w.supplier.id), document_kind="stock_list").json()
-    label_before = plan["document_label"]
-    packed_before = client.post(BUILD_URL, json={"plan_id": plan["id"]}).json()["rows"][0][
-        "qty_packed"
-    ]
-
-    # A newer list for the same supplier, exactly as a second plan's upload would leave it.
+    # The rows this plan was started from, as its own upload would have left them.
     db.execute(
         text(
-            "UPDATE scm.supplier_inventory SET qty_packed = qty_packed + 100, "
-            "as_of = as_of + INTERVAL '30 days' WHERE supplier_id = CAST(:s AS uuid)"
+            "UPDATE scm.supplier_inventory SET loading_plan_id = CAST(:p AS uuid) "
+            "WHERE supplier_id = CAST(:s AS uuid)"
         ),
-        {"s": str(w.supplier.id)},
+        {"p": plan["id"], "s": str(w.supplier.id)},
+    )
+    db.flush()
+    before = client.post(BUILD_URL, json={"plan_id": plan["id"]}).json()
+    packed_before = before["rows"][0]["qty_packed"]
+    label_before = before["plan"]["document_label"]
+
+    # A newer, bigger list for the same supplier, uploaded from a SECOND plan.
+    newer = _create(client, str(w.supplier.id), document_kind="stock_list").json()
+    db.execute(
+        text(
+            """
+            INSERT INTO scm.supplier_inventory
+                (id, company_id, supplier_id, item_code, product_id, qty_packed,
+                 qty_unfinished, as_of, loading_plan_id)
+            SELECT gen_random_uuid(), company_id, supplier_id, item_code, product_id,
+                   qty_packed + 100, qty_unfinished, as_of + INTERVAL '30 days',
+                   CAST(:n AS uuid)
+              FROM scm.supplier_inventory
+             WHERE loading_plan_id = CAST(:p AS uuid)
+            """
+        ),
+        {"n": newer["id"], "p": plan["id"]},
     )
     db.flush()
 
     after = client.post(BUILD_URL, json={"plan_id": plan["id"]}).json()
 
-    assert after["rows"][0]["qty_packed"] == packed_before + 100
+    assert after["rows"][0]["qty_packed"] == packed_before
     assert after["plan"]["document_label"] == label_before
+    # And the newer plan reads its own, which is the other half of the same rule.
+    newer_built = client.post(BUILD_URL, json={"plan_id": newer["id"]}).json()
+    assert newer_built["rows"][0]["qty_packed"] == packed_before + 100
 
 
 # --------------------------------------------------------------------------- #
@@ -711,9 +800,9 @@ def test_a_cancelled_plan_can_no_longer_be_sent_or_downloaded(scm_app):
     )
 
     assert send.status_code == 409, send.text
-    assert send.json()["detail"]["code"] == "plan_cancelled"
+    assert send.json()["code"] == "plan_cancelled"
     assert document.status_code == 409, document.text
-    assert document.json()["detail"]["code"] == "plan_cancelled"
+    assert document.json()["code"] == "plan_cancelled"
     assert (
         db.query(SupplierNotice).filter(SupplierNotice.loading_plan_id == plan["id"]).count()
         == 0

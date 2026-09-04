@@ -3,8 +3,10 @@
  *
  * What this pins: the search box reaches the service, the two filters live behind ONE
  * Filters popover that says what it is filtering, the whole row opens the invoice, the
- * right cluster is [gear] [Start] (R14), and a convert from the list runs at once with no
- * dialog in front of it (R15).
+ * right cluster is [gear] [Start] (R14), and a convert from the list runs the whole
+ * selection at once with no PER-LINE quantity dialog (R15) - it does open
+ * `ConvertToPackingListDialog` to ask the container size (S5, ruling 1), stubbed here since
+ * that dialog's own behaviour is pinned in its own test file.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -103,13 +105,36 @@ vi.mock('../../hooks/useFulfilment', () => ({
   useFulfilmentSuppliers: () => ({
     data: [{ value: 'sup-1', label: 'Kailu Hardware Factory' }],
   }),
+  useContainerSizes: () => ({
+    data: [{ id: 'size-40hq', code: '40HQ', label: '40ft high cube', cbm: 65, is_default: true }],
+    isLoading: false,
+  }),
 }));
 
-// The dialogs are exercised in their own test files; stub them here so this suite only
-// asserts what the list itself renders.
+// The upload dialog is stubbed here so this suite only asserts what the list itself
+// renders. `ConvertToPackingListDialog` is stubbed too - its OWN container-size select is
+// exercised where it renders un-stubbed, `ProformaInvoiceDetail.test.tsx` - and this stub
+// exposes ONE "Convert" button that fires `onConvert` with no size chosen (the default).
 vi.mock('./ProformaUploadDialog', () => ({
   ProformaUploadDialog: ({ open }: { open: boolean }) =>
     open ? <div data-testid="upload-dialog" /> : null,
+}));
+
+vi.mock('./ConvertToPackingListDialog', () => ({
+  ConvertToPackingListDialog: ({
+    open,
+    onConvert,
+  }: {
+    open: boolean;
+    onConvert: (args: { lineQuantities: Record<string, number>; containerSizeId: string | null }) => void;
+  }) =>
+    open ? (
+      <div role="dialog">
+        <button onClick={() => onConvert({ lineQuantities: {}, containerSizeId: null })}>
+          Convert
+        </button>
+      </div>
+    ) : null,
 }));
 
 const state = {
@@ -159,13 +184,8 @@ function invoiceRow(over: Partial<ProformaInvoiceListRow> = {}): ProformaInvoice
     uploaded_by: 'Ms Tee',
     created_at: '2026-08-01T02:00:00',
     updated_at: '2026-08-01T02:00:00',
-    container_size_id: null,
-    container_size_code: '40HQ',
-    container_cbm: 65,
     total_cbm: 27.1,
     unmeasured_lines: 0,
-    fill_pct: 41.69,
-    over_by_cbm: null,
     status: 'current',
     revision_no: 1,
     revision_count: 1,
@@ -259,15 +279,42 @@ beforeEach(() => {
 });
 
 describe('ProformaInvoicesView - loading / empty / error / data states', () => {
-  it('says nothing is waiting for a container, under the default filter', () => {
-    // The list opens on "Not converted" (AC-F6), so its empty state answers THAT question -
-    // one sentence that is true whether nothing was uploaded or everything is placed.
+  it('opens with no filter applied (AC-D1): the true-empty state, no Show-every-invoice CTA', () => {
+    // Superseded AC-F6 (Aug plan): a fresh visit no longer defaults to "Not converted" - a
+    // book where everything was already placed used to read as empty rather than as
+    // "nothing left to place". The CTA to clear filters has nothing to do while none are set.
     state.data = { data: [], total: 0 };
     renderView();
 
     expect(
+      screen.getByText(
+        'No proforma invoice read yet. Upload the supplier’s proforma workbook to hold its priced lines.',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /show every invoice/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('answers "waiting for a container" once that filter is chosen', async () => {
+    state.data = { data: [], total: 0 };
+    renderView();
+
+    openFilters();
+    fireEvent.change(screen.getByLabelText('Packing list filter'), {
+      target: { value: 'not_converted' },
+    });
+
+    expect(
       screen.getByText('No proforma invoice is waiting for a container.'),
     ).toBeInTheDocument();
+
+    // The popover marks the rest of the page aria-hidden while open (Radix `hideOthers`),
+    // so the Show-every-invoice button underneath is unreachable by role until it closes.
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    await waitFor(() =>
+      expect(screen.queryByLabelText('Packing list filter')).not.toBeInTheDocument(),
+    );
     expect(screen.getByRole('button', { name: /show every invoice/i })).toBeInTheDocument();
   });
 
@@ -276,8 +323,6 @@ describe('ProformaInvoicesView - loading / empty / error / data states', () => {
     renderView();
 
     openFilters();
-    // Off the placement filter first: with it on, the empty state answers that question.
-    fireEvent.change(screen.getByLabelText('Packing list filter'), { target: { value: '' } });
     fireEvent.change(screen.getByLabelText('Supplier'), { target: { value: 'sup-1' } });
 
     expect(
@@ -326,7 +371,9 @@ describe('ProformaInvoicesView - loading / empty / error / data states', () => {
     renderView();
 
     expect(
-      screen.getByText('No proforma invoice is waiting for a container.'),
+      screen.getByText(
+        'No proforma invoice read yet. Upload the supplier’s proforma workbook to hold its priced lines.',
+      ),
     ).toBeInTheDocument();
   });
 
@@ -372,13 +419,22 @@ describe('ProformaInvoicesView - the standard toolbar', () => {
     expect(screen.getByLabelText('Packing list filter')).toBeInTheDocument();
   });
 
-  it('states the active filter on screen, with a way to clear it', () => {
+  it('states a CHOSEN filter on screen, with a way to clear it (no chip by default, AC-D1)', () => {
     state.data = { data: [invoiceRow()], total: 1 };
     renderView();
 
-    // The default IS a filter, so it says so - a sticky default the reader did not set is
-    // otherwise indistinguishable from missing data. ("Not converted" is also the row's own
-    // Packing list cell, so the chip is identified by its clear button, not by the words.)
+    // No default, so nothing to clear yet.
+    expect(
+      screen.queryByRole('button', { name: /clear filter/i }),
+    ).not.toBeInTheDocument();
+
+    openFilters();
+    fireEvent.change(screen.getByLabelText('Packing list filter'), {
+      target: { value: 'not_converted' },
+    });
+
+    // ("Not converted" is also the row's own Packing list cell, so the chip is identified by
+    // its clear button, not by the words.)
     const clear = screen.getByRole('button', { name: /clear filter: not converted/i });
     expect(clear).toBeInTheDocument();
     fireEvent.click(clear);
@@ -515,7 +571,8 @@ describe('ProformaInvoicesView - the whole row opens the invoice', () => {
     expect(push).toHaveBeenCalledTimes(1);
     const href = push.mock.calls[0][0] as string;
     expect(href).toContain('/scm/proforma-invoices/pi-1');
-    expect(href).toContain('placement=not_converted');
+    // AC-D1: no filter applied by default, so none travels into the detail URL either.
+    expect(href).not.toContain('placement=');
   });
 
   it('keeps the PI number a real anchor, and stops it opening the row twice', () => {
@@ -597,8 +654,17 @@ describe('ProformaInvoicesView - delete lives under the gear, never in a row', (
   });
 });
 
-describe('R15 - a convert from the list runs at once', () => {
-  it('calls the convert with the ticked invoices and no dialog in between', async () => {
+describe('R15 - a convert from the list, once the container size is chosen (S5, ruling 1)', () => {
+  /** Start > Convert opens the size-picking dialog (stubbed above); its own Convert button
+   *  fires the actual write - no per-line quantity question for a list convert, but the box
+   *  IS asked. */
+  function openConvertDialogAndSubmit() {
+    openStart();
+    fireEvent.click(screen.getByRole('menuitem', { name: /convert 1 to packing list/i }));
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /^convert$/i }));
+  }
+
+  it('opens the container-size dialog rather than converting immediately', () => {
     state.data = { data: [invoiceRow()], total: 1 };
     renderView();
 
@@ -606,14 +672,24 @@ describe('R15 - a convert from the list runs at once', () => {
     openStart();
     fireEvent.click(screen.getByRole('menuitem', { name: /convert 1 to packing list/i }));
 
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(state.convertInvoices).not.toHaveBeenCalled();
+  });
+
+  it('calls the convert with the ticked invoices once the dialog is confirmed', async () => {
+    state.data = { data: [invoiceRow()], total: 1 };
+    renderView();
+
+    tickFirstRow();
+    openConvertDialogAndSubmit();
+
     await waitFor(() =>
       expect(state.convertInvoices).toHaveBeenCalledWith({
         invoiceIds: ['pi-1'],
         overrideReason: undefined,
+        containerSizeId: null,
       }),
     );
-    // No packing-list dialog stood in front of it.
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
   it('names the packing list in the toast and lands on it', async () => {
@@ -621,8 +697,7 @@ describe('R15 - a convert from the list runs at once', () => {
     renderView();
 
     tickFirstRow();
-    openStart();
-    fireEvent.click(screen.getByRole('menuitem', { name: /convert 1 to packing list/i }));
+    openConvertDialogAndSubmit();
 
     await waitFor(() =>
       expect(toast.success).toHaveBeenCalledWith(
@@ -635,19 +710,18 @@ describe('R15 - a convert from the list runs at once', () => {
   it('asks whether to load the box anyway when the placement is over capacity', async () => {
     state.data = { data: [invoiceRow()], total: 1 };
     state.convertInvoices = vi.fn().mockRejectedValue(
-      Object.assign(new Error('PI-2026-001 is 69.36 cbm and the 40HQ holds 65.'), {
+      Object.assign(new Error('70 cbm and the 40HQ holds 65 - over by 5 cbm.'), {
         code: 'over_capacity',
       }),
     );
     renderView();
 
     tickFirstRow();
-    openStart();
-    fireEvent.click(screen.getByRole('menuitem', { name: /convert 1 to packing list/i }));
+    openConvertDialogAndSubmit();
 
     expect(await screen.findByText('This will not fit')).toBeInTheDocument();
     expect(
-      screen.getByText('PI-2026-001 is 69.36 cbm and the 40HQ holds 65.'),
+      screen.getByText('70 cbm and the 40HQ holds 65 - over by 5 cbm.'),
     ).toBeInTheDocument();
   });
 
@@ -671,8 +745,7 @@ describe('R15 - a convert from the list runs at once', () => {
     renderView();
 
     tickFirstRow();
-    openStart();
-    fireEvent.click(screen.getByRole('menuitem', { name: /convert 1 to packing list/i }));
+    openConvertDialogAndSubmit();
     await screen.findByText('This will not fit');
 
     fireEvent.change(screen.getByLabelText(/why convert anyway/i), {
@@ -684,6 +757,7 @@ describe('R15 - a convert from the list runs at once', () => {
       expect(state.convertInvoices).toHaveBeenLastCalledWith({
         invoiceIds: ['pi-1'],
         overrideReason: 'Second container booked',
+        containerSizeId: null,
       }),
     );
   });

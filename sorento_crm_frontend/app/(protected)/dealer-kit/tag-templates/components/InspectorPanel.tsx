@@ -7,13 +7,25 @@
  * Type-specific sections render below based on `layer.props.kind`.
  */
 
-import { useCallback } from 'react';
-import { Braces, Eye, LayoutTemplate, Link2, Link2Off, X } from 'lucide-react';
+import { useCallback, useMemo } from 'react';
+import {
+  Bold,
+  Braces,
+  Eye,
+  Italic,
+  LayoutTemplate,
+  Link2,
+  Link2Off,
+  Strikethrough,
+  Underline,
+  X,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
 import type {
@@ -27,6 +39,7 @@ import type {
 } from '@/lib/dealer-kit/tag-template-types';
 import { imageSourceOf } from '@/lib/dealer-kit/tag-template-types';
 import { isDynamic } from '@/lib/dealer-kit/product-block';
+import { tagColours } from '@/lib/dealer-kit/colour';
 import { ColorPicker } from './ColorPicker';
 
 // ---------------------------------------------------------------------------
@@ -155,6 +168,8 @@ interface InspectorPanelProps {
   layer: TagLayer | null;
   onUpdate: (id: string, changes: Partial<TagLayer>) => void;
   onUpdateProps: (id: string, changes: Partial<TagLayerProps>) => void;
+  /** The whole tag, so the colour picker can derive "This tag" (S3, AC-S3-5). */
+  layers?: TagLayer[];
   /** What this layer's slot currently resolves to, for the unlink/relink pair. */
   resolvedText?: string | null;
   /** Human-readable name of what the selected group is bound to. No UUIDs. */
@@ -187,6 +202,7 @@ export function InspectorPanel({
   layer,
   onUpdate,
   onUpdateProps,
+  layers,
   resolvedText,
   bindingLabel,
   fontOptions,
@@ -202,6 +218,8 @@ export function InspectorPanel({
   onPreviewBlock,
   onClearBlockPreview,
 }: InspectorPanelProps) {
+  const usedColours = useMemo(() => tagColours(layers ?? []), [layers]);
+
   const update = useCallback(
     (changes: Partial<TagLayer>) => {
       if (layer) onUpdate(layer.id, changes);
@@ -352,13 +370,14 @@ export function InspectorPanel({
               fontOptions={fontOptions ?? STATIC_FONT_OPTIONS}
               onUploadFont={onUploadFont}
               onInsertField={onInsertField}
+              usedColours={usedColours}
             />
           )}
           {layer.props.kind === 'price_badge' && (
-            <PriceBadgeInspector props={layer.props} onChange={updateProps} />
+            <PriceBadgeInspector props={layer.props} onChange={updateProps} usedColours={usedColours} />
           )}
           {layer.props.kind === 'shape' && (
-            <ShapeInspector props={layer.props} onChange={updateProps} />
+            <ShapeInspector props={layer.props} onChange={updateProps} usedColours={usedColours} />
           )}
           {layer.props.kind === 'image' && (
             <ImageInspector
@@ -406,6 +425,7 @@ function TextInspector({
   fontOptions,
   onUploadFont,
   onInsertField,
+  usedColours,
 }: {
   layer: TagLayer;
   props: Extract<TagLayerProps, { kind: 'text' }>;
@@ -415,6 +435,7 @@ function TextInspector({
   fontOptions: SearchableSelectOption[];
   onUploadFont?: () => void;
   onInsertField?: () => void;
+  usedColours: string[];
 }) {
   // A slot-bound layer is edited through `text_override`, never through
   // `props.text`: the binding survives the edit, so "Relink" is simply clearing
@@ -508,27 +529,72 @@ function TextInspector({
             options={fontOptions}
           />
         </div>
-        <div className="grid grid-cols-2 gap-2">
-          <NumberInput
-            label="Font Size"
-            value={props.fontSize}
-            onChange={(v) => onChange({ ...props, fontSize: v })}
-            step={0.5}
-            min={4}
-          />
-          <div className="flex flex-col gap-1">
-            <Label className="text-xs text-muted-foreground">Font Weight</Label>
-            <SearchableSelect
-              value={String(props.fontWeight)}
-              onChange={(v: string) => onChange({ ...props, fontWeight: parseInt(v, 10) })}
-              options={FONT_WEIGHT_OPTIONS}
+        <div className="flex items-end gap-2">
+          <div className="flex-1">
+            <NumberInput
+              label="Font Size"
+              value={props.fontSize}
+              onChange={(v) => onChange({ ...props, fontSize: v })}
+              step={0.5}
+              min={4}
             />
           </div>
+          <ToggleGroup
+            type="multiple"
+            variant="outline"
+            size="sm"
+            value={[
+              props.fontWeight >= 600 && 'bold',
+              props.italic && 'italic',
+              props.underline && 'underline',
+              props.strikethrough && 'strikethrough',
+            ].filter((v): v is string => Boolean(v))}
+            onValueChange={(next: string[]) => {
+              const on = new Set(next);
+              // Only rewrite fontWeight when Bold's OWN pressed state actually
+              // changed - a `type="multiple"` group reports every currently
+              // pressed item on every click, so toggling Italic while a 600+
+              // weight reads Bold as pressed must not collapse that weight to
+              // the canonical 700 as a side effect of a click nowhere near it.
+              const wasBold = props.fontWeight >= 600;
+              const willBeBold = on.has('bold');
+              onChange({
+                ...props,
+                fontWeight:
+                  willBeBold === wasBold ? props.fontWeight : willBeBold ? 700 : 400,
+                italic: on.has('italic'),
+                underline: on.has('underline'),
+                strikethrough: on.has('strikethrough'),
+              });
+            }}
+          >
+            <ToggleGroupItem value="bold" aria-label="Bold" title="Bold">
+              <Bold className="size-3.5" />
+            </ToggleGroupItem>
+            <ToggleGroupItem value="italic" aria-label="Italic" title="Italic">
+              <Italic className="size-3.5" />
+            </ToggleGroupItem>
+            <ToggleGroupItem value="underline" aria-label="Underline" title="Underline">
+              <Underline className="size-3.5" />
+            </ToggleGroupItem>
+            <ToggleGroupItem value="strikethrough" aria-label="Strikethrough" title="Strikethrough">
+              <Strikethrough className="size-3.5" />
+            </ToggleGroupItem>
+          </ToggleGroup>
+        </div>
+        <div className="flex flex-col gap-1">
+          <Label className="text-xs text-muted-foreground">Font Weight</Label>
+          <SearchableSelect
+            value={String(props.fontWeight)}
+            onChange={(v: string) => onChange({ ...props, fontWeight: parseInt(v, 10) })}
+            options={FONT_WEIGHT_OPTIONS}
+          />
         </div>
         <ColorPicker
           label="Colour"
           value={props.color}
           onChange={(v) => onChange({ ...props, color: v })}
+          usedColours={usedColours}
         />
         <div className="flex flex-col gap-1">
           <Label className="text-xs text-muted-foreground">Align</Label>
@@ -576,9 +642,11 @@ function TextInspector({
 function ShapeInspector({
   props,
   onChange,
+  usedColours,
 }: {
   props: Extract<TagLayerProps, { kind: 'shape' }>;
   onChange: (changes: Partial<TagLayerProps>) => void;
+  usedColours: string[];
 }) {
   return (
     <section>
@@ -598,11 +666,13 @@ function ShapeInspector({
           label="Fill"
           value={props.fill}
           onChange={(v) => onChange({ ...props, fill: v })}
+          usedColours={usedColours}
         />
         <ColorPicker
           label="Stroke"
           value={props.stroke}
           onChange={(v) => onChange({ ...props, stroke: v })}
+          usedColours={usedColours}
         />
         <div className="grid grid-cols-2 gap-2">
           <NumberInput
@@ -698,9 +768,11 @@ function ImageInspector({
 function PriceBadgeInspector({
   props,
   onChange,
+  usedColours,
 }: {
   props: Extract<TagLayerProps, { kind: 'price_badge' }>;
   onChange: (changes: Partial<TagLayerProps>) => void;
+  usedColours: string[];
 }) {
   return (
     <section>
@@ -722,11 +794,13 @@ function PriceBadgeInspector({
           label="Box Fill"
           value={props.fill}
           onChange={(v) => onChange({ ...props, fill: v })}
+          usedColours={usedColours}
         />
         <ColorPicker
           label="Text Colour"
           value={props.textColor}
           onChange={(v) => onChange({ ...props, textColor: v })}
+          usedColours={usedColours}
         />
         <NumberInput
           label="Corner Radius"

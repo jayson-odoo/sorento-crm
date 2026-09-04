@@ -59,14 +59,21 @@ import {
 import { getSalesOrderUoms } from '../../../services/salesOrderService';
 import DetailActions from '@/components/common/DetailActions';
 import { purchaseOrdersPagerQuery } from '../../../hooks/usePurchaseOrders';
-import { PurchaseOrderAllocations } from './PurchaseOrderAllocations';
+import { PlanRowDialog } from '../../../components/PlanRowDialog';
+import { PlanNumberButton } from '../../../components/PlanNumberButton';
+import { PoLinePlacementsBody, placedQtyOf } from './PoLinePlacementsBody';
+import { PoPlanCard } from './PoPlanCard';
 import { BASE_CURRENCY, fmtDate, fmtInt } from '../../../lib/format';
 import {
   isDraftPurchaseOrder,
   purchaseOrderLineStatusPill,
   purchaseOrderStatusPill,
 } from '../../../lib/purchaseOrderStatus';
-import type { PurchaseOrder, PurchaseOrderLine } from '../../../types/scm.types';
+import type {
+  PurchaseOrder,
+  PurchaseOrderLine,
+  PurchaseOrderLineAllocation,
+} from '../../../types/scm.types';
 import BackToList from '@/components/common/BackToList';
 
 /**
@@ -111,6 +118,20 @@ const SOURCE_LABELS: Record<NonNullable<PurchaseOrder['source']>, string> = {
   import: 'Imported history',
   crm: 'Created in CRM',
   manual: 'Manual',
+};
+
+/** A line the "Placed" button never renders enabled for (no allocation, figure 0) has no
+ *  real row to look up - this is the shape the dialog is defensively given if it is ever
+ *  opened on one anyway, so it reads "Nothing is placed on this line" rather than crashing. */
+const EMPTY_PLACEMENTS_ALLOCATION: PurchaseOrderLineAllocation = {
+  line_id: '',
+  sku: '',
+  warehouse_code: null,
+  outstanding: 0,
+  allocated: 0,
+  free: 0,
+  dedicated_to: [],
+  placements: [],
 };
 
 /** Does this line answer the product search above the grid? Code and description, because
@@ -270,6 +291,9 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
   const [expectedDate, setExpectedDate] = useState('');
   const [lineDrafts, setLineDrafts] = useState<Record<string, LineDraft>>({});
   const [error, setError] = useState<string | null>(null);
+  // Which LINE's "Placed" figure was pressed (R5, AC-L1) - one dialog for the whole grid,
+  // replacing the "Allocated to" card that used to sit under it (AC-L3).
+  const [placementsLineId, setPlacementsLineId] = useState<string | null>(null);
   const originalLineSignatureRef = useRef<string | null>(null);
 
   const beginEdit = (po: PurchaseOrder) => {
@@ -382,6 +406,24 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
     () => lines.reduce((sum, l) => sum + outstandingOf(l), 0),
     [lines, outstandingOf],
   );
+
+  // R5: one allocation per LINE, keyed for the Placed column and its dialog (AC-L1). Off
+  // `data` rather than `po` - the latter is not defined until after the loading/error
+  // returns below, and this map is built before them.
+  const allocationByLineId = useMemo(() => {
+    const map = new Map<string, PurchaseOrderLineAllocation>();
+    for (const a of data?.allocations ?? []) map.set(a.line_id, a);
+    return map;
+  }, [data]);
+  const placedTotal = useMemo(
+    () =>
+      lines.reduce((sum, l) => {
+        const allocation = allocationByLineId.get(l.id);
+        return sum + (allocation ? placedQtyOf(allocation) : 0);
+      }, 0),
+    [lines, allocationByLineId],
+  );
+
   const amountTotal = useMemo(() => {
     const amounts = lines.map(amountOf).filter((a): a is string => a !== null);
     return amounts.length ? sumMoney(amounts) : null;
@@ -515,6 +557,38 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
         footer: () => fmtInt(outstandingTotal),
         meta: {
           headerTitle: 'Outstanding qty',
+          headerClassName: 'text-right',
+          cellClassName: 'text-right tabular-nums',
+        },
+      },
+      {
+        // R5: the sum of every SPO pull, order-inquiry link and dedication on the line -
+        // opens the lightbox that replaces the "Allocated to" card (AC-L1, AC-L3).
+        id: 'placed',
+        accessorFn: (line) => {
+          const allocation = allocationByLineId.get(line.id);
+          return allocation ? placedQtyOf(allocation) : 0;
+        },
+        header: ({ column }) => <DataGridColumnHeader title="Placed" column={column} />,
+        cell: ({ row }) => {
+          const allocation = allocationByLineId.get(row.original.id);
+          const figure = allocation ? placedQtyOf(allocation) : 0;
+          const label = `Placed on ${row.original.sku}`;
+          if (!allocation || figure <= 0) {
+            return <PlanNumberButton value={fmtInt(figure)} label={label} onClick={() => {}} disabled />;
+          }
+          return (
+            <PlanNumberButton
+              value={fmtInt(figure)}
+              label={label}
+              onClick={() => setPlacementsLineId(row.original.id)}
+            />
+          );
+        },
+        size: 120,
+        footer: () => fmtInt(placedTotal),
+        meta: {
+          headerTitle: 'Placed',
           headerClassName: 'text-right',
           cellClassName: 'text-right tabular-nums',
         },
@@ -744,6 +818,8 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
       qtyOrderedTotal,
       qtyReceivedTotal,
       outstandingTotal,
+      allocationByLineId,
+      placedTotal,
       amountTotal,
     ],
   );
@@ -809,6 +885,9 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
   const po = data;
   const statusPill = purchaseOrderStatusPill(po);
   const lineCount = po.line_count ?? lines.length;
+  const placementsLine = placementsLineId
+    ? (lines.find((l) => l.id === placementsLineId) ?? null)
+    : null;
 
   const handleSave = async () => {
     setError(null);
@@ -1071,6 +1150,10 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
               <Field label="Lines">{fmtInt(lineCount)}</Field>
             </section>
           </Card>
+
+          {/* R1 (AC-H7): a `crm_spo` order's own pulls/covers, off `plan_of`. Every other
+              order carries no plan (`po.spo_plan` is null), so nothing renders here for it. */}
+          {po.source === 'crm' && po.spo_plan ? <PoPlanCard plan={po.spo_plan} /> : null}
         </TabsContent>
 
         <TabsContent value="lines" className="mt-0 space-y-4 focus-visible:outline-none">
@@ -1127,11 +1210,6 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
               </CardFooter>
             </Card>
           </DataGrid>
-
-          {/* Allocated to - BELOW the grid, never columns in it (the captain, 25 Aug):
-              the buyer re-keys the split in AutoCount and re-uploads, and an upload
-              overwriting our split would lose it. Always rendered, empty state and all. */}
-          <PurchaseOrderAllocations allocations={po.allocations ?? []} />
         </TabsContent>
 
         <TabsContent value="goods-receipt" className="mt-0 focus-visible:outline-none">
@@ -1168,6 +1246,26 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* R5: the "Placed" figure's lightbox - one dialog for the whole grid, the shell every
+          SCM screen's drillable figure opens (AC-L1). Replaces "Allocated to" (AC-L3). */}
+      {placementsLine ? (
+        <PlanRowDialog
+          kind="placements"
+          productCode={placementsLine.sku}
+          productName={placementsLine.product_name}
+          open
+          onOpenChange={(next) => {
+            if (!next) setPlacementsLineId(null);
+          }}
+        >
+          <PoLinePlacementsBody
+            allocation={
+              allocationByLineId.get(placementsLine.id) ?? EMPTY_PLACEMENTS_ALLOCATION
+            }
+          />
+        </PlanRowDialog>
+      ) : null}
     </div>
   );
 }

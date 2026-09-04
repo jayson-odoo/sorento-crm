@@ -9,9 +9,11 @@
  * in the template editor next door, so a tag here is an object on a page that
  * can be nudged and nothing else.
  *
- * The arrangement itself is computed (`autoArrange`), so this view is normally
- * something to glance at rather than something to do. A tag somebody drags is
- * pinned by the host and survives the next re-arrange.
+ * The arrangement itself is computed (`autoArrange`), auto-fit off the tag's
+ * own size (S6, D8) - there is no preset to pick, only the page/bleed/gap and
+ * a read-only "C x R = N per sheet" line - so this view is normally something
+ * to glance at rather than something to do. A tag somebody drags is pinned by
+ * the host and survives the next re-arrange.
  */
 
 import { useCallback, useMemo } from 'react';
@@ -19,7 +21,6 @@ import type Konva from 'konva';
 import { Loader2, Minus, Plus, Printer } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
 import type {
   ImpositionConfig,
   ImpositionPreset,
@@ -29,6 +30,7 @@ import type {
   TagSheetDoc,
 } from '@/lib/dealer-kit/tag-template-types';
 import { layerDisplay } from '@/lib/dealer-kit/product-block';
+import { impositionFit } from '@/lib/dealer-kit/request-tags';
 
 // Rendered inside a component the shell loads with ssr:false, so the direct
 // react-konva imports are safe.
@@ -56,6 +58,15 @@ interface Props {
   onMoveTag: (sheetIndex: number, tag: PlacedTag, x_mm: number, y_mm: number) => void;
   onPrintSheet: (sheetIndex: number) => void;
   printing: boolean;
+  /**
+   * The size the fit line and grid are computed off: the largest of every
+   * line's tag, REQUESTED rather than placed (S6). `doc.sheets` cannot answer
+   * this on its own - when the page is too small for the tag at all,
+   * `autoArrange` seats zero unpinned copies, so reading the size off what
+   * got placed would go blank exactly when AC-S6-3's "0 per sheet" message
+   * most needs a size to quote. Null before any line has a tag yet.
+   */
+  tagDims: { width_mm: number; height_mm: number } | null;
 }
 
 export function ArrangeSheetView({
@@ -72,6 +83,7 @@ export function ArrangeSheetView({
   onMoveTag,
   onPrintSheet,
   printing,
+  tagDims,
 }: Props) {
   const activeSheet = doc.sheets[activeSheetIndex] ?? doc.sheets[0];
   const scale = DEFAULT_SCALE * zoom;
@@ -85,18 +97,23 @@ export function ArrangeSheetView({
     [doc.sheets],
   );
 
+  const fit = useMemo(() => {
+    if (!tagDims) return null;
+    return impositionFit(
+      doc.imposition.page_width_mm,
+      doc.imposition.page_height_mm,
+      doc.imposition.bleed_mm,
+      doc.imposition.gap_mm,
+      tagDims.width_mm,
+      tagDims.height_mm,
+    );
+  }, [doc.imposition, tagDims]);
+
   const handleStageClick = useCallback(
     (e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
       if (e.target === e.target.getStage()) onSelectTag(null);
     },
     [onSelectTag],
-  );
-
-  const handlePresetChange = useCallback(
-    (preset: ImpositionPreset) => {
-      onImpositionChange({ ...doc.imposition, preset });
-    },
-    [doc.imposition, onImpositionChange],
   );
 
   const handleField = useCallback(
@@ -144,59 +161,73 @@ export function ArrangeSheetView({
         {/* Sheet canvas */}
         <div className="flex flex-1 flex-col overflow-hidden">
           <div className="flex-1 overflow-auto bg-muted/30">
-            <div className="inline-block min-h-full min-w-full p-6">
-              <div
-                className="relative mx-auto shadow-lg"
-                style={{ width: canvasWidthPx, height: canvasHeightPx }}
-              >
-                <Stage
-                  width={canvasWidthPx}
-                  height={canvasHeightPx}
-                  onClick={handleStageClick}
-                  onTap={handleStageClick}
-                >
-                  <KonvaLayer>
-                    <Rect
-                      x={0}
-                      y={0}
-                      width={canvasWidthPx}
-                      height={canvasHeightPx}
-                      fill="#ffffff"
-                      stroke="#d4d4d8"
-                      strokeWidth={1}
-                    />
-
-                    {doc.imposition.bleed_mm > 0 && (
-                      <Rect
-                        x={doc.imposition.bleed_mm * scale}
-                        y={doc.imposition.bleed_mm * scale}
-                        width={(pageW - 2 * doc.imposition.bleed_mm) * scale}
-                        height={(pageH - 2 * doc.imposition.bleed_mm) * scale}
-                        stroke="#e5e7eb"
-                        strokeWidth={0.5}
-                        dash={[6, 4]}
-                        listening={false}
-                      />
-                    )}
-
-                    {(activeSheet?.tags ?? []).map((tag) => (
-                      <TagOnCanvas
-                        key={tag.id}
-                        tag={tag}
-                        scale={scale}
-                        isSelected={selectedTagId === tag.id}
-                        resolvedData={resolved.get(tag.request_line_id) ?? null}
-                        assetUrls={assetUrls}
-                        onSelect={onSelectTag}
-                        onDragEnd={(xPx, yPx) =>
-                          onMoveTag(activeSheetIndex, tag, xPx / scale, yPx / scale)
-                        }
-                      />
-                    ))}
-                  </KonvaLayer>
-                </Stage>
+            {fit && fit.perSheet === 0 ? (
+              // AC-S6-3: the page cannot hold even one tag at its current
+              // size - nothing to arrange, so say why instead of drawing an
+              // empty page.
+              <div className="flex h-full min-h-full flex-col items-center justify-center gap-1.5 p-8 text-center">
+                <p className="text-sm font-medium">No tag fits this page</p>
+                <p className="max-w-xs text-xs text-muted-foreground">
+                  {tagDims!.width_mm} x {tagDims!.height_mm} mm needs more usable space than{' '}
+                  {pageW} x {pageH} mm leaves after a {doc.imposition.bleed_mm}mm bleed. Grow the
+                  page or shrink the bleed/gap.
+                </p>
               </div>
-            </div>
+            ) : (
+              <div className="inline-block min-h-full min-w-full p-6">
+                <div
+                  className="relative mx-auto shadow-lg"
+                  style={{ width: canvasWidthPx, height: canvasHeightPx }}
+                >
+                  <Stage
+                    width={canvasWidthPx}
+                    height={canvasHeightPx}
+                    onClick={handleStageClick}
+                    onTap={handleStageClick}
+                  >
+                    <KonvaLayer>
+                      <Rect
+                        x={0}
+                        y={0}
+                        width={canvasWidthPx}
+                        height={canvasHeightPx}
+                        fill="#ffffff"
+                        stroke="#d4d4d8"
+                        strokeWidth={1}
+                      />
+
+                      {doc.imposition.bleed_mm > 0 && (
+                        <Rect
+                          x={doc.imposition.bleed_mm * scale}
+                          y={doc.imposition.bleed_mm * scale}
+                          width={(pageW - 2 * doc.imposition.bleed_mm) * scale}
+                          height={(pageH - 2 * doc.imposition.bleed_mm) * scale}
+                          stroke="#e5e7eb"
+                          strokeWidth={0.5}
+                          dash={[6, 4]}
+                          listening={false}
+                        />
+                      )}
+
+                      {(activeSheet?.tags ?? []).map((tag) => (
+                        <TagOnCanvas
+                          key={tag.id}
+                          tag={tag}
+                          scale={scale}
+                          isSelected={selectedTagId === tag.id}
+                          resolvedData={resolved.get(tag.request_line_id) ?? null}
+                          assetUrls={assetUrls}
+                          onSelect={onSelectTag}
+                          onDragEnd={(xPx, yPx) =>
+                            onMoveTag(activeSheetIndex, tag, xPx / scale, yPx / scale)
+                          }
+                        />
+                      ))}
+                    </KonvaLayer>
+                  </Stage>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Sheet tabs */}
@@ -247,24 +278,9 @@ export function ArrangeSheetView({
               Imposition
             </h3>
 
-            <div>
-              <Label className="text-[10px] text-muted-foreground">Preset</Label>
-              <SearchableSelect
-                value={doc.imposition.preset}
-                onChange={(v) => handlePresetChange((v || 'custom') as ImpositionPreset)}
-                options={[
-                  { value: 'a4_3up', label: 'A4 3-up' },
-                  { value: 'a4_2x2', label: 'A4 2x2' },
-                  { value: 'custom', label: 'Custom' },
-                ]}
-                placeholder="Select preset"
-                className="mt-0.5"
-              />
-            </div>
-
             <div className="grid grid-cols-2 gap-1.5">
               <div>
-                <Label className="text-[10px] text-muted-foreground">Width (mm)</Label>
+                <Label className="text-2xs text-muted-foreground">Page W (mm)</Label>
                 <Input
                   type="number"
                   className="mt-0.5 h-7 text-xs"
@@ -273,7 +289,7 @@ export function ArrangeSheetView({
                 />
               </div>
               <div>
-                <Label className="text-[10px] text-muted-foreground">Height (mm)</Label>
+                <Label className="text-2xs text-muted-foreground">Page H (mm)</Label>
                 <Input
                   type="number"
                   className="mt-0.5 h-7 text-xs"
@@ -299,6 +315,25 @@ export function ArrangeSheetView({
                   onChange={(e) => handleField('gap_mm', Number(e.target.value))}
                 />
               </div>
+            </div>
+
+            {/* Auto-fit (S6, D8): nothing to choose, just what the tag's own
+                size fits on this page. */}
+            <div className="rounded-md bg-muted px-2.5 py-2 text-xs">
+              {fit ? (
+                <>
+                  <p className="font-medium">
+                    {fit.cols} x {fit.rows} = {fit.perSheet} per sheet
+                  </p>
+                  <p className="mt-0.5 text-muted-foreground">
+                    {totalTags} tag{totalTags === 1 ? '' : 's'} of {tagDims!.width_mm} x{' '}
+                    {tagDims!.height_mm} mm, {doc.sheets.length} sheet
+                    {doc.sheets.length === 1 ? '' : 's'}
+                  </p>
+                </>
+              ) : (
+                <p className="text-muted-foreground">Add a tag to see how many fit per sheet.</p>
+              )}
             </div>
           </div>
         </div>

@@ -47,6 +47,8 @@ from app.services.numbering_defaults import (
     seed_inbound_shipment_draft_rule,
 )
 from app.services.numbering_service import NumberingService
+from app.services.scm.container_capacity import container_sizes as _container_sizes
+from app.services.scm.container_capacity import fit as _fit
 from app.services.scm.currency_resolution import resolve_currency
 from app.services.scm.proforma_invoice_reader import (
     ProformaDocument,
@@ -56,7 +58,9 @@ from app.services.scm.proforma_invoice_reader import (
 from app.services.scm.supplier_scope import (  # noqa: F401  (assert_supplier is re-exported)
     assert_supplier,
     is_uuid as _is_uuid,
+    supplier_check as _supplier_check,
     supplier_label as _supplier_label,
+    supplier_mismatch_warning as _supplier_mismatch_warning,
 )
 from app.services.scm.upload_validation import envelope, named
 
@@ -244,7 +248,15 @@ def _summarise(
 ) -> dict[str, Any]:
     """What the file holds, described. `known` and `resolved` are injectable so `apply`,
     which needs both to do the writing, does not pay for them a second time to describe
-    what it wrote."""
+    what it wrote.
+
+    `supplier_check` (AC-G3) rides along here rather than living only in `validate`, so
+    `preview` and `apply`'s own summary agree with it too: `{letterhead,
+    chosen_supplier_name, other_supplier_name | null}`, or `None` when the file states no
+    letterhead. `document_count` is what the verdict card calls "N invoice blocks" and
+    `unmatched_items` is its "U codes unknown" (AC-G4) - both already computed below, named
+    for what they were before this slice, not renamed for it.
+    """
     codes = {ln.item_code for d in parsed.documents for ln in d.lines}
     if known is None:
         known = _products_by_code(db, codes)
@@ -303,6 +315,7 @@ def _summarise(
         "currency": file_currency,
         "currency_source": file_source,
         "priced_lines_without_currency": priced_without_currency,
+        "supplier_check": _supplier_check(db, parsed.letterhead, supplier_id=supplier_id),
     }
 
 
@@ -758,8 +771,39 @@ def validate(
             "The stated total does not match the sum of the lines on "
             + named(len(disagreeing), disagreeing, one="invoice", many="invoices")
         )
+    mismatch = _supplier_mismatch_warning(summary.get("supplier_check"))
+    if mismatch:
+        warnings.append(mismatch)
 
     return envelope(ok=not problems, problems=problems, warnings=warnings, summary=summary)
+
+
+def _plan_of_this_supplier(
+    db: Session, loading_plan_id: Optional[str], *, supplier_id: str
+) -> None:
+    """Refuse a plan that belongs to somebody else (AC-F3).
+
+    Checked BEFORE anything is written, like the revision targets: stamping one supplier's
+    invoices onto another supplier's plan would make every read on that plan wrong - its
+    holdings, its unknown codes and its own subtitle - and nothing on the record would say so.
+    """
+    if not loading_plan_id:
+        return
+    from app.models.scm import LoadingPlan
+
+    try:
+        uuid.UUID(str(loading_plan_id))
+    except (ValueError, AttributeError, TypeError):
+        raise AppException(422, "That loading plan does not exist.", detail="loading_plan_id")
+    plan = db.query(LoadingPlan).filter(LoadingPlan.id == loading_plan_id).first()
+    if plan is None:
+        raise AppException(422, "That loading plan does not exist.", detail="loading_plan_id")
+    if str(plan.supplier_id) != str(supplier_id):
+        raise AppException(
+            422,
+            "That loading plan belongs to a different supplier.",
+            detail="invoice_supplier_mismatch",
+        )
 
 
 def apply(
@@ -772,6 +816,7 @@ def apply(
     actor: Optional[str] = None,
     revision_of: Optional[dict] = None,
     file_as_new: Optional[list] = None,
+    loading_plan_id: Optional[str] = None,
 ) -> dict:
     """Write one proforma invoice per document in the file. Idempotent by identity.
 
@@ -779,7 +824,14 @@ def apply(
     rather than generated: the same file uploaded twice resolves to the same invoices and
     replaces their lines, which is AC-P1.4 and is also what stops a nervous second click
     doubling an invoice. Does not commit.
+
+    `loading_plan_id` (S6, AC-F3) stamps EVERY invoice this call creates or revises with the
+    plan it was uploaded into. That stamp is what lets the plan sum its own five blocks
+    instead of reading whichever single invoice sorted first for the supplier - which, over
+    five blocks sharing an invoice date and a transaction timestamp, was decided by the UUID.
+    A superseded prior keeps the plan that took IT, so an older plan goes on reading its own.
     """
+    _plan_of_this_supplier(db, loading_plan_id, supplier_id=supplier_id)
     parsed = _parse(db, data)
     if not parsed.ok:
         raise AppException(
@@ -893,6 +945,14 @@ def apply(
         invoice.source_ref = source_ref
         invoice.block_index = doc.index
         invoice.uploaded_by = actor
+        # The plan that CREATED this document owns it, and only a new row or a revision was
+        # created here (SF-8). An in-place replace - the same file re-uploaded without
+        # ticking the revision - found an invoice some other plan is reading, and stamping
+        # that row would move the first plan's own statement onto this one, leaving the
+        # first plan reading nothing. Never cleared either, for the same reason: a
+        # standalone re-upload must not unbind a plan from what it was started with.
+        if loading_plan_id and not existed:
+            invoice.loading_plan_id = loading_plan_id
         db.flush()
 
         # Replace rather than merge: the file is the document of record, and a line the new
@@ -1327,37 +1387,38 @@ def source_proforma_invoices(db: Session, shipment_id: str) -> dict:
 
 def _over_capacity(
     db: Session,
-    invoices: list[ProformaInvoice],
     placing: dict[str, float],
-) -> list[str]:
-    """One sentence per invoice that will not fit, naming both figures (AC-E5).
+    container_size_id: Optional[str],
+) -> Optional[str]:
+    """One sentence naming the COMBINED volume this convert is loading, against the ONE
+    container it is going into - never any single invoice alone (captain's ruling, 3 Sep,
+    PLAN-scm-pi-packing-list-feedback-3sep.md ruling 1). Several PIs routinely share a box
+    (FSCU8103365 = 7 factories), so the question the gate answers is whether what they add up
+    to fits, not whether any one of them would on its own.
 
     Judged on what is ACTUALLY being loaded, not on the whole document: `placing` is the
-    volume of the quantities this convert is placing, so half of a 69 cbm invoice is 35 cbm
-    and goes in the box - which is the split Q9 exists for, and was unreachable while the
-    gate read the whole invoice however little of it was moving.
+    volume of the quantities this convert is placing, so half of a 69 cbm invoice is 35 cbm -
+    the split Q9 exists for, and was unreachable while the gate read the whole invoice however
+    little of it was moving.
 
     Judged against an EMPTY box, because every convert opens a new one (Q6): there is
     never anything already in it to load on top of.
 
-    An invoice whose lines state NO volume is not over capacity - it is unmeasured, and
-    refusing it would break the Kailu shape that has converted since G3b (AC-H3). Silence
-    about a number nobody has is the honest answer; a guess is not.
+    Silent when nothing placed states a volume: an unmeasured convert is not over capacity,
+    it is unknown, and refusing it would break the Kailu shape that has converted since G3b
+    (AC-H3).
     """
+    total_placing = sum(placing.values())
+    if not total_placing:
+        return None
     sizes_by_id, default_size = _container_sizes(db)
-    out: list[str] = []
-    for invoice in invoices:
-        placed_cbm = placing.get(str(invoice.id))
-        if placed_cbm is None:
-            continue
-        fit = _fit(invoice, placed_cbm, sizes_by_id, default_size)
-        if fit["over_by_cbm"]:
-            out.append(
-                f"{invoice.pi_number} is {_num(placed_cbm)} cbm and the "
-                f"{fit['container_size_code'] or 'container'} holds "
-                f"{_num(fit['container_cbm'])} - over by {_num(fit['over_by_cbm'])} cbm."
-            )
-    return out
+    result = _fit(container_size_id, total_placing, sizes_by_id, default_size)
+    if not result["over_by_cbm"]:
+        return None
+    return (
+        f"{_num(total_placing)} cbm and the {result['container_size_code'] or 'container'} "
+        f"holds {_num(result['container_cbm'])} - over by {_num(result['over_by_cbm'])} cbm."
+    )
 
 
 def _dec(value: Any) -> Decimal:
@@ -1387,7 +1448,7 @@ def _placing_volume(line: ProformaInvoiceLine, qty: float) -> Optional[float]:
 def _record_over_capacity(
     db: Session,
     shipment_id: str,
-    over: list[str],
+    over: Optional[str],
     override_reason: Optional[str],
     created_by: Optional[str],
 ) -> None:
@@ -1407,7 +1468,7 @@ def _record_over_capacity(
         str(shipment_id),
         "UPDATE",
         user_id=created_by if _is_uuid(created_by) else None,
-        description=f"Converted over capacity: {' '.join(over)} Reason: {reason}",
+        description=f"Converted over capacity: {over} Reason: {reason}",
     )
 
 
@@ -1419,6 +1480,7 @@ def convert_to_draft_shipment(
     override_capacity: bool = False,
     override_reason: Optional[str] = None,
     line_quantities: Optional[dict] = None,
+    container_size_id: Optional[str] = None,
 ) -> dict:
     """One or more proforma invoices become ONE NEW draft inbound shipment (the packing-list
     amendment, `PLAN-scm-proforma-to-spo.md`): "pick one or more PIs -> the system creates a
@@ -1426,6 +1488,11 @@ def convert_to_draft_shipment(
     DIFFERENT suppliers on purpose - a container is routinely one factory's PI joining three
     others' inside the same box (the real KAILU + FSCU8103365 documents this was built
     against) - so every shipment line carries its OWN `supplier_id`, never the header's.
+
+    `container_size_id` is the box the convert DIALOG chose (S5, ruling 1). `None` means the
+    tenant's default, the same convention `_fit` reads on every other capacity screen - it is
+    written onto the draft AS GIVEN (never resolved to a concrete id here), so a later change
+    to which size is the default still applies to a shipment nobody explicitly sized.
 
     Not built here: the real packing list replacing/reconciling this draft (that is the
     EXISTING upload path, `packing_list_service.apply`, unchanged by this function - a draft's
@@ -1449,6 +1516,11 @@ def convert_to_draft_shipment(
         raise AppException(
             422, "Select at least one proforma invoice to convert.", detail="proforma_invoice_ids"
         )
+    if container_size_id:
+        if not _is_uuid(container_size_id):
+            raise AppException(422, "That container size does not exist.", detail="container_size_id")
+        if not db.query(ContainerSize.id).filter(ContainerSize.id == str(container_size_id)).first():
+            raise AppException(404, "That container size does not exist.", detail="container_size_id")
 
     invoices = db.query(ProformaInvoice).filter(ProformaInvoice.id.in_(ids)).all()
     found_by_id = {str(inv.id): inv for inv in invoices}
@@ -1618,6 +1690,10 @@ def convert_to_draft_shipment(
                     # rule the unit price follows two blocks below (AC-F3.5).
                     "measurements": {},
                     "remarks": [],
+                    # The supplier's own wording for the line (S9, "description carried from
+                    # the PI"), so the container workbook and the shipment grid print what the
+                    # factory called the item rather than the product's name here.
+                    "description": None,
                     "source_lines": [],
                 }
                 groups[key] = group
@@ -1652,6 +1728,8 @@ def convert_to_draft_shipment(
                     value = getattr(ln, source, None)
                     if value is not None and group["measurements"].get(target) is None:
                         group["measurements"][target] = value
+                if ln.description and group["description"] is None:
+                    group["description"] = ln.description
             group["placed"] = group.get("placed", {})
             if primary:
                 # HOW MUCH of the PI line came here, in the PI line's OWN units, recorded
@@ -1696,12 +1774,13 @@ def convert_to_draft_shipment(
         )
 
     # Checked HERE, after the placed quantities are known and before the first write: the
-    # question is whether what is being loaded fits in the box it is going into (AC-E5).
-    over = _over_capacity(db, invoices, placing)
+    # question is whether the COMBINED volume of what is being loaded fits in the ONE box it
+    # is going into (AC-E5, ruling 1) - never any single invoice's own volume alone.
+    over = _over_capacity(db, placing, container_size_id)
     if over and not override_capacity:
         raise AppException(
             409,
-            " ".join(over) + " Convert anyway to load it regardless.",
+            over + " Convert anyway to load it regardless.",
             code="over_capacity",
         )
     if over and override_capacity and not (override_reason or "").strip():
@@ -1724,6 +1803,7 @@ def convert_to_draft_shipment(
         shipment_date=min(invoice_dates) if invoice_dates else _date.today(),
         shipment_status=_DRAFT_SHIPMENT_STATUS,
         created_by=created_by,
+        container_size_id=str(container_size_id) if container_size_id else None,
     )
     db.add(shipment)
     db.flush()
@@ -1755,6 +1835,7 @@ def convert_to_draft_shipment(
             **({"cartons_count": group["cartons"]} if group["cartons"] is not None else {}),
             **group["measurements"],
             remarks="; ".join(group["remarks"]) if group["remarks"] else None,
+            description=group["description"],
         )
         db.add(line)
         shipment_lines_by_key[key] = line
@@ -1954,16 +2035,9 @@ def to_xlsx(payload: dict) -> bytes:
     for col in range(1, len(_EXPORT_COLUMNS) + 1):
         ws.cell(row=ws.max_row, column=col).font = bold
 
-    capacity = payload.get("container_cbm")
-    if capacity:
-        over = payload.get("over_by_cbm")
-        ws.append(
-            [
-                f"货柜 / Container {payload.get('container_size_code') or ''}".strip(),
-                None, None, None, None, None, _num(capacity), None,
-                f"超出 / Over by {_num(over)} cbm" if over else None, None,
-            ]
-        )
+    # No "货柜 / Container" capacity footer here (S5): capacity is a property of the
+    # CONTAINER this invoice's goods may end up sharing with several others, and this
+    # export is one invoice's own document - the total line above is its complete answer.
 
     for i, width in enumerate(_EXPORT_WIDTHS, start=1):
         ws.column_dimensions[get_column_letter(i)].width = width
@@ -2055,16 +2129,6 @@ def bulk_delete(db: Session, invoice_ids: list[str]) -> dict:
     return {"deleted": deleted, "blocked": blocked}
 
 
-def _container_sizes(db: Session) -> tuple[dict[str, Any], Optional[Any]]:
-    """Every active container size by id, and whichever one is the tenant's default.
-
-    Read once per serialization rather than per invoice: a page of 25 invoices asks the
-    same three-row question 25 times otherwise.
-    """
-    rows = db.query(ContainerSize).filter(ContainerSize.is_active.is_(True)).all()
-    return {str(r.id): r for r in rows}, next((r for r in rows if r.is_default), None)
-
-
 def _volumes(db: Session, invoice_ids: list[str]) -> dict[str, tuple[Optional[float], int]]:
     """Per invoice, `(total cbm, lines with no volume)` in ONE query.
 
@@ -2085,43 +2149,6 @@ def _volumes(db: Session, invoice_ids: list[str]) -> dict[str, tuple[Optional[fl
         .all()
     )
     return {str(inv): (_f(total), int(unmeasured or 0)) for inv, total, unmeasured in rows}
-
-
-def _fit(
-    invoice: ProformaInvoice,
-    total_cbm: Optional[float],
-    sizes_by_id: dict[str, Any],
-    default_size: Optional[Any],
-) -> dict[str, Any]:
-    """How full this invoice's container is, and which container that is.
-
-    The size is RESOLVED at read time from the tenant's default when the invoice names none,
-    rather than copied onto the row at import: a PI uploaded before anybody thought about
-    capacity should follow the default, not freeze whatever it happened to be that day
-    (AC-D4). An invoice that DOES name one keeps it, which is what makes it changeable.
-    """
-    size = sizes_by_id.get(str(invoice.container_size_id)) if invoice.container_size_id else None
-    if size is None:
-        size = default_size
-    capacity = _f(size.cbm) if size is not None else None
-    fill = (
-        (total_cbm / capacity) * 100
-        if total_cbm is not None and capacity
-        else None
-    )
-    over = (
-        round(total_cbm - capacity, 4)
-        if total_cbm is not None and capacity and total_cbm > capacity
-        else None
-    )
-    return {
-        "container_size_id": str(size.id) if size is not None else None,
-        "container_size_code": size.code if size is not None else None,
-        "container_cbm": capacity,
-        "total_cbm": total_cbm,
-        "fill_pct": round(fill, 2) if fill is not None else None,
-        "over_by_cbm": over,
-    }
 
 
 def _placed_invoice_ids(db: Session, invoice_ids: list[str]) -> dict[str, str]:
@@ -2325,37 +2352,9 @@ def remove_line(
     return serialize(db, invoice)
 
 
-def set_container_size(
-    db: Session, invoice_id: str, container_size_id: Optional[str]
-) -> dict:
-    """Which box this invoice is being fitted into. `None` means the tenant's default."""
-    invoice = get_or_404(db, invoice_id)
-    _set_container_size(db, invoice, container_size_id)
-    db.flush()
-    return serialize(db, invoice)
-
-
 #: "The caller did not mention this field", which is a different instruction from "set it to
-#: null" - `container_size_id: null` means the tenant default, and an absent one means leave
-#: the invoice's own choice alone.
+#: null" - an absent field means leave the invoice's own choice alone.
 UNSET: Any = object()
-
-
-def _set_container_size(db: Session, invoice: ProformaInvoice, container_size_id: Optional[str]) -> None:
-    """Resolve and set the box. Shared by the PATCH and the whole-document PUT."""
-    if container_size_id:
-        if not _is_uuid(container_size_id):
-            raise AppException(422, "That container size does not exist.", detail="container_size_id")
-        size = (
-            db.query(ContainerSize)
-            .filter(ContainerSize.id == str(container_size_id))
-            .first()
-        )
-        if size is None:
-            raise AppException(404, "That container size does not exist.", detail="container_size_id")
-        invoice.container_size_id = str(size.id)
-    else:
-        invoice.container_size_id = None
 
 
 def _rename(db: Session, invoice: ProformaInvoice, pi_number: Optional[str]) -> None:
@@ -2392,7 +2391,74 @@ def _rename(db: Session, invoice: ProformaInvoice, pi_number: Optional[str]) -> 
     invoice.pi_number = number
 
 
-def _write_lines(db: Session, invoice: ProformaInvoice, rows: list[dict]) -> None:
+def _remember_line_match(
+    db: Session, invoice: ProformaInvoice, line: ProformaInvoiceLine, *, actor: Optional[str]
+) -> None:
+    """AC-C1: a product (or set) picked for THIS line in edit mode is written down as the
+    supplier's own `manual` alias for the code, exactly the memory the Match column's own
+    Match/Change dialog writes (`supplier_code_alias_service.create`) - so a match made by
+    editing a line and one made through the dialog are the same decision, not two mechanisms
+    that can disagree (ruling 2, PLAN-scm-pi-packing-list-feedback-3sep.md). `create` also
+    re-binds every OTHER current line and stock row of this supplier under the same code, so
+    the sibling line the operator did not touch catches up in the same Save.
+
+    Imported locally: `supplier_code_alias_service` reaches `entity_resolver`, which reaches
+    BACK into this module for `_DRAFT_SHIPMENT_STATUS` - a module-level import here would be
+    a genuine cycle, not just an ordering nuisance.
+    """
+    from app.services.scm import supplier_code_alias_service
+
+    if line.product_id:
+        supplier_code_alias_service.create(
+            db,
+            supplier_id=str(invoice.supplier_id),
+            supplier_code=line.item_code,
+            product_id=str(line.product_id),
+            actor=actor,
+        )
+    elif line.product_set_id:
+        supplier_code_alias_service.create(
+            db,
+            supplier_id=str(invoice.supplier_id),
+            supplier_code=line.item_code,
+            product_set_id=str(line.product_set_id),
+            actor=actor,
+        )
+
+
+def _forget_line_match(
+    db: Session, invoice: ProformaInvoice, line: ProformaInvoiceLine, *, actor: Optional[str]
+) -> None:
+    """AC-C2: clearing the Product select is the inverse of picking one - but only when the
+    memory behind the bind was the operator's OWN prior decision. A `manual` alias is deleted
+    (`supplier_code_alias_service.delete`, which also re-derives every row under the code from
+    the ladder, same as the Match column's Forget). An `auto` alias is the ladder's own
+    derivation, not a decision this clear is undoing, so it is left on file untouched - only
+    THIS line's own binding, already cleared above, changes.
+    """
+    from app.services.scm import supplier_code_alias_service
+
+    if not line.item_code:
+        return
+    alias = (
+        db.query(SupplierProductCodeAlias)
+        .filter(
+            SupplierProductCodeAlias.supplier_id == str(invoice.supplier_id),
+            SupplierProductCodeAlias.supplier_code.ilike(line.item_code),
+        )
+        .first()
+    )
+    if alias is not None and alias.source == "manual":
+        supplier_code_alias_service.delete(db, str(alias.id), actor=actor)
+
+
+def _write_lines(
+    db: Session,
+    invoice: ProformaInvoice,
+    rows: list[dict],
+    *,
+    actor: Optional[str] = None,
+) -> None:
     """The whole line set in one write: rows with an id update, rows without create, and a
     line the payload no longer names is deleted.
 
@@ -2402,6 +2468,18 @@ def _write_lines(db: Session, invoice: ProformaInvoice, rows: list[dict]) -> Non
 
     `line_no` is NOT re-flowed. It is where the line sat on the paper the supplier sent, so a
     removed line leaves a gap and a new one is appended after the highest number in use.
+
+    `product_id` and `product_set_id` follow the same ABSENT-vs-null rule the whole-document
+    write uses for `pi_number` (`UNSET` above): a key the row does not mention is left
+    exactly as it was, and an explicit `null` unbinds it. The edit screen's Save omits the key
+    on every line the operator did not touch (`toDraft`/`saveEdit` on the FE), so a save that
+    only changed a quantity used to silently unbind every matched product on the invoice - the
+    route always sent `product_id` because `model_dump()` fills in Pydantic's own `None`
+    default for a field the caller never mentioned. AC-B3.
+
+    When the key IS sent and the value it resolves to differs from what the line already
+    held, the change is remembered (AC-C1) or forgotten (AC-C2) via `_remember_line_match` /
+    `_forget_line_match` - a save that leaves a line's match untouched writes nothing new.
     """
     existing = {
         str(ln.id): ln
@@ -2423,6 +2501,9 @@ def _write_lines(db: Session, invoice: ProformaInvoice, rows: list[dict]) -> Non
         if qty < 0:
             raise AppException(422, "Enter a quantity of zero or more.", detail="qty")
 
+        # ABSENT means "leave alone"; a key present with `None` means "unbind" - the two are
+        # different instructions and must not collapse into one (AC-B3).
+        product_id_sent = "product_id" in row
         product_id = row.get("product_id") or None
         if product_id:
             if not _is_uuid(str(product_id)):
@@ -2430,6 +2511,21 @@ def _write_lines(db: Session, invoice: ProformaInvoice, rows: list[dict]) -> Non
             found = db.query(Product.id).filter(Product.id == str(product_id)).first()
             if found is None:
                 raise AppException(404, "That product does not exist.", detail="product_id")
+
+        product_set_id_sent = "product_set_id" in row
+        product_set_id = row.get("product_set_id") or None
+        if product_set_id:
+            if not _is_uuid(str(product_set_id)):
+                raise AppException(
+                    422, "That product set does not exist.", detail="product_set_id"
+                )
+            found_set = (
+                db.query(ProductSet.id).filter(ProductSet.id == str(product_set_id)).first()
+            )
+            if found_set is None:
+                raise AppException(
+                    404, "That product set does not exist.", detail="product_set_id"
+                )
 
         line_id = row.get("id")
         if line_id:
@@ -2439,12 +2535,18 @@ def _write_lines(db: Session, invoice: ProformaInvoice, rows: list[dict]) -> Non
                     404, "That line is not on this proforma invoice.", detail="line_id"
                 )
             kept.add(str(line_id))
+            # What the line already held, so the assignment below can be told a REAL change
+            # (AC-C1/AC-C2) from a save that just echoed the same match back.
+            was_product_id = str(line.product_id) if line.product_id else None
+            was_product_set_id = str(line.product_set_id) if line.product_set_id else None
         else:
             line = ProformaInvoiceLine(
                 id=_uuid(), invoice_id=invoice.id, line_no=next_line_no, item_code=code, qty=qty
             )
             next_line_no += 1
             db.add(line)
+            was_product_id = None
+            was_product_set_id = None
 
         unit_price = row.get("unit_price")
         cbm_per_unit = row.get("cbm_per_unit")
@@ -2467,7 +2569,29 @@ def _write_lines(db: Session, invoice: ProformaInvoice, rows: list[dict]) -> Non
         line.gross_weight = (
             None if row.get("gross_weight") is None else Decimal(str(row["gross_weight"]))
         )
-        line.product_id = str(product_id) if product_id else None
+        # A line binds to a product OR a set, never both (R19) - picking one clears whichever
+        # the line held before, so a Save that rebinds cannot leave a stale second binding
+        # underneath the one just chosen.
+        if product_id_sent:
+            line.product_id = str(product_id) if product_id else None
+            if product_id:
+                line.product_set_id = None
+        if product_set_id_sent:
+            line.product_set_id = str(product_set_id) if product_set_id else None
+            if product_set_id:
+                line.product_id = None
+
+        # AC-C1/AC-C2: only a REAL change to the bind is remembered or forgotten - a save
+        # that sent the key but echoed back what the line already held (every untouched
+        # line, since `toDraft` always sends the current match) writes nothing new.
+        if product_id_sent or product_set_id_sent:
+            now_product_id = str(line.product_id) if line.product_id else None
+            now_product_set_id = str(line.product_set_id) if line.product_set_id else None
+            if (now_product_id, now_product_set_id) != (was_product_id, was_product_set_id):
+                if now_product_id or now_product_set_id:
+                    _remember_line_match(db, invoice, line, actor=actor)
+                else:
+                    _forget_line_match(db, invoice, line, actor=actor)
 
     for line_id, line in existing.items():
         if line_id not in kept:
@@ -2480,27 +2604,26 @@ def update_invoice(
     invoice_id: str,
     *,
     pi_number: Any = UNSET,
-    container_size_id: Any = UNSET,
     lines: Any = UNSET,
     actor: Optional[str] = None,
 ) -> dict:
     """The whole document as the edit screen holds it, written in ONE call. Does not commit.
 
     The detail page edits a local draft and nothing is written until Save, so this is the
-    only write that save makes: rename, container size and the whole line set travel
-    together and either all land or none do. A superseded revision and an invoice whose
-    goods are already on a container are refused here, by the same rules that refuse a
-    single-line adjustment.
+    only write that save makes: rename and the whole line set travel together and either
+    both land or neither does. A superseded revision and an invoice whose goods are already
+    on a container are refused here, by the same rules that refuse a single-line adjustment.
+
+    Container size is NOT one of these fields (S5): capacity is a property of the CONTAINER,
+    not the invoice, and it now lives on `inbound_shipments`, set from the convert dialog.
     """
     invoice = get_or_404(db, invoice_id)
     _editable_or_409(db, invoice)
 
     if pi_number is not UNSET:
         _rename(db, invoice, pi_number)
-    if container_size_id is not UNSET:
-        _set_container_size(db, invoice, container_size_id)
     if lines is not UNSET:
-        _write_lines(db, invoice, list(lines or []))
+        _write_lines(db, invoice, list(lines or []), actor=actor)
         # Stamped only when the LINES moved: renaming a document or choosing a different box
         # is not trimming it to fit, and "adjusted by" is what tells the screen the
         # supplier's figures are no longer what we are shipping.
@@ -2614,7 +2737,6 @@ def list_for_supplier(
 
     labels = _supplier_labels(db, [str(r.supplier_id) for r in rows])
     volumes = _volumes(db, [str(r.id) for r in rows])
-    sizes = _container_sizes(db)
     placements = _quantities(db, [str(r.id) for r in rows])
     return {
         "data": [
@@ -2624,7 +2746,6 @@ def list_for_supplier(
                 with_lines=False,
                 supplier_labels=labels,
                 volumes=volumes,
-                container_sizes=sizes,
                 placements=placements,
             )
             for r in rows
@@ -2670,15 +2791,20 @@ def serialize(
     with_lines: bool = True,
     supplier_labels: Optional[dict[str, tuple[Optional[str], Optional[str]]]] = None,
     volumes: Optional[dict[str, tuple[Optional[float], int]]] = None,
-    container_sizes: Optional[tuple[dict[str, Any], Optional[Any]]] = None,
     placements: Optional[dict[str, dict]] = None,
 ) -> dict:
     """One invoice as the API returns it: codes and names, never a bare identifier.
 
-    `supplier_labels`, `volumes` and `container_sizes` are the page's own lookups, resolved
-    once by a caller listing several invoices; a single serialization resolves its own. All
-    three are per-page rather than per-row because each is one query that would otherwise be
-    asked twenty-five times for the same answer.
+    `supplier_labels`, `volumes` and `placements` are the page's own lookups, resolved once
+    by a caller listing several invoices; a single serialization resolves its own. Each is
+    per-page rather than per-row because each is one query that would otherwise be asked
+    twenty-five times for the same answer.
+
+    NOT here: a container size, a fill percentage, an "over by" (S5, ruling 1). Capacity is a
+    property of the CONTAINER this invoice's goods end up sharing with however many others,
+    not of the invoice - that arithmetic moved to the shipment payload
+    (`InboundShipmentService`). This invoice states its own volume only: the number Ms Tee
+    adds up across invoices to decide which of them share a box.
     """
     if supplier_labels is not None:
         supplier_code, supplier_name = supplier_labels.get(
@@ -2748,13 +2874,10 @@ def serialize(
         }
     )
 
-    sizes_by_id, default_size = (
-        container_sizes if container_sizes is not None else _container_sizes(db)
-    )
     if volumes is None:
         volumes = _volumes(db, [str(invoice.id)])
     total_cbm, unmeasured = volumes.get(str(invoice.id), (None, 0))
-    out.update(_fit(invoice, total_cbm, sizes_by_id, default_size))
+    out["total_cbm"] = total_cbm
     out["unmeasured_lines"] = unmeasured
 
     if not with_lines:
@@ -2846,6 +2969,12 @@ def serialize(
             # What the SUPPLIER stated, frozen at import - the "was" beside our "now".
             "supplier_qty": _f(ln.supplier_qty),
             "supplier_unit_price": _f(ln.supplier_unit_price),
+            # The catalogue ids the line is bound to, when it names one, so the edit screen's
+            # Product select can show the match rather than reading empty on every open
+            # (AC-B1/AC-B2) - `product_code` below is the human label, these are what Save
+            # sends back.
+            "product_id": str(ln.product_id) if ln.product_id else None,
+            "product_set_id": str(ln.product_set_id) if ln.product_set_id else None,
             # The product we hold, by CODE. A line that matched nothing says so rather than
             # carrying an id nobody can read.
             "product_code": (

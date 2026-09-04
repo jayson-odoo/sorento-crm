@@ -27,7 +27,7 @@ export interface UseSalesOrdersParams {
   /** Order date, inclusive of both ends. ISO `yyyy-mm-dd`. */
   dateFrom?: string | null;
   dateTo?: string | null;
-  customerId?: string | null;
+  customerCode?: string | null;
   /** Keep only orders with quantity still owed. `false` narrows nothing. */
   outstanding?: boolean;
   salesAgentId?: string | null;
@@ -57,7 +57,9 @@ export function salesOrdersListParamsFromUrl(
     source: params.filters.source || null,
     dateFrom: params.filters.date_from || null,
     dateTo: params.filters.date_to || null,
-    customerId: params.filters.customer_id || null,
+    // The detail URL carries `customer_code` - `buildDetailSearch`'s own key on this page
+    // (`SalesOrdersGrid.tsx`'s `detailSearch`) - never `customer_id`.
+    customerCode: params.filters.customer_code || null,
     outstanding: params.filters.outstanding === 'true',
     salesAgentId: params.filters.sales_agent_id || null,
     demandClass: params.filters.demand_class || null,
@@ -81,7 +83,7 @@ export const salesOrdersPagerQuery = {
       source: p.source ?? null,
       dateFrom: p.dateFrom ?? null,
       dateTo: p.dateTo ?? null,
-      customerId: p.customerId ?? null,
+      customerCode: p.customerCode ?? null,
       outstanding: p.outstanding ?? false,
       salesAgentId: p.salesAgentId ?? null,
       demandClass: p.demandClass ?? null,
@@ -89,27 +91,35 @@ export const salesOrdersPagerQuery = {
   },
 };
 
-export function useSalesOrders(params: UseSalesOrdersParams) {
+/**
+ * `enabled` lets the list hold the fetch until the user's remembered sort and filter have
+ * resolved, so the grid is fetched ONCE with the view already applied instead of fetching the
+ * defaults and immediately refetching (PLAN-listing-view-memory, AC-B3). Kept OUT of the query
+ * key - it is a fetch gate, not part of what was fetched.
+ */
+export function useSalesOrders(params: UseSalesOrdersParams & { enabled?: boolean }) {
+  const { enabled = true, ...listParams } = params;
   return useQuery({
     ...LIST_QUERY_OPTIONS,
-    queryKey: salesOrdersListQueryKey(params),
+    queryKey: salesOrdersListQueryKey(listParams),
     queryFn: () =>
       getSalesOrders({
-        pageIndex: params.pageIndex,
-        pageSize: params.pageSize,
-        sortField: params.sorting?.[0]?.id,
-        sortDir: params.sorting?.[0]?.desc ? 'desc' : 'asc',
-        searchQuery: params.searchQuery,
-        status: params.status,
-        priority: params.priority,
-        source: params.source ?? null,
-        dateFrom: params.dateFrom ?? null,
-        dateTo: params.dateTo ?? null,
-        customerId: params.customerId ?? null,
-        outstanding: params.outstanding ?? false,
-        salesAgentId: params.salesAgentId ?? null,
-        demandClass: params.demandClass ?? null,
+        pageIndex: listParams.pageIndex,
+        pageSize: listParams.pageSize,
+        sortField: listParams.sorting?.[0]?.id,
+        sortDir: listParams.sorting?.[0]?.desc ? 'desc' : 'asc',
+        searchQuery: listParams.searchQuery,
+        status: listParams.status,
+        priority: listParams.priority,
+        source: listParams.source ?? null,
+        dateFrom: listParams.dateFrom ?? null,
+        dateTo: listParams.dateTo ?? null,
+        customerCode: listParams.customerCode ?? null,
+        outstanding: listParams.outstanding ?? false,
+        salesAgentId: listParams.salesAgentId ?? null,
+        demandClass: listParams.demandClass ?? null,
       }),
+    enabled,
     staleTime: 10_000,
     retry: 1,
   });

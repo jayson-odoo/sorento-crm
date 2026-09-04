@@ -103,6 +103,18 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
 }));
 
+// The remembered sort/filter view (PLAN-listing-view-memory) reads this service under
+// `useListingViewPreferences`. Stubbed to resolve fast with nothing stored, so the gated
+// data fetch unblocks on the next tick rather than hanging on a real network call.
+vi.mock('@/lib/listing-column-preferences/listColumnPreferencesService', () => ({
+  getUserListColumnConfig: vi.fn(async () => ({ listing_key: '/scm/sales-orders', config: null })),
+  upsertUserListColumnConfig: vi.fn(async (listingKey: string, payload: unknown) => ({
+    listing_key: listingKey,
+    config: payload,
+  })),
+  resetUserListColumnConfig: vi.fn(async () => undefined),
+}));
+
 const useSalesOrders = vi.fn();
 vi.mock('../../hooks/useSalesOrders', () => ({
   useSalesOrders: (...a: unknown[]) => useSalesOrders(...a),
@@ -245,7 +257,7 @@ describe('SalesOrdersList - dynamic filters', () => {
     fireEvent.click(option);
 
     await waitFor(() => {
-      expect(lastQuery()).toMatchObject({ customerId: '300-R009' });
+      expect(lastQuery()).toMatchObject({ customerCode: '300-R009' });
     });
   });
 

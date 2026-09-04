@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 from app.models.procurement import InboundShipment, InboundShipmentLine, Supplier
 from app.models.product import Brand, Product
 from app.services.error_handler import AppException
+from app.services.scm.container_capacity import line_cbm
 from app.services.scm.supplier_scope import is_uuid
 
 #: The captain's own file counts SANDEL / CABANA / blank under SORENTO, so this is a single
@@ -39,10 +40,6 @@ COMPANIES = (SORENTO, MOCHA)
 
 #: What a factory with no name is called on the sheet. It sorts last.
 UNASSIGNED = "Unassigned"
-
-#: Catalogue dimensions are millimetres; volume is cubic metres.
-_MM3_PER_M3 = 1_000_000_000.0
-
 
 def _f(v) -> Optional[float]:
     return None if v is None else float(v)
@@ -55,20 +52,6 @@ def _qty(v: float):
 
 def _num(v: float) -> str:
     return str(_qty(v))
-
-
-def _catalogue_cbm(product: Product, qty: float) -> Optional[float]:
-    """Volume from the catalogue when the packing list did not state one.
-
-    The formula is COPIED from `loading_plan_service._catalogue_cbm` rather than imported:
-    that module is being changed by another lane, and two lines of arithmetic are a smaller
-    cost than a merge conflict across the two features. Same mm^3 basis, times the quantity
-    on the line (the loading plan wants a per-unit figure; a packing list wants the line's).
-    """
-    l, w, h = product.dimensions_length, product.dimensions_width, product.dimensions_height
-    if l is None or w is None or h is None:
-        return None
-    return round(float(l) * float(w) * float(h) / _MM3_PER_M3 * float(qty), 6)
 
 
 def _totals(lines: list[dict]) -> dict:
@@ -138,15 +121,21 @@ def build(db: Session, shipment_id: str) -> dict:
     for line, product, brand in rows:
         brand_code = (brand.brand_code or "").strip() if brand else None
         qty = int(line.quantity_shipped or 0)
-        cbm = _f(line.cbm)
-        if cbm is None:
-            cbm = _catalogue_cbm(product, qty)
+        # Stored cbm, else the line's OWN carton dimensions, else the catalogue's - the
+        # SAME rule `_attach_capacity` (S5's fill gauge) reads by, so a line's volume cannot
+        # be zero on the Split card and the fill gauge while `to_xlsx` derives a real figure
+        # for it live from those same dimensions (S12).
+        cbm = line_cbm(line, product)
         grouped.setdefault(str(line.supplier_id) if line.supplier_id else None, []).append(
             {
                 "line_id": str(line.id),
                 "product_id": str(product.id),
                 "product_code": product.product_code,
                 "product_name": product.product_name,
+                # The supplier's own wording for the item (S9), the product name when the
+                # line has none - a container drafted before this column existed, or one
+                # uploaded from a packing list with no description column of its own.
+                "description": line.description or product.product_name,
                 "brand": brand_code or None,
                 "company": MOCHA if (brand_code or "").upper() == MOCHA else SORENTO,
                 "qty": qty,
@@ -355,6 +344,15 @@ _LETTERS = [spec[0] for spec in _COLUMNS_SPEC]
 #: payload holds, or Excel treats them as text.
 _HEADER_DATE_KEYS = {"loading_date", "etd", "eta"}
 
+#: Round 2 (captain, 3 Sep): the header block used to be forced centre/centre/wrap-text, and
+#: the captain read that as a defect - "headers should be left aligned", "very ugly on first
+#: open". The reference's own hand-typed file leaves every label at Excel's default and left
+#: -aligns only these value rows (dates, container no, SO no); the rest are default too, off
+#: `FSCU8103365.xlsx`. Read off the reference rather than guessed at, same as everything else
+#: in this module - a rule that invented "always left" would drift the moment a fifth row in
+#: the reference turned out to disagree.
+_HEADER_LEFT_B_ROWS = {1, 2, 3, 4, 6}
+
 #: The header block above the lines: (row, label, payload key on `header`).
 _HEADER_BLOCK = [
     (1, "LOADING : ", "loading_date"),
@@ -443,15 +441,22 @@ def to_xlsx(payload: dict) -> bytes:
     ws = wb.active or wb.create_sheet()
     ws.title = _SHEET_TITLE
     centred = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    # The header block (rows 1-12) is NOT centred - see `_HEADER_LEFT_B_ROWS`.
+    header_label = Alignment(vertical="center")
+    header_label_wrap = Alignment(vertical="center", wrap_text=True)
+    header_value = Alignment(vertical="center")
+    header_value_left = Alignment(horizontal="left", vertical="center")
 
-    def style(row: int, column: int, *, bold: bool = False, red: bool = False, fmt=None):
+    def style(
+        row: int, column: int, *, bold: bool = False, red: bool = False, fmt=None, alignment=None
+    ):
         """Every cell the sheet writes goes through here, so nothing is left at Excel's
         default 11pt in the middle of a 12pt document."""
         cell = ws.cell(row=row, column=column)
         cell.font = Font(
             name=_FONT_NAME, size=_FONT_SIZE, bold=bold, color=_RED if red else None
         )
-        cell.alignment = centred
+        cell.alignment = alignment if alignment is not None else centred
         if fmt:
             cell.number_format = fmt
         return cell
@@ -465,11 +470,13 @@ def to_xlsx(payload: dict) -> bytes:
 
     # ---- the header block ------------------------------------------------- #
     for row, label, key in _HEADER_BLOCK:
-        style(row, 1).value = label
+        label_alignment = header_label_wrap if row == 12 else header_label
+        style(row, 1, alignment=label_alignment).value = label
         value = header.get(key)
         if key == "free_days" and value is not None:
             value = f"{_qty(value)} FREEDAYS"
-        cell = style(row, 2)
+        value_alignment = header_value_left if row in _HEADER_LEFT_B_ROWS else header_value
+        cell = style(row, 2, alignment=value_alignment)
         # A date is written AS a date, in the reference's own format. Written as the ISO
         # string it arrives as, Excel left-aligns it as text: it cannot be sorted, cannot be
         # added to, and prints 2026-07-17 on a document everybody else reads dd/mm/yyyy.
@@ -519,7 +526,9 @@ def to_xlsx(payload: dict) -> bytes:
             ws.cell(row=row, column=1, value=block["name"])
             ws.cell(row=row, column=2, value=number)
             ws.cell(row=row, column=3, value=line.get("product_code"))
-            ws.cell(row=row, column=4, value=line.get("product_name"))
+            # DESCRIPTION prints the supplier's own wording (S9), the product name when
+            # the line has none - `build()` already resolved the fallback.
+            ws.cell(row=row, column=4, value=line.get("description"))
             ws.cell(row=row, column=5, value=line.get("material"))
             ws.cell(row=row, column=6, value=_qty(qty))
             ws.cell(row=row, column=7, value=pcs)
@@ -662,10 +671,8 @@ def to_xlsx(payload: dict) -> bytes:
 
     for letter, width in _WIDTHS.items():
         ws.column_dimensions[letter].width = width
-    # The header block and the column headers stay put while the lines scroll: a container
-    # runs to sixty rows and a factory column nobody can see is a column nobody reads. The
-    # reference freezes nothing, which is the one place this sheet is deliberately better.
-    ws.freeze_panes = f"A{_SUBHEADER_ROW + 1}"
+    # Round 2 (captain, 3 Sep): a frozen band read as "freezing at the bottom" on first open.
+    # The reference freezes nothing, and neither does this sheet now.
 
     buf = BytesIO()
     wb.save(buf)

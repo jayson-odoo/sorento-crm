@@ -9,7 +9,7 @@ import {
   getCoreRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { Ban, Trash2, Upload } from 'lucide-react';
+import { Upload } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -21,18 +21,15 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import {
-  useDeferredRowAction,
-  useRowPending,
-} from '@/hooks/useDeferredRowAction';
+import { useRowPending } from '@/hooks/useDeferredRowAction';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
-import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
 import { EM_DASH, fmtDate, fmtInt, fmtOpens, fmtTrimmedDecimal } from '../../lib/format';
-import { useCancelLoadingPlan, useLoadingPlanList } from '../../hooks/useFulfilment';
+import { useLoadingPlanList } from '../../hooks/useFulfilment';
 import {
   type LoadingPlanRecord,
   type LoadingPlanStatus,
 } from '../../services/fulfilmentService';
+import { LoadingPlanRowActions } from '../actions';
 import { PlanContainerDialog } from './PlanContainerDialog';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
@@ -87,16 +84,6 @@ export function LoadingPlansGrid() {
   };
   const [status, setStatus] = useState<LoadingPlanStatus | 'active'>('active');
   const [uploadOpen, setUploadOpen] = useState(false);
-  const [cancelling, setCancelling] = useState<LoadingPlanRecord | null>(null);
-  // Delete asks nothing (D7): the row dims and a toast counts down with Cancel. A
-  // plan whose notice already went out is refused by the server, which is the same
-  // rule the button's disabled state states up front.
-  const deletion = useDeferredRowAction({
-    actionKey: 'loading_plan.delete',
-    entityType: 'loading_plan',
-    successMessage: 'Plan deleted',
-    invalidateKeys: [['scm-loading-plans']],
-  });
   const rowPending = useRowPending<LoadingPlanRecord>('loading_plan');
 
   const list = useLoadingPlanList({
@@ -106,7 +93,6 @@ export function LoadingPlansGrid() {
     searchQuery,
     status,
   });
-  const cancel = useCancelLoadingPlan();
 
   const columns = useMemo<ColumnDef<LoadingPlanRecord>[]>(
     () => [
@@ -257,55 +243,13 @@ export function LoadingPlansGrid() {
       {
         id: 'actions',
         header: '',
-        // `stopPropagation` on both: the row is a link to the record, and a click meant for
-        // Cancel that also navigates leaves the confirm dialog on a screen nobody chose.
-        cell: ({ row }) => {
-          const plan = row.original;
-          const sent = !!plan.sent_at;
-          return (
-            <div className="flex items-center justify-end gap-1">
-              <Button
-                mode="icon"
-                variant="ghost"
-                size="sm"
-                className="h-8 w-8"
-                disabled={plan.status === 'cancelled'}
-                title={plan.status === 'cancelled' ? 'Already cancelled' : 'Cancel this plan'}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setCancelling(plan);
-                }}
-                aria-label="Cancel plan"
-              >
-                <Ban className="size-4" />
-              </Button>
-              <Button
-                mode="icon"
-                variant="ghost"
-                size="sm"
-                className="h-8 w-8 text-destructive"
-                disabled={sent}
-                title={sent ? 'Sent plans are cancelled, not deleted' : 'Delete this plan'}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  deletion.run({
-                    id: plan.id,
-                    subject: plan.supplier_name ?? 'this plan',
-                  });
-                }}
-                aria-label="Delete plan"
-              >
-                <Trash2 className="size-4" />
-              </Button>
-            </div>
-          );
-        },
-        size: 90,
+        cell: ({ row }) => <LoadingPlanRowActions plan={row.original} />,
+        size: 60,
         enableHiding: false,
         enableSorting: false,
       },
     ],
-    [deletion],
+    [],
   );
 
   const rows = list.data?.data ?? [];
@@ -412,20 +356,6 @@ export function LoadingPlansGrid() {
       </DataGrid>
 
       <PlanContainerDialog open={uploadOpen} onOpenChange={setUploadOpen} />
-
-      <ConfirmActionDialog
-        open={!!cancelling}
-        onOpenChange={(next) => !next && setCancelling(null)}
-        title="Cancel this plan?"
-        description="The supplier link stops working. The plan stays on the list under the Cancelled filter."
-        confirmLabel="Cancel plan"
-        isBusy={cancel.isPending}
-        onConfirm={() => {
-          if (!cancelling) return;
-          cancel.mutate(cancelling.id, { onSuccess: () => setCancelling(null) });
-        }}
-      />
-
     </>
   );
 }

@@ -3,8 +3,9 @@
  * amendment, captain live case 21 Aug): the AlertDialog names the SPO numbers and count
  * per ADR-PRODUCT-STANDARDS, the delete actually fires the DELETE route, and a self-heal
  * note (a stale link cleaned up on read) shows as an informational banner rather than a
- * toast. The confirm-table (non-converted) path is exercised by `CreateSpoPanel.test.tsx`'s
- * older sibling; this file covers what changed on `SpoPlannerTable` itself.
+ * toast. The confirm-table (non-converted) path was exercised by `CreateSpoPanel.test.tsx`'s
+ * older sibling before that file was deleted (F5, review round 2: `CreateSpoPanel.tsx` was
+ * dead, imported nowhere); this file covers what changed on `SpoPlannerTable` itself.
  *
  * A note on the query style here: a `findBy*` result is never used directly -
  * the find is awaited, then the SAME query is repeated with `getBy*`, and that
@@ -100,82 +101,90 @@ beforeEach(() => {
 });
 
 const existingSpos = () => [
-  { purchase_order_id: 'po-1', po_number: 'CRM-SPO-0001', supplier_id: 'sup-1', supplier_name: 'Kailu' },
+  {
+    purchase_order_id: 'po-1',
+    po_number: 'CRM-SPO-0001',
+    supplier_id: 'sup-1',
+    supplier_name: 'Kailu',
+    line_count: 1,
+    total_qty: 40,
+    // F2 (review round): a naive UTC timestamp late enough in the day (17:30 UTC) that
+    // Malaysia's own civil date (UTC+8) is already the NEXT day - 31 Aug, not 30 Aug -
+    // so a browser-local read (which happens to be UTC in this test runner) would print
+    // the wrong date if the fix regressed.
+    created_at: '2026-08-30T17:30:00',
+    status: 'active',
+  },
 ];
 
-describe('SpoPlannerTable - already-converted Delete action', () => {
-  it('offers a Delete SPO action alongside the worksheet download', async () => {
-    state.suggestion = suggestion({ already_converted: true, existing_spos: existingSpos() });
+/**
+ * R1 (`PLAN-scm-spo-planner-feedback-3sep.md`) - a container can carry MANY SPOs. The
+ * Created SPOs grid (AC-H6) lists every one, each a link to its own PO detail (which
+ * carries the Plan card, AC-H7), Delete per row scoped to that ONE SPO, and the remainder
+ * planner renders below it rather than being replaced by it.
+ */
+describe('SpoPlannerTable - Created SPOs grid (R1)', () => {
+  it('lists every SPO this shipment has made, each a link to its own PO detail', async () => {
+    state.suggestion = suggestion({ existing_spos: existingSpos() });
     renderTable();
 
-    await screen.findByRole('button', { name: /delete spo/i });
-    expect(screen.getByRole('button', { name: /delete spo/i })).toBeInTheDocument();
+    const link = await screen.findByRole('link', { name: 'CRM-SPO-0001' });
+    expect(link).toHaveAttribute('href', '/scm/purchase-orders/po-1');
+    expect(screen.getByText('Kailu')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /download worksheet/i })).toBeInTheDocument();
+    // F2 (review round): 17:30 UTC on the 30th is already 31 Aug in Malaysia (UTC+8) -
+    // a browser-local read of the naive timestamp would print the 30th instead.
+    expect(screen.getByText('31/08/2026')).toBeInTheDocument();
   });
 
-  it('names the SPO number and uses the standard "cannot be undone" copy in the confirm dialog', async () => {
-    state.suggestion = suggestion({ already_converted: true, existing_spos: existingSpos() });
-    renderTable();
-
-    await screen.findByRole('button', { name: /delete spo/i });
-    fireEvent.click(screen.getByRole('button', { name: /delete spo/i }));
-
-    await screen.findByText('Confirm delete');
-    expect(screen.getByText('Confirm delete')).toBeInTheDocument();
-    expect(screen.getByText(/This deletes CRM-SPO-0001/)).toBeInTheDocument();
-    expect(screen.getByText(/This action cannot be undone/)).toBeInTheDocument();
-  });
-
-  it('names every SPO and the count when more than one was created from this shipment', async () => {
+  it('Delete on a row opens the confirm naming that row\'s own SPO', async () => {
     state.suggestion = suggestion({
-      already_converted: true,
       existing_spos: [
         ...existingSpos(),
-        { purchase_order_id: 'po-2', po_number: 'CRM-SPO-0002', supplier_id: 'sup-2', supplier_name: 'Jiangmen' },
+        {
+          purchase_order_id: 'po-2',
+          po_number: 'CRM-SPO-0002',
+          supplier_id: 'sup-2',
+          supplier_name: 'Jiangmen',
+          line_count: 1,
+          total_qty: 30,
+          created_at: '2026-09-01T00:00:00',
+          status: 'active',
+        },
       ],
     });
     renderTable();
 
-    await screen.findByRole('button', { name: /delete spo/i });
-    fireEvent.click(screen.getByRole('button', { name: /delete spo/i }));
+    await screen.findByRole('link', { name: 'CRM-SPO-0002' });
+    fireEvent.click(screen.getByRole('button', { name: /delete crm-spo-0002/i }));
 
-    expect(
-      await screen.findByText(/This deletes 2 SPOs: CRM-SPO-0001, CRM-SPO-0002/),
-    ).toBeInTheDocument();
-  });
-
-  it('does not delete until the AlertDialog is confirmed', async () => {
-    state.suggestion = suggestion({ already_converted: true, existing_spos: existingSpos() });
-    renderTable();
-
-    await screen.findByRole('button', { name: /delete spo/i });
-    fireEvent.click(screen.getByRole('button', { name: /delete spo/i }));
     await screen.findByText('Confirm delete');
-
+    expect(screen.getByText(/This deletes CRM-SPO-0002/)).toBeInTheDocument();
+    expect(screen.getByText(/This action cannot be undone/)).toBeInTheDocument();
     expect(state.deleteSpo).not.toHaveBeenCalled();
   });
 
-  it('deletes on confirm and toasts the deleted SPO number', async () => {
-    state.suggestion = suggestion({ already_converted: true, existing_spos: existingSpos() });
+  it('confirming Delete calls delete with that row\'s own purchase_order_id, never the whole shipment', async () => {
+    state.suggestion = suggestion({ existing_spos: existingSpos() });
     renderTable();
 
-    await screen.findByRole('button', { name: /delete spo/i });
-    fireEvent.click(screen.getByRole('button', { name: /delete spo/i }));
+    await screen.findByRole('link', { name: 'CRM-SPO-0001' });
+    fireEvent.click(screen.getByRole('button', { name: /delete crm-spo-0001/i }));
     await screen.findByText('Confirm delete');
     fireEvent.click(screen.getByRole('button', { name: /^delete$/i }));
 
-    await waitFor(() => expect(state.deleteSpo).toHaveBeenCalledWith('sh-1'));
+    await waitFor(() => expect(state.deleteSpo).toHaveBeenCalledWith('sh-1', 'po-1'));
     await waitFor(() =>
       expect(toast.success).toHaveBeenCalledWith('Deleted SPO CRM-SPO-0001.'),
     );
   });
 
   it('closes the dialog on cancel without deleting anything', async () => {
-    state.suggestion = suggestion({ already_converted: true, existing_spos: existingSpos() });
+    state.suggestion = suggestion({ existing_spos: existingSpos() });
     renderTable();
 
-    await screen.findByRole('button', { name: /delete spo/i });
-    fireEvent.click(screen.getByRole('button', { name: /delete spo/i }));
+    await screen.findByRole('link', { name: 'CRM-SPO-0001' });
+    fireEvent.click(screen.getByRole('button', { name: /delete crm-spo-0001/i }));
     await screen.findByText('Confirm delete');
     fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
 
@@ -184,14 +193,14 @@ describe('SpoPlannerTable - already-converted Delete action', () => {
   });
 
   it('surfaces the crm_spo-only guard message as an error toast on a refused delete', async () => {
-    state.suggestion = suggestion({ already_converted: true, existing_spos: existingSpos() });
+    state.suggestion = suggestion({ existing_spos: existingSpos() });
     state.deleteSpo = vi.fn().mockRejectedValue(
       new Error('CRM-SPO-0001 was not created by Create SPO and cannot be deleted from this screen.'),
     );
     renderTable();
 
-    await screen.findByRole('button', { name: /delete spo/i });
-    fireEvent.click(screen.getByRole('button', { name: /delete spo/i }));
+    await screen.findByRole('link', { name: 'CRM-SPO-0001' });
+    fireEvent.click(screen.getByRole('button', { name: /delete crm-spo-0001/i }));
     await screen.findByText('Confirm delete');
     fireEvent.click(screen.getByRole('button', { name: /^delete$/i }));
 
@@ -204,7 +213,6 @@ describe('SpoPlannerTable - already-converted Delete action', () => {
 
   it('shows a self-heal note as an informational banner, not a toast', async () => {
     state.suggestion = suggestion({
-      already_converted: true,
       existing_spos: existingSpos(),
       self_heal_note: '1 SPO previously linked to this shipment no longer exists and has been cleared.',
     });
@@ -215,6 +223,38 @@ describe('SpoPlannerTable - already-converted Delete action', () => {
     ).toBeInTheDocument();
     expect(toast.warning).not.toHaveBeenCalled();
     expect(toast.info).not.toHaveBeenCalled();
+  });
+
+  it('the remainder planner still renders below the Created SPOs grid (AC-H6)', async () => {
+    state.suggestion = suggestion({
+      existing_spos: existingSpos(),
+      lines: [plannerLine()],
+    });
+    renderTable();
+
+    await screen.findByRole('link', { name: 'CRM-SPO-0001' });
+    expect(screen.getByRole('button', { name: /^create spo$/i })).toBeInTheDocument();
+    expect(screen.getByTestId('spo-qty-input')).toBeInTheDocument();
+  });
+
+  it('a fully spent line (remaining_qty 0) reads Done and its qty input is disabled', async () => {
+    state.suggestion = suggestion({
+      existing_spos: existingSpos(),
+      lines: [
+        plannerLine({
+          remaining_qty: 0,
+          cannot_convert: true,
+          reason: 'Already on CRM-SPO-0001.',
+          po_takes: [],
+          suggested_qty: 0,
+        }),
+      ],
+    });
+    renderTable();
+
+    const doneCells = await screen.findAllByText('Done');
+    expect(doneCells.length).toBeGreaterThanOrEqual(2); // PO covers AND SO covered
+    expect(screen.getByTestId('spo-qty-input')).toBeDisabled();
   });
 });
 
@@ -233,6 +273,7 @@ function plannerLine(over: Record<string, unknown> = {}) {
     supplier_id: 'sup-1',
     supplier_name: 'Kailu',
     packed_qty: 100,
+    remaining_qty: 100,
     po_covered_qty: 100,
     matched_po_number: '202605-S0060',
     matched_by: 'product' as const,
@@ -293,6 +334,7 @@ function plannerLine(over: Record<string, unknown> = {}) {
       {
         key: 'project:row-1',
         kind: 'project' as const,
+        demand_class: 'project' as const,
         document: 'SI26-0100',
         customer_name: 'Sunway',
         required_date: '2026-09-10',
@@ -304,6 +346,7 @@ function plannerLine(over: Record<string, unknown> = {}) {
       {
         key: 'retail:sol-9',
         kind: 'retail' as const,
+        demand_class: 'retail' as const,
         document: 'SO-2201',
         customer_name: 'Dealer A',
         required_date: '2026-09-20',
@@ -315,6 +358,7 @@ function plannerLine(over: Record<string, unknown> = {}) {
       {
         key: 'retail:sol-10',
         kind: 'retail' as const,
+        demand_class: 'retail' as const,
         document: 'SO-2202',
         customer_name: 'Dealer B',
         required_date: '2026-10-02',
@@ -338,6 +382,15 @@ function plannerLine(over: Record<string, unknown> = {}) {
 async function closeDrill() {
   fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape', code: 'Escape' });
   await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+}
+
+/**
+ * Create SPO creates on the click (captain's ruling, 4 Sep) - the review dialog it used to
+ * open first is gone, so this just presses the button.
+ */
+async function createSpo() {
+  await screen.findByRole('button', { name: /^create spo$/i });
+  fireEvent.click(screen.getByRole('button', { name: /^create spo$/i }));
 }
 
 describe('F7 - the SPO planner chooses its POs and its SOs', () => {
@@ -365,8 +418,8 @@ describe('F7 - the SPO planner chooses its POs and its SOs', () => {
   it('ticks every PO take by default and says how many (AC-G1)', async () => {
     renderTable();
 
-    await screen.findByText('2 of 2 POs');
-    expect(screen.getByText('2 of 2 POs')).toBeInTheDocument();
+    await screen.findByTitle(/which po covers this/i);
+    expect(screen.getByTitle(/which po covers this/i)).toHaveTextContent('100');
     await openPoDrill();
     expect(screen.getByRole('checkbox', { name: 'Draw from 202605-S0060' })).toBeChecked();
     expect(screen.getByRole('checkbox', { name: 'Draw from 202606-S0099' })).toBeChecked();
@@ -378,16 +431,14 @@ describe('F7 - the SPO planner chooses its POs and its SOs', () => {
 
     fireEvent.click(screen.getByRole('checkbox', { name: 'Draw from 202605-S0060' }));
 
-    await screen.findByText('1 of 2 POs');
-    expect(screen.getByText('1 of 2 POs')).toBeInTheDocument();
     // The remaining PO has 150 open, so it covers the whole 100 packed - not the 40 the
     // cascade happened to take from it while the other one was ticked.
-    expect(screen.getByTitle(/what the TICKED POs pull this SPO up to/i)).toHaveValue(100);
+    expect(screen.getByTestId('spo-qty-input')).toHaveValue(100);
   });
 
   it('a take can only cover what its own line has open', async () => {
     state.suggestion = suggestion({
-      lines: [plannerLine({ packed_qty: 200, po_covered_qty: 100, suggested_qty: 100 })],
+      lines: [plannerLine({ packed_qty: 200, remaining_qty: 200, po_covered_qty: 100, suggested_qty: 100 })],
     });
     renderTable();
     await openPoDrill();
@@ -395,7 +446,7 @@ describe('F7 - the SPO planner chooses its POs and its SOs', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: 'Draw from 202606-S0099' }));
 
     // Only the 60-open line is ticked now, whatever the packed quantity is.
-    expect(screen.getByTitle(/what the TICKED POs pull this SPO up to/i)).toHaveValue(60);
+    expect(screen.getByTestId('spo-qty-input')).toHaveValue(60);
   });
 
   it('sends only the ticked takes to the create (AC-G6)', async () => {
@@ -403,7 +454,7 @@ describe('F7 - the SPO planner chooses its POs and its SOs', () => {
     await openPoDrill();
     fireEvent.click(screen.getByRole('checkbox', { name: 'Draw from 202605-S0060' }));
     await closeDrill();
-    fireEvent.click(screen.getByRole('button', { name: /create spo/i }));
+    await createSpo();
 
     await waitFor(() => expect(state.create).toHaveBeenCalledTimes(1));
     const [, lines] = state.create.mock.calls[0];
@@ -433,8 +484,7 @@ describe('F7 - the SPO planner chooses its POs and its SOs', () => {
 
   it('the ticks drive the location split (AC-G4)', async () => {
     renderTable();
-    await screen.findByRole('button', { name: /create spo/i });
-    fireEvent.click(screen.getByRole('button', { name: /create spo/i }));
+    await createSpo();
 
     await waitFor(() => expect(state.create).toHaveBeenCalledTimes(1));
     const [, lines] = state.create.mock.calls[0];
@@ -452,7 +502,7 @@ describe('F7 - the SPO planner chooses its POs and its SOs', () => {
     await openSoDrill();
     fireEvent.click(screen.getByRole('checkbox', { name: 'Cover SO-2201' }));
     await closeDrill();
-    fireEvent.click(screen.getByRole('button', { name: /create spo/i }));
+    await createSpo();
 
     await waitFor(() => expect(state.create).toHaveBeenCalledTimes(1));
     const [, lines] = state.create.mock.calls[0];
@@ -461,18 +511,17 @@ describe('F7 - the SPO planner chooses its POs and its SOs', () => {
     expect(lines[0].so_line_ids).toEqual(['project:row-1']);
   });
 
-  it('states the shortfall when the ticks ask for more than the container holds (AC-G5)', async () => {
+  it('says nothing about a part-covered order, and Create SPO stays enabled (AC-A2)', async () => {
     renderTable();
     await openSoDrill();
 
     fireEvent.click(screen.getByRole('checkbox', { name: 'Cover SO-2202' }));
+    await closeDrill();
 
     // 160 ticked against a container of 100: the third order is served in part, which is
-    // what the default walk does on its last entry every time. Said out loud, not blocked.
-    expect(
-      await screen.findByText(/160 ticked, 100 on this container - SO-2202 partly covered/),
-    ).toBeInTheDocument();
-    await closeDrill();
+    // what the default walk does on its last entry every time. The grey "partly covered"
+    // sentence no longer renders for it - only the red conditions gate Create SPO.
+    expect(screen.queryByText(/partly covered/)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /create spo/i })).toBeEnabled();
   });
 });
@@ -508,6 +557,7 @@ function shortCoveredLine(over: Record<string, unknown> = {}) {
       {
         key: 'project:row-a',
         kind: 'project' as const,
+        demand_class: 'project' as const,
         document: 'SI26-0100',
         customer_name: 'Sunway',
         required_date: '2026-09-10',
@@ -519,6 +569,7 @@ function shortCoveredLine(over: Record<string, unknown> = {}) {
       {
         key: 'retail:sol-a',
         kind: 'retail' as const,
+        demand_class: 'retail' as const,
         document: 'SO-2201',
         customer_name: 'Dealer A',
         required_date: '2026-09-20',
@@ -530,6 +581,7 @@ function shortCoveredLine(over: Record<string, unknown> = {}) {
       {
         key: 'retail:sol-b',
         kind: 'retail' as const,
+        demand_class: 'retail' as const,
         document: 'SO-2202',
         customer_name: 'Dealer B',
         required_date: '2026-10-02',
@@ -543,7 +595,7 @@ function shortCoveredLine(over: Record<string, unknown> = {}) {
   });
 }
 
-describe('F7 - the SO-covered cell and the Create banner are one arithmetic', () => {
+describe('F7 - the SO-covered cell reads the same arithmetic Create SPO sends', () => {
   beforeEach(() => {
     state.suggestion = suggestion({ lines: [shortCoveredLine()] });
     state.create = vi.fn().mockResolvedValue({
@@ -585,26 +637,23 @@ describe('F7 - the SO-covered cell and the Create banner are one arithmetic', ()
     expect(screen.getByRole('checkbox', { name: 'Cover SO-2202' })).not.toBeChecked();
   });
 
-  it('says which order it cannot serve when the operator ticks one it cannot reach', async () => {
+  it('does not block Create SPO on an over-tick (R2)', async () => {
     renderTable();
     await screen.findByTitle(/which demand this spo is for/i);
     fireEvent.click(screen.getByTitle(/which demand this spo is for/i));
 
     fireEvent.click(screen.getByRole('checkbox', { name: 'Cover SO-2202' }));
-
-    // Named on the banner - the lightbox lists SO-2202 as well, so the assertion is on the
-    // sentence that stops the send, not on the number appearing somewhere.
-    expect(
-      await screen.findByText(/SO-2202 - this container has nothing left/),
-    ).toBeInTheDocument();
     await closeDrill();
-    expect(screen.getByRole('button', { name: /create spo/i })).toBeDisabled();
+
+    // R2 (captain's ruling, 3 Sep): an over-tick no longer blocks Create SPO or shows a live
+    // banner. There is no review dialog to name it in either (4 Sep) - Create SPO stays
+    // enabled and creates on the click.
+    expect(screen.getByRole('button', { name: /create spo/i })).toBeEnabled();
   });
 
   it('splits only what it can serve, and calls the rest unassigned', async () => {
     renderTable();
-    await screen.findByRole('button', { name: /create spo/i });
-    fireEvent.click(screen.getByRole('button', { name: /create spo/i }));
+    await createSpo();
 
     await waitFor(() => expect(state.create).toHaveBeenCalledTimes(1));
     const [, lines] = state.create.mock.calls[0];
@@ -636,7 +685,7 @@ describe('F7 - unticking then re-ticking a take returns every figure', () => {
     });
   });
 
-  const qtyInput = () => screen.getByTitle(/what the TICKED POs pull this SPO up to/i);
+  const qtyInput = () => screen.getByTestId('spo-qty-input');
   /** The drill closes on a tick, so each one is its own open-click-read. */
   const tick = async (name: string) => {
     await screen.findByTitle(/which po covers this/i);
@@ -659,7 +708,7 @@ describe('F7 - unticking then re-ticking a take returns every figure', () => {
 
     expect(qtyInput()).toHaveValue(100);
     await tick('Draw from 202605-S0060');
-    expect(screen.getByText('2 of 2 POs')).toBeInTheDocument();
+    expect(screen.getByTitle(/which po covers this/i)).toHaveTextContent('100');
     expect(qtyInput()).toHaveValue(100);
   });
 
@@ -669,7 +718,7 @@ describe('F7 - unticking then re-ticking a take returns every figure', () => {
     await tick('Draw from 202606-S0099');
 
     await closeDrill();
-    fireEvent.click(screen.getByRole('button', { name: /create spo/i }));
+    await createSpo();
 
     await waitFor(() => expect(state.create).toHaveBeenCalledTimes(1));
     const [, lines] = state.create.mock.calls[0];
@@ -680,7 +729,7 @@ describe('F7 - unticking then re-ticking a take returns every figure', () => {
     ]);
   });
 
-  it('keeps a quantity the operator typed themselves, clamped to what is ticked', async () => {
+  it('keeps a quantity the operator typed themselves, across an untick and a re-tick', async () => {
     renderTable();
     await screen.findByTitle(/which po covers this/i);
     fireEvent.change(qtyInput(), { target: { value: '50' } });
@@ -736,7 +785,7 @@ describe('F7 - unticking an SO line shows up as Unassigned', () => {
 
   it('says nothing about unassigned when every piece is spoken for', async () => {
     state.suggestion = suggestion({
-      lines: [plannerLine({ packed_qty: 70, po_covered_qty: 70, suggested_qty: 70 })],
+      lines: [plannerLine({ packed_qty: 70, remaining_qty: 70, po_covered_qty: 70, suggested_qty: 70 })],
     });
     renderTable();
     await screen.findByTitle(/which demand this spo is for/i);
@@ -746,12 +795,15 @@ describe('F7 - unticking an SO line shows up as Unassigned', () => {
 });
 
 /**
- * Browser pass 4, finding 2 - a typed quantity survives a round trip through the ticks.
+ * Browser pass 4, finding 2, amended by R2 (captain's ruling, 3 Sep) - a typed quantity
+ * survives a round trip through the ticks, and is NEVER clamped to what is ticked any more.
  *
- * The recompute wrote the CLAMPED figure back into the quantity, so unticking the only
- * take stored 0 and the re-tick had nothing left to restore.
+ * Pre-R2 the recompute wrote the CLAMPED figure back into the quantity, so unticking the
+ * only take stored 0 and the re-tick had nothing left to restore - fixed by deriving from
+ * the typed figure rather than the clamped one. R2 goes further and removes the clamp
+ * itself: unticking every take now leaves the typed figure exactly as typed, not 0.
  */
-describe('F7 - the quantity the operator typed is theirs', () => {
+describe('F7 - the quantity the operator typed is theirs, never clamped to what is ticked', () => {
   const oneTake = () =>
     plannerLine({
       po_takes: [
@@ -771,43 +823,146 @@ describe('F7 - the quantity the operator typed is theirs', () => {
     state.suggestion = suggestion({ lines: [oneTake()] });
   });
 
-  const qtyInput = () => screen.getByTitle(/what the TICKED POs pull this SPO up to/i);
+  const qtyInput = () => screen.getByTestId('spo-qty-input');
   const toggle = async () => {
     await screen.findByTitle(/which po covers this/i);
     fireEvent.click(screen.getByTitle(/which po covers this/i));
     fireEvent.click(screen.getByRole('checkbox', { name: 'Draw from 202605-S0060' }));
   };
 
-  it('gives back the typed figure after untick and re-tick, every time', async () => {
+  it('gives back the typed figure after untick and re-tick, every time (R2)', async () => {
     renderTable();
     await screen.findByTitle(/which po covers this/i);
     fireEvent.change(qtyInput(), { target: { value: '40' } });
     expect(qtyInput()).toHaveValue(40);
 
+    // Unticking the only take drops what a PO covers to 0 - the PO cap is removed (R2), so
+    // the typed 40 stays exactly as typed, never clamped down to 0.
     await toggle();
-    expect(qtyInput()).toHaveValue(0);
+    expect(qtyInput()).toHaveValue(40);
     await toggle();
     expect(qtyInput()).toHaveValue(40);
 
-    // And again - the second round trip used to give back whatever the first one left.
+    // And again - it survives every round trip, not only the first.
     await toggle();
-    expect(qtyInput()).toHaveValue(0);
+    expect(qtyInput()).toHaveValue(40);
     await toggle();
     expect(qtyInput()).toHaveValue(40);
   });
+});
 
-  it('never lets the typed figure exceed what is ticked', async () => {
+/**
+ * Section I - free quantity, creates on the click (R2, captain's ruling 3 Sep; dialog
+ * withdrawn 4 Sep, UAC AC-I1, AC-I4, AC-I5 - AC-I2/I3/I6 named a "Review before creating"
+ * dialog that no longer exists).
+ *
+ * A single line packed 500, one open PO covering 409 of it. Typing past what the PO covers
+ * neither clamps nor bans the send, and Create SPO writes it straight away - the server caps
+ * the line at its own remainder and writes the uncovered part without a PO pull.
+ */
+function unbackedLine(over: Record<string, unknown> = {}) {
+  return plannerLine({
+    shipment_line_id: 'sl-big',
+    item_code: 'BIG-ITEM',
+    packed_qty: 500,
+    remaining_qty: 500,
+    po_covered_qty: 409,
+    suggested_qty: 409,
+    no_po_qty: 91,
+    po_takes: [
+      {
+        po_line_id: 'pol-big',
+        po_number: 'PO-BIG',
+        qty: 409,
+        expected_date: '2026-09-01',
+        po_date: '2026-05-02',
+        supplier_name: 'Kailu',
+        open_qty: 409,
+      },
+    ],
+    so_coverage: [],
+    ...over,
+  });
+}
+
+describe('Section I - free quantity, creates on the click', () => {
+  beforeEach(() => {
+    state.suggestion = suggestion({ lines: [unbackedLine()] });
+    state.create = vi.fn().mockResolvedValue({
+      shipment_id: 'sh-1',
+      shipment_number: 'ABCU1000001',
+      created_spos: [],
+      skipped: [],
+      allocations: [],
+      demand_links: [],
+    });
+  });
+
+  const qtyInput = () => screen.getByTestId('spo-qty-input');
+
+  it('keeps a typed figure past what the PO covers, with no banner, Create SPO enabled (AC-I1)', async () => {
+    renderTable();
+    await screen.findByTestId('spo-qty-input');
+
+    fireEvent.change(qtyInput(), { target: { value: '500' } });
+
+    expect(qtyInput()).toHaveValue(500);
+    expect(screen.queryByText(/without PO backing/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /create spo/i })).toBeEnabled();
+  });
+
+  it('Create SPO sends the typed figure on the single click, no dialog in between', async () => {
+    renderTable();
+    await screen.findByTestId('spo-qty-input');
+    fireEvent.change(qtyInput(), { target: { value: '500' } });
+
+    await createSpo();
+
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    await waitFor(() => expect(state.create).toHaveBeenCalledTimes(1));
+    const [shipmentId, lines] = state.create.mock.calls[0];
+    expect(shipmentId).toBe('sh-1');
+    expect(lines[0]).toMatchObject({
+      shipment_line_id: 'sl-big',
+      qty: 500,
+      include: true,
+      po_take_ids: ['pol-big'],
+    });
+  });
+
+  it('a line with a supplier but no open PO at all is convertible, and creates without PO backing on the click', async () => {
     state.suggestion = suggestion({
-      lines: [oneTake()],
+      lines: [
+        unbackedLine({
+          shipment_line_id: 'sl-nopo',
+          item_code: 'NOPO-ITEM',
+          packed_qty: 40,
+          remaining_qty: 40,
+          po_covered_qty: 0,
+          suggested_qty: 0,
+          no_po_qty: 40,
+          po_takes: [],
+          cannot_convert: false,
+          reason: 'No open PO to pull from; the SPO line is written without PO backing.',
+        }),
+      ],
     });
     renderTable();
-    await screen.findByTitle(/which po covers this/i);
-    fireEvent.change(qtyInput(), { target: { value: '90' } });
+    await screen.findByTestId('spo-qty-input');
+    // A cannot_convert-only-by-no-supplier line starts at the default (0 here), so it must be
+    // typed to be included - the same "qty > 0 to include" rule every other line follows.
+    fireEvent.change(qtyInput(), { target: { value: '40' } });
 
-    await toggle();
-    await toggle();
+    await createSpo();
 
-    expect(qtyInput()).toHaveValue(90);
+    await waitFor(() => expect(state.create).toHaveBeenCalledTimes(1));
+    const [, lines] = state.create.mock.calls[0];
+    expect(lines[0]).toMatchObject({
+      shipment_line_id: 'sl-nopo',
+      qty: 40,
+      include: true,
+      po_take_ids: [],
+    });
   });
 });
 
@@ -889,6 +1044,28 @@ describe('R22 - the destinations expand under the row', () => {
     expect(screen.getByRole('button', { name: /create spo/i })).toBeDisabled();
   });
 
+  it('the red split-mismatch reason stays visible in Schedule view too, before the View select (S3 review)', async () => {
+    renderTable();
+    fireEvent.click(await chevron());
+    await screen.findByText(/SRTWT7443 - destinations/);
+    fireEvent.change(qtyRow(1), { target: { value: '200' } });
+    await screen.findByText(/location split does not add up/);
+
+    fireEvent.click(screen.getByRole('button', { name: /schedule/i }));
+
+    // A disabled Create SPO with no reason on screen reads as broken - the reason has to
+    // survive the view switch, not only show in table view.
+    const reason = screen.getByText(/location split does not add up/);
+    expect(reason).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /create spo/i })).toBeDisabled();
+    // It comes BEFORE the schedule View select in document order (S3), so the reason a
+    // control is disabled is read first.
+    const viewLabel = screen.getByText('View');
+    expect(
+      reason.compareDocumentPosition(viewLabel) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
   it('removing a destination leaves its quantity unassigned', async () => {
     renderTable();
     fireEvent.click(await chevron());
@@ -912,7 +1089,7 @@ describe('R22 - the destinations expand under the row', () => {
     // The remaining 30 lands on the row that was just added, at the warehouse not already
     // used - so the split adds up again and Create SPO is allowed.
     expect(qtyRow(2)).toHaveValue(30);
-    fireEvent.click(screen.getByRole('button', { name: /create spo/i }));
+    await createSpo();
     await waitFor(() => expect(state.create).toHaveBeenCalledTimes(1));
     const [, lines] = state.create.mock.calls[0];
     expect(lines[0].location_splits).toEqual([
@@ -1065,8 +1242,7 @@ describe('R21 - the four figures open the shared lightbox', () => {
     fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Draw from 202606-S0099' }));
 
     expect(screen.getByTitle(PO)).toHaveTextContent('60');
-    expect(screen.getByText('1 of 2 POs')).toBeInTheDocument();
-    expect(screen.getByTitle(/what the TICKED POs pull this SPO up to/i)).toHaveValue(60);
+    expect(screen.getByTestId('spo-qty-input')).toHaveValue(60);
     // The dialog stays open across the tick - it is a lightbox, not a hover surface.
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
@@ -1081,10 +1257,11 @@ describe('R21 - the four figures open the shared lightbox', () => {
     expect(rows[2].textContent).toContain('SO-2201');
     expect(rows[3].textContent).toContain('SO-2202');
     // Open / Take per row, off the one walk: 40 and 30 are served in full, and the order
-    // nobody ticked gets nothing.
-    expect(rows[1].querySelectorAll('td')[6].textContent).toBe('40');
+    // nobody ticked gets nothing. Column 6 is S5's new Taken column (all dashes here -
+    // nothing in this fixture is covered by another SPO); Take moved to 7 to make room.
+    expect(rows[1].querySelectorAll('td')[7].textContent).toBe('40');
     expect(rows[3].querySelectorAll('td')[5].textContent).toBe('90');
-    expect(rows[3].querySelectorAll('td')[6].textContent).toBe('0');
+    expect(rows[3].querySelectorAll('td')[7].textContent).toBe('0');
     expect(within(dialog).getByText('Unassigned 30')).toBeInTheDocument();
   });
 
@@ -1191,5 +1368,389 @@ describe('R21 - the four figures open the shared lightbox', () => {
 
     await screen.findByTitle(PO);
     expect(screen.queryByTitle(INCOMING)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * S1 (feedback, 3 Sep) - fewer words, controls that stay put.
+ */
+describe('S1 - planner chrome (AC-A1-AC-A7)', () => {
+  beforeEach(() => {
+    state.suggestion = suggestion({ lines: [plannerLine()] });
+  });
+
+  it('renders no text under the SPO planner title, on a real shipment (AC-A1)', async () => {
+    renderTable();
+
+    const title = await screen.findByText('SPO planner');
+    expect(title.parentElement?.querySelector('p')).toBeNull();
+  });
+
+  it('renders no text under the SPO planner title, on a draft shipment (AC-A1)', async () => {
+    state.suggestion = suggestion({ shipment_status: 'draft', lines: [plannerLine()] });
+    renderTable();
+
+    const title = await screen.findByText('SPO planner');
+    expect(title.parentElement?.querySelector('p')).toBeNull();
+    expect(screen.queryByText(/draft shipment/i)).not.toBeInTheDocument();
+  });
+
+  it('the Product cell renders the item code and the reason icon, nothing else (AC-A3)', async () => {
+    renderTable();
+
+    await screen.findByText('SRTWT7443');
+    expect(screen.getByText('SRTWT7443')).toBeInTheDocument();
+    expect(screen.queryByText(/Basin Mixer/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Kailu/)).not.toBeInTheDocument();
+  });
+
+  it('the PO covers cell renders the figure and no "of N POs" text (AC-A4)', async () => {
+    renderTable();
+
+    await screen.findByTitle(/which po covers this/i);
+    expect(screen.getByTitle(/which po covers this/i)).toHaveTextContent('100');
+    expect(screen.queryByText(/of \d+ POs/)).not.toBeInTheDocument();
+  });
+
+  it('Expand all sits in the same group as the Table/Schedule toggle (AC-A5)', async () => {
+    renderTable();
+
+    const toggleGroup = await screen.findByRole('group', { name: /planner view/i });
+    const leftGroup = toggleGroup.parentElement as HTMLElement;
+    expect(within(leftGroup).getByRole('button', { name: /expand all/i })).toBeInTheDocument();
+    expect(within(leftGroup).getByRole('button', { name: /collapse all/i })).toBeInTheDocument();
+  });
+
+  it('labels the schedule control View, with Purchase order / Sales order options, one line (AC-A6)', async () => {
+    renderTable();
+    await screen.findByRole('button', { name: /schedule/i });
+    fireEvent.click(screen.getByRole('button', { name: /schedule/i }));
+
+    const control = await screen.findByRole('combobox', { name: 'View' });
+    expect(control).toHaveTextContent('Purchase order');
+    expect(screen.queryByText(/Bucketed by/i)).not.toBeInTheDocument();
+
+    fireEvent.click(control);
+    expect(await screen.findByText('Sales order')).toBeInTheDocument();
+  });
+
+  it('the schedule row header renders the item code only, once (AC-A7)', async () => {
+    renderTable();
+    await screen.findByRole('button', { name: /schedule/i });
+    fireEvent.click(screen.getByRole('button', { name: /schedule/i }));
+
+    await screen.findByText('SRTWT7443');
+    expect(screen.getAllByText('SRTWT7443')).toHaveLength(1);
+  });
+});
+
+/**
+ * S4 (feedback, 3 Sep) - schedule cells are coloured and clickable, and open the SAME
+ * lightbox the table's own PO covers / SO covered cells do (AC-D1-AC-D5).
+ *
+ * `plannerLine()`'s two PO takes land on 2026-09-01 (week of 31 Aug 2026) and 2026-08-01
+ * (week of 27 Jul 2026); the two default-ticked SO coverage entries land on 2026-09-10
+ * (week of 7 Sep 2026) and 2026-09-20 (week of 14 Sep 2026) - four different weeks, so a
+ * bucket-hit assertion can tell one row from its neighbour. These are the MONDAYS
+ * (`startOfWeekIso`, fixed S5) - a UTC+8 host used to print the SUNDAY before each one.
+ */
+describe('S4 - schedule cells (AC-D1-AC-D5)', () => {
+  beforeEach(() => {
+    state.suggestion = suggestion({ lines: [plannerLine()] });
+  });
+
+  const openSchedule = async () => {
+    await screen.findByRole('button', { name: /schedule/i });
+    fireEvent.click(screen.getByRole('button', { name: /schedule/i }));
+  };
+
+  const switchToSalesOrderView = async () => {
+    const control = await screen.findByRole('combobox', { name: 'View' });
+    fireEvent.click(control);
+    fireEvent.click(await screen.findByText('Sales order'));
+  };
+
+  it('the legend renders in schedule view but not in table view (AC-D5)', async () => {
+    renderTable();
+    await screen.findByText('SRTWT7443');
+    expect(screen.queryByTestId('spo-schedule-legend')).not.toBeInTheDocument();
+
+    await openSchedule();
+
+    await screen.findByTestId('spo-schedule-legend');
+    const legend = screen.getByTestId('spo-schedule-legend');
+    expect(legend.textContent).toContain('This SPO');
+    expect(legend.textContent).toContain('Taken elsewhere');
+  });
+
+  it('clicking a cell in the Purchase order view opens "PO covers · <code>" (AC-D2)', async () => {
+    renderTable();
+    await openSchedule();
+
+    fireEvent.click(await screen.findByRole('button', { name: /SRTWT7443 - 31 Aug 2026/ }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText(/PO covers · SRTWT7443/)).toBeInTheDocument();
+    expect(document.querySelector('[data-radix-popper-content-wrapper]')).toBeNull();
+  });
+
+  it('clicking a cell in the Sales order view opens "SO covered · <code>" (AC-D2)', async () => {
+    renderTable();
+    await openSchedule();
+    await switchToSalesOrderView();
+
+    fireEvent.click(await screen.findByRole('button', { name: /SRTWT7443 - 7 Sep/ }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText(/SO covered · SRTWT7443/)).toBeInTheDocument();
+  });
+
+  it('inside the opened PO picker, the row in the clicked week carries data-bucket-hit and the row tint (AC-D3)', async () => {
+    renderTable();
+    await openSchedule();
+
+    fireEvent.click(await screen.findByRole('button', { name: /SRTWT7443 - 31 Aug 2026/ }));
+    const dialog = await screen.findByRole('dialog');
+
+    const hitRow = within(dialog).getByText('202605-S0060').closest('tr') as HTMLElement;
+    const otherRow = within(dialog).getByText('202606-S0099').closest('tr') as HTMLElement;
+    expect(hitRow).toHaveAttribute('data-bucket-hit', 'true');
+    expect(hitRow.className).toContain('bg-primary/10');
+    expect(otherRow).not.toHaveAttribute('data-bucket-hit');
+    expect(otherRow.className).not.toContain('bg-primary/10');
+  });
+
+  it('inside the opened SO picker, the row in the clicked week carries data-bucket-hit and the row tint (AC-D3)', async () => {
+    renderTable();
+    await openSchedule();
+    await switchToSalesOrderView();
+
+    fireEvent.click(await screen.findByRole('button', { name: /SRTWT7443 - 7 Sep/ }));
+    const dialog = await screen.findByRole('dialog');
+
+    const hitRow = within(dialog).getByText('SI26-0100').closest('tr') as HTMLElement;
+    const otherRow = within(dialog).getByText('SO-2201').closest('tr') as HTMLElement;
+    expect(hitRow).toHaveAttribute('data-bucket-hit', 'true');
+    expect(hitRow.className).toContain('bg-primary/10');
+    expect(otherRow).not.toHaveAttribute('data-bucket-hit');
+  });
+
+  it('the picker\'s own search is untouched by a bucket click - typing still narrows the rows (S4)', async () => {
+    renderTable();
+    await openSchedule();
+
+    fireEvent.click(await screen.findByRole('button', { name: /SRTWT7443 - 31 Aug 2026/ }));
+    const dialog = await screen.findByRole('dialog');
+
+    const search = within(dialog).getByPlaceholderText('Search POs');
+    fireEvent.change(search, { target: { value: '202606' } });
+    fireEvent.keyDown(search, { key: 'Enter' });
+
+    expect(within(dialog).getByText('202606-S0099')).toBeInTheDocument();
+    expect(within(dialog).queryByText('202605-S0060')).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * S5 (`PLAN-scm-spo-planner-feedback-3sep.md`) - a row already occupied by ANOTHER SPO is
+ * visible and grey, never tickable: `qty === 0 && taken_qty > 0`. Own fixture (not
+ * `plannerLine()`'s shared defaults) so these additions cannot perturb the many existing
+ * assertions built off the base two-take, three-coverage line.
+ */
+function takenPlannerLine() {
+  return plannerLine({
+    packed_qty: 60,
+    remaining_qty: 60,
+    po_covered_qty: 60,
+    suggested_qty: 60,
+    po_takes: [
+      {
+        po_line_id: 'pol-1',
+        po_number: '202605-S0060',
+        qty: 60,
+        expected_date: '2026-09-01',
+        po_date: '2026-05-02',
+        supplier_name: 'Kailu',
+        open_qty: 60,
+        // Mixed: this SAME line also carries a pull from an EARLIER SPO - the cascade
+        // above still took 60 from it (whatever it gave was open), but another SPO has 25
+        // of it too, on the SAME week bucket (31 Aug 2026).
+        taken_qty: 25,
+        taken_by: ['CRM-SPO-2026/08-0005'],
+      },
+      {
+        // Taken-only: this cascade never draws from it (qty 0), a DIFFERENT week bucket
+        // (2026-10-01, week of 28 Sep 2026) so its cell is never mixed with the row above.
+        po_line_id: 'pol-taken',
+        po_number: '202607-S0120',
+        qty: 0,
+        expected_date: '2026-10-01',
+        po_date: '2026-01-05',
+        supplier_name: 'Kailu',
+        open_qty: 0,
+        taken_qty: 50,
+        taken_by: ['CRM-SPO-2026/08-0005'],
+      },
+    ],
+    so_coverage: [
+      {
+        key: 'project:row-1',
+        kind: 'project' as const,
+        demand_class: 'project' as const,
+        document: 'SI26-0100',
+        customer_name: 'Sunway',
+        required_date: '2026-09-10',
+        qty: 40,
+        warehouse_id: 'wh-1',
+        warehouse_code: 'BRW',
+        default_ticked: true,
+        // Mixed: same week bucket (7 Sep 2026) as this row's own take.
+        taken_qty: 15,
+        taken_by: ['CRM-SPO-2026/08-0005'],
+      },
+      {
+        // Taken-only: never ticked (`default_ticked: false`, the server's own rule), a
+        // different week bucket (2026-10-15) so its cell stands alone.
+        key: 'retail:sol-taken',
+        kind: 'retail' as const,
+        demand_class: 'retail' as const,
+        document: 'SO-9000',
+        customer_name: 'Dealer C',
+        required_date: '2026-10-15',
+        qty: 0,
+        warehouse_id: 'wh-2',
+        warehouse_code: 'MWH',
+        default_ticked: false,
+        taken_qty: 20,
+        taken_by: ['CRM-SPO-2026/08-0005'],
+      },
+    ],
+  });
+}
+
+describe('S5 - occupied by another SPO (AC-E7, AC-E8)', () => {
+  beforeEach(() => {
+    state.suggestion = suggestion({ lines: [takenPlannerLine()] });
+  });
+
+  it('the taken PO line is never ticked by default, and PO covers excludes it (AC-E7)', async () => {
+    renderTable();
+
+    await screen.findByTitle(/which po covers this/i);
+    // Only the real take (60) counts - the taken-only line (qty 0) never joins the sum.
+    expect(screen.getByTitle(/which po covers this/i)).toHaveTextContent('60');
+
+    fireEvent.click(screen.getByTitle(/which po covers this/i));
+    const dialog = await screen.findByRole('dialog');
+
+    const checkbox = within(dialog).getByRole('checkbox', { name: 'Draw from 202607-S0120' });
+    expect(checkbox).not.toBeChecked();
+    expect(checkbox).toBeDisabled();
+  });
+
+  it('the taken SO row is never ticked by default, and SO covered excludes it (AC-E7)', async () => {
+    renderTable();
+
+    await screen.findByTitle(/which demand this spo is for/i);
+    // Project row (40) is the only real tick - the taken retail row (qty 0) contributes 0.
+    expect(screen.getByTitle(/which demand this spo is for/i)).toHaveTextContent('40');
+
+    fireEvent.click(screen.getByTitle(/which demand this spo is for/i));
+    const dialog = await screen.findByRole('dialog');
+
+    const checkbox = within(dialog).getByRole('checkbox', { name: 'Cover SO-9000' });
+    expect(checkbox).not.toBeChecked();
+    expect(checkbox).toBeDisabled();
+  });
+
+  it('a schedule cell whose only quantity is taken renders bg-muted (Purchase order view, AC-E8)', async () => {
+    renderTable();
+    await screen.findByRole('button', { name: /schedule/i });
+    fireEvent.click(screen.getByRole('button', { name: /schedule/i }));
+
+    // "Sep" not "Sep 2026" - `en-GB` abbreviates September as "Sept", so a regex requiring
+    // the space right after "Sep" would miss it (`SpoPlannerTable.test.tsx`'s own precedent).
+    const cell = await screen.findByRole('button', { name: /SRTWT7443 - 28 Sep/ });
+    expect(cell.className).toContain('bg-muted');
+    expect(cell.className).not.toContain('bg-primary/10');
+    expect(within(cell).getByText('50')).toBeTruthy();
+  });
+
+  it('a mixed schedule cell shows the tinted figure and "+N on SPO-..." (Purchase order view, AC-E8)', async () => {
+    renderTable();
+    await screen.findByRole('button', { name: /schedule/i });
+    fireEvent.click(screen.getByRole('button', { name: /schedule/i }));
+
+    const cell = await screen.findByRole('button', { name: /SRTWT7443 - 31 Aug 2026/ });
+    expect(cell.className).toContain('bg-primary/10');
+    expect(within(cell).getByText('60')).toBeTruthy();
+    expect(within(cell).getByText('+25 on CRM-SPO-2026/08-0005')).toBeTruthy();
+  });
+
+  it('a mixed schedule cell shows the tinted figure and "+N on SPO-..." (Sales order view, AC-E8)', async () => {
+    renderTable();
+    await screen.findByRole('button', { name: /schedule/i });
+    fireEvent.click(screen.getByRole('button', { name: /schedule/i }));
+    const control = await screen.findByRole('combobox', { name: 'View' });
+    fireEvent.click(control);
+    fireEvent.click(await screen.findByText('Sales order'));
+
+    const cell = await screen.findByRole('button', { name: /SRTWT7443 - 7 Sep/ });
+    expect(cell.className).toContain('bg-primary/10');
+    expect(within(cell).getByText('40')).toBeTruthy();
+    expect(within(cell).getByText('+15 on CRM-SPO-2026/08-0005')).toBeTruthy();
+  });
+});
+
+/**
+ * Live bug (captain, 4 Sep): the SPO qty input lost focus after EVERY keystroke, so the
+ * operator had to click back into it for each digit.
+ *
+ * `flexRender` renders a column's `cell` FUNCTION as a React component type
+ * (`createElement(columnDef.cell, ctx)`), so a `columns` array rebuilt on each keystroke
+ * hands React a new element TYPE for every cell - which unmounts the old input and mounts
+ * a fresh one, taking the caret with it. The assertion is node IDENTITY: the element that
+ * had focus before the change is still `document.activeElement` after it.
+ */
+describe('editable cells keep focus while typing (live bug, 4 Sep)', () => {
+  beforeEach(() => {
+    state.suggestion = suggestion({ lines: [plannerLine()] });
+  });
+
+  it('the SPO qty input is still the focused node after each keystroke', async () => {
+    renderTable();
+    await screen.findByTestId('spo-qty-input');
+
+    const input = screen.getByTestId('spo-qty-input');
+    input.focus();
+    expect(document.activeElement).toBe(input);
+
+    fireEvent.change(input, { target: { value: '4' } });
+    expect(document.activeElement).toBe(input);
+    expect(screen.getByTestId('spo-qty-input')).toBe(input);
+    expect(input).toHaveValue(4);
+
+    fireEvent.change(input, { target: { value: '40' } });
+    expect(document.activeElement).toBe(input);
+    expect(screen.getByTestId('spo-qty-input')).toBe(input);
+    expect(input).toHaveValue(40);
+  });
+
+  it('the destination quantity input in the expanded row keeps focus too', async () => {
+    renderTable();
+    await screen.findByTitle('Where this SPO lands');
+    fireEvent.click(screen.getByTitle('Where this SPO lands'));
+
+    const input = await screen.findByLabelText('Quantity for destination 1');
+    input.focus();
+    expect(document.activeElement).toBe(input);
+
+    fireEvent.change(input, { target: { value: '7' } });
+    expect(document.activeElement).toBe(input);
+    expect(input).toHaveValue(7);
+
+    fireEvent.change(input, { target: { value: '70' } });
+    expect(document.activeElement).toBe(input);
+    expect(input).toHaveValue(70);
   });
 });

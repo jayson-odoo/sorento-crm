@@ -49,6 +49,7 @@ import {
   usePlanningBoard,
 } from '../../_shared/hooks/useFulfilmentPlanning';
 import { usePlanningChangeBatch } from '../../_shared/hooks/usePlanningChanges';
+import { canQuickSave, suggestedDecisionFor } from '../../_shared/lib/boardAmend';
 import {
   annotationsByCell,
   preMarkedKeys,
@@ -265,6 +266,24 @@ export function FulfilmentBoardPanel({
   );
 
   /**
+   * A Confirm's own refetch is on the wire, on the SAME selection/granularity/window - a
+   * draft save/undo never lands here any more (D16: `useLineDraftMutation` patches the cache
+   * in place and asks for no refetch at all). React Query already keeps the last successful
+   * `data` on screen through a same-key refetch with no extra wiring; the only gap was that
+   * `FulfilmentBoardListView` was fed this flag AS `PanelDataGrid`'s `isLoading`, which
+   * skeleton-wipes a grid that already had every row it needed - the flicker itself (the
+   * captain, 3 September 2026: "very choppy"). Read here instead to DIM the board rather than
+   * blank it.
+   *
+   * Deliberately NOT extended to a granularity/day-window turn (that IS a key change, so it
+   * would need `placeholderData` to keep the old rows up) - measured, not theoretical: turning
+   * that on made a cell opened moments after a granularity switch close itself, because the
+   * click landed on the OLD granularity's cell before the fresh read replaced it and
+   * `liveCell` then matched nothing. See `usePlanningBoard`'s own note.
+   */
+  const boardRefreshing = board.isFetching;
+
+  /**
    * Move the day window by a whole window at a time.
    *
    * The FIRST window is the server's: it opens on the earliest date still to come, falling
@@ -422,12 +441,24 @@ export function FulfilmentBoardPanel({
    * updater synchronously on dispatch (the "eager state" check), and the toast only runs after
    * `await`ing the network write, well past that point - so it is always the map this decision
    * actually produced, never a value computed before a concurrent call's own delta landed.
+   *
+   * `options.quiet` (D15) skips this per-line toast without touching anything else about the
+   * write: `decideMany` and `undoMany` below post every key through this SAME function, one at
+   * a time, so a bulk press still gets the identical local-first / revert-on-failure behaviour
+   * and reports its own outcome with a single toast of its own instead of N of these.
    */
   const decide = React.useCallback(
-    async (key: string, decision: BoardDecision | null): Promise<boolean> => {
+    async (
+      key: string,
+      decision: BoardDecision | null,
+      options?: { quiet?: boolean },
+    ): Promise<boolean> => {
       let hadPrevious = false;
       let previousForKey: BoardDecision | undefined;
       let appliedNext: BoardDraft = {};
+      // Read once, for both the write below and the toast at the end - the same
+      // contribution either way, and `allContributions` does not move mid-call.
+      const contribution = allContributions.find((entry) => entry.key === key);
       setDraft((current) => {
         hadPrevious = Object.prototype.hasOwnProperty.call(current, key);
         previousForKey = current[key];
@@ -439,10 +470,12 @@ export function FulfilmentBoardPanel({
       });
       try {
         if (decision) {
-          // S1 (code review round 3): the PUT body carries no `proposed` any more. Staleness
-          // is judged server-side on the LINE's own facts (outstanding qty, required date),
-          // not on a proposal that depends on which orders share the board.
-          await saveLineDraft(key, decision);
+          // S1 (code review round 3) still holds: staleness is judged server-side on the
+          // LINE's own facts (outstanding qty, required date), never on a proposal. D12
+          // (#573) adds the contribution's own `sources` as `proposed` for a DIFFERENT
+          // reason: the Sales Order page's Suggested column reads it back on this line
+          // until Confirm freezes a revision.
+          await saveLineDraft(key, decision, contribution?.sources);
         } else {
           await removeDraftKey(key);
         }
@@ -457,8 +490,7 @@ export function FulfilmentBoardPanel({
         });
         return false;
       }
-      if (decision && decision.verdict !== 'rejected') {
-        const contribution = allContributions.find((entry) => entry.key === key);
+      if (!options?.quiet && decision && decision.verdict !== 'rejected') {
         const { toConfirm } = confirmSummaryFor(allContributions, appliedNext);
         toast.success(
           `Line ${contribution?.line_no ?? ''} saved · ${toConfirm} to confirm`,
@@ -467,6 +499,89 @@ export function FulfilmentBoardPanel({
       return true;
     },
     [allContributions, saveLineDraft, removeDraftKey],
+  );
+
+  /**
+   * Every still-eligible line saved with the engine's own composition, in one press (D15: the
+   * board-wide "Save all suggested" button, the list's and dialog's own bulk buttons, and a
+   * grid cell's own save icon all post through this rather than looping `onDecide` themselves,
+   * which is what left D14's bulk verbs toasting once PER LINE - "Line 4 saved", "Line 7
+   * saved", ... - on a press that was meant to be one action.
+   *
+   * FIVE AT A TIME: `Promise.all` per chunk, chunks run one after another, so a board-wide
+   * press of forty lines does not open forty simultaneous writes against the same draft
+   * endpoint.
+   *
+   * The toast's own "M to confirm" is read off `appliedNext` - THIS call's own delta over the
+   * `draft` this component held when the press started, not a fresh read of React state after
+   * the fact: every key here was eligible precisely because it carried no draft yet, so the
+   * composition `decide()` is about to save for each one is exactly what `appliedNext` adds.
+   */
+  const decideMany = React.useCallback(
+    async (keys: string[]): Promise<{ saved: number; failed: number }> => {
+      let saved = 0;
+      let failed = 0;
+      const appliedNext: BoardDraft = { ...draft };
+      const CHUNK_SIZE = 5;
+      for (let i = 0; i < keys.length; i += CHUNK_SIZE) {
+        const chunk = keys.slice(i, i + CHUNK_SIZE);
+        await Promise.all(
+          chunk.map(async (key) => {
+            const contribution = allContributions.find((entry) => entry.key === key);
+            if (!contribution) {
+              failed += 1;
+              return;
+            }
+            const decision = suggestedDecisionFor(contribution);
+            const ok = await decide(key, decision, { quiet: true });
+            if (ok) {
+              saved += 1;
+              appliedNext[key] = decision;
+            } else {
+              failed += 1;
+            }
+          }),
+        );
+      }
+      if (saved > 0) {
+        const { toConfirm } = confirmSummaryFor(allContributions, appliedNext);
+        toast.success(
+          `${saved} line${saved === 1 ? '' : 's'} saved · ${toConfirm} to confirm`,
+        );
+      }
+      return { saved, failed };
+    },
+    [allContributions, decide, draft],
+  );
+
+  /**
+   * The cell's own Undo and the list's per-row Undo already act on ONE line without a toast
+   * (S4's per-line Undo carries none, on the reading that one line's undo is reversible with
+   * another quick save). A GRID CELL's own undo icon can carry several lines at once, so it
+   * gets the one toast its own press deserves - the same "one action, one toast" rule
+   * `decideMany` follows above, in the other direction.
+   */
+  const undoMany = React.useCallback(
+    async (keys: string[]): Promise<{ saved: number; failed: number }> => {
+      let saved = 0;
+      let failed = 0;
+      const CHUNK_SIZE = 5;
+      for (let i = 0; i < keys.length; i += CHUNK_SIZE) {
+        const chunk = keys.slice(i, i + CHUNK_SIZE);
+        await Promise.all(
+          chunk.map(async (key) => {
+            const ok = await decide(key, null, { quiet: true });
+            if (ok) saved += 1;
+            else failed += 1;
+          }),
+        );
+      }
+      if (saved > 0) {
+        toast.success(`${saved} line${saved === 1 ? '' : 's'} back to suggested`);
+      }
+      return { saved, failed };
+    },
+    [decide],
   );
 
   /**
@@ -821,6 +936,37 @@ export function FulfilmentBoardPanel({
   const filtering = productSearch.trim().length > 0 || kindFilter !== null;
 
   /**
+   * Every key the board-wide "Save all suggested" button would post (D15): whichever lines the
+   * planner is ACTUALLY LOOKING AT right now, filtered by whatever this screen's own dials
+   * (view, the decision-strip card, product search) currently leave standing - never
+   * `allContributions`. A board-wide press acting on lines a filter had hidden would save
+   * something the button's own count never claimed to.
+   *
+   * The list already carries its own "whole selection, kind-filtered" population
+   * (`visibleListContributions`); the grid additionally narrows by the product search, which
+   * only ever touches the rows, never the list.
+   */
+  const quickSaveKeys = React.useMemo(() => {
+    const population =
+      view === 'list'
+        ? visibleListContributions
+        : (() => {
+            const shownRowKeys = new Set(visibleProductRows.map((row) => row.key));
+            const seen = new Map<string, BoardContribution>();
+            for (const cell of visibleCells) {
+              if (!shownRowKeys.has(cell.row_key ?? cell.item_code)) continue;
+              for (const contribution of cell.contributions) {
+                seen.set(contribution.key, contribution);
+              }
+            }
+            return [...seen.values()];
+          })();
+    return population
+      .filter((contribution) => canQuickSave(contribution, draft))
+      .map((contribution) => contribution.key);
+  }, [view, visibleListContributions, visibleCells, visibleProductRows, draft]);
+
+  /**
    * Orders the link asked for that the board came back without.
    *
    * A shared link can name an order that has since been delivered or closed, or one that was
@@ -988,6 +1134,19 @@ export function FulfilmentBoardPanel({
           <span />
         )}
         <div className="flex flex-wrap items-center gap-2">
+          {/* D15: the board-wide quick save, left of the gear - every line shown right now
+              that a quick save could still touch, in one press. No confirmation: it is
+              reversible the same way a single quick save is, through Undo all or a line's
+              own Undo. */}
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={quickSaveKeys.length === 0}
+            onClick={() => void decideMany(quickSaveKeys)}
+          >
+            {`Save all suggested (${quickSaveKeys.length})`}
+          </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
@@ -1187,72 +1346,93 @@ export function FulfilmentBoardPanel({
               every label in its own colour, so a legend was the same six words twice - and
               the one a reader meets first should be the one with the numbers on it. */}
 
-          {/* Suggested vs decided across the selection, card per kind (AC-D2). */}
-          <DecisionStrip
-            contributions={stripContributions}
-            draft={draft}
-            active={kindFilter}
-            onToggle={(kind) =>
-              setKindFilter((current) => (current === kind ? null : kind))
-            }
-          />
-
-          {/* The movements this board's confirmations raised, ABOVE the matrix (R13). They
-              used to be reachable only from the transfers screen, so the promise was made
-              here and the movement it implied was approved by somebody who had not seen the
-              order it was for. */}
-          <BoardTransfersPanel
-            soNumbers={soNumbers}
-            justConfirmed={batchResults !== null}
-            inquiryRows={(batchResults ?? [])
-              .filter((result) => result.ok)
-              .reduce((total, result) => total + (result.inquiry_rows_created ?? 0), 0)}
-          />
-
-          {view === 'list' ? (
-            /* D2: one row per contributing line across every cell of the WHOLE selection, not
-               the pivoted/windowed rows the grid shows - the point is an overview, so the row
-               axis and product search that shape the grid do not narrow it. */
-            <FulfilmentBoardListView
-              contributions={visibleListContributions}
+          {/* Dims rather than blanks (D16): Confirm's own refetch of this SAME selection
+              leaves every row mounted, so a card's own open/closed state and scroll position
+              survive it - a skeleton in their place would not. `boardRefreshing` above. A
+              draft save/undo never lands here at all any more; it patches the cache without
+              asking for a refetch. A granularity/day-window turn is a DIFFERENT selection and
+              still shows the true skeleton (`board.isLoading` above) - see the note on
+              `usePlanningBoard`. */}
+          <div
+            data-testid="board-content"
+            className={`space-y-4 transition-opacity duration-150 ${
+              boardRefreshing ? 'opacity-60' : 'opacity-100'
+            }`}
+          >
+            {/* Suggested vs decided across the selection, card per kind (AC-D2). */}
+            <DecisionStrip
+              contributions={stripContributions}
               draft={draft}
-              onDecide={decide}
-              isLoading={board.isFetching}
+              active={kindFilter}
+              onToggle={(kind) =>
+                setKindFilter((current) => (current === kind ? null : kind))
+              }
             />
-          ) : (
-            <>
-              {/* How much of the board is on screen. Only while a filter is on, and stated as
-                  a fraction, so a narrowed board is never mistaken for the whole one. */}
-              {filtering && (
-                <p className="text-sm text-muted-foreground tabular-nums">
-                  {`${visibleProductRows.length} of ${axis.rows.length} ${ROW_AXIS_NOUNS[rowAxis]}`}
-                </p>
-              )}
 
-              {visibleProductRows.length === 0 ? (
-                <Card>
-                  <CardContent className="px-6 py-10 text-center">
-                    <PackageSearch className="mx-auto size-6 text-muted-foreground" aria-hidden />
-                    {/* NOT the "owes nothing" copy: the selection owes plenty, the filter
-                        simply matched none of it. */}
-                    <h3 className="mt-2 text-sm font-semibold">No products match</h3>
-                  </CardContent>
-                </Card>
-              ) : (
-                <FulfilmentBoardMatrix
-                  dateBuckets={board.data.dateBuckets}
-                  rows={visibleProductRows}
-                  rowHeader={
-                    ROW_AXIS_OPTIONS.find((option) => option.value === rowAxis)?.label ?? 'Product'
-                  }
-                  cells={visibleCells}
-                  draft={draft}
-                  annotations={changeAnnotations}
-                  onOpenCell={(cell) => setOpenCell(cell)}
-                />
-              )}
-            </>
-          )}
+            {/* The movements this board's confirmations raised, ABOVE the matrix (R13). They
+                used to be reachable only from the transfers screen, so the promise was made
+                here and the movement it implied was approved by somebody who had not seen the
+                order it was for. */}
+            <BoardTransfersPanel
+              soNumbers={soNumbers}
+              justConfirmed={batchResults !== null}
+              inquiryRows={(batchResults ?? [])
+                .filter((result) => result.ok)
+                .reduce((total, result) => total + (result.inquiry_rows_created ?? 0), 0)}
+            />
+
+            {view === 'list' ? (
+              /* D2: one row per contributing line across every cell of the WHOLE selection, not
+                 the pivoted/windowed rows the grid shows - the point is an overview, so the row
+                 axis and product search that shape the grid do not narrow it.
+
+                 NO `isLoading` HERE (D16): this only ever mounts once `board.data` already has
+                 cells, so passing the query's `isFetching` skeleton-wiped a list that already
+                 had every row it needed - the flicker itself. The dim wrapper above says the
+                 same thing without discarding what is on screen. */
+              <FulfilmentBoardListView
+                contributions={visibleListContributions}
+                draft={draft}
+                onDecide={decide}
+                onDecideMany={decideMany}
+              />
+            ) : (
+              <>
+                {/* How much of the board is on screen. Only while a filter is on, and stated as
+                    a fraction, so a narrowed board is never mistaken for the whole one. */}
+                {filtering && (
+                  <p className="text-sm text-muted-foreground tabular-nums">
+                    {`${visibleProductRows.length} of ${axis.rows.length} ${ROW_AXIS_NOUNS[rowAxis]}`}
+                  </p>
+                )}
+
+                {visibleProductRows.length === 0 ? (
+                  <Card>
+                    <CardContent className="px-6 py-10 text-center">
+                      <PackageSearch className="mx-auto size-6 text-muted-foreground" aria-hidden />
+                      {/* NOT the "owes nothing" copy: the selection owes plenty, the filter
+                          simply matched none of it. */}
+                      <h3 className="mt-2 text-sm font-semibold">No products match</h3>
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <FulfilmentBoardMatrix
+                    dateBuckets={board.data.dateBuckets}
+                    rows={visibleProductRows}
+                    rowHeader={
+                      ROW_AXIS_OPTIONS.find((option) => option.value === rowAxis)?.label ?? 'Product'
+                    }
+                    cells={visibleCells}
+                    draft={draft}
+                    annotations={changeAnnotations}
+                    onOpenCell={(cell) => setOpenCell(cell)}
+                    onDecideMany={decideMany}
+                    onUndoMany={undoMany}
+                  />
+                )}
+              </>
+            )}
+          </div>
 
           {/* NO COMMIT SECTION (R13). It was one card per sales order carrying a Confirm,
               a "N of M lines decided" counter and a paragraph explaining where Buy rows and
@@ -1269,6 +1449,7 @@ export function FulfilmentBoardPanel({
           draft={draft}
           poolSharePct={board.data?.pool_share_pct}
           onDecide={decide}
+          onDecideMany={decideMany}
           onClose={() => setOpenCell(null)}
         />
       )}

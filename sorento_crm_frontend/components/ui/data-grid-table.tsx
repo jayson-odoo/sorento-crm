@@ -582,17 +582,23 @@ function DataGridTableBodyRow<TData>({
   // A record on its way out stays visible and says so, rather than vanishing
   // before the reader can cancel (S6-07).
   const isPending = props.rowPending?.(row.original) ?? false;
+  // S4: a picker opened from a schedule cell tints the rows whose date fell in the clicked
+  // week, so the click reads as "these rows" once the dialog opens.
+  const extraClassName = props.rowClassName?.(row.original);
+  const extraAttributes = props.rowAttributes?.(row.original) ?? {};
 
   const rowProps: React.ComponentProps<'tr'> = {
     ref: dndRef,
     style: { ...(dndStyle ? dndStyle : null) },
     'data-state': table.options.enableRowSelection && row.getIsSelected() ? 'selected' : undefined,
     'data-pending': isPending ? 'true' : undefined,
+    ...extraAttributes,
     ...(dndAttributes ?? {}),
     ...(dndListeners ?? {}),
     className: cn(
       'hover:bg-muted/40 data-[state=selected]:bg-muted/50',
       isPending && 'opacity-50',
+      extraClassName,
       (href || props.onRowClick) && 'cursor-pointer',
       // The press cue belongs to the rows that take a press. It is not on the
       // skeleton row (nothing to open yet), and not on a stripped grid, where

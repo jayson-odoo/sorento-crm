@@ -3,9 +3,7 @@
 import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
 import {
-  approveLoadingPlan,
   buildContainerRequest,
-  cancelLoadingPlan,
   createLoadingPlanRecord,
   createSpo,
   deleteSpo,
@@ -16,7 +14,6 @@ import {
   getContainerSizes,
   getFulfilmentSuppliers,
   getLoadingPlanList,
-  getPlanNotices,
   getSpoSuggestion,
   getSupplierChatContacts,
   getSupplierNotices,
@@ -29,7 +26,6 @@ import {
   type ContainerRequestSendOptions,
   type LoadingPlanCreate,
   type LoadingPlanListParams,
-  type LoadingPlanRecord,
   type SpoConfirmLine,
 } from '../services/fulfilmentService';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
@@ -137,23 +133,6 @@ export function useCreateLoadingPlan() {
   });
 }
 
-/** Cancel: the plan stops being worked on AND the supplier's live link stops answering (Q4). */
-export function useCancelLoadingPlan() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) => cancelLoadingPlan(id),
-    onSuccess: (plan: LoadingPlanRecord) => {
-      qc.setQueryData([...KEY, 'container-request', plan.id], (prev: unknown) =>
-        prev && typeof prev === 'object' ? { ...(prev as object), plan } : prev,
-      );
-      void qc.invalidateQueries({ queryKey: [...KEY, 'plan-list'] });
-      void qc.invalidateQueries({ queryKey: [...KEY, 'container-request', plan.id] });
-      toast.success('Plan cancelled. The supplier link no longer works.');
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
-}
-
 /**
  * Save the typed quantities (R6). The whole map goes in one PUT, and the build is invalidated
  * rather than patched: `suggested_qty` comes back with the edits already applied, so the grid
@@ -186,30 +165,6 @@ export function useSaveLoadingPlanEdits(planId: string | null) {
   });
 }
 
-/** S8 - the notices produced by approving a plan, and the one action that produces them. */
-export function usePlanNotices(planId: string | null) {
-  return useQuery({
-    queryKey: [...KEY, 'notices', planId],
-    queryFn: () => getPlanNotices(planId as string),
-    enabled: !!planId,
-  });
-}
-
-export function useApproveLoadingPlan() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (planId: string) => approveLoadingPlan(planId),
-    onSuccess: (out, planId) => {
-      qc.invalidateQueries({ queryKey: [...KEY, 'notices', planId] });
-      // Say what actually happened per channel. "Notice sent" when the supplier has no address
-      // on file would be the screen telling the user something untrue.
-      const sent = out.notices.filter((n) => n.status === 'sent').length;
-      if (sent) toast.success(`Notice sent on ${sent === 1 ? '1 channel' : `${sent} channels`}.`);
-      else toast.warning('Notice created. No channel could send it, so send the document by hand.');
-    },
-    onError: (e: Error) => toast.error(e.message),
-  });
-}
 
 /**
  * Stage 1 - the container request (PLAN-scm-loading-plan-demand-first.md). A pure read, so a
@@ -366,6 +321,8 @@ export function useCreateSpo(shipmentId: string | null) {
     mutationFn: (lines: SpoConfirmLine[]) => createSpo(shipmentId as string, lines),
     onSuccess: (out) => {
       void qc.invalidateQueries({ queryKey: [...KEY, 'spo-suggestion', shipmentId] });
+      // A new purchase order exists now - the PO list/detail must see it too.
+      void qc.invalidateQueries({ queryKey: ['scm', 'purchase-orders'] });
       const names = out.created_spos.map((s) => s.po_number).filter(Boolean).join(', ');
       const allocated = out.allocations.length;
       const allocatedMsg = allocated
@@ -381,16 +338,17 @@ export function useCreateSpo(shipmentId: string | null) {
   });
 }
 
-/** Delete action on the already-converted planner row (third amendment) - unwinds the whole
- *  conversion for this shipment. On success, the planner's own suggestion query is
- *  invalidated so it falls back to a normal (non-converted) `suggest` and re-renders the
- *  confirm table. */
+/** Delete action on a row of the Created SPOs grid (R1) - unwinds ONE SPO
+ *  (`purchaseOrderId`) or, absent, every SPO the shipment ever made. On success, the
+ *  planner's own suggestion query is invalidated so it re-reads the remainder, and the PO
+ *  list/detail queries are invalidated since a purchase order just disappeared. */
 export function useDeleteSpo(shipmentId: string | null) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => deleteSpo(shipmentId as string),
+    mutationFn: (purchaseOrderId?: string) => deleteSpo(shipmentId as string, purchaseOrderId),
     onSuccess: (out) => {
       void qc.invalidateQueries({ queryKey: [...KEY, 'spo-suggestion', shipmentId] });
+      void qc.invalidateQueries({ queryKey: ['scm', 'purchase-orders'] });
       const names = out.deleted_po_numbers.join(', ');
       toast.success(
         out.deleted_spo_count === 1

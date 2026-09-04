@@ -60,6 +60,8 @@ function row(over: Partial<ContainerRequestRow> = {}): ContainerRequestRow {
     holding_source: 'stock_list' as const,
     holding_qty: 522,
     holding_as_of: null,
+    holding_blocks: 0,
+    blocks: [],
     qty_packed: 522,
     qty_unfinished: 1411,
     cbm_per_unit: 0.11,

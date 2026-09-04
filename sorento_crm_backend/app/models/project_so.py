@@ -1327,6 +1327,16 @@ class SOSupplyDecisionDraft(Base, CompanyScopedMixin):
     #: line_snapshot;` - the table was hand-created there too, see migration
     #: `461_so_supply_decision_drafts`).
     line_snapshot = Column(JSONB, nullable=True)
+    #: WHAT THE ENGINE SUGGESTED at save time (D12, #573, captain ruling): the board
+    #: contribution's own `sources` the moment this draft was written, in the frontend's
+    #: `BoardSource[]` words - opaque here, the same as `decision` above. NOT the same
+    #: fact `line_snapshot` above carries and NEVER read for staleness (that stays the
+    #: line's own facts, S1): this exists only so `SalesOrderService.serialize`'s
+    #: `supply_proposed` can read a saved-but-unconfirmed line's suggested composition,
+    #: the way an active revision's frozen `proposed_components` already does. NULL on a
+    #: draft saved before this column shipped, or on a save nothing was offered for - see
+    #: migration `463_draft_proposed`.
+    proposed = Column(JSONB, nullable=True)
     saved_by = Column(
         String(100), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )

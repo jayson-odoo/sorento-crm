@@ -36,6 +36,10 @@ pytest>=7.0.0
 # serially (see the job comment in .github/workflows/deploy.yml).
 pytest-xdist>=3.6
 pytest-split>=0.10  # CI shards the backend suite across runners (--splits/--group)
+# Per-test reruns for known-nondeterministic tests (@pytest.mark.flaky). NOT a global
+# --reruns flag - that would mask new flakes. See LESSONS-LEARNT.md / the marked tests
+# for the issue each guards against.
+pytest-rerunfailures>=14.0
 pgvector
 PyMuPDF>=1.24
 opencv-python-headless>=4.9

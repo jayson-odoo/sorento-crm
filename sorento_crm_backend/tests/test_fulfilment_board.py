@@ -192,14 +192,27 @@ def _line(
     return row
 
 
-def _policy(db, factors: dict, class_weights: dict | None = None, *, name: str | None = None,
-            active: bool = True) -> PriorityPolicy:
+def _policy(
+    db, factors: dict, class_weights: dict | None = None, *, name: str | None = None,
+    active: bool = True, overdue_grace_days: int | None = None,
+    overdue_dead_days: int | None = None,
+) -> PriorityPolicy:
     row = PriorityPolicy(
         id=_uid(),
         name=name or f"{MARKER}-policy-{_uid()[:6]}",
         is_active=active,
         factors=factors,
         demand_class_weights=class_weights or {"project": 1.0},
+        # None leaves the column's own SHIPPED default (0 / 0, captain's ruling 3 Sep
+        # 2026) - a caller proving R-O's grace RULE passes both explicitly.
+        **(
+            {"overdue_grace_days": overdue_grace_days}
+            if overdue_grace_days is not None else {}
+        ),
+        **(
+            {"overdue_dead_days": overdue_dead_days}
+            if overdue_dead_days is not None else {}
+        ),
     )
     db.add(row)
     db.flush()
@@ -2872,6 +2885,104 @@ def test_the_drill_down_lists_the_documents_behind_the_totals():
         ]
 
 
+def test_the_drill_down_states_the_assumed_arrival_of_a_late_document():
+    """AC-O.3's Stock tab half (R-O, 3 Sep 2026, #586).
+
+    A document whose arrival has passed is planned against `today + overdue_grace_days`, so
+    the ledger row carries that day BESIDE the one the paperwork states - the panel prints
+    "assumed 17 Sep 2026, stated 24 Jul". A document past `overdue_dead_days` is counted as
+    nothing (R31) and its row says so instead of naming a date nobody can plan on.
+
+    R-O SHIPS at 0 / 0 (captain's ruling, 3 Sep 2026), so this fixture activates the
+    RECOMMENDED 14 / 90 itself - it is proving the grace RULE, not the number production
+    starts at.
+
+    Both fields are asserted BY NAME: `response_model` drops what a schema does not
+    declare, and this is the second time a field on this very row went out silently.
+    """
+    from datetime import timedelta
+
+    today = date.today()
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        _policy(db, {}, overdue_grace_days=14, overdue_dead_days=90)
+        _stock(db, product, warehouse, on_hand=0)
+        _incoming(
+            db, product, warehouse, spo_number="ZZT-SPO-LATE", allocated=100,
+            received=0, arrives=today - timedelta(days=41),
+        )
+        _incoming(
+            db, product, warehouse, spo_number="ZZT-SPO-DEAD", allocated=500,
+            received=0, arrives=today - timedelta(days=241),
+        )
+
+        rows = {
+            row["spo_number"]: row
+            for row in _service(db).stock_detail(str(product.id), str(warehouse.id))[
+                "incoming"
+            ]
+        }
+
+    late = rows["ZZT-SPO-LATE"]
+    assert late["expected_date"] == today - timedelta(days=41), "the paperwork's own date"
+    assert late["assumed_date"] == today + timedelta(days=14), "the day the walk plans on"
+    assert late["counted"] is True
+    assert late["overdue_days"] == 41
+
+    dead = rows["ZZT-SPO-DEAD"]
+    assert dead["assumed_date"] is None, "nothing is assumed about a document counted as nothing"
+    assert dead["counted"] is False
+
+
+def test_an_empty_settings_read_still_uses_the_walks_own_grace_and_dead_defaults():
+    """Review fix round, S4: `_fulfilment_settings()` returns `{}` on its own defensive
+    except (no policy row, or a mid-migration branch). The ledger used to read that with a
+    bare `or 0` rather than `supply_assignment.DEFAULT_OVERDUE_GRACE_DAYS` /
+    `DEFAULT_OVERDUE_DEAD_DAYS` - the same constants the walk itself falls back to
+    (`compute_overdue_event`) - so a document could be "Not counted" on the ledger while the
+    walk itself still counted it as supply. The two disagreeing about the same book is
+    exactly what R-O exists to prevent.
+
+    Read off the SAME constants here rather than a hardcoded pair, so this keeps proving
+    the invariant (ledger and walk fall back to identical numbers) whatever the SHIPPED
+    default happens to be - 0 / 0 as of the captain's 3 Sep 2026 ruling, which makes ANY
+    lateness dead (R31), so the 41-day-late document below reads "not counted" on BOTH
+    sides rather than the 14/90-days "still counts" this test asserted before that ruling.
+    """
+    from datetime import timedelta
+
+    from app.services.scm import supply_assignment
+
+    today = date.today()
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse = _warehouse(db, f"ZZT-{_uid()[:6]}"[:20])
+        _stock(db, product, warehouse, on_hand=0)
+        _incoming(
+            db, product, warehouse, spo_number="ZZT-SPO-LATE", allocated=100,
+            received=0, arrives=today - timedelta(days=41),
+        )
+
+        service = _service(db)
+        service.supply.fulfilment_settings = lambda: {}
+        rows = {
+            row["spo_number"]: row
+            for row in service.stock_detail(str(product.id), str(warehouse.id))["incoming"]
+        }
+
+    late = rows["ZZT-SPO-LATE"]
+    grace = supply_assignment.DEFAULT_OVERDUE_GRACE_DAYS
+    dead = supply_assignment.DEFAULT_OVERDUE_DEAD_DAYS
+    is_dead = 41 > dead
+    assert late["counted"] is (not is_dead), (
+        "the ledger's fallback is the SAME constant the walk itself falls back to"
+    )
+    assert late["assumed_date"] == (
+        None if is_dead else today + timedelta(days=grace)
+    )
+
+
 def test_the_drill_down_total_is_the_same_number_the_cell_printed():
     """The list has to ADD UP to the strip, or the drill-down justifies nothing.
 
@@ -3873,6 +3984,10 @@ def test_a_location_with_no_pool_of_its_own_still_draws_another_active_site_pool
         assert step["answer"] == "yes"
         assert step["took"] == "10"
         assert pool2.warehouse_code in (step["note"] or "")
+        # AC-N.10: the note is a sentence of its own - capitalized and full-stopped -
+        # rather than a lowercase fragment that reads as the `why` sentence above it
+        # running on into "checked ...".
+        assert step["note"] == f"Checked {pool2.warehouse_code}."
         kinds = [(s["kind"], s["qty"], s["location"]) for s in contribution["sources"]]
         assert kinds == [("reserve", "10", pool2.warehouse_code)]
 
@@ -3884,7 +3999,7 @@ def test_the_proof_offers_what_ANOTHER_site_pool_actually_gave():
     across every location in the chain, so on the R-L path - where the first pool is
     oversold and a LATER one answers - it printed "no other active site pool has anything
     to offer" beside a Reserve of 300 it had just made at that very pool. Each pool's own
-    allowance is now walked the way `_draw_other_pools` walks it, bounded by the one net.
+    allowance is now walked the way step 0 itself walks it, bounded by the one net.
     """
     with blank_session() as db:
         product = _product(db, f"ZZT-{_uid()[:6]}")
@@ -3915,6 +4030,57 @@ def test_the_proof_offers_what_ANOTHER_site_pool_actually_gave():
         "the proof offered 0 beside a draw of 300 it had just made at that pool",
         step["why"],
     )
+
+
+def test_a_cell_whose_pool_step_answered_from_two_pools_shows_both_taken_figures():
+    """S2 of `PLAN-scm-pool-chain-first.md` (R-N): the proof agrees with a MULTI-POOL step 0.
+
+    Step 0 walks the whole chain now, so the ordinary answer is two pools at once. Three
+    things have to say the same thing about it: the pool question's `offered`, which reads
+    `pool_share_capacity` over the chain; its `took`; and the Taken column on the cell's own
+    site pool rows, which is where a planner checks WHERE the units come from. A cell that
+    printed one pool's take against a two-pool composition would be the round-2 S5 defect
+    again, one rung further up.
+    """
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        own, own_pool = _pooled_warehouses(db)
+        _far_own, far_pool = _pooled_warehouses(db)
+        # The asking bin's own pool may spare 4 of its 8 (half is kept for dealers) and the
+        # second pool holds plenty, so a line of 8 is 4 + 4 across the two of them.
+        _stock(db, product, own, on_hand=0)
+        _stock(db, product, own_pool, on_hand=8)
+        _stock(db, product, far_pool, on_hand=687)
+
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        _line(db, order, product, qty="8", required_date=date(2026, 9, 3), warehouse=own)
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        cell = _cell(board, product.product_code, "2026-08-31")
+        contribution = cell["contributions"][0]
+        step = _step(contribution, "pool")
+        sources = [(s["kind"], s["qty"], s["location"]) for s in contribution["sources"]]
+        pool_rows = [row for row in cell["locations"] if row["where"] == "site_pool"]
+        listed = {row["location"]: row["available_for_project"] for row in pool_rows}
+        own_code, far_code = own_pool.warehouse_code, far_pool.warehouse_code
+
+    assert sources == [
+        ("reserve", "4", own_code),
+        ("reserve", "4", far_code),
+    ], sources
+    assert step["answer"] == "yes"
+    # `offered` is internal since the trail was cut back to a sentence and an answer; what
+    # a reader can check is that the question TOOK the whole 8 and that its sentence names
+    # both pools it took them from. A chain capped by the first pool's allowance would have
+    # answered 4 here, which is the round-2 S5 defect one rung further up.
+    assert step["took"] == "8"
+    # BOTH pools are rows of the cell's own table, each stating the allowance the walk
+    # obeyed - which is what the Stock tab's Taken column is checked against (the column
+    # itself is summed on the client off these very components, `takenByLocation`).
+    assert listed[own_code] == "4", listed
+    assert Decimal(listed[far_code]) >= Decimal("4"), listed
+    assert own_code in step["why"] and far_code in step["why"], step["why"]
 
 
 def test_a_dealer_hot_selling_line_still_reads_the_pools_own_later_order_in_the_proof():

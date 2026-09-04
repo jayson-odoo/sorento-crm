@@ -58,7 +58,7 @@ def _world(db) -> World:
 
 def _built(db, lines: list[dict], *, monkeypatch, sheet: bytes | None = None):
     monkeypatch.setattr(
-        model, "_retained_stock_list", lambda _db, _sid: sheet if sheet else _their_sheet()
+        model, "_retained_stock_list", lambda _db, _sid, **_kw: sheet if sheet else _their_sheet()
     )
     return model.build(db, supplier_id=str(uuid.uuid4()), lines=lines)
 
@@ -157,7 +157,7 @@ def test_the_ask_lands_on_their_row_through_the_snapshot_binding(monkeypatch):
             )
         )
         db.flush()
-        monkeypatch.setattr(model, "_retained_stock_list", lambda _db, _sid: _their_sheet())
+        monkeypatch.setattr(model, "_retained_stock_list", lambda _db, _sid, **_kw: _their_sheet())
 
         sheet = model.build(
             db,
@@ -226,7 +226,7 @@ def test_without_a_retained_file_the_columns_are_the_same_eleven(monkeypatch):
     # us must not get a different document because of a file WE failed to keep.
     with pg_session() as db:
         w = _world(db)
-        monkeypatch.setattr(model, "_retained_stock_list", lambda _db, _sid: None)
+        monkeypatch.setattr(model, "_retained_stock_list", lambda _db, _sid, **_kw: None)
 
         sheet = model.build(
             db,
@@ -250,7 +250,7 @@ def test_without_a_retained_file_the_row_states_what_we_know(monkeypatch):
         product.company_id = "00000000-0000-0000-0000-000000000001"  # SRT
         w.stock("A", packed=120, unfinished=340, cbm=0.21)
         db.flush()
-        monkeypatch.setattr(model, "_retained_stock_list", lambda _db, _sid: None)
+        monkeypatch.setattr(model, "_retained_stock_list", lambda _db, _sid, **_kw: None)
 
         sheet = model.build(
             db,
@@ -274,7 +274,7 @@ def test_without_a_retained_file_a_zero_holding_is_still_red(monkeypatch):
     with pg_session() as db:
         w = _world(db)
         w.stock("A", packed=0, unfinished=12)
-        monkeypatch.setattr(model, "_retained_stock_list", lambda _db, _sid: None)
+        monkeypatch.setattr(model, "_retained_stock_list", lambda _db, _sid, **_kw: None)
 
         sheet = model.build(
             db,
@@ -290,7 +290,7 @@ def test_a_stored_file_that_will_not_open_falls_back_rather_than_failing(monkeyp
     # A send must never die because a stored file is corrupt: the ask is the point.
     with pg_session() as db:
         w = _world(db)
-        monkeypatch.setattr(model, "_retained_stock_list", lambda _db, _sid: b"not a workbook")
+        monkeypatch.setattr(model, "_retained_stock_list", lambda _db, _sid, **_kw: b"not a workbook")
 
         sheet = model.build(
             db,

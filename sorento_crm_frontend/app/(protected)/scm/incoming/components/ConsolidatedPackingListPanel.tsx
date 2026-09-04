@@ -138,13 +138,19 @@ function FactorySection({ factory }: { factory: PackingListFactory }) {
         meta: { headerTitle: 'Model' },
       },
       {
-        accessorKey: 'product_name',
+        accessorKey: 'description',
         header: ({ column }) => <DataGridColumnHeader title="Description" column={column} />,
-        cell: ({ row }) => (
-          <span className="block truncate" title={row.original.product_name ?? undefined}>
-            {row.original.product_name ?? EM_DASH}
-          </span>
-        ),
+        cell: ({ row }) => {
+          // The supplier's own wording (S9), the product's name when the line has none -
+          // `build()` already resolves that fallback server-side, so this is only for a
+          // payload built before the field existed at all.
+          const value = row.original.description ?? row.original.product_name;
+          return (
+            <span className="block truncate" title={value ?? undefined}>
+              {value ?? EM_DASH}
+            </span>
+          );
+        },
         size: 260,
         meta: { headerTitle: 'Description' },
       },

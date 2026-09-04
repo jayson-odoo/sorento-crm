@@ -52,6 +52,10 @@ function todayIso(): string {
  * The cross-group borrow caps that used to sit here are gone with R5: any ownership group may
  * donate now, so there is nothing left for a cap to cap.
  *
+ * `overdue_grace_days` / `overdue_dead_days` (R-O, 3 Sep ruling) are the other pair on that
+ * row: a document whose arrival has passed with nothing received is planned against
+ * `today + grace`, and one later than the dead line counts as nothing at all.
+ *
  * `immediate_window_days` / `pool_share_pct` (fulfilment feedback batch, S1, 2 Sep ruling
  * R-B) tune the site pool's share step: a line due within the window may take up to
  * `pool_share_pct`'s complement of the pool's free pile now, bounded by the five-pool net;
@@ -73,6 +77,8 @@ export function FulfilmentPriorityPanel() {
   const [transferDays, setTransferDays] = useState('0');
   const [immediateWindowDays, setImmediateWindowDays] = useState('30');
   const [poolSharePct, setPoolSharePct] = useState('50');
+  const [overdueGraceDays, setOverdueGraceDays] = useState('0');
+  const [overdueDeadDays, setOverdueDeadDays] = useState('0');
   const [formError, setFormError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -107,6 +113,11 @@ export function FulfilmentPriorityPanel() {
     // activate" contract every other field on this row already has (AC-1.1).
     setImmediateWindowDays(String(data.immediate_window_days ?? 30));
     setPoolSharePct(String(data.pool_share_pct ?? 50));
+    // R-O's pair, same contract: a GET from a database that predates migration 464 omits
+    // both keys, so the panel seeds the column's own SHIPPED default (0 / 0 - captain's
+    // ruling, 3 Sep 2026) itself.
+    setOverdueGraceDays(String(data.overdue_grace_days ?? 0));
+    setOverdueDeadDays(String(data.overdue_dead_days ?? 0));
   }, [data]);
 
   const onSave = async () => {
@@ -191,6 +202,28 @@ export function FulfilmentPriorityPanel() {
       return;
     }
 
+    // R-O (3 Sep ruling): 0 is valid for both (no grace at all, and every late document
+    // dead on the day), and out-of-range is refused with the backend's own 0-365 bound.
+    const parsedOverdueGraceDays = Number(overdueGraceDays);
+    if (
+      !Number.isFinite(parsedOverdueGraceDays) ||
+      parsedOverdueGraceDays < 0 ||
+      parsedOverdueGraceDays > 365
+    ) {
+      setFormError('Overdue grace (days) must be between 0 and 365.');
+      return;
+    }
+
+    const parsedOverdueDeadDays = Number(overdueDeadDays);
+    if (
+      !Number.isFinite(parsedOverdueDeadDays) ||
+      parsedOverdueDeadDays < 0 ||
+      parsedOverdueDeadDays > 365
+    ) {
+      setFormError('Overdue dead after (days) must be between 0 and 365.');
+      return;
+    }
+
     setFormError(null);
     try {
       await save.mutateAsync({
@@ -201,6 +234,8 @@ export function FulfilmentPriorityPanel() {
         transfer_days: Math.trunc(parsedTransferDays),
         immediate_window_days: Math.trunc(parsedImmediateWindowDays),
         pool_share_pct: Math.trunc(parsedPoolSharePct),
+        overdue_grace_days: Math.trunc(parsedOverdueGraceDays),
+        overdue_dead_days: Math.trunc(parsedOverdueDeadDays),
       });
     } catch {
       // Already toasted by the mutation's own onError; this only stops the rejection
@@ -444,6 +479,52 @@ export function FulfilmentPriorityPanel() {
                   <p className="mt-1 text-2xs text-muted-foreground">
                     Kept back from the site pool for dealers; a project line
                     may take up to the rest.
+                  </p>
+                </div>
+                <div>
+                  <Label
+                    htmlFor="fulfilment-overdue-grace-days"
+                    className="mb-1 block"
+                  >
+                    Overdue grace (days)
+                  </Label>
+                  <Input
+                    id="fulfilment-overdue-grace-days"
+                    type="number"
+                    min={0}
+                    max={365}
+                    step={1}
+                    inputMode="numeric"
+                    value={overdueGraceDays}
+                    onChange={(e) => setOverdueGraceDays(e.target.value)}
+                    className="w-full"
+                  />
+                  <p className="mt-1 text-2xs text-muted-foreground">
+                    A document whose arrival has passed is planned against this
+                    many days from today.
+                  </p>
+                </div>
+                <div>
+                  <Label
+                    htmlFor="fulfilment-overdue-dead-days"
+                    className="mb-1 block"
+                  >
+                    Overdue dead after (days)
+                  </Label>
+                  <Input
+                    id="fulfilment-overdue-dead-days"
+                    type="number"
+                    min={0}
+                    max={365}
+                    step={1}
+                    inputMode="numeric"
+                    value={overdueDeadDays}
+                    onChange={(e) => setOverdueDeadDays(e.target.value)}
+                    className="w-full"
+                  />
+                  <p className="mt-1 text-2xs text-muted-foreground">
+                    Past this much lateness a document counts as nothing at
+                    all.
                   </p>
                 </div>
               </div>

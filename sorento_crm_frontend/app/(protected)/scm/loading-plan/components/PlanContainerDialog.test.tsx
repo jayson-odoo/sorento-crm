@@ -3,9 +3,11 @@
  *
  * ONE dialog, not two: the dropzone and the existing two-step Test / Confirm run INSIDE it,
  * so what is asserted here is that nothing acts without a supplier, that choosing a document
- * reveals the dropzone in place (and "No file" hides it), and that Confirm does the three
- * things in the order the record depends on - apply the file, find the sheet it was retained
- * as, create the plan and open it.
+ * reveals the dropzone in place (and "No file" hides it), and that Confirm does its three
+ * things in the order the record depends on - create the PLAN, apply the file INTO it, open
+ * it (S6, AC-F2). The order is the feature: the rows the apply writes are stamped with the
+ * plan, which is the whole of "a plan owns its statement". A refused apply takes the plan
+ * back with it, so no empty record is left behind.
  *
  * The reads themselves belong to the upload channels' own suites; they are stubbed here.
  */
@@ -50,8 +52,8 @@ const getFulfilmentSuppliers = vi.fn(
 const applyStockList = vi.fn();
 const previewStockList = vi.fn();
 const testStockList = vi.fn();
-const getSupplierStockListFile = vi.fn();
 const createLoadingPlanRecord = vi.fn();
+const deleteLoadingPlan = vi.fn();
 
 vi.mock('../../services/fulfilmentService', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../services/fulfilmentService')>();
@@ -61,8 +63,8 @@ vi.mock('../../services/fulfilmentService', async (importOriginal) => {
     applyStockList: (...a: unknown[]) => applyStockList(...a),
     previewStockList: (...a: unknown[]) => previewStockList(...a),
     testStockList: (...a: unknown[]) => testStockList(...a),
-    getSupplierStockListFile: (...a: unknown[]) => getSupplierStockListFile(...a),
     createLoadingPlanRecord: (...a: unknown[]) => createLoadingPlanRecord(...a),
+    deleteLoadingPlan: (...a: unknown[]) => deleteLoadingPlan(...a),
   };
 });
 
@@ -70,6 +72,8 @@ vi.mock('../../services/fulfilmentService', async (importOriginal) => {
 vi.mock('../../reorder/services/outstandingImportService', () => ({
   getOutstandingUploadConfig: async () => ({ allowed_extensions: ['.xlsx'] }),
 }));
+
+import { toast } from 'sonner';
 
 import { PlanContainerDialog } from './PlanContainerDialog';
 
@@ -98,8 +102,8 @@ describe('PlanContainerDialog', () => {
     applyStockList.mockResolvedValue({ rows_written: 3, rows_replaced: 0 });
     previewStockList.mockResolvedValue({ ok: true, readable: true, summary: {} });
     testStockList.mockResolvedValue({ valid: true, errors: [], warnings: [] });
-    getSupplierStockListFile.mockResolvedValue({ attachment_id: 'att-9', filename: 's.xlsx' });
     createLoadingPlanRecord.mockResolvedValue({ id: 'plan-9' });
+    deleteLoadingPlan.mockResolvedValue(undefined);
   });
 
   it('asks for the supplier, the sales order cut-off and the document, and nothing else', async () => {
@@ -172,7 +176,7 @@ describe('PlanContainerDialog', () => {
     );
   });
 
-  it('applies the stock list FIRST, then names the sheet the plan was started from', async () => {
+  it('creates the plan FIRST, then applies the file INTO it (AC-F2)', async () => {
     renderDialog();
     await chooseSupplier();
     const file = new File(['x'], 'stock.xlsx', {
@@ -183,20 +187,45 @@ describe('PlanContainerDialog', () => {
 
     fireEvent.click(await screen.findByTestId('plan-container-confirm'));
 
-    await waitFor(() => expect(applyStockList).toHaveBeenCalled());
     await waitFor(() =>
       expect(createLoadingPlanRecord).toHaveBeenCalledWith({
         supplier_id: 'sup-1',
         plan_horizon_date: null,
         document_kind: 'stock_list',
-        source_attachment_id: 'att-9',
+        // The server points the plan at the sheet while it retains it, so the dialog has
+        // nothing to look up between the two calls.
+        source_attachment_id: null,
       }),
+    );
+    // The apply carries the plan it belongs to, which is what stamps the rows.
+    await waitFor(() =>
+      expect(applyStockList).toHaveBeenCalledWith(file, 'sup-1', 'plan-9'),
     );
     await waitFor(() => expect(push).toHaveBeenCalledWith('/scm/loading-plan/plan-9'));
   });
 
-  it('a plan is still started when the retained sheet cannot be found', async () => {
-    getSupplierStockListFile.mockRejectedValue(new Error('gone'));
+  it('a refused file takes its just-created plan with it (AC-F2)', async () => {
+    applyStockList.mockRejectedValue(new Error('This file has no model number column.'));
+    renderDialog();
+    await chooseSupplier();
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [new File(['x'], 'stock.xlsx')] } });
+
+    fireEvent.click(await screen.findByTestId('plan-container-confirm'));
+
+    await waitFor(() => expect(deleteLoadingPlan).toHaveBeenCalledWith('plan-9'));
+    expect(
+      await screen.findByText('This file has no model number column.'),
+    ).toBeInTheDocument();
+    // Nobody is taken to a plan that holds nothing.
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it('names the plan it could not take back, so the operator can (SF-1)', async () => {
+    // The rollback was `.catch(() => undefined)`: a plan that could not be deleted stayed
+    // on the list holding nothing, and nobody was told which one it was.
+    applyStockList.mockRejectedValue(new Error('This file has no model number column.'));
+    deleteLoadingPlan.mockRejectedValue(new Error('The plan could not be deleted.'));
     renderDialog();
     await chooseSupplier();
     const input = document.querySelector('input[type="file"]') as HTMLInputElement;
@@ -205,9 +234,15 @@ describe('PlanContainerDialog', () => {
     fireEvent.click(await screen.findByTestId('plan-container-confirm'));
 
     await waitFor(() =>
-      expect(createLoadingPlanRecord).toHaveBeenCalledWith(
-        expect.objectContaining({ source_attachment_id: null }),
+      expect(toast.error).toHaveBeenCalledWith(
+        expect.stringContaining('Foshan Ceramics'),
       ),
     );
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('Delete it'));
+    // The file's own refusal still reaches the dialog.
+    expect(
+      await screen.findByText('This file has no model number column.'),
+    ).toBeInTheDocument();
+    expect(push).not.toHaveBeenCalled();
   });
 });

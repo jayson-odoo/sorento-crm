@@ -28,6 +28,7 @@ import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { buildDetailSearch } from '@/lib/listNavQuery';
+import { spoDetailHref } from '@/lib/spo-detail';
 import { pendingEntityKey, usePendingEntityKeys } from '@/lib/pending-entity-store';
 import { useDeferredBulkAction } from '@/hooks/useDeferredBulkAction';
 import { useImportJobDrawer } from '@/components/upload-activity';
@@ -145,10 +146,8 @@ export default function SPOAllocationsList() {
     [pagination.pageIndex, pagination.pageSize, sorting, searchQuery, stateFilter, productFilter, warehouseFilter],
   );
 
-  // Slash-encoded (Q7): an SPO number can carry a literal `/` (e.g. `SPO-2026/08-0061`),
-  // which a Next.js `[spoNumber]` segment must receive as ONE encoded path piece.
   const detailHref = (row: SPODocumentRow) =>
-    `/procurement-management/spo-allocations/${encodeURIComponent(row.spo_number)}${detailSearch ? `?${detailSearch}` : ''}`;
+    `${spoDetailHref(row.spo_number)}${detailSearch ? `?${detailSearch}` : ''}`;
 
   const columns = useMemo<ColumnDef<SPODocumentRow>[]>(
     () => [

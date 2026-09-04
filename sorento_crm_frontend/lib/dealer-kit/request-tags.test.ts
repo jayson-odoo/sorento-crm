@@ -20,10 +20,13 @@ import type {
 import { IMPOSITION_PRESETS, defaultTextProps } from './tag-template-types';
 import { PRODUCT_BLOCK_SIZE, SET_BLOCK_SIZE } from './product-block';
 import {
+  applyDesignToAllLines,
   autoArrange,
   copiesOf,
   defaultTemplateFor,
+  impositionFit,
   impositionSlots,
+  normaliseImpositionPreset,
   pinKeyForPlacement,
   pinnedFromDoc,
   placementKey,
@@ -34,6 +37,7 @@ import {
   tagForLine,
   tagSizeBounds,
   tagSizePresets,
+  templateFromTag,
 } from './request-tags';
 
 // ---------------------------------------------------------------------------
@@ -117,8 +121,15 @@ function setLine(id: string, quantity = 1) {
   };
 }
 
-const A4_3UP: ImpositionConfig = { preset: 'a4_3up', ...IMPOSITION_PRESETS.a4_3up };
-const A4_2X2: ImpositionConfig = { preset: 'a4_2x2', ...IMPOSITION_PRESETS.a4_2x2 };
+// A4, 3mm bleed, 2mm gap - the everyday page geometry most of this file's
+// fixtures arrange onto. Named PAGE_A4 rather than after a preset because S6
+// removed the presets: every `ImpositionConfig` now lays out the same way,
+// auto-fit off the tag's own size (see `impositionSlots`/`impositionFit`
+// below).
+const PAGE_A4: ImpositionConfig = { preset: 'auto', ...IMPOSITION_PRESETS.auto };
+// Same page, a much wider gap - genuinely different geometry, for the test
+// that reopens a saved sheet under a changed page.
+const PAGE_A4_WIDE_GAP: ImpositionConfig = { ...PAGE_A4, gap_mm: 10 };
 
 let layerSeq = 0;
 const newId = () => `layer-${(layerSeq += 1)}`;
@@ -356,29 +367,110 @@ describe('tagForLine', () => {
 });
 
 // ---------------------------------------------------------------------------
+// impositionFit (S6, D8): the golden set behind the "C x R = N per sheet"
+// read-out replacing the fixed presets.
+// ---------------------------------------------------------------------------
+
+describe('impositionFit', () => {
+  it('95 x 44.5 mm tags on A4 (3mm bleed, 2mm gap) fit 2 x 6 = 12 per sheet (AC-S6-2)', () => {
+    expect(impositionFit(210, 297, 3, 2, 95, 44.5)).toEqual({ cols: 2, rows: 6, perSheet: 12 });
+  });
+
+  it('a tag that exactly fills the usable area fits exactly one', () => {
+    expect(impositionFit(100, 100, 0, 0, 100, 100)).toEqual({ cols: 1, rows: 1, perSheet: 1 });
+  });
+
+  it('a tag wider than the usable area fits none (AC-S6-3)', () => {
+    expect(impositionFit(50, 297, 3, 2, 95, 44.5)).toEqual({ cols: 0, rows: 6, perSheet: 0 });
+  });
+
+  it('a zero tag size + zero gap divides by zero (Infinity) - treated as 0, not an unbounded grid (S2)', () => {
+    expect(impositionFit(210, 297, 3, 0, 0, 0)).toEqual({ cols: 0, rows: 0, perSheet: 0 });
+  });
+
+  it('a NaN input (empty/invalid field) never reaches the grid as NaN (S2)', () => {
+    expect(impositionFit(NaN, 297, 3, 2, 95, 44.5)).toEqual({ cols: 0, rows: 6, perSheet: 0 });
+  });
+
+  it('clamps an absurd page/tag ratio to a ceiling per axis rather than materialising 10^5+ slots (S2)', () => {
+    const fit = impositionFit(10000, 10000, 0, 0, 10, 10);
+    expect(fit.cols).toBeLessThanOrEqual(200);
+    expect(fit.rows).toBeLessThanOrEqual(200);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // impositionSlots
 // ---------------------------------------------------------------------------
 
 describe('impositionSlots', () => {
-  it('a4_3up is one column of three, centred', () => {
-    const slots = impositionSlots(A4_3UP, 60, 40);
-    expect(slots).toHaveLength(3);
-    expect(slots.every((s) => s.x_mm === slots[0].x_mm)).toBe(true);
-    expect(slots[1].y_mm - slots[0].y_mm).toBe(40 + A4_3UP.gap_mm);
+  it('fills a grid sized by impositionFit, centred in the bleed box, row-major', () => {
+    const slots = impositionSlots(PAGE_A4, 60, 40);
+    const { cols, rows, perSheet } = impositionFit(210, 297, 3, 2, 60, 40);
+    expect(slots).toHaveLength(perSheet);
+    expect(rows).toBeGreaterThan(1);
+    // Row-major: the first `cols` slots share one y; column and row spacing
+    // are the tag size plus the gap.
+    expect(slots.slice(0, cols).every((s) => s.y_mm === slots[0].y_mm)).toBe(true);
+    expect(slots[1].x_mm - slots[0].x_mm).toBe(60 + PAGE_A4.gap_mm);
+    expect(slots[cols].y_mm - slots[0].y_mm).toBe(40 + PAGE_A4.gap_mm);
     // Centred horizontally inside the bleed box.
-    expect(slots[0].x_mm).toBeCloseTo(3 + (204 - 60) / 2, 6);
+    const totalW = cols * 60 + (cols - 1) * PAGE_A4.gap_mm;
+    expect(slots[0].x_mm).toBeCloseTo(3 + (204 - totalW) / 2, 6);
   });
 
-  it('a4_2x2 is two columns of two', () => {
-    const slots = impositionSlots(A4_2X2, 60, 40);
-    expect(slots).toHaveLength(4);
-    expect(slots[1].x_mm - slots[0].x_mm).toBe(60 + A4_2X2.gap_mm);
-    expect(slots[2].y_mm - slots[0].y_mm).toBe(40 + A4_2X2.gap_mm);
+  it('falls back to a single centred slot when the tag does not fit the page at all, so a copy still has somewhere to go', () => {
+    // impositionFit is what tells the designer "0 per sheet" (AC-S6-3); this
+    // function still has to seat a copy SOMEWHERE, or autoArrange places
+    // nothing and a saved line's design vanishes on the next reload.
+    const tiny: ImpositionConfig = { ...PAGE_A4, page_width_mm: 50 };
+    expect(impositionFit(50, 297, 3, 2, 95, 44.5).perSheet).toBe(0);
+    const slots = impositionSlots(tiny, 95, 44.5);
+    expect(slots).toHaveLength(1);
+    expect(slots[0]).toEqual({ x_mm: 3 + (44 - 95) / 2, y_mm: 3 + (291 - 44.5) / 2 });
   });
 
-  it('custom is a single centred slot', () => {
-    const custom: ImpositionConfig = { preset: 'custom', ...IMPOSITION_PRESETS.custom };
-    expect(impositionSlots(custom, 60, 40)).toHaveLength(1);
+  it('a NaN fit still falls back to a single centred slot, never an empty grid (S2)', () => {
+    // A NaN cols/rows used to slip past the `perSheet === 0` check (NaN !==
+    // 0) while the row/col loops still never ran (any comparison against NaN
+    // is false), leaving `slots` empty and `autoArrange` crashing on
+    // `slots[0]`.
+    const nanPage: ImpositionConfig = { ...PAGE_A4, page_width_mm: NaN };
+    const slots = impositionSlots(nanPage, 95, 44.5);
+    expect(slots).toHaveLength(1);
+  });
+
+  it('the preset value no longer changes the layout - an old a4_3up/a4_2x2 doc lays out identically (AC-S6-4)', () => {
+    const auto = impositionSlots({ ...PAGE_A4, preset: 'auto' }, 60, 40);
+    expect(impositionSlots({ ...PAGE_A4, preset: 'a4_3up' }, 60, 40)).toEqual(auto);
+    expect(impositionSlots({ ...PAGE_A4, preset: 'a4_2x2' }, 60, 40)).toEqual(auto);
+    expect(impositionSlots({ ...PAGE_A4, preset: 'custom' }, 60, 40)).toEqual(auto);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// normaliseImpositionPreset - old presets migrate to 'auto' on load (S3, AC-S6-4)
+// ---------------------------------------------------------------------------
+
+describe('normaliseImpositionPreset', () => {
+  it.each(['a4_3up', 'a4_2x2'] as const)('migrates a pre-S6 %s preset to auto', (preset) => {
+    const result = normaliseImpositionPreset({ ...PAGE_A4, preset });
+    expect(result.preset).toBe('auto');
+  });
+
+  it('leaves auto alone', () => {
+    const doc = { ...PAGE_A4, preset: 'auto' as const };
+    expect(normaliseImpositionPreset(doc)).toEqual(doc);
+  });
+
+  it('leaves custom alone - a field edit already wrote it deliberately', () => {
+    const doc = { ...PAGE_A4, preset: 'custom' as const };
+    expect(normaliseImpositionPreset(doc)).toEqual(doc);
+  });
+
+  it('keeps every other field unchanged', () => {
+    const doc = { ...PAGE_A4, preset: 'a4_3up' as const, gap_mm: 7 };
+    expect(normaliseImpositionPreset(doc)).toMatchObject({ gap_mm: 7 });
   });
 });
 
@@ -415,12 +507,23 @@ describe('copiesOf', () => {
 
 describe('autoArrange', () => {
   it('lays quantity copies out in line order across as many sheets as it needs', () => {
+    // A page that fits exactly 3 of the fixture's 60x40 tag (1 col x 3 rows),
+    // so 5 copies genuinely need a second sheet.
+    const narrowPage: ImpositionConfig = {
+      preset: 'auto',
+      page_width_mm: 70,
+      page_height_mm: 136,
+      bleed_mm: 3,
+      gap_mm: 2,
+    };
+    expect(impositionFit(70, 136, 3, 2, 60, 40).perSheet).toBe(3);
+
     const sheets = autoArrange(
       [
         { tag: placed('a', 'l1'), quantity: 2 },
         { tag: placed('b', 'l2'), quantity: 3 },
       ],
-      A4_3UP,
+      narrowPage,
     );
 
     expect(sheets).toHaveLength(2);
@@ -430,10 +533,10 @@ describe('autoArrange', () => {
   });
 
   it('puts each copy on its slot, so nothing overlaps', () => {
-    const slots = impositionSlots(A4_3UP, 60, 40);
-    const sheets = autoArrange([{ tag: placed('a', 'l1'), quantity: 3 }], A4_3UP);
+    const slots = impositionSlots(PAGE_A4, 60, 40);
+    const sheets = autoArrange([{ tag: placed('a', 'l1'), quantity: 3 }], PAGE_A4);
     expect(sheets[0].tags.map((t) => ({ x: t.x_mm, y: t.y_mm }))).toEqual(
-      slots.map((s) => ({ x: s.x_mm, y: s.y_mm })),
+      slots.slice(0, 3).map((s) => ({ x: s.x_mm, y: s.y_mm })),
     );
   });
 
@@ -442,7 +545,7 @@ describe('autoArrange', () => {
       { tag: placed('a', 'l1'), quantity: 2 },
       { tag: placed('b', 'l2'), quantity: 2 },
     ];
-    expect(autoArrange(items, A4_3UP)).toEqual(autoArrange(items, A4_3UP));
+    expect(autoArrange(items, PAGE_A4)).toEqual(autoArrange(items, PAGE_A4));
   });
 
   it('sizes the slot grid off the largest tag, so a big tag still fits its slot', () => {
@@ -452,15 +555,15 @@ describe('autoArrange', () => {
         { tag: placed('a', 'l1'), quantity: 1 },
         { tag: big, quantity: 1 },
       ],
-      A4_3UP,
+      PAGE_A4,
     );
-    const slots = impositionSlots(A4_3UP, 100, 70);
+    const slots = impositionSlots(PAGE_A4, 100, 70);
     expect(sheets[0].tags[0].x_mm).toBe(slots[0].x_mm);
     expect(sheets[0].tags[1].y_mm).toBe(slots[1].y_mm);
   });
 
   it('every copy carries the tag layers, its template and its line', () => {
-    const sheets = autoArrange([{ tag: placed('a', 'l1', 't-wc'), quantity: 2 }], A4_3UP);
+    const sheets = autoArrange([{ tag: placed('a', 'l1', 't-wc'), quantity: 2 }], PAGE_A4);
     for (const tag of sheets[0].tags) {
       expect(tag.template_id).toBe('t-wc');
       expect(tag.request_line_id).toBe('l1');
@@ -475,11 +578,11 @@ describe('autoArrange', () => {
         { tag: placed('a', 'l1'), quantity: 2 },
         { tag: placed('b', 'l2'), quantity: 1 },
       ],
-      A4_3UP,
+      PAGE_A4,
       pinned,
     );
 
-    const slots = impositionSlots(A4_3UP, 60, 40);
+    const slots = impositionSlots(PAGE_A4, 60, 40);
     expect(sheets).toHaveLength(2);
     expect(sheets[0].tags.map((t) => t.id)).toEqual(['a-c0', 'b-c0']);
     // The pinned copy takes no slot, so the one behind it moves up into slot 2.
@@ -489,8 +592,24 @@ describe('autoArrange', () => {
   });
 
   it('answers one empty sheet when the request has nothing to place', () => {
-    const sheets = autoArrange([], A4_3UP);
+    const sheets = autoArrange([], PAGE_A4);
     expect(sheets).toEqual([{ id: 'sheet-1', tags: [] }]);
+  });
+
+  it('still places every line when the page is too small for the tag, so no design is lost on reload', () => {
+    // A page smaller than the tag - impositionFit reads 0 per sheet, but
+    // every copy still has to land SOMEWHERE: `tagsFromDoc` reads a line's
+    // design off `sheets`, so an empty sheet here would make every line look
+    // never-designed the next time this request is opened.
+    const tiny: ImpositionConfig = { ...PAGE_A4, page_width_mm: 50 };
+    const sheets = autoArrange(
+      [
+        { tag: placed('a', 'l1'), quantity: 1 },
+        { tag: placed('b', 'l2'), quantity: 1 },
+      ],
+      tiny,
+    );
+    expect(sheets.flatMap((s) => s.tags).map((t) => t.request_line_id)).toEqual(['l1', 'l2']);
   });
 });
 
@@ -526,7 +645,7 @@ describe('pinnedFromDoc', () => {
   it('reads only the copies somebody actually dragged', () => {
     const pinned = pinnedFromDoc({
       kind: 'tag_sheet',
-      imposition: A4_3UP,
+      imposition: PAGE_A4,
       sheets: [
         { id: 'sheet-1', tags: [{ ...placed('a-c0', 'l1'), x_mm: 5, y_mm: 6 }] },
         {
@@ -547,7 +666,7 @@ describe('pinnedFromDoc', () => {
     // is the answer that leaves the sheet correct rather than frozen.
     const pinned = pinnedFromDoc({
       kind: 'tag_sheet',
-      imposition: A4_3UP,
+      imposition: PAGE_A4,
       sheets: [{ id: 's-old', tags: [{ ...placed('t-1756-3', 'l9'), x_mm: 1, y_mm: 2 }] }],
     });
     expect(pinned).toEqual({});
@@ -569,7 +688,7 @@ describe('a saved sheet reopens still arrangeable', () => {
   ];
 
   it('an auto-placed copy is not marked as dragged', () => {
-    const sheets = autoArrange(items, A4_3UP);
+    const sheets = autoArrange(items, PAGE_A4);
     for (const sheet of sheets) {
       for (const tag of sheet.tags) expect(tag.pinned).not.toBe(true);
     }
@@ -577,7 +696,7 @@ describe('a saved sheet reopens still arrangeable', () => {
 
   it('a dragged copy is marked, and only that one comes back as a pin', () => {
     const pinned = { [placementKey('l1', 1)]: { sheet: 1, x_mm: 12.5, y_mm: 33 } };
-    const saved = { kind: 'tag_sheet' as const, imposition: A4_3UP, sheets: autoArrange(items, A4_3UP, pinned) };
+    const saved = { kind: 'tag_sheet' as const, imposition: PAGE_A4, sheets: autoArrange(items, PAGE_A4, pinned) };
 
     const dragged = saved.sheets[1].tags[0];
     expect(dragged.id).toBe('a-c1');
@@ -585,26 +704,26 @@ describe('a saved sheet reopens still arrangeable', () => {
     expect(pinnedFromDoc(saved)).toEqual(pinned);
   });
 
-  it('switching the preset re-imposes everything that was not dragged', () => {
-    const saved = { kind: 'tag_sheet' as const, imposition: A4_3UP, sheets: autoArrange(items, A4_3UP) };
+  it('reopening under a different page geometry re-imposes everything that was not dragged', () => {
+    const saved = { kind: 'tag_sheet' as const, imposition: PAGE_A4, sheets: autoArrange(items, PAGE_A4) };
 
-    const reopened = autoArrange(items, A4_2X2, pinnedFromDoc(saved));
+    const reopened = autoArrange(items, PAGE_A4_WIDE_GAP, pinnedFromDoc(saved));
 
-    const slots = impositionSlots(A4_2X2, 60, 40);
+    const slots = impositionSlots(PAGE_A4_WIDE_GAP, 60, 40);
     expect(reopened[0].tags.map((t) => ({ x: t.x_mm, y: t.y_mm }))).toEqual(
       slots.slice(0, 3).map((s) => ({ x: s.x_mm, y: s.y_mm })),
     );
   });
 
   it('a quantity bump lands in the next free slot, not on top of copy 0', () => {
-    const saved = { kind: 'tag_sheet' as const, imposition: A4_3UP, sheets: autoArrange(items, A4_3UP) };
+    const saved = { kind: 'tag_sheet' as const, imposition: PAGE_A4, sheets: autoArrange(items, PAGE_A4) };
 
     const bumped = autoArrange(
       [
         { tag: placed('a', 'l1'), quantity: 3 },
         { tag: placed('b', 'l2'), quantity: 1 },
       ],
-      A4_3UP,
+      PAGE_A4,
       pinnedFromDoc(saved),
     );
 
@@ -675,7 +794,7 @@ describe('autoArrange with resized tags (AC-S9-3)', () => {
     ];
 
     const dragged = { [placementKey('l2', 0)]: { sheet: 0, x_mm: 12, y_mm: 34 } };
-    const sheets = autoArrange(items, A4_3UP, dragged);
+    const sheets = autoArrange(items, PAGE_A4, dragged);
 
     const line2Tag = sheets[0].tags.find((t) => t.request_line_id === 'l2');
     expect(line2Tag).toMatchObject({ x_mm: 12, y_mm: 34, width_mm: 95, height_mm: 44.5 });
@@ -694,8 +813,8 @@ describe('autoArrange with resized tags (AC-S9-3)', () => {
 
 describe('tagSizeBounds', () => {
   it('is the usable page area after bleed, on both axes', () => {
-    // A4_3UP: 210x297mm page, 3mm bleed each side.
-    expect(tagSizeBounds(A4_3UP)).toEqual({
+    // PAGE_A4: 210x297mm page, 3mm bleed each side.
+    expect(tagSizeBounds(PAGE_A4)).toEqual({
       min_mm: 10,
       max_width_mm: 204,
       max_height_mm: 291,
@@ -704,7 +823,7 @@ describe('tagSizeBounds', () => {
 });
 
 describe('resolveTagSize', () => {
-  const bounds = tagSizeBounds(A4_3UP);
+  const bounds = tagSizeBounds(PAGE_A4);
 
   it('accepts a size that fits, unchanged', () => {
     expect(resolveTagSize(95, 44.5, bounds)).toEqual({
@@ -727,5 +846,232 @@ describe('resolveTagSize', () => {
   it('refuses a height that does not fit the sheet, with a reason', () => {
     const result = resolveTagSize(95, 400, bounds);
     expect(result.ok).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// templateFromTag - "Save as template" (S4, AC-S4-6/7/9)
+// ---------------------------------------------------------------------------
+
+describe('templateFromTag', () => {
+  function tagWithLayers(layers: TagLayer[]): PlacedTag {
+    return {
+      id: 'tag-1',
+      template_id: 't-sink',
+      request_line_id: 'l1',
+      x_mm: 0,
+      y_mm: 0,
+      width_mm: 72,
+      height_mm: 48,
+      layers,
+    };
+  }
+
+  it('strips text_override off a bound layer - a slot binding is what makes a template apply to every product (AC-S4-9)', () => {
+    const bound: TagLayer = { ...textLayer('code', 1), text_override: 'SRT-9999' };
+    const tag = tagWithLayers([bound]);
+
+    const result = templateFromTag(tag, { name: 'My Template', family: 'ala_carte', newId });
+
+    expect(result.doc.layers[0].slot_binding).toBe('code');
+    expect(result.doc.layers[0].text_override).toBeNull();
+  });
+
+  it('keeps unbound text exactly as typed - it has no binding to fall back to', () => {
+    const unbound: TagLayer = {
+      ...textLayer('heading', 1),
+      slot_binding: null,
+      text_override: 'Sale Now On',
+    };
+    const tag = tagWithLayers([unbound]);
+
+    const result = templateFromTag(tag, { name: 'My Template', family: 'ala_carte', newId });
+
+    expect(result.doc.layers[0].slot_binding).toBeNull();
+    expect(result.doc.layers[0].text_override).toBe('Sale Now On');
+  });
+
+  it('gives every layer a fresh id, sharing none with the tag it was cloned from', () => {
+    const tag = tagWithLayers([textLayer('code', 1), groupLayer('group', ['code'])]);
+
+    const result = templateFromTag(tag, { name: 'My Template', family: 'ala_carte', newId });
+
+    const resultIds = result.doc.layers.map((l) => l.id);
+    expect(resultIds).toHaveLength(2);
+    expect(resultIds).not.toEqual(expect.arrayContaining(['code', 'group']));
+    expect(new Set(resultIds).size).toBe(2);
+  });
+
+  it("remaps a group's children ids to the same fresh ids their layers got", () => {
+    const tag = tagWithLayers([textLayer('code', 1), groupLayer('group', ['code'])]);
+
+    const result = templateFromTag(tag, { name: 'My Template', family: 'ala_carte', newId });
+
+    const remappedCodeId = result.doc.layers.find((l) => l.slot_binding === 'code')?.id;
+    const group = result.doc.layers.find((l) => l.props.kind === 'group');
+    expect(group?.props).toMatchObject({ children: [remappedCodeId] });
+  });
+
+  it("print_size is the tag's own width/height, not the template it was cloned from", () => {
+    const tag = tagWithLayers([textLayer('code', 1)]);
+
+    const result = templateFromTag(tag, { name: 'My Template', family: 'ala_carte', newId });
+
+    expect(result.print_size).toEqual({ width_mm: 72, height_mm: 48 });
+    expect(result.doc).toMatchObject({ width_mm: 72, height_mm: 48 });
+  });
+
+  it('name and family pass through as given', () => {
+    const tag = tagWithLayers([textLayer('code', 1)]);
+
+    const result = templateFromTag(tag, { name: 'Sink Combo v2', family: 'sink_combo', newId });
+
+    expect(result.name).toBe('Sink Combo v2');
+    expect(result.family).toBe('sink_combo');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// applyDesignToAllLines - "Apply this design to all lines" (S5, D3, AC-S5-2/5/6)
+// ---------------------------------------------------------------------------
+
+describe('applyDesignToAllLines', () => {
+  function sourceTag(overrides: Partial<PlacedTag> = {}): PlacedTag {
+    return {
+      id: 'tag-src',
+      template_id: 't-sink',
+      request_line_id: 'l1',
+      x_mm: 0,
+      y_mm: 0,
+      width_mm: 95,
+      height_mm: 44.5,
+      layers: [
+        { ...textLayer('code', 1), text_override: 'Hand typed' },
+        groupLayer('group', ['code']),
+      ],
+      ...overrides,
+    };
+  }
+
+  it('clones the source tag to every OTHER line, rebound to each line\'s own product', () => {
+    const tags = { l1: sourceTag() };
+    const lines = [productLine('l1'), productLine('l2'), productLine('l3')];
+
+    const next = applyDesignToAllLines(tags, lines, 'l1', newId);
+
+    expect(next.l2).toBeDefined();
+    expect(next.l3).toBeDefined();
+    const group2 = next.l2.layers.find((l) => l.props.kind === 'group');
+    expect(group2?.props).toMatchObject({ binding: { product_id: 'p-l2' } });
+    const group3 = next.l3.layers.find((l) => l.props.kind === 'group');
+    expect(group3?.props).toMatchObject({ binding: { product_id: 'p-l3' } });
+  });
+
+  it('copies template_id and size from the source onto every other line', () => {
+    const tags = { l1: sourceTag() };
+    const lines = [productLine('l1'), productLine('l2')];
+
+    const next = applyDesignToAllLines(tags, lines, 'l1', newId);
+
+    expect(next.l2).toMatchObject({
+      template_id: 't-sink',
+      width_mm: 95,
+      height_mm: 44.5,
+    });
+  });
+
+  it('copies a hand-typed text_override VERBATIM (D3) - no stripping, unlike templateFromTag', () => {
+    const tags = { l1: sourceTag() };
+    const lines = [productLine('l1'), productLine('l2')];
+
+    const next = applyDesignToAllLines(tags, lines, 'l1', newId);
+
+    const codeLayer = next.l2.layers.find((l) => l.slot_binding === 'code');
+    expect(codeLayer?.text_override).toBe('Hand typed');
+  });
+
+  it('gives every clone fresh layer ids, sharing none with the source or with each other', () => {
+    const tags = { l1: sourceTag() };
+    const lines = [productLine('l1'), productLine('l2'), productLine('l3')];
+
+    const next = applyDesignToAllLines(tags, lines, 'l1', newId);
+
+    const l2Ids = next.l2.layers.map((l) => l.id);
+    const l3Ids = next.l3.layers.map((l) => l.id);
+    expect(l2Ids).not.toEqual(expect.arrayContaining(['code', 'group']));
+    expect(l3Ids).not.toEqual(expect.arrayContaining(['code', 'group']));
+    expect(new Set([...l2Ids, ...l3Ids]).size).toBe(l2Ids.length + l3Ids.length);
+  });
+
+  it("remaps a group's children to the same fresh ids their layers got", () => {
+    const tags = { l1: sourceTag() };
+    const lines = [productLine('l1'), productLine('l2')];
+
+    const next = applyDesignToAllLines(tags, lines, 'l1', newId);
+
+    const remappedCodeId = next.l2.layers.find((l) => l.slot_binding === 'code')?.id;
+    const group = next.l2.layers.find((l) => l.props.kind === 'group');
+    expect(group?.props).toMatchObject({ children: [remappedCodeId] });
+  });
+
+  it('keeps a target line\'s existing pinned copy/position rather than resetting it', () => {
+    const tags = {
+      l1: sourceTag(),
+      l2: { ...placed('old-l2', 'l2'), x_mm: 12, y_mm: 34, pinned: true },
+    };
+    const lines = [productLine('l1'), productLine('l2')];
+
+    const next = applyDesignToAllLines(tags, lines, 'l1', newId);
+
+    expect(next.l2).toMatchObject({ x_mm: 12, y_mm: 34, pinned: true });
+  });
+
+  it('gives a target line a fresh tag id even when it already had one, so Undo is not silently defeated (B1)', () => {
+    const tags = {
+      l1: sourceTag(),
+      l2: { ...placed('old-l2', 'l2'), x_mm: 12, y_mm: 34, pinned: true },
+    };
+    const lines = [productLine('l1'), productLine('l2')];
+
+    const next = applyDesignToAllLines(tags, lines, 'l1', newId);
+
+    expect(next.l2.id).not.toBe('old-l2');
+  });
+
+  it('a line with no tag yet gets one too, so it never re-clones from the default template later (AC-S5-5)', () => {
+    const tags = { l1: sourceTag() };
+    const lines = [productLine('l1'), productLine('l2')];
+
+    const next = applyDesignToAllLines(tags, lines, 'l1', newId);
+
+    expect(next.l2).toBeDefined();
+    expect(next.l2.layers.length).toBeGreaterThan(0);
+  });
+
+  it('never touches the source line\'s own tag', () => {
+    const source = sourceTag();
+    const tags = { l1: source };
+    const lines = [productLine('l1'), productLine('l2')];
+
+    const next = applyDesignToAllLines(tags, lines, 'l1', newId);
+
+    expect(next.l1).toBe(source);
+  });
+
+  it('answers the map unchanged when the source line has no tag', () => {
+    const tags = {};
+    const lines = [productLine('l1'), productLine('l2')];
+
+    expect(applyDesignToAllLines(tags, lines, 'l1', newId)).toBe(tags);
+  });
+
+  it('binds a set line to its own product set, not the source line\'s binding', () => {
+    const tags = { l1: sourceTag() };
+    const lines = [productLine('l1'), setLine('l2')];
+
+    const next = applyDesignToAllLines(tags, lines, 'l1', newId);
+
+    const group = next.l2.layers.find((l) => l.props.kind === 'group');
+    expect(group?.props).toMatchObject({ binding: { product_set_id: 's-l2' } });
   });
 });

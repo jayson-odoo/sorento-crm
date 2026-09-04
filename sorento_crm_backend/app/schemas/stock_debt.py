@@ -101,10 +101,20 @@ class StockDebtSupplyEvent(BaseModel):
     bought_for: Optional[DateType] = None
     qty: float
     #: What nobody took by the end of the walk - the quantity its month credits (R37).
-    #: Zero for an overdue document, which is not supply until somebody re-dates it (R31).
+    #: Zero for a DEAD document, which is not supply until somebody re-dates it (R31).
     free_qty: float
-    #: Arrival passed with nothing received: listed, and counted as nothing (R31).
+    #: Arrival passed and the grace period has given up on it (later than
+    #: `overdue_dead_days`): listed, and counted as nothing (R31, as R-O leaves it). The
+    #: row reads "not counted".
     overdue: bool
+    #: The date the DOCUMENT states, when `date` above is the ASSUMED one the grace period
+    #: gave a late arrival (R-O). `None` when the two are the same, so a reader can print
+    #: "assumed 17 Sep 2026, stated 24 Jul" only where there is something to say.
+    #: `response_model` drops an undeclared field, so this is named explicitly.
+    stated_date: Optional[DateType] = None
+    #: How late the paperwork is, in days, on the day the walk was taken (R-O). 0 when the
+    #: arrival is the one the document states.
+    days_late: int = 0
     assigned_to: List[StockDebtAssignedTo]
 
 

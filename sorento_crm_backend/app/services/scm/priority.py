@@ -189,12 +189,20 @@ DEFAULT_TBA_DATE_FROM = date(2029, 1, 1)
 #: The site pool's share step defaults (fulfilment feedback batch, S1, 2 Sep ruling R-B,
 #: migration 460): a database that never set them charges 50% kept for dealers with a
 #: 30-day immediate window, the values the plan documents.
+#: The overdue grace defaults (R-O, 3 Sep 2026, migration 464): a late document counts as
+#: supply landing `overdue_grace_days` out, and one more than `overdue_dead_days` late
+#: counts as nothing (R31 kept for the dead). SHIPPED at 0 / 0 (captain's ruling, 3 Sep
+#: 2026): dead at 0 makes any lateness dead, which is exactly R31, so production keeps
+#: today's behaviour until someone raises these; 14 / 90 is the RECOMMENDED pair, set
+#: through the settings route once the captain is ready to turn the grace on.
 FULFILMENT_SETTINGS_DEFAULTS = {
     "reorder_coverage_until": None,
     "tba_date_from": DEFAULT_TBA_DATE_FROM,
     "transfer_days": 0,
     "immediate_window_days": 30,
     "pool_share_pct": 50,
+    "overdue_grace_days": 0,
+    "overdue_dead_days": 0,
 }
 
 #: What the admin screen shows when NO policy has ever been activated (a database that
@@ -207,7 +215,8 @@ _NO_POLICY_NAME = "Fulfilment priority (no policy activated yet)"
 
 def fulfilment_settings(policy: Optional[PriorityPolicy]) -> dict:
     """`{reorder_coverage_until, tba_date_from, transfer_days, immediate_window_days,
-    pool_share_pct}` for a policy, or the documented default.
+    pool_share_pct, overdue_grace_days, overdue_dead_days}` for a policy, or the documented
+    default.
 
     A sibling of `policy_weights` for the ladder's calendar dates and its transfer charge:
     one place reads them off the active row, so the admin screen and the engine cannot come
@@ -233,6 +242,16 @@ def fulfilment_settings(policy: Optional[PriorityPolicy]) -> dict:
             int(policy.pool_share_pct)
             if policy.pool_share_pct is not None
             else FULFILMENT_SETTINGS_DEFAULTS["pool_share_pct"]
+        ),
+        "overdue_grace_days": (
+            int(policy.overdue_grace_days)
+            if getattr(policy, "overdue_grace_days", None) is not None
+            else FULFILMENT_SETTINGS_DEFAULTS["overdue_grace_days"]
+        ),
+        "overdue_dead_days": (
+            int(policy.overdue_dead_days)
+            if getattr(policy, "overdue_dead_days", None) is not None
+            else FULFILMENT_SETTINGS_DEFAULTS["overdue_dead_days"]
         ),
     }
 
@@ -317,6 +336,8 @@ def create_revision(
     transfer_days: Optional[int] = None,
     immediate_window_days: Optional[int] = None,
     pool_share_pct: Optional[int] = None,
+    overdue_grace_days: Optional[int] = None,
+    overdue_dead_days: Optional[int] = None,
     notes: Optional[str] = None,
 ) -> PriorityPolicy:
     """Write a NEW policy revision and activate it. Never mutates an old row.
@@ -361,6 +382,16 @@ def create_revision(
             pool_share_pct
             if pool_share_pct is not None
             else FULFILMENT_SETTINGS_DEFAULTS["pool_share_pct"]
+        ),
+        overdue_grace_days=(
+            overdue_grace_days
+            if overdue_grace_days is not None
+            else FULFILMENT_SETTINGS_DEFAULTS["overdue_grace_days"]
+        ),
+        overdue_dead_days=(
+            overdue_dead_days
+            if overdue_dead_days is not None
+            else FULFILMENT_SETTINGS_DEFAULTS["overdue_dead_days"]
         ),
         notes=notes,
     )
@@ -452,6 +483,26 @@ def save_fulfilment_priority(db: Session, body) -> PriorityPolicy:
             body.pool_share_pct
             if body.pool_share_pct is not None
             else (current.pool_share_pct if current is not None else None)
+        ),
+        # R-O's two, same "not said, so unchanged" shape - the range check (0-365 each)
+        # already ran in `FulfilmentPriorityWrite._check`.
+        overdue_grace_days=(
+            body.overdue_grace_days
+            if body.overdue_grace_days is not None
+            else (
+                getattr(current, "overdue_grace_days", None)
+                if current is not None
+                else None
+            )
+        ),
+        overdue_dead_days=(
+            body.overdue_dead_days
+            if body.overdue_dead_days is not None
+            else (
+                getattr(current, "overdue_dead_days", None)
+                if current is not None
+                else None
+            )
         ),
         notes=current.notes if current is not None else None,
     )

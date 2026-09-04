@@ -1982,30 +1982,41 @@ class ConversationSLATrackingService:
         there does it fall back across sets by seniority (tier desc, then code asc).
         When the target isn't in that agent's chain, the
         existing team/tier are kept. Target must belong to at least one team
-        (hand-off may cross teams, decision 2026-09-03); the actor must still
-        own the task or be in scope of its current assignee (checked above).
+        (hand-off may cross teams, decision 2026-09-03). Any team member may
+        reassign any unresolved task, regardless of whose scope it currently
+        sits in (decision 2026-09-03): the earlier "actor must be in scope of
+        the assignee" rule locked out an agent whose ticket got escalated to
+        her manager's (parent) team mid-click, so it is gone. Admins pass
+        regardless.
         Writes a 'reassignment' event log, pushes Respond + notifies.
         """
         from app.models.user import User
+        from app.models.access import TeamMember
 
         tracking = self.get_tracking(tracking_id, load_event_logs=False)
         if bool(getattr(tracking, "is_resolved", False)):
             raise handle_validation_error("Cannot reassign a resolved SLA task.")
-        if not self.can_user_act_on_tracking(user_id, tracking):
-            # The row EXISTS here (get_tracking already 404'd otherwise), so the
-            # old handle_not_found read "SLA Tracking not found. Someone might
-            # have deleted it already." on a task the user is looking at. Say
-            # what is actually wrong, without confirming the id to a stranger.
-            raise handle_validation_error(
-                "This SLA task is assigned outside your teams, so you cannot reassign it. "
-                "Ask an admin or a member of the owning team."
+
+        # Actor gate (decision 2026-09-03): any team member may reassign any
+        # unresolved task; only someone in no team at all is turned away.
+        # Admins bypass. This replaced the visible-scope check that blocked an
+        # agent reassigning her own escalated task the moment it moved to her
+        # manager's (parent) team.
+        if not self._is_admin(user_id):
+            _actor_has_team = (
+                self.db.query(TeamMember.user_id)
+                .filter(TeamMember.user_id == str(user_id))
+                .first()
+                is not None
             )
+            if not _actor_has_team:
+                raise handle_validation_error(
+                    "You are not in any team, so you cannot reassign SLA tasks."
+                )
 
         # Target must be a member of at least one team, i.e. someone who can
         # actually own an SLA task. Cross-team hand-off is allowed; only a
         # target with no team routing at all is rejected.
-        from app.models.access import TeamMember
-
         _has_team = (
             self.db.query(TeamMember.user_id)
             .filter(TeamMember.user_id == str(target_user_id))

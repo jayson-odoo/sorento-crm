@@ -7,10 +7,10 @@
  * exists.
  *
  * Sheet arrangement is a consequence of the tags rather than a thing the user
- * has to do: every line's tag is laid out in line order, quantity times, on the
- * request's imposition preset. A copy somebody dragged in the Arrange view is
- * PINNED by line and copy index, so re-arranging keeps it and flows the rest
- * around it.
+ * has to do: every line's tag is laid out in line order, quantity times, on a
+ * grid auto-fit off the tag's own size and the page (S6, D8) - nothing to
+ * choose. A copy somebody dragged in the Arrange view is PINNED by line and
+ * copy index, so re-arranging keeps it and flows the rest around it.
  */
 
 import {
@@ -31,6 +31,8 @@ import type {
   TagSheet,
   TagSheetDoc,
   TagTemplate,
+  TagTemplateDoc,
+  TagTemplateFamily,
 } from './tag-template-types';
 
 // ---------------------------------------------------------------------------
@@ -231,6 +233,63 @@ export function tagSizePresets(templates: TagTemplate[]): TagSizePreset[] {
   return presets;
 }
 
+// ---------------------------------------------------------------------------
+// Save as template (S4, PLAN D1)
+// ---------------------------------------------------------------------------
+
+/** What `templateFromTag` needs beyond the tag's own layers/size. */
+export interface TemplateFromTagInput {
+  name: string;
+  family: TagTemplateFamily;
+  /** Fresh id generator, so a saved template shares none of its layer ids
+   *  with the tag it was cloned from (AC-S4-9) - callers pass their own
+   *  monotonic id source, the same one every other clone in this file uses. */
+  newId: () => string;
+}
+
+/**
+ * Turn a designed tag into a template payload (AC-S4-6/7/9, D1).
+ *
+ * Every layer gets a fresh id (group `children` remapped alongside), so the
+ * saved template shares nothing with the tag it came from - editing one can
+ * never reach into the other. Bound layers (`slot_binding` set) lose their
+ * `text_override`: a slot binding is what makes a template apply to every
+ * product in the family, and a value typed for THIS line is not that. Unbound
+ * text - a hand-typed heading, say - has no binding to fall back to and stays
+ * exactly as typed.
+ */
+export function templateFromTag(
+  tag: PlacedTag,
+  input: TemplateFromTagInput,
+): { name: string; family: TagTemplateFamily; doc: TagTemplateDoc; print_size: { width_mm: number; height_mm: number } } {
+  const idMap = new Map<string, string>();
+  for (const layer of tag.layers) idMap.set(layer.id, input.newId());
+
+  const layers: TagLayer[] = tag.layers.map((layer) => {
+    const clone: TagLayer = {
+      ...structuredClone(layer),
+      id: idMap.get(layer.id) as string,
+      text_override: layer.slot_binding ? null : layer.text_override,
+    };
+    if (clone.props.kind === 'group') {
+      clone.props = {
+        ...clone.props,
+        children: clone.props.children
+          .map((childId) => idMap.get(childId))
+          .filter((childId): childId is string => Boolean(childId)),
+      };
+    }
+    return clone;
+  });
+
+  return {
+    name: input.name,
+    family: input.family,
+    doc: { layers, width_mm: tag.width_mm, height_mm: tag.height_mm },
+    print_size: { width_mm: tag.width_mm, height_mm: tag.height_mm },
+  };
+}
+
 /**
  * Resize one line's tag footprint - the outer plate size `autoArrange` lays
  * sheets out with, not the layers inside it. Every copy of the line shares
@@ -307,6 +366,83 @@ export function resolveTagSize(
 }
 
 // ---------------------------------------------------------------------------
+// Apply this design to all lines (S5, D3, D11)
+// ---------------------------------------------------------------------------
+
+/**
+ * "Apply this design to all lines" (AC-S5-1/2/5): the SELECTED line's tag,
+ * cloned onto every other line - and for the "Use template..." picker's
+ * "Apply to all lines" checkbox, `tags[sourceLineId]` is a pristine
+ * `tagForLine` clone the caller already stashed under the source line, so
+ * this one function covers both surfaces (D3).
+ *
+ * Every clone gets FRESH layer ids (group `children` remapped alongside), so
+ * no two lines' tags ever share an id - the same reason `templateFromTag`
+ * remaps ids, just fanned out to N lines instead of one template. Unlike
+ * `templateFromTag`, `text_override` is copied VERBATIM (D3): this is one
+ * line's tag becoming every line's tag, not a tag becoming a reusable
+ * template, so a hand-typed price note is exactly what "apply to all lines"
+ * is supposed to spread.
+ *
+ * `bindTemplateLayers` re-points each clone's group binding at the TARGET
+ * line's own product/set - a straight copy would leave every other line's
+ * tag pointing at the source line's item - and clears a stale barcode
+ * override the same way a fresh clone from a template does.
+ *
+ * A line that already had a tag keeps its position/pin (AC-S5-2): those live
+ * on the `PlacedTag` a caller may be carrying position/pin state on, and
+ * losing them here would silently un-arrange whatever was dragged. A line
+ * with no tag yet gets one too (AC-S5-5), so it never later clones from the
+ * request's default template and quietly undoes the bulk apply.
+ */
+export function applyDesignToAllLines(
+  tags: Record<string, PlacedTag>,
+  lines: TagRequestLine[],
+  sourceLineId: string,
+  newId: () => string,
+): Record<string, PlacedTag> {
+  const source = tags[sourceLineId];
+  if (!source) return tags;
+
+  const next: Record<string, PlacedTag> = { ...tags };
+  for (const line of lines) {
+    if (line.id === sourceLineId) continue;
+
+    const idMap = new Map<string, string>();
+    for (const layer of source.layers) idMap.set(layer.id, newId());
+    const layers: TagLayer[] = source.layers.map((layer) => {
+      const clone: TagLayer = {
+        ...structuredClone(layer),
+        id: idMap.get(layer.id) as string,
+      };
+      if (clone.props.kind === 'group') {
+        clone.props = {
+          ...clone.props,
+          children: clone.props.children
+            .map((childId) => idMap.get(childId))
+            .filter((childId): childId is string => Boolean(childId)),
+        };
+      }
+      return clone;
+    });
+
+    const existing = next[line.id];
+    next[line.id] = {
+      id: newId(),
+      template_id: source.template_id,
+      request_line_id: line.id,
+      x_mm: existing?.x_mm ?? 0,
+      y_mm: existing?.y_mm ?? 0,
+      width_mm: source.width_mm,
+      height_mm: source.height_mm,
+      layers: bindTemplateLayers(layers, bindingForLine(line)),
+      pinned: existing?.pinned,
+    };
+  }
+  return next;
+}
+
+// ---------------------------------------------------------------------------
 // Imposition
 // ---------------------------------------------------------------------------
 
@@ -315,53 +451,120 @@ export interface LayoutSlot {
   y_mm: number;
 }
 
+/** How many of a tag this size fit on one sheet, and the grid shape (S6, D8). */
+export interface ImpositionFit {
+  cols: number;
+  rows: number;
+  perSheet: number;
+}
+
 /**
- * Where a tag of this size sits on one sheet of the chosen preset.
+ * A doc saved before S6 carries `preset: 'a4_3up'`/`'a4_2x2'` - `impositionSlots`
+ * already lays every preset out identically (AC-S6-4), but nothing ever WROTE
+ * `'auto'` back: a field edit writes `'custom'` and nothing else writes
+ * anything, so the old value would live in the doc forever (S3). Called when
+ * a doc is loaded, so the next autosave catches the value up to what the
+ * layout has already been doing since S6.
+ */
+export function normaliseImpositionPreset(imposition: ImpositionConfig): ImpositionConfig {
+  if (imposition.preset === 'a4_3up' || imposition.preset === 'a4_2x2') {
+    return { ...imposition, preset: 'auto' };
+  }
+  return imposition;
+}
+
+/** Hard ceiling per axis (S2): the arrange page has unbounded number fields, and
+ *  a page/tag ratio in the tens of thousands would otherwise rebuild a grid
+ *  with 10^5-10^6 slots on every keystroke. */
+const MAX_IMPOSITION_AXIS = 200;
+
+/**
+ * How many tags of this size fit one sheet, per axis.
  *
- * The slot count is the sheet's capacity, which is what decides how many sheets
- * a request needs.
+ * `floor((usable + gap) / (tag + gap))` folds the last gap into the division
+ * so N tags separated by N-1 gaps compares correctly against the usable span
+ * (usable = page minus bleed on both sides). Either axis floors to 0 when the
+ * tag does not fit at all, which floors `perSheet` to 0 too (AC-S6-3).
+ *
+ * A blank/invalid field (`NaN`) or `tag + gap === 0` (division by zero,
+ * `Infinity`) is not a valid grid - `Number.isFinite` catches both and folds
+ * them to 0, same as "does not fit" (S2). A grid that DOES fit is still
+ * clamped to `MAX_IMPOSITION_AXIS` per axis.
+ */
+export function impositionFit(
+  page_width_mm: number,
+  page_height_mm: number,
+  bleed_mm: number,
+  gap_mm: number,
+  tag_width_mm: number,
+  tag_height_mm: number,
+): ImpositionFit {
+  const usableW = page_width_mm - 2 * bleed_mm;
+  const usableH = page_height_mm - 2 * bleed_mm;
+  const rawCols = Math.floor((usableW + gap_mm) / (tag_width_mm + gap_mm));
+  const rawRows = Math.floor((usableH + gap_mm) / (tag_height_mm + gap_mm));
+  const cols = Number.isFinite(rawCols) ? Math.min(MAX_IMPOSITION_AXIS, Math.max(0, rawCols)) : 0;
+  const rows = Number.isFinite(rawRows) ? Math.min(MAX_IMPOSITION_AXIS, Math.max(0, rawRows)) : 0;
+  return { cols, rows, perSheet: cols * rows };
+}
+
+/**
+ * Where a tag of this size sits on one sheet, auto-fit off the tag's own
+ * size (S6, D8): a grid of `impositionFit`'s cols x rows, centred in the
+ * bleed box, row-major (left to right, then down).
+ *
+ * `imposition.preset` no longer changes the layout - every value, including
+ * an old doc's `'a4_3up'` / `'a4_2x2'`, produces the same grid (AC-S6-4).
+ *
+ * A single centred slot (which may overflow the bleed box) when the tag does
+ * not fit the page at all, rather than an empty grid: `impositionFit` is what
+ * tells the designer that ("0 per sheet" and the Arrange empty state,
+ * AC-S6-3) - this function still has to seat every unpinned copy SOMEWHERE,
+ * because `tagsFromDoc` reads a line's design off `doc.sheets`. An empty grid
+ * here means `autoArrange` places nothing, which means the next reload finds
+ * no tag for any line and treats every one of them as never designed - a
+ * page-size typo would silently delete every line's work.
  */
 export function impositionSlots(
   imposition: ImpositionConfig,
   tagW: number,
   tagH: number,
 ): LayoutSlot[] {
-  const { page_width_mm, page_height_mm, bleed_mm, gap_mm, preset } = imposition;
+  const { page_width_mm, page_height_mm, bleed_mm, gap_mm } = imposition;
   const usableW = page_width_mm - 2 * bleed_mm;
   const usableH = page_height_mm - 2 * bleed_mm;
-
-  if (preset === 'a4_3up') {
-    // One column, three rows, centred.
-    const startX = bleed_mm + (usableW - tagW) / 2;
-    const totalH = 3 * tagH + 2 * gap_mm;
-    const startY = bleed_mm + (usableH - totalH) / 2;
+  const { cols, rows, perSheet } = impositionFit(
+    page_width_mm,
+    page_height_mm,
+    bleed_mm,
+    gap_mm,
+    tagW,
+    tagH,
+  );
+  if (perSheet === 0) {
     return [
-      { x_mm: startX, y_mm: startY },
-      { x_mm: startX, y_mm: startY + tagH + gap_mm },
-      { x_mm: startX, y_mm: startY + 2 * (tagH + gap_mm) },
+      {
+        x_mm: bleed_mm + (usableW - tagW) / 2,
+        y_mm: bleed_mm + (usableH - tagH) / 2,
+      },
     ];
   }
 
-  if (preset === 'a4_2x2') {
-    const totalW = 2 * tagW + gap_mm;
-    const totalH = 2 * tagH + gap_mm;
-    const startX = bleed_mm + (usableW - totalW) / 2;
-    const startY = bleed_mm + (usableH - totalH) / 2;
-    return [
-      { x_mm: startX, y_mm: startY },
-      { x_mm: startX + tagW + gap_mm, y_mm: startY },
-      { x_mm: startX, y_mm: startY + tagH + gap_mm },
-      { x_mm: startX + tagW + gap_mm, y_mm: startY + tagH + gap_mm },
-    ];
-  }
+  const totalW = cols * tagW + (cols - 1) * gap_mm;
+  const totalH = rows * tagH + (rows - 1) * gap_mm;
+  const startX = bleed_mm + (usableW - totalW) / 2;
+  const startY = bleed_mm + (usableH - totalH) / 2;
 
-  // Custom: a single tag, centred.
-  return [
-    {
-      x_mm: bleed_mm + (usableW - tagW) / 2,
-      y_mm: bleed_mm + (usableH - tagH) / 2,
-    },
-  ];
+  const slots: LayoutSlot[] = [];
+  for (let row = 0; row < rows; row += 1) {
+    for (let col = 0; col < cols; col += 1) {
+      slots.push({
+        x_mm: startX + col * (tagW + gap_mm),
+        y_mm: startY + row * (tagH + gap_mm),
+      });
+    }
+  }
+  return slots;
 }
 
 // ---------------------------------------------------------------------------
@@ -425,7 +628,10 @@ export function copiesOf(items: ArrangeItem[]): Copy[] {
  * The slot grid is sized off the LARGEST tag in the request, so a mixed request
  * still prints without two tags overlapping. A pinned copy keeps the sheet and
  * the position it was dragged to and consumes no slot, which is what makes the
- * rest flow around it rather than leaving a hole where it used to be.
+ * rest flow around it rather than leaving a hole where it used to be (AC-S6-5).
+ * `impositionSlots` always answers at least one slot (even one that overflows
+ * the page, when the tag does not fit it at all), so every unpinned copy has
+ * somewhere to go and no line's design goes missing on the next reload.
  */
 export function autoArrange(
   items: ArrangeItem[],

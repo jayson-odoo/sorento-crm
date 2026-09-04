@@ -519,6 +519,11 @@ export const MENU_SIDEBAR: MenuConfig = [
             path: '/dealer-kit/tag-templates',
             permission: 'dealer_kit.page.view',
           },
+          {
+            title: 'Tag Sizes',
+            path: '/dealer-kit/tag-sizes',
+            permission: 'dealer_kit.page.view',
+          },
         ],
       },
     ],

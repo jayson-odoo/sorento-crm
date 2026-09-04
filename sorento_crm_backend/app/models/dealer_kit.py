@@ -788,3 +788,28 @@ class TagTemplateVersion(Base):
     # join to it without an explicit cast.
     created_by = Column(String, nullable=True)
     created_at = _created_at()
+
+
+class TagSizePreset(Base, CompanyScopedMixin):
+    """A saved, named tag size (S4, PLAN D2) - a shortcut the request
+    designer's Tag Size dropdown offers under "Saved sizes", editable at
+    ``/dealer-kit/tag-sizes``. Distinct from a template's own ``print_size``:
+    just a name and a width/height, no document.
+    """
+
+    __tablename__ = "tag_size_preset"
+    __table_args__ = (
+        UniqueConstraint(
+            "company_id", "name", name="uq_dealer_kit_tag_size_preset_company_name"
+        ),
+        {"schema": SCHEMA},
+    )
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    name = Column(String(255), nullable=False)
+    width_mm = Column(Numeric(6, 2), nullable=False)
+    height_mm = Column(Numeric(6, 2), nullable=False)
+    # String, not UUID - same reason as ``TagTemplateVersion.created_by`` above.
+    created_by = Column(String, nullable=True)
+    created_at = _created_at()
+    updated_at = _updated_at()

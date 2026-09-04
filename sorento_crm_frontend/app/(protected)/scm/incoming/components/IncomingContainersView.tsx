@@ -24,9 +24,9 @@ import { AllocationPanel } from './AllocationPanel';
  * "Create SPO" used to have its own panel here (`CreateSpoPanel.tsx`) - moved by the captain's
  * second amendment (`PLAN-scm-proforma-to-spo.md`, 21 Aug 00:40) to a planner tab on
  * `/procurement-management/packing-lists/{id}` (`SpoPlannerTable`), the packing-list book over
- * this same `inbound_shipments` table, so there is one surface for it rather than two. The
- * component file stays - its own test still exercises it directly - but it is deliberately
- * UNREFERENCED here.
+ * this same `inbound_shipments` table, so there is one surface for it rather than two.
+ * `CreateSpoPanel.tsx` and its test were deleted with F5 (review round 2) once a grep found
+ * it imported nowhere - dead code the move above left behind.
  */
 
 export function IncomingContainersView() {

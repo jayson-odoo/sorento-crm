@@ -210,6 +210,30 @@ describe('ConsolidatedPackingListPanel', () => {
     expect(screen.getByText('Basin Mixer Tall')).toBeInTheDocument();
   });
 
+  it("shows the supplier's own description, the product name when the line has none (S9)", async () => {
+    state.getList = vi.fn().mockResolvedValue(
+      packingList({
+        factories: [
+          {
+            supplier_id: 'sup-a',
+            supplier_code: '400-K029',
+            supplier_name: 'KAILU HARDWARE FACTORY',
+            lines: [{ ...KAILU_LINE, description: '连体马桶' }, MOCHA_LINE],
+            subtotal: { lines: 2, qty: 1390, cartons: 141, cbm: 9.4123 },
+          },
+        ],
+      }),
+    );
+    renderPanel();
+
+    // `build()` already resolves this pair, so this is the same value both ways -
+    // KAILU's own wording where the line carries one, MOCHA's product name where it does
+    // not (a payload built before this field existed).
+    expect(await screen.findByText('连体马桶')).toBeInTheDocument();
+    expect(screen.getByText('Shower Set')).toBeInTheDocument();
+    expect(screen.queryByText('Basin Mixer Tall')).not.toBeInTheDocument();
+  });
+
   it("prints the supplier's own remark, and nothing derived beside it", async () => {
     renderPanel();
 

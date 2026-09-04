@@ -787,6 +787,24 @@ class PriorityPolicy(Base):
     pool_share_pct = Column(
         Integer, nullable=False, default=50, server_default=text("50")
     )
+    # The overdue grace (R-O, 3 Sep 2026, migration 464). R31 counted a document whose
+    # arrival has passed as nothing at all on its outstanding balance; on SO419417 that left
+    # the ladder lending 4 units off the 11 on the floor at BRW while 725 SPO units dated
+    # July and August sat unreceived. A late-but-alive document now counts as supply landing on
+    # `today + overdue_grace_days`, and one later than `overdue_dead_days` counts as
+    # nothing, which is R31 kept for the dead. Two numbers on this row for the same reason
+    # `immediate_window_days` is here: one policy, activated as a whole.
+    #
+    # SHIPPED at 0 / 0 (captain's ruling, 3 Sep 2026): with dead at 0 any lateness at all is
+    # past it, so a document one day late counts as nothing exactly as R31 always had it -
+    # production keeps today's behaviour until someone raises these. 14 / 90 is the
+    # RECOMMENDED pair once the captain is ready to turn the grace on.
+    overdue_grace_days = Column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
+    overdue_dead_days = Column(
+        Integer, nullable=False, default=0, server_default=text("0")
+    )
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
@@ -1335,6 +1353,16 @@ class SupplierInventory(Base, CompanyScopedMixin):
     uploaded_by = Column(String, nullable=True)
     source_system = Column(String, nullable=True)
     source_ref = Column(String, nullable=True)
+    #: WHICH loading plan this snapshot belongs to (S6, migration 454). A plan reads its own
+    #: rows and nobody else's: before this the snapshot was one per supplier, so a plan
+    #: started with no file at all still showed the last file anybody had uploaded for that
+    #: supplier - and said "No file" while doing it. NULL is the standalone stock-list page's
+    #: upload, and every row that predates 454.
+    loading_plan_id = Column(
+        UUID(as_uuid=False), ForeignKey("scm.loading_plan.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
@@ -1344,13 +1372,20 @@ class SupplierInventory(Base, CompanyScopedMixin):
         Index("ix_scm_supplier_inventory_supplier", "supplier_id"),
         Index("ix_scm_supplier_inventory_product", "product_id"),
         Index("ix_scm_supplier_inventory_set", "product_set_id"),
-        # Declared on the MODEL as well as in migration 336, because a CI database is built
-        # with `create_all` and never runs a migration body: without it the guard against a
-        # doubled packed quantity exists in production and nowhere else.
+        Index("ix_scm_supplier_inventory_loading_plan", "loading_plan_id"),
+        # Declared on the MODEL as well as in migrations 336 and 454, because a CI database is
+        # built with `create_all` and never runs a migration body: without it the guard
+        # against a doubled packed quantity exists in production and nowhere else.
+        #
+        # The plan is IN the key (454), coalesced for the same reason the company is: Postgres
+        # treats every NULL as distinct, and the identity has to hold across the plan-less
+        # rows too. Without it the second plan to upload one model number for a supplier
+        # collides with the first and the upload fails.
         Index(
             "uq_scm_supplier_inventory_identity",
             text("coalesce(company_id, '%s'::uuid)" % _NIL_COMPANY),
             "supplier_id",
+            text("coalesce(loading_plan_id, '%s'::uuid)" % _NIL_COMPANY),
             "item_code",
             unique=True,
         ),
@@ -1574,14 +1609,6 @@ class ProformaInvoice(Base, CompanyScopedMixin):
     block_index = Column(Integer, nullable=True)
     uploaded_by = Column(String, nullable=True)
 
-    #: Which box this invoice is being fitted into. NULL means the tenant's default size,
-    #: resolved on read rather than copied in - a PI uploaded before anybody thought about
-    #: capacity should follow the default, not freeze whatever it happened to be that day.
-    container_size_id = Column(
-        UUID(as_uuid=False), ForeignKey("scm.container_size.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-
     #: Who trimmed this document to fit, and when. NULL on an invoice nobody has touched,
     #: which is what tells the screen to show the supplier's figures unqualified.
     adjusted_by = Column(String(200), nullable=True)
@@ -1597,6 +1624,15 @@ class ProformaInvoice(Base, CompanyScopedMixin):
         nullable=True,
     )
     revision_no = Column(Integer, nullable=False, server_default=text("1"))
+    #: The loading plan this invoice was uploaded INTO (S6, migration 454). One sheet holds
+    #: five stacked invoice blocks, and the plan binds to every one of them, so its "They
+    #: hold" figure is the sum across its own blocks rather than whichever single invoice
+    #: sorted first for the supplier. NULL on the standalone proforma page's uploads and on
+    #: every row that predates 454.
+    loading_plan_id = Column(
+        UUID(as_uuid=False), ForeignKey("scm.loading_plan.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     #: `current` or `superseded`. A superseded revision is KEPT and read-only: it is what the
     #: supplier actually sent on the day, and the diff against it is the reason anybody looks
     #: at the new one. It is never a cost and never converts (AC-E9, AC-E10).
@@ -1615,6 +1651,7 @@ class ProformaInvoice(Base, CompanyScopedMixin):
     __table_args__ = (
         Index("ix_scm_proforma_invoice_supplier", "supplier_id"),
         Index("ix_scm_proforma_invoice_revision_of", "revision_of_id"),
+        Index("ix_scm_proforma_invoice_loading_plan", "loading_plan_id"),
         CheckConstraint(
             "status IN ('current', 'superseded')", name="ck_scm_proforma_invoice_status"
         ),
@@ -1790,12 +1827,16 @@ class ShipmentLineSpoLink(Base, CompanyScopedMixin):
     table). A shipment line reached from a real packing-list upload with no PI behind it at
     all still gets a row here; the PI half of the trail is simply absent for it.
 
-    One row per shipment line "Create SPO" touched - matched (points at the new SPO
-    line) or skipped, with `unmatched_reason` naming why (already covered by an open PO,
-    covered by stock, no supplier on the line, or simply left unticked). Existence of ANY
-    row for a shipment is what makes a second "Create SPO" on it refused rather than
-    silently doubling what the office is asked to key into AutoCount - the same idempotency
-    shape `ProformaInvoiceShipmentLink` uses for the PI convert.
+    One row per shipment line PER "Create SPO" run that touched it - matched (points at
+    the new SPO line) or skipped, with `unmatched_reason` naming why (no remainder left to
+    pull, no supplier on the line, or simply left unticked). A shipment line can carry
+    SEVERAL matched rows over its life (R1, `PLAN-scm-spo-planner-feedback-3sep.md`: "many
+    SPOs per container") - one Create SPO run can leave a remainder for a later run to
+    convert, and each run that matches the line writes its own row rather than replacing
+    the one before it. `inbound_shipment_line_id` therefore carries a plain (non-unique)
+    index (migration 469 dropped the UNIQUE one migration 406 first wrote, when one row per
+    line, ever, was still the rule) - a line's total already-SPO'd quantity is the SUM of
+    every matched row's own PO line `qty_ordered`, read by `spo_conversion_service`.
     """
     __tablename__ = "shipment_line_spo_link"
 
@@ -1826,8 +1867,10 @@ class ShipmentLineSpoLink(Base, CompanyScopedMixin):
         Index("ix_scm_shipment_spo_link_po", "purchase_order_id"),
         # The FK check when a purchase order line is deleted (see OrderLinkClaim).
         Index("ix_scm_shipment_spo_link_po_line", "purchase_order_line_id"),
-        # One conversion outcome per shipment line, ever - what makes a second "Create SPO"
-        # attempt on an already-converted shipment detectable rather than a silent duplicate.
-        Index("uq_scm_shipment_spo_link_line", "inbound_shipment_line_id", unique=True),
+        # One conversion OUTCOME per shipment line per Create SPO run - NOT unique (R1,
+        # migration 469 dropped the unique index migration 406 first wrote): a line can
+        # carry several matched rows across several runs once a remainder is convertible
+        # again. Kept as a plain index since every reader still filters/aggregates by it.
+        Index("ix_scm_shipment_spo_link_line", "inbound_shipment_line_id"),
         {"schema": "scm"},
     )

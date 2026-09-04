@@ -39,6 +39,8 @@ function row(over: Partial<ContainerRequestRow> = {}): ContainerRequestRow {
     holding_source: 'stock_list',
     holding_qty: 0,
     holding_as_of: null,
+    holding_blocks: 0,
+    blocks: [],
     qty_packed: 0,
     qty_unfinished: 0,
     cbm_per_unit: null,

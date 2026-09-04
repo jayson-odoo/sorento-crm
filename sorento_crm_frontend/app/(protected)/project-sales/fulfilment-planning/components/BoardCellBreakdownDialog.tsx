@@ -1,7 +1,8 @@
 'use client';
 
 import * as React from 'react';
-import { Check, ChevronDown, ChevronRight, Info, X } from 'lucide-react';
+import Link from 'next/link';
+import { Check, ChevronDown, ChevronRight, ExternalLink, Info, Undo2, X } from 'lucide-react';
 import { ColumnDef, RowSelectionState } from '@tanstack/react-table';
 import { Button } from '@/components/ui/button';
 import {
@@ -30,6 +31,7 @@ import {
 } from '@/hooks/useDebouncedSearch';
 import { cn } from '@/lib/utils';
 import { formatDateInMalaysia } from '@/lib/helpers';
+import { spoDetailHref, spoNumberFromLabel } from '@/lib/spo-detail';
 import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
 import { OrderInquiryStatePill } from '../../_shared/components/OrderInquiryVerbPill';
 import {
@@ -48,6 +50,7 @@ import {
 import type { SuggestionRow } from '../../_shared/lib/supplyVocabulary';
 import { LADDER_VERSION } from '../../_shared/lib/supplyVocabulary';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
+import { canQuickSave } from '../../_shared/lib/boardAmend';
 import { BoardDecisionPill } from './BoardDecisionPill';
 import { BoardLineDecisionPanel } from './BoardLineDecisionPanel';
 import { BoardTrailPopover, ItemFlagChips } from './BoardTrailPopover';
@@ -105,6 +108,7 @@ export function BoardCellBreakdownDialog({
   draft,
   poolSharePct,
   onDecide,
+  onDecideMany,
   onClose,
 }: {
   cell: BoardCell;
@@ -117,6 +121,12 @@ export function BoardCellBreakdownDialog({
    */
   poolSharePct?: number;
   onDecide: (key: string, decision: BoardDecision | null) => Promise<boolean> | void;
+  /**
+   * D15: the quiet-bulk path "Approve selected" and "Save all suggested" both post through -
+   * each key's own suggestion, one toast for the whole press, rather than D14's N separate
+   * "Line N saved" toasts.
+   */
+  onDecideMany: (keys: string[]) => Promise<{ saved: number; failed: number }>;
   onClose: () => void;
 }) {
   // NO RANK, ANYWHERE ON THIS TABLE (R8, the captain 27 Aug: "rank goes"). Under ladder v4
@@ -393,6 +403,41 @@ export function BoardCellBreakdownDialog({
   );
 
   /**
+   * APPROVE, ticked row by ticked row - the same loop `decideSelected` runs, but each key
+   * gets ITS OWN suggestion rather than one decision applied to every row, because
+   * "approved" is not one object across lines with different suggestions the way "rejected"
+   * is.
+   *
+   * D11 is why this is the only approve verb here: a bare `{verdict: 'approved'}` carries no
+   * composition, so a Save-untouched confirms nothing the engine proposed and the sales order
+   * page reads it as Decided "-". An approval IS the suggested composition, which is exactly
+   * what `BoardLineDecisionPanel`'s own untouched Save posts - so approving in bulk and
+   * "saving as suggested" were one verb with two buttons, and this is the one.
+   *
+   * D15: posts through `onDecideMany` now, not a loop of `onDecide` calls - the composition is
+   * still each key's own suggestion, computed the same way, but the board posts them quietly
+   * and toasts once for the whole press instead of once per line.
+   */
+  const approveSelected = React.useCallback(() => {
+    void onDecideMany(selectedKeys);
+    setRowSelection({});
+  }, [selectedKeys, onDecideMany]);
+
+  /**
+   * D14: every line in the cell a quick save could still touch - not covered (there is
+   * nothing to approve on a confirmed line) and not already drafted (nothing a re-save would
+   * change). No selection needed for this one; it is the cell's own "nothing here is worth a
+   * second look" button.
+   */
+  const suggestibleContributions = React.useMemo(
+    () => cell.contributions.filter((entry) => canQuickSave(entry, draft)),
+    [cell.contributions, draft],
+  );
+  const saveAllSuggested = React.useCallback(() => {
+    void onDecideMany(suggestibleContributions.map((entry) => entry.key));
+  }, [suggestibleContributions, onDecideMany]);
+
+  /**
    * The muted line under the title, in the shape the family's shell wants it (`PlanRowDialog`,
    * `StockDebtCellDialog`): the facts about the CELL that neither tab states.
    *
@@ -414,11 +459,19 @@ export function BoardCellBreakdownDialog({
       // The repo's own select column, the one the users list uses, so the header select-all and
       // its indeterminate state are not a second implementation.
       buildSelectColumn<BoardContribution>({
-        enableRow: (row) => !row.original.unplannable && !row.original.covered,
+        // Already SAVED is out here for the same reason it is out of the list view and out
+        // of "Save all suggested": a quick save would overwrite an amended draft with the
+        // engine's own composition, which is the one thing a planner who amended it does
+        // not want. Undo is how a saved row comes back into play.
+        enableRow: (row) => canQuickSave(row.original, draft),
         disabledReason: (row) =>
           row.original.covered
             ? 'This line is already confirmed. Amend it to change what was decided.'
-            : 'This line cannot be decided here: its sales order states no fulfilment location.',
+            : row.original.unplannable
+              ? 'This line cannot be decided here: its sales order states no fulfilment location.'
+              : draft[row.original.key]
+                ? 'Already saved. Undo it before saving it again.'
+                : undefined,
         rowLabel: (row) =>
           `Select ${row.original.so_number} line ${row.original.line_no}`,
       }),
@@ -793,17 +846,37 @@ export function BoardCellBreakdownDialog({
         header: ({ column }) => (
           <DataGridColumnHeader title="Decision" column={column} />
         ),
-        // A PILL, AND NOTHING ELSE (C2). The three verbs used to live here, which is why the
-        // column was 210px wide and still truncated its own composition: a decision is taken
-        // in the expanded row now, where the numbers it is made against are.
-        cell: ({ row }) => (
-          <BoardDecisionPill
-            contribution={row.original}
-            decision={draft[row.original.key] ?? null}
-          />
-        ),
-        size: 110,
-        minSize: 100,
+        // A PILL, AND (D14) an Undo beside a saved one. The three verbs used to live here,
+        // which is why the column was 210px wide and still truncated its own composition: a
+        // decision is taken in the expanded row now, where the numbers it is made against
+        // are - Undo is the one exception, because there is nothing left to look at once a
+        // line is saved, only the choice to unsave it.
+        cell: ({ row }) => {
+          const key = row.original.key;
+          const drafted = Boolean(draft[key]);
+          return (
+            <div className="flex min-w-0 items-center gap-1">
+              <BoardDecisionPill contribution={row.original} decision={draft[key] ?? null} />
+              {drafted ? (
+                <Button
+                  type="button"
+                  mode="icon"
+                  variant="ghost"
+                  size="sm"
+                  aria-label={`Undo ${row.original.so_number} line ${row.original.line_no}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onDecide(key, null);
+                  }}
+                >
+                  <Undo2 className="size-3.5" aria-hidden />
+                </Button>
+              ) : null}
+            </div>
+          );
+        },
+        size: 140,
+        minSize: 120,
         enableSorting: false,
         meta: { headerTitle: 'Decision' },
       },
@@ -982,19 +1055,31 @@ export function BoardCellBreakdownDialog({
                               location: source.location,
                             }
                           : undefined;
+                      // The captain's own complaint (3 Sep 2026, SO418869
+                      // SRTWCX7405-RL-S-PJ): the chip only ever jumped the table below, and
+                      // there was no way OUT of the dialog onto the document itself.
+                      const documentHref = sourceDocument
+                        ? spoDetailHref(
+                            spoNumberFromLabel(source.supply_document as string),
+                          )
+                        : undefined;
                       return (
                         <p
                           key={`${source.kind}-${index}`}
                           className="text-sm text-muted-foreground"
                         >
-                          {annotateReason(source, {
-                            onDonorClick: () =>
-                              stockTableRef.current?.jumpToDonor(sourceDonor),
-                            onDocumentClick: () =>
-                              stockTableRef.current?.jumpToDocument(
-                                sourceDocument,
-                              ),
-                          })}
+                          {annotateReason(
+                            source,
+                            {
+                              onDonorClick: () =>
+                                stockTableRef.current?.jumpToDonor(sourceDonor),
+                              onDocumentClick: () =>
+                                stockTableRef.current?.jumpToDocument(
+                                  sourceDocument,
+                                ),
+                            },
+                            documentHref,
+                          )}
                         </p>
                       );
                     })}
@@ -1096,10 +1181,10 @@ export function BoardCellBreakdownDialog({
                 onRowSelectionChange={setRowSelection}
                 // A covered row is not selectable either: the bulk verbs are Approve and Reject,
                 // and a bulk Reject sweeping up a confirmed line would silently un-decide it,
-                // which is the very defect the covered state exists to stop.
-                enableRowSelection={(row) =>
-                  !row.original.unplannable && !row.original.covered
-                }
+                // which is the very defect the covered state exists to stop. Nor is a row that
+                // already carries a draft - a bulk verb would overwrite an amended composition
+                // with the engine's own, which is the list view's rule too.
+                enableRowSelection={(row) => canQuickSave(row.original, draft)}
                 toolbar={
                   <div className="flex flex-wrap items-center gap-2">
                     <ListSearchInput
@@ -1113,6 +1198,18 @@ export function BoardCellBreakdownDialog({
                       placeholder="Search SO number, customer, agent"
                       className="w-full sm:w-72"
                     />
+                    {/* D14: the cell's own "nothing here needs a second look" button - every
+                    still-outstanding, not-yet-drafted line in the cell, with no selection to
+                    make first. Reversible with the per-line Undo below, so no confirmation. */}
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={suggestibleContributions.length === 0}
+                      onClick={saveAllSuggested}
+                    >
+                      Save all suggested
+                    </Button>
                     {selectedKeys.length > 0 ? (
                       <>
                         {/* Says exactly how many rows the verbs will act on. With a paginated cell
@@ -1127,9 +1224,7 @@ export function BoardCellBreakdownDialog({
                         <Button
                           type="button"
                           size="sm"
-                          onClick={() =>
-                            decideSelected({ verdict: 'approved' })
-                          }
+                          onClick={approveSelected}
                         >
                           <Check className="size-4" aria-hidden />
                           Approve selected
@@ -1449,10 +1544,17 @@ function isJumpableDocument(value: string | null | undefined): boolean {
  * `supply_document`) rather than re-parsing the prose: the two markers are known values, so
  * a plain search-and-wrap is the whole job, and a regex over free text would be guessing at
  * a grammar the server never promised to keep stable.
+ *
+ * `documentHref`, when the source names a document, adds a SECOND, tiny control right after
+ * the chip: an external-link icon that opens the SPO itself. The chip keeps its own job -
+ * jumping the table below to the matching row (AC-3.4) - because the captain's own screenshot
+ * (3 Sep 2026, SO418869 SRTWCX7405-RL-S-PJ) shows that working; there was simply no way OUT
+ * of the dialog onto the document, so this adds one rather than repurposing the other.
  */
 function annotateReason(
   source: BoardSource,
   handlers: { onDonorClick: () => void; onDocumentClick: () => void },
+  documentHref?: string,
 ): React.ReactNode {
   const markers = [
     source.donor_so_number
@@ -1501,6 +1603,20 @@ function annotateReason(
         {marker.value}
       </button>,
     );
+    if (marker.testId === 'suggestion-document-link' && documentHref) {
+      nodes.push(
+        <Link
+          key={`suggestion-document-open-${position}`}
+          href={documentHref}
+          onClick={(event) => event.stopPropagation()}
+          className="ms-1 inline-flex align-middle text-muted-foreground hover:text-primary"
+          aria-label={`Open ${marker.value}`}
+          data-testid="suggestion-document-open-link"
+        >
+          <ExternalLink className="size-3.5" aria-hidden />
+        </Link>,
+      );
+    }
     cursor = marker.index + marker.value.length;
   });
   nodes.push(source.reason.slice(cursor));

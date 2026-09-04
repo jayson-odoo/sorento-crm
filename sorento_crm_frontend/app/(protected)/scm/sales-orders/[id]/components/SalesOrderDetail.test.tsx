@@ -1323,6 +1323,69 @@ describe('SalesOrderDetail - what has already been planned about a line', () => 
     expect(within(row).getByText('Rev 2')).toBeInTheDocument();
   });
 
+  it('sits Linked to immediately after Outstanding qty in the default column order (R4, AC-K1)', () => {
+    useSalesOrder.mockReturnValue({ data: planned(), isLoading: false, isError: false });
+    renderDetail();
+    openTab('Lines');
+
+    const headers = screen.getAllByRole('columnheader').map((h) => h.textContent?.trim());
+    const outstandingIndex = headers.indexOf('Outstanding qty');
+    expect(outstandingIndex).toBeGreaterThan(-1);
+    expect(headers[outstandingIndex + 1]).toBe('Linked to');
+  });
+
+  // R5 (AC-L4): the "Linked to" cell reads a figure BUTTON now, but the two absence states
+  // it carried before this stay exactly as worded.
+  it('reads a dash when no inquiry row exists at all, and offers no button', () => {
+    useSalesOrder.mockReturnValue({
+      data: planned({ linked_to: null }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    const row = screen.getByText('SKU-PLANNED').closest('tr') as HTMLElement;
+    expect(within(row).getAllByText('-').length).toBeGreaterThanOrEqual(1);
+    expect(
+      screen.queryByRole('button', { name: 'Linked to SKU-PLANNED' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('reads Not linked, not a dash, on a line whose inquiry row holds no link', () => {
+    useSalesOrder.mockReturnValue({
+      data: planned({ linked_to: [] }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    const row = screen.getByText('SKU-PLANNED').closest('tr') as HTMLElement;
+    expect(within(row).getByText('Not linked')).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Linked to SKU-PLANNED' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('opens Linked to · <code> when a line with links is pressed', () => {
+    useSalesOrder.mockReturnValue({
+      data: planned({
+        linked_to: [
+          { kind: 'spo', document: 'SPO-2026/08-0061', qty: '10', location: 'BRW' },
+        ],
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+    fireEvent.click(screen.getByRole('button', { name: 'Linked to SKU-PLANNED' }));
+
+    expect(screen.getByText('Linked to · SKU-PLANNED')).toBeInTheDocument();
+    expect(within(screen.getByRole('dialog')).getByText('SPO-2026/08-0061')).toBeInTheDocument();
+  });
+
   it('prints a dash on a line nothing has been raised or decided on', () => {
     useSalesOrder.mockReturnValue({
       data: planned({ order_inquiry: null, decision_revision: null }),
@@ -1489,6 +1552,59 @@ describe('SalesOrderDetail - what has already been planned about a line', () => 
     expect(within(row).getByText('Rev 2')).toBeInTheDocument();
     expect(within(row).queryByText('Saved')).not.toBeInTheDocument();
   });
+
+  /**
+   * D12 (#573, captain 3 Sep): a saved draft keeps the engine's suggestion at save time,
+   * so the Suggested column shows it here the same way the board's list view does ("BRW 3
+   * (BRW)") until Confirm freezes a revision. Before this the column read `supply_proposed`
+   * off the confirmed revision alone, so a line saved but not yet confirmed read "-" beside
+   * a live composition.
+   */
+  it('shows a saved draft\'s suggested composition too, before any revision is confirmed', () => {
+    useSalesOrder.mockReturnValue({
+      data: planned({
+        decision_revision: null,
+        supply_proposed: [{ kind: 'reserve', qty: '3', source_location: 'BRW', rung: 'pool' }],
+        supply_decided: null,
+        supply_saved: [{ kind: 'reserve', qty: '3', source_location: 'BRW', rung: 'pool' }],
+        saved_by: 'Leena',
+        saved_at: '2026-09-03T02:30:00Z',
+        saved_stale: false,
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    const row = screen.getByText('SKU-PLANNED').closest('tr') as HTMLElement;
+    expect(within(row).getAllByText('BRW 3 (BRW)')).toHaveLength(2);
+  });
+
+  it('reads "-", not "Not recorded", for a saved line with no suggestion at all', () => {
+    useSalesOrder.mockReturnValue({
+      data: planned({
+        decision_revision: null,
+        supply_proposed: null,
+        supply_decided: null,
+        supply_saved: [{ kind: 'buy', qty: '3', source_location: null, rung: null }],
+        saved_by: 'Leena',
+        saved_at: '2026-09-03T02:30:00Z',
+        saved_stale: false,
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    const row = screen.getByText('SKU-PLANNED').closest('tr') as HTMLElement;
+    // The Decided column already reads the saved "Buy 3"; the Suggested column, with
+    // nothing recorded for it, reads a plain absence rather than "Not recorded" - that
+    // word is reserved for a CONFIRMED revision frozen before the proposal was recorded.
+    expect(within(row).getAllByText('-').length).toBeGreaterThanOrEqual(1);
+    expect(within(row).queryByText('Not recorded')).not.toBeInTheDocument();
+  });
 });
 
 /**
@@ -1537,18 +1653,23 @@ describe('SalesOrderDetail - two links to the same SPO line', () => {
       line_count: 1,
     });
 
-  it('renders both rows without a duplicate-key warning', () => {
+  // R5: the inline row is gone (AC-L4) - both links now render as rows in the "Linked to"
+  // lightbox the summed figure opens, still each a distinct row (the duplicate-key risk
+  // this describe block exists for is `SoLineLinksBody`'s `getRowId`, which carries the
+  // INDEX for exactly this reason).
+  it('opens both links in the lightbox without a duplicate-key warning', () => {
     const warn = vi.spyOn(console, 'error').mockImplementation(() => {});
     useSalesOrder.mockReturnValue({ data: twoLinks(), isLoading: false, isError: false });
     renderDetail();
     openTab('Lines');
+    fireEvent.click(screen.getByRole('button', { name: 'Linked to SKU-PLANNED' }));
 
-    const row = screen.getByText('SKU-PLANNED').closest('tr') as HTMLElement;
-    // Location FIRST (AC-D16, item 5 of PLAN-scm-oi-draft-links.md): the visible text
-    // reads the pool warehouse code, never the SPO's own line label - that moved into
-    // the title, where it names which of the two identical-looking rows is which.
-    expect(within(row).getAllByText(/SPO-2026\/08-0061 BRW/)).toHaveLength(2);
-    expect(within(row).queryAllByText(/SPO-2026\/08-0061 L4/)).toHaveLength(0);
+    const dialog = within(screen.getByRole('dialog'));
+    expect(dialog.getByText('Linked to · SKU-PLANNED')).toBeInTheDocument();
+    // Each link keeps its OWN quantity - the SPO covered this line in two goes.
+    expect(dialog.getByText('10')).toBeInTheDocument();
+    expect(dialog.getByText('5')).toBeInTheDocument();
+    expect(dialog.getAllByText('SPO-2026/08-0061 L4')).toHaveLength(2);
     expect(
       warn.mock.calls.some((call) => String(call[0]).includes('same key')),
     ).toBe(false);
@@ -1559,8 +1680,8 @@ describe('SalesOrderDetail - two links to the same SPO line', () => {
     useSalesOrder.mockReturnValue({ data: twoLinks(), isLoading: false, isError: false });
     renderDetail();
     openTab('Lines');
+    fireEvent.click(screen.getByRole('button', { name: 'Linked to SKU-PLANNED' }));
 
-    const row = screen.getByText('SKU-PLANNED').closest('tr') as HTMLElement;
-    expect(within(row).getAllByText(/14\/09\/2026|2026-09-14/).length).toBeGreaterThanOrEqual(1);
+    expect(within(screen.getByRole('dialog')).getAllByText('14/09/2026')).toHaveLength(2);
   });
 });

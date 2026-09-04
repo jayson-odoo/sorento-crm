@@ -1,24 +1,9 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { toast } from '@/lib/toast';
-import {
-  ArrowLeft,
-  Ban,
-  CalendarDays,
-  Check,
-  Download,
-  Eye,
-  FileText,
-  Link2,
-  LoaderCircle,
-  RefreshCw,
-  Save,
-  Send,
-  Settings,
-  Trash2,
-} from 'lucide-react';
+import { ArrowLeft, LoaderCircle, Save } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -31,27 +16,19 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import DetailActions from '@/components/common/DetailActions';
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from '@/components/common/AttachmentPreviewModal';
-import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
-import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
+import { useUrlTab } from '@/hooks/useUrlTab';
 import { EM_DASH, fmtDate } from '../../lib/format';
 import {
   loadingPlanPagerQuery,
-  useCancelLoadingPlan,
   useContainerRequestBuild,
   useDownloadContainerRequestDocument,
   useSaveLoadingPlanEdits,
@@ -60,19 +37,29 @@ import {
   useSupplierStockListFile,
   useUpdateLoadingPlanCutOff,
 } from '../../hooks/useFulfilment';
-import { useRematchSupplierCodes } from '../../hooks/useSupplierCodeAliases';
+import {
+  useRematchSupplierCodes,
+  useUnmatchedSupplierCodes,
+} from '../../hooks/useSupplierCodeAliases';
 import {
   type CodedError,
   type ContainerRequestRow,
   type ContainerRequestSendOptions,
   type LoadingPlanStatus,
 } from '../../services/fulfilmentService';
-import { UnmatchedSupplierCodesPanel } from './UnmatchedSupplierCodesPanel';
+import { useLoadingPlanActions } from '../actions';
+import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
+import { SupplierCodesTab } from './SupplierCodesTab';
 import { ContainerRequestSection } from './ContainerRequestSection';
 import { SendRequestDialog } from './SendRequestDialog';
+import { SentRequestsPanel } from './SentRequestsPanel';
 import { requestLinesFrom } from './containerRequestSummary';
 import { copyPublicLink } from './copyPublicLink';
 import { PageHeader } from '@/components/common/PageHeader';
+
+/** The record's three tabs (S2): Lines (default), Supplier codes, Sent. */
+type LoadingPlanTab = 'lines' | 'codes' | 'sent';
+const LOADING_PLAN_TABS: LoadingPlanTab[] = ['lines', 'codes', 'sent'];
 
 /**
  * One loading plan, as a record (R5).
@@ -81,11 +68,11 @@ import { PageHeader } from '@/components/common/PageHeader';
  * anyone can reopen, so this screen is shaped like every other detail page: a `Toolbar`
  * carrying who and when, prev/next across the list, and one right-hand cluster of actions.
  *
- * The cluster reads [gear] [Save] [Send to supplier] [Back], gear FIRST. Send is the errand;
- * the gear holds the things done occasionally, and putting it on the left keeps the errand at
- * the end of the row where the eye stops. The old header card (Supplier / Plan until / Upload
- * / gear) is gone with the ephemeral page it described, and the "What to ask" card keeps its
- * heading only.
+ * The cluster reads [pager] [gear] [Save] [Back] (S1, captain's markup 2 Sep): Send to
+ * supplier is no longer a standalone button, it is a gear item (and a row menu item), one
+ * `useLoadingPlanActions(plan)` hook feeding both surfaces (D15) so Cancel and Delete cannot
+ * drift between them. The old header card (Supplier / Plan until / Upload / gear) is gone
+ * with the ephemeral page it described, and the "What to ask" card keeps its heading only.
  *
  * Typed quantities are held HERE, not in the grid, because Save and Send both act on them and
  * both live up here. What the grid shows is `suggested_qty` with the plan's saved edits
@@ -108,8 +95,19 @@ const STATUS_VARIANT: Record<LoadingPlanStatus, 'warning' | 'primary' | 'seconda
   cancelled: 'secondary',
 };
 
+/**
+ * The three DATA-LOSS prompts below (Refresh suggestion, a new cut-off, leaving with typed
+ * quantities) are `ConfirmActionDialog`, the shared non-destructive confirmation - the D7
+ * carve-out AC-A6 names. They ask because something TYPED would vanish, not because the
+ * record itself is on its way out: Cancel and Delete are deferred countdowns and reach for
+ * no dialog at all. A local copy of the shared component briefly stood here to keep the
+ * AC-I1 guard quiet; a second copy of a dialog is a second place for its behaviour to
+ * drift, so the guard bans the destructive vehicles instead (SF-2).
+ */
+
 export function LoadingPlanView({ planId }: { planId: string }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const build = useContainerRequestBuild(planId);
   const plan = build.data?.plan ?? null;
   const supplierId = plan?.supplier_id ?? '';
@@ -119,35 +117,53 @@ export function LoadingPlanView({ planId }: { planId: string }) {
   // ONLY what has not been written yet - which is exactly what the leave-the-page prompt and
   // the "Send saves first" rule need to know about.
   const [edits, setEdits] = useState<Record<string, number>>({});
-  const [cancelOpen, setCancelOpen] = useState(false);
   const [sendOpen, setSendOpen] = useState(false);
   const [cutOffOpen, setCutOffOpen] = useState(false);
   const [cutOffDraft, setCutOffDraft] = useState('');
   const [cutOffDropOpen, setCutOffDropOpen] = useState(false);
   const [refreshOpen, setRefreshOpen] = useState(false);
   const [leaveOpen, setLeaveOpen] = useState(false);
-  // The gear's copy confirms itself in place (S7-05), so the menu has to stay
-  // open long enough to be read: an item that closes the menu has nowhere to
-  // put a tick.
-  const [linkCopied, setLinkCopied] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
 
   const save = useSaveLoadingPlanEdits(planId);
   const changeCutOff = useUpdateLoadingPlanCutOff(planId);
   const send = useSendContainerRequest();
-  const cancel = useCancelLoadingPlan();
   const download = useDownloadContainerRequestDocument(planId);
   // Scoped to THIS plan (R3/R11): the same supplier's other open plan has its own live
   // link and its own history, and neither belongs on this record.
   const notices = useSupplierNotices(supplierId || null, planId);
-  const stockListFile = useSupplierStockListFile(
-    plan?.document_kind === 'stock_list' ? supplierId : null,
-  );
-  // The same action `RefreshMatchingButton` runs on the queue panel - the panel hides itself
-  // when every code binds, and that is exactly the state somebody is trying to reach after
-  // adding the missing products (R18), so it is also reachable from up here.
+  // The sheet THIS plan was started from (BL-3). S6 stamps it on the plan at apply time, so
+  // the record opens its own file rather than whatever the supplier last uploaded from some
+  // other plan. A plan that predates the stamp has none, and for a stock-list plan the
+  // supplier's latest is still the file it was started from, so the old lookup survives for
+  // exactly that case - and runs at all only in it.
+  const legacyStockList =
+    plan?.document_kind === 'stock_list' && !plan?.source_attachment_id ? supplierId : null;
+  const stockListFile = useSupplierStockListFile(legacyStockList || null);
+  const uploadedListId = plan?.source_attachment_id ?? stockListFile.data?.attachment_id ?? null;
+  const uploadedListName =
+    (plan?.source_attachment_id
+      ? plan.source_attachment_filename
+      : stockListFile.data?.filename) ?? null;
+  // The same action `RefreshMatchingButton` runs on the Supplier codes tab - the tab's
+  // "Needs a decision" group empties out and that is exactly the state somebody is trying
+  // to reach after adding the missing products (R18), so it is also reachable from up here.
   const rematch = useRematchSupplierCodes();
+  // Read here too (S2), for the Supplier codes tab's own badge - same query key as
+  // `SupplierCodesTab`, so React Query serves both callers from one fetch. Keyed on the
+  // PLAN since S6: the badge counts what THIS plan's statement left unanswered.
+  const { data: unmatchedCodes = [] } = useUnmatchedSupplierCodes(planId || null);
 
+  // The tab lives in the URL (AC-B2), not component state: reload and the record's own
+  // prev/next pager both have to land back on the tab she was reading. `?tab=` follows the
+  // same shape ProductDetail uses - absent or unrecognised falls back to Lines, the default.
+  // Shared with the proforma invoice (S1 of the PI/packing-list feedback batch) as
+  // `useUrlTab`, so the two records cannot drift onto two ways of doing the same thing.
+  const [activeTab, handleTabChange] = useUrlTab({
+    tabs: LOADING_PLAN_TABS,
+    defaultTab: 'lines',
+    basePath: `/scm/loading-plan/${planId}`,
+  });
 
   const rows = useMemo(() => build.data?.rows ?? [], [build.data]);
   const readOnly = plan?.status === 'cancelled';
@@ -207,17 +223,16 @@ export function LoadingPlanView({ planId }: { planId: string }) {
   }, [unsaved]);
 
   const stockListPreviewItems = useMemo<AttachmentPreviewItem[]>(() => {
-    const id = stockListFile.data?.attachment_id;
-    if (!id) return [];
+    if (!uploadedListId) return [];
     return [
       {
-        id,
-        name: stockListFile.data?.filename || 'Stock list',
+        id: uploadedListId,
+        name: uploadedListName || 'Stock list',
         url: '',
-        downloadUrl: `/api/v1/resource-management/attachments/${id}/download`,
+        downloadUrl: `/api/v1/resource-management/attachments/${uploadedListId}/download`,
       },
     ];
-  }, [stockListFile.data]);
+  }, [uploadedListId, uploadedListName]);
 
   const requestNotices = (notices.data ?? []).filter((n) => n.notice_type === 'container_request');
   // Only one of THIS PLAN's tokens is ever live (each send retires the plan's last), so the
@@ -227,19 +242,59 @@ export function LoadingPlanView({ planId }: { planId: string }) {
 
   const goBack = () => router.push('/scm/loading-plan');
 
-  // Delete asks nothing (D7): the countdown counts down in the toast and Cancel is
-  // the way back. A plan whose notice already went out is refused by the server,
-  // which is the same rule the menu item's disabled state states up front.
-  const deletion = useDeferredAction({
-    actionKey: 'loading_plan.delete',
-    entityType: 'loading_plan',
-    entityId: planId,
-    verb: 'Deleting',
-    subject: plan?.supplier_name ?? 'this plan',
-    surface: 'toast',
-    successMessage: 'Plan deleted',
-    invalidateKeys: [['scm-loading-plans']],
-    onCommitted: goBack,
+  // A link the row navigated here to open (LoadingPlanRowActions) - a row has no built lines
+  // to hand the dialog itself, so it opens the record and asks it to open the dialog instead.
+  useEffect(() => {
+    if (searchParams?.get('send') !== '1') return;
+    setSendOpen(true);
+    // Only `send` goes: replacing the bare path threw away the tab she was on (`?tab=`) and
+    // scrolled the record back to the top under the dialog it had just opened (SF-4).
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete('send');
+    const qs = params.toString();
+    router.replace(`/scm/loading-plan/${planId}${qs ? `?${qs}` : ''}`, { scroll: false });
+  }, [searchParams, planId, router]);
+
+  // One action set, gear and row menu alike (S1, D15): Cancel and Delete are parked here
+  // through the deferred-action engine (D7), and the record hands over every gear-only
+  // extra it has - the row, which has none of them, ends up with just Send/Cancel/Delete.
+  const { actions: planActions, pending: planPending } = useLoadingPlanActions(plan, {
+    onDeleted: goBack,
+    onCancelled: () => setEdits({}),
+    send: {
+      run: () => setSendOpen(true),
+      disabled: readOnly || lines.length === 0 || totalQty <= 0 || send.isPending,
+      disabledReason: readOnly ? 'This plan is cancelled.' : undefined,
+    },
+    changeCutOff: {
+      disabled: readOnly,
+      run: () => {
+        setCutOffDraft(plan?.plan_horizon_date ?? '');
+        setCutOffOpen(true);
+      },
+    },
+    refreshSuggestion: {
+      disabled: build.isFetching,
+      run: () => (editedCount > 0 ? setRefreshOpen(true) : void build.refetch()),
+    },
+    refreshMatching: {
+      disabled: rematch.isPending,
+      run: () => rematch.mutate({ plan_id: planId }),
+    },
+    copyLink: {
+      disabled: !liveLinkNotice,
+      disabledReason: liveLinkNotice ? undefined : 'No link sent yet',
+      run: () => copyPublicLink(liveLinkNotice?.public_url),
+    },
+    downloadXlsx: {
+      disabled: lines.length === 0 || download.isPending,
+      run: () => download.mutate({ lines, format: 'xlsx' }),
+    },
+    downloadPdf: {
+      disabled: lines.length === 0 || download.isPending,
+      run: () => download.mutate({ lines, format: 'pdf' }),
+    },
+    ...(uploadedListId ? { viewUploadedList: { run: () => setPreviewOpen(true) } } : {}),
   });
 
   /**
@@ -355,8 +410,10 @@ export function LoadingPlanView({ planId }: { planId: string }) {
         </p>
       </PageHeader>
 
-      {/* The plan's own actions: pager, gear, primary (D6). They sit under the
-          toolbar rather than on it, and wrap at 375. */}
+      {/* The plan's own actions: pager, gear, primary (D6, S1). They sit under the
+          toolbar rather than on it, and wrap at 375. The gear renders `planActions` - the
+          same array the row menu renders on the list - so Cancel and Delete never drift
+          between the two surfaces (D15). */}
       <DetailActions
         className="mb-4"
         pager={{
@@ -365,150 +422,77 @@ export function LoadingPlanView({ planId }: { planId: string }) {
           currentId: planId,
           ariaLabel: 'loading plan',
         }}
-        gear={
-          <>
-            {/* Everything that is not the errand. ONE gear on this screen (R5): the card below
-                used to carry a second one, which made "the plan's actions" two menus deep. */}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  aria-label="Plan actions"
-                  data-testid="plan-actions"
-                >
-                  <Settings className="size-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56">
-                {stockListFile.data?.attachment_id ? (
-                  <DropdownMenuItem onSelect={() => setPreviewOpen(true)}>
-                    <Eye className="size-4" />
-                    View uploaded list
-                  </DropdownMenuItem>
-                ) : null}
-                <DropdownMenuItem
-                  disabled={rematch.isPending}
-                  onSelect={() => rematch.mutate({ supplier_id: supplierId })}
-                  data-testid="refresh-matching-item"
-                >
-                  <RefreshCw className="size-4" />
-                  Refresh matching
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  disabled={build.isFetching}
-                  onSelect={() => (editedCount > 0 ? setRefreshOpen(true) : void build.refetch())}
-                >
-                  <RefreshCw className="size-4" />
-                  Refresh suggestion
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  disabled={!liveLinkNotice}
-                  title={liveLinkNotice ? undefined : 'No link sent yet'}
-                  onSelect={(event) => {
-                    event.preventDefault();
-                    void copyPublicLink(liveLinkNotice?.public_url).then((copied) => {
-                      if (!copied) return;
-                      setLinkCopied(true);
-                      window.setTimeout(() => setLinkCopied(false), 2000);
-                    });
-                  }}
-                >
-                  {linkCopied ? <Check className="size-4" /> : <Link2 className="size-4" />}
-                  {linkCopied ? 'Copied' : 'Copy link'}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  disabled={lines.length === 0 || download.isPending}
-                  onSelect={() => download.mutate({ lines, format: 'xlsx' })}
-                >
-                  <Download className="size-4" />
-                  Download XLSX
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  disabled={lines.length === 0 || download.isPending}
-                  onSelect={() => download.mutate({ lines, format: 'pdf' })}
-                >
-                  <FileText className="size-4" />
-                  Download PDF
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  disabled={readOnly}
-                  onSelect={() => {
-                    setCutOffDraft(plan.plan_horizon_date ?? '');
-                    setCutOffOpen(true);
-                  }}
-                >
-                  <CalendarDays className="size-4" />
-                  Change cut-off
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  variant="destructive"
-                  disabled={readOnly}
-                  onSelect={() => setCancelOpen(true)}
-                >
-                  <Ban className="size-4" />
-                  Cancel plan
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  variant="destructive"
-                  disabled={!!plan.sent_at}
-                  title={plan.sent_at ? 'Sent plans are cancelled, not deleted' : undefined}
-                  onSelect={() => deletion.start()}
-                >
-                  <Trash2 className="size-4" />
-                  Delete plan
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </>
-        }
+        actions={planActions}
+        gearLabel="Plan actions"
+        pendingAction={planPending}
         primary={
-          <>
-            <Button
-              variant="outline"
-              disabled={readOnly || unsavedCount === 0 || save.isPending}
-              title={readOnly ? 'This plan is cancelled.' : undefined}
-              onClick={() => save.mutate(editedMap, { onSuccess: () => setEdits({}) })}
-              data-testid="save-plan-edits"
-            >
-              {save.isPending ? (
-                <LoaderCircle className="size-4 animate-spin" />
-              ) : (
-                <Save className="size-4" />
-              )}
-              Save ({unsavedCount})
-            </Button>
-
-            <Button
-              disabled={readOnly || lines.length === 0 || totalQty <= 0 || send.isPending}
-              title={readOnly ? 'This plan is cancelled.' : undefined}
-              onClick={() => setSendOpen(true)}
-              data-testid="send-to-supplier"
-            >
-              {send.isPending ? (
-                <LoaderCircle className="size-4 animate-spin" />
-              ) : (
-                <Send className="size-4" />
-              )}
-              Send to supplier
-            </Button>
-          </>
+          <Button
+            variant="outline"
+            disabled={readOnly || unsavedCount === 0 || save.isPending}
+            title={readOnly ? 'This plan is cancelled.' : undefined}
+            onClick={() => save.mutate(editedMap, { onSuccess: () => setEdits({}) })}
+            data-testid="save-plan-edits"
+          >
+            {save.isPending ? (
+              <LoaderCircle className="size-4 animate-spin" />
+            ) : (
+              <Save className="size-4" />
+            )}
+            Save ({unsavedCount})
+          </Button>
         }
       />
 
-      {/* The queue of codes this supplier's file names and our catalogue does not - the stock
-          behind them is invisible to the plan below until somebody answers them. */}
-      <UnmatchedSupplierCodesPanel supplierId={supplierId} />
+      {/* Three tabs (S2): what to ask (Lines, default), the codes her file named that our
+          catalogue does not (Supplier codes), and what has already gone out (Sent). The
+          toolbar above never moves between them - Save and Send both act on the Lines tab's
+          edits no matter which tab is open. */}
+      <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
+        <TabsList variant="line" className="mb-4 w-full justify-start">
+          <TabsTrigger value="lines">Lines</TabsTrigger>
+          <TabsTrigger value="codes">
+            Supplier codes{unmatchedCodes.length ? ` (${unmatchedCodes.length})` : ''}
+          </TabsTrigger>
+          <TabsTrigger value="sent">
+            Sent{requestNotices.length ? ` (${requestNotices.length})` : ''}
+          </TabsTrigger>
+        </TabsList>
 
-      <ContainerRequestSection
-        planId={planId}
-        supplierId={supplierId}
-        supplierName={supplierName}
-        qtyFor={qtyFor}
-        onQtyChange={(rowKey, qty) => setEdits((prev) => ({ ...prev, [rowKey]: qty }))}
-        readOnly={readOnly}
-      />
+        <TabsContent value="lines">
+          <ContainerRequestSection
+            planId={planId}
+            supplierId={supplierId}
+            supplierName={supplierName}
+            qtyFor={qtyFor}
+            onQtyChange={(rowKey, qty) => setEdits((prev) => ({ ...prev, [rowKey]: qty }))}
+            readOnly={readOnly}
+          />
+        </TabsContent>
+
+        <TabsContent value="codes">
+          {/* The queue of codes this supplier's file names and our catalogue does not, AND
+              the supplier's memory of every ruling ever made (S3) - both always render, so
+              the Remembered list is reachable even once the queue itself is answered down to
+              nothing; the tab's own empty states cover each half. */}
+          <SupplierCodesTab
+            planId={planId}
+            supplierId={supplierId}
+            documentKind={plan.document_kind}
+            documentLabel={plan.document_label}
+            statementAsOf={plan.statement_as_of}
+          />
+        </TabsContent>
+
+        <TabsContent value="sent">
+          <SentRequestsPanel
+            supplierName={supplierName}
+            notices={requestNotices}
+            onSend={() => setSendOpen(true)}
+            sendDisabled={readOnly || lines.length === 0 || totalQty <= 0 || send.isPending}
+            sendDisabledReason={readOnly ? 'This plan is cancelled.' : undefined}
+          />
+        </TabsContent>
+      </Tabs>
 
       <SendRequestDialog
         open={sendOpen}
@@ -561,23 +545,6 @@ export function LoadingPlanView({ planId }: { planId: string }) {
         confirmLabel="Change the cut-off"
         isBusy={save.isPending || changeCutOff.isPending}
         onConfirm={() => void applyCutOff()}
-      />
-
-      <ConfirmActionDialog
-        open={cancelOpen}
-        onOpenChange={setCancelOpen}
-        title="Cancel this plan?"
-        description="The supplier link stops working. The plan stays on the list under the Cancelled filter."
-        confirmLabel="Cancel plan"
-        isBusy={cancel.isPending}
-        onConfirm={() =>
-          cancel.mutate(planId, {
-            onSuccess: () => {
-              setCancelOpen(false);
-              setEdits({});
-            },
-          })
-        }
       />
 
       <ConfirmActionDialog

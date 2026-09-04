@@ -108,6 +108,14 @@ export interface TextLayerProps {
   align: 'left' | 'center' | 'right';
   lineHeight: number;
   letterSpacing: number;
+  /**
+   * Whole-layer B/I/U/S flags (S2, D4). Absent on a document saved before
+   * S2 - `text-format.ts` and the renderers treat a missing flag as false,
+   * so an old tag still opens and prints unchanged.
+   */
+  italic?: boolean;
+  underline?: boolean;
+  strikethrough?: boolean;
 }
 
 export interface ShapeLayerProps {
@@ -291,10 +299,17 @@ export interface TagTemplateVersionDetail extends TagTemplateVersion {
 }
 
 // ---------------------------------------------------------------------------
-// Imposition (used in S4)
+// Imposition (used in S4; auto-fit replaces the fixed presets in S6)
 // ---------------------------------------------------------------------------
 
-export type ImpositionPreset = 'a4_3up' | 'a4_2x2' | 'custom';
+/**
+ * `'a4_3up'` / `'a4_2x2'` are read-only history: a doc saved before S6 may
+ * still carry one, and `impositionSlots` treats every value the same (the
+ * auto-fit grid) so an old doc loads unchanged (AC-S6-4). `'auto'` is what
+ * every new save writes; `'custom'` marks "the designer edited a page field
+ * by hand" - it no longer selects a different layout algorithm.
+ */
+export type ImpositionPreset = 'auto' | 'custom' | 'a4_3up' | 'a4_2x2';
 
 export interface ImpositionConfig {
   preset: ImpositionPreset;
@@ -304,9 +319,8 @@ export interface ImpositionConfig {
   gap_mm: number;
 }
 
-export const IMPOSITION_PRESETS: Record<ImpositionPreset, Omit<ImpositionConfig, 'preset'>> = {
-  a4_3up: { page_width_mm: 210, page_height_mm: 297, bleed_mm: 3, gap_mm: 2 },
-  a4_2x2: { page_width_mm: 210, page_height_mm: 297, bleed_mm: 3, gap_mm: 2 },
+export const IMPOSITION_PRESETS: Record<'auto' | 'custom', Omit<ImpositionConfig, 'preset'>> = {
+  auto: { page_width_mm: 210, page_height_mm: 297, bleed_mm: 3, gap_mm: 2 },
   custom: { page_width_mm: 210, page_height_mm: 297, bleed_mm: 3, gap_mm: 2 },
 };
 

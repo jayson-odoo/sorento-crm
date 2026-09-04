@@ -65,13 +65,25 @@ LEAD_DAYS = 30
 WINDOW_DAY = LEAD_DAYS + 14
 
 
-def _policy(db, name: str | None = None):
+def _policy(
+    db,
+    name: str | None = None,
+    *,
+    overdue_grace_days: int | None = None,
+    overdue_dead_days: int | None = None,
+):
     priority.create_revision(
         db,
         name=name or f"zzt-v7-{_uid()[:6]}",
         factors={},
         demand_class_weights={},
         reorder_coverage_until=None,
+        # None-means-unchanged all the way down to `create_revision`, which takes the
+        # column's own SHIPPED default (0 / 0, captain's ruling 3 Sep 2026) when a caller
+        # never asks for the grace explicitly - a caller that DOES care about it (R-O's own
+        # suite) passes both.
+        overdue_grace_days=overdue_grace_days,
+        overdue_dead_days=overdue_dead_days,
     )
     db.commit()
 
@@ -201,19 +213,29 @@ def test_an_undecided_line_leaves_the_other_groups_pile_alone_in_the_assignment(
     ]
 
 
-def test_a_confirmed_cross_group_hold_depletes_that_groups_pile_for_its_own_later_asker():
+def test_a_confirmed_cross_group_hold_depletes_that_groups_pile_for_the_next_asker():
     """R40's second half: the OFFER becomes an assumption the moment somebody Confirms it.
 
-    Before the Confirm the IR pile is whole and IR's own later line reads `covered`; after
-    it, 40 of the 100 is pinned to the BB line, so IR's own asker for 80 can only draw 60
-    and step 1 - whole unit or nothing - gives it nothing.
+    RE-BLESSED under R-M (3 Sep 2026). The case used to hold 100 at the IR bin against IR's
+    own later line of 80, let a BB line confirm 40 of it, and assert that IR's own asker
+    then went `short` by 20. Under R-M that Confirm is refused before it is written ("IR now
+    has 20 free for this line, and 40 was asked for"), because what another group may lend
+    is bounded by its WHOLE open book and IR's book was 20. A cross-group Confirm can no
+    longer make the lending group's own line go short - which is the ruling, not a loss of
+    coverage here.
+
+    So the same story is told with the numbers the cap allows: IR holds 120 against its own
+    80, so its book spares exactly 40, and the BB line confirms all of it. IR's own line
+    stays `covered` - R-M never lends away a group's own cover - and the PILE is gone: 40
+    free at the IR bin before the Confirm, nothing after it, so the next asker is offered
+    nothing at all.
     """
     with blank_session() as db:
         company_id, eling, project, product = _world(db)
         _group, sites = _group_sites(db)
         own, _pool = sites["BRW"]
         donor = _warehouse(db, f"ZZTDC1-IR{_uid()[:3]}")
-        _stock(db, product, donor, on_hand=100)
+        _stock(db, product, donor, on_hand=120)
         _lead_time(db, product, LEAD_DAYS)
         _policy(db)
 
@@ -232,6 +254,12 @@ def test_a_confirmed_cross_group_hold_depletes_that_groups_pile_for_its_own_late
         before_status = next(
             r.status for r in before.lines if r.line.key == str(later_core.id)
         )
+        before_free = before.free[f"on_hand:{donor.id}"]
+        # The offer the BB line is made is the group's BOOK, not the date-bounded pile:
+        # 120 less IR's own 80, which is exactly the 40 it asks for.
+        asker_components = _components(
+            ProjectSupplyService(db).proposal_for(asker)
+        )
 
         # The BB line takes the offer: a Reserve at the IR bin, confirmed.
         _decide(db, asker, asker_line, donor, "40", eling)
@@ -241,16 +269,23 @@ def test_a_confirmed_cross_group_hold_depletes_that_groups_pile_for_its_own_late
         after_row = next(
             r for r in after.lines if r.line.key == str(later_core.id)
         )
+        after_free = after.free[f"on_hand:{donor.id}"]
         later_components = _components(
             ProjectSupplyService(db).proposal_for(later)
         )
+        donor_code = donor.warehouse_code
 
     assert before_status == "covered", "IR's own line had the whole pile before the Confirm"
-    assert (after_row.status, after_row.uncovered) == ("short", 20.0), (
-        "60 of IR's 100 is left once 40 is pinned to the BB line"
+    assert before_free == 40.0, "40 of IR's 120 is spare once its own 80 is met"
+    assert [(c["kind"], c["qty"], c["source_location"]) for c in asker_components] == [
+        ("reserve", "40", donor_code),
+    ]
+    assert (after_row.status, after_row.uncovered) == ("covered", 0.0), (
+        "R-M lends only what IR's own book can spare, so IR's own line is never the payer"
     )
-    assert [(c["kind"], c["qty"]) for c in later_components] == [("buy", "80")], (
-        "60 is not the whole unit, so step 1 gives nothing (R10/R33)"
+    assert after_free == 0.0, "the pile is spoken for: the next asker is offered nothing"
+    assert [(c["kind"], c["qty"]) for c in later_components] == [("reserve", "80")], (
+        "IR's own line still draws its own group's stock, which nobody took from it"
     )
 
 

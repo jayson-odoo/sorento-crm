@@ -145,7 +145,7 @@ arrives - see the file's own "Materials" comment for the precedent.
 | `DetailActions` + `ListPager` | `components/common/DetailActions.tsx`, `components/common/ListPager.tsx` | Record card: pager, gear LEFT of the single primary button, Delete last in the gear |
 | `DataGrid` / `DataGridTable` | `components/ui/data-grid.tsx`, `components/ui/data-grid-table.tsx` | EVERY tabular list; `tableLayout: { width: 'fixed', columnsResizable: true }`, explicit `size`, `truncate` + `title`; a deliberately pinned column keeps its pinned styles on a phone, nothing pins automatically |
 | `Badge` pill | `components/ui/badge.tsx` | Status = rounded tinted pill with a dot (`status` prop, resolves via `getStatusBadgeVariant`) |
-| `Tabs` with `TabsList variant="line"` | `components/ui/tabs.tsx` | Form/detail tabs (the default); pills (`variant="default"`) only for a two/three-option segmented switch inside a dialog |
+| `Tabs` with `TabsList variant="line"` | `components/ui/tabs.tsx` | The default everywhere, dialogs/lightboxes included (S9, PLAN-scm-loading-plan-feedback-2sep.md section 3.9); pills (`variant="default"`) are reserved for a view TOGGLE that is not navigation - a Table/Schedule switch, never a set of tabbed panels |
 | `Dialog` / `Sheet` / `AlertDialog` | `components/ui/dialog.tsx`, `components/ui/sheet.tsx`, `components/ui/alert-dialog.tsx` | Lightbox surfaces, `modal ?? true`, shared `OVERLAY_CLASS` / `OVERLAY_CLASS_STATIC` from `components/ui/primitive-classes.ts` |
 | `SearchableSelect` / `SearchableMultiSelect` | `components/common/SearchableSelect.tsx`, `components/common/SearchableMultiSelect.tsx` | Every dropdown-select; optional ones set `clearable` |
 | `ListSearchInput` | `components/common/ListSearchInput.tsx` | Every list search box |
@@ -173,7 +173,11 @@ coarse-pointer `::after` hit area supplies the 44px target invisibly.
 - **D15** - one `recordActions` set per entity (`use<Entity>Actions(record)`), shared by the
   list row's "..." menu and the record's gear - same items, same order, same permissions. No
   Edit item in the row menu; the row click (list) / primary button (record) is the edit path.
-  Reference detail pattern: the Users account page (first case for D15).
+  An item that needs record-only state (built lines, a live link, an attachment) may be
+  OMITTED from the row menu - the row and the record still share one definition, and the
+  hook simply receives fewer items on the row. Do not add disabled placeholders to the row
+  to make the two lists the same length. Reference detail pattern: the Users account page
+  (first case for D15).
 
 ## 6. Copy and content
 

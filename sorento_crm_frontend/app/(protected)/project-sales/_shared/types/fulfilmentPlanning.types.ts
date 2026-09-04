@@ -1863,12 +1863,21 @@ export interface BoardLineDraft {
   saved_at: string;
   /**
    * The engine has re-suggested this line since it was saved (AC-4.4: "a line saved but
-   * then re-suggested by a new upload"). Computed by the SERVER on every board read: the
-   * draft keeps the `proposed` it was saved against, and the board compares that
-   * composition - kind, quantity and location, never the reason sentence - with what it is
-   * proposing now. False on an ordinary saved line.
+   * then re-suggested by a new upload"). Computed by the SERVER on every board read,
+   * against the LINE's own facts at save time (S1, code review round 3) - open quantity
+   * and required date, never `proposed` below. False on an ordinary saved line.
    */
   stale?: boolean;
+  /**
+   * WHAT THE ENGINE SUGGESTED at save time (D12, #573, captain ruling): the contribution's
+   * own `sources` the moment the draft was written, in the SAME shape. NOT what `stale`
+   * above is judged against (that stays the line's own facts, S1) - this exists only so
+   * the Sales Order page's Suggested column can read a saved-but-unconfirmed line's
+   * composition the way the board's list view already does ("BRW 3 (BRW)"), until Confirm
+   * freezes a revision. `null`/absent on a draft saved before D12, or on a save nothing
+   * was offered for.
+   */
+  proposed?: BoardSource[] | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1925,6 +1934,17 @@ export interface StockDetailIncoming {
    * supplier to chase instead of wondering why the cover never lands.
    */
   overdue_days?: number | null;
+  /**
+   * The day the WALK plans this late document against - `today + overdue_grace_days`
+   * (R-O, 3 September 2026). Null when the document is not late, or when it is so late
+   * that nothing is assumed about it at all.
+   */
+  assumed_date?: string | null;
+  /**
+   * False when the document is later than `overdue_dead_days` and therefore counts as
+   * nothing (R31, as R-O leaves it). The row reads "not counted".
+   */
+  counted?: boolean;
 }
 
 /**

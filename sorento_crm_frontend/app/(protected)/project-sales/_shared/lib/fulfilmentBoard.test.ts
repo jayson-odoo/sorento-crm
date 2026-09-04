@@ -1051,6 +1051,32 @@ describe('confirmLinesFor', () => {
     });
   });
 
+  /**
+   * D11: `BoardLineDecisionPanel.save()` now writes the suggested COMPOSITION onto an
+   * approved draft too (reserve, borrow, buy_qty, timely_spo_qty), not only the verdict, so
+   * the sales order page's own "Decided" column has something to read. Confirm must not
+   * double-count it: an uncovered approval's own branch (`lineFor`) never reads
+   * `decision.reserve`/`decision.borrow`/`decision.buy_qty` at all, deriving fresh off the
+   * contribution's own `qty_proposed_*` and source strip instead - so a draft that now
+   * carries the composition confirms identically to one that carried only the verdict.
+   */
+  it('confirms identically whether or not the approved draft also carries the suggested composition', () => {
+    const bare = confirmLinesFor(contributions, 'so-a', {
+      [keyOf('SO000001', 1)]: { verdict: 'approved' },
+    });
+    const composed = confirmLinesFor(contributions, 'so-a', {
+      [keyOf('SO000001', 1)]: {
+        verdict: 'approved',
+        reserve_qty: '100',
+        timely_spo_qty: '0',
+        reserve: [{ warehouse_id: 'wh-BRW-BB', location: 'BRW-BB', qty: '100' }],
+        borrow: [],
+        buy_qty: '0',
+      },
+    });
+    expect(composed).toEqual(bare);
+  });
+
   it('moves what an amendment took off the Reserve into the Buy', () => {
     // 50 owed, 20 free: the rule proposed reserve 20 + buy 30. Amended down to 5, the other
     // 15 has to be bought - the difference cannot simply vanish.

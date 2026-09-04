@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
 import {
   dismissSupplierCode,
+  forgetSupplierCodeMatch,
   listSupplierCodeAliases,
   listUnmatchedSupplierCodes,
   matchSupplierCode,
@@ -20,11 +21,20 @@ export function useSupplierCodeAliases(supplierId: string | null) {
   });
 }
 
-export function useUnmatchedSupplierCodes(supplierId: string | null) {
+/**
+ * The unknown codes on ONE plan's own statement (S6, AC-C7).
+ *
+ * Keyed on the PLAN, not the supplier: the queue used to be supplier-wide, so a plan
+ * started with no file at all listed 79 codes off a snapshot another plan had uploaded.
+ * The remembered list below stays per supplier - a ruling is the supplier's memory and it
+ * is consulted on every later upload.
+ */
+export function useUnmatchedSupplierCodes(planId: string | null) {
   return useQuery({
-    queryKey: [...KEY, 'unmatched', supplierId],
-    queryFn: () => listUnmatchedSupplierCodes(supplierId as string),
-    enabled: !!supplierId,
+    queryKey: [...KEY, 'unmatched', planId],
+    queryFn: () => listUnmatchedSupplierCodes(planId as string),
+    enabled: !!planId,
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -113,7 +123,65 @@ export function useRematchSupplierCodes() {
   });
 }
 
-// Forgetting a match has no mutation hook: both screens that offer it park
+/**
+ * Match / dismiss for the Supplier codes tab's "Needs a decision" queue (S3).
+ *
+ * Unlike `useMatchSupplierCode` / `useDismissSupplierCode` above, these do NOT invalidate
+ * the unmatched or remembered queries on success: AC-C1/AC-C2/AC-C3 keep the row exactly
+ * where it is, showing the decision with Undo, and the decided row only joins Remembered
+ * on the NEXT load (an explicit Undo, or leaving the tab). Invalidating here would refetch
+ * the unmatched list mid-visit and the row the operator just answered would vanish out from
+ * under them - the very behaviour S3 exists to fix.
+ */
+export function useMatchSupplierCodeInPlace() {
+  return useMutation({
+    mutationFn: matchSupplierCode,
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+export function useDismissSupplierCodeInPlace() {
+  return useMutation({
+    mutationFn: dismissSupplierCode,
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+/**
+ * Undo of a decision made THIS visit (AC-C1/AC-C2): the same DELETE `Forget` runs on the
+ * remembered list, called here immediately rather than through the deferred engine - undoing
+ * a pick made seconds ago is a correction, not a destructive action on someone else's data,
+ * so it carries no countdown. Invalidates on success so the picker's fresh state (the ladder
+ * may since answer differently) is what comes back.
+ */
+export function useUndoSupplierCodeDecision() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: forgetSupplierCodeMatch,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: KEY });
+      void qc.invalidateQueries({ queryKey: ['scm', 'proforma-invoices'] });
+      void qc.invalidateQueries({ queryKey: ['scm', 'fulfilment'] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+/**
+ * "Confirm (N)" on the Needs a decision queue (S10 fix 2).
+ *
+ * A pick or a dismiss already wrote its alias the moment it happened (AC-C1/AC-C2) - this
+ * writes nothing. It only asks the plan's own queue and the supplier's memory to refetch, so
+ * the rows decided this visit stop waiting for a reload (or leaving the tab) to join
+ * Remembered: the unmatched list drops them because the ladder now resolves them, and the
+ * alias list picks them up, same as `useMatchSupplierCode`'s own invalidation.
+ */
+export function useConfirmSupplierCodeDecisions() {
+  const qc = useQueryClient();
+  return () => void qc.invalidateQueries({ queryKey: KEY });
+}
+
+// Forgetting a REMEMBERED match has no mutation hook: both screens that offer it park
 // `supplier_code_alias.forget` through `useDeferredRowAction` instead (D7), so the
 // server applies it when the window lapses and the same three lists are refetched
 // from the action's own invalidateKeys.

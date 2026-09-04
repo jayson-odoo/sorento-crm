@@ -485,6 +485,53 @@ class TagTemplateVersionDetailResponse(TagTemplateVersionResponse):
 
 
 # ---------------------------------------------------------------------------
+# Save as template (S4, PLAN D1, AC-S4-7)
+# ---------------------------------------------------------------------------
+
+
+class TagTemplateFromTagCreate(BaseModel):
+    """What the designer's "Save as template" posts. Creates the template AND
+    publishes it as v1 in one transaction - see the route docstring."""
+
+    name: str = Field(..., min_length=1, max_length=255)
+    family: str = Field(..., min_length=1, max_length=50)
+    doc: dict = Field(default_factory=dict)
+    print_size: dict = Field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
+# Tag size presets (S4, PLAN D2)
+# ---------------------------------------------------------------------------
+
+
+class TagSizePresetCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    width_mm: float = Field(..., ge=10)
+    height_mm: float = Field(..., ge=10)
+
+
+class TagSizePresetUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    width_mm: Optional[float] = Field(default=None, ge=10)
+    height_mm: Optional[float] = Field(default=None, ge=10)
+
+
+class TagSizePresetResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    width_mm: float
+    height_mm: float
+    created_by: Optional[str] = None
+    # Resolved, not stored - a preset row holds a user id and nothing a
+    # person can read (no UUIDs in the UI). Filled by the route.
+    created_by_name: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+# ---------------------------------------------------------------------------
 # Tag sheet design doc
 # ---------------------------------------------------------------------------
 

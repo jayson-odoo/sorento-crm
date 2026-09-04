@@ -45,8 +45,9 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { getProducts } from '@/app/(protected)/master-data-management/products/services/productService';
+import { useUOMSelectQuery } from '@/app/(protected)/master-data-management/shared/hooks/use-uom-select-query';
 import { useHasPermission } from '@/hooks/usePermissions';
-import { useContainerSizes } from '../../../hooks/useFulfilment';
+import { useUrlTab } from '@/hooks/useUrlTab';
 import {
   useConvertProformaInvoicesToDraftShipment,
   useProformaInvoice,
@@ -68,7 +69,6 @@ import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { proformaInvoicesPagerQuery } from '../../../hooks/useProformaInvoices';
 import { MarkAsRevisionDialog } from './MarkAsRevisionDialog';
 import { ProformaRevisionsCard } from './ProformaRevisionsCard';
-import { ProformaVolumeFill } from './ProformaVolumeFill';
 import BackToList, { useBackToListHref } from '@/components/common/BackToList';
 
 const CONVERT_PERMISSION = 'scm.reorder.run';
@@ -80,6 +80,9 @@ const LINES_LISTING_KEY = 'scm.dashboard.view::proforma-invoice-lines';
 
 /** How many products a page of the picker asks for. */
 const PRODUCT_PAGE_SIZE = 50;
+
+/** The record's four tabs (S1): General (default), Lines, Revisions, Packing lists. */
+const PI_TABS = ['general', 'lines', 'revisions', 'packing-lists'] as const;
 
 function Field({
   label,
@@ -117,6 +120,9 @@ interface DraftLine {
   key: string;
   id?: string;
   productId: string | null;
+  /** The line's other possible binding (R19) - carried through so an untouched line does not
+   *  lose it on Save, though this slice's select only picks PRODUCTS (S3 brings set memory). */
+  productSetId: string | null;
   productCode: string | null;
   itemCode: string;
   description: string;
@@ -149,7 +155,10 @@ function toDraft(line: ProformaInvoiceLine): DraftLine {
   return {
     key: line.id,
     id: line.id,
-    productId: null,
+    // AC-B2: the matched product travels into the draft, so the edit-mode select shows it
+    // rather than reading empty on every open.
+    productId: line.product_id,
+    productSetId: line.product_set_id,
     productCode: line.product_code,
     itemCode: line.item_code,
     description: line.description ?? '',
@@ -187,7 +196,13 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
   const canConvert = useHasPermission(CONVERT_PERMISSION);
   const canAdjust = useHasPermission(ADJUST_PERMISSION);
   const { data, isLoading, isError } = useProformaInvoice(id);
-  const containerSizes = useContainerSizes();
+  // AC-B4: the master list, not free text - "unit" and "UNIT" read as one unit here and two
+  // strings on the export.
+  const uoms = useUOMSelectQuery();
+  const uomSelectOptions = useMemo(
+    () => (uoms.data ?? []).map((u) => ({ value: u.uom_code, label: u.uom_code })),
+    [uoms.data],
+  );
   const convertToDraftShipment = useConvertProformaInvoicesToDraftShipment();
   const saveInvoice = useSaveProformaInvoice(id);
   // Delete asks nothing (D7): the countdown takes the primary button's place and
@@ -213,20 +228,35 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
     successMessage: 'Match forgotten.',
     invalidateKeys: [['scm', 'proforma-invoices', 'detail', id]],
   });
+  // Destructured for the Lines grid's `columns` memo below: `run` is the only thing that
+  // memo calls, and it never changes reference (`useDeferredRowAction`'s own `useCallback`
+  // has an empty dep array). Depending on `matchForgetting` WHOLE ties every row's cells to
+  // `isPending`/`targetId`, which flip the moment ANY row's Forget starts, counts down or
+  // commits - a background pending-action watch settling while a product picker on a
+  // DIFFERENT row is open recomputed every column, remounted every row's `SearchableSelect`,
+  // and silently closed the open popover (reproduced in isolation, S2 tester).
+  const forgetMatch = matchForgetting.run;
 
-  const [tab, setTab] = useState('general');
+  // The tab lives in the URL, not component state (S1, AC-A1-A4): reload, the record's own
+  // prev/next pager, and pressing Edit all have to land back on the tab she was reading.
+  // Shared with the loading plan as `useUrlTab`, extracted from its own inline version.
+  const [tab, setTab] = useUrlTab({
+    tabs: PI_TABS,
+    defaultTab: 'general',
+    basePath: `/scm/proforma-invoices/${id}`,
+  });
   const [editing, setEditing] = useState(false);
   const [draftNumber, setDraftNumber] = useState('');
-  const [draftSizeId, setDraftSizeId] = useState<string | null>(null);
   const [draftLines, setDraftLines] = useState<DraftLine[]>([]);
   const [overCapacity, setOverCapacity] = useState<string | null>(null);
   const [overrideReason, setOverrideReason] = useState('');
   const [convertOpen, setConvertOpen] = useState(false);
   const [revisionOpen, setRevisionOpen] = useState(false);
   // Held so an over-capacity refusal can be re-submitted with the reason WITHOUT asking
-  // the operator to re-type the split they already chose.
+  // the operator to re-type the split - or the container size - they already chose.
   const [convertArgs, setConvertArgs] = useState<{
     lineQuantities: Record<string, number>;
+    containerSizeId: string | null;
   } | null>(null);
   const [saving, setSaving] = useState(false);
   /** The line whose supplier code is being answered by hand (R16). */
@@ -268,14 +298,13 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
   }, []);
 
   // Editing starts from whatever the server currently holds, every time - a draft left over
-  // from a cancelled edit would silently re-apply what the user backed out of.
+  // from a cancelled edit would silently re-apply what the user backed out of. It does NOT
+  // reset the tab (AC-A4): pressing Edit from Lines has to stay on Lines.
   const beginEdit = () => {
     if (!data) return;
     setDraftNumber(data.pi_number);
-    setDraftSizeId(data.container_size_id ?? null);
     setDraftLines(lines.map(toDraft));
     setEditing(true);
-    setTab('general');
   };
 
   const cancelEdit = () => {
@@ -306,6 +335,7 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
       {
         key: `new-${Date.now()}-${prev.length}`,
         productId: null,
+        productSetId: null,
         productCode: null,
         itemCode: '',
         description: '',
@@ -342,31 +372,6 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
     return { total, unmeasured };
   }, [editing, draftLines, data?.total_cbm, data?.unmeasured_lines]);
 
-  const containerCbm = useMemo(() => {
-    if (!editing) return data?.container_cbm ?? null;
-    const chosen = (containerSizes.data ?? []).find((s) => s.id === draftSizeId);
-    if (chosen) return chosen.cbm;
-    const fallback = (containerSizes.data ?? []).find((s) => s.is_default);
-    return fallback?.cbm ?? data?.container_cbm ?? null;
-  }, [editing, draftSizeId, containerSizes.data, data?.container_cbm]);
-
-  const containerLabel = useMemo(() => {
-    if (!editing) return data?.container_size_code ?? null;
-    const chosen = (containerSizes.data ?? []).find((s) => s.id === draftSizeId);
-    if (chosen) return chosen.code;
-    const fallback = (containerSizes.data ?? []).find((s) => s.is_default);
-    return fallback?.code ?? data?.container_size_code ?? null;
-  }, [editing, draftSizeId, containerSizes.data, data?.container_size_code]);
-
-  const containerOptions = useMemo(
-    () =>
-      (containerSizes.data ?? []).map((s) => ({
-        value: s.id,
-        label: `${s.code} - ${fmtTrimmedDecimal(s.cbm, 2)} cbm${s.is_default ? ' (default)' : ''}`,
-      })),
-    [containerSizes.data],
-  );
-
   const saveEdit = async () => {
     if (!data) return;
     const number = draftNumber.trim();
@@ -388,24 +393,35 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
     }
     // ONE call. Rows with an id update, rows without create, and a line the array no longer
     // names is deleted - so the whole draft either lands or none of it does.
-    const payload: ProformaInvoiceLineWrite[] = kept.map((row) => ({
-      ...(row.id ? { id: row.id } : {}),
-      ...(row.productId ? { product_id: row.productId } : {}),
-      item_code: row.itemCode.trim(),
-      description: row.description.trim() || null,
-      qty: num(row.qty) ?? 0,
-      uom: row.uom.trim() || null,
-      cartons: num(row.cartons),
-      cbm_per_unit: num(row.cbmPerUnit),
-      unit_price: num(row.unitPrice),
-      net_weight: num(row.netWeight),
-      gross_weight: num(row.grossWeight),
-    }));
+    //
+    // `product_id` / `product_set_id`: the key is sent ONLY when the operator actually
+    // touched the Product select on this row - untouched, it is left out of the payload
+    // entirely, and the server keeps whatever the line already had (AC-B3). Sending the
+    // CURRENT value unconditionally (what this used to do, always omitting it because
+    // `toDraft` hard-coded `productId: null`) is what silently unbound every matched product
+    // on every save.
+    const payload: ProformaInvoiceLineWrite[] = kept.map((row) => {
+      const productIdChanged = row.productId !== (row.source?.product_id ?? null);
+      const productSetIdChanged = row.productSetId !== (row.source?.product_set_id ?? null);
+      return {
+        ...(row.id ? { id: row.id } : {}),
+        ...(productIdChanged ? { product_id: row.productId } : {}),
+        ...(productSetIdChanged ? { product_set_id: row.productSetId } : {}),
+        item_code: row.itemCode.trim(),
+        description: row.description.trim() || null,
+        qty: num(row.qty) ?? 0,
+        uom: row.uom.trim() || null,
+        cartons: num(row.cartons),
+        cbm_per_unit: num(row.cbmPerUnit),
+        unit_price: num(row.unitPrice),
+        net_weight: num(row.netWeight),
+        gross_weight: num(row.grossWeight),
+      };
+    });
     setSaving(true);
     try {
       await saveInvoice.mutateAsync({
         pi_number: number,
-        container_size_id: draftSizeId ?? null,
         lines: payload,
       });
       setEditing(false);
@@ -420,7 +436,7 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
   };
 
   const runConvert = async (
-    args: { lineQuantities: Record<string, number> } | null,
+    args: { lineQuantities: Record<string, number>; containerSizeId: string | null } | null,
     reason?: string,
   ) => {
     setConvertArgs(args);
@@ -429,6 +445,7 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
         invoiceIds: [id],
         overrideReason: reason,
         lineQuantities: args?.lineQuantities,
+        containerSizeId: args?.containerSizeId ?? null,
       });
       setOverCapacity(null);
       setOverrideReason('');
@@ -507,16 +524,23 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
         cell: ({ row }) => {
           const line = row.original;
           if (editing) {
+            // A line matched to a SET (R19) has no `productId` - the select still shows
+            // the match, keyed by the set's id, so a bound line never reads empty in edit
+            // mode (AC-B2). This select only SEARCHES products; the only new value it can
+            // ever produce for `productSetId` is `null` - picking (or clearing) always
+            // resolves the line to one binding, never two at once.
+            const selectValue = line.productId ?? line.productSetId ?? '';
             return (
               // SERVER-SEARCHED and paginated: the catalogue is tens of thousands of rows,
               // and a picker holding one cached page silently hides the item being looked for.
               <SearchableSelect
-                value={line.productId ?? ''}
+                value={selectValue}
                 onChange={(v: string) => {
                   const known = v ? productCodes.current.get(v) : undefined;
                   patchLine(line.key, {
                     productId: v || null,
-                    productCode: known?.code ?? line.productCode,
+                    productSetId: null,
+                    productCode: known?.code ?? (v ? line.productCode : null),
                     // Only where the operator has not written one themselves: the supplier's
                     // own spelling is the document of record, and overwriting it would make
                     // our copy disagree with their paper.
@@ -528,8 +552,8 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
                 paginated
                 pageSize={PRODUCT_PAGE_SIZE}
                 selectedOption={
-                  line.productId && line.productCode
-                    ? { value: line.productId, label: line.productCode }
+                  selectValue && line.productCode
+                    ? { value: selectValue, label: line.productCode }
                     : undefined
                 }
                 placeholder="Search a product"
@@ -620,21 +644,36 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
         header: ({ column }) => <DataGridColumnHeader title="UOM" column={column} />,
         cell: ({ row }) => {
           const line = row.original;
-          return editing ? (
-            <Input
-              value={line.uom}
-              onChange={(e) => patchLine(line.key, { uom: e.target.value })}
-              className="h-8 w-20"
-              aria-label={`UOM for ${line.itemCode || `line ${row.index + 1}`}`}
-              disabled={line.removed}
-            />
-          ) : (
+          if (editing) {
+            const selectId = `pi-edit-line-${line.key}-uom`;
+            return (
+              <>
+                {/* SearchableSelect forwards `id`, not arbitrary aria props - same pattern
+                    as the Product select above and the UoM cell on the sales order. */}
+                <label className="sr-only" htmlFor={selectId}>
+                  UOM for {line.itemCode || `line ${row.index + 1}`}
+                </label>
+                <SearchableSelect
+                  id={selectId}
+                  value={line.uom}
+                  onChange={(v: string) => patchLine(line.key, { uom: v })}
+                  options={uomSelectOptions}
+                  placeholder="Search a UoM"
+                  emptyMessage="No UoM found."
+                  size="sm"
+                  clearable
+                  disabled={line.removed}
+                />
+              </>
+            );
+          }
+          return (
             <span className="truncate" title={line.uom || undefined}>
               {line.uom || EM_DASH}
             </span>
           );
         },
-        size: 90,
+        size: 140,
         enableSorting: false,
         meta: { headerTitle: 'UOM' },
       },
@@ -919,7 +958,7 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
                     className="h-6 px-1.5 text-2xs"
                     onClick={() =>
                       line.match_id &&
-                      matchForgetting.run({
+                      forgetMatch({
                         id: line.match_id,
                         subject: `${line.item_code} means ${line.product_code ?? 'this product'}`,
                       })
@@ -972,7 +1011,8 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
         enableSorting: false,
       },
     ],
-    [data?.currency, editing, canAdjust, fetchProducts, matchForgetting],
+    // `forgetMatch`, not `matchForgetting` - see the note where it is destructured above.
+    [data?.currency, editing, canAdjust, fetchProducts, forgetMatch, uomSelectOptions],
   );
 
   const table = useReactTable({
@@ -1229,29 +1269,6 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
               <Field label="Container">{invoice.container_no ?? EM_DASH}</Field>
               <Field label="BL">{invoice.bl_no ?? EM_DASH}</Field>
               <Field label="Currency">{invoice.currency ?? EM_DASH}</Field>
-              {/* Same slot in both views: the value becomes a select where the value was. */}
-              <Field label="Container size" htmlFor={editing ? 'pi-container-size' : undefined}>
-                {editing ? (
-                  <SearchableSelect
-                    id="pi-container-size"
-                    size="sm"
-                    value={draftSizeId ?? ''}
-                    onChange={(v: string) => setDraftSizeId(v || null)}
-                    options={containerOptions}
-                    placeholder={containerLabel ? `${containerLabel} (default)` : 'Default size'}
-                    clearable
-                  />
-                ) : (
-                  <>
-                    {invoice.container_size_code ?? EM_DASH}
-                    {invoice.container_cbm != null ? (
-                      <span className="ms-1 font-normal text-muted-foreground">
-                        {fmtTrimmedDecimal(invoice.container_cbm, 2)} cbm
-                      </span>
-                    ) : null}
-                  </>
-                )}
-              </Field>
               <Field label="Total">
                 {fmtSupplierCost(invoice.total_amount, invoice.currency)}
               </Field>
@@ -1271,20 +1288,27 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
             </section>
           </Card>
 
+          {/* No container size, gauge or "over by" here (S5, ruling 1): capacity is a
+              property of the CONTAINER this invoice's goods may end up sharing with
+              several others, chosen on the convert dialog. This is the number Ms Tee adds
+              up across invoices to decide which of them share a box. */}
           <Card>
             <CardHeader>
               <CardHeading>
-                <CardTitle>Volume</CardTitle>
+                <CardTitle>Total volume</CardTitle>
               </CardHeading>
             </CardHeader>
-            <section aria-label="Volume" className="p-4">
-              <ProformaVolumeFill
-                className="max-w-xl"
-                totalCbm={volume.total}
-                containerCbm={containerCbm}
-                containerLabel={containerLabel}
-                unmeasuredLines={volume.unmeasured}
-              />
+            <section aria-label="Total volume" className="p-4">
+              <p className="text-sm font-medium">
+                {volume.total === null
+                  ? 'No volume on this invoice'
+                  : `${fmtTrimmedDecimal(volume.total, 2)} cbm`}
+              </p>
+              {volume.unmeasured > 0 ? (
+                <p className="mt-1 text-2xs text-muted-foreground">
+                  {volume.unmeasured} unmeasured {volume.unmeasured === 1 ? 'line' : 'lines'}
+                </p>
+              ) : null}
             </section>
           </Card>
         </TabsContent>

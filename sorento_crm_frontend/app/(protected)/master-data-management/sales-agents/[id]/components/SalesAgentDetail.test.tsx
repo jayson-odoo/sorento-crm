@@ -58,6 +58,22 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
 }));
 
+// The Sales orders tab renders `SalesOrdersGrid`, whose remembered sort/filter view
+// (PLAN-listing-view-memory) reads this service under `useListingViewPreferences`. Stubbed
+// to resolve fast with nothing stored, so the grid's gated fetch unblocks on the next tick
+// rather than sitting on its loading skeleton forever.
+vi.mock('@/lib/listing-column-preferences/listColumnPreferencesService', () => ({
+  getUserListColumnConfig: vi.fn(async () => ({
+    listing_key: 'master_data.sales_agents.view::sales-orders',
+    config: null,
+  })),
+  upsertUserListColumnConfig: vi.fn(async (listingKey: string, payload: unknown) => ({
+    listing_key: listingKey,
+    config: payload,
+  })),
+  resetUserListColumnConfig: vi.fn(async () => undefined),
+}));
+
 vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: () => true,
   usePermissions: () => ({ permissions: [], permissionSet: new Set(), isLoading: false }),
@@ -567,7 +583,10 @@ describe('SalesAgentDetail - the Sales orders tab', () => {
     renderDetail();
     await openSalesOrdersTab();
 
-    fireEvent.click(screen.getByText('Rowenda Kitchen Sdn Bhd'));
+    // Waits for the same row the sibling test clicks synchronously - the grid's own
+    // fetch is gated on the remembered view resolving first (PLAN-listing-view-memory),
+    // so the row is not necessarily painted the instant the tabpanel itself is.
+    fireEvent.click(await screen.findByText('Rowenda Kitchen Sdn Bhd'));
 
     const href = push.mock.calls.at(-1)?.[0] as string;
     expect(new URLSearchParams(href.split('?')[1] ?? '').get('sales_agent_id')).toBe('agent-1');

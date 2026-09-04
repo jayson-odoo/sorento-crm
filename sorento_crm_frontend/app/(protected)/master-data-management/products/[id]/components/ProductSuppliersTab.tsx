@@ -78,17 +78,20 @@ export default function ProductSuppliersTab({ productId }: ProductSuppliersTabPr
                     </Badge>
                   ) : null}
                 </div>
-                {/* The same five terms the edit view holds, in the same order, so a value
+                {/* The same terms the edit view holds, in the same order, so a value
                     the buyer set is where they expect to read it back. A dash means the
                     term is not on file, which for the price is why the reorder plan cannot
-                    cost this supplier. */}
-                <dl className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+                    cost this supplier. "Their code" is the supplier's own spelling of this
+                    product's code, from a manual match on the loading plan (S4) - read-only
+                    here, it is set on the plan's Supplier codes tab, not on this form. */}
+                <dl className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
                   <Term label="Lead time (days)"
                         value={fmtTerm(ps.standard_lead_time_days ?? ps.lead_time_days)} />
                   <Term label="Unit cost" value={fmtTerm(ps.unit_cost)} />
                   <Term label="Currency" value={fmtTerm(ps.currency)} />
                   <Term label="Minimum order" value={fmtTerm(ps.moq)} />
                   <Term label="Order multiple" value={fmtTerm(ps.order_multiple)} />
+                  <Term label="Their code" value={fmtTerm(ps.supplier_item_code)} />
                 </dl>
               </div>
             ))}
