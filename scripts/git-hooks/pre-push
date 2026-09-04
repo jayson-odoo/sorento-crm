@@ -166,6 +166,32 @@ else
   ok "dash-guard"
 fi
 
+# --- f. oversized PNG guard ------------------------------------------------
+PNG_MAX_BYTES=204800
+PNG_HITS=""
+CHANGED_PNG="$(git diff --name-only origin/main...HEAD -- '*.png' || true)"
+if [ -n "$CHANGED_PNG" ]; then
+  while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    [ -f "$f" ] || continue
+    SIZE="$(stat -f%z "$f" 2>/dev/null || stat -c%s "$f" 2>/dev/null || echo 0)"
+    if [ "$SIZE" -gt "$PNG_MAX_BYTES" ]; then
+      PNG_HITS="$PNG_HITS
+$f: ${SIZE} bytes"
+    fi
+  done <<EOF
+$CHANGED_PNG
+EOF
+fi
+
+if [ -n "$PNG_HITS" ]; then
+  fail "png-size"
+  echo "$PNG_HITS" | sed '/^$/d;s/^/pre-push:   /'
+  echo "pre-push:   hint: compress with pngquant --quality=60-85 <file>"
+else
+  ok "png-size"
+fi
+
 echo "pre-push: done in ${SECONDS}s"
 if [ "$FAILED" = "1" ]; then
   echo "$BYPASS_HINT"

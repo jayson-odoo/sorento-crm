@@ -49,9 +49,11 @@ calls the `mattpocock-skills` plugin at the slots below. Two rules override that
 a spec issue; **(b) frontend mock before any backend code** - `implement` has no concept of
 Phase 1, so scope it to Phase 2 only. Every step also has a **named executor** (main session
 vs a `.claude/agents` subagent) - see the /feature skill map. Planning and grilling stay in
-the main session; implementation (Phases 1-2) is delegated to the `coder` agent in a worktree;
-review runs `reviewer` + `/code-review`, optionally `/codex-review` for a cross-model second
-opinion. Running a step in the wrong seat is a process violation.
+the main session; Phase 1 is delegated to the `coder` agent in a worktree; in Phase 2 the
+`tester` agent writes the failing tests FIRST (from the UAC and the captain's test list)
+before the `coder` (one agent, kept alive for the whole lane) makes them green; Phase 3 runs
+`reviewer` + `security-reviewer` + browser verification (`tester`) in parallel, once per lane.
+Running a step in the wrong seat is a process violation.
 
 0. **Guided user experience FIRST - design the journey before the system.** Before any entity,
    table, endpoint or status graph is discussed, write the **guided journey**: who the actor is,
@@ -87,11 +89,14 @@ opinion. Running a step in the wrong seat is a process violation.
    (shape may still shift), NO backend code. When the open question is "which of these designs",
    run `/prototype` BEFORE this phase and throw the result away - it is not built to the layering
    rules below and must never become the shipped FE.
-4. **Phase 2 - Backend wiring, TDD.** Build BE (models → migration → schema → service → route)
-   to match the Phase-1 contract, then swap the mock for the real `api-client` call (one-line at
-   the service boundary). **This phase is test-FIRST (red → green → refactor), not test-after:**
-   for every unit of behaviour, write the failing test BEFORE the implementation, watch it fail
-   for the right reason, implement the minimum to pass, then refactor green. Applies to all
+4. **Phase 2 - Backend wiring, TDD, tester before coder.** The `tester` agent writes the failing
+   tests FIRST, from the UAC and the captain's per-AC test list, with no implementation to look
+   at, confirms each fails for the right reason, and commits them red. The `coder` agent (one
+   instance, kept alive for the whole lane) then builds BE (models → migration → schema →
+   service → route) to match the Phase-1 contract, making those tests green, then swaps the mock
+   for the real `api-client` call (one-line at the service boundary). **Red → green → refactor,
+   not test-after:** implement the minimum to pass, then refactor green; the coder does not edit
+   or delete a red test without reporting why to the captain first. Applies to all
    backend logic - pytest (every route: happy + auth-denial + validation; every service branch)
    and, above all, **deterministic engines** (e.g. the SCM reorder maths): the golden-set expected
    numbers are written as failing tests first, and the code is built to satisfy them. FE hook/logic
@@ -101,12 +106,18 @@ opinion. Running a step in the wrong seat is a process violation.
    Tests are **never
    deferred** to Phase 3. Re-verify live. `/tdd` drives the loop; `/implement` may drive a whole
    ticket **at this phase only** (it calls `/tdd` internally and knows nothing of Phase 1).
-5. **Phase 3 - Code review.** `/code-review` (or `ultra` for big diffs) → address via `--fix` /
-   `/simplify` → open PR. Reviewer runs `documentation/reference/PR-CHECKLIST.md` + the DoD gate below.
-   Use THIS repo's `/code-review`, not the plugin's same-named skill, unless asked otherwise.
-   Inbound bugs enter via `/triage` (labels in `documentation/agents/triage-labels.md`) and are
-   worked with `/diagnosing-bugs`; `/improve-codebase-architecture` and `/codebase-design` are
-   periodic, never part of the feature loop.
+5. **Phase 3 - Review, in parallel.** Once per lane (not per slice), `reviewer` runs
+   `/code-review` (or `ultra` for big diffs) plus a **kill test**: comment out the implementing
+   branch for 2-3 UAC lines, run the test, confirm it goes red - a test that stays green is a
+   blocker; `security-reviewer` runs the built-in `/security-review` checklist whenever the diff
+   touches auth, RBAC, external ingest, uploads or multi-company scoping; browser verification
+   (`tester`) runs alongside both. Fix round goes back to the same `coder`. Address findings via
+   `--fix` / `/simplify` → `guide-writer` updates the Outline user guide → open PR. Reviewer runs
+   `documentation/reference/PR-CHECKLIST.md` + the DoD gate below. Use THIS repo's `/code-review`,
+   not the plugin's same-named skill, unless asked otherwise. Inbound bugs enter via `/triage`
+   (labels in `documentation/agents/triage-labels.md`) and are worked with `/diagnosing-bugs`;
+   `/improve-codebase-architecture` and `/codebase-design` are periodic, never part of the
+   feature loop.
 6. **Branch** per feature; merge only after review. The user codes concurrently in the main
    checkout - `git status` before ANY branch/commit op; never assume the tree is clean.
 

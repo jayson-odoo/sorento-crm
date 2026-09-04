@@ -149,6 +149,12 @@ class SystemSettingUpdate(BaseModel):
     media_extraction_timeout_seconds: Optional[int] = Field(None, ge=5, le=110)
     media_max_entities: Optional[int] = Field(None, ge=1, le=100)
     chatbot_stock_denial_enabled: Optional[bool] = None
+    # Which chatbot lanes the CRM may FINISH, by `branch_kind`. `[]` (the default) means
+    # none, and every turn delegates to n8n exactly as today. Validated as a list of
+    # strings only: an unknown branch kind is the ENGINE's problem to ignore-and-warn, not
+    # this endpoint's to reject, because the vocabulary grows slice by slice and a settings
+    # form that rejects tomorrow's lane name is a support ticket.
+    chatbot_completed_lanes: Optional[list[str]] = None
 
 
 class SmtpTestResult(BaseModel):
@@ -347,6 +353,7 @@ async def get_settings(
                 "media_extraction_timeout_seconds": getattr(settings, "media_extraction_timeout_seconds", 45) if settings else None,
                 "media_max_entities": getattr(settings, "media_max_entities", 10) if settings else None,
                 "chatbot_stock_denial_enabled": getattr(settings, "chatbot_stock_denial_enabled", False) if settings else None,
+                "chatbot_completed_lanes": getattr(settings, "chatbot_completed_lanes", None) or [] if settings else None,
                 "smtp": smtp_response,
             } if settings else None,
             "roles": [{"id": r.id, "name": r.name} for r in roles]

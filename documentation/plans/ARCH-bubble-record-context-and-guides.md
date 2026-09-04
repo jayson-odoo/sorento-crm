@@ -1,6 +1,6 @@
 # Architecture - Bubble Record-Context + System Guides
 
-**Companion to:** [`PLAN-bubble-record-context-and-guides.md`](./PLAN-bubble-record-context-and-guides.md) · [`UAC-bubble-record-context-and-guides.md`](./UAC-bubble-record-context-and-guides.md)
+**Companion to:** [`PLAN-bubble-record-context-and-guides.md`](./_archive/PLAN-bubble-record-context-and-guides.md) · [`UAC-bubble-record-context-and-guides.md`](./UAC-bubble-record-context-and-guides.md)
 
 Diagrams are Mermaid - render in GitHub / any Mermaid viewer. `NEW` = added by this plan.
 

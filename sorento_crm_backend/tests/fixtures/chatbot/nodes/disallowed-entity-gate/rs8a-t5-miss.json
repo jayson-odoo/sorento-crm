@@ -1,0 +1,1996 @@
+{
+  "source": {
+    "execution_id": "14611584",
+    "workflow_id": "1txF4azSeYlmBnJH",
+    "workflow_version": "70fa92bf-2af6-443a-b61c-1fe28063f24e",
+    "node": "disallowed-entity-gate",
+    "captured_at": "2026-08-31T06:03:21+00:00",
+    "expected_from": "runData",
+    "dedupe_sig": "563e58cfba70f27c3aefe16627407e8278c0fd383ce47a0b20c4ae9507475f1e"
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "ctx": {
+            "ctx": {
+              "contact": {
+                "id": 900000009,
+                "firstName": "Person 12",
+                "lastName": "",
+                "phone": "+60100000046",
+                "countryCode": "MY",
+                "status": "open",
+                "custom_fields": [
+                  {
+                    "name": "is_human_intervened",
+                    "value": "false"
+                  },
+                  {
+                    "name": "is_allowed_stock",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_allowed_voice",
+                    "value": "true"
+                  }
+                ]
+              },
+              "text": {
+                "event_type": "message.received",
+                "contact": {
+                  "id": 900000009,
+                  "firstName": "Person 12",
+                  "lastName": "",
+                  "phone": "+60100000046",
+                  "countryCode": "MY",
+                  "status": "open",
+                  "custom_fields": [
+                    {
+                      "name": "is_human_intervened",
+                      "value": "false"
+                    },
+                    {
+                      "name": "is_allowed_stock",
+                      "value": "true"
+                    },
+                    {
+                      "name": "is_allowed_voice",
+                      "value": "true"
+                    }
+                  ]
+                },
+                "message": {
+                  "messageId": 1788156173799,
+                  "contactId": 900000009,
+                  "channelId": 453209,
+                  "traffic": "incoming",
+                  "timestamp": 1788156173799,
+                  "message": {
+                    "type": "text",
+                    "text": "check stock ZZZNOTAREALCODE999"
+                  }
+                }
+              },
+              "session": {
+                "respond_io_id": "900000009",
+                "session_vars": {
+                  "variables": {
+                    "routing": {
+                      "suggested_team": "it_admin",
+                      "suggested_agent": "it_support"
+                    },
+                    "entities": [
+                      {
+                        "raw": "srtwc286",
+                        "hint": "product",
+                        "confident": true,
+                        "canonical_code": null,
+                        "current_message": false
+                      }
+                    ],
+                    "ideation": null,
+                    "response": "Informed the user that request is out of scope and will proceed to escalate to the it_admin team",
+                    "date_mode": null,
+                    "dym_offer": null,
+                    "user_goal": "trying to raise an IT ticket",
+                    "escalation": {
+                      "is_escalation_confirmation": false
+                    },
+                    "match_mode": "and",
+                    "domain_hint": null,
+                    "intent_hint": null,
+                    "message_type": "request_for_help",
+                    "query_brands": [
+                      "sorento"
+                    ],
+                    "access_levels": [
+                      "dealer"
+                    ],
+                    "routing_brand": null,
+                    "contains_flyer": false,
+                    "dym_candidates": [],
+                    "date_filter_end": null,
+                    "last_result_set": [],
+                    "routing_company": null,
+                    "date_filter_start": null,
+                    "routing_companies": null,
+                    "selection_context": null,
+                    "routing_roster_plan": null,
+                    "requested_attributes": [],
+                    "routing_brand_source": null
+                  }
+                }
+              },
+              "parse": {
+                "output": {
+                  "message_type": "business_query",
+                  "intent_hint": "check_stock",
+                  "domain_hint": "inventory",
+                  "scope_intent": "specific",
+                  "is_affirmative": null,
+                  "user_goal": "trying to check stock for ZZZNOTAREALCODE999",
+                  "access_levels": [],
+                  "broaden_axis": null,
+                  "date_mode": null,
+                  "date_filter_start": null,
+                  "date_filter_end": null,
+                  "match_mode": "and",
+                  "demand_qty": null,
+                  "entities": [
+                    {
+                      "raw": "ZZZNOTAREALCODE999",
+                      "hint": "product",
+                      "canonical_code": null,
+                      "current_message": true,
+                      "confident": true
+                    }
+                  ],
+                  "entity_op": "replace_combine",
+                  "scope_exclusive": false,
+                  "requested_attributes": [],
+                  "contains_flyer": false,
+                  "reference_positions": [],
+                  "reference_target": null,
+                  "person_mention": null,
+                  "is_active": null,
+                  "order_status": null,
+                  "correction": false,
+                  "routing": {
+                    "suggested_team": "warehouse",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "domain_signal_source": "intent_explicit",
+                  "scope_exclusive_applied": false,
+                  "entity_op_applied": "replace_combine",
+                  "query_brands": [],
+                  "entities_filtered": false,
+                  "entities_emptied_by_filter": false
+                },
+                "_parser_raw": {
+                  "message_type": "business_query",
+                  "intent_hint": "check_stock",
+                  "domain_hint": "inventory",
+                  "scope_intent": "specific",
+                  "is_affirmative": null,
+                  "user_goal": "trying to check stock for ZZZNOTAREALCODE999",
+                  "access_levels": [],
+                  "broaden_axis": null,
+                  "date_mode": null,
+                  "date_filter_start": null,
+                  "date_filter_end": null,
+                  "match_mode": "and",
+                  "demand_qty": null,
+                  "entities": [
+                    {
+                      "raw": "ZZZNOTAREALCODE999",
+                      "hint": "product",
+                      "canonical_code": null,
+                      "current_message": true,
+                      "confident": true
+                    }
+                  ],
+                  "entity_op": "replace_combine",
+                  "scope_exclusive": false,
+                  "requested_attributes": [],
+                  "contains_flyer": false,
+                  "reference_positions": [],
+                  "reference_target": null,
+                  "person_mention": null,
+                  "is_active": null,
+                  "order_status": null,
+                  "correction": false,
+                  "routing": {
+                    "suggested_team": "warehouse",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "escalation": {
+                    "is_escalation_confirmation": false,
+                    "company_pick": null
+                  }
+                }
+              },
+              "access": {
+                "allowed": true,
+                "decision": "allow",
+                "agent_name": "General Enquiries",
+                "attributes": null,
+                "all_attributes_allowed": null
+              },
+              "media": null
+            }
+          },
+          "entry": "resolve",
+          "item": {
+            "allowed": true,
+            "decision": "allow",
+            "agent_name": "General Enquiries",
+            "attributes": null,
+            "all_attributes_allowed": null,
+            "branch_kind": "business_query",
+            "entry": "resolve"
+          },
+          "is_test": true
+        }
+      }
+    ],
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 900000009,
+              "firstName": "Person 12",
+              "lastName": "",
+              "phone": "+60100000046",
+              "countryCode": "MY",
+              "status": "open",
+              "custom_fields": [
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": "true"
+                }
+              ]
+            },
+            "text": {
+              "event_type": "message.received",
+              "contact": {
+                "id": 900000009,
+                "firstName": "Person 12",
+                "lastName": "",
+                "phone": "+60100000046",
+                "countryCode": "MY",
+                "status": "open",
+                "custom_fields": [
+                  {
+                    "name": "is_human_intervened",
+                    "value": "false"
+                  },
+                  {
+                    "name": "is_allowed_stock",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_allowed_voice",
+                    "value": "true"
+                  }
+                ]
+              },
+              "message": {
+                "messageId": 1788156173799,
+                "contactId": 900000009,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788156173799,
+                "message": {
+                  "type": "text",
+                  "text": "check stock ZZZNOTAREALCODE999"
+                }
+              }
+            },
+            "session": {
+              "respond_io_id": "900000009",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "it_admin",
+                    "suggested_agent": "it_support"
+                  },
+                  "entities": [
+                    {
+                      "raw": "srtwc286",
+                      "hint": "product",
+                      "confident": true,
+                      "canonical_code": null,
+                      "current_message": false
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Informed the user that request is out of scope and will proceed to escalate to the it_admin team",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to raise an IT ticket",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": null,
+                  "intent_hint": null,
+                  "message_type": "request_for_help",
+                  "query_brands": [
+                    "sorento"
+                  ],
+                  "access_levels": [
+                    "dealer"
+                  ],
+                  "routing_brand": null,
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [],
+                  "routing_company": null,
+                  "date_filter_start": null,
+                  "routing_companies": null,
+                  "selection_context": null,
+                  "routing_roster_plan": null,
+                  "requested_attributes": [],
+                  "routing_brand_source": null
+                }
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "check_stock",
+                "domain_hint": "inventory",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check stock for ZZZNOTAREALCODE999",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "ZZZNOTAREALCODE999",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "warehouse",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_explicit",
+                "scope_exclusive_applied": false,
+                "entity_op_applied": "replace_combine",
+                "query_brands": [],
+                "entities_filtered": false,
+                "entities_emptied_by_filter": false
+              },
+              "_parser_raw": {
+                "message_type": "business_query",
+                "intent_hint": "check_stock",
+                "domain_hint": "inventory",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check stock for ZZZNOTAREALCODE999",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "ZZZNOTAREALCODE999",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "warehouse",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "General Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null
+          }
+        }
+      }
+    ],
+    "item": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "General Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null,
+          "branch_kind": "business_query",
+          "entry": "resolve"
+        }
+      }
+    ],
+    "entry-gate": [],
+    "resolve-entity": [
+      {
+        "json": {
+          "tokens": [
+            "ZZZNOTAREALCODE999"
+          ],
+          "elapsed_ms": 487.96,
+          "resolutions": [
+            {
+              "token": "ZZZNOTAREALCODE999",
+              "resolved": false,
+              "ambiguous": false,
+              "matches": [],
+              "alternatives": []
+            }
+          ],
+          "unresolved_tokens": [
+            "ZZZNOTAREALCODE999"
+          ],
+          "fallback_match_mode": "or",
+          "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens."
+        }
+      }
+    ],
+    "disallowed-entity-gate": [
+      {
+        "json": {
+          "tokens": [
+            "ZZZNOTAREALCODE999"
+          ],
+          "elapsed_ms": 487.96,
+          "resolutions": [
+            {
+              "token": "ZZZNOTAREALCODE999",
+              "resolved": false,
+              "ambiguous": false,
+              "matches": [],
+              "alternatives": []
+            }
+          ],
+          "unresolved_tokens": [
+            "ZZZNOTAREALCODE999"
+          ],
+          "fallback_match_mode": "or",
+          "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+          "gate_passed": false,
+          "require_specific": false,
+          "resolved_company": null,
+          "company_team": null,
+          "resolved_companies": [],
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_companies": [],
+          "routing_company": null,
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "no entities and 'inventory' requires a scoping entity",
+          "gate_clarification": "",
+          "compatible_entities": [],
+          "gate_debug": {
+            "domain": "inventory",
+            "allowed_lookup": [
+              "product",
+              "category",
+              "brand"
+            ],
+            "entities_count": 0
+          }
+        }
+      }
+    ],
+    "build-ctx-resolved": [
+      {
+        "json": {
+          "tokens": [
+            "ZZZNOTAREALCODE999"
+          ],
+          "elapsed_ms": 487.96,
+          "resolutions": [
+            {
+              "token": "ZZZNOTAREALCODE999",
+              "resolved": false,
+              "ambiguous": false,
+              "matches": [],
+              "alternatives": []
+            }
+          ],
+          "unresolved_tokens": [
+            "ZZZNOTAREALCODE999"
+          ],
+          "fallback_match_mode": "or",
+          "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+          "gate_passed": false,
+          "require_specific": false,
+          "resolved_company": null,
+          "company_team": null,
+          "resolved_companies": [],
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_companies": [],
+          "routing_company": null,
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "no entities and 'inventory' requires a scoping entity",
+          "gate_clarification": "",
+          "compatible_entities": [],
+          "gate_debug": {
+            "domain": "inventory",
+            "allowed_lookup": [
+              "product",
+              "category",
+              "brand"
+            ],
+            "entities_count": 0
+          },
+          "ctx": {
+            "contact": {
+              "id": 900000009,
+              "firstName": "Person 12",
+              "lastName": "",
+              "phone": "+60100000046",
+              "countryCode": "MY",
+              "status": "open",
+              "custom_fields": [
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": "true"
+                }
+              ]
+            },
+            "text": {
+              "event_type": "message.received",
+              "contact": {
+                "id": 900000009,
+                "firstName": "Person 12",
+                "lastName": "",
+                "phone": "+60100000046",
+                "countryCode": "MY",
+                "status": "open",
+                "custom_fields": [
+                  {
+                    "name": "is_human_intervened",
+                    "value": "false"
+                  },
+                  {
+                    "name": "is_allowed_stock",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_allowed_voice",
+                    "value": "true"
+                  }
+                ]
+              },
+              "message": {
+                "messageId": 1788156173799,
+                "contactId": 900000009,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788156173799,
+                "message": {
+                  "type": "text",
+                  "text": "check stock ZZZNOTAREALCODE999"
+                }
+              }
+            },
+            "session": {
+              "respond_io_id": "900000009",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "it_admin",
+                    "suggested_agent": "it_support"
+                  },
+                  "entities": [
+                    {
+                      "raw": "srtwc286",
+                      "hint": "product",
+                      "confident": true,
+                      "canonical_code": null,
+                      "current_message": false
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Informed the user that request is out of scope and will proceed to escalate to the it_admin team",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to raise an IT ticket",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": null,
+                  "intent_hint": null,
+                  "message_type": "request_for_help",
+                  "query_brands": [
+                    "sorento"
+                  ],
+                  "access_levels": [
+                    "dealer"
+                  ],
+                  "routing_brand": null,
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [],
+                  "routing_company": null,
+                  "date_filter_start": null,
+                  "routing_companies": null,
+                  "selection_context": null,
+                  "routing_roster_plan": null,
+                  "requested_attributes": [],
+                  "routing_brand_source": null
+                }
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "check_stock",
+                "domain_hint": "inventory",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check stock for ZZZNOTAREALCODE999",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "ZZZNOTAREALCODE999",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "warehouse",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_explicit",
+                "scope_exclusive_applied": false,
+                "entity_op_applied": "replace_combine",
+                "query_brands": [],
+                "entities_filtered": false,
+                "entities_emptied_by_filter": false
+              },
+              "_parser_raw": {
+                "message_type": "business_query",
+                "intent_hint": "check_stock",
+                "domain_hint": "inventory",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check stock for ZZZNOTAREALCODE999",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "ZZZNOTAREALCODE999",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "warehouse",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "General Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null,
+            "resolved": {
+              "tokens": [
+                "ZZZNOTAREALCODE999"
+              ],
+              "elapsed_ms": 487.96,
+              "resolutions": [
+                {
+                  "token": "ZZZNOTAREALCODE999",
+                  "resolved": false,
+                  "ambiguous": false,
+                  "matches": [],
+                  "alternatives": []
+                }
+              ],
+              "unresolved_tokens": [
+                "ZZZNOTAREALCODE999"
+              ],
+              "fallback_match_mode": "or",
+              "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens."
+            },
+            "entities": null,
+            "gate": {
+              "tokens": [
+                "ZZZNOTAREALCODE999"
+              ],
+              "elapsed_ms": 487.96,
+              "resolutions": [
+                {
+                  "token": "ZZZNOTAREALCODE999",
+                  "resolved": false,
+                  "ambiguous": false,
+                  "matches": [],
+                  "alternatives": []
+                }
+              ],
+              "unresolved_tokens": [
+                "ZZZNOTAREALCODE999"
+              ],
+              "fallback_match_mode": "or",
+              "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+              "gate_passed": false,
+              "require_specific": false,
+              "resolved_company": null,
+              "company_team": null,
+              "resolved_companies": [],
+              "routing_brand": null,
+              "routing_brand_source": null,
+              "routing_companies": [],
+              "routing_company": null,
+              "access_denied_levels": [],
+              "access_notice": "",
+              "brand_gate_empty": false,
+              "brand_unheld": false,
+              "gate_reason": "no entities and 'inventory' requires a scoping entity",
+              "gate_clarification": "",
+              "compatible_entities": [],
+              "gate_debug": {
+                "domain": "inventory",
+                "allowed_lookup": [
+                  "product",
+                  "category",
+                  "brand"
+                ],
+                "entities_count": 0
+              }
+            }
+          }
+        }
+      }
+    ],
+    "If3": [
+      {
+        "json": {
+          "tokens": [
+            "ZZZNOTAREALCODE999"
+          ],
+          "elapsed_ms": 487.96,
+          "resolutions": [
+            {
+              "token": "ZZZNOTAREALCODE999",
+              "resolved": false,
+              "ambiguous": false,
+              "matches": [],
+              "alternatives": []
+            }
+          ],
+          "unresolved_tokens": [
+            "ZZZNOTAREALCODE999"
+          ],
+          "fallback_match_mode": "or",
+          "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+          "gate_passed": false,
+          "require_specific": false,
+          "resolved_company": null,
+          "company_team": null,
+          "resolved_companies": [],
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_companies": [],
+          "routing_company": null,
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "no entities and 'inventory' requires a scoping entity",
+          "gate_clarification": "",
+          "compatible_entities": [],
+          "gate_debug": {
+            "domain": "inventory",
+            "allowed_lookup": [
+              "product",
+              "category",
+              "brand"
+            ],
+            "entities_count": 0
+          },
+          "ctx": {
+            "contact": {
+              "id": 900000009,
+              "firstName": "Person 12",
+              "lastName": "",
+              "phone": "+60100000046",
+              "countryCode": "MY",
+              "status": "open",
+              "custom_fields": [
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": "true"
+                }
+              ]
+            },
+            "text": {
+              "event_type": "message.received",
+              "contact": {
+                "id": 900000009,
+                "firstName": "Person 12",
+                "lastName": "",
+                "phone": "+60100000046",
+                "countryCode": "MY",
+                "status": "open",
+                "custom_fields": [
+                  {
+                    "name": "is_human_intervened",
+                    "value": "false"
+                  },
+                  {
+                    "name": "is_allowed_stock",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_allowed_voice",
+                    "value": "true"
+                  }
+                ]
+              },
+              "message": {
+                "messageId": 1788156173799,
+                "contactId": 900000009,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788156173799,
+                "message": {
+                  "type": "text",
+                  "text": "check stock ZZZNOTAREALCODE999"
+                }
+              }
+            },
+            "session": {
+              "respond_io_id": "900000009",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "it_admin",
+                    "suggested_agent": "it_support"
+                  },
+                  "entities": [
+                    {
+                      "raw": "srtwc286",
+                      "hint": "product",
+                      "confident": true,
+                      "canonical_code": null,
+                      "current_message": false
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Informed the user that request is out of scope and will proceed to escalate to the it_admin team",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to raise an IT ticket",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": null,
+                  "intent_hint": null,
+                  "message_type": "request_for_help",
+                  "query_brands": [
+                    "sorento"
+                  ],
+                  "access_levels": [
+                    "dealer"
+                  ],
+                  "routing_brand": null,
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [],
+                  "routing_company": null,
+                  "date_filter_start": null,
+                  "routing_companies": null,
+                  "selection_context": null,
+                  "routing_roster_plan": null,
+                  "requested_attributes": [],
+                  "routing_brand_source": null
+                }
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "check_stock",
+                "domain_hint": "inventory",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check stock for ZZZNOTAREALCODE999",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "ZZZNOTAREALCODE999",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "warehouse",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_explicit",
+                "scope_exclusive_applied": false,
+                "entity_op_applied": "replace_combine",
+                "query_brands": [],
+                "entities_filtered": false,
+                "entities_emptied_by_filter": false
+              },
+              "_parser_raw": {
+                "message_type": "business_query",
+                "intent_hint": "check_stock",
+                "domain_hint": "inventory",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check stock for ZZZNOTAREALCODE999",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "ZZZNOTAREALCODE999",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "warehouse",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "General Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null,
+            "resolved": {
+              "tokens": [
+                "ZZZNOTAREALCODE999"
+              ],
+              "elapsed_ms": 487.96,
+              "resolutions": [
+                {
+                  "token": "ZZZNOTAREALCODE999",
+                  "resolved": false,
+                  "ambiguous": false,
+                  "matches": [],
+                  "alternatives": []
+                }
+              ],
+              "unresolved_tokens": [
+                "ZZZNOTAREALCODE999"
+              ],
+              "fallback_match_mode": "or",
+              "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens."
+            },
+            "entities": null,
+            "gate": {
+              "tokens": [
+                "ZZZNOTAREALCODE999"
+              ],
+              "elapsed_ms": 487.96,
+              "resolutions": [
+                {
+                  "token": "ZZZNOTAREALCODE999",
+                  "resolved": false,
+                  "ambiguous": false,
+                  "matches": [],
+                  "alternatives": []
+                }
+              ],
+              "unresolved_tokens": [
+                "ZZZNOTAREALCODE999"
+              ],
+              "fallback_match_mode": "or",
+              "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+              "gate_passed": false,
+              "require_specific": false,
+              "resolved_company": null,
+              "company_team": null,
+              "resolved_companies": [],
+              "routing_brand": null,
+              "routing_brand_source": null,
+              "routing_companies": [],
+              "routing_company": null,
+              "access_denied_levels": [],
+              "access_notice": "",
+              "brand_gate_empty": false,
+              "brand_unheld": false,
+              "gate_reason": "no entities and 'inventory' requires a scoping entity",
+              "gate_clarification": "",
+              "compatible_entities": [],
+              "gate_debug": {
+                "domain": "inventory",
+                "allowed_lookup": [
+                  "product",
+                  "category",
+                  "brand"
+                ],
+                "entities_count": 0
+              }
+            }
+          }
+        }
+      }
+    ],
+    "If-incoming-picker": [],
+    "If-customer-picker": [],
+    "resolve-exit-not-found": [
+      {
+        "json": {
+          "tokens": [
+            "ZZZNOTAREALCODE999"
+          ],
+          "elapsed_ms": 487.96,
+          "resolutions": [
+            {
+              "token": "ZZZNOTAREALCODE999",
+              "resolved": false,
+              "ambiguous": false,
+              "matches": [],
+              "alternatives": []
+            }
+          ],
+          "unresolved_tokens": [
+            "ZZZNOTAREALCODE999"
+          ],
+          "fallback_match_mode": "or",
+          "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+          "gate_passed": false,
+          "require_specific": false,
+          "resolved_company": null,
+          "company_team": null,
+          "resolved_companies": [],
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_companies": [],
+          "routing_company": null,
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "no entities and 'inventory' requires a scoping entity",
+          "gate_clarification": "",
+          "compatible_entities": [],
+          "gate_debug": {
+            "domain": "inventory",
+            "allowed_lookup": [
+              "product",
+              "category",
+              "brand"
+            ],
+            "entities_count": 0
+          },
+          "ctx": {
+            "contact": {
+              "id": 900000009,
+              "firstName": "Person 12",
+              "lastName": "",
+              "phone": "+60100000046",
+              "countryCode": "MY",
+              "status": "open",
+              "custom_fields": [
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": "true"
+                }
+              ]
+            },
+            "text": {
+              "event_type": "message.received",
+              "contact": {
+                "id": 900000009,
+                "firstName": "Person 12",
+                "lastName": "",
+                "phone": "+60100000046",
+                "countryCode": "MY",
+                "status": "open",
+                "custom_fields": [
+                  {
+                    "name": "is_human_intervened",
+                    "value": "false"
+                  },
+                  {
+                    "name": "is_allowed_stock",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_allowed_voice",
+                    "value": "true"
+                  }
+                ]
+              },
+              "message": {
+                "messageId": 1788156173799,
+                "contactId": 900000009,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788156173799,
+                "message": {
+                  "type": "text",
+                  "text": "check stock ZZZNOTAREALCODE999"
+                }
+              }
+            },
+            "session": {
+              "respond_io_id": "900000009",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "it_admin",
+                    "suggested_agent": "it_support"
+                  },
+                  "entities": [
+                    {
+                      "raw": "srtwc286",
+                      "hint": "product",
+                      "confident": true,
+                      "canonical_code": null,
+                      "current_message": false
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Informed the user that request is out of scope and will proceed to escalate to the it_admin team",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to raise an IT ticket",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": null,
+                  "intent_hint": null,
+                  "message_type": "request_for_help",
+                  "query_brands": [
+                    "sorento"
+                  ],
+                  "access_levels": [
+                    "dealer"
+                  ],
+                  "routing_brand": null,
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [],
+                  "routing_company": null,
+                  "date_filter_start": null,
+                  "routing_companies": null,
+                  "selection_context": null,
+                  "routing_roster_plan": null,
+                  "requested_attributes": [],
+                  "routing_brand_source": null
+                }
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "check_stock",
+                "domain_hint": "inventory",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check stock for ZZZNOTAREALCODE999",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "ZZZNOTAREALCODE999",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "warehouse",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_explicit",
+                "scope_exclusive_applied": false,
+                "entity_op_applied": "replace_combine",
+                "query_brands": [],
+                "entities_filtered": false,
+                "entities_emptied_by_filter": false
+              },
+              "_parser_raw": {
+                "message_type": "business_query",
+                "intent_hint": "check_stock",
+                "domain_hint": "inventory",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check stock for ZZZNOTAREALCODE999",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "ZZZNOTAREALCODE999",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "warehouse",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "General Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null,
+            "resolved": {
+              "tokens": [
+                "ZZZNOTAREALCODE999"
+              ],
+              "elapsed_ms": 487.96,
+              "resolutions": [
+                {
+                  "token": "ZZZNOTAREALCODE999",
+                  "resolved": false,
+                  "ambiguous": false,
+                  "matches": [],
+                  "alternatives": []
+                }
+              ],
+              "unresolved_tokens": [
+                "ZZZNOTAREALCODE999"
+              ],
+              "fallback_match_mode": "or",
+              "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens."
+            },
+            "entities": null,
+            "gate": {
+              "tokens": [
+                "ZZZNOTAREALCODE999"
+              ],
+              "elapsed_ms": 487.96,
+              "resolutions": [
+                {
+                  "token": "ZZZNOTAREALCODE999",
+                  "resolved": false,
+                  "ambiguous": false,
+                  "matches": [],
+                  "alternatives": []
+                }
+              ],
+              "unresolved_tokens": [
+                "ZZZNOTAREALCODE999"
+              ],
+              "fallback_match_mode": "or",
+              "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+              "gate_passed": false,
+              "require_specific": false,
+              "resolved_company": null,
+              "company_team": null,
+              "resolved_companies": [],
+              "routing_brand": null,
+              "routing_brand_source": null,
+              "routing_companies": [],
+              "routing_company": null,
+              "access_denied_levels": [],
+              "access_notice": "",
+              "brand_gate_empty": false,
+              "brand_unheld": false,
+              "gate_reason": "no entities and 'inventory' requires a scoping entity",
+              "gate_clarification": "",
+              "compatible_entities": [],
+              "gate_debug": {
+                "domain": "inventory",
+                "allowed_lookup": [
+                  "product",
+                  "category",
+                  "brand"
+                ],
+                "entities_count": 0
+              }
+            }
+          },
+          "resolved": {
+            "tokens": [
+              "ZZZNOTAREALCODE999"
+            ],
+            "elapsed_ms": 487.96,
+            "resolutions": [
+              {
+                "token": "ZZZNOTAREALCODE999",
+                "resolved": false,
+                "ambiguous": false,
+                "matches": [],
+                "alternatives": []
+              }
+            ],
+            "unresolved_tokens": [
+              "ZZZNOTAREALCODE999"
+            ],
+            "fallback_match_mode": "or",
+            "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens."
+          },
+          "gate": {
+            "tokens": [
+              "ZZZNOTAREALCODE999"
+            ],
+            "elapsed_ms": 487.96,
+            "resolutions": [
+              {
+                "token": "ZZZNOTAREALCODE999",
+                "resolved": false,
+                "ambiguous": false,
+                "matches": [],
+                "alternatives": []
+              }
+            ],
+            "unresolved_tokens": [
+              "ZZZNOTAREALCODE999"
+            ],
+            "fallback_match_mode": "or",
+            "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+            "gate_passed": false,
+            "require_specific": false,
+            "resolved_company": null,
+            "company_team": null,
+            "resolved_companies": [],
+            "routing_brand": null,
+            "routing_brand_source": null,
+            "routing_companies": [],
+            "routing_company": null,
+            "access_denied_levels": [],
+            "access_notice": "",
+            "brand_gate_empty": false,
+            "brand_unheld": false,
+            "gate_reason": "no entities and 'inventory' requires a scoping entity",
+            "gate_clarification": "",
+            "compatible_entities": [],
+            "gate_debug": {
+              "domain": "inventory",
+              "allowed_lookup": [
+                "product",
+                "category",
+                "brand"
+              ],
+              "entities_count": 0
+            }
+          },
+          "ctx_resolved": {
+            "tokens": [
+              "ZZZNOTAREALCODE999"
+            ],
+            "elapsed_ms": 487.96,
+            "resolutions": [
+              {
+                "token": "ZZZNOTAREALCODE999",
+                "resolved": false,
+                "ambiguous": false,
+                "matches": [],
+                "alternatives": []
+              }
+            ],
+            "unresolved_tokens": [
+              "ZZZNOTAREALCODE999"
+            ],
+            "fallback_match_mode": "or",
+            "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+            "gate_passed": false,
+            "require_specific": false,
+            "resolved_company": null,
+            "company_team": null,
+            "resolved_companies": [],
+            "routing_brand": null,
+            "routing_brand_source": null,
+            "routing_companies": [],
+            "routing_company": null,
+            "access_denied_levels": [],
+            "access_notice": "",
+            "brand_gate_empty": false,
+            "brand_unheld": false,
+            "gate_reason": "no entities and 'inventory' requires a scoping entity",
+            "gate_clarification": "",
+            "compatible_entities": [],
+            "gate_debug": {
+              "domain": "inventory",
+              "allowed_lookup": [
+                "product",
+                "category",
+                "brand"
+              ],
+              "entities_count": 0
+            },
+            "ctx": {
+              "contact": {
+                "id": 900000009,
+                "firstName": "Person 12",
+                "lastName": "",
+                "phone": "+60100000046",
+                "countryCode": "MY",
+                "status": "open",
+                "custom_fields": [
+                  {
+                    "name": "is_human_intervened",
+                    "value": "false"
+                  },
+                  {
+                    "name": "is_allowed_stock",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_allowed_voice",
+                    "value": "true"
+                  }
+                ]
+              },
+              "text": {
+                "event_type": "message.received",
+                "contact": {
+                  "id": 900000009,
+                  "firstName": "Person 12",
+                  "lastName": "",
+                  "phone": "+60100000046",
+                  "countryCode": "MY",
+                  "status": "open",
+                  "custom_fields": [
+                    {
+                      "name": "is_human_intervened",
+                      "value": "false"
+                    },
+                    {
+                      "name": "is_allowed_stock",
+                      "value": "true"
+                    },
+                    {
+                      "name": "is_allowed_voice",
+                      "value": "true"
+                    }
+                  ]
+                },
+                "message": {
+                  "messageId": 1788156173799,
+                  "contactId": 900000009,
+                  "channelId": 453209,
+                  "traffic": "incoming",
+                  "timestamp": 1788156173799,
+                  "message": {
+                    "type": "text",
+                    "text": "check stock ZZZNOTAREALCODE999"
+                  }
+                }
+              },
+              "session": {
+                "respond_io_id": "900000009",
+                "session_vars": {
+                  "variables": {
+                    "routing": {
+                      "suggested_team": "it_admin",
+                      "suggested_agent": "it_support"
+                    },
+                    "entities": [
+                      {
+                        "raw": "srtwc286",
+                        "hint": "product",
+                        "confident": true,
+                        "canonical_code": null,
+                        "current_message": false
+                      }
+                    ],
+                    "ideation": null,
+                    "response": "Informed the user that request is out of scope and will proceed to escalate to the it_admin team",
+                    "date_mode": null,
+                    "dym_offer": null,
+                    "user_goal": "trying to raise an IT ticket",
+                    "escalation": {
+                      "is_escalation_confirmation": false
+                    },
+                    "match_mode": "and",
+                    "domain_hint": null,
+                    "intent_hint": null,
+                    "message_type": "request_for_help",
+                    "query_brands": [
+                      "sorento"
+                    ],
+                    "access_levels": [
+                      "dealer"
+                    ],
+                    "routing_brand": null,
+                    "contains_flyer": false,
+                    "dym_candidates": [],
+                    "date_filter_end": null,
+                    "last_result_set": [],
+                    "routing_company": null,
+                    "date_filter_start": null,
+                    "routing_companies": null,
+                    "selection_context": null,
+                    "routing_roster_plan": null,
+                    "requested_attributes": [],
+                    "routing_brand_source": null
+                  }
+                }
+              },
+              "parse": {
+                "output": {
+                  "message_type": "business_query",
+                  "intent_hint": "check_stock",
+                  "domain_hint": "inventory",
+                  "scope_intent": "specific",
+                  "is_affirmative": null,
+                  "user_goal": "trying to check stock for ZZZNOTAREALCODE999",
+                  "access_levels": [],
+                  "broaden_axis": null,
+                  "date_mode": null,
+                  "date_filter_start": null,
+                  "date_filter_end": null,
+                  "match_mode": "and",
+                  "demand_qty": null,
+                  "entities": [
+                    {
+                      "raw": "ZZZNOTAREALCODE999",
+                      "hint": "product",
+                      "canonical_code": null,
+                      "current_message": true,
+                      "confident": true
+                    }
+                  ],
+                  "entity_op": "replace_combine",
+                  "scope_exclusive": false,
+                  "requested_attributes": [],
+                  "contains_flyer": false,
+                  "reference_positions": [],
+                  "reference_target": null,
+                  "person_mention": null,
+                  "is_active": null,
+                  "order_status": null,
+                  "correction": false,
+                  "routing": {
+                    "suggested_team": "warehouse",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "domain_signal_source": "intent_explicit",
+                  "scope_exclusive_applied": false,
+                  "entity_op_applied": "replace_combine",
+                  "query_brands": [],
+                  "entities_filtered": false,
+                  "entities_emptied_by_filter": false
+                },
+                "_parser_raw": {
+                  "message_type": "business_query",
+                  "intent_hint": "check_stock",
+                  "domain_hint": "inventory",
+                  "scope_intent": "specific",
+                  "is_affirmative": null,
+                  "user_goal": "trying to check stock for ZZZNOTAREALCODE999",
+                  "access_levels": [],
+                  "broaden_axis": null,
+                  "date_mode": null,
+                  "date_filter_start": null,
+                  "date_filter_end": null,
+                  "match_mode": "and",
+                  "demand_qty": null,
+                  "entities": [
+                    {
+                      "raw": "ZZZNOTAREALCODE999",
+                      "hint": "product",
+                      "canonical_code": null,
+                      "current_message": true,
+                      "confident": true
+                    }
+                  ],
+                  "entity_op": "replace_combine",
+                  "scope_exclusive": false,
+                  "requested_attributes": [],
+                  "contains_flyer": false,
+                  "reference_positions": [],
+                  "reference_target": null,
+                  "person_mention": null,
+                  "is_active": null,
+                  "order_status": null,
+                  "correction": false,
+                  "routing": {
+                    "suggested_team": "warehouse",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "escalation": {
+                    "is_escalation_confirmation": false,
+                    "company_pick": null
+                  }
+                }
+              },
+              "access": {
+                "allowed": true,
+                "decision": "allow",
+                "agent_name": "General Enquiries",
+                "attributes": null,
+                "all_attributes_allowed": null
+              },
+              "media": null,
+              "resolved": {
+                "tokens": [
+                  "ZZZNOTAREALCODE999"
+                ],
+                "elapsed_ms": 487.96,
+                "resolutions": [
+                  {
+                    "token": "ZZZNOTAREALCODE999",
+                    "resolved": false,
+                    "ambiguous": false,
+                    "matches": [],
+                    "alternatives": []
+                  }
+                ],
+                "unresolved_tokens": [
+                  "ZZZNOTAREALCODE999"
+                ],
+                "fallback_match_mode": "or",
+                "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens."
+              },
+              "entities": null,
+              "gate": {
+                "tokens": [
+                  "ZZZNOTAREALCODE999"
+                ],
+                "elapsed_ms": 487.96,
+                "resolutions": [
+                  {
+                    "token": "ZZZNOTAREALCODE999",
+                    "resolved": false,
+                    "ambiguous": false,
+                    "matches": [],
+                    "alternatives": []
+                  }
+                ],
+                "unresolved_tokens": [
+                  "ZZZNOTAREALCODE999"
+                ],
+                "fallback_match_mode": "or",
+                "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+                "gate_passed": false,
+                "require_specific": false,
+                "resolved_company": null,
+                "company_team": null,
+                "resolved_companies": [],
+                "routing_brand": null,
+                "routing_brand_source": null,
+                "routing_companies": [],
+                "routing_company": null,
+                "access_denied_levels": [],
+                "access_notice": "",
+                "brand_gate_empty": false,
+                "brand_unheld": false,
+                "gate_reason": "no entities and 'inventory' requires a scoping entity",
+                "gate_clarification": "",
+                "compatible_entities": [],
+                "gate_debug": {
+                  "domain": "inventory",
+                  "allowed_lookup": [
+                    "product",
+                    "category",
+                    "brand"
+                  ],
+                  "entities_count": 0
+                }
+              }
+            }
+          },
+          "aggregate": null,
+          "tier_gate": null,
+          "annotate_incoming": null,
+          "_exit_kind": "not_found"
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "tokens": [
+          "ZZZNOTAREALCODE999"
+        ],
+        "elapsed_ms": 487.96,
+        "resolutions": [
+          {
+            "token": "ZZZNOTAREALCODE999",
+            "resolved": false,
+            "ambiguous": false,
+            "matches": [],
+            "alternatives": []
+          }
+        ],
+        "unresolved_tokens": [
+          "ZZZNOTAREALCODE999"
+        ],
+        "fallback_match_mode": "or",
+        "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens."
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "tokens": [
+          "ZZZNOTAREALCODE999"
+        ],
+        "elapsed_ms": 487.96,
+        "resolutions": [
+          {
+            "token": "ZZZNOTAREALCODE999",
+            "resolved": false,
+            "ambiguous": false,
+            "matches": [],
+            "alternatives": []
+          }
+        ],
+        "unresolved_tokens": [
+          "ZZZNOTAREALCODE999"
+        ],
+        "fallback_match_mode": "or",
+        "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+        "gate_passed": false,
+        "require_specific": false,
+        "resolved_company": null,
+        "company_team": null,
+        "resolved_companies": [],
+        "routing_brand": null,
+        "routing_brand_source": null,
+        "routing_companies": [],
+        "routing_company": null,
+        "access_denied_levels": [],
+        "access_notice": "",
+        "brand_gate_empty": false,
+        "brand_unheld": false,
+        "gate_reason": "no entities and 'inventory' requires a scoping entity",
+        "gate_clarification": "",
+        "compatible_entities": [],
+        "gate_debug": {
+          "domain": "inventory",
+          "allowed_lookup": [
+            "product",
+            "category",
+            "brand"
+          ],
+          "entities_count": 0
+        }
+      }
+    }
+  ],
+  "runIndex": 0,
+  "execution": {
+    "id": "14611584"
+  },
+  "ran": [
+    "When Executed by Another Workflow",
+    "build-ctx",
+    "item",
+    "entry-gate",
+    "resolve-entity",
+    "disallowed-entity-gate",
+    "build-ctx-resolved",
+    "If3",
+    "If-incoming-picker",
+    "If-customer-picker",
+    "resolve-exit-not-found"
+  ]
+}

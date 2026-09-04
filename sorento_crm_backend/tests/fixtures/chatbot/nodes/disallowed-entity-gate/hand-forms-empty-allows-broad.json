@@ -1,0 +1,83 @@
+{
+ "source": {
+  "hand_crafted": true,
+  "expected_from": "reasoned",
+  "reasoned_from": "contract",
+  "rationale": "Zero resolved entities on a 'forms' turn. ALLOWS_EMPTY.forms is true, so the gate PASSES and reports that the domain permits a broad query. allowed_lookup is ['form'] \u2014 forms is the one single-type row of ALLOWED. With no matches at all, `flat` is empty and every routing axis stays null/empty rather than being guessed."
+ },
+ "ctx": {
+  "Call 'sub-query-reformulator'": [
+   {
+    "json": {
+     "output": {
+      "domain_hint": "forms"
+     }
+    }
+   }
+  ],
+  "resolve-entity": [
+   {
+    "json": {
+     "tokens": [],
+     "resolutions": [],
+     "unresolved_tokens": []
+    }
+   }
+  ],
+  "build-ctx": [
+   {
+    "json": {
+     "ctx": {
+      "parse": {
+       "output": {
+        "domain_hint": "forms"
+       }
+      }
+     }
+    }
+   }
+  ]
+ },
+ "input": [
+  {
+   "json": {
+    "tokens": [],
+    "resolutions": [],
+    "unresolved_tokens": []
+   }
+  }
+ ],
+ "expected": [
+  {
+   "json": {
+    "tokens": [],
+    "resolutions": [],
+    "unresolved_tokens": [],
+    "access_denied_levels": [],
+    "access_notice": "",
+    "brand_gate_empty": false,
+    "brand_unheld": false,
+    "resolved_company": null,
+    "company_team": null,
+    "resolved_companies": [],
+    "routing_brand": null,
+    "routing_brand_source": null,
+    "routing_companies": [],
+    "routing_company": null,
+    "gate_passed": true,
+    "require_specific": false,
+    "gate_reason": "no entities; 'forms' permits broad query",
+    "gate_clarification": "",
+    "compatible_entities": [],
+    "gate_debug": {
+     "domain": "forms",
+     "allowed_lookup": [
+      "form"
+     ],
+     "entities_count": 0
+    }
+   }
+  }
+ ],
+ "runIndex": 0
+}

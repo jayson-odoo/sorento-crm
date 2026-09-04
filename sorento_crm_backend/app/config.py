@@ -96,6 +96,19 @@ class Settings(BaseSettings):
     # when that lane dies mid-turn the call never comes and the row would stay `delegated`
     # forever - a ghost in the trace list that Retry (failed turns only, R4) cannot touch.
     chatbot_delegated_ttl_minutes: int = 10  # CHATBOT_DELEGATED_TTL_MINUTES
+    # Chatbot turn engine: run the ported business lane (resolve + gate, S6a) in process.
+    # OFF by default, and that default is the strangler's whole point (D7). Until the n8n
+    # edits in documentation/plans/chatbot/n8n-changes.md section S6a are made, n8n STILL
+    # calls `sub-resolve-and-gate` itself, so turning this on runs the resolver twice per
+    # business turn - including the spec-search model call. Enable it in one environment to
+    # gather shadow evidence, confirm `delegate_payload` matches what n8n produced, then
+    # make the n8n edit and leave it on. CHATBOT_BUSINESS_LANE_ENABLED.
+    chatbot_business_lane_enabled: bool = False
+    # Per-MCP-call bound for the chatbot's fetch step. The plan's capacity section says 10
+    # seconds; the AI assistant's own 20 is a different budget for a different surface (a
+    # user watching a screen, not a customer waiting inside a whole WhatsApp turn's latency
+    # target). CHATBOT_MCP_TIMEOUT_SECONDS.
+    chatbot_mcp_timeout_seconds: int = 10
 
     # External API Access
     external_api_key: str | None = None  # API key for external parties to access endpoints

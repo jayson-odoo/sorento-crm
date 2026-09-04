@@ -13,7 +13,7 @@ Monorepo. Four siblings:
 
 Shared docs live in `documentation/`. `PRINCIPLES.md` at the repo root governs (it holds the layering rules the deleted `ARCHITECTURE-RULES.md` used to carry); treat `documentation/reference/ADR-PRODUCT-STANDARDS.md` as binding alongside it.
 
-**Plans:** every implementation/design plan (from planning sessions, grill-me, etc.) is written to `documentation/plans/<domain>/PLAN-<slug>.md`, with its UAC file alongside as `<slug>-acceptance-criteria.md`, before implementation starts. Update the plan's Status line as work progresses.
+**Plans:** every implementation/design plan (from planning sessions, grill-me, etc.) is written to `documentation/plans/<domain>/PLAN-<slug>.md`, with its UAC file alongside as `<slug>-acceptance-criteria.md` (or `UAC-<slug>.md`, the older-convention name some plans still use), before implementation starts. Update the plan's Status line as work progresses. Once that Status line reads terminal (implemented, done, shipped, merged, built, deployed, complete, closed, superseded, or abandoned), the plan and its UAC move to `documentation/plans/_archive/<domain>/`.
 
 ## Common commands
 
@@ -211,8 +211,11 @@ both work: the one with fewer moving parts wins.
 executes it.** Not restated here - one copy, one place to update.
 
 The shape: journey → grill → UAC → plan → tickets → **Phase 1** frontend-first against mocks (no
-backend, no tests yet) → **Phase 2** backend wiring test-FIRST (red/green/refactor; pytest +
-vitest land here, never deferred) → **Phase 3** `/code-review` → DoD gate → PR.
+backend, no tests yet) → **Phase 2** tester-first backend wiring, test-FIRST (the `tester` agent
+writes the red tests from the UAC + captain's test list BEFORE the `coder` agent, one instance
+kept alive for the whole lane, makes them green; pytest + vitest land here, never deferred) →
+**Phase 3** `reviewer` + `security-reviewer` + browser verification in parallel, once per lane →
+`guide-writer` → DoD gate → PR.
 
 Skipping or reordering a phase is a process violation; if a phase genuinely cannot be done, say so
 in the PR description.
@@ -332,12 +335,18 @@ Reference docs this file defers to, so nothing is stated twice:
 ### Subagent model routing (standing rule, 2026-08-30)
 
 The main session (Fable) plans and briefs; execution subagents run on **Sonnet** by default -
-`coder` and `tester` declare `model: sonnet` in `.claude/agents/`; `reviewer` and `planner` stay
-`model: opus` (the review is the quality gate before a PR, and it has caught merge-blocking
-defects the cheaper pass would risk missing - captain's call, 30 Aug 2026). The captain's
-job is to make the brief precise enough that Sonnet can execute it mechanically: measured facts,
-exact file paths, the test list, the contract shapes. A vague brief is the captain's defect, not
-a reason to upgrade the model.
+`coder`, `tester`, `guide-writer` and `triage` declare `model: sonnet` in `.claude/agents/`;
+`reviewer`, `security-reviewer` and `planner` stay `model: opus` (the review is the quality gate
+before a PR, and it has caught merge-blocking defects the cheaper pass would risk missing -
+captain's call, 30 Aug 2026). The captain's job is to make the brief precise enough that Sonnet
+can execute it mechanically: measured facts, exact file paths, the test list, the contract
+shapes. A vague brief is the captain's defect, not a reason to upgrade the model.
+
+**One coder per lane, continued not respawned.** The `coder` agent stays alive for every slice
+of a lane; the captain sends fix rounds and later slices as follow-up messages to the same
+agent instance instead of a cold spawn, so worktree state and context carry over. Reviewer,
+security-reviewer and browser verification run once per lane, in parallel, after the coder -
+not once per slice.
 
 Escalate a SINGLE spawn to Opus (pass `model: "opus"` on the Agent call; do not edit the agent
 files) only for:

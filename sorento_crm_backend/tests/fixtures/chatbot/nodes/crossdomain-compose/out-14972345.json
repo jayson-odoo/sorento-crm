@@ -1,0 +1,968 @@
+{
+  "source": {
+    "execution_id": "14972345",
+    "workflow_id": "qa4LWvPrhUnAPgjC",
+    "workflow_version": "c32698c1-fc36-4a48-90cf-9b9ebd6c7341",
+    "node": "crossdomain-compose",
+    "captured_at": "2026-09-04T19:09:30+00:00",
+    "expected_from": "runData",
+    "dedupe_sig": "7b40132fdbed909aa17e781d4f7fc7e1500fe439814ffcf9b41ff11dbb1065cf"
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "item": {
+            "branch_kind": "escalation_declined"
+          },
+          "ctx": {
+            "contact": {
+              "id": 900000066,
+              "firstName": "Person 87",
+              "lastName": "Person 88",
+              "phone": "+60100000033",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/3745656c-22f7-44a2-aa3a-8c99231d3169"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260510_200514",
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": null,
+              "created_at": 1778415976
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "a385823b-ea09-415f-a360-2b07c4c64017",
+              "contact": {
+                "id": 900000066,
+                "firstName": "Person 87",
+                "lastName": "Person 88",
+                "phone": "+60100000033",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1778415976
+              },
+              "message": {
+                "messageId": 1788394597000000,
+                "channelMessageId": "wamid.HBgLNjAxMjY3ODExNzgVAgASGBYzRUIwODU5MTlBMTI5MUYwNEVBNjc1AA==",
+                "contactId": 900000066,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788394597000,
+                "message": {
+                  "type": "text",
+                  "text": "no need , tq"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 89\"},\"wa_id\":\"60100000033\",\"user_id\":\"MY.900000067\",\"firstName\":\"Person 87\",\"lastName\":\"Person 88\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000066",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "purchasing",
+                    "suggested_agent": "incoming_stock_enquiries"
+                  },
+                  "entities": [
+                    {
+                      "raw": "CB2805A-DIY",
+                      "hint": "product",
+                      "confident": true,
+                      "canonical_code": "CB2805A-DIY",
+                      "current_message": true
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Here's what you want:\n\u2022 product: CB2805A-DIY\n\nBut no incoming matched these. Would you like me to escalate to purchasing team?",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to check the incoming status for CB2805A-DIY",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "incoming",
+                  "intent_hint": "check_incoming",
+                  "message_type": "business_query",
+                  "query_brands": [],
+                  "access_levels": [],
+                  "routing_brand": "cabana",
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [],
+                  "routing_company": "00000000-0000-0000-0000-000000000001",
+                  "date_filter_start": null,
+                  "routing_companies": [
+                    {
+                      "codes": [
+                        "CB2805A-DIY"
+                      ],
+                      "labels": [
+                        "CB2805A-DIY"
+                      ],
+                      "brand_code": "cabana",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "selection_context": null,
+                  "routing_roster_plan": null,
+                  "requested_attributes": [],
+                  "routing_brand_source": "resolved"
+                },
+                "user_response": "Here's what you want:\n\u2022 product: CB2805A-DIY\n\nBut no incoming matched these.\nBut here are the stock details for the requested products:\n\n- *Product Code:* CB2805A-DIY\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 1165\n\n- *Product Code:* CB2805A-DIY\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-IB\n*Quantity On Hand:* 851\n\n- *Product Code:* CB2805A-DIY\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-IR\n*Quantity On Hand:* 626\n\n- *Product Code:* CB2805A-DIY\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 0\n\n- *Product Code:* CB2805A-DIY\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SMC\n*Quantity On Hand:* 0\n\n- *Product Code:* CB2805A-DIY\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SYNT\n*Quantity On Hand:* 0\n\n- *Product Code:* CB2805A-DIY\n*Warehouse:* MULTIMODAL (SEKSYEN 15)\n*System Location:* RSW\n*Quantity On Hand:* 0\n\n- *Product Code:* CB2805A-DIY\n*Warehouse:* MULTIMODAL (SEKSYEN 15)\n*System Location:* RSW-BB\n*Quantity On Hand:* 0\n\n- *Product Code:* CB2805A-DIY\n*Warehouse:* MULTIMODAL (SEKSYEN 15)\n*System Location:* RSW-IB\n*Quantity On Hand:* 0\n\n- *Product Code:* CB2805A-DIY\n*Warehouse:* MULTIMODAL (SEKSYEN 15)\n*System Location:* RSW-IR\n*Quantity On Hand:* 0\n\nWould you like me to escalate to purchasing team?"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "casual",
+                "intent_hint": null,
+                "domain_hint": null,
+                "scope_intent": null,
+                "is_affirmative": false,
+                "user_goal": "trying to decline the escalation offer and thank the assistant",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "CB2805A-DIY",
+                    "hint": "product",
+                    "confident": true,
+                    "canonical_code": "CB2805A-DIY",
+                    "current_message": false
+                  }
+                ],
+                "entity_op": "reuse",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "purchasing",
+                  "suggested_agent": "incoming_stock_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "escalation_declined": true
+                },
+                "domain_signal_source": "intent_none",
+                "entity_op_applied": "reuse",
+                "query_brands": []
+              },
+              "_parser_raw": {
+                "message_type": "casual",
+                "intent_hint": null,
+                "domain_hint": null,
+                "scope_intent": null,
+                "is_affirmative": false,
+                "user_goal": "trying to decline the escalation offer and thank the assistant",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [],
+                "entity_op": "reuse",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": null,
+                  "suggested_agent": null
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "Incoming Stock Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null
+          }
+        }
+      }
+    ],
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 900000066,
+              "firstName": "Person 87",
+              "lastName": "Person 88",
+              "phone": "+60100000033",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/3745656c-22f7-44a2-aa3a-8c99231d3169"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260510_200514",
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": null,
+              "created_at": 1778415976
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "a385823b-ea09-415f-a360-2b07c4c64017",
+              "contact": {
+                "id": 900000066,
+                "firstName": "Person 87",
+                "lastName": "Person 88",
+                "phone": "+60100000033",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1778415976
+              },
+              "message": {
+                "messageId": 1788394597000000,
+                "channelMessageId": "wamid.HBgLNjAxMjY3ODExNzgVAgASGBYzRUIwODU5MTlBMTI5MUYwNEVBNjc1AA==",
+                "contactId": 900000066,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788394597000,
+                "message": {
+                  "type": "text",
+                  "text": "no need , tq"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 89\"},\"wa_id\":\"60100000033\",\"user_id\":\"MY.900000067\",\"firstName\":\"Person 87\",\"lastName\":\"Person 88\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000066",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "purchasing",
+                    "suggested_agent": "incoming_stock_enquiries"
+                  },
+                  "entities": [
+                    {
+                      "raw": "CB2805A-DIY",
+                      "hint": "product",
+                      "confident": true,
+                      "canonical_code": "CB2805A-DIY",
+                      "current_message": true
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Here's what you want:\n\u2022 product: CB2805A-DIY\n\nBut no incoming matched these. Would you like me to escalate to purchasing team?",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to check the incoming status for CB2805A-DIY",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "incoming",
+                  "intent_hint": "check_incoming",
+                  "message_type": "business_query",
+                  "query_brands": [],
+                  "access_levels": [],
+                  "routing_brand": "cabana",
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [],
+                  "routing_company": "00000000-0000-0000-0000-000000000001",
+                  "date_filter_start": null,
+                  "routing_companies": [
+                    {
+                      "codes": [
+                        "CB2805A-DIY"
+                      ],
+                      "labels": [
+                        "CB2805A-DIY"
+                      ],
+                      "brand_code": "cabana",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "selection_context": null,
+                  "routing_roster_plan": null,
+                  "requested_attributes": [],
+                  "routing_brand_source": "resolved"
+                },
+                "user_response": "Here's what you want:\n\u2022 product: CB2805A-DIY\n\nBut no incoming matched these.\nBut here are the stock details for the requested products:\n\n- *Product Code:* CB2805A-DIY\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 1165\n\n- *Product Code:* CB2805A-DIY\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-IB\n*Quantity On Hand:* 851\n\n- *Product Code:* CB2805A-DIY\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-IR\n*Quantity On Hand:* 626\n\n- *Product Code:* CB2805A-DIY\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 0\n\n- *Product Code:* CB2805A-DIY\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SMC\n*Quantity On Hand:* 0\n\n- *Product Code:* CB2805A-DIY\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SYNT\n*Quantity On Hand:* 0\n\n- *Product Code:* CB2805A-DIY\n*Warehouse:* MULTIMODAL (SEKSYEN 15)\n*System Location:* RSW\n*Quantity On Hand:* 0\n\n- *Product Code:* CB2805A-DIY\n*Warehouse:* MULTIMODAL (SEKSYEN 15)\n*System Location:* RSW-BB\n*Quantity On Hand:* 0\n\n- *Product Code:* CB2805A-DIY\n*Warehouse:* MULTIMODAL (SEKSYEN 15)\n*System Location:* RSW-IB\n*Quantity On Hand:* 0\n\n- *Product Code:* CB2805A-DIY\n*Warehouse:* MULTIMODAL (SEKSYEN 15)\n*System Location:* RSW-IR\n*Quantity On Hand:* 0\n\nWould you like me to escalate to purchasing team?"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "casual",
+                "intent_hint": null,
+                "domain_hint": null,
+                "scope_intent": null,
+                "is_affirmative": false,
+                "user_goal": "trying to decline the escalation offer and thank the assistant",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "CB2805A-DIY",
+                    "hint": "product",
+                    "confident": true,
+                    "canonical_code": "CB2805A-DIY",
+                    "current_message": false
+                  }
+                ],
+                "entity_op": "reuse",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "purchasing",
+                  "suggested_agent": "incoming_stock_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "escalation_declined": true
+                },
+                "domain_signal_source": "intent_none",
+                "entity_op_applied": "reuse",
+                "query_brands": []
+              },
+              "_parser_raw": {
+                "message_type": "casual",
+                "intent_hint": null,
+                "domain_hint": null,
+                "scope_intent": null,
+                "is_affirmative": false,
+                "user_goal": "trying to decline the escalation offer and thank the assistant",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [],
+                "entity_op": "reuse",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": null,
+                  "suggested_agent": null
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "Incoming Stock Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null
+          }
+        }
+      }
+    ],
+    "g-result": [],
+    "g-resolved": [],
+    "g-gate": [],
+    "g-offer_hold": [],
+    "g-suggest_offer": [],
+    "g-not_found": [],
+    "g-incoming_picker": [],
+    "g-access_choice": [],
+    "g-crossdomain_render": [],
+    "g-answer": [],
+    "g-clarify": [],
+    "item-restore": [
+      {
+        "json": {
+          "branch_kind": "escalation_declined"
+        }
+      }
+    ],
+    "entry-gate": [
+      {
+        "json": {
+          "branch_kind": "escalation_declined"
+        }
+      }
+    ],
+    "escalate-catalog": [
+      {
+        "json": {
+          "branch_kind": "escalation_declined",
+          "response": "Escalation declined.",
+          "manualResponse": true,
+          "includeResponse": true,
+          "is_escalate_offer": false
+        }
+      }
+    ],
+    "cs-offer-gate": [],
+    "build-outcome": [
+      {
+        "json": {
+          "branch_kind": "escalation_declined",
+          "response": "Escalation declined.",
+          "manualResponse": true,
+          "includeResponse": true,
+          "is_escalate_offer": false,
+          "outcome": {
+            "build-ideate-reply": null,
+            "build-suggest-offer": null,
+            "build-cs-member-offer": null,
+            "escalate-catalog": {
+              "branch_kind": "escalation_declined",
+              "response": "Escalation declined.",
+              "manualResponse": true,
+              "includeResponse": true,
+              "is_escalate_offer": false
+            },
+            "central-exchange": null,
+            "access-level-choice-message": null,
+            "promo-picker": null,
+            "validator": null,
+            "crossdomain-zeroset": null,
+            "build-miss-member-offer": null,
+            "dym-annotate-partial": null,
+            "dym-annotate": null,
+            "clarify-company-reply": null,
+            "offer-hold-reply": null,
+            "cs-roster-plan": null
+          }
+        }
+      }
+    ],
+    "compile-current-state": [
+      {
+        "json": {
+          "reply": {
+            "text": "Escalation declined.",
+            "session_patch": {
+              "variables": {
+                "message_type": "casual",
+                "intent_hint": null,
+                "domain_hint": null,
+                "user_goal": "trying to decline the escalation offer and thank the assistant",
+                "query_brands": [],
+                "access_levels": [],
+                "entities": [
+                  {
+                    "raw": "CB2805A-DIY",
+                    "hint": "product",
+                    "confident": true,
+                    "canonical_code": "CB2805A-DIY",
+                    "current_message": false
+                  }
+                ],
+                "routing": {
+                  "suggested_team": "purchasing",
+                  "suggested_agent": "incoming_stock_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "escalation_declined": true
+                },
+                "response": "Escalation declined.",
+                "last_result_set": [],
+                "selection_context": null,
+                "date_filter_start": null,
+                "requested_attributes": [],
+                "date_filter_end": null,
+                "date_mode": null,
+                "match_mode": "and",
+                "contains_flyer": false,
+                "dym_offer": null,
+                "dym_candidates": [],
+                "ideation": null,
+                "routing_roster_plan": null,
+                "routing_brand": "cabana",
+                "routing_brand_source": "resolved",
+                "routing_company": "00000000-0000-0000-0000-000000000001",
+                "routing_companies": [
+                  {
+                    "codes": [
+                      "CB2805A-DIY"
+                    ],
+                    "labels": [
+                      "CB2805A-DIY"
+                    ],
+                    "brand_code": "cabana",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento"
+                  }
+                ]
+              },
+              "user_response": "Escalation declined."
+            }
+          }
+        }
+      }
+    ],
+    "crossdomain-compose": [
+      {
+        "json": {
+          "reply": {
+            "text": "Escalation declined.",
+            "session_patch": {
+              "variables": {
+                "message_type": "casual",
+                "intent_hint": null,
+                "domain_hint": null,
+                "user_goal": "trying to decline the escalation offer and thank the assistant",
+                "query_brands": [],
+                "access_levels": [],
+                "entities": [
+                  {
+                    "raw": "CB2805A-DIY",
+                    "hint": "product",
+                    "confident": true,
+                    "canonical_code": "CB2805A-DIY",
+                    "current_message": false
+                  }
+                ],
+                "routing": {
+                  "suggested_team": "purchasing",
+                  "suggested_agent": "incoming_stock_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "escalation_declined": true
+                },
+                "response": "Escalation declined.",
+                "last_result_set": [],
+                "selection_context": null,
+                "date_filter_start": null,
+                "requested_attributes": [],
+                "date_filter_end": null,
+                "date_mode": null,
+                "match_mode": "and",
+                "contains_flyer": false,
+                "dym_offer": null,
+                "dym_candidates": [],
+                "ideation": null,
+                "routing_roster_plan": null,
+                "routing_brand": "cabana",
+                "routing_brand_source": "resolved",
+                "routing_company": "00000000-0000-0000-0000-000000000001",
+                "routing_companies": [
+                  {
+                    "codes": [
+                      "CB2805A-DIY"
+                    ],
+                    "labels": [
+                      "CB2805A-DIY"
+                    ],
+                    "brand_code": "cabana",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento"
+                  }
+                ]
+              },
+              "user_response": "Escalation declined."
+            }
+          }
+        }
+      }
+    ],
+    "save-session-vars": [
+      {
+        "json": {
+          "respond_io_id": "900000066",
+          "session_vars": {
+            "variables": {
+              "message_type": "casual",
+              "intent_hint": null,
+              "domain_hint": null,
+              "user_goal": "trying to decline the escalation offer and thank the assistant",
+              "query_brands": [],
+              "access_levels": [],
+              "entities": [
+                {
+                  "raw": "CB2805A-DIY",
+                  "hint": "product",
+                  "confident": true,
+                  "canonical_code": "CB2805A-DIY",
+                  "current_message": false
+                }
+              ],
+              "routing": {
+                "suggested_team": "purchasing",
+                "suggested_agent": "incoming_stock_enquiries"
+              },
+              "escalation": {
+                "is_escalation_confirmation": false,
+                "escalation_declined": true
+              },
+              "response": "Escalation declined.",
+              "last_result_set": [],
+              "selection_context": null,
+              "date_filter_start": null,
+              "requested_attributes": [],
+              "date_filter_end": null,
+              "date_mode": null,
+              "match_mode": "and",
+              "contains_flyer": false,
+              "dym_offer": null,
+              "dym_candidates": [],
+              "ideation": null,
+              "routing_roster_plan": null,
+              "routing_brand": "cabana",
+              "routing_brand_source": "resolved",
+              "routing_company": "00000000-0000-0000-0000-000000000001",
+              "routing_companies": [
+                {
+                  "codes": [
+                    "CB2805A-DIY"
+                  ],
+                  "labels": [
+                    "CB2805A-DIY"
+                  ],
+                  "brand_code": "cabana",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento"
+                }
+              ]
+            },
+            "user_response": "Escalation declined."
+          }
+        }
+      }
+    ],
+    "sorento-sub-respond-sendmsg-respond2": [
+      {
+        "json": {
+          "success": true
+        }
+      }
+    ],
+    "send-attachments": []
+  },
+  "input": [
+    {
+      "json": {
+        "reply": {
+          "text": "Escalation declined.",
+          "session_patch": {
+            "variables": {
+              "message_type": "casual",
+              "intent_hint": null,
+              "domain_hint": null,
+              "user_goal": "trying to decline the escalation offer and thank the assistant",
+              "query_brands": [],
+              "access_levels": [],
+              "entities": [
+                {
+                  "raw": "CB2805A-DIY",
+                  "hint": "product",
+                  "confident": true,
+                  "canonical_code": "CB2805A-DIY",
+                  "current_message": false
+                }
+              ],
+              "routing": {
+                "suggested_team": "purchasing",
+                "suggested_agent": "incoming_stock_enquiries"
+              },
+              "escalation": {
+                "is_escalation_confirmation": false,
+                "escalation_declined": true
+              },
+              "response": "Escalation declined.",
+              "last_result_set": [],
+              "selection_context": null,
+              "date_filter_start": null,
+              "requested_attributes": [],
+              "date_filter_end": null,
+              "date_mode": null,
+              "match_mode": "and",
+              "contains_flyer": false,
+              "dym_offer": null,
+              "dym_candidates": [],
+              "ideation": null,
+              "routing_roster_plan": null,
+              "routing_brand": "cabana",
+              "routing_brand_source": "resolved",
+              "routing_company": "00000000-0000-0000-0000-000000000001",
+              "routing_companies": [
+                {
+                  "codes": [
+                    "CB2805A-DIY"
+                  ],
+                  "labels": [
+                    "CB2805A-DIY"
+                  ],
+                  "brand_code": "cabana",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento"
+                }
+              ]
+            },
+            "user_response": "Escalation declined."
+          }
+        }
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "reply": {
+          "text": "Escalation declined.",
+          "session_patch": {
+            "variables": {
+              "message_type": "casual",
+              "intent_hint": null,
+              "domain_hint": null,
+              "user_goal": "trying to decline the escalation offer and thank the assistant",
+              "query_brands": [],
+              "access_levels": [],
+              "entities": [
+                {
+                  "raw": "CB2805A-DIY",
+                  "hint": "product",
+                  "confident": true,
+                  "canonical_code": "CB2805A-DIY",
+                  "current_message": false
+                }
+              ],
+              "routing": {
+                "suggested_team": "purchasing",
+                "suggested_agent": "incoming_stock_enquiries"
+              },
+              "escalation": {
+                "is_escalation_confirmation": false,
+                "escalation_declined": true
+              },
+              "response": "Escalation declined.",
+              "last_result_set": [],
+              "selection_context": null,
+              "date_filter_start": null,
+              "requested_attributes": [],
+              "date_filter_end": null,
+              "date_mode": null,
+              "match_mode": "and",
+              "contains_flyer": false,
+              "dym_offer": null,
+              "dym_candidates": [],
+              "ideation": null,
+              "routing_roster_plan": null,
+              "routing_brand": "cabana",
+              "routing_brand_source": "resolved",
+              "routing_company": "00000000-0000-0000-0000-000000000001",
+              "routing_companies": [
+                {
+                  "codes": [
+                    "CB2805A-DIY"
+                  ],
+                  "labels": [
+                    "CB2805A-DIY"
+                  ],
+                  "brand_code": "cabana",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento"
+                }
+              ]
+            },
+            "user_response": "Escalation declined."
+          }
+        }
+      }
+    }
+  ],
+  "runIndex": 0,
+  "execution": {
+    "id": "14972345"
+  },
+  "ran": [
+    "When Executed by Another Workflow",
+    "build-ctx",
+    "g-result",
+    "g-resolved",
+    "g-gate",
+    "g-offer_hold",
+    "g-suggest_offer",
+    "g-not_found",
+    "g-incoming_picker",
+    "g-access_choice",
+    "g-crossdomain_render",
+    "g-answer",
+    "g-clarify",
+    "item-restore",
+    "entry-gate",
+    "escalate-catalog",
+    "cs-offer-gate",
+    "build-outcome",
+    "compile-current-state",
+    "crossdomain-compose",
+    "save-session-vars",
+    "sorento-sub-respond-sendmsg-respond2",
+    "send-attachments"
+  ]
+}

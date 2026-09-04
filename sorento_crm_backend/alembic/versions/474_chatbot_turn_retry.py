@@ -30,7 +30,13 @@ Three changes, one migration, because the retry path needs all three to work:
    start from a contact id.
 
 Revision ID: 474_chatbot_turn_retry
-Revises: 472_chatbot_turns
+Revises: 477_chatbot_lanes
+
+The number is lower than the parent's and that is deliberate: the file was written before
+S1b, S3 and S6 landed on the lane, and this repo's re-parenting rule is to flip
+`down_revision` and NOT rename (`scripts/alembic-reparent.sh`, "No file renaming"), because
+a rename means editing every reference to the old id - including the ones in the tests and
+the UAC that name migration 474 by number. The chain, not the filename, is the order.
 """
 import logging
 
@@ -39,7 +45,7 @@ from alembic import op
 from sqlalchemy.orm import Session
 
 revision = "474_chatbot_turn_retry"
-down_revision = "472_chatbot_turns"
+down_revision = "477_chatbot_lanes"
 branch_labels = None
 depends_on = None
 

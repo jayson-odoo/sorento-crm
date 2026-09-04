@@ -102,10 +102,9 @@ def derive_routing(out: dict) -> dict:
             if is_cert
             else {"suggested_team": "marketing_product", "suggested_agent": "general_enquiries"}
         )
-    # resource_attachment (catalogue / warranty / price tag template / shipping schedule)
-    # is the same marketing-material hand-off as product_attachment's non-cert row.
-    if domain == "resource_attachment":
-        return {"suggested_team": "marketing_product", "suggested_agent": "general_enquiries"}
+    # NO `resource_attachment` case. The live body falls through to the null pair for it;
+    # the marketing_product row that pairs it with product_attachment's non-cert arm is part
+    # of the UNPROMOTED B-TEAM-1' lane change and is not what production runs today.
     if domain == "forms":
         return {"suggested_team": "marketing_form", "suggested_agent": "marketing_form"}
     if domain == "inventory":
@@ -454,6 +453,33 @@ _ORD = {
 # `companies.code` column threaded through the resolver.
 CO_ALIASES = {"sorento": ["sorento", "srt"], "mocha": ["mocha", "mch"], "cabana": ["cabana", "cbn"]}
 
+# The company-pick resolver's filler / negator vocabularies and its product-code test. All
+# three read the customer's raw reply and are reproduced from the live body verbatim.
+CO_FILLERS = frozenset(
+    {
+        "yes", "ya", "yeah", "yep", "yup", "ok", "okay", "okie", "oki", "k", "sure",
+        "please", "pls", "plz", "pl", "kindly", "team", "the", "a", "an", "to", "for",
+        "of", "on", "at", "in", "route", "assign", "escalate", "escalation", "pass",
+        "send", "forward", "transfer", "connect", "pick", "choose", "select", "prefer",
+        "handle", "help", "one", "lah", "la", "leh", "lor", "ah", "go", "with", "it",
+        "that", "this", "then", "can", "could", "would", "like", "want", "need", "you",
+        "me", "my", "us", "i", "ill", "id", "company", "side", "instead", "guys", "ppl",
+        "people", "staff", "department", "dept", "group", "thanks", "thank", "ty", "tq",
+    }
+)
+CO_NEGATORS = frozenset(
+    {
+        "no", "not", "nope", "nah", "never", "dont", "neither", "nor", "none", "without",
+        "except", "cancel", "stop",
+    }
+)
+# `/^[a-z]{2,}[a-z0-9-]*\d/i` - letters then a digit somewhere after. ASCII digits, as JS.
+_PROD_TOK_RE = re.compile(r"^[a-z]{2,}[a-z0-9-]*[0-9]", re.IGNORECASE)
+
+
+def _co_tok(word: Any) -> str:
+    return re.sub(r"[^a-z0-9]", "", jsc.js_string(word).lower())
+
 DATE_FILTER_DOMAINS = frozenset({"promotion", "order"})
 
 # DIGITS and WORD BOUNDARIES are ASCII here; WHITESPACE is not. Python's `\d` and `\b`
@@ -642,11 +668,6 @@ def post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  # 
     llm_agent_raw = jsc.get(o.get("routing"), "suggested_agent")
     llm_team_n = norm(llm_team_raw)
     llm_agent_n = norm(llm_agent_raw)
-    # B-TEAM-1': the LLM's OWN confidence marker for the team it named this turn.
-    llm_team_source_raw = jsc.get(o.get("routing"), "team_source")
-    llm_team_source_n = (
-        llm_team_source_raw if llm_team_source_raw in ("explicit", "inferred") else None
-    )
     # (b) The LLM occasionally emits the LITERAL STRING "null" for a hint. That is truthy,
     #     so it mis-fires the domain->business_query clobber. Coerce to real null here.
     o["domain_hint"] = norm(o.get("domain_hint"))
@@ -1688,85 +1709,55 @@ def post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  # 
         "suggested_agent": None,
     }
 
-    # -- B-TEAM-1': STATE-keyed routing rank ladder --------------------------------------- #
-    # Priority, never the customer's own words:
-    #   (1) LLM EXPLICIT team - the customer named one, in any language.
-    #   (2) the PRIOR OFFERED team - ONLY when THIS turn actually engages an open offer
-    #       (`offeredEscalation && isAffirmative`, the same test that flips
-    #       is_escalation_confirmation above).
-    #   (3) derived-from-domain, or the LLM's own low-confidence 'inferred' guess.
-    #   (4) null TEAM - never a hard team default; clarify-team-gate asks instead.
-    # TEAM and AGENT are read from the SAME winning rank: two independent `??` chains let
-    # an explicit team pair with a stale open-offer agent, exactly the mismatch the
-    # CS-order-pick divert and the roster-lane check both require to be coherent. A rank
-    # wins when its OWN team OR its OWN agent is non-null (not team alone: derived's
-    # `ideate` case is an intentional team:null / agent:'ideation' pair).
-    explicit_team = llm_team_n if llm_team_source_n == "explicit" else None
-    explicit_agent = llm_agent_n if llm_team_source_n == "explicit" else None
-    accepted_open_offer = offered_escalation and is_affirmative
-    open_offer_team = norm(jsc.get(prior_routing, "suggested_team")) if accepted_open_offer else None
-    open_offer_agent = norm(jsc.get(prior_routing, "suggested_agent")) if accepted_open_offer else None
-    derived_team = norm(derived.get("suggested_team"))
-    derived_agent = norm(derived.get("suggested_agent"))
-    inferred_team = llm_team_n if llm_team_source_n == "inferred" else None
-    inferred_agent = llm_agent_n if llm_team_source_n == "inferred" else None
+    # -- routing: two independent `??` chains, the LIVE shape ----------------------------- #
+    # For a `request_for_help` turn with a valid LLM team, that team WINS over deriveRouting
+    # and prior state. A TERNARY, not `req_help and llm_team_n`: JS's `false ?? y` is `false`,
+    # which would poison the nullish chain, and the port reproduces the ternary rather than
+    # the shortcut for exactly that reason.
+    #
+    # The chains are INDEPENDENT: team and agent are resolved separately, so an explicit team
+    # can pair with a prior-state agent. The 4-rank ladder that couples them (B-TEAM-1') is an
+    # UNPROMOTED lane change and is not what production runs; see the plan's S1 "pending
+    # re-port" note. Both chains end in a HARD default, which is why this body never emits a
+    # null team.
+    def _nullish(*candidates: Any) -> Any:
+        """JS `a ?? b ?? c`. Every operand here is a normalised string or None, so
+        "not None" is the same test JS's nullish coalescing applies."""
+        return next((c for c in candidates if c is not None), None)
 
-    routing_ranks = [
-        {"team": explicit_team, "agent": explicit_agent},
-        {"team": open_offer_team, "agent": open_offer_agent},
-        {"team": derived_team, "agent": derived_agent},
-        {"team": inferred_team, "agent": inferred_agent},
-    ]
-    winning = next(
-        (r for r in routing_ranks if r["team"] is not None or r["agent"] is not None),
-        {"team": None, "agent": None},
+    suggested_team = _nullish(
+        llm_team_n if req_help else None,
+        norm(derived.get("suggested_team")),
+        norm(jsc.get(prior_routing, "suggested_team")),
+        "customer_service",
     )
-    suggested_team = winning["team"]
-    # AGENT keeps a hard default WITHIN the winning rank: it is the spine's ACCESS key,
-    # read unconditionally before any routing decision runs. TEAM stays null when no rank
-    # resolves - the null-when-unsure contract is TEAM-only.
-    suggested_agent = winning["agent"] if winning["agent"] is not None else "general_enquiries"
+    suggested_agent = _nullish(
+        llm_agent_n if req_help else None,
+        norm(derived.get("suggested_agent")),
+        norm(jsc.get(prior_routing, "suggested_agent")),
+        "general_enquiries",
+    )
 
     o["routing"] = {"suggested_team": suggested_team, "suggested_agent": suggested_agent}
     # normalise a legacy suffixed promotion team to the single base team
     if _PROMO_TEAM_RE.match(jsc.lower_or_empty(o["routing"].get("suggested_team")) or ""):
         o["routing"]["suggested_team"] = "marketing_promotion"
 
-    # -- rev 3: pending team_clarify completion / abandon ---------------------------------- #
-    # `selection_context === 'team_clarify'` means the LAST bot turn was the clarify ask:
-    # the team resolved to null and the customer was asked instead of silently defaulted.
-    # Without this the bare reply "order" re-parsed as a fresh business_query and answered
-    # normally - the escalation intent was lost (clone exec 14992562 -> 14992601).
-    if prev_state.get("selection_context") == "team_clarify":
-        # ABANDON: a fresh current-message entity means the customer asked something
-        # SPECIFIC and new, not merely answering "what's this about".
-        fresh_entity_this_turn = jsc.is_array(o.get("entities")) and any(
-            jsc.truthy(e) and jsc.get(e, "current_message") is True for e in o["entities"]
-        )
-        # rev 4: two more abandon clauses, same "no signal -> fall through" shape.
-        #   (a) casual - without it "haha ok nvm" force-completes and the clarify re-fires
-        #       with the same frozen string every turn: an unbounded identical-copy loop.
-        #   (b) an explicit decline - force-completing on top of it would produce the
-        #       forbidden pair {escalation_declined, is_escalation_confirmation}.
-        abandon_clarify = (
-            fresh_entity_this_turn
-            or o.get("message_type") == "casual"
-            or jsc.get(o.get("escalation"), "escalation_declined") is True
-        )
-        if not abandon_clarify:
-            # COMPLETE: route this turn to escalation exactly as an accepted open offer
-            # would. escalation-context then recomputes `team` from THIS turn's routing.
-            o["escalation"] = {
-                **(o.get("escalation") if jsc.truthy(o.get("escalation")) else {}),
-                "is_escalation_confirmation": True,
-            }
-
-    # -- miss-company-routing: company-pick resolver (STATE-ONLY as of rev 8) -------------- #
-    # The offer names companies; a reply that resolves to exactly ONE company of the
-    # OFFERED pool is a pool pick, not a new query. The LLM owns the language understanding
-    # (typos, any language, ordinals, correcting negations) via `escalation.company_pick`;
-    # this resolver's ONLY job is to VALIDATE that emission against the pool, refusing
-    # anything not actually offered. It never re-reads the customer's words.
+    # -- miss-company-routing: company-pick resolver ------------------------------------- #
+    # The offer names companies; a SHORT reply that word-boundary-matches exactly ONE
+    # company of the OFFERED pool - and matches no member row - is a pool pick, not a new
+    # query. Two tiers, deterministic first:
+    #   (i)  a filler-stripped word match over the customer's own reply, bounded by
+    #        `short_ok` / `long_ok` and refused outright by a negator or a product-code-like
+    #        token;
+    #   (ii) the LLM's `escalation.company_pick`, read from the frozen raw snapshot and
+    #        accepted only after the same pool validation.
+    #
+    # **Tier (i) reads the raw customer message.** It is inventoried in the plan's
+    # text-sniffing table and reproduced because it is what the LIVE body does (D8: parity
+    # before improvement). The state-only rev 8 that deletes it, and hands the whole job to
+    # the prompt, is part of the UNPROMOTED B-TEAM-1' lane change; see the plan's S1
+    # "pending re-port" note. No NEW text-matching site may be added.
     def co_company_pick(candidate_output: dict) -> dict:
         st = parent_input.get("previous_conversation_state") or {}
         rp = jsc.array(st.get("routing_roster_plan"))
@@ -1798,26 +1789,66 @@ def post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  # 
                         break
             return next(iter(h)) if len(h) == 1 else None
 
-        try:
-            if not pool:
-                return {"any": None}
-            raw = jsc.get(jsc.get(parser_raw_snapshot, "escalation"), "company_pick")
-            if isinstance(raw, str) and raw.strip():
+        raw_reply = _split_reply_to(parent_input.get("latest_user_message")).strip()
+        words = [w for w in re.split(r"\s+", raw_reply) if w]
+        kept = [w for w in words if _co_tok(w) not in CO_FILLERS]
+        has_neg = any(_co_tok(w) in CO_NEGATORS for w in words)
+        # (C) a product-code-like token ("MUB6201", "MWCX7608-SH-S10") refuses the pick.
+        prod_tok = any(
+            _PROD_TOK_RE.match(re.sub(r"[^a-z0-9-]", "", jsc.js_string(w), flags=re.IGNORECASE))
+            for w in words
+        )
+        cur_ent = any(
+            jsc.truthy(e) and jsc.get(e, "current_message") is True
+            for e in jsc.array(candidate_output.get("entities"))
+        )
+        # == the member-offer arm's `is_new_query`, kept in lockstep.
+        domain_q = (
+            jsc.truthy(candidate_output.get("domain_hint"))
+            or candidate_output.get("message_type") == "business_query"
+            or candidate_output.get("message_type") == "clarification"
+        ) and candidate_output.get("is_affirmative") is not True
+        # The SHORT path is unguarded only while the filler-stripped remainder is a single
+        # token; a 2+ token remainder must also carry no current-message entity and not be a
+        # domain query, so "mocha promotions" right after an offer is ANSWERED, not escalated.
+        short_ok = 0 < len(words) <= 4 and (len(kept) < 2 or (not cur_ent and not domain_q))
+        long_ok = len(words) > 4 and 0 < len(kept) <= 6 and not cur_ent and not domain_q
+
+        def deterministic_pick() -> str | None:
+            if not pool or has_neg or prod_tok:
+                return None
+            texts: list[str] = []
+            if (short_ok or long_ok) and len(kept):
+                texts.append(" ".join(kept).lower())
+            pm = candidate_output.get("person_mention")
+            pm_raw = pm.strip().lower() if isinstance(pm, str) and pm.strip() else ""
+            if pm_raw:
+                texts.append(pm_raw)
+            if not texts:
+                return None
+            return hits(texts)
+
+        def llm_pick() -> str | None:
+            try:
+                if not pool or not len(kept) or has_neg or domain_q:
+                    return None
+                raw = jsc.get(jsc.get(parser_raw_snapshot, "escalation"), "company_pick")
+                if not isinstance(raw, str) or not raw.strip():
+                    return None
                 k = raw.lower().strip()
                 direct = [ent for ent in pool.values() if k in ent["keys"]]
                 if len(direct) == 1:
-                    return {"any": direct[0]["name"]}
+                    return direct[0]["name"]
                 if len(direct) > 1:
-                    return {"any": None}
-                by_raw = hits([k])
-                if by_raw:
-                    return {"any": by_raw}
-            # secondary LLM signal: person_mention, same pool validation.
-            pm = candidate_output.get("person_mention")
-            pm_raw = pm.strip().lower() if isinstance(pm, str) and pm.strip() else ""
-            return {"any": hits([pm_raw]) if pm_raw else None}
-        except Exception:
-            return {"any": None}
+                    return None
+                return hits([k])
+            except Exception:
+                return None
+
+        # Deterministic wins. Only `any` has a reader; the live body's other five return
+        # members are dead there too and are not reproduced.
+        pick = deterministic_pick()
+        return {"any": pick if pick is not None else llm_pick()}
 
     # -- CS member-pick override (final say) ---------------------------------------------- #
     sel_ctx = jsc.get(parent_input.get("previous_conversation_state"), "selection_context")
@@ -2074,26 +2105,6 @@ def post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  # 
                 o["escalation"] = {"is_escalation_confirmation": True, "company_pick": co_o["any"]}
                 o["entities"] = []
                 o["member_pick_context"] = True
-
-    # -- rev 5/6: a validated PICK completes rank 2 ---------------------------------------- #
-    # Rank 2 fires only on isAffirmative, so a reply that ENGAGES the offer by resolving a
-    # company/member pick without the LLM flagging is_affirmative missed it and fell to
-    # null (clone exec 15019770). This COMPLETES rank 2 - same priority, not a backfill -
-    # so it overwrites whatever a lower rank computed. Only "the customer named a different
-    # team this turn" still wins: rank 1 EXPLICIT, or a Tier-1 RETARGET.
-    explicit_won = explicit_team is not None or explicit_agent is not None
-    prior_offered_team = norm(jsc.get(prior_routing, "suggested_team"))
-    if (
-        offered_escalation
-        and o.get("member_pick_context") is True
-        and jsc.get(o.get("escalation"), "is_escalation_confirmation") is True
-        and not explicit_won
-        and jsc.get(o.get("escalation"), "retarget_team") is not True
-        and jsc.truthy(prior_offered_team)
-    ):
-        o["routing"]["suggested_team"] = prior_offered_team
-        agent = norm(jsc.get(prior_routing, "suggested_agent"))
-        o["routing"]["suggested_agent"] = agent if agent is not None else "general_enquiries"
 
     # -- DATE-FILTER DOMAIN GATE (policy lives here, not in the LLM) ----------------------- #
     # The parser extracts a date window whenever the message names one, for ANY domain.

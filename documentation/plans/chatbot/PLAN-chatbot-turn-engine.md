@@ -1,6 +1,6 @@
 # PLAN - Chatbot Turn Engine: n8n business logic moves into the CRM
 
-Status: S0 + S1 IMPLEMENTED on lane feat/chatbot-turn-engine (4 Sep 2026); approved "ok good to go", 6 review rounds, D1 to D16; S1b next
+Status: S0 + S1 IMPLEMENTED on lane feat/chatbot-turn-engine (4 Sep 2026); approved "ok good to go", 6 review rounds, D1 to D16; re-ported onto the LIVE n8n body 5 Sep (see S1 "pending re-port"); S1b DELIVERED 5 Sep (-40.0% prompt, published unlabelled, promote is the owner's call); S2 (the tail) MERGED 5 Sep; S6a MERGED 5 Sep, behind `CHATBOT_BUSINESS_LANE_ENABLED` (default off) until the n8n edit in `n8n-changes.md` S6a is made
 UAC: `documentation/plans/chatbot/chatbot-turn-engine-acceptance-criteria.md`
 Classification: **MODULE** (`chatbot`), own Postgres schema `chatbot` (D12)
 Owner decisions: D1 to D13 in the UAC; rulings R1 to R6 in the UAC
@@ -147,6 +147,20 @@ result_set}`, `send_attachments {attachments_src, reply}`, `assign_conversation
 Every action carries `dry_run` (true on test envelopes, D14) so the clone's `test-guard`
 records instead of sends, exactly as today.
 
+**D14's input half (O2, AC-112).** A dry-run envelope may also carry three optional harness
+keys, and the engine honours them ONLY on a dry run: `mock_reformulator_output` replaces the
+parser call (no provider is asked; the mock goes through the same `post_process` +
+`suggest_follow_up` a real emission does, so the harness exercises the code instead of
+bypassing it, and a malformed mock is a failed `understood` stage exactly like a malformed
+model answer), while `previous_conversation_state` and `referenced_result_set` replace the
+stored memory for that turn and are never written back. They are `Envelope` EXTRAS rather
+than declared fields on purpose: a harness contract that a live producer should have no
+reason to reach for. On a live envelope all three are ignored and listed in the `received`
+record's `harness_keys_ignored` (empty list when there are none), so a stray key is visible
+rather than silently answering a real customer from a mock. Tests are named after the n8n
+guards they replace: `TestHarnessInjectionsG6` (reformulator bypass),
+`TestHarnessInjectionsG8` (session injection).
+
 **Why not an outbound webhook (rejected at review round 3):** a fixed CRM-to-n8n URL would
 decide egress on the CRM side, so a chat-console or clone turn would push to the live sender.
 Returning the data keeps egress with the caller and keeps the harness's containment model
@@ -227,6 +241,14 @@ picker_families_carried, routing_roster_plan, routing_brand, routing_brand_sourc
 routing_company, routing_companies`, plus the new `pending {kind, team?, domain?}` marker
 (R3). `extra = "forbid"` still matters: it is what stops harness keys leaking into customer
 sessions (H15). `is_active` stays a phantom read (the parser port reads it as null).
+
+**`pending` is written for ONE kind at S2, and that is deliberate** (amended 5 Sep 2026).
+`PendingKind` declares five, but the other four (`team_clarify`, `company_clarify`,
+`tier_ask`, `member_offer`) already have a structured reader today - `selection_context`
+plus `last_result_set`, which the parser post-processor reads without touching text. Only
+`escalation_offer` replaces a TEXT read (`output_exchange._offer_is_open`), so only it is
+written; writing a marker nobody reads would be machinery for a hypothetical. S5 writes
+the clarify kinds when its escalation lane needs them.
 Top-level siblings `user_response` and `quick_reply` persist as today. The ideation service
 keeps writing `ideation` through the same store (already in-process, already the CRM).
 
@@ -240,10 +262,13 @@ inventoried during S1 and listed here with its disposition:
 | site | what it matches | disposition |
 |---|---|---|
 | `output_exchange.js` `offeredEscalation` regex over previous `response` | "would you like me to escalate" | replaced by `pending.kind = escalation_offer` (R3, S1/S2) |
-| `crossdomain-compose.js` `isAnswered` regex over previous `response` | "Previous turn (" | replaced by `pending.kind`/`last_answer_domain` (R3, S2) |
+| `crossdomain-compose.js` `isAnswered` regex over previous `response` | "Previous turn (" | replaced at S2 by a VALUE, not a session key: `CompiledState.answered_domain`. The question is "did THIS turn's business-summary arm run", which never crosses a turn boundary, so the compiler hands the answer down instead of persisting one. `last_answer_domain` is therefore NOT a session key (amended 5 Sep 2026) |
 | `route-turn.js` `tierRepick` | bare digit or exact menu word in the raw message | reproduced (owner's own Fix 6 rule; exact match, not fuzzy); candidate to move into the parser as `tier_pick` after parity |
 | `escalation-context.js` `_CO_ALIASES` company name / code match | company name or alias in `escalation.company_pick` | reproduced; the parser already emits `company_pick`, the alias table is a STOPGAP mirror, candidate to delete once the parser output is trusted |
 | `output_exchange.js` `domain_switched_by_keyword` and sibling keyword checks | domain keywords in the raw message | reproduced for parity; listed as divergence candidates for the parser prompt (backlog issue) |
+| `output_exchange.js` `_coCompanyPick` deterministic tier | the reply minus fillers, word-boundary matched against the offered company pool; refused by a negator or a product-code-like token | reproduced (5 Sep re-port): the LIVE body still has it. The export's rev 8 deletes it and hands the whole job to the prompt, but rev 8 is the unpromoted B-TEAM-1' change, so parity keeps the tier until the owner promotes it |
+| `output_exchange.js` member-offer `extract()` + `_ORD` | a bare number or an ordinal WORD in the raw reply | reproduced; the same shape as `route-turn.js` `tierRepick` and inventoried with it |
+| `output_exchange.js` `_statedTiers` / `_statedBrands` | tier and brand words in the raw message (English and Malay literals only) | reproduced. The prompt is what covers every other language, which is why the ACCESS LEVELS vocabulary cannot move out of it |
 
 Rule for new code in the package: no regex or substring match over `ctx.text` or over a
 previous reply. A reviewer finding one is a merge blocker.
@@ -257,6 +282,7 @@ previous reply. A reviewer finding one is a merge blocker.
 | respond.io `space_id` | default respond workspace row (`respond_workspaces.space_id`) | already the integration's home; kills the hard-coded `364817` |
 | unsupported domains | `system_settings.chatbot_unsupported_domains` (JSON, default the two today) | the one list the owner has changed; column, not table (CLAUDE.md "both dict builders") |
 | stock denial lanes | `system_settings.chatbot_stock_denial_enabled` (bool, default false) | R1: the corrected vocabulary turns two never-tested lanes on; a data switch with a test, not a surprise |
+| which lanes the CRM may FINISH | `system_settings.chatbot_completed_lanes` (JSON array of `branch_kind`, default `[]`) | S4: `CRM_COMPLETED_BRANCH_KINDS` says what the CODE can complete, this says what it MAY, and both are required. Without it a lane starts answering the moment it deploys and the n8n edit has to land in the same window or the lane runs twice. With it, deploy / compare / switch on / cut n8n are four separate reversible steps, one lane at a time (AC-308) |
 | worker offload, wait | env `CHATBOT_TURN_ON_WORKER` (off), `CHATBOT_TURN_WAIT_SECONDS` (60), `WORKER_QUEUES` | ops, not owner |
 
 ### Test strategy (the reason for the port)
@@ -307,6 +333,19 @@ suite on the shared DB.
 - **Rule: never hold a DB session across LLM or MCP I/O.** The engine closes the session before
   the parser / clarifier / MCP calls and reopens after (the 96/100 connection incident is the
   evidence). Guardrail test asserts no open transaction during the parser call.
+  - **ONE named exemption, S6a's resolver seam** (5 Sep 2026). The business lane runs inside
+    the session opened for access / routed, so that session is held across the resolver's
+    OPTIONAL spec-search model call (2 to 3 s, only when `understand_phrase` fires and the
+    normal probes missed). It is an exemption rather than a bug because the resolver is a
+    database service - it cannot be called without a session at all - and because the
+    connection count is unchanged from today: n8n makes the same call over HTTP while its own
+    request holds a pool connection for the whole turn. What is different is only WHERE the
+    connection is held. **Trigger to remove it: S6b**, which adds the MCP fetch call and
+    splits `looked_up` into its own stage; the session closes before that stage and reopens
+    after, exactly as the parser call already does. Pinned by
+    `tests/chatbot/test_s6a_gate_dry_run_and_seams.py::TestCapacityRuleDuringResolverSeam`,
+    an `xfail(strict=True)` that goes red the day the split lands and the exemption should
+    be deleted.
 - Timeouts: n8n HTTP node 60 s explicit; parser 8 s **(bound not enforced until #656)**; each
   MCP call 10 s; over = failed stage. The parser bound is not wired because
   `llm_provider.LLMProvider.chat` takes no timeout at all - each provider builds its own
@@ -387,6 +426,47 @@ Human-intervened check becomes an `update_contact_fields` action (AC-108). Audio
 becomes a failed turn (AC-107). R3 reader accepts both forms. R5 fail-loud.
 n8n: replace five spine nodes with one `httpRequest` + two re-emitters (AC-110).
 
+#### S1 pending re-port: B-TEAM-1' (added 5 Sep 2026)
+
+**The port was made from the working-tree EXPORT, and the export is not what production
+runs.** The n8n partner session fetched the LIVE `sub-semantic-parser` read-only and the
+two bodies differ:
+
+| | live | working-tree export |
+|---|---|---|
+| `output_exchange.js` | 1,881 lines, sha `a837333a13a2` | 2,043 lines, MANIFEST `locally_edited` |
+| system message | 46,942 chars, sha256 `90c0741997...bdf87b66` | 49,318 chars |
+
+The extra material is one unpromoted lane change, **B-TEAM-1'** (+241/-83 over 10 hunks):
+`routing.team_source`, a 4-rank team ladder replacing the `?? 'customer_service'` default,
+a `resource_attachment` row in `deriveRouting`, a pending `team_clarify` completion block,
+and a state-only company-pick resolver with the deterministic word-match tier deleted.
+
+`head/output_exchange.py`, `head/parser.py`'s `ParseOutput` schema and
+`chatbot_parser_prompt.py` are now faithful to the LIVE body. Evidence, both directions:
+
+* the five `parser-*` fixtures that sat in `STALE_FIXTURES` because the port emitted a null
+  team where they expect `purchasing` / `marketing_product` / `warehouse` now replay EQUAL,
+  and their entries are retired. They were live-faithful captures graded against the wrong
+  body, which is what a stale-fixture list looks like when the port is the stale side;
+* the 19 hand-built fixtures that now fail are reproduced EXACTLY by the pre-re-port Python
+  and by nothing else (19 of 19, no residue). They pin the unpromoted body, so they take
+  those entries instead. **Every real capture in the corpus is graded; not one `parser-*` or
+  `exec-*` fixture is excluded.**
+
+**Re-port B-TEAM-1' when the owner promotes the escalation-routing lane's B3 step**, and
+retire the 19 entries in the same change. Diffs:
+`output_exchange.LIVE-vs-WORKTREE.diff` and `output_exchange.HEAD-vs-LIVE.diff` in the n8n
+session scratchpad (`.../11a092cf-e08a-4fa0-b142-99499e993633/scratchpad/`), beside
+`output_exchange.live.js` and `sub-semantic-parser.systemMessage.live.txt`. Nothing goes in
+`divergences.py`: this is parity with production, not a deliberate hazard fix.
+
+One consequence worth stating, because it reads as a regression and is not: with the live
+body the LLM's own `suggested_team` is used ONLY on a `request_for_help` turn, and every
+other turn falls through `deriveRouting` -> prior state -> the hard `customer_service`
+default. This body therefore never emits a null team, and `resource_attachment` routes by
+the prior-state carry rather than to `marketing_product`.
+
 **The Switch on `duplicate` must sit BEFORE the `build-ctx` / `route-turn` re-emitters.**
 A duplicate delivery (D15) returns the FIRST turn's stored answer, and a duplicate of a
 turn that FAILED has no `ctx` to replay - the re-emitters read
@@ -398,15 +478,43 @@ Parity gate: AC-102, AC-103, AC-111.
 
 ### S1b - Parser prompt slim-down (same lane as S1, after parity, before promote)
 
-D16. Inventory the 48 KB system message section by section
+D16. Inventory the 46 KB system message section by section
 (`documentation/plans/chatbot/parser-prompt-inventory.md`): `understanding` stays;
-`rule` (the domain-to-team map, date maths, positional / ordinal resolution, carry and
-entity-op rules, quantity parsing) moves into `output_exchange.py` where most of it already
-has a deterministic twin; `example` survives only when it stands for a phrasing class the
-corpus shows; `dead` goes. Gate: parser fixtures still equal, live parity 99%+ on the
-regression guards plus a fresh 200-turn sample, at least 40% fewer characters, published as a
-registry version. AC-151 to AC-155. This is where the owner's "no overfitting, no bloat, LLM
-only for language" lands, and it is the first prompt change the corpus can prove safe.
+`rule` moves into `output_exchange.py` where it already has a deterministic twin; `example`
+survives only when it stands for a phrasing class the corpus shows; `dead` goes. AC-151 to
+AC-155. This is where the owner's "no overfitting, no bloat, LLM only for language" lands.
+
+**Delivered (5 Sep 2026), on the LIVE body after the re-port above.**
+
+* 46,906 -> 28,124 characters, **-40.04%** (AC-154). Published as registry version 2 with
+  NO label by migration `475_chatbot_parser_prompt_slim`; `production` stays on version 1,
+  so the promote is a label move and the rollback is the reverse move. The migration seeds
+  both on a fresh database.
+* Six `rule` sections deleted, all six with an existing twin in `output_exchange.py`
+  (domain-to-team map, the `business_query` force, the `attachment_type` drop on
+  `master_products`, the `broaden_axis` domain restore, the brand-plus-tier access-level
+  split, the legacy promotion-team suffix). Four `dead` sections deleted, including 700
+  characters of n8n JavaScript the registry cannot evaluate and hands to the model as
+  source code. **No new post-processor code**: `output_exchange.py` is untouched by S1b.
+  Unit cover in `tests/chatbot/test_output_exchange_rules.py`, every case feeding a
+  deliberately non-compliant emission.
+* Date maths, `demand_qty` and ordinal resolution were each investigated and REJECTED as
+  moves, on evidence, in the inventory. Two date gates were measured against the replay
+  corpus and would have rewritten fixtures the post-processor deliberately produces.
+
+**AC-153's 99% bar cannot be met by any prompt, and the measurement says why.** A control
+run sending the LIVE prompt down BOTH lanes agrees with itself on only 99.0% of key
+instances, and on the free-prose `user_goal` only 81.6%. The parser is not deterministic at
+temperature 0. Old vs new is 95.8% post-processed (97.5% excluding `user_goal`), i.e. 3.2
+points from the noise floor, with every disagreement triaged: 13 improvements, 11
+regressions, 20 "neither matches the capture", 38 noise, 1 ungraded, zero untriaged. The
+regressions are enumerated in the inventory and none is systematic. **Owner call at
+promote**, and the bar in AC-153 should be restated against the measured floor.
+
+**AC-155 could not be met as written**: the corpus contains no Malay capture at all (249
+real captures, zero). The parity script uses eight real corpus turns with the message
+translated and the real previous state kept, labelled `synthetic-from-corpus`; seven of the
+eight agree on every key. Capturing real Malay turns is a backlog item.
 
 ### S2 - Tail (2,400 lines)
 
@@ -414,6 +522,20 @@ only for language" lands, and it is the first prompt change the corpus can prove
 (110), `copy.py` (escalate-catalog 104, registry keys), CS member offer (23 + 163, team
 members in-process). `engine.complete_turn` writes session vars via
 `overwrite_for_contact` and closes the turn. R2 drops, R3 marker written.
+
+**Landed 5 Sep 2026**, with four shape notes worth carrying forward:
+`tail/member_offer.py` holds `cs-roster-plan` + the roster read + `build-cs-member-offer`;
+the roster read is `app/services/team_roster_service.list_team_roster`, EXTRACTED from
+`app/api/v1/external/team_members.py` so the endpoint n8n still uses and the tail resolve
+the same pool (an id offered by one must be accepted by next-assignee, which is the
+endpoint's own stated contract). `compile_current_state` returns a `CompiledState`, not a
+bare item: `item` is what the corpus grades and `answered_domain` is what replaces
+`crossdomain-compose`'s regex. And `copy.py` reads its strings from
+`app/services/chatbot_reply_copy.py`, OUTSIDE the package, because `ai_prompt_registry` is
+core and core must not import the module (AC-002). Fourth, `/complete` refuses any turn
+that is not `delegated` with a 409 and closes every tail failure `failed` at `remembered`:
+without the guard a FAILED turn could be completed, which wrote a fabricated reply into
+the customer's session and overwrote the R4 / H32 failure record with `done`.
 n8n: `sub-output` body + `save-session-vars` replaced by `/complete` (AC-207). After this PR
 the CRM is the only session writer on the turn path (AC-207 grep is the proof).
 Parity gate: AC-202, AC-204, AC-205, AC-208.
@@ -494,6 +616,31 @@ through `MCPRuntimeClient` like every business tool. `chatbot_unsupported_domain
 `chatbot_clarifier`, `central-exchange` fence-stripping. Error = failed turn + today's text
 (AC-403). n8n: three nodes deleted (AC-404).
 
+**Delivered 5 Sep 2026.** Two decisions worth recording, because neither is in the UAC and
+both change what an operator sees:
+
+1. **A lane setup failure is the LANE's failure, not the engine's.** `resolve_for_prompt`,
+   `construct_user_prompt` and `resolve_clarifier_config` all exist to make the clarifier
+   call possible, so a missing AI-assistant config or API key is the same customer-visible
+   event as the call itself failing: the lane cannot answer. All three are therefore inside
+   the lane's own `try`, and the turn fails at `stage = casual_llm` with `branch_kind` still
+   `low_signal` and today's `sub-error-logger` text (AC-403). Letting them reach
+   `run_turn`'s catch-all instead would null the branch kind and send the PARSER's error
+   reply, which is a different lane's words for a different failure. Two pre-existing tests
+   (`test_trace_legibility::test_low_signal`, `test_s6a_gate_dry_run_and_seams[low_signal]`)
+   assert the branch kind survives, and both were red until this was folded in.
+2. **A successful turn ends at `remembered`, not `casual_llm`.** The lane runs S2's tail
+   (`complete_turn`: outcome -> compile-state -> compose -> session write), so it closes
+   where every other completed lane closes. `casual_llm` is the FAILURE stage only. The row
+   passes through `delegated` / `routed` first, which is not bookkeeping: it is the state
+   the turn is genuinely in while the clarifier runs, it is what `complete_turn` refuses to
+   run without, and it is what the trace screen should show if the process dies mid-call.
+   The item handed to the tail is `sub-answer`'s own output shape
+   (`{...central-exchange, outcome_fragment}`), NOT `route-turn`'s item - hand it the latter
+   and the entry gate runs `escalate-catalog`, which has no case for `low_signal`, produces
+   an empty `response`, and wins the compile-state ladder over `central-exchange`. The reply
+   comes out blank. Measured, not reasoned: the first wiring did exactly that.
+
 ### S5 - Escalation (400 lines)
 
 `lanes/escalation.py`: `escalation-input`, `fresh-entity-gate` (calls S6a's resolve + gate,
@@ -509,9 +656,51 @@ two subs unpublished; the outbound executes assign / comment (AC-506).
 - **S6a resolve + gate (1,500):** `get-access-types`, `resolve-entity` (references resolve
   service, `entity_pins`, H38), `tier-gate` (230), `disallowed-entity-gate` (1,001),
   `build-ctx-resolved`, incoming / customer pickers (157) with their probes,
-  `resolve-exit-*`. Brand / company carried once from the resolved row (H50). H16, H46 contract
+  `resolve-exit-*`. H16, H46 contract
   tests. Ships behind `delegate` for the fetch step: `/turn` returns `_exit_kind` + `ctx'` and
   n8n's `sub-main-processing` enters at `resolve-arm`.
+
+  **As built (5 Sep 2026), four things the slice learned and the plan did not say:**
+
+  1. **A config flag, not a silent cutover.** `CHATBOT_BUSINESS_LANE_ENABLED` (default
+     FALSE) decides whether the three business arms run the lane. It exists because the n8n
+     edit is a separate, hand-made, owner-gated step: until it happens n8n still calls
+     `sub-resolve-and-gate` itself, so an unflagged CRM would run the resolver twice on
+     every business turn, spec-search model call included. The flag is the shadow window's
+     switch and the rollback. See `n8n-changes.md` S6a.
+  1b. **n8n retries `resolve-entity`; the port does not.** The httpRequest node carries
+     `retryOnFail` and the in-process call has no equivalent, so a transient resolver
+     failure that n8n would have survived becomes a shadow-lane failure here (recorded at
+     `looked_up`, turn still delegated). Deliberately not added: an in-process call to a
+     local service has none of the failure modes a network hop does, and a retry around a
+     database call that has already opened a transaction is its own hazard. Revisit if the
+     shadow window shows any resolver failures at all; that is the same evidence gate the
+     cutover already has.
+  2. **The pickers' probes need S6b.** `probe-incoming` / `probe-customer-orders` call
+     `sub-get-results`, whose `entity-ids-transformer` and `output-structurer` are S6b, so
+     the S6a probe seam raises and both annotators take their own documented UNPROBED arm
+     (bare picker with `customer_probe_skip_reason: 'probe_unavailable'`; today's "None of
+     these have incoming stock right now."). That is a real difference on picker turns and
+     it is the reason the shadow window has to include picker traffic.
+  3. **H50 is REPRODUCED, not fixed.** The plan said "brand / company carried once from the
+     resolved row (H50)". Carrying it once changes `resolved_company` /
+     `resolved_companies` / `routing_brand` / `routing_companies` on real turns, and D8
+     says parity before improvement: a fix is a separate, named, tested divergence, and
+     there is no evidence yet about which of the node's two derivations is the right one to
+     keep. Ported faithfully; the trigger for the fix is a captured turn where the two
+     disagree and the owner says which is correct.
+  4. **Every capture predates two output keys the shipping bodies emit.** All 254 captures
+     were taken against `disallowed-entity-gate` at 934 lines and `tier-gate` at 195; the
+     export ships 1,001 and 230. The delta is five changes, of which two are unconditional
+     new keys (`specific_options`, `tier_pick_domain`). They are excluded from the replay
+     comparison and carry unit tests instead - see `tests/chatbot/_corpus.py`
+     `CAPTURE_BODY_ADDITIONS` for the evidence. With them excluded, 212 of 212 gate
+     captures, 6 of 6 tier-gate captures and 10 of 10 whole-sub replays are byte-equal.
+     **Superseded 5 Sep** by a capture run against the LIVE sub (`tKeQUkZK5cFK9BFa`,
+     version `4f367b1c`, pool 682/682): 84 files whose bodies ARE the shipping ones, so
+     both keys are graded on them and nothing is excluded. The exclusion is now applied per
+     FIXTURE, derived from whether that capture's own `expected` carries the key, so it
+     cannot outlive the captures that need it.
 - **S6b fetch (700):** tool search in-process (H53), `tool-filter` (59, zero tools = `not_found`
   outcome, H11), tier probe plan / collect, `entity-ids-transformer` (145), `MCPRuntimeClient`
   call at the configured URL (H52), `output-structurer` (482), `fetch-result` (48). Verify the
@@ -580,9 +769,9 @@ From the n8n map's 55 catalogued hazards. `fix` = a named divergence with a test
 | H43 | missing `$4` | moot (in-process call binds domain) |
 | H44 | soft default on malformed parser output | fix S1: strict structured output at the provider; anything else = failed `understood` stage, no default routing (R5 resolved) |
 | H45 | did-you-mean offers rows already shown | fix S6c (AC-609) |
-| H46 | `_isTimeline` contains-sentinel | reproduce S6a (AC-602) |
+| H46 | `_isTimeline` contains-sentinel | S6a declares the sentinel and its reading ONCE (`contracts.TIMELINE_SENTINEL` + `is_timeline`, contract test incl. the mixed-array case) - the node that USES it, `output-structurer`, is S6b and consumes that reading rather than re-deriving it |
 | H49 | `orders_by_product_list` never selected | verify before S6b |
-| H50 | brand / company derived in five places | fix S6a |
+| H50 | brand / company derived in five places | REPRODUCED at S6a, not fixed: carrying it once changes real turns and D8 wants a named, tested divergence with evidence first. Trigger: a captured turn where the node's two derivations disagree plus the owner's ruling on which wins |
 | H52 | raw IP, plaintext MCP, SQL interpolation | fix S6b (config URL); SQL one is `live-respond-close-convo`, backlog |
 | H53 | n8n hits production Postgres | fix S6b (tool search in-process); SLA reads by `live-respond-*` backlog |
 | H54 | dead custom fields | fix S7 |

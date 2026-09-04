@@ -28,11 +28,10 @@ logger = logging.getLogger(__name__)
 
 PROMPT_KEY = "chatbot_semantic_parser"
 
-# The parser's own error reply, byte-identical to what the spine sends today when
-# `sub-query-reformulator` fails (`sub-error-logger`).
-PARSER_ERROR_REPLY = (
-    "Sorry, I ran into a problem understanding that. Please try again in a moment."
-)
+# The parser's own error reply. ONE declaration, in `app/services/chatbot_reply_copy.py`
+# with the rest of the bot's fixed sentences, because the ENDPOINT sends the same string
+# when the TAIL fails and it cannot import this package (AC-002).
+from app.services.chatbot_reply_copy import CHATBOT_TURN_ERROR_REPLY as PARSER_ERROR_REPLY
 
 PARSER_MAX_TOKENS = 2048
 
@@ -73,6 +72,9 @@ class ParserConfig:
 
 def _build_json_schema() -> dict[str, Any]:
     """The strict 26-key `ParseOutput` schema the provider is held to (AC-105).
+
+    26 top-level keys, and `routing` carries exactly two members. That is what the LIVE
+    parser emits: every one of the 488 captured raw emissions has this shape.
 
     Built from the prompt's own OUTPUT block. `additionalProperties: false` is what makes
     "exactly these keys, no others" a provider guarantee instead of an instruction, and
@@ -135,9 +137,13 @@ def _build_json_schema() -> dict[str, Any]:
                 "properties": {
                     "suggested_team": string_or_null,
                     "suggested_agent": string_or_null,
-                    "team_source": string_or_null,
                 },
-                "required": ["suggested_team", "suggested_agent", "team_source"],
+                # NO `team_source`. It is not a live key: the live `sub-semantic-parser`
+                # system message never asks for it and not one of the 488 captured
+                # emissions carries it. It belongs to the UNPROMOTED B-TEAM-1' lane change
+                # (plan, S1 "pending re-port"), and declaring it `required` here would make
+                # the CRM the only deployment that forces the model to invent one.
+                "required": ["suggested_team", "suggested_agent"],
             },
             "escalation": {
                 "type": "object",
