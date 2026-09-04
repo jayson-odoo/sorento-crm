@@ -1,6 +1,6 @@
 # PLAN - Chatbot Turn Engine: n8n business logic moves into the CRM
 
-Status: APPROVED 4 Sep 2026 ("ok good to go", 6 review rounds, D1 to D16); tickets published; S0+S1 in progress on lane feat/chatbot-turn-engine
+Status: S0 + S1 IMPLEMENTED on lane feat/chatbot-turn-engine (4 Sep 2026); approved "ok good to go", 6 review rounds, D1 to D16; S1b next
 UAC: `documentation/plans/chatbot/chatbot-turn-engine-acceptance-criteria.md`
 Classification: **MODULE** (`chatbot`), own Postgres schema `chatbot` (D12)
 Owner decisions: D1 to D13 in the UAC; rulings R1 to R6 in the UAC
@@ -79,7 +79,11 @@ app/services/chatbot/
   __init__.py            # exports run_turn, complete_turn ONLY
   contracts.py           # Pydantic: Envelope, Ctx, ParseOutput (qf), SessionVars (extra=forbid),
                          #   BranchKind, Reply, Action, TurnResult; every enum as ONE Literal
-  engine.py              # run_turn(db, envelope) -> TurnResult ; complete_turn(db, turn_id, fragments)
+  engine.py              # run_turn(envelope, *, session_factory) -> TurnResult ;
+                         #   complete_turn(turn_id, fragments, *, session_factory)
+                         #   A session FACTORY, not a session: the capacity rule below
+                         #   forbids holding one across the LLM call, which a
+                         #   request-scoped Depends(get_db) session cannot satisfy.
   head/parser.py         # LLM call (prompt key chatbot_semantic_parser), strict schema
   head/output_exchange.py# port of output_exchange.js + suggest-follow-up.js
   head/access.py         # contact-to-agent access check (service behind /external/access-agent/check; not MCP)

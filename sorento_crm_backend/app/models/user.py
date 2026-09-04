@@ -522,6 +522,10 @@ class SystemSetting(Base):
     # dispatcher's 120 second lock TTL.
     media_extraction_timeout_seconds = Column(Integer, nullable=False, server_default="45", default=45)
     media_max_entities = Column(Integer, nullable=False, server_default="10", default=10)
+    # R1 (H1): the corrected `check_stock` vocabulary makes two lanes reachable that
+    # have been dead by typo since they were written (0/150 live fixtures). Turning them
+    # on is therefore a DATA change with a test, not a surprise on deploy. Default off.
+    chatbot_stock_denial_enabled = Column(Boolean, nullable=False, server_default="false", default=False)
 
 
 class UserQuickAccess(Base):

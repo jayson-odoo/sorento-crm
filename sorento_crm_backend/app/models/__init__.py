@@ -82,6 +82,7 @@ from app.models.ai_assistant import (
 )
 from app.models.ai_prompt import AIPromptVersion, AIPromptLabel
 from app.models.chat_history import ChatHistory
+from app.models.chatbot_turn import ChatbotTurn
 from app.models.conversation_frame import ConversationFrame
 from app.models.lookup import LookupSet, LookupOption, LookupOptionKeyword, LookupBinding
 from app.models.portal import (

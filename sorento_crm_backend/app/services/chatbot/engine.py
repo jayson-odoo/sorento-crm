@@ -1,6 +1,556 @@
-"""Placeholder - replaced by the real engine in this same slice."""
+"""`run_turn` - the head of the turn: receive, understand, check access, route.
+
+One inbound WhatsApp message in, `{turn_id, ctx, item, branch_kind, delegate}` out. The
+stages the S1 head owns map onto the five nodes it replaces in the live spine
+(`get-session-vars`, `Call 'sub-query-reformulator'`, `check-access`, `build-ctx`,
+`route-turn`), and `item` is byte-equal to what `route-turn` emits today so every n8n
+reader downstream is unchanged (AC-101, AC-110).
+
+**Session discipline.** `run_turn` takes a session FACTORY, not a session. The plan's
+capacity section is explicit: never hold a DB session across LLM or MCP I/O, and the
+96/100-connection incident is the evidence. The engine opens a session to read, closes it,
+makes the parser call with nothing checked out, and reopens to check access and record the
+turn. A request-scoped `Depends(get_db)` session could not satisfy that, which is why the
+signature differs from the plan's original sketch (the plan is updated in the same change).
+
+**D14, dry run.** `envelope.dry_run` is evaluated FIRST, before anything side-effecting
+(H37: n8n called next-assignee and guarded afterwards). On a dry run the only row written
+anywhere is the `chatbot.turns` record itself, every action carries `dry_run: true`, and
+the response carries `session_patch` - null in S1, because the head writes no session
+state; the tail (S2) is what fills it.
+"""
 from __future__ import annotations
 
+import logging
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from typing import Any, Callable, Iterator
 
-def run_turn(*args, **kwargs):  # pragma: no cover - superseded below
-    raise NotImplementedError
+from sqlalchemy.orm import Session
+
+from app.models.chatbot_turn import ChatbotTurn
+from app.services.chatbot import jsc, trace as trace_mod
+from app.services.chatbot.contracts import Envelope
+from app.services.chatbot.delegate import delegate_for
+from app.services.chatbot.head import parser
+from app.services.chatbot.head.access import check_access, default_space_id
+from app.services.chatbot.head.build_ctx import build_ctx
+from app.services.chatbot.head.output_exchange import (
+    ParserOutputError,
+    post_process,
+    suggest_follow_up,
+)
+from app.services.chatbot.head.route import decide
+
+logger = logging.getLogger(__name__)
+
+SessionFactory = Callable[[], Session]
+
+# H5 / AC-107: `sub-media-intake` did not patch a transcript onto an audio turn, so the
+# spine's audio branch had no successor and the turn died silently. It is now a FAILED
+# turn with an explicit reason and today's error reply.
+AUDIO_NOT_PATCHED_ERROR = (
+    "media intake did not transcribe this voice note, so there is no text to understand"
+)
+GENERIC_ERROR_REPLY = parser.PARSER_ERROR_REPLY
+
+
+class TurnResult:
+    """What the endpoint serialises. A plain object so the route stays a thin adapter."""
+
+    __slots__ = (
+        "turn_id",
+        "ctx",
+        "item",
+        "branch_kind",
+        "delegate",
+        "reply",
+        "actions",
+        "session_patch",
+        "duplicate",
+        "status",
+        "stage",
+        "error",
+    )
+
+    def __init__(self, **kwargs: Any) -> None:
+        for slot in self.__slots__:
+            setattr(self, slot, kwargs.get(slot))
+        if self.actions is None:
+            self.actions = []
+        if self.duplicate is None:
+            self.duplicate = False
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "turn_id": self.turn_id,
+            "ctx": self.ctx,
+            "item": self.item,
+            "branch_kind": self.branch_kind,
+            "delegate": self.delegate,
+            "reply": self.reply,
+            "actions": self.actions,
+            "session_patch": self.session_patch,
+            "duplicate": self.duplicate,
+        }
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+@contextmanager
+def _session(factory: SessionFactory) -> Iterator[Session]:
+    db = factory()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+# --------------------------------------------------------------------------- #
+# Envelope readers. Each names the n8n node whose read it reproduces, so the
+# by-name hazard the port removes stays traceable.
+# --------------------------------------------------------------------------- #
+
+
+def _tf_message(envelope: Envelope) -> dict[str, Any]:
+    """`tf-message`: the respond.io webhook body carried on the envelope."""
+    return envelope.message or {}
+
+
+def _inner_message(envelope: Envelope) -> dict[str, Any]:
+    """`ctx.text.message.message` - the respond.io message payload itself."""
+    return jsc.get(jsc.get(_tf_message(envelope), "message"), "message") or {}
+
+
+def _message_id(envelope: Envelope) -> str | None:
+    value = jsc.get(jsc.get(_tf_message(envelope), "message"), "messageId")
+    return str(value) if value not in (None, "") else None
+
+
+def _contact_respond_id(envelope: Envelope) -> str:
+    """`sorento-sub-respond-findcontact-respond`'s `id`, carried on the envelope (D1)."""
+    contact_id = jsc.get(envelope.contact, "id")
+    if contact_id in (None, ""):
+        raise ValueError("envelope.contact.id is required")
+    return str(contact_id)
+
+
+def _is_human_intervened(envelope: Envelope) -> bool:
+    """`is-human-intervened`: `custom_fields.find(...)?.value?.toBoolean() == true`."""
+    row = jsc.find(
+        jsc.get(envelope.contact, "custom_fields"),
+        lambda x: jsc.get(x, "name") == "is_human_intervened",
+    )
+    return jsc.to_boolean(jsc.get(row, "value")) is True
+
+
+def _attachment_type(envelope: Envelope) -> Any:
+    return jsc.get(jsc.get(_inner_message(envelope), "attachment"), "type")
+
+
+def _reply_to_message_id(envelope: Envelope) -> str | None:
+    """`tf-message.message.replyTo.id` - the quoted message, when the customer quoted."""
+    value = jsc.get(jsc.get(jsc.get(_tf_message(envelope), "message"), "replyTo"), "id")
+    return str(value) if value not in (None, "") else None
+
+
+def build_latest_user_message(envelope: Envelope) -> str:
+    """The two-line string `Call 'sub-query-reformulator'` builds today, verbatim.
+
+    Line 1 is the text, or an image's description when there is no text. Line 2 is the
+    quoted message n8n appends as `reply to: ...`; several ported blocks split it back off
+    with `/\\s*reply to:/i`, so the exact shape (including the trailing newline) matters.
+    """
+    inner = _inner_message(envelope)
+    text = jsc.get(inner, "text")
+    if not jsc.truthy(text):
+        text = jsc.get(jsc.get(inner, "attachment"), "description")
+    line1 = jsc.js_string(text) if jsc.truthy(text) else ""
+
+    reply_to = jsc.get(jsc.get(_tf_message(envelope), "message"), "replyTo")
+    quoted = jsc.get(reply_to, "message")
+    line2 = ""
+    if jsc.truthy(quoted):
+        quoted_text = jsc.get(quoted, "text")
+        body = quoted_text if jsc.truthy(quoted_text) else jsc.get(quoted, "title")
+        line2 = "reply to: " + jsc.js_string(body) if jsc.truthy(body) else "reply to: "
+    return f"{line1}\n{line2}\n"
+
+
+def _pending_kind(variables: dict[str, Any]) -> str | None:
+    """R3: the persisted marker, read where the JS matched a frozen reply string."""
+    pending = variables.get("pending")
+    kind = jsc.get(pending, "kind")
+    return str(kind) if kind else None
+
+
+# --------------------------------------------------------------------------- #
+# Reads (session-bound, short)
+# --------------------------------------------------------------------------- #
+
+
+def _read_session_vars(db: Session, *, respond_io_id: str, reply_to_id: str | None) -> dict:
+    """`get-session-vars`: the same body `GET /external/conversation-variables/{id}` returns."""
+    from app.services.conversation_variables_service import (
+        get_for_contact,
+        get_referenced_result_set,
+        get_referenced_state,
+    )
+
+    state = get_for_contact(db, respond_io_id=respond_io_id)
+    if reply_to_id is not None:
+        state = {
+            **state,
+            "referenced_result_set": get_referenced_result_set(
+                db, respond_io_id=respond_io_id, message_id=reply_to_id
+            ),
+            "referenced_state": get_referenced_state(
+                db, respond_io_id=respond_io_id, message_id=reply_to_id
+            ),
+        }
+    return {"respond_io_id": respond_io_id, "session_vars": state}
+
+
+def _existing_turn(db: Session, *, contact_respond_id: str, message_id: str | None):
+    """D15: has this respond message already been turned into a turn?
+
+    Checked with a SELECT rather than left to the unique index so a legitimate double
+    delivery (webhook plus failover poller) costs a lookup, not an exception and an LLM
+    call. The index is still there as the real guarantee under concurrency.
+    """
+    if message_id is None:
+        return None
+    return (
+        db.query(ChatbotTurn)
+        .filter(
+            ChatbotTurn.contact_respond_id == contact_respond_id,
+            ChatbotTurn.message_id == message_id,
+        )
+        .order_by(ChatbotTurn.created_at.asc())
+        .first()
+    )
+
+
+def _insert_turn(db: Session, *, envelope: Envelope, contact_respond_id: str) -> ChatbotTurn:
+    row = ChatbotTurn(
+        contact_respond_id=contact_respond_id,
+        message_id=_message_id(envelope),
+        ingress=envelope.ingress,
+        envelope=envelope.model_dump(mode="json"),
+        is_test=envelope.dry_run,
+        status="processing",
+        stage="received",
+        attempt=1,
+        trace=[],
+        shadow_of=getattr(envelope, "shadow_of", None),
+        started_at=_now(),
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def _close_turn(
+    db: Session,
+    turn_id: str,
+    *,
+    status: str,
+    stage: str | None,
+    branch_kind: str | None,
+    error: str | None,
+    records: list[dict[str, Any]],
+) -> None:
+    row = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).first()
+    if row is None:  # pragma: no cover - the row was inserted two lines earlier
+        return
+    row.status = status
+    row.stage = stage
+    row.branch_kind = branch_kind
+    row.error = error
+    row.trace = records
+    row.finished_at = _now()
+    db.commit()
+
+
+# --------------------------------------------------------------------------- #
+# The turn
+# --------------------------------------------------------------------------- #
+
+
+def run_turn(envelope: Envelope, *, session_factory: SessionFactory) -> TurnResult:  # noqa: PLR0915
+    """Run the head of one turn. Never raises for a business failure; records it."""
+    turn_trace = trace_mod.TurnTrace()
+    turn_trace.start()
+
+    contact_respond_id = _contact_respond_id(envelope)
+    dry_run = envelope.dry_run
+
+    # -- received ---------------------------------------------------------- #
+    with _session(session_factory) as db:
+        duplicate = _existing_turn(
+            db, contact_respond_id=contact_respond_id, message_id=_message_id(envelope)
+        )
+        if duplicate is not None:
+            # D15: the two injectors delivered the same respond message. No second turn
+            # runs, no second LLM call, and the caller's Switch on `duplicate` sends
+            # nothing.
+            return TurnResult(
+                turn_id=str(duplicate.id),
+                branch_kind=duplicate.branch_kind,
+                delegate=delegate_for(duplicate.branch_kind) if duplicate.branch_kind else None,
+                duplicate=True,
+                status=duplicate.status,
+                stage=duplicate.stage,
+            )
+        row = _insert_turn(db, envelope=envelope, contact_respond_id=contact_respond_id)
+        turn_id = str(row.id)
+
+        actions: list[dict[str, Any]] = []
+        # AC-108: today's `set-human-intervened` path. The turn CONTINUES; the caller
+        # clears the flag on the contact.
+        if _is_human_intervened(envelope):
+            actions.append(
+                {
+                    "kind": "update_contact_fields",
+                    "fields": {"is_human_intervened": False},
+                    "dry_run": dry_run,
+                }
+            )
+
+        # AC-107 / H5: the attachment is still audio, so media intake did not patch a
+        # transcript in. n8n's audio branch simply had no successor and the turn vanished.
+        if _attachment_type(envelope) == "audio":
+            turn_trace.record(
+                "received",
+                status="failed",
+                summary="Could not read the voice note.",
+                why="Media intake returned no transcript, so there is nothing to understand.",
+                facts={"attachment_type": "audio"},
+                error=AUDIO_NOT_PATCHED_ERROR,
+                raw={"message": _inner_message(envelope)},
+            )
+            _close_turn(
+                db,
+                turn_id,
+                status="failed",
+                stage="intake",
+                branch_kind=None,
+                error=AUDIO_NOT_PATCHED_ERROR,
+                records=turn_trace.records,
+            )
+            return _failed_result(turn_id, "intake", AUDIO_NOT_PATCHED_ERROR, actions, dry_run)
+
+        session_block = _read_session_vars(
+            db,
+            respond_io_id=contact_respond_id,
+            reply_to_id=_reply_to_message_id(envelope),
+        )
+        variables = jsc.get(jsc.get(session_block, "session_vars"), "variables") or {}
+        referenced_result_set = jsc.get(
+            jsc.get(session_block, "session_vars"), "referenced_result_set"
+        )
+        latest_user_message = build_latest_user_message(envelope)
+        parser_config = parser.resolve_config(db, current_date=_current_date_directive())
+
+    turn_trace.record(
+        "received",
+        summary="Received the message and loaded what the bot remembered.",
+        why="Every turn starts from the contact's stored conversation state.",
+        facts={
+            "ingress": envelope.ingress,
+            "remembered_keys": len(variables),
+            "quoted_a_message": _reply_to_message_id(envelope) is not None,
+            "dry_run": dry_run,
+        },
+        raw={"session_vars": session_block},
+    )
+
+    # -- understood (NO DB SESSION IS OPEN HERE) ---------------------------- #
+    parent_input = {
+        "latest_user_message": latest_user_message,
+        "contact_id": contact_respond_id,
+        "previous_conversation_state": variables,
+        "referenced_result_set": referenced_result_set,
+    }
+    user_block = parser.build_user_block(
+        previous_response=variables.get("response"),
+        latest_user_message=latest_user_message,
+        pending_kind=_pending_kind(variables),
+    )
+    try:
+        parser_raw = parser.parse(parser_config, user_block)
+        parse_block = post_process({"output": parser_raw}, {}, parent_input)
+        parse_block = suggest_follow_up(parse_block, parent_input)
+    except (parser.ParserError, ParserOutputError) as exc:
+        # R5 / H44: no soft default and no default routing. A failed understanding is a
+        # failed turn with today's error reply.
+        message = str(exc)
+        turn_trace.record(
+            "understood",
+            status="failed",
+            summary="Could not understand the message.",
+            why="The parser did not return a usable answer, so the turn was not routed.",
+            facts={"prompt_version": parser_config.prompt_version, "model": parser_config.model},
+            error=message,
+            raw={"user_block": user_block},
+        )
+        with _session(session_factory) as db:
+            _close_turn(
+                db,
+                turn_id,
+                status="failed",
+                stage="understood",
+                branch_kind=None,
+                error=message,
+                records=turn_trace.records,
+            )
+        return _failed_result(turn_id, "understood", message, actions, dry_run)
+
+    qf = parse_block.get("output") or {}
+    turn_trace.record(
+        "understood",
+        summary=trace_mod.understood_summary(qf),
+        why="The parser is the only step that reads the customer's words; everything after it works on structured state.",
+        facts={
+            "message_type": qf.get("message_type"),
+            "domain": qf.get("domain_hint"),
+            "intent": qf.get("intent_hint"),
+            "entities": len(qf.get("entities") or []),
+            "prompt_version": parser_config.prompt_version,
+        },
+        raw={"parser_raw": parse_block.get("_parser_raw"), "derived": qf},
+    )
+
+    # -- access + routed ---------------------------------------------------- #
+    with _session(session_factory) as db:
+        suggested_agent = jsc.get(qf.get("routing"), "suggested_agent")
+        access = check_access(
+            db,
+            agent_code=suggested_agent,
+            contact_id=contact_respond_id,
+            space_id=default_space_id(db),
+        )
+        turn_trace.record(
+            "access",
+            summary=(
+                f"Access allowed for {access.get('agent_name') or suggested_agent}."
+                if access.get("allowed")
+                else f"Access refused: {access.get('decision')}."
+            ),
+            why="The contact must be granted the agent this turn would use before anything is looked up.",
+            facts={
+                "agent": suggested_agent,
+                "allowed": bool(access.get("allowed")),
+                "decision": access.get("decision"),
+            },
+            raw=access,
+        )
+
+        ctx = build_ctx(
+            contact=envelope.contact,
+            text=_tf_message(envelope),
+            session=session_block,
+            parse=parse_block,
+            access=access,
+            media=getattr(envelope, "media", None),
+        )[0]["json"]["ctx"]
+
+        stock_denial_enabled = _stock_denial_enabled(db)
+        branch_kind, tier_stamp = decide(ctx, stock_denial_enabled=stock_denial_enabled)
+        item = _stamp_item(access, branch_kind, tier_stamp)
+
+        turn_trace.record(
+            "routed",
+            summary=f"Routed to {trace_mod.lane_words(branch_kind, qf.get('domain_hint'))}.",
+            why=trace_mod.routed_why(branch_kind, qf, bool(access.get("allowed"))),
+            facts={
+                "lane": branch_kind,
+                "tier_pick": tier_stamp.get("tier_pick"),
+                "stock_denial_enabled": stock_denial_enabled,
+            },
+            raw={"item": item},
+        )
+
+        delegate = delegate_for(branch_kind)
+        _close_turn(
+            db,
+            turn_id,
+            status="delegated" if delegate else "done",
+            stage="routed",
+            branch_kind=branch_kind,
+            error=None,
+            records=turn_trace.records,
+        )
+
+    return TurnResult(
+        turn_id=turn_id,
+        ctx=ctx,
+        item=item,
+        branch_kind=branch_kind,
+        delegate=delegate,
+        actions=actions,
+        # D14: on a dry run the response carries the would-be session patch. The HEAD
+        # writes no session state at all, so there is nothing to patch yet and this is
+        # null for every turn in S1; the tail (S2) is what fills it.
+        session_patch=None,
+        status="delegated" if delegate else "done",
+        stage="routed",
+    )
+
+
+def _stamp_item(access: dict, branch_kind: str, tier_stamp: dict) -> dict[str, Any]:
+    """`route-turn`'s output item, byte-equal to today (AC-101)."""
+    from app.services.chatbot.contracts import TAG_ONLY_BRANCH_KINDS
+
+    if branch_kind in TAG_ONLY_BRANCH_KINDS:
+        return {"branch_kind": branch_kind}
+    return {**access, "branch_kind": branch_kind, **tier_stamp}
+
+
+def _failed_result(
+    turn_id: str, stage: str, error: str, actions: list[dict[str, Any]], dry_run: bool
+) -> TurnResult:
+    """A failed turn still hands the caller today's error reply to send (AC-105, AC-107)."""
+    return TurnResult(
+        turn_id=turn_id,
+        ctx=None,
+        item=None,
+        branch_kind=None,
+        delegate=None,
+        reply={"text": GENERIC_ERROR_REPLY, "quick_replies": []},
+        actions=[
+            *actions,
+            {
+                "kind": "send_message",
+                "text": GENERIC_ERROR_REPLY,
+                "quick_replies": [],
+                "dry_run": dry_run,
+            },
+        ],
+        status="failed",
+        stage=stage,
+        error=error,
+    )
+
+
+def _stock_denial_enabled(db: Session) -> bool:
+    """R1: `system_settings.chatbot_stock_denial_enabled`, default false.
+
+    Off, `isStockCheckDenied` is never evaluated and no turn can reach `stock_denied` or
+    `demand_qty` - which is exactly as dead as those two lanes are today, by typo.
+    """
+    from app.models.user import SystemSetting
+
+    row = db.query(SystemSetting).first()
+    return bool(getattr(row, "chatbot_stock_denial_enabled", False)) if row is not None else False
+
+
+def _current_date_directive() -> str:
+    """`{{ $now.toUTC(8*60).format('cccc, dd MMMM yyyy') }}` - Malaysia time, same format."""
+    from datetime import timedelta
+
+    now_myt = datetime.now(timezone.utc) + timedelta(hours=8)
+    return now_myt.strftime("%A, %d %B %Y")

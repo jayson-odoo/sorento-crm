@@ -513,28 +513,65 @@ def _ce_keys_of(e: Any) -> list[str]:
     return out or [_ce_key(e)]
 
 
-def output_exchange(json_item: dict, parent_input: dict) -> dict:  # noqa: C901, PLR0912, PLR0915
-    """One item through the post-processor. Returns `{output, _parser_raw, ...}`."""
-    output: dict[str, Any] = {}
-    parent_input = parent_input or {}
-    norm = jsc.norm
+def _offer_is_open(state: Any) -> bool:
+    """R3 / AC-106: is an escalation offer open? BOTH forms, during the migration window.
 
+    The JS decided this by matching the frozen phrase "would you like me to escalate"
+    against the previous reply - H13's frozen string contract, and D11's own counter
+    example (understanding text is the parser's job). S2 writes `pending.kind =
+    escalation_offer` instead; S8 deletes the regex. Until then a session written by n8n
+    carries only the string and a session written by the CRM carries the marker, so the
+    reader accepts either and neither deployment order strands a customer mid-offer.
+    """
+    if jsc.get(jsc.get(state, "pending"), "kind") == "escalation_offer":
+        return True
+    response = jsc.get(state, "response")
+    return bool(
+        _OFFERED_ESCALATION_RE.search(jsc.js_string(response if jsc.truthy(response) else ""))
+    )
+
+
+def _unwrap(json_item: dict) -> dict:
+    """The node's own opening lines: get to `{output: <the LLM object>}`.
+
+    The AI Agent hands back either a JSON STRING (every one of the 116 captured inputs) or
+    an already-shaped object - `mock-reformulator-output` returns `{output: <object>}`, so
+    the object branch takes it whole. The string branch strips code fences, then slices
+    from the first `{` to the last `}` because the model occasionally wraps the object in
+    prose.
+    """
     raw_output = json_item.get("output")
     if isinstance(raw_output, dict):
-        output = raw_output
-    else:
-        raw = jsc.js_string(raw_output if jsc.truthy(raw_output) else "")
-        raw = _FENCE_RE.sub(lambda m: _FENCE_MARK_RE.sub("", m.group(0)), raw)
-        idx = raw.find("{")
-        if idx == -1:
-            output = {"output": raw, "quick_reply": json_item.get("quick_reply")}
-        else:
-            start_slice = raw[idx:]
-            last = start_slice.rfind("}")
-            clean_slice = start_slice[: last + 1] if last != -1 else start_slice
-            output["output"] = json.loads(clean_slice)
+        return raw_output
+    raw = jsc.js_string(raw_output if jsc.truthy(raw_output) else "")
+    raw = _FENCE_RE.sub(lambda m: _FENCE_MARK_RE.sub("", m.group(0)), raw)
+    idx = raw.find("{")
+    if idx == -1:
+        return {"output": raw, "quick_reply": json_item.get("quick_reply")}
+    start_slice = raw[idx:]
+    last = start_slice.rfind("}")
+    clean_slice = start_slice[: last + 1] if last != -1 else start_slice
+    return {"output": json.loads(clean_slice)}
+
+
+def output_exchange(json_item: dict, parent_input: dict) -> dict:
+    """One n8n item through the post-processor. The fixture-facing entry point."""
+    return post_process(_unwrap(json_item), json_item, parent_input or {})
+
+
+def post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  # noqa: C901, PLR0912, PLR0915
+    """The body. `output` is `{output: <the LLM object>}`; returns it with `_parser_raw`.
+
+    The CRM calls this directly: `parser.parse` already returns a validated dict, so there
+    is no string to unwrap and no reason to re-serialise one just to parse it back.
+    """
+    parent_input = parent_input or {}
+    json_item = json_item or {}
+    norm = jsc.norm
 
     if not isinstance(output.get("output"), dict):
+        # n8n limped on with a string here and threw a few lines later on
+        # `reference_positions.length`. R5 makes it explicit: a failed `understood` stage.
         raise ParserOutputError("parser did not emit a JSON object")
 
     o: dict[str, Any] = output["output"]
@@ -1533,12 +1570,7 @@ def output_exchange(json_item: dict, parent_input: dict) -> dict:  # noqa: C901,
 
     # escalation confirmation = the previous response OFFERED escalation (fixed wording)
     # AND the current message is affirmative.
-    prev_response = jsc.js_string(
-        jsc.get(parent_input.get("previous_conversation_state"), "response")
-        if jsc.truthy(jsc.get(parent_input.get("previous_conversation_state"), "response"))
-        else ""
-    )
-    offered_escalation = bool(_OFFERED_ESCALATION_RE.search(prev_response))
+    offered_escalation = _offer_is_open(parent_input.get("previous_conversation_state"))
     is_affirmative = o.get("is_affirmative") is True
     is_decline = o.get("is_affirmative") is False
 
@@ -2006,11 +2038,7 @@ def output_exchange(json_item: dict, parent_input: dict) -> dict:  # noqa: C901,
     # forward across same-team turns and would re-open a closed offer.
     if sel_ctx != "member_offer" and o.get("dym_pick_applied") is not True:
         st_o = parent_input.get("previous_conversation_state") or {}
-        open_o = bool(
-            _OFFERED_ESCALATION_RE.search(
-                jsc.js_string(st_o.get("response") if jsc.truthy(st_o.get("response")) else "")
-            )
-        )
+        open_o = _offer_is_open(st_o)
         if open_o and not jsc.truthy(o.get("domain_hint")):
             co_o = co_company_pick(o)
             retarget_o = (

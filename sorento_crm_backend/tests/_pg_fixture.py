@@ -94,8 +94,8 @@ def blank_schema_engine():
     paid once for the whole session rather than per test. Data isolation is the
     caller's job: use ``blank_session()``, which discards writes.
 
-    ``scm``, ``dealer_kit`` and ``projects`` are translated alongside the default
-    schema, so those models -- which could not be created on sqlite at all -- are
+    ``scm``, ``dealer_kit``, ``chatbot`` and ``projects`` are translated alongside the
+    default schema, so those models -- which could not be created on sqlite at all -- are
     included. Any future module that declares its own schema must be added here
     too, or ``create_all`` fails on the first table it cannot place.
     """
@@ -123,6 +123,7 @@ def blank_schema_engine():
         admin.exec_driver_sql(f'CREATE SCHEMA "{name}_scm"')
         admin.exec_driver_sql(f'CREATE SCHEMA "{name}_dealer_kit"')
         admin.exec_driver_sql(f'CREATE SCHEMA "{name}_projects"')
+        admin.exec_driver_sql(f'CREATE SCHEMA "{name}_chatbot"')
         admin.close()
 
         scoped = engine.execution_options(
@@ -131,6 +132,7 @@ def blank_schema_engine():
                 "scm": f"{name}_scm",
                 "dealer_kit": f"{name}_dealer_kit",
                 "projects": f"{name}_projects",
+                "chatbot": f"{name}_chatbot",
             }
         )
         # AUTOCOMMIT, so each CREATE TABLE / ADD CONSTRAINT / CREATE INDEX commits
@@ -168,6 +170,7 @@ def drop_blank_schema():
         admin.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}_scm" CASCADE')
         admin.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}_dealer_kit" CASCADE')
         admin.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}_projects" CASCADE')
+        admin.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}_chatbot" CASCADE')
         admin.close()
 
 
@@ -206,7 +209,7 @@ def blank_session() -> Session:
     name = _BLANK["name"]
     connection.exec_driver_sql(
         f'SET LOCAL search_path TO "{name}", "{name}_scm", "{name}_dealer_kit", '
-        f'"{name}_projects"'
+        f'"{name}_chatbot", "{name}_projects"'
     )
 
     session = Session(bind=connection, join_transaction_mode="create_savepoint")
@@ -282,7 +285,8 @@ def pg_empty_schema(tables) -> Session:
     for you -- Postgres validates FK targets at DDL time where sqlite did not, so an
     incomplete list fails loudly here instead of silently not enforcing.
 
-    All three schemas are translated (``scm`` and ``projects`` alongside the default),
+    Every module schema is translated (``scm``, ``projects`` and ``chatbot`` alongside
+    the default),
     mirroring ``blank_schema_engine``: a model that declares a schema must land in a
     scratch copy of it, never in the REAL ``projects`` schema, and a caller reaching
     one through a foreign key must not have it quietly dropped.
@@ -293,6 +297,7 @@ def pg_empty_schema(tables) -> Session:
     admin.exec_driver_sql(f'CREATE SCHEMA "{name}"')
     admin.exec_driver_sql(f'CREATE SCHEMA "{name}_scm"')
     admin.exec_driver_sql(f'CREATE SCHEMA "{name}_projects"')
+    admin.exec_driver_sql(f'CREATE SCHEMA "{name}_chatbot"')
     admin.close()
 
     scoped = engine.execution_options(
@@ -300,6 +305,7 @@ def pg_empty_schema(tables) -> Session:
             None: name,
             "scm": f"{name}_scm",
             "projects": f"{name}_projects",
+            "chatbot": f"{name}_chatbot",
         }
     )
     connection = scoped.connect()
@@ -320,4 +326,5 @@ def pg_empty_schema(tables) -> Session:
         cleanup.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}" CASCADE')
         cleanup.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}_scm" CASCADE')
         cleanup.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}_projects" CASCADE')
+        cleanup.exec_driver_sql(f'DROP SCHEMA IF EXISTS "{name}_chatbot" CASCADE')
         cleanup.close()

@@ -141,6 +141,7 @@ EXTERNAL_ENDPOINT_PERMISSIONS: dict[str, str] = {
     "memory": "integration.conversation_context.edit",
     "ideation": "integration.ideation.submit",
     "media": "integration.chatbot_media.process",
+    "chat": "integration.chat_turn.submit",
 }
 
 # Slugs invented for this surface because no human-facing equivalent existed.
@@ -175,6 +176,15 @@ NEW_INTEGRATION_PERMISSIONS: list[dict] = [
         "slug": "integration.ideation.submit",
         "name": "Submit ideation turns",
         "description": "Post ideation capture turns from an external channel.",
+    },
+    {
+        "slug": "integration.chat_turn.submit",
+        "name": "Submit chatbot turns",
+        "description": (
+            "Post one inbound WhatsApp turn to the chatbot engine and receive the reply "
+            "and the actions to execute. Its own slug because it drives the whole turn "
+            "path (session state, assignment, SLA) rather than one read."
+        ),
     },
     {
         "slug": "integration.chatbot_media.process",

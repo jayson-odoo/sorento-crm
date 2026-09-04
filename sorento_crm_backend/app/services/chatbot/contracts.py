@@ -349,6 +349,14 @@ class Reply(BaseModel):
     attachments_src: Any = None
 
 
+class TurnRequest(BaseModel):
+    """`POST /api/v1/external/chat/turn` body."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    envelope: Envelope
+
+
 class TurnResponse(BaseModel):
     """`POST /api/v1/external/chat/turn` 200 body.
 
@@ -364,8 +372,10 @@ class TurnResponse(BaseModel):
     item: dict[str, Any] | None = None
     branch_kind: BranchKind | None = None
     delegate: str | None = None
-    reply: Reply | None = None
-    actions: list[Action] = Field(default_factory=list)
+    reply: dict[str, Any] | None = None
+    # The caller executes these IN ORDER. Declared as dicts because the payload
+    # differs per kind and `response_model` silently DROPS anything undeclared.
+    actions: list[dict[str, Any]] = Field(default_factory=list)
     session_patch: dict[str, Any] | None = None
     duplicate: bool = False
 

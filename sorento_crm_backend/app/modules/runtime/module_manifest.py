@@ -105,6 +105,25 @@ _RAW: Dict[str, dict] = {
         "description": "Reorder engine, net-position views, demand classification, supplier performance.",
         "dependencies": ["base", "product", "inventory", "order", "procurement"],
     },
+    "chatbot": {
+        "display_name": "Chatbot turn engine",
+        "description": (
+            "The WhatsApp turn engine: semantic parse, access check, routing, lanes and "
+            "the turn trace. Owns the `chatbot` Postgres schema."
+        ),
+        # Every domain a business-query turn can answer about, plus `sla` for the
+        # escalation lane's clock. `base` carries the session store and the access agents.
+        "dependencies": [
+            "base",
+            "product",
+            "inventory",
+            "order",
+            "marketing",
+            "procurement",
+            "resources",
+            "sla",
+        ],
+    },
     "projects": {
         "display_name": "Project sales",
         "description": (

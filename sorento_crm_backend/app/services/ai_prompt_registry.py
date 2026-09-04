@@ -699,6 +699,23 @@ Reply with JSON only:
 "evidence": "<the words you read it from>"}]}"""
 
 
+def _chatbot_semantic_parser_fallback() -> str:
+    """System prompt for the WhatsApp chatbot's semantic parser (`chatbot_semantic_parser`).
+
+    The fallback is the LIVE n8n `sub-semantic-parser` system message, verbatim (AC-104),
+    vendored in `app/services/chatbot_parser_prompt.py` - outside the module package, so
+    this core module does not import it (AC-002). One string, one place, and the registry
+    can publish over it without a deploy.
+
+    D16 / S1b slims it by moving every deterministic rule into `output_exchange.py`,
+    proven against the replay corpus first. S1 changes nothing but the `{{current_date}}`
+    token, which is n8n's own `$now` expression in the registry's syntax.
+    """
+    from app.services.chatbot_parser_prompt import SEMANTIC_PARSER_PROMPT
+
+    return SEMANTIC_PARSER_PROMPT
+
+
 @dataclass(frozen=True)
 class PromptKeySpec:
     name: str
@@ -729,6 +746,16 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
     # --- Ideation pipeline brain extractor (D-CONFIRM) - active, gated by the
     #     ideation config being set (dormant when unset). Emits structured
     #     {fields, remove, confirm} for the external ideate-turn endpoint. ---
+    # --- WhatsApp chatbot turn engine (module `chatbot`). One LLM call per turn; the
+    #     only place in that engine that reads the customer's words (D11). ---
+    "chatbot_semantic_parser": PromptKeySpec(
+        name="chatbot_semantic_parser",
+        role="Chatbot semantic parser - understand a WhatsApp turn (strict JSON)",
+        active=True,
+        activates_in=None,
+        variables=["current_date"],
+        fallback=_chatbot_semantic_parser_fallback,
+    ),
     "ideate_extractor": PromptKeySpec(
         name="ideate_extractor",
         role="Ideate extractor - NLU for ideation turns (fields/remove/confirm)",
