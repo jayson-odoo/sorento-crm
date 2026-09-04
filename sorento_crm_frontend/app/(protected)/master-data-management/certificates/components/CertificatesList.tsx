@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 
 import {
   ColumnDef,
@@ -51,6 +51,7 @@ import type { Certificate } from '../types/certificate.types';
 import CertificateFormDialog from './CertificateFormDialog';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { RowActionsMenu } from '@/components/common/RowActionsMenu';
@@ -117,9 +118,16 @@ export default function CertificatesList() {
   });
   const rowPending = useRowPending<Certificate>('certificate');
 
-  useEffect(() => {
-    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
-  }, [validityFilter, expiringWithin, schemeFilter, statusFilter, needsReviewFilter, searchQuery]);
+  // Page one when a filter CHANGES, never on mount - the mount run used to stamp
+  // page 1 over the page `useListStateFromUrl` had just restored from the URL.
+  useResetPageOnFilterChange(setPagination, [
+    validityFilter,
+    expiringWithin,
+    schemeFilter,
+    statusFilter,
+    needsReviewFilter,
+    searchQuery,
+  ]);
 
   const { data, isLoading, isPlaceholderData, refetch, isFetching } = useCertificates({
     pageIndex: pagination.pageIndex,

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
   ColumnDef,
@@ -38,6 +38,7 @@ import { DEMAND_CLASS_OPTIONS, demandClassLabel } from '../lib/demandClass';
 import { salesAgentSourceLabel } from '../lib/salesAgentSource';
 import type { SalesAgent } from '../types/salesAgent.types';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 
@@ -80,9 +81,9 @@ export default function SalesAgentsList() {
   const [bulkField, setBulkField] = useState<BulkField | null>(null);
   const [bulkValue, setBulkValue] = useState('');
 
-  useEffect(() => {
-    setPagination((p) => ({ ...p, pageIndex: 0 }));
-  }, [debouncedSearch, sorting]);
+  // Page one when a filter CHANGES, never on mount - the mount run used to stamp
+  // page 1 over the page `useListStateFromUrl` had just restored from the URL.
+  useResetPageOnFilterChange(setPagination, [debouncedSearch, sorting]);
 
   const { data, isLoading, isPlaceholderData, isError, error, refetch, isFetching } = useSalesAgents({
     pageIndex: pagination.pageIndex,

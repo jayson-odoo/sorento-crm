@@ -61,6 +61,7 @@ import { ConvertToPackingListDialog } from './ConvertToPackingListDialog';
 import { OverCapacityDialog } from './OverCapacityDialog';
 import { ProformaUploadDialog } from './ProformaUploadDialog';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 
@@ -187,8 +188,11 @@ export function ProformaInvoicesView() {
     null,
   );
 
+  // Page one when a filter CHANGES, never on mount - the mount run used to stamp
+  // page 1 over the page `useListStateFromUrl` had just restored from the URL.
+  useResetPageOnFilterChange(setPagination, [searchQuery, supplierId, placement]);
+  // A tick on a row the new filter excludes is not a selection any more.
   useEffect(() => {
-    setPagination((p) => ({ ...p, pageIndex: 0 }));
     setRowSelection({});
   }, [searchQuery, supplierId, placement]);
 

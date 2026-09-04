@@ -8,7 +8,7 @@
  * people are waiting.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import {
   getCoreRowModel,
@@ -45,6 +45,7 @@ import {
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
 import { useOnboardingRequests } from '../hooks/useOnboardingRequests';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 
 const STATUS_OPTIONS = [
   { value: 'all', label: 'All statuses' },
@@ -97,17 +98,10 @@ export function OnboardingRequestList() {
    * Anything that changes WHICH rows match sends the reader back to page one.
    * Searching from page 3 otherwise narrows the set to two rows and then asks
    * for the third page of it, which renders as an empty grid and reads like
-   * "nothing matched". The mounted guard keeps the URL-restored page from
-   * being clobbered on first render.
+   * "nothing matched". On a CHANGE only - the mount run used to stamp page 1
+   * over the page `useListStateFromUrl` had just restored from the URL.
    */
-  const searchMounted = useRef(false);
-  useEffect(() => {
-    if (!searchMounted.current) {
-      searchMounted.current = true;
-      return;
-    }
-    firstPage();
-  }, [searchQuery]);
+  useResetPageOnFilterChange(setPagination, [searchQuery]);
 
   const isFiltered = searchQuery.trim().length > 0 || statusFilter !== 'all';
 

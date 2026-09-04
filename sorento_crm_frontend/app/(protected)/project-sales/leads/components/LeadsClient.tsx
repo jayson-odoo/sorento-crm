@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { useLeadMutations, useLeads } from '../../_shared/hooks/useProjects';
 import { useLeadAcceptanceMutations } from '../../_shared/hooks/useLeadAcceptance';
@@ -87,10 +88,9 @@ export function LeadsClient() {
   const { remove } = useLeadMutations();
 
   // Narrowing the set changes which rows exist, so page 3 of the old set is a page of
-  // nothing in the new one.
-  React.useEffect(() => {
-    setPagination((previous) => ({ ...previous, pageIndex: 0 }));
-  }, [debounced, outcome, source]);
+  // nothing in the new one. Only on a CHANGE - the mount run used to stamp page 1 over
+  // the page `useListStateFromUrl` had just restored from the URL.
+  useResetPageOnFilterChange(setPagination, [debounced, outcome, source]);
 
   const leads = useLeads({
     query: debounced || undefined,

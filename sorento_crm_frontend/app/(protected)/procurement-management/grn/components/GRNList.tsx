@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
   ColumnDef,
@@ -39,6 +39,7 @@ import { importGRNListing, importGRNLines, validateGRNListing, validateGRNLines 
 import { useImportJobDrawer } from '@/components/upload-activity';
 import { useQueryClient } from '@tanstack/react-query';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 
 export default function GRNList() {
   const router = useRouter();
@@ -85,9 +86,9 @@ export default function GRNList() {
     spo_allocation_id: spoAllocationId || undefined,
   });
 
-  useEffect(() => {
-    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
-  }, [searchQuery, statusFilter, spoAllocationId]);
+  // Page one when a filter CHANGES, never on mount - the mount run used to stamp
+  // page 1 over the page `useListStateFromUrl` had just restored from the URL.
+  useResetPageOnFilterChange(setPagination, [searchQuery, statusFilter, spoAllocationId]);
 
   // The whole row opens the record, carrying the list query the pager rebuilds
   // its key from.

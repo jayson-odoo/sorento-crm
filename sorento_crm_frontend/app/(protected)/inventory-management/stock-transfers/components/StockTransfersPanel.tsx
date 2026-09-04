@@ -49,6 +49,7 @@ import {
   type TransferAction,
 } from './StockTransferActions';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { RowActionsMenu } from '@/components/common/RowActionsMenu';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
@@ -187,9 +188,16 @@ export function StockTransfersPanel({
   } | null>(null);
   const [confirmingBulk, setConfirmingBulk] = React.useState(false);
 
-  React.useEffect(() => {
-    setPagination((previous) => ({ ...previous, pageIndex: 0 }));
-  }, [debounced, state, kind, fromWarehouseId, toWarehouseId, productId]);
+  // Page one when a filter CHANGES, never on mount - the mount run used to stamp
+  // page 1 over the page `useListStateFromUrl` had just restored from the URL.
+  useResetPageOnFilterChange(setPagination, [
+    debounced,
+    state,
+    kind,
+    fromWarehouseId,
+    toWarehouseId,
+    productId,
+  ]);
 
   /**
    * A selection belongs to the rows that were on screen when it was made.

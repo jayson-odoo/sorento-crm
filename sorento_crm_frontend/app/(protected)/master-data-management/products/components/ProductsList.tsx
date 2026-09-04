@@ -62,6 +62,7 @@ import { toast } from '@/lib/toast';
 import { generateExcelFile } from '@/lib/excel-utils';
 import type { ColumnOption } from '@/lib/excel-utils';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
@@ -268,9 +269,9 @@ const ProductsList = () => {
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
   };
 
-  useEffect(() => {
-    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
-  }, [advancedFilter]);
+  // Page one when a filter CHANGES, never on mount - the mount run used to stamp
+  // page 1 over the page `useListStateFromUrl` had just restored from the URL.
+  useResetPageOnFilterChange(setPagination, [advancedFilter, searchQuery]);
 
   // Carry the active list query (search/sort + category/brand/status/discontinued
   // batch filters) into the detail URL so the detail page's prev/next pager walks
@@ -705,11 +706,10 @@ const ProductsList = () => {
   });
 
   // The search box drives the server query itself (via useDebouncedSearch), so
-  // this only has to keep the two OTHER consumers of the term in step: the
-  // chat-search filter panel, and the page reset every other filter already gets.
+  // this only has to keep the OTHER consumer of the term in step: the chat-search
+  // filter panel. The page reset rides with every other filter, above.
   useEffect(() => {
     setSearch(searchQuery || undefined);
-    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
   }, [searchQuery]);
 
   const simpleFiltersActiveCount =
