@@ -30,8 +30,9 @@ from typing import Any, Callable, Iterator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.models.chatbot_turn import ChatbotTurn
-from app.services.chatbot import jsc, trace as trace_mod
+from app.services.chatbot import dispatch, jsc, trace as trace_mod
 from app.services.chatbot.contracts import TURN_FAILURE_STAGES, Envelope
 from app.services.chatbot.delegate import delegate_for, enabled_lanes_from
 from app.services.error_handler import AppException
@@ -47,6 +48,10 @@ from app.services.chatbot.head.route import decide
 from app.services.chatbot.lanes import business, casual
 from app.services.chatbot.lanes.business import resolve_gate, services as business_services
 from app.services.chatbot.usage import record_parser_usage
+# Module level and by name, the same shape `app/api/v1/external/media.py` uses for its own
+# enqueue-and-wait: the offload is one flag away from being the normal path, and a lazy
+# import inside the branch would hide the dependency from anything reading this file.
+from app.services.queue_service import enqueue_job, get_job_status, redis_conn
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +68,14 @@ AUDIO_NOT_PATCHED_ERROR = (
     "media intake did not transcribe this voice note, so there is no text to understand"
 )
 GENERIC_ERROR_REPLY = parser.PARSER_ERROR_REPLY
+
+# AC-703. The queue the offloaded turn runs on, classified `fast` in `worker.QUEUES`: a
+# customer is watching "typing...", so it must never queue behind a 39-minute import.
+CHAT_QUEUE = "chat"
+
+# How often the waiting request looks at the job. Same order as `/external/media`'s own
+# poll: short enough not to pad a fast turn, long enough not to spin.
+WORKER_POLL_INTERVAL_SECONDS = 0.25
 
 
 class TurnResult:
@@ -485,7 +498,9 @@ def _duplicate_result(row: ChatbotTurn) -> TurnResult:
 # --------------------------------------------------------------------------- #
 
 
-def run_turn(envelope: Envelope, *, session_factory: SessionFactory) -> TurnResult:
+def run_turn(
+    envelope: Envelope, *, session_factory: SessionFactory, offload: bool | None = None
+) -> TurnResult:
     """Run the head of one turn. NEVER raises for a business failure; records it.
 
     Two things happen before the stages: the D15 dedup, and the row insert. Everything
@@ -494,7 +509,16 @@ def run_turn(envelope: Envelope, *, session_factory: SessionFactory) -> TurnResu
     contact with no `is_allowed_stock` field - closes the turn as `failed` with the stage
     it reached and hands the caller today's error reply. A turn left at `processing` with
     a null error and no trace is exactly the dropped turn H32 is about.
+
+    `offload` exists for ONE caller: the RQ job (`app/tasks/chat_turns.py`) passes `False`
+    so the worker actually runs the turn instead of enqueuing it to itself forever. Every
+    other caller leaves it None and gets whatever `CHATBOT_TURN_ON_WORKER` says.
     """
+    if offload is None:
+        offload = bool(getattr(settings, "chatbot_turn_on_worker", False))
+    if offload:
+        return _run_on_worker(envelope, session_factory=session_factory)
+
     turn_trace = trace_mod.TurnTrace()
     turn_trace.start()
 
@@ -539,17 +563,44 @@ def run_turn(envelope: Envelope, *, session_factory: SessionFactory) -> TurnResu
     # the inner stages update it and the handler reads it.
     stage: list[str] = ["received"]
     actions: list[dict[str, Any]] = []
+    ordered = bool(getattr(settings, "chatbot_ordering_enabled", False))
+    ticket: int | None = None
+    redis = None
     try:
-        return _run_stages(
-            envelope,
-            session_factory=session_factory,
-            turn_trace=turn_trace,
-            turn_id=turn_id,
-            contact_respond_id=contact_respond_id,
-            dry_run=dry_run,
-            actions=actions,
-            stage=stage,
-        )
+        if ordered:
+            # AC-709. The wait happens HERE: after the row exists (so a queue timeout is a
+            # recorded turn, not a vanished one) and before any stage runs. `stage[0]`
+            # carries `queued` through the wait, so the handler below files a `QueueWait`
+            # under the stage it actually happened in without a special case (AC-710).
+            stage[0] = "queued"
+            redis = _ordering_redis()
+            ticket = dispatch.contact_ticket(redis, contact_respond_id)
+            dispatch.wait_for_turn(
+                redis,
+                contact_respond_id,
+                ticket,
+                timeout_s=float(getattr(settings, "chatbot_queue_wait_seconds", 45.0)),
+            )
+            dispatch.mark_running(redis, contact_respond_id, ticket)
+            stage[0] = "received"
+        try:
+            return _run_stages(
+                envelope,
+                session_factory=session_factory,
+                turn_trace=turn_trace,
+                turn_id=turn_id,
+                contact_respond_id=contact_respond_id,
+                dry_run=dry_run,
+                actions=actions,
+                stage=stage,
+            )
+        finally:
+            # AC-704. In a `finally`, because the ONE thing worse than a failed turn is a
+            # failed turn that never releases its ticket: every later message from that
+            # contact would then wait out the whole queue window and fail as well, and the
+            # customer would watch one broken turn break the conversation.
+            if ticket is not None:
+                dispatch.mark_done(redis, contact_respond_id, ticket)
     except Exception as exc:  # noqa: BLE001 - a failed turn is recorded, never dropped
         message = f"{type(exc).__name__}: {exc}"
         logger.exception("chatbot turn %s failed at stage %s", turn_id, stage[0])
@@ -573,6 +624,93 @@ def run_turn(envelope: Envelope, *, session_factory: SessionFactory) -> TurnResu
                 records=turn_trace.records,
             )
         return _failed_result(turn_id, stage[0], message, actions, dry_run)
+
+
+def _ordering_redis() -> Any:
+    """The connection the ordering keys live on: the one the queues already use.
+
+    Its `decode_responses=False` is why `dispatch._as_int` exists - the tests drive a
+    decoding client and the engine does not, and a ticket counter that reads differently
+    depending on who is asking would be the worst kind of intermittent.
+    """
+    return redis_conn
+
+
+def _run_on_worker(envelope: Envelope, *, session_factory: SessionFactory) -> TurnResult:
+    """AC-703. Run the turn on the `chat` queue and wait for it, inside this request.
+
+    The caller's contract does not change: n8n still gets the finished turn on the same
+    response. What changes is which process holds the LLM wait - an API thread, or a
+    worker. Off by default; the trigger for turning it on is measured (the plan's capacity
+    section: beyond ~250 concurrent turns the API threads, not the model, are the limit).
+
+    Enqueue-and-wait is `app/api/v1/external/media.py`'s pattern, for its reason: a job
+    row that outlives the request means a slow turn degrades into a recorded one rather
+    than a hung socket.
+    """
+    # Imported HERE, not at module level: the task module imports this engine (it is the
+    # thing it runs), so a top-level import is a cycle. `enqueue_job` and `get_job_status`
+    # stay at module level because the tests patch them by name on this module.
+    from app.tasks.chat_turns import run_turn_job
+
+    job = enqueue_job(
+        run_turn_job,
+        envelope.model_dump(mode="json"),
+        queue_name=CHAT_QUEUE,
+        job_timeout=int(getattr(settings, "chatbot_turn_wait_seconds", 60)) * 2,
+    )
+    deadline = time.monotonic() + float(getattr(settings, "chatbot_turn_wait_seconds", 60))
+    while True:
+        snapshot = get_job_status(job.id) or {}
+        state = snapshot.get("status")
+        if state == "finished":
+            result = snapshot.get("result")
+            if isinstance(result, dict):
+                return TurnResult(**result)
+            return _worker_failed(
+                envelope,
+                session_factory,
+                "the offloaded turn finished without returning a turn",
+            )
+        if state in ("failed", "stopped", "canceled"):
+            return _worker_failed(
+                envelope,
+                session_factory,
+                f"the offloaded turn {state}: {(snapshot.get('exc_info') or '')[:300]}",
+            )
+        if time.monotonic() >= deadline:
+            return _worker_failed(
+                envelope,
+                session_factory,
+                f"the offloaded turn did not finish within "
+                f"{getattr(settings, 'chatbot_turn_wait_seconds', 60)}s",
+            )
+        time.sleep(WORKER_POLL_INTERVAL_SECONDS)
+
+
+def _worker_failed(
+    envelope: Envelope, session_factory: SessionFactory, message: str
+) -> TurnResult:
+    """The caller still gets today's error reply when the offloaded turn does not answer.
+
+    The turn id is read back off the row the WORKER inserted, so the operator opening the
+    trace screen lands on the turn that actually ran rather than on a job id that means
+    nothing there. Empty only when the worker never got as far as inserting.
+    """
+    turn_id = ""
+    try:
+        with _session(session_factory) as db:
+            row = _select_turn(
+                db,
+                contact_respond_id=_contact_respond_id(envelope),
+                message_id=_message_id(envelope),
+            )
+            if row is not None:
+                turn_id = str(row.id)
+    except Exception:  # noqa: BLE001 - the reply matters more than the id
+        logger.warning("chatbot offload: could not read back the turn row", exc_info=True)
+    logger.error("chatbot offload failed: %s", message)
+    return _failed_result(turn_id, "queued", message, [], envelope.dry_run)
 
 
 def _run_stages(  # noqa: PLR0915
@@ -1300,8 +1438,6 @@ def _business_lane_enabled() -> bool:
     column because it is a DEPLOYMENT step, not a tenant preference: it is turned on once
     per environment, in the same change that rewires n8n, and never again.
     """
-    from app.config import settings
-
     return bool(getattr(settings, "chatbot_business_lane_enabled", False))
 
 

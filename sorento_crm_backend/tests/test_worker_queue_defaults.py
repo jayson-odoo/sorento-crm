@@ -233,9 +233,14 @@ def test_default_queues_starts_with_imports_and_ends_with_notifications():
     assert worker.DEFAULT_QUEUES[-1] == "notifications"
 
 
-def test_default_queues_is_byte_identical_to_pre_split_order():
-    """The #569 split must not reorder the no-env fallback drain list."""
-    assert worker.DEFAULT_QUEUES == (
+def test_default_queues_keeps_the_pre_split_order():
+    """The #569 split must not REORDER the no-env fallback drain list.
+
+    A queue may be added (S7 put `chat` next to `media`, its latency twin); what this
+    guards is that the seven that were here before stay in the order they were in, since
+    that order is drain priority and #569 is the change that could have scrambled it.
+    """
+    pre_split = (
         "imports",
         "respond_io",
         "catalogue_render",
@@ -244,10 +249,12 @@ def test_default_queues_is_byte_identical_to_pre_split_order():
         "flyer_read",
         "notifications",
     )
+    assert [q for q in worker.DEFAULT_QUEUES if q in pre_split] == list(pre_split)
 
 
 def test_queues_for_role_fast(monkeypatch):
-    assert worker.queues_for_role("fast") == ["respond_io", "media", "notifications"]
+    # `chat` joined at S7 (AC-703); the others are #569's.
+    assert worker.queues_for_role("fast") == ["respond_io", "media", "chat", "notifications"]
 
 
 def test_queues_for_role_batch(monkeypatch):

@@ -1,4 +1,10 @@
-"""Re-injecting a failed turn at the ingress it originally arrived through (AC-705).
+"""Ordering one contact's turns, and re-injecting a failed one (AC-705, AC-709, AC-710).
+
+Two jobs, one module, because they are the same subject seen twice: WHICH turn for this
+contact runs next. The ordering half is the S7 replacement for n8n's `sorento-dispatcher`,
+which popped one contact per second and therefore served a 50-dealer burst over 50 seconds
+no matter how fast the CRM was. The re-inject half puts an operator's Retry back through
+the front door so it takes the same ordering everything else takes.
 
 R4: there is no automatic retry anywhere. An operator presses Retry on the trace screen,
 and what that does is put the customer's ORIGINAL message back through the front door -
@@ -23,11 +29,160 @@ function and one env var rather than a transport abstraction.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+# --------------------------------------------------------------------------- #
+# Per-contact ordering (AC-709, AC-710, H30, H31)
+#
+# Three keys per contact, and the third one is the interesting one:
+#
+#   chatbot:seq:{contact}      the ticket counter. INCR on arrival; a turn's ticket is
+#                              its place in the queue for THIS contact only.
+#   chatbot:done:{contact}     the last ticket that finished. Absent means zero.
+#   chatbot:running:{contact}  present only while a ticket is actually being worked.
+#
+# `running` exists so a waiter can tell "my predecessor is slow" from "my predecessor is
+# dead". The dead case is the one that matters: a process killed mid-turn never advances
+# `done`, and without a repair every later message from that contact would wait out the
+# full queue timeout and fail - one crashed turn silently breaking a conversation for as
+# long as the customer keeps typing. So `mark_done` DELETES the key rather than letting it
+# expire, and a waiter that sees it absent for `STALL_GRACE_SECONDS` repairs the counter
+# and goes.
+#
+# Redis, not Postgres advisory locks: the wait is a poll of one integer, it must not hold a
+# database connection while it waits (the capacity rule), and redis is already the queue
+# substrate this process talks to.
+# --------------------------------------------------------------------------- #
+
+# The counter is per conversation and a conversation goes quiet. An hour after the last
+# message the keys are worthless, and a fresh contact starting again at ticket 1 is
+# correct - nothing is waiting on the old numbers.
+TICKET_TTL_SECONDS = 3600
+
+# How long the `running` key survives without anyone clearing it. Far longer than a turn
+# (the whole turn budget is tens of seconds) and short enough that a process killed with
+# the key set does not make this contact look busy for the rest of the hour.
+RUNNING_TTL_SECONDS = 300
+
+# The waiter polls; it does not subscribe. One integer read every 200 ms for at most the
+# queue-wait window is a handful of cheap reads, and a pub/sub channel per contact would be
+# a second mechanism to keep alive for no measured gain.
+POLL_INTERVAL_SECONDS = 0.2
+
+# How long `running` may be ABSENT before a waiter decides the predecessor died and repairs
+# the counter. Two seconds is longer than the gap between `contact_ticket` and
+# `mark_running` in a healthy turn by three orders of magnitude.
+STALL_GRACE_SECONDS = 2.0
+
+
+class QueueWait(RuntimeError):
+    """The wait for this contact's turn exceeded the budget. The turn fails at `queued`."""
+
+
+def seq_key(contact: str) -> str:
+    return f"chatbot:seq:{contact}"
+
+
+def done_key(contact: str) -> str:
+    return f"chatbot:done:{contact}"
+
+
+def running_key(contact: str) -> str:
+    return f"chatbot:running:{contact}"
+
+
+def _as_int(value: Any) -> int:
+    """A redis value as an int. Absent is 0, and so is anything unreadable.
+
+    Both client shapes reach this: the engine's connection decodes nothing
+    (`queue_service.redis_conn`, `decode_responses=False`), a test's client decodes
+    everything. A counter that cannot be read is treated as "nothing finished yet", which
+    makes a waiter wait rather than run out of turn.
+    """
+    if value is None:
+        return 0
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", "ignore")
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def contact_ticket(redis: Any, contact: str) -> int:
+    """This turn's place in the queue for this contact. Monotonic per contact."""
+    key = seq_key(contact)
+    ticket = int(redis.incr(key))
+    redis.expire(key, TICKET_TTL_SECONDS)
+    return ticket
+
+
+def mark_running(redis: Any, contact: str, ticket: int) -> None:
+    """Say this ticket is being worked, so a waiter does not mistake it for a dead one."""
+    redis.set(running_key(contact), int(ticket), ex=RUNNING_TTL_SECONDS)
+
+
+def mark_done(redis: Any, contact: str, ticket: int) -> None:
+    """Release the next waiter. Called from a `finally`, so a FAILED turn releases too.
+
+    Deleting `running` rather than letting it lapse is what makes its absence a signal
+    (see the block comment above).
+    """
+    redis.set(done_key(contact), int(ticket), ex=TICKET_TTL_SECONDS)
+    redis.delete(running_key(contact))
+
+
+def wait_for_turn(redis: Any, contact: str, ticket: int, *, timeout_s: float) -> None:
+    """Block until every earlier ticket for this contact has finished.
+
+    Returns as soon as `done >= ticket - 1`, repairs a stalled counter after
+    `STALL_GRACE_SECONDS` with no `running` key, and raises `QueueWait` if neither happens
+    inside `timeout_s`. The caller records that as a turn failed at stage `queued`; it
+    never hangs the request past the budget.
+    """
+    target = int(ticket) - 1
+    if target <= 0 and _as_int(redis.get(done_key(contact))) >= target:
+        return
+
+    deadline = time.monotonic() + max(0.0, float(timeout_s))
+    absent_since: float | None = None
+
+    while True:
+        if _as_int(redis.get(done_key(contact))) >= target:
+            return
+
+        now = time.monotonic()
+        if redis.exists(running_key(contact)):
+            # Somebody is genuinely working. Reset the death timer: a predecessor that
+            # takes 30 s is slow, not dead, and jumping it would answer out of order.
+            absent_since = None
+        elif absent_since is None:
+            absent_since = now
+        elif now - absent_since > STALL_GRACE_SECONDS:
+            logger.warning(
+                "chatbot ordering: repairing stalled counter for %s (ticket %s, done -> %s)",
+                contact,
+                ticket,
+                target,
+            )
+            redis.set(done_key(contact), target, ex=TICKET_TTL_SECONDS)
+            return
+
+        if time.monotonic() >= deadline:
+            raise QueueWait(
+                f"waited {timeout_s}s for ticket {target} of contact {contact} to finish"
+            )
+        time.sleep(POLL_INTERVAL_SECONDS)
+
+
+# --------------------------------------------------------------------------- #
+# Re-injecting a failed turn (AC-705)
+# --------------------------------------------------------------------------- #
 
 # n8n's HTTP node waits the whole turn, so this is generous: the call being answered
 # means "n8n accepted the message", not "the turn finished".
