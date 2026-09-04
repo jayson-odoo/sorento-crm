@@ -1,8 +1,11 @@
 'use client';
 
+import { useMemo } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { RiCheckboxCircleFill, RiErrorWarningFill } from '@remixicon/react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import type { ColumnDef } from '@tanstack/react-table';
+import { useReactTable, getCoreRowModel } from '@tanstack/react-table';
 import {
   AppWindowMac,
   Bell,
@@ -27,14 +30,9 @@ import {
 import { Checkbox } from '@/components/ui/checkbox';
 import { Form, FormControl, FormField, FormItem } from '@/components/ui/form';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { DataGrid } from '@/components/ui/data-grid';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridTable } from '@/components/ui/data-grid-table';
 import { useSettings } from '../components/settings-context';
 import {
   NotificationSettingsSchema,
@@ -77,7 +75,9 @@ const notificationSettings = [
     webField: 'notifySystemErrorWeb',
     roleIdsField: 'notifySystemErrorRoleIds',
   },
-];
+] as const;
+
+type NotificationSettingRow = (typeof notificationSettings)[number];
 
 const NotificationSettingsPage = () => {
   const queryClient = useQueryClient();
@@ -171,6 +171,151 @@ const NotificationSettingsPage = () => {
 
   const isProcessing = mutation.status === 'pending';
 
+  const columns = useMemo<ColumnDef<NotificationSettingRow>[]>(
+    () => [
+      {
+        accessorKey: 'label',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Notification" icon={<Bell />} column={column} />
+        ),
+        cell: ({ row }) => (
+          <div className="space-y-1">
+            <div className="text-md font-semibold">{row.original.label}</div>
+            <div className="text-muted-foreground font-2sm font-regular">
+              {row.original.description}
+            </div>
+          </div>
+        ),
+        size: 400,
+        meta: { headerTitle: 'Notification' },
+      },
+      {
+        id: 'roles',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Users" icon={<Users />} column={column} />
+        ),
+        cell: ({ row }) => {
+          const { roleIdsField } = row.original;
+          const selectedRoleIds =
+            (form.watch(roleIdsField as keyof NotificationSettingsSchemaType) as string[]) ?? [];
+          return (
+            <div className="flex items-center gap-3">
+              <SearchableMultiSelect
+                value={selectedRoleIds}
+                onChange={(next) =>
+                  form.setValue(roleIdsField as keyof NotificationSettingsSchemaType, next, {
+                    shouldDirty: true,
+                  })
+                }
+                emptyMessage="No roles found."
+                className="w-[200px]"
+                // Picked roles render as badges beside this control, so the trigger
+                // stays the compact icon button it has always been.
+                renderTrigger={() => (
+                  <Button
+                    variant="outline"
+                    mode="icon"
+                    className="h-7! w-7!"
+                    data-testid="notify-roles-trigger"
+                    aria-label="Add notify roles"
+                  >
+                    <UserPlus className="size-3.5!" />
+                  </Button>
+                )}
+                options={(roles ?? []).map((role) => ({
+                  value: role.id,
+                  label: role.name,
+                }))}
+              />
+              <div className="flex items-center flex-wrap gap-2">
+                {selectedRoleIds.length > 0 ? (
+                  selectedRoleIds.map((roleId) => {
+                    const role = roles.find((r) => r.id === roleId);
+                    return (
+                      <Badge key={roleId} variant="secondary">
+                        {role?.name}
+                      </Badge>
+                    );
+                  })
+                ) : (
+                  <span className="text-muted-foreground">Not set</span>
+                )}
+              </div>
+            </div>
+          );
+        },
+        size: 320,
+        meta: { headerTitle: 'Users' },
+      },
+      {
+        id: 'email',
+        header: ({ column }) => (
+          <DataGridColumnHeader
+            title="Email"
+            icon={<MailWarning />}
+            column={column}
+            className="justify-center"
+          />
+        ),
+        cell: ({ row }) => (
+          <div className="flex justify-center">
+            <FormField
+              control={form.control}
+              name={row.original.emailField as keyof NotificationSettingsSchemaType}
+              render={({ field }) => (
+                <FormItem className="items-center">
+                  <FormControl>
+                    <Checkbox checked={Boolean(field.value)} onCheckedChange={field.onChange} />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+          </div>
+        ),
+        size: 140,
+        meta: { headerTitle: 'Email' },
+      },
+      {
+        id: 'web',
+        header: ({ column }) => (
+          <DataGridColumnHeader
+            title="Web"
+            icon={<AppWindowMac />}
+            column={column}
+            className="justify-center"
+          />
+        ),
+        cell: ({ row }) => (
+          <div className="flex justify-center">
+            <FormField
+              control={form.control}
+              name={row.original.webField as keyof NotificationSettingsSchemaType}
+              render={({ field }) => (
+                <FormItem className="items-center">
+                  <FormControl>
+                    <Checkbox checked={Boolean(field.value)} onCheckedChange={field.onChange} />
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+          </div>
+        ),
+        size: 140,
+        enableResizing: false,
+        meta: { headerTitle: 'Web' },
+      },
+    ],
+    [form, roles],
+  );
+
+  const table = useReactTable({
+    columns,
+    data: [...notificationSettings],
+    getRowId: (row) => row.label,
+    getCoreRowModel: getCoreRowModel(),
+    columnResizeMode: 'onChange',
+  });
+
   return (
     <form onSubmit={form.handleSubmit(handleSubmit)}>
       <Form {...form}>
@@ -179,155 +324,13 @@ const NotificationSettingsPage = () => {
             <CardTitle>Notification Settings</CardTitle>
           </CardHeader>
           <CardContent className="px-0 py-2.5">
-            <Table>
-              <TableHeader>
-                <TableRow className="text-2sm">
-                  <TableHead className="w-[400px] text-muted-foreground ps-6">
-                    <div className="inline-flex items-center gap-1.5">
-                      <Bell className="text-muted-foreground size-3.5" />
-                      Notification
-                    </div>
-                  </TableHead>
-                  <TableHead className="text-muted-foreground">
-                    <div className="inline-flex items-center gap-1.5">
-                      <Users className="text-muted-foreground size-3.5" />
-                      Users
-                    </div>
-                  </TableHead>
-                  <TableHead className="w-36 text-center text-muted-foreground">
-                    <div className="inline-flex items-center gap-1.5">
-                      <MailWarning className="text-muted-foreground size-3.5" />
-                      Email
-                    </div>
-                  </TableHead>
-                  <TableHead className="w-36 text-center text-muted-foreground pe-6">
-                    <div className="inline-flex items-center gap-1.5">
-                      <AppWindowMac className="text-muted-foreground size-3.5" />
-                      Web
-                    </div>
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {notificationSettings.map(
-                  ({
-                    label,
-                    description,
-                    emailField,
-                    webField,
-                    roleIdsField,
-                  }) => (
-                    <TableRow key={label}>
-                      <TableCell className="ps-6">
-                        <div className="space-y-1">
-                          <div className="text-md font-semibold">{label}</div>
-                          <div className="text-muted-foreground font-2sm font-regular">
-                            {description}
-                          </div>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-3">
-                          <SearchableMultiSelect
-                            value={
-                              (form.watch(
-                                roleIdsField as keyof NotificationSettingsSchemaType,
-                              ) as string[]) ?? []
-                            }
-                            onChange={(next) =>
-                              form.setValue(
-                                roleIdsField as keyof NotificationSettingsSchemaType,
-                                next,
-                                { shouldDirty: true },
-                              )
-                            }
-                            emptyMessage="No roles found."
-                            className="w-[200px]"
-                            // Picked roles render as badges beside this control, so the trigger
-                            // stays the compact icon button it has always been.
-                            renderTrigger={() => (
-                              <Button
-                                variant="outline"
-                                mode="icon"
-                                className="h-7! w-7!"
-                                data-testid="notify-roles-trigger"
-                                aria-label="Add notify roles"
-                              >
-                                <UserPlus className="size-3.5!" />
-                              </Button>
-                            )}
-                            options={(roles ?? []).map((role) => ({
-                              value: role.id,
-                              label: role.name,
-                            }))}
-                          />
-                          <div className="flex items-center flex-wrap gap-2">
-                            {(
-                              form.watch(
-                                roleIdsField as keyof NotificationSettingsSchemaType,
-                              ) as string[]
-                            )?.length > 0 ? (
-                              (
-                                form.watch(
-                                  roleIdsField as keyof NotificationSettingsSchemaType,
-                                ) as string[]
-                              ).map((roleId) => {
-                                const role = roles.find((r) => r.id === roleId);
-                                return (
-                                  <Badge key={roleId} variant="secondary">
-                                    {role?.name}
-                                  </Badge>
-                                );
-                              })
-                            ) : (
-                              <span className="text-muted-foreground">
-                                Not set
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-center pe-2!">
-                        <FormField
-                          control={form.control}
-                          name={
-                            emailField as keyof NotificationSettingsSchemaType
-                          }
-                          render={({ field }) => (
-                            <FormItem className="items-center">
-                              <FormControl>
-                                <Checkbox
-                                  checked={Boolean(field.value)}
-                                  onCheckedChange={field.onChange}
-                                />
-                              </FormControl>
-                            </FormItem>
-                          )}
-                        />
-                      </TableCell>
-                      <TableCell className="text-center pe-6!">
-                        <FormField
-                          control={form.control}
-                          name={
-                            webField as keyof NotificationSettingsSchemaType
-                          }
-                          render={({ field }) => (
-                            <FormItem className="items-center">
-                              <FormControl>
-                                <Checkbox
-                                  checked={Boolean(field.value)}
-                                  onCheckedChange={field.onChange}
-                                />
-                              </FormControl>
-                            </FormItem>
-                          )}
-                        />
-                      </TableCell>
-                    </TableRow>
-                  ),
-                )}
-              </TableBody>
-            </Table>
+            <DataGrid
+              table={table}
+              recordCount={notificationSettings.length}
+              tableLayout={{ width: 'fixed', columnsResizable: true }}
+            >
+              <DataGridTable />
+            </DataGrid>
           </CardContent>
           <CardFooter className="flex justify-end gap-4 py-5 px-10">
             <Button type="button" variant="outline" onClick={handleReset}>

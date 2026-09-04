@@ -7,6 +7,10 @@ import TeamMembersList from './team-members-list';
 import type { TeamMember } from '../../types/team.types';
 import type { UserSelectItem } from '../../services/teamService';
 
+vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
+  useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
+}));
+
 const useTeamMembers = vi.fn();
 const removeMutate = vi.fn();
 const roundRobinMutate = vi.fn();

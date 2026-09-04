@@ -1,11 +1,11 @@
 'use client';
 
 import { useCallback, useMemo, useState } from 'react';
+import type { ColumnDef } from '@tanstack/react-table';
 import { LoaderCircleIcon, Trash2, UserPlus, X } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
 import { Button } from '@/components/ui/button';
-import { Card, CardHeader, CardTable } from '@/components/ui/card';
 import {
   Dialog,
   DialogContent,
@@ -14,16 +14,9 @@ import {
 } from '@/components/ui/dialog';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { Badge } from '@/components/ui/badge';
-import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import type { TeamMember } from '../../types/team.types';
 import type { UserSelectItem } from '../../services/teamService';
 import {
@@ -99,84 +92,94 @@ export default function TeamMembersList({
 
   const selectedCount = selectedUserIds.size;
 
+  const columns = useMemo<ColumnDef<TeamMember>[]>(
+    () => [
+      {
+        id: 'order',
+        accessorFn: (row) => row.sort_order ?? 0,
+        header: ({ column }) => <DataGridColumnHeader title="Order" column={column} />,
+        cell: ({ row }) => (
+          <span className="text-muted-foreground">
+            {row.original.sort_order ?? members.indexOf(row.original) + 1}
+          </span>
+        ),
+        size: 90,
+        meta: { headerTitle: 'Order' },
+      },
+      {
+        id: 'user',
+        accessorFn: (row) => displayUser(userMap.get(row.user_id), row.user_id),
+        header: ({ column }) => <DataGridColumnHeader title="User" column={column} />,
+        cell: ({ row }) => displayUser(userMap.get(row.original.user_id), row.original.user_id),
+        size: 220,
+        meta: { headerTitle: 'User' },
+      },
+      {
+        id: 'round_robin',
+        accessorFn: (row) => row.include_in_round_robin ?? true,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Auto-assign (round robin)" column={column} />
+        ),
+        cell: ({ row }) => (
+          <Switch
+            size="sm"
+            checked={row.original.include_in_round_robin ?? true}
+            onCheckedChange={(checked) =>
+              roundRobinMutation.mutate({
+                userId: row.original.user_id,
+                includeInRoundRobin: checked,
+              })
+            }
+            aria-label="Include in round robin"
+          />
+        ),
+        size: 220,
+        meta: { headerTitle: 'Auto-assign (round robin)' },
+      },
+      {
+        id: 'actions',
+        header: () => <span className="sr-only">Actions</span>,
+        cell: ({ row }) => (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="text-destructive hover:text-destructive"
+            onClick={(e) => {
+              e.stopPropagation();
+              removeMutation.mutate(row.original.user_id);
+            }}
+            disabled={removeMutation.isPending}
+            aria-label="Remove member"
+          >
+            <Trash2 className="size-4" />
+          </Button>
+        ),
+        size: 80,
+        enableResizing: false,
+        meta: { headerTitle: 'Actions' },
+      },
+    ],
+    [members, userMap, roundRobinMutation, removeMutation],
+  );
+
   return (
     <>
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between py-5">
-          <h3 className="text-lg font-medium">Members</h3>
+      <PanelDataGrid<TeamMember>
+        title="Members"
+        toolbar={
           <Button onClick={() => setAddOpen(true)} disabled={availableUsers.length === 0}>
             <UserPlus className="me-2 size-4" />
             Add member
           </Button>
-        </CardHeader>
-        <CardTable>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Order</TableHead>
-                <TableHead>User</TableHead>
-                <TableHead className="w-[200px]">Auto-assign (round robin)</TableHead>
-                <TableHead className="w-[80px]">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {isLoading ? (
-                Array.from({ length: 3 }).map((_, i) => (
-                  <TableRow key={i}>
-                    <TableCell><Skeleton className="h-6 w-10" /></TableCell>
-                    <TableCell><Skeleton className="h-6 w-40" /></TableCell>
-                    <TableCell><Skeleton className="h-6 w-10" /></TableCell>
-                    <TableCell><Skeleton className="h-8 w-8" /></TableCell>
-                  </TableRow>
-                ))
-              ) : members.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
-                    No members. Add users to this team for round-robin assignment.
-                  </TableCell>
-                </TableRow>
-              ) : (
-                members.map((member: TeamMember, index: number) => {
-                  const includeInRR = member.include_in_round_robin ?? true;
-                  return (
-                    <TableRow key={member.id}>
-                      <TableCell className="text-muted-foreground">
-                        {member.sort_order ?? index + 1}
-                      </TableCell>
-                      <TableCell>{displayUser(userMap.get(member.user_id), member.user_id)}</TableCell>
-                      <TableCell>
-                        <Switch
-                          size="sm"
-                          checked={includeInRR}
-                          onCheckedChange={(checked) =>
-                            roundRobinMutation.mutate({
-                              userId: member.user_id,
-                              includeInRoundRobin: checked,
-                            })
-                          }
-                          aria-label="Include in round robin"
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="text-destructive hover:text-destructive"
-                          onClick={() => removeMutation.mutate(member.user_id)}
-                          disabled={removeMutation.isPending}
-                          aria-label="Remove member"
-                        >
-                          <Trash2 className="size-4" />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })
-              )}
-            </TableBody>
-          </Table>
-        </CardTable>
-      </Card>
+        }
+        columns={columns}
+        rows={members}
+        getRowId={(row) => row.id}
+        listingKey="user_management.teams.view::members"
+        isLoading={isLoading}
+        emptyTitle="No members."
+        emptyBody="Add users to this team for round-robin assignment."
+      />
 
       <Dialog
         open={addOpen}

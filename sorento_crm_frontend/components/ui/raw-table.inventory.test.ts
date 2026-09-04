@@ -85,10 +85,6 @@ const ALLOWLIST: Record<string, string> = {
     'pending migration, M5 run 3',
   'app/(protected)/resource-management/attachments/components/AttachmentDetailModal.tsx':
     'pending migration, M5 run 3',
-  'app/(protected)/user-management/settings/notifications/page.tsx':
-    'pending migration, M5 run 3',
-  'app/(protected)/user-management/teams/[id]/components/team-members-list.tsx':
-    'pending migration, M5 run 3',
   // Not a list: a pivot report reshapes rows into a matrix (rows x measures),
   // which is not what a DataGrid's one-row-per-record model expresses.
   // Permanently exempt (captain's ruling, M5 review run 1).
