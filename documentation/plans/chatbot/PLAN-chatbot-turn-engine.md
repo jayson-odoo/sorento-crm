@@ -145,6 +145,20 @@ result_set}`, `send_attachments {attachments_src, reply}`, `assign_conversation
 Every action carries `dry_run` (true on test envelopes, D14) so the clone's `test-guard`
 records instead of sends, exactly as today.
 
+**D14's input half (O2, AC-112).** A dry-run envelope may also carry three optional harness
+keys, and the engine honours them ONLY on a dry run: `mock_reformulator_output` replaces the
+parser call (no provider is asked; the mock goes through the same `post_process` +
+`suggest_follow_up` a real emission does, so the harness exercises the code instead of
+bypassing it, and a malformed mock is a failed `understood` stage exactly like a malformed
+model answer), while `previous_conversation_state` and `referenced_result_set` replace the
+stored memory for that turn and are never written back. They are `Envelope` EXTRAS rather
+than declared fields on purpose: a harness contract that a live producer should have no
+reason to reach for. On a live envelope all three are ignored and listed in the `received`
+record's `harness_keys_ignored` (empty list when there are none), so a stray key is visible
+rather than silently answering a real customer from a mock. Tests are named after the n8n
+guards they replace: `TestHarnessInjectionsG6` (reformulator bypass),
+`TestHarnessInjectionsG8` (session injection).
+
 **Why not an outbound webhook (rejected at review round 3):** a fixed CRM-to-n8n URL would
 decide egress on the CRM side, so a chat-console or clone turn would push to the live sender.
 Returning the data keeps egress with the caller and keeps the harness's containment model

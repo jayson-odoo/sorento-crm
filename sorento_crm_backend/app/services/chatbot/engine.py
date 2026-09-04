@@ -201,6 +201,59 @@ def build_latest_user_message(envelope: Envelope, session_block: Any = None) -> 
     return f"{line1}\n{line2}\n"
 
 
+# O2 / AC-112: the three keys a DRY-RUN envelope may carry so a harness can drive a turn
+# with no LLM and none of the contact's real memory. Declared in ONE order, and that order
+# is what `harness_keys_ignored` reports, so two traces diff readably.
+#
+# `Envelope` is `extra="allow"`, so they arrive as extras rather than as declared fields -
+# deliberately: they are a HARNESS contract, not part of the envelope every injector sends,
+# and declaring them would invite a live producer to start setting them.
+HARNESS_KEYS = (
+    "mock_reformulator_output",
+    "previous_conversation_state",
+    "referenced_result_set",
+)
+
+
+def _harness_keys_present(envelope: Envelope) -> list[str]:
+    """Which harness keys this envelope carries, in the declared order.
+
+    Membership, not truthiness: `previous_conversation_state: {}` is a harness saying "this
+    contact remembers NOTHING", which is a different instruction from not saying anything.
+    """
+    extra = envelope.model_extra or {}
+    return [key for key in HARNESS_KEYS if key in extra]
+
+
+def _harness_value(envelope: Envelope, key: str) -> Any:
+    return (envelope.model_extra or {}).get(key)
+
+
+def _inject_harness_session(
+    session_block: dict[str, Any], envelope: Envelope
+) -> dict[str, Any]:
+    """G8: replace the stored memory with the harness's, FOR THIS TURN ONLY.
+
+    Applied to the whole `session_block` rather than to the local `variables`, because the
+    same object becomes `ctx.session` and the `received` record's `raw` - a turn whose
+    trace showed the contact's real memory while the lane ran on injected memory would be
+    the worst kind of unreadable.
+
+    Nothing here writes: the head persists no session state at all (the tail does, at S2),
+    and D14 already forbids that write on a dry run. The guarantee is asserted by
+    `TestHarnessInjectionsG8::test_the_injected_state_is_never_written_back`.
+    """
+    present = _harness_keys_present(envelope)
+    if not ({"previous_conversation_state", "referenced_result_set"} & set(present)):
+        return session_block
+    session_vars = dict(jsc.get(session_block, "session_vars") or {})
+    if "previous_conversation_state" in present:
+        session_vars["variables"] = _harness_value(envelope, "previous_conversation_state")
+    if "referenced_result_set" in present:
+        session_vars["referenced_result_set"] = _harness_value(envelope, "referenced_result_set")
+    return {**session_block, "session_vars": session_vars}
+
+
 def _pending_kind(variables: dict[str, Any]) -> str | None:
     """R3: the persisted marker, read where the JS matched a frozen reply string."""
     pending = variables.get("pending")
@@ -501,6 +554,13 @@ def _run_stages(  # noqa: PLR0915
             respond_io_id=contact_respond_id,
             reply_to_id=_reply_to_message_id(envelope),
         )
+        # O2 / AC-112: honoured on a DRY RUN, ignored on a live envelope. The ignored list
+        # is recorded below rather than dropped, because a harness envelope that reached a
+        # real customer would otherwise answer them from a mock in silence.
+        harness_present = _harness_keys_present(envelope)
+        harness_ignored: list[str] = [] if dry_run else harness_present
+        if dry_run:
+            session_block = _inject_harness_session(session_block, envelope)
         variables = jsc.get(jsc.get(session_block, "session_vars"), "variables") or {}
         referenced_result_set = jsc.get(
             jsc.get(session_block, "session_vars"), "referenced_result_set"
@@ -517,6 +577,9 @@ def _run_stages(  # noqa: PLR0915
             "remembered_keys": len(variables),
             "quoted_a_message": _reply_to_message_id(envelope) is not None,
             "dry_run": dry_run,
+            # ALWAYS present, empty list included: a reader must never have to tell
+            # "no harness keys" from "this build does not report them".
+            "harness_keys_ignored": harness_ignored,
         },
         raw={"session_vars": session_block},
     )
@@ -534,8 +597,18 @@ def _run_stages(  # noqa: PLR0915
         latest_user_message=latest_user_message,
         pending_kind=_pending_kind(variables),
     )
+    # G6: a dry run may supply the emission instead of paying for it. The mock goes
+    # through the SAME `post_process` + `suggest_follow_up` the real parse takes, so a
+    # harness turn routes off DERIVED state and exercises the code under test rather than
+    # whatever the harness happened to type. A mock that is not a parser emission raises
+    # `ParserOutputError` from `post_process` and lands on the failed-`understood` arm
+    # below, exactly as a malformed model answer does (R5 / H44).
+    parser_bypassed = dry_run and "mock_reformulator_output" in harness_present
     try:
-        parser_raw = parser.parse(parser_config, user_block)
+        if parser_bypassed:
+            parser_raw = _harness_value(envelope, "mock_reformulator_output")
+        else:
+            parser_raw = parser.parse(parser_config, user_block)
         parse_block = post_process({"output": parser_raw}, {}, parent_input)
         parse_block = suggest_follow_up(parse_block, parent_input)
     except (parser.ParserError, ParserOutputError) as exc:
@@ -566,14 +639,24 @@ def _run_stages(  # noqa: PLR0915
     qf = parse_block.get("output") or {}
     turn_trace.record(
         "understood",
-        summary=trace_mod.understood_summary(qf),
-        why="The parser is the only step that reads the customer's words; everything after it works on structured state.",
+        summary=(
+            "Parser bypassed by harness."
+            if parser_bypassed
+            else trace_mod.understood_summary(qf)
+        ),
+        why=(
+            "A test envelope supplied the parser's answer, so no model was asked; "
+            "everything after this point ran normally."
+            if parser_bypassed
+            else "The parser is the only step that reads the customer's words; everything after it works on structured state."
+        ),
         facts={
             "message_type": qf.get("message_type"),
             "domain": qf.get("domain_hint"),
             "intent": qf.get("intent_hint"),
             "entities": len(qf.get("entities") or []),
             "prompt_version": parser_config.prompt_version,
+            "parser_bypassed": parser_bypassed,
         },
         raw={"parser_raw": parse_block.get("_parser_raw"), "derived": qf},
     )
