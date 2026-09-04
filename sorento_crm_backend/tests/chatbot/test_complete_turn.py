@@ -27,12 +27,13 @@ import pytest
 from sqlalchemy import text
 
 import app.main  # noqa: F401  isort:skip - registers every model before any query
-from app.main import app
-from app.dependencies import get_db
 from app.models.chatbot_turn import ChatbotTurn
 from app.services.chatbot import engine as engine_mod
-from app.services.chatbot.contracts import Envelope
 from app.services.chatbot.head import parser as parser_mod
+# The endpoint fixtures are REUSED, not rebuilt: `api_key` issues a real integration key
+# whose role holds exactly `integration.chat_turn.submit`, and `client` overrides
+# `get_db` onto the blank schema. A second copy would be a second thing to keep in step
+# with the auth chain.
 from tests.chatbot.test_chat_turn_endpoint import api_key, client  # noqa: F401 - fixtures
 from tests.chatbot.test_engine import CONTACT_ID, _envelope, _parser_output
 

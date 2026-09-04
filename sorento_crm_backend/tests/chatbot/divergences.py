@@ -65,15 +65,10 @@ DIVERGENCES: list[Divergence] = [
 ]
 
 
-# World-level deltas: session keys a WORLD is allowed to differ on, per world id, with
-# the reason. Deliberately per-world and per-KEY rather than a blanket skip - a world that
-# is allowed to differ everywhere proves nothing, and the point of a world is that the
-# wiring produced the same reply and the same memory as the execution it was derived from.
-#
-# `pending` is dropped for every world without an entry here: it is the R3 marker the JS
-# had no equivalent of, already registered as a field-scoped divergence for the node
-# replay above.
-WORLD_DELTAS: dict[str, tuple[str, ...]] = {}
+# World-level allowances live in `tests/chatbot/worlds.py`, not here, and there are
+# exactly two of them (`pending` and `dym_offer.id`). A world that differs anywhere else
+# is either a defect or a NAMED body difference, and a body difference SKIPS the world
+# rather than excusing a key - so there is no per-world delta table to keep honest.
 
 
 def find(node: str, fixture: str) -> Divergence | None:
