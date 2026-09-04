@@ -732,7 +732,9 @@ def post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  # 
                 and _ce_key(e) not in ce_dym_picked_keys
             ]
             if len(same_hint) == 1:
-                idx = prior.index(same_hint[0])
+                # `indexOf` is IDENTITY in JS. `list.index` compares by equality, so two
+                # entities that happen to be equal dicts would both resolve to the first.
+                idx = next(i for i, e in enumerate(prior) if e is same_hint[0])
 
         # FORCE the type from the candidate record - entity_type is the PICKED candidate's
         # resolved type; for_hint describes the SOURCE token. Never trust the LLM hint here.
@@ -1888,13 +1890,14 @@ def post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  # 
         llm_new_query = (
             jsc.truthy(o.get("domain_hint")) or o.get("message_type") == "business_query"
         ) and o.get("is_affirmative") is not True
-        digit_in_entity = any(
-            jsc.truthy(e)
-            and jsc.truthy(jsc.get(e, "current_message"))
-            and any(
-                re.search(r"(^|\D)" + re.escape(jsc.js_string(n)) + r"(\D|$)", jsc.lower_or_empty(jsc.get(e, "raw")) or jsc.js_string(jsc.get(e, "raw")))
-                for n in pos
+        def _digit_in_raw(e: Any) -> bool:
+            raw = jsc.js_string(jsc.get(e, "raw") if jsc.truthy(jsc.get(e, "raw")) else "")
+            return any(
+                re.search(r"(^|\D)" + re.escape(jsc.js_string(n)) + r"(\D|$)", raw) for n in pos
             )
+
+        digit_in_entity = any(
+            jsc.truthy(e) and jsc.truthy(jsc.get(e, "current_message")) and _digit_in_raw(e)
             for e in jsc.array(o.get("entities"))
         )
         if not strict and pos and llm_new_query and digit_in_entity:
