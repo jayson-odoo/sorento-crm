@@ -120,6 +120,26 @@ NODE_SLUGS: dict[str, tuple[str, ...]] = {
     # arm's own capture. It reuses the `resolve-exit-*` directories rather than having one
     # of its own, so no fixture is invented - see `sub_run_fixtures()`.
     "sub-resolve-and-gate": (),
+    # S6b - `sub-fetch-results`'s own nodes (AC-605, AC-606). Captured under ONE slug,
+    # `sub-fetch-results-rs`. `tier-gate` / `build-ctx` / `build-ctx-resolved` ALSO have
+    # directories inside this slug (the RS-8 name-preserving stand-ins the S6a comment
+    # above already excludes for the same reason: their input is the sub's own trigger and
+    # their expected is a re-emission, not that node's real body), so they are deliberately
+    # NOT re-registered here under this slug.
+    # The 5 Sep batch-3 run added `sub-fetch-results-live` (the LIVE sub, 96 files) beside
+    # the older `-rs` fork, and `sub-get-results` / `sub-get-rag-live` for the two subs the
+    # fetch step calls.
+    "tool-filter": ("sub-fetch-results-rs", "sub-fetch-results-live"),
+    "tier-probe-plan": ("sub-fetch-results-rs", "sub-fetch-results-live"),
+    "tier-probe-collect": ("sub-fetch-results-rs", "sub-fetch-results-live"),
+    "fetch-result": ("sub-fetch-results-rs", "sub-fetch-results-live"),
+    "entity-ids-transformer": ("sub-get-results",),
+    "output-structurer": ("sub-get-results",),
+    # `sub-get-rag`'s two Code nodes, under the names n8n gave them. Ported for REPLAY: in
+    # process there is no SQL to bind parameters for, and the collapse is what makes
+    # `tool-filter`'s max-similarity pick meaningful.
+    "Code_in_JavaScript": ("sub-get-rag-live",),
+    "Code_in_JavaScript1": ("sub-get-rag-live",),
     # S2, the tail. `clone-sub-output` is the RS-9 split-out sub; the two spine slugs
     # captured the same node names before and after the split, which is why the loader
     # unions them and prefixes each id with its slug.
@@ -145,26 +165,6 @@ NODE_SLUGS: dict[str, tuple[str, ...]] = {
         "live-spine-sorento-consume-main",
         "clone-spine-RS",
     ),
-    # S6b - `sub-fetch-results`'s own nodes (AC-605, AC-606). Captured under ONE slug,
-    # `sub-fetch-results-rs`. `tier-gate` / `build-ctx` / `build-ctx-resolved` ALSO have
-    # directories inside this slug (the RS-8 name-preserving stand-ins the S6a comment
-    # above already excludes for the same reason: their input is the sub's own trigger and
-    # their expected is a re-emission, not that node's real body), so they are deliberately
-    # NOT re-registered here under this slug.
-    # The 5 Sep batch-3 run added `sub-fetch-results-live` (the LIVE sub, 96 files) beside
-    # the older `-rs` fork, and `sub-get-results` / `sub-get-rag-live` for the two subs the
-    # fetch step calls.
-    "tool-filter": ("sub-fetch-results-rs", "sub-fetch-results-live"),
-    "tier-probe-plan": ("sub-fetch-results-rs", "sub-fetch-results-live"),
-    "tier-probe-collect": ("sub-fetch-results-rs", "sub-fetch-results-live"),
-    "fetch-result": ("sub-fetch-results-rs", "sub-fetch-results-live"),
-    "entity-ids-transformer": ("sub-get-results",),
-    "output-structurer": ("sub-get-results",),
-    # `sub-get-rag`'s two Code nodes, under the names n8n gave them. Ported for REPLAY: in
-    # process there is no SQL to bind parameters for, and the collapse is what makes
-    # `tool-filter`'s max-similarity pick meaningful.
-    "Code_in_JavaScript": ("sub-get-rag-live",),
-    "Code_in_JavaScript1": ("sub-get-rag-live",),
 }
 
 # Output keys the SHIPPING node bodies emit that the body an OLD capture was taken

@@ -828,6 +828,71 @@ def _run_stages(  # noqa: PLR0915
                     },
                     raw={"resolve_gate": payload},
                 )
+
+                # -- S6b: the fetch step, on the `continue` exit only ---------- #
+                # The other three exits are answers in their own right: `access_ask`
+                # needs a tier from the customer, `not_found` and `offer` have nothing
+                # to look up. Only `continue` means "the gate is satisfied, go read".
+                if payload.get("_exit_kind") == "continue":
+                    try:
+                        fetch_fragment = business.run_fetch(
+                            payload,
+                            services=business_services.fetch_services(db),
+                            dry_run=dry_run,
+                            space_id=business_services.fetch_space_id(db),
+                        )
+                    except Exception as fetch_error:  # noqa: BLE001 - shadow, like above
+                        logger.exception("chatbot turn %s: fetch step failed", turn_id)
+                        lane_error_text = f"{type(fetch_error).__name__}: {fetch_error}"
+                        turn_trace.record(
+                            "looked_up",
+                            status="failed",
+                            summary="Could not look up an answer.",
+                            why="The fetch step the business lane depends on did not answer.",
+                            facts={"lane": "business", "step": "fetch"},
+                            error=lane_error_text,
+                            raw=None,
+                        )
+                    else:
+                        delegate_payload = {**payload, "fetch": fetch_fragment.get("fetch")}
+                        if fetch_fragment.get("kind") == "error":
+                            # H11 and every other fetch failure reach the trace and a
+                            # reply, instead of a turn that goes quiet. `delegate` is
+                            # unchanged: n8n still answers it while the lane is shadow.
+                            lane_error_text = jsc.js_string(fetch_fragment.get("error"))
+                            turn_trace.record(
+                                "looked_up",
+                                status="failed",
+                                summary="Found nothing to look the answer up with.",
+                                why=(
+                                    "No tool matched the question, or the read the answer "
+                                    "needs did not come back."
+                                ),
+                                facts={
+                                    "arm": fetch_fragment.get("_fetch_arm"),
+                                    "outcome": fetch_fragment.get("outcome"),
+                                },
+                                error=lane_error_text,
+                                raw={"fetch": fetch_fragment.get("fetch")},
+                            )
+                        else:
+                            turn_trace.record(
+                                "looked_up",
+                                summary=trace_mod.looked_up_summary(fetch_fragment)
+                                if hasattr(trace_mod, "looked_up_summary")
+                                else "Looked the answer up.",
+                                why=(
+                                    "One tool is chosen per turn and read once; the answer "
+                                    "is rendered from what it returned."
+                                ),
+                                facts={
+                                    "arm": fetch_fragment.get("_fetch_arm"),
+                                    "tool": (
+                                        (fetch_fragment.get("fetch") or {}).get("tool") or {}
+                                    ).get("name"),
+                                },
+                                raw={"fetch": fetch_fragment.get("fetch")},
+                            )
             stage[0] = "routed"
 
         # S6a review S1: a SHADOW lane failure must be findable without reading the trace

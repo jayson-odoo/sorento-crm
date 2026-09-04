@@ -66,7 +66,7 @@ class TestS6aDelegateSeamFlagGating:
             "production_services",
             lambda db, *, space_id=None: bundle,
         )
-        monkeypatch.setattr(engine_mod, "decide", lambda ctx, *, stock_denial_enabled: (branch_kind, {}))
+        monkeypatch.setattr(engine_mod, "decide", lambda *args, **kwargs: (branch_kind, {}))
         stub_parser()
         stub_access()
 
@@ -90,7 +90,7 @@ class TestS6aDelegateSeamFlagGating:
             "production_services",
             lambda db, *, space_id=None: bundle,
         )
-        monkeypatch.setattr(engine_mod, "decide", lambda ctx, *, stock_denial_enabled: (branch_kind, {}))
+        monkeypatch.setattr(engine_mod, "decide", lambda *args, **kwargs: (branch_kind, {}))
         stub_parser()
         stub_access()
 
@@ -128,7 +128,7 @@ class TestS6aDelegateSeamFlagGating:
         """With the flag off, `delegate` is n8n's own tag - never overwritten to
         `business_query`, which is only what the LANE resumes on once it runs."""
         monkeypatch.setattr(settings, "chatbot_business_lane_enabled", False)
-        monkeypatch.setattr(engine_mod, "decide", lambda ctx, *, stock_denial_enabled: (branch_kind, {}))
+        monkeypatch.setattr(engine_mod, "decide", lambda *args, **kwargs: (branch_kind, {}))
         stub_parser()
         stub_access()
 

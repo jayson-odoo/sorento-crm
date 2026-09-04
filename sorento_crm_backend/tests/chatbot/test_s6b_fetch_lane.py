@@ -295,8 +295,9 @@ def _replay(fixture: _corpus.Fixture) -> None:
 )
 def test_entity_ids_transformer_replay_placeholder_tool_filter_replay(fixture) -> None:
     """AC-606: `tool-filter`, `tier-probe-plan`, `tier-probe-collect` and `fetch-result`
-    against every captured `sub-fetch-results-rs` execution (16 captures, gate 0's floor is
-    5 per branch and is NOT yet met - see the note at the bottom of this file).
+    against every captured `sub-fetch-results-rs` execution (16 captures; a vendored subset
+    of these now exists too, see `test_gate_0_vendored_subset_is_present` below - AC-008's
+    "5 per branch" floor is a separate, per-branch count that test does not verify).
 
     `entity-ids-transformer` and `output-structurer` have NO captured `runData` fixtures
     anywhere in the corpus today (checked: `tests/fixtures/nodes/{entity-ids-transformer,
@@ -311,16 +312,23 @@ def test_entity_ids_transformer_replay_placeholder_tool_filter_replay(fixture) -
 
 
 @pytest.mark.parametrize("node", _S6B_NODES)
-def test_gate_0_vendored_subset_is_missing(node: str) -> None:
-    """Documents the gap rather than hiding it: AC-008 requires a vendored subset under
-    `tests/fixtures/chatbot/nodes/<node>/` before this slice's PR opens (gate 0), and none
-    exists yet for the four S6b nodes. This is a XFAIL, not a skip, so it flips to failing
-    (and gets noticed) the moment someone vendors a subset without also fixing this test's
-    own expectation - a silently-passing "TODO" test is the thing AC-008 exists to prevent.
+def test_gate_0_vendored_subset_is_present(node: str) -> None:
+    """AC-008 requires a vendored subset under `tests/fixtures/chatbot/nodes/<node>/` before
+    this slice's PR opens (gate 0). This test used to assert the OPPOSITE - it was written as
+    a tripwire before the port existed, deliberately failing the moment a vendored subset
+    appeared, so the gap could not silently stay unfixed. The coder has since vendored one
+    fixture per node for all four S6b replay nodes and the tripwire fired as designed; it is
+    inverted here to the steady-state assertion this suite should carry from now on.
+
+    This only checks PRESENCE, not the AC-008 floor - "at least 5 real captures per branch of
+    every branch the slice ports" is a per-branch count this test does not attempt to verify
+    (some nodes here have only one or two vendored fixtures today; see the corpus's own
+    `scripts/chatbot_fixture_coverage.py` / `COVERAGE.md` for the branch-level count that
+    actually gates a merge).
     """
-    assert not _corpus.vendored(node), (
-        f"a vendored subset now exists for {node} - update this test (and, per AC-008, "
-        "confirm it covers >= 5 real captures per branch before treating gate 0 as met)"
+    assert _corpus.vendored(node), (
+        f"no vendored fixtures for {node} under tests/fixtures/chatbot/nodes/{node}/ - the "
+        "always-on replay gate would pass by having nothing to check"
     )
 
 
@@ -369,7 +377,9 @@ class TestEntityIdsTransformer:
     No `runData` fixture exists for this node in the corpus (checked directly), so these are
     NOT graded against a real capture - they assert the structural rules the JS states in its
     own comments, so the port has something to satisfy before the corpus catches up (AC-008
-    tracks the capture gap separately, in `test_gate_0_vendored_subset_is_missing` above).
+    tracks the capture gap separately, in `test_gate_0_vendored_subset_is_present` above -
+    which only covers the four replay nodes; `entity-ids-transformer` and `output-structurer`
+    have no vendored fixtures at all yet).
     """
 
     def test_type_to_param_maps_product_and_dedupes_uuids(self):
@@ -478,16 +488,24 @@ class TestOutputStructurer:
             "own copy of the sentinel check (H46)"
         )
 
+        # `output_structurer`'s `result` argument is the MCP tool's RENDER ENVELOPE (what
+        # `_find_payload` accepts: a top-level `items` list, `portal_url`, or `token` - or
+        # those same three nested under `content[].text`, since all 20 real captures arrive
+        # wrapped as `{"content": [...]}`). It is NOT shaped like this function's own return
+        # value - the earlier version of this fixture passed `{"response", "answers", ...}`,
+        # which `_find_payload` does not recognise, so `_extract_envelope` fell through to
+        # its empty envelope and no denial note could ever fire either way. Reshaped to the
+        # real input: a top-level `items` list plus `result_type: "incoming_stock"` (so the
+        # clearance-envelope gate that guards field-level denial actually opens).
         denied_result = {
-            "response": "x",
-            "response_intro": "x",
-            "answers": [
+            "result_type": "incoming_stock",
+            "intro": "Here is what I found.",
+            "items": [
                 {
                     "title": "row",
                     "fields": [{"key": "product_code", "label": "Product Code", "value": "SRTWB7096"}],
                 }
             ],
-            "attachments": [],
             "has_result": True,
             "field_access": {"denied": [{"field": "eta_delay_date", "label": "ETA Delay"}]},
         }
