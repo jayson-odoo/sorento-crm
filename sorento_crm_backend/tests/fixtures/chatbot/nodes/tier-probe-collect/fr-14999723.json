@@ -1,0 +1,3970 @@
+{
+  "source": {
+    "execution_id": "14999723",
+    "workflow_id": "WfZ8UCTO9bsrvilO",
+    "workflow_version": "aad2e709-e3e3-4b07-9dcb-85225d022daa",
+    "node": "tier-probe-collect",
+    "captured_at": "2026-09-04T20:05:50+00:00",
+    "expected_from": "runData",
+    "dedupe_sig": "e9f3114f3321083110abe44daf463bc73f3a3c4d8f624fac527955bbce8f4c17"
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "ctx_resolved": {
+            "match_mode": "and",
+            "tokens": [
+              "Cgb1032b"
+            ],
+            "elapsed_ms": 77.92,
+            "intersection": [
+              {
+                "entity_type": "product",
+                "canonical_code": "CGB1032B",
+                "uuid": "3dccf7b0-e08a-406a-8092-b2f54ccb9cc4",
+                "match_field": "product_code",
+                "match_tier": "and",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "product_name": "CGB1032B",
+                  "is_active": true,
+                  "brand": {
+                    "brand_id": "9f1277f0-42fa-442c-978f-ab5f41e72a20",
+                    "brand_code": "CABANA",
+                    "brand_name": "CABANA"
+                  }
+                }
+              },
+              {
+                "entity_type": "product",
+                "canonical_code": "CGB1032B-NL",
+                "uuid": "da7c962f-d88b-4077-a22b-abc5b5e80b20",
+                "match_field": "product_code",
+                "match_tier": "and",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "product_name": "CGB1032B-NL",
+                  "is_active": true,
+                  "brand": {
+                    "brand_id": "f2ca6703-3aff-4431-87a2-6aa5e86eb747",
+                    "brand_code": "NO LOGO",
+                    "brand_name": "NO LOGO"
+                  }
+                }
+              }
+            ],
+            "by_entity_type": {
+              "product": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "CGB1032B",
+                  "uuid": "3dccf7b0-e08a-406a-8092-b2f54ccb9cc4",
+                  "match_field": "product_code",
+                  "match_tier": "and",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "product_name": "CGB1032B",
+                    "is_active": true,
+                    "brand": {
+                      "brand_id": "9f1277f0-42fa-442c-978f-ab5f41e72a20",
+                      "brand_code": "CABANA",
+                      "brand_name": "CABANA"
+                    }
+                  }
+                },
+                {
+                  "entity_type": "product",
+                  "canonical_code": "CGB1032B-NL",
+                  "uuid": "da7c962f-d88b-4077-a22b-abc5b5e80b20",
+                  "match_field": "product_code",
+                  "match_tier": "and",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "product_name": "CGB1032B-NL",
+                    "is_active": true,
+                    "brand": {
+                      "brand_id": "f2ca6703-3aff-4431-87a2-6aa5e86eb747",
+                      "brand_code": "NO LOGO",
+                      "brand_name": "NO LOGO"
+                    }
+                  }
+                }
+              ]
+            },
+            "empty": false,
+            "unresolved_tokens": [],
+            "alternatives": [],
+            "token_coverage": [
+              {
+                "token": "Cgb1032b",
+                "match_semantics": "max_coverage",
+                "coverage": [
+                  {
+                    "entity_type": "product",
+                    "matched_words": [
+                      "Cgb1032b"
+                    ],
+                    "unmatched_words": [],
+                    "truncated": false
+                  }
+                ]
+              }
+            ],
+            "gate_passed": true,
+            "require_specific": false,
+            "specific_options": [],
+            "resolved_company": null,
+            "company_team": null,
+            "resolved_companies": [
+              "cabana",
+              "sorento"
+            ],
+            "routing_brand": null,
+            "routing_brand_source": null,
+            "routing_companies": [
+              {
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "brand_code": null,
+                "codes": [
+                  "CGB1032B",
+                  "CGB1032B-NL"
+                ],
+                "labels": [
+                  "CGB1032B",
+                  "CGB1032B-NL"
+                ]
+              }
+            ],
+            "routing_company": "00000000-0000-0000-0000-000000000001",
+            "access_denied_levels": [],
+            "brand_gate_empty": false,
+            "brand_unheld": false,
+            "access_notice": "",
+            "gate_reason": "ok",
+            "gate_clarification": "",
+            "compatible_entities": [
+              {
+                "uuid": "3dccf7b0-e08a-406a-8092-b2f54ccb9cc4",
+                "entity_type": "product",
+                "code": "CGB1032B"
+              },
+              {
+                "uuid": "da7c962f-d88b-4077-a22b-abc5b5e80b20",
+                "entity_type": "product",
+                "code": "CGB1032B-NL"
+              }
+            ],
+            "gate_debug": {
+              "domain": "promotion",
+              "allowed_lookup": [
+                "product",
+                "promotion",
+                "category",
+                "brand"
+              ],
+              "entities_count": 2
+            },
+            "ctx": {
+              "contact": {
+                "id": 900000006,
+                "firstName": "Person 7",
+                "lastName": "Person 8",
+                "phone": "+60100000003",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "locale": null,
+                "countryCode": "MY",
+                "status": "open",
+                "isBlocked": false,
+                "custom_fields": [
+                  {
+                    "name": "enquiry_type",
+                    "value": null
+                  },
+                  {
+                    "name": "user_type",
+                    "value": null
+                  },
+                  {
+                    "name": "complaint_id",
+                    "value": null
+                  },
+                  {
+                    "name": "is_allowed_stock",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_human_intervened",
+                    "value": "false"
+                  },
+                  {
+                    "name": "backend_id",
+                    "value": "https://fe-sorento.foundryx.my/user-management/contacts/b0d8b35b-95f8-418f-a5a2-991b04a72ea7"
+                  },
+                  {
+                    "name": "is_allowed_ai",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_allowed_voice",
+                    "value": null
+                  }
+                ],
+                "tags": [
+                  "imported_20260627_150636"
+                ],
+                "assignee": null,
+                "lifecycle": null,
+                "created_at": 1782546255
+              },
+              "text": {
+                "event_type": "message.received",
+                "event_id": "daccd3b7-569f-4682-ba09-2998eca8cc60",
+                "contact": {
+                  "id": 900000006,
+                  "firstName": "Person 7",
+                  "lastName": "Person 8",
+                  "phone": "+60100000003",
+                  "email": null,
+                  "language": null,
+                  "profilePic": null,
+                  "countryCode": "MY",
+                  "status": "open",
+                  "assignee": {
+                    "id": null,
+                    "firstName": null,
+                    "lastName": null,
+                    "email": null
+                  },
+                  "created_at": 1782546255
+                },
+                "message": {
+                  "messageId": 1788411753000000,
+                  "channelMessageId": "wamid.HBgLNjAxNDkyODk2ODcVAgASGBQzQTFCRkNDNjlBMUJFNDVDRjY5RgA=",
+                  "contactId": 900000006,
+                  "channelId": 453209,
+                  "traffic": "incoming",
+                  "timestamp": 1788411753000,
+                  "message": {
+                    "type": "text",
+                    "text": "Cgb1032b promotion"
+                  }
+                },
+                "channel": {
+                  "id": 453209,
+                  "name": "Internal (+60 11-1673 1179)",
+                  "source": "whatsapp_business",
+                  "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 10\"},\"wa_id\":\"60100000003\",\"user_id\":\"MY.900000007\",\"firstName\":\"Person 7\",\"lastName\":\"Person 9\"}}",
+                  "created_at": 1767682908
+                },
+                "sender": {
+                  "source": "contact",
+                  "userId": null,
+                  "teamId": null,
+                  "workflowId": null,
+                  "broadcastHistoryId": null
+                }
+              },
+              "session": {
+                "respond_io_id": "900000006",
+                "session_vars": {
+                  "variables": {
+                    "routing": {
+                      "suggested_team": "warehouse",
+                      "suggested_agent": "general_enquiries"
+                    },
+                    "entities": [
+                      {
+                        "raw": "7741",
+                        "hint": "product",
+                        "confident": true,
+                        "canonical_code": null,
+                        "current_message": true
+                      }
+                    ],
+                    "ideation": null,
+                    "response": "Previous turn (inventory): returned 12 records",
+                    "date_mode": null,
+                    "dym_offer": null,
+                    "user_goal": "trying to check stock for 7741",
+                    "escalation": {
+                      "is_escalation_confirmation": false
+                    },
+                    "match_mode": "and",
+                    "domain_hint": "inventory",
+                    "intent_hint": "check_stock",
+                    "message_type": "business_query",
+                    "query_brands": [],
+                    "access_levels": [],
+                    "routing_brand": "mocha",
+                    "contains_flyer": false,
+                    "dym_candidates": [],
+                    "date_filter_end": null,
+                    "last_result_set": [
+                      {
+                        "idx": 1,
+                        "uuid": null,
+                        "label": "MCM7741",
+                        "product": null,
+                        "filename": null,
+                        "entity_type": null,
+                        "attachment_type": null
+                      },
+                      {
+                        "idx": 2,
+                        "uuid": null,
+                        "label": "MCM7741",
+                        "product": null,
+                        "filename": null,
+                        "entity_type": null,
+                        "attachment_type": null
+                      },
+                      {
+                        "idx": 3,
+                        "uuid": null,
+                        "label": "MCM7741",
+                        "product": null,
+                        "filename": null,
+                        "entity_type": null,
+                        "attachment_type": null
+                      },
+                      {
+                        "idx": 4,
+                        "uuid": null,
+                        "label": "MCM7741",
+                        "product": null,
+                        "filename": null,
+                        "entity_type": null,
+                        "attachment_type": null
+                      },
+                      {
+                        "idx": 5,
+                        "uuid": null,
+                        "label": "MCM7741-BL",
+                        "product": null,
+                        "filename": null,
+                        "entity_type": null,
+                        "attachment_type": null
+                      },
+                      {
+                        "idx": 6,
+                        "uuid": null,
+                        "label": "MCM7741-BL",
+                        "product": null,
+                        "filename": null,
+                        "entity_type": null,
+                        "attachment_type": null
+                      },
+                      {
+                        "idx": 7,
+                        "uuid": null,
+                        "label": "MCM7741-GD",
+                        "product": null,
+                        "filename": null,
+                        "entity_type": null,
+                        "attachment_type": null
+                      },
+                      {
+                        "idx": 8,
+                        "uuid": null,
+                        "label": "MCM7741-GD",
+                        "product": null,
+                        "filename": null,
+                        "entity_type": null,
+                        "attachment_type": null
+                      },
+                      {
+                        "idx": 9,
+                        "uuid": null,
+                        "label": "MCM7741-GM",
+                        "product": null,
+                        "filename": null,
+                        "entity_type": null,
+                        "attachment_type": null
+                      },
+                      {
+                        "idx": 10,
+                        "uuid": null,
+                        "label": "MCM7741-GM",
+                        "product": null,
+                        "filename": null,
+                        "entity_type": null,
+                        "attachment_type": null
+                      },
+                      {
+                        "idx": 11,
+                        "uuid": null,
+                        "label": "MCM7741-RG",
+                        "product": null,
+                        "filename": null,
+                        "entity_type": null,
+                        "attachment_type": null
+                      },
+                      {
+                        "idx": 12,
+                        "uuid": null,
+                        "label": "MCM7741-RG",
+                        "product": null,
+                        "filename": null,
+                        "entity_type": null,
+                        "attachment_type": null
+                      }
+                    ],
+                    "routing_company": null,
+                    "date_filter_start": null,
+                    "routing_companies": [
+                      {
+                        "codes": [
+                          "MCM7741-BL",
+                          "MCM7741-GD",
+                          "MCM7741-GM",
+                          "MCM7741",
+                          "MCM7741-RG"
+                        ],
+                        "labels": [
+                          "MCM7741-BL",
+                          "MCM7741-GD",
+                          "MCM7741-GM",
+                          "MCM7741",
+                          "MCM7741-RG"
+                        ],
+                        "brand_code": null,
+                        "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                        "company_name": "Mocha"
+                      },
+                      {
+                        "codes": [
+                          "MCM7741-GM",
+                          "MCM7741"
+                        ],
+                        "labels": [
+                          "MCM7741-GM",
+                          "MCM7741"
+                        ],
+                        "brand_code": "mocha",
+                        "company_id": "00000000-0000-0000-0000-000000000001",
+                        "company_name": "Sorento"
+                      }
+                    ],
+                    "selection_context": null,
+                    "routing_roster_plan": null,
+                    "requested_attributes": [],
+                    "routing_brand_source": "resolved"
+                  },
+                  "user_response": "Stock details found for the requested products.\n\n1. *Company:* Sorento\n*Product Code:* MCM7741\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 19\n\n2. *Company:* Sorento\n*Product Code:* MCM7741\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-AM\n*Quantity On Hand:* 13\n\n3. *Company:* Mocha\n*Product Code:* MCM7741\n*Warehouse:* HQ\n*System Location:* HQ\n*Quantity On Hand:* 0\n\n4. *Company:* Mocha\n*Product Code:* MCM7741\n*Warehouse:* MERU\n*System Location:* MOCHA-WH\n*Quantity On Hand:* 1\n\n5. *Company:* Mocha\n*Product Code:* MCM7741-BL\n*Warehouse:* HQ\n*System Location:* HQ\n*Quantity On Hand:* 0\n\n6. *Company:* Mocha\n*Product Code:* MCM7741-BL\n*Warehouse:* MERU\n*System Location:* MOCHA-WH\n*Quantity On Hand:* 0\n\n7. *Company:* Mocha\n*Product Code:* MCM7741-GD\n*Warehouse:* HQ\n*System Location:* HQ\n*Quantity On Hand:* 50\n\n8. *Company:* Mocha\n*Product Code:* MCM7741-GD\n*Warehouse:* MERU\n*System Location:* MOCHA-WH\n*Quantity On Hand:* 68\n\n9. *Company:* Mocha\n*Product Code:* MCM7741-GM\n*Warehouse:* HQ\n*System Location:* HQ\n*Quantity On Hand:* 100\n\n10. *Company:* Mocha\n*Product Code:* MCM7741-GM\n*Warehouse:* MERU\n*System Location:* MOCHA-WH\n*Quantity On Hand:* 80\n\n11. *Company:* Mocha\n*Product Code:* MCM7741-RG\n*Warehouse:* HQ\n*System Location:* HQ\n*Quantity On Hand:* 50\n\n12. *Company:* Mocha\n*Product Code:* MCM7741-RG\n*Warehouse:* MERU\n*System Location:* MOCHA-WH\n*Quantity On Hand:* 57\n\n_Data last updated: 03/09/2026 11:31:14_"
+                }
+              },
+              "parse": {
+                "output": {
+                  "message_type": "business_query",
+                  "intent_hint": "check_promotion",
+                  "domain_hint": "promotion",
+                  "scope_intent": "specific",
+                  "is_affirmative": null,
+                  "user_goal": "trying to check the promotion for Cgb1032b",
+                  "access_levels": [],
+                  "broaden_axis": null,
+                  "date_mode": null,
+                  "date_filter_start": null,
+                  "date_filter_end": null,
+                  "match_mode": "and",
+                  "demand_qty": null,
+                  "entities": [
+                    {
+                      "raw": "Cgb1032b",
+                      "hint": "product",
+                      "canonical_code": null,
+                      "current_message": true,
+                      "confident": true
+                    }
+                  ],
+                  "entity_op": "replace_combine",
+                  "scope_exclusive": false,
+                  "requested_attributes": [],
+                  "contains_flyer": false,
+                  "reference_positions": [],
+                  "reference_target": null,
+                  "person_mention": null,
+                  "is_active": null,
+                  "order_status": null,
+                  "correction": false,
+                  "routing": {
+                    "suggested_team": "marketing_promotion",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "domain_signal_source": "intent_explicit",
+                  "scope_exclusive_applied": false,
+                  "entity_op_applied": "replace_combine",
+                  "query_brands": [],
+                  "entities_filtered": false,
+                  "entities_emptied_by_filter": false
+                },
+                "_parser_raw": {
+                  "message_type": "business_query",
+                  "intent_hint": "check_promotion",
+                  "domain_hint": "promotion",
+                  "scope_intent": "specific",
+                  "is_affirmative": null,
+                  "user_goal": "trying to check the promotion for Cgb1032b",
+                  "access_levels": [],
+                  "broaden_axis": null,
+                  "date_mode": null,
+                  "date_filter_start": null,
+                  "date_filter_end": null,
+                  "match_mode": "and",
+                  "demand_qty": null,
+                  "entities": [
+                    {
+                      "raw": "Cgb1032b",
+                      "hint": "product",
+                      "canonical_code": null,
+                      "current_message": true,
+                      "confident": true
+                    }
+                  ],
+                  "entity_op": "replace_combine",
+                  "scope_exclusive": false,
+                  "requested_attributes": [],
+                  "contains_flyer": false,
+                  "reference_positions": [],
+                  "reference_target": null,
+                  "person_mention": null,
+                  "is_active": null,
+                  "order_status": null,
+                  "correction": false,
+                  "routing": {
+                    "suggested_team": "marketing_promotion",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "escalation": {
+                    "is_escalation_confirmation": false,
+                    "company_pick": null
+                  }
+                }
+              },
+              "access": {
+                "allowed": true,
+                "decision": "allow",
+                "agent_name": "General Enquiries",
+                "attributes": null,
+                "all_attributes_allowed": null
+              },
+              "media": null,
+              "resolved": {
+                "match_mode": "and",
+                "tokens": [
+                  "Cgb1032b"
+                ],
+                "elapsed_ms": 77.92,
+                "intersection": [
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "CGB1032B",
+                    "uuid": "3dccf7b0-e08a-406a-8092-b2f54ccb9cc4",
+                    "match_field": "product_code",
+                    "match_tier": "and",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento",
+                    "display": {
+                      "product_name": "CGB1032B",
+                      "is_active": true,
+                      "brand": {
+                        "brand_id": "9f1277f0-42fa-442c-978f-ab5f41e72a20",
+                        "brand_code": "CABANA",
+                        "brand_name": "CABANA"
+                      }
+                    }
+                  },
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "CGB1032B-NL",
+                    "uuid": "da7c962f-d88b-4077-a22b-abc5b5e80b20",
+                    "match_field": "product_code",
+                    "match_tier": "and",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento",
+                    "display": {
+                      "product_name": "CGB1032B-NL",
+                      "is_active": true,
+                      "brand": {
+                        "brand_id": "f2ca6703-3aff-4431-87a2-6aa5e86eb747",
+                        "brand_code": "NO LOGO",
+                        "brand_name": "NO LOGO"
+                      }
+                    }
+                  }
+                ],
+                "by_entity_type": {
+                  "product": [
+                    {
+                      "entity_type": "product",
+                      "canonical_code": "CGB1032B",
+                      "uuid": "3dccf7b0-e08a-406a-8092-b2f54ccb9cc4",
+                      "match_field": "product_code",
+                      "match_tier": "and",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento",
+                      "display": {
+                        "product_name": "CGB1032B",
+                        "is_active": true,
+                        "brand": {
+                          "brand_id": "9f1277f0-42fa-442c-978f-ab5f41e72a20",
+                          "brand_code": "CABANA",
+                          "brand_name": "CABANA"
+                        }
+                      }
+                    },
+                    {
+                      "entity_type": "product",
+                      "canonical_code": "CGB1032B-NL",
+                      "uuid": "da7c962f-d88b-4077-a22b-abc5b5e80b20",
+                      "match_field": "product_code",
+                      "match_tier": "and",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento",
+                      "display": {
+                        "product_name": "CGB1032B-NL",
+                        "is_active": true,
+                        "brand": {
+                          "brand_id": "f2ca6703-3aff-4431-87a2-6aa5e86eb747",
+                          "brand_code": "NO LOGO",
+                          "brand_name": "NO LOGO"
+                        }
+                      }
+                    }
+                  ]
+                },
+                "empty": false,
+                "unresolved_tokens": [],
+                "alternatives": [],
+                "token_coverage": [
+                  {
+                    "token": "Cgb1032b",
+                    "match_semantics": "max_coverage",
+                    "coverage": [
+                      {
+                        "entity_type": "product",
+                        "matched_words": [
+                          "Cgb1032b"
+                        ],
+                        "unmatched_words": [],
+                        "truncated": false
+                      }
+                    ]
+                  }
+                ]
+              },
+              "entities": {
+                "name": [
+                  "Sorento Office",
+                  "Sorento Dealer",
+                  "Mocha Dealer",
+                  "Mocha Office",
+                  "Cabana Office",
+                  "Cabana Dealer",
+                  "End User"
+                ]
+              },
+              "gate": {
+                "match_mode": "and",
+                "tokens": [
+                  "Cgb1032b"
+                ],
+                "elapsed_ms": 77.92,
+                "intersection": [
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "CGB1032B",
+                    "uuid": "3dccf7b0-e08a-406a-8092-b2f54ccb9cc4",
+                    "match_field": "product_code",
+                    "match_tier": "and",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento",
+                    "display": {
+                      "product_name": "CGB1032B",
+                      "is_active": true,
+                      "brand": {
+                        "brand_id": "9f1277f0-42fa-442c-978f-ab5f41e72a20",
+                        "brand_code": "CABANA",
+                        "brand_name": "CABANA"
+                      }
+                    }
+                  },
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "CGB1032B-NL",
+                    "uuid": "da7c962f-d88b-4077-a22b-abc5b5e80b20",
+                    "match_field": "product_code",
+                    "match_tier": "and",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento",
+                    "display": {
+                      "product_name": "CGB1032B-NL",
+                      "is_active": true,
+                      "brand": {
+                        "brand_id": "f2ca6703-3aff-4431-87a2-6aa5e86eb747",
+                        "brand_code": "NO LOGO",
+                        "brand_name": "NO LOGO"
+                      }
+                    }
+                  }
+                ],
+                "by_entity_type": {
+                  "product": [
+                    {
+                      "entity_type": "product",
+                      "canonical_code": "CGB1032B",
+                      "uuid": "3dccf7b0-e08a-406a-8092-b2f54ccb9cc4",
+                      "match_field": "product_code",
+                      "match_tier": "and",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento",
+                      "display": {
+                        "product_name": "CGB1032B",
+                        "is_active": true,
+                        "brand": {
+                          "brand_id": "9f1277f0-42fa-442c-978f-ab5f41e72a20",
+                          "brand_code": "CABANA",
+                          "brand_name": "CABANA"
+                        }
+                      }
+                    },
+                    {
+                      "entity_type": "product",
+                      "canonical_code": "CGB1032B-NL",
+                      "uuid": "da7c962f-d88b-4077-a22b-abc5b5e80b20",
+                      "match_field": "product_code",
+                      "match_tier": "and",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento",
+                      "display": {
+                        "product_name": "CGB1032B-NL",
+                        "is_active": true,
+                        "brand": {
+                          "brand_id": "f2ca6703-3aff-4431-87a2-6aa5e86eb747",
+                          "brand_code": "NO LOGO",
+                          "brand_name": "NO LOGO"
+                        }
+                      }
+                    }
+                  ]
+                },
+                "empty": false,
+                "unresolved_tokens": [],
+                "alternatives": [],
+                "token_coverage": [
+                  {
+                    "token": "Cgb1032b",
+                    "match_semantics": "max_coverage",
+                    "coverage": [
+                      {
+                        "entity_type": "product",
+                        "matched_words": [
+                          "Cgb1032b"
+                        ],
+                        "unmatched_words": [],
+                        "truncated": false
+                      }
+                    ]
+                  }
+                ],
+                "gate_passed": true,
+                "require_specific": false,
+                "specific_options": [],
+                "resolved_company": null,
+                "company_team": null,
+                "resolved_companies": [
+                  "cabana",
+                  "sorento"
+                ],
+                "routing_brand": null,
+                "routing_brand_source": null,
+                "routing_companies": [
+                  {
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento",
+                    "brand_code": null,
+                    "codes": [
+                      "CGB1032B",
+                      "CGB1032B-NL"
+                    ],
+                    "labels": [
+                      "CGB1032B",
+                      "CGB1032B-NL"
+                    ]
+                  }
+                ],
+                "routing_company": "00000000-0000-0000-0000-000000000001",
+                "access_denied_levels": [],
+                "brand_gate_empty": false,
+                "brand_unheld": false,
+                "access_notice": "",
+                "gate_reason": "ok",
+                "gate_clarification": "",
+                "compatible_entities": [
+                  {
+                    "uuid": "3dccf7b0-e08a-406a-8092-b2f54ccb9cc4",
+                    "entity_type": "product",
+                    "code": "CGB1032B"
+                  },
+                  {
+                    "uuid": "da7c962f-d88b-4077-a22b-abc5b5e80b20",
+                    "entity_type": "product",
+                    "code": "CGB1032B-NL"
+                  }
+                ],
+                "gate_debug": {
+                  "domain": "promotion",
+                  "allowed_lookup": [
+                    "product",
+                    "promotion",
+                    "category",
+                    "brand"
+                  ],
+                  "entities_count": 2
+                }
+              }
+            }
+          },
+          "tier_gate": {
+            "name": [
+              "Sorento Office",
+              "Sorento Dealer",
+              "Mocha Dealer",
+              "Mocha Office",
+              "Cabana Office",
+              "Cabana Dealer",
+              "End User"
+            ],
+            "tier_stated": [],
+            "entitled_tiers": [
+              "dealer",
+              "office",
+              "end_user"
+            ],
+            "entitled_unknown": [],
+            "query_brands": [],
+            "pending_pick": false,
+            "tier_ask": true,
+            "tier_proceed": false,
+            "access_levels_recomposed": [
+              "Sorento Office",
+              "Sorento Dealer",
+              "Mocha Dealer",
+              "Mocha Office",
+              "Cabana Office",
+              "Cabana Dealer",
+              "End User"
+            ],
+            "tier_probe_plan": [
+              {
+                "tier": "dealer",
+                "access_levels": [
+                  "Sorento Dealer",
+                  "Mocha Dealer",
+                  "Cabana Dealer"
+                ]
+              },
+              {
+                "tier": "office",
+                "access_levels": [
+                  "Sorento Office",
+                  "Mocha Office",
+                  "Cabana Office"
+                ]
+              },
+              {
+                "tier": "end_user",
+                "access_levels": [
+                  "End User"
+                ]
+              }
+            ],
+            "brand_gate_empty": false,
+            "brand_unheld": false,
+            "tier_pick_domain": null
+          },
+          "is_test": false
+        }
+      }
+    ],
+    "tier-gate-gate": [
+      {
+        "json": {
+          "ctx_resolved": {
+            "match_mode": "and",
+            "tokens": [
+              "Cgb1032b"
+            ],
+            "elapsed_ms": 77.92,
+            "intersection": [
+              {
+                "entity_type": "product",
+                "canonical_code": "CGB1032B",
+                "uuid": "3dccf7b0-e08a-406a-8092-b2f54ccb9cc4",
+                "match_field": "product_code",
+                "match_tier": "and",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "product_name": "CGB1032B",
+                  "is_active": true,
+                  "brand": {
+                    "brand_id": "9f1277f0-42fa-442c-978f-ab5f41e72a20",
+                    "brand_code": "CABANA",
+                    "brand_name": "CABANA"
+                  }
+                }
+              },
+              {
+                "entity_type": "product",
+                "canonical_code": "CGB1032B-NL",
+                "uuid": "da7c962f-d88b-4077-a22b-abc5b5e80b20",
+                "match_field": "product_code",
+                "match_tier": "and",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "product_name": "CGB1032B-NL",
+                  "is_active": true,
+                  "brand": {
+                    "brand_id": "f2ca6703-3aff-4431-87a2-6aa5e86eb747",
+                    "brand_code": "NO LOGO",
+                    "brand_name": "NO LOGO"
+                  }
+                }
+              }
+            ],
+            "by_entity_type": {
+              "product": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "CGB1032B",
+                  "uuid": "3dccf7b0-e08a-406a-8092-b2f54ccb9cc4",
+                  "match_field": "product_code",
+                  "match_tier": "and",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "product_name": "CGB1032B",
+                    "is_active": true,
+                    "brand": {
+                      "brand_id": "9f1277f0-42fa-442c-978f-ab5f41e72a20",
+                      "brand_code": "CABANA",
+                      "brand_name": "CABANA"
+                    }
+                  }
+                },
+                {
+                  "entity_type": "product",
+                  "canonical_code": "CGB1032B-NL",
+                  "uuid": "da7c962f-d88b-4077-a22b-abc5b5e80b20",
+                  "match_field": "product_code",
+                  "match_tier": "and",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "product_name": "CGB1032B-NL",
+                    "is_active": true,
+                    "brand": {
+                      "brand_id": "f2ca6703-3aff-4431-87a2-6aa5e86eb747",
+                      "brand_code": "NO LOGO",
+                      "brand_name": "NO LOGO"
+                    }
+                  }
+                }
+              ]
+            },
+            "empty": false,
+            "unresolved_tokens": [],
+            "alternatives": [],
+            "token_coverage": [
+              {
+                "token": "Cgb1032b",
+                "match_semantics": "max_coverage",
+                "coverage": [
+                  {
+                    "entity_type": "product",
+                    "matched_words": [
+                      "Cgb1032b"
+                    ],
+                    "unmatched_words": [],
+                    "truncated": false
+                  }
+                ]
+              }
+            ],
+            "gate_passed": true,
+            "require_specific": false,
+            "specific_options": [],
+            "resolved_company": null,
+            "company_team": null,
+            "resolved_companies": [
+              "cabana",
+              "sorento"
+            ],
+            "routing_brand": null,
+            "routing_brand_source": null,
+            "routing_companies": [
+              {
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "brand_code": null,
+                "codes": [
+                  "CGB1032B",
+                  "CGB1032B-NL"
+                ],
+                "labels": [
+                  "CGB1032B",
+                  "CGB1032B-NL"
+                ]
+              }
+            ],
+            "routing_company": "00000000-0000-0000-0000-000000000001",
+            "access_denied_levels": [],
+            "brand_gate_empty": false,
+            "brand_unheld": false,
+            "access_notice": "",
+            "gate_reason": "ok",
+            "gate_clarification": "",
+            "compatible_entities": [
+              {
+                "uuid": "3dccf7b0-e08a-406a-8092-b2f54ccb9cc4",
+                "entity_type": "product",
+                "code": "CGB1032B"
+              },
+              {
+                "uuid": "da7c962f-d88b-4077-a22b-abc5b5e80b20",
+                "entity_type": "product",
+                "code": "CGB1032B-NL"
+              }
+            ],
+            "gate_debug": {
+              "domain": "promotion",
+              "allowed_lookup": [
+                "product",
+                "promotion",
+                "category",
+                "brand"
+              ],
+              "entities_count": 2
+            },
+            "ctx": {
+              "contact": {
+                "id": 900000006,
+                "firstName": "Person 7",
+                "lastName": "Person 8",
+                "phone": "+60100000003",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "locale": null,
+                "countryCode": "MY",
+                "status": "open",
+                "isBlocked": false,
+                "custom_fields": [
+                  {
+                    "name": "enquiry_type",
+                    "value": null
+                  },
+                  {
+                    "name": "user_type",
+                    "value": null
+                  },
+                  {
+                    "name": "complaint_id",
+                    "value": null
+                  },
+                  {
+                    "name": "is_allowed_stock",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_human_intervened",
+                    "value": "false"
+                  },
+                  {
+                    "name": "backend_id",
+                    "value": "https://fe-sorento.foundryx.my/user-management/contacts/b0d8b35b-95f8-418f-a5a2-991b04a72ea7"
+                  },
+                  {
+                    "name": "is_allowed_ai",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_allowed_voice",
+                    "value": null
+                  }
+                ],
+                "tags": [
+                  "imported_20260627_150636"
+                ],
+                "assignee": null,
+                "lifecycle": null,
+                "created_at": 1782546255
+              },
+              "text": {
+                "event_type": "message.received",
+                "event_id": "daccd3b7-569f-4682-ba09-2998eca8cc60",
+                "contact": {
+                  "id": 900000006,
+                  "firstName": "Person 7",
+                  "lastName": "Person 8",
+                  "phone": "+60100000003",
+                  "email": null,
+                  "language": null,
+                  "profilePic": null,
+                  "countryCode": "MY",
+                  "status": "open",
+                  "assignee": {
+                    "id": null,
+                    "firstName": null,
+                    "lastName": null,
+                    "email": null
+                  },
+                  "created_at": 1782546255
+                },
+                "message": {
+                  "messageId": 1788411753000000,
+                  "channelMessageId": "wamid.HBgLNjAxNDkyODk2ODcVAgASGBQzQTFCRkNDNjlBMUJFNDVDRjY5RgA=",
+                  "contactId": 900000006,
+                  "channelId": 453209,
+                  "traffic": "incoming",
+                  "timestamp": 1788411753000,
+                  "message": {
+                    "type": "text",
+                    "text": "Cgb1032b promotion"
+                  }
+                },
+                "channel": {
+                  "id": 453209,
+                  "name": "Internal (+60 11-1673 1179)",
+                  "source": "whatsapp_business",
+                  "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 10\"},\"wa_id\":\"60100000003\",\"user_id\":\"MY.900000007\",\"firstName\":\"Person 7\",\"lastName\":\"Person 9\"}}",
+                  "created_at": 1767682908
+                },
+                "sender": {
+                  "source": "contact",
+                  "userId": null,
+                  "teamId": null,
+                  "workflowId": null,
+                  "broadcastHistoryId": null
+                }
+              },
+              "session": {
+                "respond_io_id": "900000006",
+                "session_vars": {
+                  "variables": {
+                    "routing": {
+                      "suggested_team": "warehouse",
+                      "suggested_agent": "general_enquiries"
+                    },
+                    "entities": [
+                      {
+                        "raw": "7741",
+                        "hint": "product",
+                        "confident": true,
+                        "canonical_code": null,
+                        "current_message": true
+                      }
+                    ],
+                    "ideation": null,
+                    "response": "Previous turn (inventory): returned 12 records",
+                    "date_mode": null,
+                    "dym_offer": null,
+                    "user_goal": "trying to check stock for 7741",
+                    "escalation": {
+                      "is_escalation_confirmation": false
+                    },
+                    "match_mode": "and",
+                    "domain_hint": "inventory",
+                    "intent_hint": "check_stock",
+                    "message_type": "business_query",
+                    "query_brands": [],
+                    "access_levels": [],
+                    "routing_brand": "mocha",
+                    "contains_flyer": false,
+                    "dym_candidates": [],
+                    "date_filter_end": null,
+                    "last_result_set": [
+                      {
+                        "idx": 1,
+                        "uuid": null,
+                        "label": "MCM7741",
+                        "product": null,
+                        "filename": null,
+                        "entity_type": null,
+                        "attachment_type": null
+                      },
+                      {
+                        "idx": 2,
+                        "uuid": null,
+                        "label": "MCM7741",
+                        "product": null,
+                        "filename": null,
+                        "entity_type": null,
+                        "attachment_type": null
+                      },
+                      {
+                        "idx": 3,
+                        "uuid": null,
+                        "label": "MCM7741",
+                        "product": null,
+                        "filename": null,
+                        "entity_type": null,
+                        "attachment_type": null
+                      },
+                      {
+                        "idx": 4,
+                        "uuid": null,
+                        "label": "MCM7741",
+                        "product": null,
+                        "filename": null,
+                        "entity_type": null,
+                        "attachment_type": null
+                      },
+                      {
+                        "idx": 5,
+                        "uuid": null,
+                        "label": "MCM7741-BL",
+                        "product": null,
+                        "filename": null,
+                        "entity_type": null,
+                        "attachment_type": null
+                      },
+                      {
+                        "idx": 6,
+                        "uuid": null,
+                        "label": "MCM7741-BL",
+                        "product": null,
+                        "filename": null,
+                        "entity_type": null,
+                        "attachment_type": null
+                      },
+                      {
+                        "idx": 7,
+                        "uuid": null,
+                        "label": "MCM7741-GD",
+                        "product": null,
+                        "filename": null,
+                        "entity_type": null,
+                        "attachment_type": null
+                      },
+                      {
+                        "idx": 8,
+                        "uuid": null,
+                        "label": "MCM7741-GD",
+                        "product": null,
+                        "filename": null,
+                        "entity_type": null,
+                        "attachment_type": null
+                      },
+                      {
+                        "idx": 9,
+                        "uuid": null,
+                        "label": "MCM7741-GM",
+                        "product": null,
+                        "filename": null,
+                        "entity_type": null,
+                        "attachment_type": null
+                      },
+                      {
+                        "idx": 10,
+                        "uuid": null,
+                        "label": "MCM7741-GM",
+                        "product": null,
+                        "filename": null,
+                        "entity_type": null,
+                        "attachment_type": null
+                      },
+                      {
+                        "idx": 11,
+                        "uuid": null,
+                        "label": "MCM7741-RG",
+                        "product": null,
+                        "filename": null,
+                        "entity_type": null,
+                        "attachment_type": null
+                      },
+                      {
+                        "idx": 12,
+                        "uuid": null,
+                        "label": "MCM7741-RG",
+                        "product": null,
+                        "filename": null,
+                        "entity_type": null,
+                        "attachment_type": null
+                      }
+                    ],
+                    "routing_company": null,
+                    "date_filter_start": null,
+                    "routing_companies": [
+                      {
+                        "codes": [
+                          "MCM7741-BL",
+                          "MCM7741-GD",
+                          "MCM7741-GM",
+                          "MCM7741",
+                          "MCM7741-RG"
+                        ],
+                        "labels": [
+                          "MCM7741-BL",
+                          "MCM7741-GD",
+                          "MCM7741-GM",
+                          "MCM7741",
+                          "MCM7741-RG"
+                        ],
+                        "brand_code": null,
+                        "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                        "company_name": "Mocha"
+                      },
+                      {
+                        "codes": [
+                          "MCM7741-GM",
+                          "MCM7741"
+                        ],
+                        "labels": [
+                          "MCM7741-GM",
+                          "MCM7741"
+                        ],
+                        "brand_code": "mocha",
+                        "company_id": "00000000-0000-0000-0000-000000000001",
+                        "company_name": "Sorento"
+                      }
+                    ],
+                    "selection_context": null,
+                    "routing_roster_plan": null,
+                    "requested_attributes": [],
+                    "routing_brand_source": "resolved"
+                  },
+                  "user_response": "Stock details found for the requested products.\n\n1. *Company:* Sorento\n*Product Code:* MCM7741\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 19\n\n2. *Company:* Sorento\n*Product Code:* MCM7741\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-AM\n*Quantity On Hand:* 13\n\n3. *Company:* Mocha\n*Product Code:* MCM7741\n*Warehouse:* HQ\n*System Location:* HQ\n*Quantity On Hand:* 0\n\n4. *Company:* Mocha\n*Product Code:* MCM7741\n*Warehouse:* MERU\n*System Location:* MOCHA-WH\n*Quantity On Hand:* 1\n\n5. *Company:* Mocha\n*Product Code:* MCM7741-BL\n*Warehouse:* HQ\n*System Location:* HQ\n*Quantity On Hand:* 0\n\n6. *Company:* Mocha\n*Product Code:* MCM7741-BL\n*Warehouse:* MERU\n*System Location:* MOCHA-WH\n*Quantity On Hand:* 0\n\n7. *Company:* Mocha\n*Product Code:* MCM7741-GD\n*Warehouse:* HQ\n*System Location:* HQ\n*Quantity On Hand:* 50\n\n8. *Company:* Mocha\n*Product Code:* MCM7741-GD\n*Warehouse:* MERU\n*System Location:* MOCHA-WH\n*Quantity On Hand:* 68\n\n9. *Company:* Mocha\n*Product Code:* MCM7741-GM\n*Warehouse:* HQ\n*System Location:* HQ\n*Quantity On Hand:* 100\n\n10. *Company:* Mocha\n*Product Code:* MCM7741-GM\n*Warehouse:* MERU\n*System Location:* MOCHA-WH\n*Quantity On Hand:* 80\n\n11. *Company:* Mocha\n*Product Code:* MCM7741-RG\n*Warehouse:* HQ\n*System Location:* HQ\n*Quantity On Hand:* 50\n\n12. *Company:* Mocha\n*Product Code:* MCM7741-RG\n*Warehouse:* MERU\n*System Location:* MOCHA-WH\n*Quantity On Hand:* 57\n\n_Data last updated: 03/09/2026 11:31:14_"
+                }
+              },
+              "parse": {
+                "output": {
+                  "message_type": "business_query",
+                  "intent_hint": "check_promotion",
+                  "domain_hint": "promotion",
+                  "scope_intent": "specific",
+                  "is_affirmative": null,
+                  "user_goal": "trying to check the promotion for Cgb1032b",
+                  "access_levels": [],
+                  "broaden_axis": null,
+                  "date_mode": null,
+                  "date_filter_start": null,
+                  "date_filter_end": null,
+                  "match_mode": "and",
+                  "demand_qty": null,
+                  "entities": [
+                    {
+                      "raw": "Cgb1032b",
+                      "hint": "product",
+                      "canonical_code": null,
+                      "current_message": true,
+                      "confident": true
+                    }
+                  ],
+                  "entity_op": "replace_combine",
+                  "scope_exclusive": false,
+                  "requested_attributes": [],
+                  "contains_flyer": false,
+                  "reference_positions": [],
+                  "reference_target": null,
+                  "person_mention": null,
+                  "is_active": null,
+                  "order_status": null,
+                  "correction": false,
+                  "routing": {
+                    "suggested_team": "marketing_promotion",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "domain_signal_source": "intent_explicit",
+                  "scope_exclusive_applied": false,
+                  "entity_op_applied": "replace_combine",
+                  "query_brands": [],
+                  "entities_filtered": false,
+                  "entities_emptied_by_filter": false
+                },
+                "_parser_raw": {
+                  "message_type": "business_query",
+                  "intent_hint": "check_promotion",
+                  "domain_hint": "promotion",
+                  "scope_intent": "specific",
+                  "is_affirmative": null,
+                  "user_goal": "trying to check the promotion for Cgb1032b",
+                  "access_levels": [],
+                  "broaden_axis": null,
+                  "date_mode": null,
+                  "date_filter_start": null,
+                  "date_filter_end": null,
+                  "match_mode": "and",
+                  "demand_qty": null,
+                  "entities": [
+                    {
+                      "raw": "Cgb1032b",
+                      "hint": "product",
+                      "canonical_code": null,
+                      "current_message": true,
+                      "confident": true
+                    }
+                  ],
+                  "entity_op": "replace_combine",
+                  "scope_exclusive": false,
+                  "requested_attributes": [],
+                  "contains_flyer": false,
+                  "reference_positions": [],
+                  "reference_target": null,
+                  "person_mention": null,
+                  "is_active": null,
+                  "order_status": null,
+                  "correction": false,
+                  "routing": {
+                    "suggested_team": "marketing_promotion",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "escalation": {
+                    "is_escalation_confirmation": false,
+                    "company_pick": null
+                  }
+                }
+              },
+              "access": {
+                "allowed": true,
+                "decision": "allow",
+                "agent_name": "General Enquiries",
+                "attributes": null,
+                "all_attributes_allowed": null
+              },
+              "media": null,
+              "resolved": {
+                "match_mode": "and",
+                "tokens": [
+                  "Cgb1032b"
+                ],
+                "elapsed_ms": 77.92,
+                "intersection": [
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "CGB1032B",
+                    "uuid": "3dccf7b0-e08a-406a-8092-b2f54ccb9cc4",
+                    "match_field": "product_code",
+                    "match_tier": "and",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento",
+                    "display": {
+                      "product_name": "CGB1032B",
+                      "is_active": true,
+                      "brand": {
+                        "brand_id": "9f1277f0-42fa-442c-978f-ab5f41e72a20",
+                        "brand_code": "CABANA",
+                        "brand_name": "CABANA"
+                      }
+                    }
+                  },
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "CGB1032B-NL",
+                    "uuid": "da7c962f-d88b-4077-a22b-abc5b5e80b20",
+                    "match_field": "product_code",
+                    "match_tier": "and",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento",
+                    "display": {
+                      "product_name": "CGB1032B-NL",
+                      "is_active": true,
+                      "brand": {
+                        "brand_id": "f2ca6703-3aff-4431-87a2-6aa5e86eb747",
+                        "brand_code": "NO LOGO",
+                        "brand_name": "NO LOGO"
+                      }
+                    }
+                  }
+                ],
+                "by_entity_type": {
+                  "product": [
+                    {
+                      "entity_type": "product",
+                      "canonical_code": "CGB1032B",
+                      "uuid": "3dccf7b0-e08a-406a-8092-b2f54ccb9cc4",
+                      "match_field": "product_code",
+                      "match_tier": "and",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento",
+                      "display": {
+                        "product_name": "CGB1032B",
+                        "is_active": true,
+                        "brand": {
+                          "brand_id": "9f1277f0-42fa-442c-978f-ab5f41e72a20",
+                          "brand_code": "CABANA",
+                          "brand_name": "CABANA"
+                        }
+                      }
+                    },
+                    {
+                      "entity_type": "product",
+                      "canonical_code": "CGB1032B-NL",
+                      "uuid": "da7c962f-d88b-4077-a22b-abc5b5e80b20",
+                      "match_field": "product_code",
+                      "match_tier": "and",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento",
+                      "display": {
+                        "product_name": "CGB1032B-NL",
+                        "is_active": true,
+                        "brand": {
+                          "brand_id": "f2ca6703-3aff-4431-87a2-6aa5e86eb747",
+                          "brand_code": "NO LOGO",
+                          "brand_name": "NO LOGO"
+                        }
+                      }
+                    }
+                  ]
+                },
+                "empty": false,
+                "unresolved_tokens": [],
+                "alternatives": [],
+                "token_coverage": [
+                  {
+                    "token": "Cgb1032b",
+                    "match_semantics": "max_coverage",
+                    "coverage": [
+                      {
+                        "entity_type": "product",
+                        "matched_words": [
+                          "Cgb1032b"
+                        ],
+                        "unmatched_words": [],
+                        "truncated": false
+                      }
+                    ]
+                  }
+                ]
+              },
+              "entities": {
+                "name": [
+                  "Sorento Office",
+                  "Sorento Dealer",
+                  "Mocha Dealer",
+                  "Mocha Office",
+                  "Cabana Office",
+                  "Cabana Dealer",
+                  "End User"
+                ]
+              },
+              "gate": {
+                "match_mode": "and",
+                "tokens": [
+                  "Cgb1032b"
+                ],
+                "elapsed_ms": 77.92,
+                "intersection": [
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "CGB1032B",
+                    "uuid": "3dccf7b0-e08a-406a-8092-b2f54ccb9cc4",
+                    "match_field": "product_code",
+                    "match_tier": "and",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento",
+                    "display": {
+                      "product_name": "CGB1032B",
+                      "is_active": true,
+                      "brand": {
+                        "brand_id": "9f1277f0-42fa-442c-978f-ab5f41e72a20",
+                        "brand_code": "CABANA",
+                        "brand_name": "CABANA"
+                      }
+                    }
+                  },
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "CGB1032B-NL",
+                    "uuid": "da7c962f-d88b-4077-a22b-abc5b5e80b20",
+                    "match_field": "product_code",
+                    "match_tier": "and",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento",
+                    "display": {
+                      "product_name": "CGB1032B-NL",
+                      "is_active": true,
+                      "brand": {
+                        "brand_id": "f2ca6703-3aff-4431-87a2-6aa5e86eb747",
+                        "brand_code": "NO LOGO",
+                        "brand_name": "NO LOGO"
+                      }
+                    }
+                  }
+                ],
+                "by_entity_type": {
+                  "product": [
+                    {
+                      "entity_type": "product",
+                      "canonical_code": "CGB1032B",
+                      "uuid": "3dccf7b0-e08a-406a-8092-b2f54ccb9cc4",
+                      "match_field": "product_code",
+                      "match_tier": "and",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento",
+                      "display": {
+                        "product_name": "CGB1032B",
+                        "is_active": true,
+                        "brand": {
+                          "brand_id": "9f1277f0-42fa-442c-978f-ab5f41e72a20",
+                          "brand_code": "CABANA",
+                          "brand_name": "CABANA"
+                        }
+                      }
+                    },
+                    {
+                      "entity_type": "product",
+                      "canonical_code": "CGB1032B-NL",
+                      "uuid": "da7c962f-d88b-4077-a22b-abc5b5e80b20",
+                      "match_field": "product_code",
+                      "match_tier": "and",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento",
+                      "display": {
+                        "product_name": "CGB1032B-NL",
+                        "is_active": true,
+                        "brand": {
+                          "brand_id": "f2ca6703-3aff-4431-87a2-6aa5e86eb747",
+                          "brand_code": "NO LOGO",
+                          "brand_name": "NO LOGO"
+                        }
+                      }
+                    }
+                  ]
+                },
+                "empty": false,
+                "unresolved_tokens": [],
+                "alternatives": [],
+                "token_coverage": [
+                  {
+                    "token": "Cgb1032b",
+                    "match_semantics": "max_coverage",
+                    "coverage": [
+                      {
+                        "entity_type": "product",
+                        "matched_words": [
+                          "Cgb1032b"
+                        ],
+                        "unmatched_words": [],
+                        "truncated": false
+                      }
+                    ]
+                  }
+                ],
+                "gate_passed": true,
+                "require_specific": false,
+                "specific_options": [],
+                "resolved_company": null,
+                "company_team": null,
+                "resolved_companies": [
+                  "cabana",
+                  "sorento"
+                ],
+                "routing_brand": null,
+                "routing_brand_source": null,
+                "routing_companies": [
+                  {
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento",
+                    "brand_code": null,
+                    "codes": [
+                      "CGB1032B",
+                      "CGB1032B-NL"
+                    ],
+                    "labels": [
+                      "CGB1032B",
+                      "CGB1032B-NL"
+                    ]
+                  }
+                ],
+                "routing_company": "00000000-0000-0000-0000-000000000001",
+                "access_denied_levels": [],
+                "brand_gate_empty": false,
+                "brand_unheld": false,
+                "access_notice": "",
+                "gate_reason": "ok",
+                "gate_clarification": "",
+                "compatible_entities": [
+                  {
+                    "uuid": "3dccf7b0-e08a-406a-8092-b2f54ccb9cc4",
+                    "entity_type": "product",
+                    "code": "CGB1032B"
+                  },
+                  {
+                    "uuid": "da7c962f-d88b-4077-a22b-abc5b5e80b20",
+                    "entity_type": "product",
+                    "code": "CGB1032B-NL"
+                  }
+                ],
+                "gate_debug": {
+                  "domain": "promotion",
+                  "allowed_lookup": [
+                    "product",
+                    "promotion",
+                    "category",
+                    "brand"
+                  ],
+                  "entities_count": 2
+                }
+              }
+            }
+          },
+          "tier_gate": {
+            "name": [
+              "Sorento Office",
+              "Sorento Dealer",
+              "Mocha Dealer",
+              "Mocha Office",
+              "Cabana Office",
+              "Cabana Dealer",
+              "End User"
+            ],
+            "tier_stated": [],
+            "entitled_tiers": [
+              "dealer",
+              "office",
+              "end_user"
+            ],
+            "entitled_unknown": [],
+            "query_brands": [],
+            "pending_pick": false,
+            "tier_ask": true,
+            "tier_proceed": false,
+            "access_levels_recomposed": [
+              "Sorento Office",
+              "Sorento Dealer",
+              "Mocha Dealer",
+              "Mocha Office",
+              "Cabana Office",
+              "Cabana Dealer",
+              "End User"
+            ],
+            "tier_probe_plan": [
+              {
+                "tier": "dealer",
+                "access_levels": [
+                  "Sorento Dealer",
+                  "Mocha Dealer",
+                  "Cabana Dealer"
+                ]
+              },
+              {
+                "tier": "office",
+                "access_levels": [
+                  "Sorento Office",
+                  "Mocha Office",
+                  "Cabana Office"
+                ]
+              },
+              {
+                "tier": "end_user",
+                "access_levels": [
+                  "End User"
+                ]
+              }
+            ],
+            "brand_gate_empty": false,
+            "brand_unheld": false,
+            "tier_pick_domain": null
+          },
+          "is_test": false
+        }
+      }
+    ],
+    "tier-gate": [
+      {
+        "json": {
+          "name": [
+            "Sorento Office",
+            "Sorento Dealer",
+            "Mocha Dealer",
+            "Mocha Office",
+            "Cabana Office",
+            "Cabana Dealer",
+            "End User"
+          ],
+          "tier_stated": [],
+          "entitled_tiers": [
+            "dealer",
+            "office",
+            "end_user"
+          ],
+          "entitled_unknown": [],
+          "query_brands": [],
+          "pending_pick": false,
+          "tier_ask": true,
+          "tier_proceed": false,
+          "access_levels_recomposed": [
+            "Sorento Office",
+            "Sorento Dealer",
+            "Mocha Dealer",
+            "Mocha Office",
+            "Cabana Office",
+            "Cabana Dealer",
+            "End User"
+          ],
+          "tier_probe_plan": [
+            {
+              "tier": "dealer",
+              "access_levels": [
+                "Sorento Dealer",
+                "Mocha Dealer",
+                "Cabana Dealer"
+              ]
+            },
+            {
+              "tier": "office",
+              "access_levels": [
+                "Sorento Office",
+                "Mocha Office",
+                "Cabana Office"
+              ]
+            },
+            {
+              "tier": "end_user",
+              "access_levels": [
+                "End User"
+              ]
+            }
+          ],
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "tier_pick_domain": null
+        }
+      }
+    ],
+    "build-ctx-resolved": [
+      {
+        "json": {
+          "match_mode": "and",
+          "tokens": [
+            "Cgb1032b"
+          ],
+          "elapsed_ms": 77.92,
+          "intersection": [
+            {
+              "entity_type": "product",
+              "canonical_code": "CGB1032B",
+              "uuid": "3dccf7b0-e08a-406a-8092-b2f54ccb9cc4",
+              "match_field": "product_code",
+              "match_tier": "and",
+              "company_id": "00000000-0000-0000-0000-000000000001",
+              "company_name": "Sorento",
+              "display": {
+                "product_name": "CGB1032B",
+                "is_active": true,
+                "brand": {
+                  "brand_id": "9f1277f0-42fa-442c-978f-ab5f41e72a20",
+                  "brand_code": "CABANA",
+                  "brand_name": "CABANA"
+                }
+              }
+            },
+            {
+              "entity_type": "product",
+              "canonical_code": "CGB1032B-NL",
+              "uuid": "da7c962f-d88b-4077-a22b-abc5b5e80b20",
+              "match_field": "product_code",
+              "match_tier": "and",
+              "company_id": "00000000-0000-0000-0000-000000000001",
+              "company_name": "Sorento",
+              "display": {
+                "product_name": "CGB1032B-NL",
+                "is_active": true,
+                "brand": {
+                  "brand_id": "f2ca6703-3aff-4431-87a2-6aa5e86eb747",
+                  "brand_code": "NO LOGO",
+                  "brand_name": "NO LOGO"
+                }
+              }
+            }
+          ],
+          "by_entity_type": {
+            "product": [
+              {
+                "entity_type": "product",
+                "canonical_code": "CGB1032B",
+                "uuid": "3dccf7b0-e08a-406a-8092-b2f54ccb9cc4",
+                "match_field": "product_code",
+                "match_tier": "and",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "product_name": "CGB1032B",
+                  "is_active": true,
+                  "brand": {
+                    "brand_id": "9f1277f0-42fa-442c-978f-ab5f41e72a20",
+                    "brand_code": "CABANA",
+                    "brand_name": "CABANA"
+                  }
+                }
+              },
+              {
+                "entity_type": "product",
+                "canonical_code": "CGB1032B-NL",
+                "uuid": "da7c962f-d88b-4077-a22b-abc5b5e80b20",
+                "match_field": "product_code",
+                "match_tier": "and",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "product_name": "CGB1032B-NL",
+                  "is_active": true,
+                  "brand": {
+                    "brand_id": "f2ca6703-3aff-4431-87a2-6aa5e86eb747",
+                    "brand_code": "NO LOGO",
+                    "brand_name": "NO LOGO"
+                  }
+                }
+              }
+            ]
+          },
+          "empty": false,
+          "unresolved_tokens": [],
+          "alternatives": [],
+          "token_coverage": [
+            {
+              "token": "Cgb1032b",
+              "match_semantics": "max_coverage",
+              "coverage": [
+                {
+                  "entity_type": "product",
+                  "matched_words": [
+                    "Cgb1032b"
+                  ],
+                  "unmatched_words": [],
+                  "truncated": false
+                }
+              ]
+            }
+          ],
+          "gate_passed": true,
+          "require_specific": false,
+          "specific_options": [],
+          "resolved_company": null,
+          "company_team": null,
+          "resolved_companies": [
+            "cabana",
+            "sorento"
+          ],
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_companies": [
+            {
+              "company_id": "00000000-0000-0000-0000-000000000001",
+              "company_name": "Sorento",
+              "brand_code": null,
+              "codes": [
+                "CGB1032B",
+                "CGB1032B-NL"
+              ],
+              "labels": [
+                "CGB1032B",
+                "CGB1032B-NL"
+              ]
+            }
+          ],
+          "routing_company": "00000000-0000-0000-0000-000000000001",
+          "access_denied_levels": [],
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "access_notice": "",
+          "gate_reason": "ok",
+          "gate_clarification": "",
+          "compatible_entities": [
+            {
+              "uuid": "3dccf7b0-e08a-406a-8092-b2f54ccb9cc4",
+              "entity_type": "product",
+              "code": "CGB1032B"
+            },
+            {
+              "uuid": "da7c962f-d88b-4077-a22b-abc5b5e80b20",
+              "entity_type": "product",
+              "code": "CGB1032B-NL"
+            }
+          ],
+          "gate_debug": {
+            "domain": "promotion",
+            "allowed_lookup": [
+              "product",
+              "promotion",
+              "category",
+              "brand"
+            ],
+            "entities_count": 2
+          },
+          "ctx": {
+            "contact": {
+              "id": 900000006,
+              "firstName": "Person 7",
+              "lastName": "Person 8",
+              "phone": "+60100000003",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/b0d8b35b-95f8-418f-a5a2-991b04a72ea7"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": null,
+              "created_at": 1782546255
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "daccd3b7-569f-4682-ba09-2998eca8cc60",
+              "contact": {
+                "id": 900000006,
+                "firstName": "Person 7",
+                "lastName": "Person 8",
+                "phone": "+60100000003",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1782546255
+              },
+              "message": {
+                "messageId": 1788411753000000,
+                "channelMessageId": "wamid.HBgLNjAxNDkyODk2ODcVAgASGBQzQTFCRkNDNjlBMUJFNDVDRjY5RgA=",
+                "contactId": 900000006,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788411753000,
+                "message": {
+                  "type": "text",
+                  "text": "Cgb1032b promotion"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 10\"},\"wa_id\":\"60100000003\",\"user_id\":\"MY.900000007\",\"firstName\":\"Person 7\",\"lastName\":\"Person 9\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000006",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "warehouse",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "entities": [
+                    {
+                      "raw": "7741",
+                      "hint": "product",
+                      "confident": true,
+                      "canonical_code": null,
+                      "current_message": true
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Previous turn (inventory): returned 12 records",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to check stock for 7741",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "inventory",
+                  "intent_hint": "check_stock",
+                  "message_type": "business_query",
+                  "query_brands": [],
+                  "access_levels": [],
+                  "routing_brand": "mocha",
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [
+                    {
+                      "idx": 1,
+                      "uuid": null,
+                      "label": "MCM7741",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 2,
+                      "uuid": null,
+                      "label": "MCM7741",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 3,
+                      "uuid": null,
+                      "label": "MCM7741",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 4,
+                      "uuid": null,
+                      "label": "MCM7741",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 5,
+                      "uuid": null,
+                      "label": "MCM7741-BL",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 6,
+                      "uuid": null,
+                      "label": "MCM7741-BL",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 7,
+                      "uuid": null,
+                      "label": "MCM7741-GD",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 8,
+                      "uuid": null,
+                      "label": "MCM7741-GD",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 9,
+                      "uuid": null,
+                      "label": "MCM7741-GM",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 10,
+                      "uuid": null,
+                      "label": "MCM7741-GM",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 11,
+                      "uuid": null,
+                      "label": "MCM7741-RG",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 12,
+                      "uuid": null,
+                      "label": "MCM7741-RG",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    }
+                  ],
+                  "routing_company": null,
+                  "date_filter_start": null,
+                  "routing_companies": [
+                    {
+                      "codes": [
+                        "MCM7741-BL",
+                        "MCM7741-GD",
+                        "MCM7741-GM",
+                        "MCM7741",
+                        "MCM7741-RG"
+                      ],
+                      "labels": [
+                        "MCM7741-BL",
+                        "MCM7741-GD",
+                        "MCM7741-GM",
+                        "MCM7741",
+                        "MCM7741-RG"
+                      ],
+                      "brand_code": null,
+                      "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                      "company_name": "Mocha"
+                    },
+                    {
+                      "codes": [
+                        "MCM7741-GM",
+                        "MCM7741"
+                      ],
+                      "labels": [
+                        "MCM7741-GM",
+                        "MCM7741"
+                      ],
+                      "brand_code": "mocha",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "selection_context": null,
+                  "routing_roster_plan": null,
+                  "requested_attributes": [],
+                  "routing_brand_source": "resolved"
+                },
+                "user_response": "Stock details found for the requested products.\n\n1. *Company:* Sorento\n*Product Code:* MCM7741\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 19\n\n2. *Company:* Sorento\n*Product Code:* MCM7741\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-AM\n*Quantity On Hand:* 13\n\n3. *Company:* Mocha\n*Product Code:* MCM7741\n*Warehouse:* HQ\n*System Location:* HQ\n*Quantity On Hand:* 0\n\n4. *Company:* Mocha\n*Product Code:* MCM7741\n*Warehouse:* MERU\n*System Location:* MOCHA-WH\n*Quantity On Hand:* 1\n\n5. *Company:* Mocha\n*Product Code:* MCM7741-BL\n*Warehouse:* HQ\n*System Location:* HQ\n*Quantity On Hand:* 0\n\n6. *Company:* Mocha\n*Product Code:* MCM7741-BL\n*Warehouse:* MERU\n*System Location:* MOCHA-WH\n*Quantity On Hand:* 0\n\n7. *Company:* Mocha\n*Product Code:* MCM7741-GD\n*Warehouse:* HQ\n*System Location:* HQ\n*Quantity On Hand:* 50\n\n8. *Company:* Mocha\n*Product Code:* MCM7741-GD\n*Warehouse:* MERU\n*System Location:* MOCHA-WH\n*Quantity On Hand:* 68\n\n9. *Company:* Mocha\n*Product Code:* MCM7741-GM\n*Warehouse:* HQ\n*System Location:* HQ\n*Quantity On Hand:* 100\n\n10. *Company:* Mocha\n*Product Code:* MCM7741-GM\n*Warehouse:* MERU\n*System Location:* MOCHA-WH\n*Quantity On Hand:* 80\n\n11. *Company:* Mocha\n*Product Code:* MCM7741-RG\n*Warehouse:* HQ\n*System Location:* HQ\n*Quantity On Hand:* 50\n\n12. *Company:* Mocha\n*Product Code:* MCM7741-RG\n*Warehouse:* MERU\n*System Location:* MOCHA-WH\n*Quantity On Hand:* 57\n\n_Data last updated: 03/09/2026 11:31:14_"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "check_promotion",
+                "domain_hint": "promotion",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check the promotion for Cgb1032b",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "Cgb1032b",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "marketing_promotion",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_explicit",
+                "scope_exclusive_applied": false,
+                "entity_op_applied": "replace_combine",
+                "query_brands": [],
+                "entities_filtered": false,
+                "entities_emptied_by_filter": false
+              },
+              "_parser_raw": {
+                "message_type": "business_query",
+                "intent_hint": "check_promotion",
+                "domain_hint": "promotion",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check the promotion for Cgb1032b",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "Cgb1032b",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "marketing_promotion",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "General Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null,
+            "resolved": {
+              "match_mode": "and",
+              "tokens": [
+                "Cgb1032b"
+              ],
+              "elapsed_ms": 77.92,
+              "intersection": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "CGB1032B",
+                  "uuid": "3dccf7b0-e08a-406a-8092-b2f54ccb9cc4",
+                  "match_field": "product_code",
+                  "match_tier": "and",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "product_name": "CGB1032B",
+                    "is_active": true,
+                    "brand": {
+                      "brand_id": "9f1277f0-42fa-442c-978f-ab5f41e72a20",
+                      "brand_code": "CABANA",
+                      "brand_name": "CABANA"
+                    }
+                  }
+                },
+                {
+                  "entity_type": "product",
+                  "canonical_code": "CGB1032B-NL",
+                  "uuid": "da7c962f-d88b-4077-a22b-abc5b5e80b20",
+                  "match_field": "product_code",
+                  "match_tier": "and",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "product_name": "CGB1032B-NL",
+                    "is_active": true,
+                    "brand": {
+                      "brand_id": "f2ca6703-3aff-4431-87a2-6aa5e86eb747",
+                      "brand_code": "NO LOGO",
+                      "brand_name": "NO LOGO"
+                    }
+                  }
+                }
+              ],
+              "by_entity_type": {
+                "product": [
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "CGB1032B",
+                    "uuid": "3dccf7b0-e08a-406a-8092-b2f54ccb9cc4",
+                    "match_field": "product_code",
+                    "match_tier": "and",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento",
+                    "display": {
+                      "product_name": "CGB1032B",
+                      "is_active": true,
+                      "brand": {
+                        "brand_id": "9f1277f0-42fa-442c-978f-ab5f41e72a20",
+                        "brand_code": "CABANA",
+                        "brand_name": "CABANA"
+                      }
+                    }
+                  },
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "CGB1032B-NL",
+                    "uuid": "da7c962f-d88b-4077-a22b-abc5b5e80b20",
+                    "match_field": "product_code",
+                    "match_tier": "and",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento",
+                    "display": {
+                      "product_name": "CGB1032B-NL",
+                      "is_active": true,
+                      "brand": {
+                        "brand_id": "f2ca6703-3aff-4431-87a2-6aa5e86eb747",
+                        "brand_code": "NO LOGO",
+                        "brand_name": "NO LOGO"
+                      }
+                    }
+                  }
+                ]
+              },
+              "empty": false,
+              "unresolved_tokens": [],
+              "alternatives": [],
+              "token_coverage": [
+                {
+                  "token": "Cgb1032b",
+                  "match_semantics": "max_coverage",
+                  "coverage": [
+                    {
+                      "entity_type": "product",
+                      "matched_words": [
+                        "Cgb1032b"
+                      ],
+                      "unmatched_words": [],
+                      "truncated": false
+                    }
+                  ]
+                }
+              ]
+            },
+            "entities": {
+              "name": [
+                "Sorento Office",
+                "Sorento Dealer",
+                "Mocha Dealer",
+                "Mocha Office",
+                "Cabana Office",
+                "Cabana Dealer",
+                "End User"
+              ]
+            },
+            "gate": {
+              "match_mode": "and",
+              "tokens": [
+                "Cgb1032b"
+              ],
+              "elapsed_ms": 77.92,
+              "intersection": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "CGB1032B",
+                  "uuid": "3dccf7b0-e08a-406a-8092-b2f54ccb9cc4",
+                  "match_field": "product_code",
+                  "match_tier": "and",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "product_name": "CGB1032B",
+                    "is_active": true,
+                    "brand": {
+                      "brand_id": "9f1277f0-42fa-442c-978f-ab5f41e72a20",
+                      "brand_code": "CABANA",
+                      "brand_name": "CABANA"
+                    }
+                  }
+                },
+                {
+                  "entity_type": "product",
+                  "canonical_code": "CGB1032B-NL",
+                  "uuid": "da7c962f-d88b-4077-a22b-abc5b5e80b20",
+                  "match_field": "product_code",
+                  "match_tier": "and",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "product_name": "CGB1032B-NL",
+                    "is_active": true,
+                    "brand": {
+                      "brand_id": "f2ca6703-3aff-4431-87a2-6aa5e86eb747",
+                      "brand_code": "NO LOGO",
+                      "brand_name": "NO LOGO"
+                    }
+                  }
+                }
+              ],
+              "by_entity_type": {
+                "product": [
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "CGB1032B",
+                    "uuid": "3dccf7b0-e08a-406a-8092-b2f54ccb9cc4",
+                    "match_field": "product_code",
+                    "match_tier": "and",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento",
+                    "display": {
+                      "product_name": "CGB1032B",
+                      "is_active": true,
+                      "brand": {
+                        "brand_id": "9f1277f0-42fa-442c-978f-ab5f41e72a20",
+                        "brand_code": "CABANA",
+                        "brand_name": "CABANA"
+                      }
+                    }
+                  },
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "CGB1032B-NL",
+                    "uuid": "da7c962f-d88b-4077-a22b-abc5b5e80b20",
+                    "match_field": "product_code",
+                    "match_tier": "and",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento",
+                    "display": {
+                      "product_name": "CGB1032B-NL",
+                      "is_active": true,
+                      "brand": {
+                        "brand_id": "f2ca6703-3aff-4431-87a2-6aa5e86eb747",
+                        "brand_code": "NO LOGO",
+                        "brand_name": "NO LOGO"
+                      }
+                    }
+                  }
+                ]
+              },
+              "empty": false,
+              "unresolved_tokens": [],
+              "alternatives": [],
+              "token_coverage": [
+                {
+                  "token": "Cgb1032b",
+                  "match_semantics": "max_coverage",
+                  "coverage": [
+                    {
+                      "entity_type": "product",
+                      "matched_words": [
+                        "Cgb1032b"
+                      ],
+                      "unmatched_words": [],
+                      "truncated": false
+                    }
+                  ]
+                }
+              ],
+              "gate_passed": true,
+              "require_specific": false,
+              "specific_options": [],
+              "resolved_company": null,
+              "company_team": null,
+              "resolved_companies": [
+                "cabana",
+                "sorento"
+              ],
+              "routing_brand": null,
+              "routing_brand_source": null,
+              "routing_companies": [
+                {
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "brand_code": null,
+                  "codes": [
+                    "CGB1032B",
+                    "CGB1032B-NL"
+                  ],
+                  "labels": [
+                    "CGB1032B",
+                    "CGB1032B-NL"
+                  ]
+                }
+              ],
+              "routing_company": "00000000-0000-0000-0000-000000000001",
+              "access_denied_levels": [],
+              "brand_gate_empty": false,
+              "brand_unheld": false,
+              "access_notice": "",
+              "gate_reason": "ok",
+              "gate_clarification": "",
+              "compatible_entities": [
+                {
+                  "uuid": "3dccf7b0-e08a-406a-8092-b2f54ccb9cc4",
+                  "entity_type": "product",
+                  "code": "CGB1032B"
+                },
+                {
+                  "uuid": "da7c962f-d88b-4077-a22b-abc5b5e80b20",
+                  "entity_type": "product",
+                  "code": "CGB1032B-NL"
+                }
+              ],
+              "gate_debug": {
+                "domain": "promotion",
+                "allowed_lookup": [
+                  "product",
+                  "promotion",
+                  "category",
+                  "brand"
+                ],
+                "entities_count": 2
+              }
+            }
+          }
+        }
+      }
+    ],
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 900000006,
+              "firstName": "Person 7",
+              "lastName": "Person 8",
+              "phone": "+60100000003",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/b0d8b35b-95f8-418f-a5a2-991b04a72ea7"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": null,
+              "created_at": 1782546255
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "daccd3b7-569f-4682-ba09-2998eca8cc60",
+              "contact": {
+                "id": 900000006,
+                "firstName": "Person 7",
+                "lastName": "Person 8",
+                "phone": "+60100000003",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1782546255
+              },
+              "message": {
+                "messageId": 1788411753000000,
+                "channelMessageId": "wamid.HBgLNjAxNDkyODk2ODcVAgASGBQzQTFCRkNDNjlBMUJFNDVDRjY5RgA=",
+                "contactId": 900000006,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788411753000,
+                "message": {
+                  "type": "text",
+                  "text": "Cgb1032b promotion"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 10\"},\"wa_id\":\"60100000003\",\"user_id\":\"MY.900000007\",\"firstName\":\"Person 7\",\"lastName\":\"Person 9\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000006",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "warehouse",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "entities": [
+                    {
+                      "raw": "7741",
+                      "hint": "product",
+                      "confident": true,
+                      "canonical_code": null,
+                      "current_message": true
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Previous turn (inventory): returned 12 records",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to check stock for 7741",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "inventory",
+                  "intent_hint": "check_stock",
+                  "message_type": "business_query",
+                  "query_brands": [],
+                  "access_levels": [],
+                  "routing_brand": "mocha",
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [
+                    {
+                      "idx": 1,
+                      "uuid": null,
+                      "label": "MCM7741",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 2,
+                      "uuid": null,
+                      "label": "MCM7741",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 3,
+                      "uuid": null,
+                      "label": "MCM7741",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 4,
+                      "uuid": null,
+                      "label": "MCM7741",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 5,
+                      "uuid": null,
+                      "label": "MCM7741-BL",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 6,
+                      "uuid": null,
+                      "label": "MCM7741-BL",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 7,
+                      "uuid": null,
+                      "label": "MCM7741-GD",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 8,
+                      "uuid": null,
+                      "label": "MCM7741-GD",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 9,
+                      "uuid": null,
+                      "label": "MCM7741-GM",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 10,
+                      "uuid": null,
+                      "label": "MCM7741-GM",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 11,
+                      "uuid": null,
+                      "label": "MCM7741-RG",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 12,
+                      "uuid": null,
+                      "label": "MCM7741-RG",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    }
+                  ],
+                  "routing_company": null,
+                  "date_filter_start": null,
+                  "routing_companies": [
+                    {
+                      "codes": [
+                        "MCM7741-BL",
+                        "MCM7741-GD",
+                        "MCM7741-GM",
+                        "MCM7741",
+                        "MCM7741-RG"
+                      ],
+                      "labels": [
+                        "MCM7741-BL",
+                        "MCM7741-GD",
+                        "MCM7741-GM",
+                        "MCM7741",
+                        "MCM7741-RG"
+                      ],
+                      "brand_code": null,
+                      "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                      "company_name": "Mocha"
+                    },
+                    {
+                      "codes": [
+                        "MCM7741-GM",
+                        "MCM7741"
+                      ],
+                      "labels": [
+                        "MCM7741-GM",
+                        "MCM7741"
+                      ],
+                      "brand_code": "mocha",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "selection_context": null,
+                  "routing_roster_plan": null,
+                  "requested_attributes": [],
+                  "routing_brand_source": "resolved"
+                },
+                "user_response": "Stock details found for the requested products.\n\n1. *Company:* Sorento\n*Product Code:* MCM7741\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 19\n\n2. *Company:* Sorento\n*Product Code:* MCM7741\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-AM\n*Quantity On Hand:* 13\n\n3. *Company:* Mocha\n*Product Code:* MCM7741\n*Warehouse:* HQ\n*System Location:* HQ\n*Quantity On Hand:* 0\n\n4. *Company:* Mocha\n*Product Code:* MCM7741\n*Warehouse:* MERU\n*System Location:* MOCHA-WH\n*Quantity On Hand:* 1\n\n5. *Company:* Mocha\n*Product Code:* MCM7741-BL\n*Warehouse:* HQ\n*System Location:* HQ\n*Quantity On Hand:* 0\n\n6. *Company:* Mocha\n*Product Code:* MCM7741-BL\n*Warehouse:* MERU\n*System Location:* MOCHA-WH\n*Quantity On Hand:* 0\n\n7. *Company:* Mocha\n*Product Code:* MCM7741-GD\n*Warehouse:* HQ\n*System Location:* HQ\n*Quantity On Hand:* 50\n\n8. *Company:* Mocha\n*Product Code:* MCM7741-GD\n*Warehouse:* MERU\n*System Location:* MOCHA-WH\n*Quantity On Hand:* 68\n\n9. *Company:* Mocha\n*Product Code:* MCM7741-GM\n*Warehouse:* HQ\n*System Location:* HQ\n*Quantity On Hand:* 100\n\n10. *Company:* Mocha\n*Product Code:* MCM7741-GM\n*Warehouse:* MERU\n*System Location:* MOCHA-WH\n*Quantity On Hand:* 80\n\n11. *Company:* Mocha\n*Product Code:* MCM7741-RG\n*Warehouse:* HQ\n*System Location:* HQ\n*Quantity On Hand:* 50\n\n12. *Company:* Mocha\n*Product Code:* MCM7741-RG\n*Warehouse:* MERU\n*System Location:* MOCHA-WH\n*Quantity On Hand:* 57\n\n_Data last updated: 03/09/2026 11:31:14_"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "check_promotion",
+                "domain_hint": "promotion",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check the promotion for Cgb1032b",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "Cgb1032b",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "marketing_promotion",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_explicit",
+                "scope_exclusive_applied": false,
+                "entity_op_applied": "replace_combine",
+                "query_brands": [],
+                "entities_filtered": false,
+                "entities_emptied_by_filter": false
+              },
+              "_parser_raw": {
+                "message_type": "business_query",
+                "intent_hint": "check_promotion",
+                "domain_hint": "promotion",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check the promotion for Cgb1032b",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "Cgb1032b",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "marketing_promotion",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "General Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null,
+            "resolved": {
+              "match_mode": "and",
+              "tokens": [
+                "Cgb1032b"
+              ],
+              "elapsed_ms": 77.92,
+              "intersection": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "CGB1032B",
+                  "uuid": "3dccf7b0-e08a-406a-8092-b2f54ccb9cc4",
+                  "match_field": "product_code",
+                  "match_tier": "and",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "product_name": "CGB1032B",
+                    "is_active": true,
+                    "brand": {
+                      "brand_id": "9f1277f0-42fa-442c-978f-ab5f41e72a20",
+                      "brand_code": "CABANA",
+                      "brand_name": "CABANA"
+                    }
+                  }
+                },
+                {
+                  "entity_type": "product",
+                  "canonical_code": "CGB1032B-NL",
+                  "uuid": "da7c962f-d88b-4077-a22b-abc5b5e80b20",
+                  "match_field": "product_code",
+                  "match_tier": "and",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "product_name": "CGB1032B-NL",
+                    "is_active": true,
+                    "brand": {
+                      "brand_id": "f2ca6703-3aff-4431-87a2-6aa5e86eb747",
+                      "brand_code": "NO LOGO",
+                      "brand_name": "NO LOGO"
+                    }
+                  }
+                }
+              ],
+              "by_entity_type": {
+                "product": [
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "CGB1032B",
+                    "uuid": "3dccf7b0-e08a-406a-8092-b2f54ccb9cc4",
+                    "match_field": "product_code",
+                    "match_tier": "and",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento",
+                    "display": {
+                      "product_name": "CGB1032B",
+                      "is_active": true,
+                      "brand": {
+                        "brand_id": "9f1277f0-42fa-442c-978f-ab5f41e72a20",
+                        "brand_code": "CABANA",
+                        "brand_name": "CABANA"
+                      }
+                    }
+                  },
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "CGB1032B-NL",
+                    "uuid": "da7c962f-d88b-4077-a22b-abc5b5e80b20",
+                    "match_field": "product_code",
+                    "match_tier": "and",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento",
+                    "display": {
+                      "product_name": "CGB1032B-NL",
+                      "is_active": true,
+                      "brand": {
+                        "brand_id": "f2ca6703-3aff-4431-87a2-6aa5e86eb747",
+                        "brand_code": "NO LOGO",
+                        "brand_name": "NO LOGO"
+                      }
+                    }
+                  }
+                ]
+              },
+              "empty": false,
+              "unresolved_tokens": [],
+              "alternatives": [],
+              "token_coverage": [
+                {
+                  "token": "Cgb1032b",
+                  "match_semantics": "max_coverage",
+                  "coverage": [
+                    {
+                      "entity_type": "product",
+                      "matched_words": [
+                        "Cgb1032b"
+                      ],
+                      "unmatched_words": [],
+                      "truncated": false
+                    }
+                  ]
+                }
+              ]
+            },
+            "entities": {
+              "name": [
+                "Sorento Office",
+                "Sorento Dealer",
+                "Mocha Dealer",
+                "Mocha Office",
+                "Cabana Office",
+                "Cabana Dealer",
+                "End User"
+              ]
+            },
+            "gate": {
+              "match_mode": "and",
+              "tokens": [
+                "Cgb1032b"
+              ],
+              "elapsed_ms": 77.92,
+              "intersection": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "CGB1032B",
+                  "uuid": "3dccf7b0-e08a-406a-8092-b2f54ccb9cc4",
+                  "match_field": "product_code",
+                  "match_tier": "and",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "product_name": "CGB1032B",
+                    "is_active": true,
+                    "brand": {
+                      "brand_id": "9f1277f0-42fa-442c-978f-ab5f41e72a20",
+                      "brand_code": "CABANA",
+                      "brand_name": "CABANA"
+                    }
+                  }
+                },
+                {
+                  "entity_type": "product",
+                  "canonical_code": "CGB1032B-NL",
+                  "uuid": "da7c962f-d88b-4077-a22b-abc5b5e80b20",
+                  "match_field": "product_code",
+                  "match_tier": "and",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "product_name": "CGB1032B-NL",
+                    "is_active": true,
+                    "brand": {
+                      "brand_id": "f2ca6703-3aff-4431-87a2-6aa5e86eb747",
+                      "brand_code": "NO LOGO",
+                      "brand_name": "NO LOGO"
+                    }
+                  }
+                }
+              ],
+              "by_entity_type": {
+                "product": [
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "CGB1032B",
+                    "uuid": "3dccf7b0-e08a-406a-8092-b2f54ccb9cc4",
+                    "match_field": "product_code",
+                    "match_tier": "and",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento",
+                    "display": {
+                      "product_name": "CGB1032B",
+                      "is_active": true,
+                      "brand": {
+                        "brand_id": "9f1277f0-42fa-442c-978f-ab5f41e72a20",
+                        "brand_code": "CABANA",
+                        "brand_name": "CABANA"
+                      }
+                    }
+                  },
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "CGB1032B-NL",
+                    "uuid": "da7c962f-d88b-4077-a22b-abc5b5e80b20",
+                    "match_field": "product_code",
+                    "match_tier": "and",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento",
+                    "display": {
+                      "product_name": "CGB1032B-NL",
+                      "is_active": true,
+                      "brand": {
+                        "brand_id": "f2ca6703-3aff-4431-87a2-6aa5e86eb747",
+                        "brand_code": "NO LOGO",
+                        "brand_name": "NO LOGO"
+                      }
+                    }
+                  }
+                ]
+              },
+              "empty": false,
+              "unresolved_tokens": [],
+              "alternatives": [],
+              "token_coverage": [
+                {
+                  "token": "Cgb1032b",
+                  "match_semantics": "max_coverage",
+                  "coverage": [
+                    {
+                      "entity_type": "product",
+                      "matched_words": [
+                        "Cgb1032b"
+                      ],
+                      "unmatched_words": [],
+                      "truncated": false
+                    }
+                  ]
+                }
+              ],
+              "gate_passed": true,
+              "require_specific": false,
+              "specific_options": [],
+              "resolved_company": null,
+              "company_team": null,
+              "resolved_companies": [
+                "cabana",
+                "sorento"
+              ],
+              "routing_brand": null,
+              "routing_brand_source": null,
+              "routing_companies": [
+                {
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "brand_code": null,
+                  "codes": [
+                    "CGB1032B",
+                    "CGB1032B-NL"
+                  ],
+                  "labels": [
+                    "CGB1032B",
+                    "CGB1032B-NL"
+                  ]
+                }
+              ],
+              "routing_company": "00000000-0000-0000-0000-000000000001",
+              "access_denied_levels": [],
+              "brand_gate_empty": false,
+              "brand_unheld": false,
+              "access_notice": "",
+              "gate_reason": "ok",
+              "gate_clarification": "",
+              "compatible_entities": [
+                {
+                  "uuid": "3dccf7b0-e08a-406a-8092-b2f54ccb9cc4",
+                  "entity_type": "product",
+                  "code": "CGB1032B"
+                },
+                {
+                  "uuid": "da7c962f-d88b-4077-a22b-abc5b5e80b20",
+                  "entity_type": "product",
+                  "code": "CGB1032B-NL"
+                }
+              ],
+              "gate_debug": {
+                "domain": "promotion",
+                "allowed_lookup": [
+                  "product",
+                  "promotion",
+                  "category",
+                  "brand"
+                ],
+                "entities_count": 2
+              }
+            }
+          }
+        }
+      }
+    ],
+    "Execute 'sub-get-rag'": [
+      {
+        "json": {
+          "tools": [
+            {
+              "name": "crm_marketing_promotions_list",
+              "similarity": 0.5147524296529509
+            }
+          ]
+        }
+      }
+    ],
+    "tool-filter": [
+      {
+        "json": {
+          "name": "crm_marketing_promotions_list",
+          "similarity": 0.5147524296529509,
+          "_tool_pick": {
+            "chosen": "crm_marketing_promotions_list",
+            "rejected": [],
+            "count": 1,
+            "has_product": true
+          }
+        }
+      }
+    ],
+    "if-tier-ask": [
+      {
+        "json": {
+          "name": "crm_marketing_promotions_list",
+          "similarity": 0.5147524296529509,
+          "_tool_pick": {
+            "chosen": "crm_marketing_promotions_list",
+            "rejected": [],
+            "count": 1,
+            "has_product": true
+          }
+        }
+      }
+    ],
+    "tier-probe-plan": [
+      {
+        "json": {
+          "name": [
+            "Sorento Office",
+            "Sorento Dealer",
+            "Mocha Dealer",
+            "Mocha Office",
+            "Cabana Office",
+            "Cabana Dealer",
+            "End User"
+          ],
+          "tier_stated": [],
+          "entitled_tiers": [
+            "dealer",
+            "office",
+            "end_user"
+          ],
+          "entitled_unknown": [],
+          "query_brands": [],
+          "pending_pick": false,
+          "tier_ask": true,
+          "tier_proceed": false,
+          "access_levels_recomposed": [
+            "Sorento Office",
+            "Sorento Dealer",
+            "Mocha Dealer",
+            "Mocha Office",
+            "Cabana Office",
+            "Cabana Dealer",
+            "End User"
+          ],
+          "tier_probe_plan": [
+            {
+              "tier": "dealer",
+              "access_levels": [
+                "Sorento Dealer",
+                "Mocha Dealer",
+                "Cabana Dealer"
+              ]
+            },
+            {
+              "tier": "office",
+              "access_levels": [
+                "Sorento Office",
+                "Mocha Office",
+                "Cabana Office"
+              ]
+            },
+            {
+              "tier": "end_user",
+              "access_levels": [
+                "End User"
+              ]
+            }
+          ],
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "tier_pick_domain": null,
+          "probe_tier": "dealer",
+          "probe_access_levels": [
+            "Sorento Dealer",
+            "Mocha Dealer",
+            "Cabana Dealer"
+          ],
+          "probe_skipped": false
+        }
+      },
+      {
+        "json": {
+          "name": [
+            "Sorento Office",
+            "Sorento Dealer",
+            "Mocha Dealer",
+            "Mocha Office",
+            "Cabana Office",
+            "Cabana Dealer",
+            "End User"
+          ],
+          "tier_stated": [],
+          "entitled_tiers": [
+            "dealer",
+            "office",
+            "end_user"
+          ],
+          "entitled_unknown": [],
+          "query_brands": [],
+          "pending_pick": false,
+          "tier_ask": true,
+          "tier_proceed": false,
+          "access_levels_recomposed": [
+            "Sorento Office",
+            "Sorento Dealer",
+            "Mocha Dealer",
+            "Mocha Office",
+            "Cabana Office",
+            "Cabana Dealer",
+            "End User"
+          ],
+          "tier_probe_plan": [
+            {
+              "tier": "dealer",
+              "access_levels": [
+                "Sorento Dealer",
+                "Mocha Dealer",
+                "Cabana Dealer"
+              ]
+            },
+            {
+              "tier": "office",
+              "access_levels": [
+                "Sorento Office",
+                "Mocha Office",
+                "Cabana Office"
+              ]
+            },
+            {
+              "tier": "end_user",
+              "access_levels": [
+                "End User"
+              ]
+            }
+          ],
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "tier_pick_domain": null,
+          "probe_tier": "office",
+          "probe_access_levels": [
+            "Sorento Office",
+            "Mocha Office",
+            "Cabana Office"
+          ],
+          "probe_skipped": false
+        }
+      },
+      {
+        "json": {
+          "name": [
+            "Sorento Office",
+            "Sorento Dealer",
+            "Mocha Dealer",
+            "Mocha Office",
+            "Cabana Office",
+            "Cabana Dealer",
+            "End User"
+          ],
+          "tier_stated": [],
+          "entitled_tiers": [
+            "dealer",
+            "office",
+            "end_user"
+          ],
+          "entitled_unknown": [],
+          "query_brands": [],
+          "pending_pick": false,
+          "tier_ask": true,
+          "tier_proceed": false,
+          "access_levels_recomposed": [
+            "Sorento Office",
+            "Sorento Dealer",
+            "Mocha Dealer",
+            "Mocha Office",
+            "Cabana Office",
+            "Cabana Dealer",
+            "End User"
+          ],
+          "tier_probe_plan": [
+            {
+              "tier": "dealer",
+              "access_levels": [
+                "Sorento Dealer",
+                "Mocha Dealer",
+                "Cabana Dealer"
+              ]
+            },
+            {
+              "tier": "office",
+              "access_levels": [
+                "Sorento Office",
+                "Mocha Office",
+                "Cabana Office"
+              ]
+            },
+            {
+              "tier": "end_user",
+              "access_levels": [
+                "End User"
+              ]
+            }
+          ],
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "tier_pick_domain": null,
+          "probe_tier": "end_user",
+          "probe_access_levels": [
+            "End User"
+          ],
+          "probe_skipped": false
+        }
+      }
+    ],
+    "tier-probe": [
+      {
+        "json": {
+          "response": "No matching results found.",
+          "response_intro": "No matching results found.",
+          "answers": [],
+          "attachments": [],
+          "action_links": [],
+          "last_updated_at": null,
+          "has_result": false,
+          "alternatives": [],
+          "relaxed_axis": null,
+          "field_access": null,
+          "requested_attributes": [],
+          "keys_served": false
+        }
+      },
+      {
+        "json": {
+          "response": "No matching results found.",
+          "response_intro": "No matching results found.",
+          "answers": [],
+          "attachments": [],
+          "action_links": [],
+          "last_updated_at": null,
+          "has_result": false,
+          "alternatives": [],
+          "relaxed_axis": null,
+          "field_access": null,
+          "requested_attributes": [],
+          "keys_served": false
+        }
+      },
+      {
+        "json": {
+          "response": "No matching results found.",
+          "response_intro": "No matching results found.",
+          "answers": [],
+          "attachments": [],
+          "action_links": [],
+          "last_updated_at": null,
+          "has_result": false,
+          "alternatives": [],
+          "relaxed_axis": null,
+          "field_access": null,
+          "requested_attributes": [],
+          "keys_served": false
+        }
+      }
+    ],
+    "tier-probe-collect": [
+      {
+        "json": {
+          "name": [
+            "Sorento Office",
+            "Sorento Dealer",
+            "Mocha Dealer",
+            "Mocha Office",
+            "Cabana Office",
+            "Cabana Dealer",
+            "End User"
+          ],
+          "tier_stated": [],
+          "entitled_tiers": [
+            "dealer",
+            "office",
+            "end_user"
+          ],
+          "entitled_unknown": [],
+          "query_brands": [],
+          "pending_pick": false,
+          "tier_ask": true,
+          "tier_proceed": false,
+          "access_levels_recomposed": [
+            "Sorento Office",
+            "Sorento Dealer",
+            "Mocha Dealer",
+            "Mocha Office",
+            "Cabana Office",
+            "Cabana Dealer",
+            "End User"
+          ],
+          "tier_probe_plan": [
+            {
+              "tier": "dealer",
+              "access_levels": [
+                "Sorento Dealer",
+                "Mocha Dealer",
+                "Cabana Dealer"
+              ]
+            },
+            {
+              "tier": "office",
+              "access_levels": [
+                "Sorento Office",
+                "Mocha Office",
+                "Cabana Office"
+              ]
+            },
+            {
+              "tier": "end_user",
+              "access_levels": [
+                "End User"
+              ]
+            }
+          ],
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "tier_pick_domain": null,
+          "tier_availability": {
+            "dealer": false,
+            "office": false,
+            "end_user": false
+          },
+          "tier_available_list": [],
+          "tier_any_available": false,
+          "_tier_probe_count": 3,
+          "_tier_probe_planned": 3
+        }
+      }
+    ],
+    "if-tier-has-any": [],
+    "Call 'sub-get-results'": [
+      {
+        "json": {
+          "response": "No matching results found.",
+          "response_intro": "No matching results found.",
+          "answers": [],
+          "attachments": [],
+          "action_links": [],
+          "last_updated_at": null,
+          "has_result": false,
+          "alternatives": [],
+          "relaxed_axis": null,
+          "field_access": null,
+          "requested_attributes": [],
+          "keys_served": false
+        }
+      }
+    ],
+    "fetch-result": [
+      {
+        "json": {
+          "response": "No matching results found.",
+          "response_intro": "No matching results found.",
+          "answers": [],
+          "attachments": [],
+          "action_links": [],
+          "last_updated_at": null,
+          "has_result": false,
+          "alternatives": [],
+          "relaxed_axis": null,
+          "field_access": null,
+          "requested_attributes": [],
+          "keys_served": false,
+          "tool": {
+            "name": "crm_marketing_promotions_list",
+            "similarity": 0.5147524296529509,
+            "_tool_pick": {
+              "chosen": "crm_marketing_promotions_list",
+              "rejected": [],
+              "count": 1,
+              "has_product": true
+            }
+          },
+          "tier_probe": {
+            "name": [
+              "Sorento Office",
+              "Sorento Dealer",
+              "Mocha Dealer",
+              "Mocha Office",
+              "Cabana Office",
+              "Cabana Dealer",
+              "End User"
+            ],
+            "tier_stated": [],
+            "entitled_tiers": [
+              "dealer",
+              "office",
+              "end_user"
+            ],
+            "entitled_unknown": [],
+            "query_brands": [],
+            "pending_pick": false,
+            "tier_ask": true,
+            "tier_proceed": false,
+            "access_levels_recomposed": [
+              "Sorento Office",
+              "Sorento Dealer",
+              "Mocha Dealer",
+              "Mocha Office",
+              "Cabana Office",
+              "Cabana Dealer",
+              "End User"
+            ],
+            "tier_probe_plan": [
+              {
+                "tier": "dealer",
+                "access_levels": [
+                  "Sorento Dealer",
+                  "Mocha Dealer",
+                  "Cabana Dealer"
+                ]
+              },
+              {
+                "tier": "office",
+                "access_levels": [
+                  "Sorento Office",
+                  "Mocha Office",
+                  "Cabana Office"
+                ]
+              },
+              {
+                "tier": "end_user",
+                "access_levels": [
+                  "End User"
+                ]
+              }
+            ],
+            "brand_gate_empty": false,
+            "brand_unheld": false,
+            "tier_pick_domain": null,
+            "tier_availability": {
+              "dealer": false,
+              "office": false,
+              "end_user": false
+            },
+            "tier_available_list": [],
+            "tier_any_available": false,
+            "_tier_probe_count": 3,
+            "_tier_probe_planned": 3
+          },
+          "_fetch_arm": "result"
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "response": "No matching results found.",
+        "response_intro": "No matching results found.",
+        "answers": [],
+        "attachments": [],
+        "action_links": [],
+        "last_updated_at": null,
+        "has_result": false,
+        "alternatives": [],
+        "relaxed_axis": null,
+        "field_access": null,
+        "requested_attributes": [],
+        "keys_served": false
+      }
+    },
+    {
+      "json": {
+        "response": "No matching results found.",
+        "response_intro": "No matching results found.",
+        "answers": [],
+        "attachments": [],
+        "action_links": [],
+        "last_updated_at": null,
+        "has_result": false,
+        "alternatives": [],
+        "relaxed_axis": null,
+        "field_access": null,
+        "requested_attributes": [],
+        "keys_served": false
+      }
+    },
+    {
+      "json": {
+        "response": "No matching results found.",
+        "response_intro": "No matching results found.",
+        "answers": [],
+        "attachments": [],
+        "action_links": [],
+        "last_updated_at": null,
+        "has_result": false,
+        "alternatives": [],
+        "relaxed_axis": null,
+        "field_access": null,
+        "requested_attributes": [],
+        "keys_served": false
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "name": [
+          "Sorento Office",
+          "Sorento Dealer",
+          "Mocha Dealer",
+          "Mocha Office",
+          "Cabana Office",
+          "Cabana Dealer",
+          "End User"
+        ],
+        "tier_stated": [],
+        "entitled_tiers": [
+          "dealer",
+          "office",
+          "end_user"
+        ],
+        "entitled_unknown": [],
+        "query_brands": [],
+        "pending_pick": false,
+        "tier_ask": true,
+        "tier_proceed": false,
+        "access_levels_recomposed": [
+          "Sorento Office",
+          "Sorento Dealer",
+          "Mocha Dealer",
+          "Mocha Office",
+          "Cabana Office",
+          "Cabana Dealer",
+          "End User"
+        ],
+        "tier_probe_plan": [
+          {
+            "tier": "dealer",
+            "access_levels": [
+              "Sorento Dealer",
+              "Mocha Dealer",
+              "Cabana Dealer"
+            ]
+          },
+          {
+            "tier": "office",
+            "access_levels": [
+              "Sorento Office",
+              "Mocha Office",
+              "Cabana Office"
+            ]
+          },
+          {
+            "tier": "end_user",
+            "access_levels": [
+              "End User"
+            ]
+          }
+        ],
+        "brand_gate_empty": false,
+        "brand_unheld": false,
+        "tier_pick_domain": null,
+        "tier_availability": {
+          "dealer": false,
+          "office": false,
+          "end_user": false
+        },
+        "tier_available_list": [],
+        "tier_any_available": false,
+        "_tier_probe_count": 3,
+        "_tier_probe_planned": 3
+      }
+    }
+  ],
+  "runIndex": 0,
+  "execution": {
+    "id": "14999723"
+  },
+  "ran": [
+    "When Executed by Another Workflow",
+    "tier-gate-gate",
+    "tier-gate",
+    "build-ctx-resolved",
+    "build-ctx",
+    "Execute 'sub-get-rag'",
+    "tool-filter",
+    "if-tier-ask",
+    "tier-probe-plan",
+    "tier-probe",
+    "tier-probe-collect",
+    "if-tier-has-any",
+    "Call 'sub-get-results'",
+    "fetch-result"
+  ]
+}

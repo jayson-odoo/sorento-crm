@@ -16,6 +16,9 @@ A branch under the bar is `exhausted` - not short - only when EVERY execution on
 | --- | --- | ---: | ---: | ---: | --- | --- | --- |
 | `spine-rs-1a` | `51f7b0d2` | 581 | 581 | 946 | yes | 2026-09-05 | `route-turn`, `build-ctx` |
 | `sub-casual-llm-live` | `08bf56a5` | 13 | 13 | 13 | yes | 2026-09-05 | `construct-user-prompt`, `mark-casual-error` |
+| `sub-fetch-results-live` | `live-5sep` | 772 | 772 | 772 | yes | 2026-09-05 | `tool-filter`, `tier-probe-plan`, `tier-probe-collect`, `fetch-result` |
+| `sub-get-rag-live` | `live-5sep` | 862 | 862 | 1050 | yes | 2026-09-05 | `Code_in_JavaScript`, `Code_in_JavaScript1` |
+| `sub-get-results` | `125e5c32` | 365 | 365 | 365 | yes | 2026-09-05 | `entity-ids-transformer`, `output-structurer` |
 | `sub-output-live` | `c32698c1` | 760 | 760 | 907 | yes | 2026-09-05 | `compile-current-state`, `crossdomain-compose`, `build-outcome`, `escalate-catalog`, `cs-roster-plan`, `build-cs-member-offer` |
 | `sub-resolve-and-gate-rs` | `4f367b1c` | 682 | 682 | 852 | yes | 2026-09-05 | `disallowed-entity-gate`, `tier-gate`, `build-ctx-resolved`, `annotate-incoming-picker`, `annotate-customer-picker`, `resolve-exit-continue`, `resolve-exit-offer`, `resolve-exit-not-found`, `item`, `sub-resolve-and-gate` |
 | `sub-semantic-parser` | `ab3ec985` | 239 | 239 | 3901 | yes | 2026-09-04 | `output_exchange`, `suggest-follow-up` |
@@ -45,6 +48,8 @@ A WORLD is one whole captured turn replayed through `run_turn` + `complete_turn`
 
 | node | fixtures | real captures | vendored (always run) |
 | --- | ---: | ---: | ---: |
+| `Code_in_JavaScript` | 38 | 38 | 1 |
+| `Code_in_JavaScript1` | 38 | 38 | 1 |
 | `annotate-customer-picker` | 4 | 4 | 1 |
 | `annotate-incoming-picker` | 8 | 5 | 2 |
 | `build-cs-member-offer` | 14 | 14 | 1 |
@@ -57,8 +62,11 @@ A WORLD is one whole captured turn replayed through `run_turn` + `complete_turn`
 | `crossdomain-compose` | 80 | 79 | 5 |
 | `cs-roster-plan` | 14 | 14 | 1 |
 | `disallowed-entity-gate` | 242 | 177 | 6 |
+| `entity-ids-transformer` | 20 | 20 | 2 |
 | `escalate-catalog` | 130 | 130 | 5 |
+| `fetch-result` | 43 | 43 | 2 |
 | `item` | 11 | 11 | 1 |
+| `output-structurer` | 20 | 20 | 2 |
 | `output_exchange` | 325 | 249 | 98 |
 | `resolve-exit-continue` | 6 | 6 | 1 |
 | `resolve-exit-not-found` | 11 | 11 | 2 |
@@ -67,11 +75,16 @@ A WORLD is one whole captured turn replayed through `run_turn` + `complete_turn`
 | `sub-resolve-and-gate` | 28 | 28 | 4 |
 | `suggest-follow-up` | 242 | 242 | 16 |
 | `tier-gate` | 9 | 9 | 2 |
+| `tier-probe-collect` | 6 | 6 | 1 |
+| `tier-probe-plan` | 6 | 6 | 1 |
+| `tool-filter` | 41 | 41 | 2 |
 
 ## Per branch
 
 | node | branch | real captures | other | gate 0 |
 | --- | --- | ---: | ---: | --- |
+| `Code_in_JavaScript` | `all` | 38 | 0 | met |
+| `Code_in_JavaScript1` | `all` | 38 | 0 | met |
 | `annotate-customer-picker` | `order` | 4 | 0 | exhausted (4) |
 | `annotate-incoming-picker` | `incoming` | 5 | 3 | met |
 | `build-cs-member-offer` | `empty_roster` | 0 | 0 | exhausted (0) |
@@ -126,6 +139,9 @@ A WORLD is one whole captured turn replayed through `run_turn` + `complete_turn`
 | `disallowed-entity-gate` | `product_attachment` | 14 | 14 | met |
 | `disallowed-entity-gate` | `promotion` | 19 | 11 | met |
 | `disallowed-entity-gate` | `resource_attachment` | 4 | 0 | exhausted (4) |
+| `entity-ids-transformer` | `crm_incoming_stock_list` | 5 | 0 | met |
+| `entity-ids-transformer` | `crm_inventory_stock_balance_list` | 10 | 0 | met |
+| `entity-ids-transformer` | `crm_master_product_attachments_list` | 5 | 0 | met |
 | `escalate-catalog` | `access_choice` | 2 | 0 | exhausted (2) |
 | `escalate-catalog` | `clarify_menu` | 3 | 0 | exhausted (3) |
 | `escalate-catalog` | `demand_qty` | 3 | 0 | dead by vocabulary |
@@ -135,7 +151,13 @@ A WORLD is one whole captured turn replayed through `run_turn` + `complete_turn`
 | `escalate-catalog` | `not_supported` | 3 | 0 | exhausted (3) |
 | `escalate-catalog` | `offer_hold` | 3 | 0 | exhausted (3) |
 | `escalate-catalog` | `out_of_scope` | 15 | 0 | met |
+| `fetch-result` | `error` | 1 | 0 | exhausted (1) |
+| `fetch-result` | `result` | 37 | 0 | met |
+| `fetch-result` | `tier-ask` | 5 | 0 | met |
 | `item` | `no_domain` | 11 | 0 | met |
+| `output-structurer` | `crm_incoming_stock_list` | 5 | 0 | met |
+| `output-structurer` | `crm_inventory_stock_balance_list` | 10 | 0 | met |
+| `output-structurer` | `crm_master_product_attachments_list` | 5 | 0 | met |
 | `output_exchange` | `incoming` | 65 | 6 | met |
 | `output_exchange` | `inventory` | 119 | 9 | met |
 | `output_exchange` | `master_products` | 4 | 13 | exhausted (4) |
@@ -174,11 +196,22 @@ A WORLD is one whole captured turn replayed through `run_turn` + `complete_turn`
 | `suggest-follow-up` | `resource_attachment` | 1 | 0 | exhausted (1) |
 | `tier-gate` | `tier_ask` | 8 | 0 | met |
 | `tier-gate` | `tier_proceed` | 1 | 0 | exhausted (1) |
+| `tier-probe-collect` | `all` | 6 | 0 | met |
+| `tier-probe-plan` | `all` | 6 | 0 | met |
+| `tool-filter` | `crm_forms_management_forms_list` | 1 | 0 | exhausted (1) |
+| `tool-filter` | `crm_incoming_stock_list` | 6 | 0 | met |
+| `tool-filter` | `crm_inventory_stock_balance_list` | 5 | 0 | met |
+| `tool-filter` | `crm_marketing_promotions_list` | 10 | 0 | met |
+| `tool-filter` | `crm_master_product_attachments_list` | 5 | 0 | met |
+| `tool-filter` | `crm_master_products_list` | 6 | 0 | met |
+| `tool-filter` | `crm_order_management_orders_list` | 5 | 0 | met |
+| `tool-filter` | `crm_portal_link_get` | 1 | 0 | exhausted (1) |
+| `tool-filter` | `crm_resource_attachments_list` | 2 | 0 | exhausted (2) |
 
 ## Gate 0 status
 
 **Not blocked.** Every cell is either met, exhausted in a fully-scanned pool, or dead by vocabulary.
 
-Exhausted (41), under the bar with no more traffic to capture: annotate-customer-picker/order (4), build-cs-member-offer/empty_roster (0), build-cs-member-offer/multi_company (0), build-ctx-resolved/forms (1), build-ctx-resolved/portal_link (1), build-ctx-resolved/product_attachment (2), build-ctx-resolved/resource_attachment (2), build-outcome/access_choice (3), build-outcome/not_supported (3), compile-current-state/goods_receive (2), compile-current-state/ideate (3), compile-current-state/resource_attachment (0), compile-current-state/spo_allocation (4), crossdomain-compose/promotion (2), crossdomain-compose/spo_allocation (1), cs-roster-plan/empty_roster (0), cs-roster-plan/multi_company (0), disallowed-entity-gate/forms (3), disallowed-entity-gate/no_domain (0), disallowed-entity-gate/portal_link (1), disallowed-entity-gate/resource_attachment (4), escalate-catalog/access_choice (2), escalate-catalog/clarify_menu (3), escalate-catalog/not_supported (3), escalate-catalog/offer_hold (3), output_exchange/master_products (4), output_exchange/portal_link (0), output_exchange/promotion (0), output_exchange/resource_attachment (1), route-turn/access_denied (1), route-turn/check_promotion (1), route-turn/clarify_menu (0), route-turn/escalate_offer (0), route-turn/escalation_declined (4), route-turn/ideate (0), route-turn/not_supported (1), route-turn/offer_hold (0), sub-resolve-and-gate/access_ask (0), suggest-follow-up/master_products (4), suggest-follow-up/resource_attachment (1), tier-gate/tier_proceed (1).
+Exhausted (45), under the bar with no more traffic to capture: annotate-customer-picker/order (4), build-cs-member-offer/empty_roster (0), build-cs-member-offer/multi_company (0), build-ctx-resolved/forms (1), build-ctx-resolved/portal_link (1), build-ctx-resolved/product_attachment (2), build-ctx-resolved/resource_attachment (2), build-outcome/access_choice (3), build-outcome/not_supported (3), compile-current-state/goods_receive (2), compile-current-state/ideate (3), compile-current-state/resource_attachment (0), compile-current-state/spo_allocation (4), crossdomain-compose/promotion (2), crossdomain-compose/spo_allocation (1), cs-roster-plan/empty_roster (0), cs-roster-plan/multi_company (0), disallowed-entity-gate/forms (3), disallowed-entity-gate/no_domain (0), disallowed-entity-gate/portal_link (1), disallowed-entity-gate/resource_attachment (4), escalate-catalog/access_choice (2), escalate-catalog/clarify_menu (3), escalate-catalog/not_supported (3), escalate-catalog/offer_hold (3), fetch-result/error (1), output_exchange/master_products (4), output_exchange/portal_link (0), output_exchange/promotion (0), output_exchange/resource_attachment (1), route-turn/access_denied (1), route-turn/check_promotion (1), route-turn/clarify_menu (0), route-turn/escalate_offer (0), route-turn/escalation_declined (4), route-turn/ideate (0), route-turn/not_supported (1), route-turn/offer_hold (0), sub-resolve-and-gate/access_ask (0), suggest-follow-up/master_products (4), suggest-follow-up/resource_attachment (1), tier-gate/tier_proceed (1), tool-filter/crm_forms_management_forms_list (1), tool-filter/crm_portal_link_get (1), tool-filter/crm_resource_attachments_list (2).
 
 Dead by vocabulary, 0 captures is the correct number: escalate-catalog/demand_qty, route-turn/demand_qty, route-turn/stock_denied. These are covered by unit tests behind `chatbot_stock_denial_enabled` (AC-306, R1), never by a capture.
