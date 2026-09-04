@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useRef, useState } from 'react';
-import { Check, ChevronDown, ChevronRight, ImageOff, Minus, Package, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, ImageOff, Loader2, Minus, Package, X } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -449,7 +449,11 @@ export function ProductPickerDialog({
                       disabled={isFetching}
                       onClick={() => fetchNextPage()}
                     >
-                      {isFetching ? 'Loading' : 'Load more products'}
+                      {isFetching ? (
+                        <Loader2 className="size-4 animate-spin" aria-label="Loading" />
+                      ) : (
+                        'Load more products'
+                      )}
                     </Button>
                   )}
                 </div>

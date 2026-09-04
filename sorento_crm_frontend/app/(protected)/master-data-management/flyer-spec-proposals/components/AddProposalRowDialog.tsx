@@ -141,7 +141,7 @@ export function AddProposalRowDialog({
                 }
                 emptyMessage={
                   isLoading
-                    ? 'Loading'
+                    ? 'Loading specifications'
                     : 'Every specification this product can carry is already in this batch.'
                 }
                 disabled={saving}

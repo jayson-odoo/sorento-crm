@@ -175,17 +175,17 @@ export default function Page() {
     ],
   );
 
+  // While `savedSupplierFallbackFetching`, the saved supplier is deliberately left OUT
+  // of the list rather than filled with a placeholder row (M5-02 review S7): a synthetic
+  // `{ supplier_name: 'Loading supplier…' }` was a SELECTABLE option, not a loading
+  // indicator. Leaving it out for that one tick means `SearchableSelect` cannot resolve
+  // `value` to any option, so the trigger falls back to its placeholder - nothing
+  // selectable appears until the fetch resolves, one way or the other.
   const suppliersForSelect = useMemo((): SupplierSelectRow[] => {
     const byId = new Map(supplierOptions.map((s) => [s.id, s]));
-    if (savedSupplierId && savedSupplierMissingFromList) {
+    if (savedSupplierId && savedSupplierMissingFromList && !savedSupplierFallbackFetching) {
       if (savedSupplierFallback) {
         byId.set(savedSupplierFallback.id, savedSupplierFallback);
-      } else if (savedSupplierFallbackFetching) {
-        byId.set(savedSupplierId, {
-          id: savedSupplierId,
-          supplier_code: '…',
-          supplier_name: 'Loading supplier…',
-        });
       } else {
         byId.set(savedSupplierId, {
           id: savedSupplierId,

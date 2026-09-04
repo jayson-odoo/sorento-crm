@@ -44,9 +44,9 @@ export type { TagLayerDisplay };
  * hold: a signed URL needs no CORS, and `anonymous` makes the browser DISCARD
  * an image whose response carries no `Access-Control-Allow-Origin`. The R2
  * bucket serving library assets sends none, so every badge, icon and diagram on
- * a tag failed to decode and sat on "Loading" forever - which is exactly what
- * the eight seeded templates showed, all 28 pieces of artwork, on a canvas that
- * was otherwise correct.
+ * a tag failed to decode and sat on the placeholder text below forever - which
+ * is exactly what the eight seeded templates showed, all 28 pieces of artwork,
+ * on a canvas that was otherwise correct.
  *
  * What `anonymous` would buy is an UNTAINTED canvas, and nothing here wants
  * one: the tag PDF is rendered by headless Chromium against the print page, not
@@ -458,7 +458,7 @@ function ImageContent({
         <Text
           width={w}
           height={h}
-          text={url ? 'Loading' : 'No image'}
+          text={url ? 'Fetching image' : 'No image'}
           align="center"
           verticalAlign="middle"
           fontSize={10}
@@ -524,8 +524,9 @@ function ImageContent({
 
 /** Whether the offscreen canvas has been drawn, is still to be drawn, or
  * `jsbarcode` threw drawing it. Distinct from `pending` so the renderer can
- * tell "still loading" apart from "cannot encode this value" - the two used
- * to share one `null`, which drew "Loading" forever on a genuine failure. */
+ * tell "still in flight" apart from "cannot encode this value" - the two used
+ * to share one `null`, which drew the pending placeholder forever on a
+ * genuine failure. */
 type BarcodeCanvasState =
   | { status: 'pending' }
   | { status: 'failed' }
@@ -676,7 +677,7 @@ function BarcodeContent({
           width={w}
           y={barsY}
           height={barsH}
-          text="Loading"
+          text="Preparing barcode"
           align="center"
           verticalAlign="middle"
           fontSize={9}

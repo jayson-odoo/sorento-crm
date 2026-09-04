@@ -23,7 +23,10 @@ describe('IdeationEmbed', () => {
       refetch: vi.fn(),
     });
     render(<IdeationEmbed title="Ideas board" />);
-    expect(screen.getByText(/loading/i)).toBeInTheDocument();
+    // `SectionSkeleton` (M5-01/M5-02 review S6) - a `role="status"` region of bars,
+    // not visible "Loading" text (this test predates that swap and asserted the bare
+    // string, which M5-02 run 2 already banned everywhere else).
+    expect(screen.getByRole('status', { name: 'Loading' })).toBeInTheDocument();
     expect(document.querySelector('iframe')).toBeNull();
   });
 

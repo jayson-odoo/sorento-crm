@@ -249,8 +249,12 @@ describe('every DataGrid list segment has a loading.tsx (M5-01)', () => {
       expect(typeof Loading, `${relativeFromTest} has no default export`).toBe('function');
 
       const { container, unmount } = render(<Loading />);
-      // Content-only: no shell wrapper of its own.
-      expect(container.querySelector('[role="status"]')).not.toBeInTheDocument();
+      // Content-only: no `ScreenLoader` shell of its own (the app-boot splash
+      // - a different loading state, never nested inside a route's own
+      // skeleton). `ListPageSkeleton`/`SectionSkeleton` DO carry `role="status"`
+      // themselves (M5-01 review S5), so that role is not what distinguishes
+      // "content-only" here - `ScreenLoader`'s own `data-slot` is.
+      expect(container.querySelector('[data-slot="screen-loader"]')).not.toBeInTheDocument();
       expect(container.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0);
       unmount();
     }

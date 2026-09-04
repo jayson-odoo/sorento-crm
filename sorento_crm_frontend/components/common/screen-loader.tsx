@@ -11,7 +11,10 @@ import { toAbsoluteUrl } from '@/lib/helpers';
  */
 export function ScreenLoader() {
   return (
-    <div className="flex flex-col items-center gap-3 justify-center fixed inset-0 z-50">
+    <div
+      className="flex flex-col items-center gap-3 justify-center fixed inset-0 z-50"
+      data-slot="screen-loader"
+    >
       <img
         className="h-[30px] max-w-none"
         src={toAbsoluteUrl('/media/app/sorento-logo.svg')}

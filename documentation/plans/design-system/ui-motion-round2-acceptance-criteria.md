@@ -303,6 +303,14 @@ Baseline measured on `origin/main` e1adad4d2, 2 Sep 2026.
   `tableLayout.scrollerMaxHeight`. The `[browser]` sweep (Products/Orders/Stock at 1280 and
   375, drag-to-reorder + resize on Products) is still open - the next browser-verification pass
   covers it.
+  **Captain ruling (M5 run 2 review):** the column-header Move Left/Right menu
+  (`headerControls` in `components/ui/data-grid-column-header.tsx`) is not rendered on main -
+  dead since `63b93d74b` ("personalized columns"), confirmed by that file's own module doc
+  comment (M5 review run 1, S4). Column reorder today is by drag (`columnsDraggable`, default
+  true), so M5-05 holds through drag regardless. `columnsMovable: true` stays the default for
+  whenever the menu is wired up - wiring `headerControls` into the render tree (a settings icon
+  and dropdown on every column header across roughly 200 grids) is a separate design call, not
+  part of M5.
 - **M5-06** `[UX] [vitest]` No product file imports `@/components/ui/table` (baseline 24). Any
   file that cannot migrate sits on an allowlist in the test with a one-line reason, and the PR
   lists them.

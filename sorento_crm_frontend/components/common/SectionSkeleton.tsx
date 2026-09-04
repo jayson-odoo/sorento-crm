@@ -22,7 +22,13 @@ export interface SectionSkeletonProps {
  */
 export function SectionSkeleton({ rows = 3, className }: SectionSkeletonProps) {
   return (
-    <div className={cn('space-y-2', className)} data-slot="section-skeleton">
+    <div
+      className={cn('space-y-2', className)}
+      data-slot="section-skeleton"
+      role="status"
+      aria-busy="true"
+      aria-label="Loading"
+    >
       {Array.from({ length: rows }).map((_, index) => (
         <Skeleton key={index} className="h-4 w-full" />
       ))}

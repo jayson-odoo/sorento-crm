@@ -38,8 +38,13 @@ export interface ListPageSkeletonProps {
  * rather than shifting the block itself (M5-03).
  */
 export function ListPageSkeleton({ rows = 10, bodyOnly = false }: ListPageSkeletonProps) {
+  // A loading region announces itself the same way any other async content
+  // does (M5-01 review S5) - `role="status"` plus `aria-busy` so assistive
+  // tech reads "loading" rather than reading past a page of bare bars.
+  const statusProps = { role: 'status' as const, 'aria-busy': true, 'aria-label': 'Loading' };
+
   const card = (
-    <Card>
+    <Card {...(bodyOnly ? statusProps : {})}>
       <CardHeader className="flex items-center justify-between gap-3">
         <Skeleton className="h-9 w-64" />
         <div className="flex items-center gap-2">
@@ -82,7 +87,7 @@ export function ListPageSkeleton({ rows = 10, bodyOnly = false }: ListPageSkelet
   if (bodyOnly) return card;
 
   return (
-    <>
+    <div {...statusProps}>
       <Container>
         <div className="flex flex-wrap items-center justify-between gap-3 pb-5">
           <div className="space-y-2">
@@ -94,6 +99,6 @@ export function ListPageSkeleton({ rows = 10, bodyOnly = false }: ListPageSkelet
       </Container>
 
       <Container>{card}</Container>
-    </>
+    </div>
   );
 }

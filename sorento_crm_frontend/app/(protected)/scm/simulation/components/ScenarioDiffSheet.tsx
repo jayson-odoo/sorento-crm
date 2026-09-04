@@ -78,10 +78,13 @@ export function ScenarioDiffSheet({ code, onOpenChange, simDbActive = false }: S
                 {STATUS_LABEL[data.status]}
               </span>
             ) : (
-              // SheetDescription renders a `<p>`, which may only hold
-              // phrasing content - a styled `span`, not the shared
-              // `Skeleton` `div`, but the same pill-shaped placeholder.
-              <span className="inline-block h-5 w-20 animate-pulse rounded-full bg-accent align-middle" />
+              // SheetDescription renders a `<p>`, which may only hold phrasing content -
+              // `Skeleton` rendered `asChild` onto a `span` (M5-01/M5-02 review N1)
+              // rather than the shared `div`, same pill shape, still carries
+              // `Skeleton`'s own `data-slot="skeleton"`.
+              <Skeleton asChild className="inline-block h-5 w-20 rounded-full align-middle">
+                <span />
+              </Skeleton>
             )}
           </SheetDescription>
         </SheetHeader>

@@ -9,7 +9,7 @@ import { getInitials } from '@/lib/helpers';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Container } from '@/components/common/container';
-import { ContentLoader } from '@/components/common/content-loader';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { PageHeader } from '@/components/common/PageHeader';
 import { AccountProvider } from './components/account-context';
 import { useHasPermission } from '@/hooks/usePermissions';
@@ -95,7 +95,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   };
 
   if (isLoading) {
-    return <ContentLoader className="mt-[30%]" />;
+    return <SectionSkeleton rows={3} className="mx-auto max-w-md mt-[30%]" />;
   }
 
   // Failed request or empty payload: isLoading is false but user is still undefined

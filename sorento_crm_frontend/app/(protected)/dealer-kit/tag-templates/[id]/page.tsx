@@ -325,7 +325,11 @@ export default function TagTemplateEditorPage() {
   if (isLoading) {
     return (
       <Container>
-        <PageHeader title={<Skeleton className="h-6 w-48" />} crumbTitle="Loading" />
+        {/* No `crumbTitle` while the record name is unknown: `title` is a node here
+            (a `Skeleton` bar), and per `buildCrumbTrail`'s own doc comment, a page
+            that offers neither a string `title` nor a `crumbTitle` simply ends the
+            trail on the sidebar entry rather than naming a placeholder crumb. */}
+        <PageHeader title={<Skeleton className="h-6 w-48" />} />
         <Skeleton className="mt-4 h-[400px] w-full" />
       </Container>
     );

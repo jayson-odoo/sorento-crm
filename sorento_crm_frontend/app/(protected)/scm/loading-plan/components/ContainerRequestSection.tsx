@@ -251,7 +251,7 @@ function PeakCell({
   onOpen: () => void;
 }) {
   if (loading && !history) {
-    return <span className="text-2xs text-muted-foreground">Loading</span>;
+    return <Skeleton className="h-3 w-12" />;
   }
   const series = history?.[kind];
   if (!series || series.total === 0 || !series.peak_month) {

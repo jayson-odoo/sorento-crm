@@ -873,10 +873,13 @@ export default function AttachmentDetailModal({
             <DialogTitle className="text-xl truncate min-w-0 flex-1">
               {attachment?.original_filename ??
                 (isLoading ? (
-                  // A `<h2>` (DialogTitle's element) may only hold phrasing
-                  // content, so this is a styled `span`, not the shared
-                  // `Skeleton` `div`, but the same bar-shaped placeholder.
-                  <span className="inline-block h-5 w-48 animate-pulse rounded-md bg-accent align-middle" />
+                  // A `<h2>` (DialogTitle's element) may only hold phrasing content, so
+                  // this is `Skeleton` rendered `asChild` onto a `span` (M5-01/M5-02
+                  // review N1) rather than the shared `div` - same bar, still carries
+                  // `Skeleton`'s own `data-slot="skeleton"`.
+                  <Skeleton asChild className="inline-block h-5 w-48 align-middle">
+                    <span />
+                  </Skeleton>
                 ) : (
                   'Attachment'
                 ))}

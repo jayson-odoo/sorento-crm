@@ -20,7 +20,7 @@ import {
 import { apiFetch } from '@/lib/api';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Container } from '@/components/common/container';
-import { ContentLoader } from '@/components/common/content-loader';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { PageHeader } from '@/components/common/PageHeader';
 import { SystemSetting } from '@/app/models/system';
 import { SettingsProvider } from './components/settings-context';
@@ -337,7 +337,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   };
 
   if (isLoading) {
-    return <ContentLoader className="mt-[30%]" />;
+    return <SectionSkeleton rows={3} className="mx-auto max-w-md mt-[30%]" />;
   }
 
   return (

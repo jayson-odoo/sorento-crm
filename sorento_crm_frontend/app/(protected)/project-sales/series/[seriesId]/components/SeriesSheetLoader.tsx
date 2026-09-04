@@ -167,9 +167,7 @@ export function SeriesSheetLoader({ series }: { series: ProjectSeries }) {
         </div>
         <Button onClick={start} disabled={!canLoad || pending}>
           {pending ? (
-            <>
-              <LoaderCircle className="size-4 animate-spin" /> Loading
-            </>
+            <LoaderCircle className="size-4 animate-spin" aria-label="Loading" />
           ) : (
             'Load'
           )}
