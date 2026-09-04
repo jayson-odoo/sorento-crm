@@ -77,6 +77,10 @@ ROUTED_TO_PIC_REPLY = (
 MALAYSIA = timezone(timedelta(hours=8))
 RESPOND_INBOX_URL = "https://app.respond.io/space/{space_id}/inbox/{contact_id}#{message_id}"
 
+# What a dry run prints where a seam would have supplied a value (AC-507). One token, so a
+# reader of a preview action can tell at a glance that nothing behind it happened.
+PREVIEW = "<preview>"
+
 # `get-round-robin-assignee`'s body has these two frozen, as literals in the JSON.
 NEXT_ASSIGNEE_POLICY_CODE = "NORMAL"
 NEXT_ASSIGNEE_TIER = 1
@@ -438,45 +442,98 @@ def run(
 
     result = escalation_result()
     team = jsc.get(context_item, "team")
-    actions: list[dict[str, Any]] = [_send_message(OUT_OF_SCOPE_REPLY, dry_run)]
 
     if dry_run:
-        # D14 / H37. The customer acknowledgement is composed - it names nothing and
-        # touches nothing - and every seam below is skipped, so no assignee is picked, no
-        # cursor advances and no SLA row is written.
+        # D14 / H37, AC-507. The seams are NOT reached - no assignee is picked, no cursor
+        # advances, no SLA row is written - and the turn still returns every action it WOULD
+        # have taken, in order, each flagged `dry_run` and `preview`. The executor renders
+        # its expressions against this shape, so a dry run that returned a shorter list
+        # would be a different contract from the live one and could not be rendered against.
+        #
+        # `assign_conversation` is always present here: whether the live run omits it
+        # depends on `is_already_assigned`, which only the seam knows, so a preview cannot
+        # honestly leave it out.
+        preview_sla = {
+            "initiated_at": PREVIEW,
+            "due_at": PREVIEW,
+            "due_at_resolution": PREVIEW,
+        }
+        actions = _assignment_actions(
+            ctx,
+            team,
+            assignee=None,
+            sla=preview_sla,
+            include_assign=True,
+            dry_run=True,
+            preview=True,
+        )
         return {**result, "actions": actions, "pending": None}
 
     if services is None:
         services = production_services()
 
     assignee = services.next_assignee(_next_assignee_body(ctx, context_item))
-    if jsc.get(assignee, "is_already_assigned") is not True:
+    sla = services.sla_create(_sla_body(ctx, context_item, assignee))
+    actions = _assignment_actions(
+        ctx,
+        team,
+        assignee=assignee,
+        sla=sla,
         # `if-conversation-unassigned`'s true leg. Already assigned in respond.io means
         # someone is on the conversation and re-assigning would take it off them.
-        actions.append(
-            {
-                "kind": "assign_conversation",
-                "respond_user_id": jsc.get(assignee, "assignee_respond_user_id"),
-                "dry_run": dry_run,
-            }
-        )
+        include_assign=jsc.get(assignee, "is_already_assigned") is not True,
+        dry_run=False,
+        preview=False,
+    )
+    return {**result, "actions": actions, "pending": None}
 
-    sla = services.sla_create(_sla_body(ctx, context_item, assignee))
 
-    actions.append(
-        {
-            "kind": "add_comment",
-            "text": _comment_text(ctx, team, sla),
-            # The RESPOND user id, not the CRM one, and exactly one of them: the executor
-            # maps this to `sub-add-comment-respond`'s `user_id`, which is what respond.io
-            # needs to turn a comment into a mention. `assign_conversation` above carries
-            # the same id for the same reason.
-            "mention_user_ids": [jsc.get(assignee, "assignee_respond_user_id")],
+def _assignment_actions(
+    ctx: dict[str, Any],
+    team: Any,
+    *,
+    assignee: Any,
+    sla: Any,
+    include_assign: bool,
+    dry_run: bool,
+    preview: bool,
+) -> list[dict[str, Any]]:
+    """The four actions, in the order the live graph performs them.
+
+    ONE builder for the live list and the preview list, so the two can only differ in the
+    values a seam would have supplied - never in the shape, the order or the set of keys.
+    That is the whole point of AC-507: the executor renders one template against both.
+
+    Neither `send_message` depends on the assignee: the first is a fixed sentence and the
+    second interpolates the TEAM, which the ladder resolved before any seam was reached. So
+    both carry their real text even in a preview, and only the assignee id, the mention and
+    the three timestamps are placeholders.
+    """
+    respond_user_id = jsc.get(assignee, "assignee_respond_user_id") if assignee is not None else None
+    actions: list[dict[str, Any]] = [_send_message(OUT_OF_SCOPE_REPLY, dry_run)]
+    if include_assign:
+        action: dict[str, Any] = {
+            "kind": "assign_conversation",
+            "respond_user_id": respond_user_id,
             "dry_run": dry_run,
         }
-    )
+        if preview:
+            action["preview"] = True
+        actions.append(action)
+    comment: dict[str, Any] = {
+        "kind": "add_comment",
+        "text": _comment_text(ctx, team, sla),
+        # The RESPOND user id, not the CRM one, and exactly one of them: the executor maps
+        # this to `sub-add-comment-respond`'s `user_id`, which is what respond.io needs to
+        # turn a comment into a mention. `assign_conversation` above carries the same id.
+        "mention_user_ids": [respond_user_id] if respond_user_id is not None else [],
+        "dry_run": dry_run,
+    }
+    if preview:
+        comment["preview"] = True
+    actions.append(comment)
     actions.append(_send_message(ROUTED_TO_PIC_REPLY.format(team=_pretty_team(team)), dry_run))
-    return {**result, "actions": actions, "pending": None}
+    return actions
 
 
 def _send_message(text: str, dry_run: bool) -> dict[str, Any]:

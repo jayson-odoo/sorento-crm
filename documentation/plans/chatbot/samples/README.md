@@ -10,16 +10,25 @@ Ids: contact `437264483` is the dev contact and is real. Every user id is synthe
 
 ## `chat-turn-out_of_scope.dry-run.json`
 
-`is_test: true`. **One action**, and that is the point: D14 / H37 means a dry run reaches no
-seam at all - no assignee is picked, no cursor moves, no SLA row is written - so the only
-thing it can produce is the acknowledgement message. `session_patch` carries what the tail
-WOULD have written.
+`is_test: true`. **All four actions, same order, same keys** as the live turn (AC-507). D14 /
+H37 still holds underneath: no seam is reached, so no assignee is picked, no cursor moves and
+no SLA row is written. What a seam would have returned is stood in for instead, so the
+executor can render one set of expressions against both files:
+
+* `assign_conversation.respond_user_id` is `null`, with `preview: true` beside it;
+* `add_comment.mention_user_ids` is `[]`, `preview: true`, and the three SLA timestamps in
+  its text read `<preview>`;
+* both `send_message` texts are REAL - neither depends on a seam (one is fixed, the other
+  interpolates the team the ladder resolved before any seam was reached).
+
+`assign_conversation` is always present here even though a live run omits it when the contact
+is already assigned: only the seam knows that, so a preview cannot honestly leave it out.
+`session_patch` carries what the tail would have written.
 
 ## `chat-turn-out_of_scope.assigned.json`
 
-The same turn WITHOUT `is_test`, so the lane runs its seams and the executor can see the
-whole action list. **This is the file to render against**, because the four-action shape
-cannot come from a dry run.
+The same turn WITHOUT `is_test`: the lane runs its seams and every value is real. Use this
+one to see what the executor actually receives in production.
 
 Two things to read carefully:
 

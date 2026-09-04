@@ -143,7 +143,14 @@ the caller sends `reply` and executes `actions`. From S7 there is no `/complete`
 result_set}`, `send_attachments {attachments_src, reply}`, `assign_conversation
 {respond_user_id}`, `add_comment {text, mention_user_ids}`, `update_contact_fields {fields}`.
 Every action carries `dry_run` (true on test envelopes, D14) so the clone's `test-guard`
-records instead of sends, exactly as today.
+records instead of sends, exactly as today. **A dry run returns every action it would have
+taken, flagged `dry_run`, with preview placeholders where a side effect would have supplied
+the value** (AC-507): the lane still reaches no seam, so where a real run would have read an
+id off `next-assignee` the preview carries `null` plus `preview: true`, and where it would
+have read a timestamp off `sla_create` the rendered text carries `<preview>`. Anything not
+behind a seam - a fixed sentence, or one interpolating state the turn already resolved -
+carries its real value on both. The shape, the order and the key set are therefore identical
+live and dry, which is what lets the executor render ONE set of expressions against both.
 
 **D14's input half (O2, AC-112).** A dry-run envelope may also carry three optional harness
 keys, and the engine honours them ONLY on a dry run: `mock_reformulator_output` replaces the

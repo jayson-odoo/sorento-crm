@@ -1,5 +1,5 @@
 {
-  "turn_id": "db3ec73b-aaa2-48f4-974a-8e942d1891be",
+  "turn_id": "a1763c23-7d10-4b32-8a19-ec038508d39c",
   "ctx": {
     "contact": {
       "id": "437264483",
@@ -12,7 +12,7 @@
         "id": "437264483"
       },
       "message": {
-        "messageId": "5704490233114283806a9762a03e9a12",
+        "messageId": "a4f0191bd97a4325ac39b4a2489fd899",
         "contactId": "437264483",
         "channelId": "whatsapp",
         "traffic": "incoming",
@@ -130,6 +130,26 @@
     {
       "kind": "send_message",
       "text": "Your request is out of the scope of my ability and require human assistance. We are directing your enquiry to the correct person. Please wait for a moment.",
+      "dry_run": true,
+      "result_set": [],
+      "quick_replies": []
+    },
+    {
+      "kind": "assign_conversation",
+      "dry_run": true,
+      "preview": true,
+      "respond_user_id": null
+    },
+    {
+      "kind": "add_comment",
+      "text": "Team: customer_service\n⏰ SLA Alert: This contact is routed to you at <preview>.\nYou have until <preview> to respond.\nYou have until <preview> to resolve.\nReference message: https://app.respond.io/space/364817/inbox/437264483#a4f0191bd97a4325ac39b4a2489fd899",
+      "dry_run": true,
+      "preview": true,
+      "mention_user_ids": []
+    },
+    {
+      "kind": "send_message",
+      "text": "This inquiry has been routed to the respective person-in-charge (PIC) from customer service team. We will get back to you soon. Thanks for your patience.",
       "dry_run": true,
       "result_set": [],
       "quick_replies": []
