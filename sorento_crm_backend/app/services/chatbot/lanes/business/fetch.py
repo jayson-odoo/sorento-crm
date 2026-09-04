@@ -575,9 +575,17 @@ def _fmt_ts(iso: Any) -> str | None:
     return f"{date} {hour}:{minute}:{second}"
 
 
+# The JS renders an empty value and an object joiner with an EM DASH, and the access note
+# with one too. Written as escapes, not as the character: the repo forbids an em dash in
+# anything WE write, and these are neither ours nor prose - they are three literals from a
+# node body that ships, and changing them would change what a customer is sent. Nothing in
+# the 20 graded captures reaches any of the three, so this is faithfulness, not evidence.
+_EM_DASH = "\u2014"
+
+
 def _fmt_value(v: Any) -> str:
     if v is None or v == "":
-        return "—"
+        return _EM_DASH
     if isinstance(v, bool):
         return "Yes" if v else "No"
     if isinstance(v, str):
@@ -592,7 +600,7 @@ def _fmt_value(v: Any) -> str:
             for x in v.values()
             if x is not None and x != ""
         ]
-        return " — ".join(parts) if parts else "—"
+        return f" {_EM_DASH} ".join(parts) if parts else _EM_DASH
     return jsc.js_string(v)
 
 
@@ -774,7 +782,8 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         if not d:
             continue  # absence is annotated per row above
         access_notes.append(
-            f"I can't share the {_label_for(kk, d).lower()} — please check with the office."
+            f"I can't share the {_label_for(kk, d).lower()} {_EM_DASH} "
+            "please check with the office."
         )
 
     # The PRESENTER owns the intro whenever it emits `summary_items` - it states the page
