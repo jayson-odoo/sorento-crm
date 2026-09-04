@@ -436,8 +436,14 @@ def run(
     if _clarify_gate(context_item, ctx):
         clarify = clarify_company_reply(context_item, ctx=ctx)
         result = escalation_result(clarify_company=clarify)
-        # R3: the marker is what the NEXT turn reads instead of matching this ask's own
-        # words. `output_exchange` already accepts both forms during the migration window.
+        # R3's marker, and it goes on the TURN ROW only - `response.pending` and the
+        # trace. It is NOT what the next turn reads: `compile_state` writes
+        # `variables.pending` from `pending_marker.derive`, which emits `escalation_offer`
+        # or nothing, and `output_exchange` reads only `escalation_offer` off it. What
+        # actually carries a company clarify across the turn boundary is the structured
+        # pair the tail re-persists - `selection_context` plus `last_result_set` - which
+        # `test_s5_escalation_seams.py` pins end to end. The marker is here so the trace
+        # says WHY this turn asked instead of assigning.
         return {**result, "actions": [], "pending": {"kind": "company_clarify"}}
 
     result = escalation_result()
@@ -469,12 +475,31 @@ def run(
         )
         return {**result, "actions": actions, "pending": None}
 
-    if services is None:
-        services = production_services()
+    if services is not None:
+        actions = _assign(ctx, context_item, team, services)
+        return {**result, "actions": actions, "pending": None}
 
+    # No injected seam, so this is production: the session is opened HERE and closed on the
+    # way out, whether the seams answered or raised. See `escalation_services`.
+    from app.services.chatbot.lanes import escalation_services
+
+    with escalation_services.production_session() as db:
+        actions = _assign(ctx, context_item, team, production_services(db))
+    return {**result, "actions": actions, "pending": None}
+
+
+def _assign(
+    ctx: dict[str, Any], context_item: dict[str, Any], team: Any, services: Any
+) -> list[dict[str, Any]]:
+    """Draw an assignee, start the SLA clock, and build the four actions in live's order.
+
+    Both seams run before a single action is built, which is what makes the failure shape
+    in `engine.py` true: the lane returns its whole list or raises before returning any of
+    it, so "assigned but no SLA row" is not a state a caller can observe.
+    """
     assignee = services.next_assignee(_next_assignee_body(ctx, context_item))
     sla = services.sla_create(_sla_body(ctx, context_item, assignee))
-    actions = _assignment_actions(
+    return _assignment_actions(
         ctx,
         team,
         assignee=assignee,
@@ -485,7 +510,6 @@ def run(
         dry_run=False,
         preview=False,
     )
-    return {**result, "actions": actions, "pending": None}
 
 
 def _assignment_actions(
@@ -585,7 +609,7 @@ def _sla_body(
     output = jsc.get(jsc.get(ctx, "parse"), "output") or {}
     message = jsc.get(jsc.get(ctx, "text"), "message")
     message_id = jsc.get(message, "messageId")
-    input_message = jsc.get(jsc.get(message, "message"), "text")
+    input_message = _input_message(ctx)
 
     def prefer(key: str, fallback: Any) -> Any:
         value = jsc.get(assignee, key)
@@ -602,6 +626,53 @@ def _sla_body(
         "source_message_id": None if message_id is None else jsc.js_string(message_id),
         "source_message_text": input_message or "",
     }
+
+
+def _input_message(ctx: dict[str, Any]) -> str:
+    """`Call 'sub-human-intervention'`'s `input_message`, expression for expression.
+
+    Live, from the node's `workflowInputs.value.input_message` (two adjacent `{{ }}`
+    blocks, concatenated with no separator by the template):
+
+        {{ ctx.text.message.message.text
+           || ctx.text.message.message.attachment?.description
+           || '[' + (ctx.text.message.message.type || 'unknown') + ' message]' }}
+        {{ ctx.text.message.replyTo?.message
+           ? ' reply to: ' + ctx.text.message.replyTo.message.text : '' }}
+
+    Reading only `.text` - which is what this file did first - is right for a typed
+    message and wrong for every other kind the bot actually receives: an image, a voice
+    note or a document arrives with an empty `text`, so the SLA row's
+    `source_message_text` came out blank and the person picking the case up saw no trace
+    of what the customer sent. Live falls back to the attachment's description and then to
+    a `[image message]` style placeholder naming the type, and appends the quoted message
+    when the customer replied to one. Reproduced here rather than improved on: the SLA row
+    is read beside rows n8n wrote, and two spellings of the same message would be worse
+    than the placeholder.
+
+    `replyTo` hangs off the WEBHOOK body (`ctx.text.message`), one level above the message
+    body the first chain reads - copying its path from the wrong level is the easy mistake
+    here, so both are spelled out above.
+    """
+    envelope = jsc.get(jsc.get(ctx, "text"), "message")
+    body = jsc.get(envelope, "message")
+
+    value = jsc.get(body, "text", jsc.UNDEFINED)
+    if not jsc.truthy(value):
+        value = jsc.get(jsc.get(body, "attachment"), "description", jsc.UNDEFINED)
+    if not jsc.truthy(value):
+        kind = jsc.get(body, "type", jsc.UNDEFINED)
+        value = "[" + (jsc.js_string(kind) if jsc.truthy(kind) else "unknown") + " message]"
+
+    text = jsc.js_string(value)
+
+    # `replyTo?.message` is the TRUTH TEST, and the text is read off it unguarded - so a
+    # quoted message with no text renders JS's own `undefined`, which is what n8n stores
+    # today. Faithful, not tidied.
+    quoted = jsc.get(jsc.get(envelope, "replyTo"), "message", jsc.UNDEFINED)
+    if jsc.truthy(quoted):
+        text += " reply to: " + jsc.js_string(jsc.get(quoted, "text", jsc.UNDEFINED))
+    return text
 
 
 def _comment_text(ctx: dict[str, Any], team: Any, sla: Any) -> str:
@@ -650,13 +721,15 @@ def _space_id(ctx: dict[str, Any]) -> str:
 # --------------------------------------------------------------------------- #
 
 
-def production_services(db: Any = None) -> Any:
-    """The real four seams. Never used by a test - every one of them injects its own.
+def production_services(db: Any) -> Any:
+    """The real four seams over a caller-owned session.
 
-    Opens its own session when the caller has none, because this lane's writes (the
-    round-robin cursor and the SLA row) are a unit of work of their own and must not ride
-    the turn's routing transaction: a turn that fails later must not roll the assignment
-    back out from under the person who was just told about it.
+    The session is a REQUIRED argument. This lane's writes (the round-robin cursor and the
+    SLA row) are a unit of work of their own and must not ride the turn's routing
+    transaction - a turn that fails later must not roll the assignment back out from under
+    the person who was just told about it - but "its own session" is not the same as "a
+    session nobody closes", which is what the first version left behind. `run()` opens one
+    with `escalation_services.production_session()` and closes it in the same breath.
     """
     from app.services.chatbot.lanes import escalation_services
 

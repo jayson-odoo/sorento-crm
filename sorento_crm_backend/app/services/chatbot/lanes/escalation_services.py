@@ -12,16 +12,24 @@ is what lets the 66-fixture replay run as JSON in, JSON out.
 | (B-HB-1, not live) | `resolve_and_gate` | S6a's `business.run_until_exit` |
 | (the member roster) | `team_members` | `app.api.v1.external.team_members` |
 
-**Nothing here is exercised by a test.** Every test in `test_s5_escalation_lane.py` injects
-its own `services`, which is the point of the seam. This module is the production wiring
-and only runs once the owner adds `out_of_scope` to `system_settings.chatbot_completed_lanes`.
+Every test in `test_s5_escalation_lane.py` injects its own `services`, which is the point
+of the seam; `test_s5_escalation_seams.py` covers THIS module - the wiring that runs once
+the owner adds `out_of_scope` to `system_settings.chatbot_completed_lanes` - with the two
+CRM services stubbed at their own boundary, because a seam nothing ever executes is where
+a typo waits for production.
+
+`team_members` is declared and NOT wired. It is not spare machinery: `test_no_hard_default_
+team` (xfail `strict=True`) names it as the roster read the B-TEAM-1' promotion needs, and
+the field is what its stub duck-types against. Like `resolve_and_gate` it raises rather
+than half-working, so promoting the build without wiring it is a loud failure.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -87,12 +95,38 @@ def _not_live(name: str):
     return call
 
 
-def build(db: Any = None) -> EscalationServices:
-    """The production bundle. `db` is the session the lane's writes run on."""
-    if db is None:  # pragma: no cover - production wiring only
-        from app.database import SessionLocal
+@contextmanager
+def production_session() -> Iterator[Any]:
+    """A session owned for exactly one assignment, closed whatever happens.
 
-        db = SessionLocal()
+    The first version called `SessionLocal()` and walked away: nothing closed it, so every
+    escalation turn leaked a pooled connection, and a seam that raised left its transaction
+    open on the way out - which on Postgres holds the round-robin cursor row's lock until
+    the connection is recycled, so the NEXT escalation turn blocks behind a failure nobody
+    is watching. Owning it here means the caller cannot forget.
+
+    Rolls back on the way out of an exception: `run()` turns a seam failure into a failed
+    turn with NO partial assignment, and a half-written unit of work in the database would
+    contradict the trace the operator is reading.
+    """
+    from app.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        yield db
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def build(db: Any) -> EscalationServices:
+    """The production bundle. `db` is the session the lane's writes run on.
+
+    It is REQUIRED. The old default opened one here and left its lifecycle to nobody; the
+    session now belongs to `production_session()`, whose `with` block is the unit of work.
+    """
     return EscalationServices(
         resolve_and_gate=_not_live("resolve_and_gate"),
         next_assignee=_next_assignee(db),

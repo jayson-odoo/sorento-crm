@@ -425,9 +425,11 @@ WHERE branch_kind = 'out_of_scope' AND created_at > now() - interval '7 days'
 GROUP BY 1, 2;
 ```
 
-shows `done` / `replied` and **zero** `failed` / `looked_up`, and every one of those turns
-has an SLA tracking row. A `failed` / `looked_up` row is the lane saying the assignment did
-not complete; its `error` says which seam.
+shows `done` / `remembered` and **zero** `failed` / `looked_up`, and every one of those
+turns has an SLA tracking row. The arm runs the TAIL, so a completed out-of-scope turn
+closes at `remembered` like every other CRM-completed lane; a row still sitting at
+`replied` means the tail did not finish. A `failed` / `looked_up` row is the lane saying
+the assignment did not complete; its `error` says which seam.
 
 **Rollback for this step is the flag.** Remove the string and the next turn delegates again.
 
@@ -468,9 +470,6 @@ and re-activate both subs FIRST, then clear the flag.
   stays brand-blind exactly as today, and a null team is not reachable anyway because the
   parser hard-defaults it to `customer_service`. Both are `xfail(strict=True)` in the test
   suite, so the promotion announces itself.
-- **The session write.** The arm closes at `replied`; there is no `remembered` stage on this
-  lane, so an out-of-scope turn completed by the CRM currently remembers nothing. Raised as
-  an open question with the plan.
 
 ---
 
