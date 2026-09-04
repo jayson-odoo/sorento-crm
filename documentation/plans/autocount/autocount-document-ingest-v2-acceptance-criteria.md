@@ -190,6 +190,30 @@ the existing upload drawer is not involved. (No notification surface is added in
 - **AC-V5-5 [T]** `planning_change_service.build_batch` is NOT run by ingest in v2 (needs the
   upload's `Diff`); recorded in the backlog with the trigger that would justify it.
 
+## Group V7 - Line adoption at cutover (`tests/test_ingest_documents_v2_adoption.py`, plan D11)
+
+- **AC-V7-1 [BE]** Given a sales order the xlsx upload created (header adopted by `so_number`,
+  every line ref-less), when the first push carries lines that match by
+  `(product_id, warehouse_id-or-NULL, outstanding)`, then each matched row keeps its id,
+  gains `source_ref` = the payload line's DtlKey and `source_system='autocount'`, has its
+  values restated from the payload, and a stock transfer / claim / GRN link that pointed at it
+  still points at it. Same for purchase orders with `qty_received`.
+- **AC-V7-2 [BE]** Given two ref-less rows with the same key, when two incoming lines match
+  them, then position decides: incoming `line_number` order against the rows' `created_at, id`
+  order.
+- **AC-V7-3 [BE]** Given no outstanding match but exactly one remaining ref-less row for
+  `(product_id, warehouse_id-or-NULL)`, then it is adopted (step 2). Given several, and the
+  remaining ref-less row count equals the remaining incoming count, then position decides
+  (step 3). Otherwise the incoming line is created and the leftover rows follow the existing
+  delete-or-cancel rule.
+- **AC-V7-4 [BE]** A row that already carries a `source_ref` is never adopted by another
+  DtlKey; it matches by its own ref only (A3 rule unchanged).
+- **AC-V7-5 [BE]** The verdict carries `lines: {adopted, created, updated, deleted,
+  cancelled}` for every document record, on dry run too (dry run writes nothing).
+- **AC-V7-6 [BE]** `line_number` is an optional int on every canonical line (SO, PO, SPO);
+  a payload without it still adopts by steps 1-2 and falls back to payload order for step 3.
+  Shipping-order row adoption (AC-V3-4) uses the same three steps.
+
 ## Group V6 - Definition of done
 
 - **AC-V6-1 [T]** Full backend suite green on an EMPTY scratch database (CI rule).

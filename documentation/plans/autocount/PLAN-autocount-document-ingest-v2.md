@@ -92,6 +92,31 @@ The ESB gates every new key behind `sorento_contract_version = 2` on its consume
   `location_code` on SPO rows, and record it as a v2 deviation since it changes v1 behaviour
   for a bad `warehouse_ref` (the ESB is the only caller). Products stay retryable.
 
+- **D11. Adopt xlsx-era lines at cutover instead of replacing them (ESB ask, 2026-09-05,
+  from their captain's review).** Today `_sync_lines` treats every ref-less line of a header
+  adopted by number as stale: deleted, or cancelled in place when referenced, and the payload's
+  lines are inserted fresh. Every allocation, claim and GRN link then hangs off a cancelled
+  row. Revised rule, applied ONLY to ref-less lines of a header adopted by number (a line that
+  already carries a `source_ref` matches by it, as today): (1) match an incoming line to one
+  remaining ref-less line by `(product_id, warehouse_id-or-NULL, outstanding)` where
+  outstanding = `qty_ordered - qty_delivered|qty_received` on the row and
+  `qty_ordered - qty_delivered|qty_received` on the payload; tie-break by position
+  (`line_number` order vs `created_at, id` order); (2) else by `(product_id,
+  warehouse_id-or-NULL)` when exactly one such row remains; (3) else by position among the
+  remaining ref-less rows when counts agree; (4) a matched row keeps its id: `source_ref` =
+  DtlKey stamped on the COLUMN (lines are never in `integration_references`, that is the A3
+  rule), `source_system = 'autocount'`, values restated from the payload; (5) the true
+  remainder follows the existing delete-or-cancel rule; (6) the verdict carries
+  `lines: {adopted, created, updated, deleted, cancelled}`, same on dry run. **Why not
+  `qty_ordered` in the key:** the upload writes `qty_ordered = outstanding` and
+  `qty_delivered = 0` on an open line it inserts (`outstanding_import_service.py:2297-2298`)
+  and `qty_ordered = fulfilled + outstanding` on update (:2364), so `qty_ordered` on an
+  xlsx-era row is not AutoCount's Qty; the OUTSTANDING figure is what both sides agree on.
+  New optional wire field `line_number` (int, AutoCount Seq) on every line, used for position
+  only (no column exists on `sales_order_lines` / `purchase_order_lines`; the SPO
+  `spo_line_number` keeps its own sequence). Same three steps drive SPO row adoption in 2.4.
+  Recommendation: accept; slice S1b.
+
 **ESB answers received 2026-09-05** (shared-service session): Q1 the ESB always sends `*_ref`
 next to code/name; Q2 code-only customers stay unlinked; Q3 vocabulary accepted plus
 `warehouse_unresolved`; Q4 `agent_code` on PO/SPO accepted-and-ignored is fine; Q5 fine;
@@ -219,6 +244,7 @@ above.
 | --- | --- | --- | --- |
 | S0 | `warnings` on `RecordResult`; v1 golden test; contract endpoint + slug + sweep migration (also seeds `scm.shipping_orders.*`); `autocount` claim source migration | V0-1..3, V3-1 (slugs), V4-3 | - |
 | S1 | code/name ladder + back-create supplier/agent/customer + `debtor_code` + CNY default | V1-1..10 | S0 |
+| S1b | line adoption at cutover (D11): three-step match of ref-less lines, `line_number` wire field, `lines` counts on the verdict | V7-1..6 | S1 |
 | S2 | `classify_document` extraction, upload rewired onto it, SO ingest classification + warning | V2-1..7 | S1 |
 | S3 | `spo_allocations` columns migration; `ShippingOrderIngest` ingest/read/deletions; `SPO-` guard on PO | V3-2..8, D5 | S1 |
 | S4 | `from_so_numbers` claims on PO + SPO lines | V4-1,2,4 | S3 |
