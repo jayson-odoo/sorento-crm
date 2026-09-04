@@ -51,6 +51,7 @@ def run_until_exit(
     services: ResolveGateServices,
     space_id: str | None = None,
     probe_default_start: str | None = None,
+    dry_run: bool = False,
 ) -> dict[str, Any]:
     """Run resolve + gate for one turn and return the `{delegate, payload}` fragment.
 
@@ -68,6 +69,7 @@ def run_until_exit(
         services=services,
         space_id=space_id,
         probe_default_start=probe_default_start,
+        dry_run=dry_run,
     )
     return {"delegate": DELEGATE, "payload": payload}
 

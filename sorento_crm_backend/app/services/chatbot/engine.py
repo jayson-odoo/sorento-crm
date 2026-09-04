@@ -655,6 +655,9 @@ def _run_stages(  # noqa: PLR0915
                     services=business_services.production_services(db),
                     space_id=default_space_id(db),
                     probe_default_start=resolve_gate.default_probe_start(),
+                    # D14, evaluated before anything side-effecting: the resolver's
+                    # spec-search reader is the one row a test turn could still write.
+                    dry_run=dry_run,
                 )
             except Exception as lane_error:  # noqa: BLE001 - shadow until n8n is rewired
                 # The lane is SHADOW while n8n still calls `sub-resolve-and-gate` itself,

@@ -172,12 +172,18 @@ def _token_of(entity: Any) -> Any:
     return value
 
 
-def resolve_entity_body(ctx: dict[str, Any]) -> dict[str, Any]:
+def resolve_entity_body(ctx: dict[str, Any], *, dry_run: bool = False) -> dict[str, Any]:
     """The `resolve-entity` httpRequest jsonBody, key for key.
 
     `entity_pins` (H38) is OMITTED in AND mode and when nothing is pinned, which is what
     the n8n expression's `Object.keys(_pins).length ? ... : ''` does. Sending it in AND
     mode is a 400 by the route's own rule, so the omission is load-bearing, not tidiness.
+
+    `dry_run` is the ONE key n8n's body does not have, and it is not a resolution input:
+    it tells the endpoint to skip its `ai_assistant_usage_logs` row, which is the last
+    write a D14 test turn could otherwise reach through this lane. The resolution is
+    identical either way, so shadow parity is unaffected; it is omitted entirely on a live
+    turn so the body stays byte-equal to n8n's there.
     """
     parse_output = _parser_output(ctx)
     entities = parse_output.get("entities")
@@ -206,6 +212,8 @@ def resolve_entity_body(ctx: dict[str, Any]) -> dict[str, Any]:
         "spec_fallback": True,
         "understand_phrase": True,
     }
+    if dry_run:
+        body["dry_run"] = True
     if jsc.js_string(match_mode).lower() != "and":
         pins: dict[str, Any] = {}
         for x in entities:
@@ -417,6 +425,7 @@ def run(
     services: ResolveGateServices,
     space_id: str | None = None,
     probe_default_start: str | None = None,
+    dry_run: bool = False,
 ) -> dict[str, Any]:
     """One pass through `sub-resolve-and-gate`. Returns the exit arm's item.
 
@@ -463,7 +472,7 @@ def run(
             )
 
     # ── resolve-entity ──────────────────────────────────────────────────────
-    resolved = services.resolve_entity(resolve_entity_body(ctx))
+    resolved = services.resolve_entity(resolve_entity_body(ctx, dry_run=dry_run))
     resolved_snapshot = _snapshot(resolved)
 
     # ── disallowed-entity-gate. Its input IS resolve-entity's item, and it MUTATES
@@ -592,6 +601,7 @@ def run_from_trigger(
     services: ResolveGateServices,
     space_id: str | None = None,
     probe_default_start: str | None = None,
+    dry_run: bool = False,
 ) -> dict[str, Any]:
     """`run()` from the sub's own `{ctx, entry, item, is_test}` trigger payload.
 
@@ -613,4 +623,5 @@ def run_from_trigger(
         services=services,
         space_id=space_id,
         probe_default_start=probe_default_start,
+        dry_run=dry_run,
     )
