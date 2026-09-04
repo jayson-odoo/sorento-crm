@@ -10,6 +10,8 @@ makes the 254-fixture replay a pure function over JSON (AC-602).
 | `get-access-types` (httpRequest) | `access_types` | `ContactAccessTypeService.resolve_active_access_levels_for_contact` |
 | `resolve-entity` (httpRequest) | `resolve_entity` | the function behind `POST /api/v1/system/references/resolve` |
 | `probe-incoming` / `probe-customer-orders` (executeWorkflow) | `probe` | S6b's fetch, over `MCPRuntimeClient` (D10) |
+| `Execute 'sub-get-rag'` (executeWorkflow -> pgvector SQL) | `embed` + `tool_search` | `EmbeddingReadService.search_tool_chunks` (H53) |
+| `MCP Client1` (mcpClient, raw IP) | `mcp_call` | `MCPRuntimeClient` at `settings.ai_assistant_mcp_url` (H52) |
 
 `space_id` is the default respond workspace's, not n8n's hard-coded `364817` (D5).
 """
@@ -42,6 +44,34 @@ class ProbeFn(Protocol):
         semantic_input: dict[str, Any],
         user_prompt: str,
     ) -> Any: ...
+
+
+class EmbedFn(Protocol):
+    def __call__(self, query: str) -> list[float]: ...
+
+
+class ToolSearchFn(Protocol):
+    def __call__(
+        self, embedding: list[float], *, query: str, domain: str | None
+    ) -> list[dict[str, Any]]: ...
+
+
+class McpCallFn(Protocol):
+    def __call__(self, name: str, args: dict[str, Any]) -> Any: ...
+
+
+@dataclass(frozen=True)
+class FetchServices:
+    """S6b's three seams, same shape as `ResolveGateServices` for the same reason.
+
+    `embed` and `tool_search` are two halves of what `sub-get-rag` was (embed the prompt,
+    then search) and they are separate because only the first is provider I/O: a test that
+    wants a deterministic ranking stubs `tool_search` and leaves the embedding alone.
+    """
+
+    embed: EmbedFn
+    tool_search: ToolSearchFn
+    mcp_call: McpCallFn
 
 
 @dataclass(frozen=True)
@@ -134,6 +164,69 @@ def _probe() -> ProbeFn:
         )
 
     return call
+
+
+def _embed(db: Session) -> EmbedFn:
+    def call(query: str) -> list[float]:
+        """The same embedding the RAG endpoint takes, through the same helper.
+
+        Holds no session of its own: `db` is bound only so the provider config is read from
+        the same place every other caller reads it.
+        """
+        from app.api.v1.external.rag import _embed_query
+
+        return _embed_query(query)
+
+    return call
+
+
+def _tool_search(db: Session) -> ToolSearchFn:
+    def call(
+        embedding: list[float], *, query: str, domain: str | None
+    ) -> list[dict[str, Any]]:
+        """`sub-get-rag`'s SQL plus both of its Code nodes, in one service call (H53).
+
+        The two Code nodes did the interesting half: the second collapses `source_id` to
+        the tool name after `implemented::` and SUMS the similarities per name, which is
+        why `tool-filter` cannot simply take the first row. The fold itself is
+        `fetch.collapse_tool_rows` (a ported node with its own 38 captures); this seam is
+        the half that must not leave the service layer - the query.
+        """
+        from app.services.embedding_service import EmbeddingReadService
+
+        from app.services.chatbot.lanes.business.fetch import collapse_tool_rows
+
+        rows = EmbeddingReadService(db).search_tool_chunks(
+            embedding, source_type="mcp_tool", limit=5, domain=domain
+        )
+        return collapse_tool_rows(rows)
+
+    return call
+
+
+def _mcp_call(db: Session) -> McpCallFn:
+    def call(name: str, args: dict[str, Any]) -> Any:
+        """One MCP tool call at the CONFIGURED url (H52, D10).
+
+        n8n bakes `http://<raw ip>:8765/mcp` into two nodes. This reads
+        `settings.ai_assistant_mcp_url`, the same setting the AI assistant already uses, so
+        an environment moves the endpoint without a deploy of anything but config.
+        """
+        from app.config import settings
+        from app.services.ai_assistant_service import MCPRuntimeClient
+
+        client = MCPRuntimeClient(
+            settings.ai_assistant_mcp_url,
+            timeout_seconds=settings.ai_assistant_mcp_timeout_seconds,
+        )
+        return client.call_tool(name, args)
+
+    return call
+
+
+def fetch_services(db: Session) -> FetchServices:
+    """S6b's bundle. One session, bound at the call site, held across no provider I/O."""
+    return FetchServices(embed=_embed(db), tool_search=_tool_search(db), mcp_call=_mcp_call(db))
 
 
 def production_services(db: Session, *, space_id: str | None = None) -> ResolveGateServices:

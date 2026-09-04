@@ -21,8 +21,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.services.chatbot.lanes.business import fetch as fetch_mod
 from app.services.chatbot.lanes.business import resolve_gate
-from app.services.chatbot.lanes.business.services import ResolveGateServices
+from app.services.chatbot.lanes.business.services import FetchServices, ResolveGateServices
 
 # `branch_kind` -> the `entry` its `tag-entry-*` node stamps. The three arms that reach
 # `sub-resolve-and-gate`, and nothing else: an arm absent from this map never enters the
@@ -78,4 +79,114 @@ def run_until_exit(
     return {"delegate": DELEGATE, "payload": payload}
 
 
-__all__ = ["DELEGATE", "ENTRY_BY_BRANCH_KIND", "handles", "run_until_exit"]
+def run_fetch(
+    payload: dict[str, Any],
+    *,
+    services: FetchServices,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """S6b: the fetch step, the next call site after `run_until_exit`'s `continue` exit.
+
+    `payload` is the resolve+gate output item - what `sub-fetch-results` receives as
+    `ctx_resolved` + `tier_gate` today. The return is a FRAGMENT in the same shape
+    `run_until_exit` produces, so the engine keeps one call per lane stage.
+
+    Three arms, from `fetch-result`'s own three:
+
+    * `tier_ask` - the customer must pick an access tier before anything is fetched. It
+      must NOT fall through to an ordinary result delegate while a tier is unresolved;
+      S6c renders the copy.
+    * `error` - the tool returned an error item. The fragment carries the reason so the
+      engine can record a failed turn at `looked_up`, the shape every other lane's failure
+      already has.
+    * `result` - S6c is not built, so the turn still delegates to n8n's business lane, and
+      the fetch's own output rides on `delegate_payload` so the next slice has something to
+      answer from without re-fetching.
+
+    D14: a dry run performs the SAME reads. A test turn that skipped the fetch would prove
+    nothing about production, and this lane writes nothing either way - the only write on
+    the whole turn is `chatbot.turns`, which the engine owns.
+    """
+    gate = payload.get("gate") if isinstance(payload.get("gate"), dict) else {}
+    tier_gate = payload.get("tier_gate") if isinstance(payload.get("tier_gate"), dict) else None
+
+    # The tier ask short-circuits BEFORE any tool is chosen: `if-tier-ask` sits upstream of
+    # the rag call in n8n for the same reason - there is nothing to fetch until the customer
+    # has said which tier they mean.
+    if payload.get("tier_ask") is True or (tier_gate or {}).get("tier_ask") is True:
+        item = fetch_mod.fetch_result(
+            {**payload, "tier_any_available": bool(payload.get("tier_any_available", True))}
+        )
+        return {"kind": "tier_ask", "_fetch_arm": item["_fetch_arm"], "fetch": item}
+
+    parse_output = ((payload.get("ctx") or {}).get("parse") or {}).get("output") or {}
+    query = (
+        f"intent_hint: {parse_output.get('intent_hint')}\n"
+        f"domain_hint: {parse_output.get('domain_hint')}\n"
+        f"user_goal: {parse_output.get('user_goal')}"
+    )
+    domain = parse_output.get("domain_hint") or (tier_gate or {}).get("tier_pick_domain")
+
+    candidates = fetch_mod.select_tool(None, query=query, domain=domain, services=services)
+    entities = gate.get("compatible_entities") or []
+    pick = fetch_mod.tool_filter(
+        candidates,
+        has_product=any(
+            isinstance(e, dict) and e.get("entity_type") == "product" for e in entities
+        )
+        if isinstance(entities, list)
+        else None,
+    )
+    if pick.outcome == "not_found":
+        # H11: zero tools is an OUTCOME, not an empty turn. The engine gets something to
+        # say rather than a fragment that looks like a lane which never ran.
+        item = fetch_mod.fetch_result({"error": "no MCP tool matched this question"})
+        return {
+            "kind": "error",
+            "_fetch_arm": item["_fetch_arm"],
+            "error": "no MCP tool matched this question",
+            "outcome": "not_found",
+            "fetch": item,
+        }
+
+    tool_item = pick.items[0]["json"]
+    tool_name = str(tool_item.get("name") or "")
+    trigger = {
+        "tool": tool_name,
+        "entities": entities,
+        "semantic_input": payload.get("semantic_input") or {},
+        "contact_id": ((payload.get("ctx") or {}).get("contact") or {}).get("id"),
+    }
+    args = fetch_mod.entity_ids_transformer(trigger)
+    raw = services.mcp_call(tool_name, args)
+    structured = fetch_mod.output_structurer(
+        raw if isinstance(raw, dict) else fetch_mod._safe_json(raw), trigger
+    )
+    if isinstance(raw, str):
+        parsed = fetch_mod._safe_json(raw)
+        if isinstance(parsed, dict) and isinstance(parsed.get("error"), str):
+            item = fetch_mod.fetch_result({"error": parsed["error"]})
+            return {
+                "kind": "error",
+                "_fetch_arm": item["_fetch_arm"],
+                "error": parsed["error"],
+                "fetch": item,
+            }
+
+    item = fetch_mod.fetch_result(structured, tool=tool_item, tier_probe=None)
+    return {
+        "kind": "result",
+        "_fetch_arm": item["_fetch_arm"],
+        "delegate": DELEGATE,
+        "delegate_payload": {**payload, "fetch": item},
+        "fetch": item,
+    }
+
+
+__all__ = [
+    "DELEGATE",
+    "ENTRY_BY_BRANCH_KIND",
+    "handles",
+    "run_fetch",
+    "run_until_exit",
+]
