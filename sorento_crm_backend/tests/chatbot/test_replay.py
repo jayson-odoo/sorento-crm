@@ -333,12 +333,15 @@ PORTED_NODES = sorted(set(RUNNERS) - {"sub-resolve-and-gate"})
 
 
 def _replay(fixture: _corpus.Fixture) -> None:
-    actual = _corpus.strip_body_additions(
-        _corpus.json_round_trip(RUNNERS[fixture.node](fixture)), fixture.node
+    expected = _corpus.json_round_trip(fixture.expected)
+    # Only the keys THIS capture's body version could not emit. A capture from the 5 Sep
+    # run carries both, so on those this is empty and the keys are graded like any other
+    # field - which is the whole point of that run.
+    stripped = _corpus.keys_to_strip(fixture.node, expected)
+    actual = _corpus.strip_keys(
+        _corpus.json_round_trip(RUNNERS[fixture.node](fixture)), stripped
     )
-    expected = _corpus.strip_body_additions(
-        _corpus.json_round_trip(fixture.expected), fixture.node
-    )
+    expected = _corpus.strip_keys(expected, stripped)
     registered = divergences.find(fixture.node, fixture.name.split("/")[-1])
     if actual == expected:
         if registered is not None:

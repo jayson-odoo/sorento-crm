@@ -3,12 +3,15 @@
 Two sources, always both:
 
 * the VENDORED subset under ``tests/fixtures/chatbot/nodes/<node>/*.json`` - committed,
-  about 3.5 MB, one fixture per node per branch kind plus the regression guards and the
+  about 4 MB, one fixture per node per branch kind plus the regression guards and the
   named canaries. It grew past the original 3 MB note at S6a and the reason is worth
   stating: a resolve+gate capture carries the WHOLE resolver response in its `ctx`, and
   the `offer` exit carries it four times over (the item, `gate`, `ctx_resolved` and
-  `ctx_resolved.ctx.gate`), so the single smallest capture of that arm is 430 KB. The
-  alternative was to stop grading the arm in CI, which is worse. It runs everywhere, CI included, and it is what makes a red replay a
+  `ctx_resolved.ctx.gate`), so the smallest capture of that arm is 236 KB. The alternative
+  was to stop grading the arm in CI, which is worse. Nothing over 400 KB is vendored.
+  Each S6a node carries at least one capture from the 5 Sep run (`rg-*`, current bodies)
+  and, where one exists under the size cap, one older capture as well - so CI grades both
+  the two late-added keys AND the `keys_to_strip` path that excuses them. It runs everywhere, CI included, and it is what makes a red replay a
   merge blocker rather than a local curiosity.
 * the FULL corpus in the sibling n8n checkout, pointed at by ``CHATBOT_FIXTURES_DIR``
   (default ``../../sorento_crm_n8n/n8n-workflows-init/tests/fixtures`` relative to the
@@ -73,14 +76,21 @@ NODE_SLUGS: dict[str, tuple[str, ...]] = {
     "sub-resolve-and-gate": (),
 }
 
-# Output keys the SHIPPING node body emits that the body every capture was taken against
-# could not. NOT divergences - the port agrees with the export, and the fixture grades an
-# older body - and not staleness either, because everything else about the capture still
-# grades: the whole rest of the item is compared as normal.
+# Output keys the SHIPPING node bodies emit that the body an OLD capture was taken
+# against could not. NOT divergences - the port agrees with the export, and those captures
+# grade an older body - and not staleness either: everything else about them still grades.
 #
-# Evidence, direct and reproducible (n8n repo `git show <rev>:...`):
+# **Applied per FIXTURE, not per node, and derived from the capture itself.** The 5 Sep
+# capture run (84 files, live sub `tKeQUkZK5cFK9BFa` version `4f367b1c`) was taken against
+# the current bodies and DOES carry both keys, so those captures grade them like any other
+# field. `keys_to_strip` therefore drops a key only from a capture whose `expected` does
+# not contain it anywhere - which is exactly "this capture predates the key" and cannot go
+# stale the way a hard-coded version list would. Both keys are emitted unconditionally by
+# the shipping bodies, so "absent from expected" has no other possible cause.
 #
-# * every `sub-resolve-and-gate*` capture carries `workflow_version` 70fa92bf, and the
+# Evidence for the two keys, direct and reproducible (n8n repo `git show <rev>:...`):
+#
+# * the 31 Aug `sub-resolve-and-gate*` captures carry `workflow_version` 70fa92bf and the
 #   export ships 43a37c05; every `live-spine-sorento-consume-main` capture ran the spine's
 #   own 934-line copy of the gate;
 # * `f1cee5b` (2026-08-31) is that 934-line body, `a4da785` + `f4c8f02` (2026-09-01) are
@@ -89,34 +99,54 @@ NODE_SLUGS: dict[str, tuple[str, ...]] = {
 # * diffing the two bodies gives FIVE changes, and only these two are unconditional. The
 #   other three (a `company` key inside `specific_options`, the F16 company-suffixed label,
 #   and the `_dfSpecAnswered` refinement of the dropped-filter gate) are reachable only
-#   through inputs the older captures do not contain, and the replay run proves it: 212 of
-#   212 gate captures and 7 of 7 tier-gate captures differ from the port by these keys and
-#   NOTHING else.
-#
-# Because the keys are ungradeable by any capture, they carry unit coverage of their own in
-# `tests/chatbot/test_resolve_gate_unit.py` rather than being trusted.
+#   through inputs the older captures do not contain.
 CAPTURE_BODY_ADDITIONS: dict[str, tuple[str, ...]] = {
     "disallowed-entity-gate": ("specific_options",),
     "tier-gate": ("tier_pick_domain",),
-    # The whole-sub replay carries both, nested in the exit item's contract fields.
+    # These carry the gate's / tier-gate's item onwards, so an old capture of them is
+    # missing the same keys one or more levels down.
+    "build-ctx-resolved": ("specific_options",),
+    "annotate-incoming-picker": ("specific_options",),
+    "annotate-customer-picker": ("specific_options",),
+    "resolve-exit-continue": ("specific_options", "tier_pick_domain"),
+    "resolve-exit-access-ask": ("specific_options", "tier_pick_domain"),
+    "resolve-exit-not-found": ("specific_options", "tier_pick_domain"),
+    "resolve-exit-offer": ("specific_options", "tier_pick_domain"),
     "sub-resolve-and-gate": ("specific_options", "tier_pick_domain"),
 }
 
 
-def strip_body_additions(value, node: str):
-    """Drop the keys the capture's body version could not emit, at every depth.
+def _contains_key(value, key: str) -> bool:
+    """Does `key` appear anywhere in this structure?"""
+    if isinstance(value, dict):
+        if key in value:
+            return True
+        return any(_contains_key(v, key) for v in value.values())
+    if isinstance(value, list):
+        return any(_contains_key(v, key) for v in value)
+    return False
+
+
+def keys_to_strip(node: str, expected) -> tuple[str, ...]:
+    """The body-addition keys THIS capture predates, i.e. the ones it cannot grade."""
+    return tuple(
+        key for key in CAPTURE_BODY_ADDITIONS.get(node, ()) if not _contains_key(expected, key)
+    )
+
+
+def strip_keys(value, keys: tuple[str, ...]):
+    """Drop `keys` at every depth.
 
     Recursive because the exit arms carry the gate's and tier-gate's items nested under
     `gate` / `ctx_resolved` / `tier_gate`, so a top-level-only strip would leave the same
     delta three levels down and grade nothing.
     """
-    keys = CAPTURE_BODY_ADDITIONS.get(node, ())
     if not keys:
         return value
     if isinstance(value, dict):
-        return {k: strip_body_additions(v, node) for k, v in value.items() if k not in keys}
+        return {k: strip_keys(v, keys) for k, v in value.items() if k not in keys}
     if isinstance(value, list):
-        return [strip_body_additions(v, node) for v in value]
+        return [strip_keys(v, keys) for v in value]
     return value
 
 

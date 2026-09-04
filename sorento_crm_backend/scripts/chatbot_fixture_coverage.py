@@ -64,6 +64,35 @@ CAPTURE_REPORT: dict[str, dict] = {
         "captured_on": "2026-09-04",
         "nodes": ("output_exchange", "suggest-follow-up"),
     },
+    # The LIVE `sub-resolve-and-gate` (`tKeQUkZK5cFK9BFa`), not the RS fork the 31 Aug
+    # captures came from. Its node bodies are byte-identical to the export, so these are
+    # the first captures that can grade `specific_options` and `tier_pick_domain` - the two
+    # keys `tests/chatbot/_corpus.py::CAPTURE_BODY_ADDITIONS` has to strip from every older
+    # capture. Every execution on the version was scanned, so a cell still under the bar is
+    # exhausted, not short: the traffic does not exist. The thin ones and their real pools:
+    # `access_ask` 0, `no_domain` 0, `portal_link` 1, `forms` 1, `master_products`
+    # (not_found) 1, `customer-picker` 2, `resource_attachment` 2, `promotion` 3,
+    # `tier-gate` 3. `build-ctx` is deliberately NOT listed: it already has a pool under
+    # `spine-rs-1a`, and the one capture of it here only adds to that count.
+    "sub-resolve-and-gate-rs": {
+        "version": "4f367b1c",
+        "version_pool": 682,
+        "scanned": 682,
+        "all_versions": 852,
+        "captured_on": "2026-09-05",
+        "nodes": (
+            "disallowed-entity-gate",
+            "tier-gate",
+            "build-ctx-resolved",
+            "annotate-incoming-picker",
+            "annotate-customer-picker",
+            "resolve-exit-continue",
+            "resolve-exit-offer",
+            "resolve-exit-not-found",
+            "item",
+            "sub-resolve-and-gate",
+        ),
+    },
 }
 
 # Branches that CANNOT be captured because live never reaches them. H1: the spine tests
@@ -250,6 +279,16 @@ def render(data: dict) -> str:
         f"Corpus: `{data['corpus_root']}` - the sibling n8n checkout's "
         "`n8n-workflows-init/tests/fixtures`, found by walking up from the backend or "
         "named explicitly by that environment variable."
+    )
+    lines.append("")
+    lines.append(
+        "**This file was rendered against a corpus that includes the 5 Sep "
+        "`sub-resolve-and-gate` capture run, which lives on an n8n WORKTREE and not yet in "
+        "that repo's main checkout.** Until those 84 files land there, reproducing this "
+        "report needs `CHATBOT_FIXTURES_DIR=<n8n worktree>/n8n-workflows-init/tests/"
+        "fixtures`; without it `test_coverage_md_is_not_stale` fails because the loader "
+        "sees a smaller corpus, not because anything drifted. CI is unaffected: it has the "
+        "vendored subset only and skips the comparison."
     )
     lines.append("")
     lines.append(
