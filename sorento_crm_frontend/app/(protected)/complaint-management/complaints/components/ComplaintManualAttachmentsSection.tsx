@@ -1,17 +1,11 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import type { ColumnDef } from '@tanstack/react-table';
 import { Download, ExternalLink, Link2, Paperclip, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { formatDate } from '@/lib/helpers';
 import { useDeleteComplaintAttachment, useDeleteComplaintResponseAttachment } from '../hooks/useComplaints';
 import LinkAttachmentBrowserDialog from '@/components/common/LinkAttachmentBrowserDialog';
@@ -98,105 +92,137 @@ export default function ComplaintManualAttachmentsSection({
     return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
   };
 
+  const columns = useMemo<ColumnDef<ComplaintAttachment>[]>(
+    () => [
+      {
+        id: 'file_name',
+        accessorFn: (row) => row.original_filename ?? row.file_name ?? 'Unnamed file',
+        header: ({ column }) => <DataGridColumnHeader title="File Name" column={column} />,
+        cell: ({ row }) => {
+          const displayName =
+            row.original.original_filename ?? row.original.file_name ?? 'Unnamed file';
+          return (
+            <span className="truncate block max-w-[280px] font-medium" title={displayName}>
+              {displayName}
+            </span>
+          );
+        },
+        size: 260,
+        meta: { headerTitle: 'File Name' },
+      },
+      {
+        id: 'uploaded_by',
+        accessorFn: (row) =>
+          attachmentUploaderLabel(row.uploaded_by_name, row.uploaded_by_role),
+        header: ({ column }) => <DataGridColumnHeader title="Uploaded By" column={column} />,
+        cell: ({ row }) => {
+          const uploaderLabel = attachmentUploaderLabel(
+            row.original.uploaded_by_name,
+            row.original.uploaded_by_role,
+          );
+          return (
+            <span className="truncate block max-w-[200px] text-sm" title={uploaderLabel}>
+              {uploaderLabel}
+            </span>
+          );
+        },
+        size: 180,
+        meta: { headerTitle: 'Uploaded By' },
+      },
+      {
+        id: 'file_size_bytes',
+        accessorFn: (row) => row.file_size_bytes ?? 0,
+        header: ({ column }) => <DataGridColumnHeader title="File Size" column={column} />,
+        cell: ({ row }) => formatFileSize(row.original.file_size_bytes),
+        size: 110,
+        meta: { headerTitle: 'File Size' },
+      },
+      {
+        id: 'uploaded_at',
+        accessorFn: (row) => row.uploaded_at,
+        header: ({ column }) => <DataGridColumnHeader title="Linked At" column={column} />,
+        cell: ({ row }) => formatDate(new Date(row.original.uploaded_at)),
+        size: 140,
+        meta: { headerTitle: 'Linked At' },
+      },
+      {
+        id: 'actions',
+        header: () => <span className="sr-only">Actions</span>,
+        cell: ({ row }) => {
+          const link = row.original;
+          const displayName = link.original_filename ?? link.file_name ?? 'Unnamed file';
+          const isResponseAttachment = link.link_type === 'response_attachment';
+          return (
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setPreviewIndex(attachments.indexOf(link));
+                  setPreviewOpen(true);
+                }}
+              >
+                <ExternalLink className="size-4" />
+                View
+              </Button>
+              <Button variant="outline" size="sm" asChild onClick={(e) => e.stopPropagation()}>
+                <a
+                  href={
+                    link.attachment_id
+                      ? `/api/v1/resource-management/attachments/${link.attachment_id}/download`
+                      : (link.file_url ?? '#')
+                  }
+                  download={displayName}
+                >
+                  <Download className="size-4" />
+                  Download
+                </a>
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setUnlinkTarget({ id: link.id, name: displayName, isResponseAttachment });
+                }}
+                disabled={unlinkPending}
+              >
+                <Trash2 className="size-4" />
+                Unlink
+              </Button>
+            </div>
+          );
+        },
+        size: 320,
+        enableResizing: false,
+        meta: { headerTitle: 'Actions' },
+      },
+    ],
+    [attachments, unlinkPending],
+  );
+
   return (
-    <Card>
-      <CardHeader className="flex-row items-center justify-between">
-        <CardTitle className="flex items-center gap-2">
-          <Paperclip className="size-5" />
-          Linked Attachments
-        </CardTitle>
-        <Button onClick={() => setLinkDialogOpen(true)}>
-          <Link2 className="size-4" />
-          Link Attachment
-        </Button>
-      </CardHeader>
-      <CardContent>
-        {attachments.length === 0 ? (
-          <div className="text-sm text-muted-foreground">No linked attachments.</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>File Name</TableHead>
-                  <TableHead>Uploaded By</TableHead>
-                  <TableHead>File Size</TableHead>
-                  <TableHead>Linked At</TableHead>
-                  <TableHead>Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {attachments.map((link, idx) => {
-                  const displayName =
-                    link.original_filename ?? link.file_name ?? 'Unnamed file';
-                  const isResponseAttachment = link.link_type === 'response_attachment';
-                  const uploaderLabel = attachmentUploaderLabel(
-                    link.uploaded_by_name,
-                    link.uploaded_by_role,
-                  );
-                  return (
-                    <TableRow key={link.id}>
-                      <TableCell className="font-medium" title={displayName}>
-                        <span className="truncate block max-w-[280px]" title={displayName}>
-                          {displayName}
-                        </span>
-                      </TableCell>
-                      <TableCell>
-                        <span className="truncate block max-w-[200px] text-sm" title={uploaderLabel}>
-                          {uploaderLabel}
-                        </span>
-                      </TableCell>
-                      <TableCell>{formatFileSize(link.file_size_bytes)}</TableCell>
-                      <TableCell>
-                        {formatDate(new Date(link.uploaded_at))}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              setPreviewIndex(idx);
-                              setPreviewOpen(true);
-                            }}
-                          >
-                            <ExternalLink className="size-4" />
-                            View
-                          </Button>
-                          <Button variant="outline" size="sm" asChild>
-                            <a
-                              href={
-                                link.attachment_id
-                                  ? `/api/v1/resource-management/attachments/${link.attachment_id}/download`
-                                  : (link.file_url ?? '#')
-                              }
-                              download={displayName}
-                            >
-                              <Download className="size-4" />
-                              Download
-                            </a>
-                          </Button>
-                          <Button
-                            variant="destructive"
-                            size="sm"
-                            onClick={() =>
-                              setUnlinkTarget({ id: link.id, name: displayName, isResponseAttachment })
-                            }
-                            disabled={unlinkPending}
-                          >
-                            <Trash2 className="size-4" />
-                            Unlink
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </div>
-        )}
-      </CardContent>
+    <>
+      <PanelDataGrid<ComplaintAttachment>
+        title={
+          <span className="flex items-center gap-2">
+            <Paperclip className="size-5" />
+            Linked Attachments
+          </span>
+        }
+        toolbar={
+          <Button onClick={() => setLinkDialogOpen(true)}>
+            <Link2 className="size-4" />
+            Link Attachment
+          </Button>
+        }
+        columns={columns}
+        rows={attachments}
+        getRowId={(row) => row.id}
+        listingKey="complaint_management.complaints.view::manual-attachments"
+        emptyTitle="No linked attachments."
+      />
       <AttachmentPreviewModal
         open={previewOpen}
         onOpenChange={setPreviewOpen}
@@ -252,6 +278,6 @@ export default function ComplaintManualAttachmentsSection({
           successEntityLabel="complaint"
         />
       )}
-    </Card>
+    </>
   );
 }

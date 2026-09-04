@@ -53,10 +53,6 @@ const ALLOWLIST: Record<string, string> = {
   'app/(auth)/view/request/page.tsx':
     'public portal page outside (protected); the DataGrid rule covers product list surfaces inside the shell',
 
-  'app/(protected)/complaint-management/complaints/components/ComplaintFulfilmentOrdersSection.tsx':
-    'pending migration, M5 run 3',
-  'app/(protected)/complaint-management/complaints/components/ComplaintManualAttachmentsSection.tsx':
-    'pending migration, M5 run 3',
   'app/(protected)/order-management/orders/components/OrderLinesCard.tsx':
     'pending migration, M5 run 3 (detail-page line table; inline editing may prove a real blocker)',
   'app/(protected)/procurement-management/grn/components/GRNDetail.tsx':
