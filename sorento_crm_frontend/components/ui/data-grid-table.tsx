@@ -29,7 +29,11 @@ import { cn } from '@/lib/utils';
  *   2. `row.original.id`, the record's own id field.
  *   3. the last path segment of the row's own href - what every `rowHref` in
  *      this app already embeds (`/module/entity/${id}`), for the rare row
- *      whose shape carries neither.
+ *      whose shape carries neither. Caveat (S6, M5 review run 1): this
+ *      assumes the id is the LAST segment - a `rowHref` that ends in a
+ *      static word instead (`/module/${id}/edit`) would tag every row with
+ *      that same word, so this fallback only holds for the id-last shape
+ *      every current `rowHref` in the app uses.
  *
  * Returns `undefined` when none of the three resolves anything, which makes
  * both callers no-ops rather than tagging a row with an empty string.
@@ -596,9 +600,11 @@ function LinkableBodyRow({
 }
 
 function subscribeToNothing() {
-  // No ongoing subscription: `getSnapshot` is read once, right after
-  // hydration, by React's own internal check (see `useReturnedRowId`) - this
-  // feature has no reason to re-run on every later URL change.
+  // No ongoing subscription: nothing in this feature listens for a LATER
+  // `from=` change, so there is nothing to re-subscribe to. `getSnapshot`
+  // (`currentLocationSearch` below) still re-reads `window.location.search`
+  // on every render the way any `useSyncExternalStore` snapshot does -
+  // "once" describes the URL param this feature acts on, not the read.
   return () => {};
 }
 function currentLocationSearch(): string {
@@ -610,8 +616,8 @@ function emptyLocationSearch(): string {
 
 /**
  * The `from=` row id (M5-07), read once after hydration and cleared on the
- * reader's first pointer interaction with the page - "until the next pointer
- * event", not for the life of the URL.
+ * reader's first pointer OR key interaction with the page - "until the next
+ * pointer or key event", not for the life of the URL.
  *
  * Reads `window.location.search` through `useSyncExternalStore` rather than
  * `next/navigation`'s `useSearchParams()`. That hook needs a router context
@@ -622,16 +628,23 @@ function emptyLocationSearch(): string {
  * real failures this file's own suite found
  * (`components/common/onboarding/PeopleGrid.test.tsx`,
  * `app/(protected)/project-sales/parties/components/PartiesClient.test.tsx`).
- * `useSyncExternalStore`'s `getServerSnapshot` is the React-native tool for
- * exactly this shape: SSR, and the client's FIRST (hydrating) render, both
- * see `''` - no `from`, no mismatch - and React re-renders with the REAL
- * value immediately after commit, entirely without a router dependency.
+ * `useSyncExternalStore`'s `getServerSnapshot` (`emptyLocationSearch`) is the
+ * React-native tool for exactly this shape: SSR, and the client's FIRST
+ * (hydrating) render, both see `''` - no `from`, no mismatch - and React
+ * re-renders with the REAL value (`getSnapshot`, which re-reads
+ * `window.location.search` on every render, same as any other snapshot)
+ * immediately after commit, entirely without a router dependency.
  *
- * Called once PER ROW rather than lifted to a single ancestor and threaded
- * down: every row reads the same value off the same query string and clears
- * on the same document-wide event, so the result is identical either way,
- * and a row that mounts late (the skeleton -> real row swap after a page
- * arrives) still reads the right value at ITS OWN mount time.
+ * Called ONCE per rendered grid (`DataGridTable`/`DataGridTableDnd`/
+ * `DataGridTableDndRows` - whichever path a given grid renders through), not
+ * per row (S5/S7, M5 review run 1): every row reads the same value off the
+ * same query string and clears on the same document-wide event, so N rows
+ * used to mean N listeners and N independent `cleared` states - a row that
+ * mounted AFTER the first pointer or key event (a paginated list still
+ * carries `from=` in the URL, so a later page's rows mount with the param
+ * still set) had its own `cleared` still `false` and re-ran `scrollIntoView`
+ * on mount. The caller now resolves this once and passes `returnedFromId`
+ * down as a prop.
  */
 function useReturnedRowId(): string | null {
   const search = React.useSyncExternalStore(
@@ -645,25 +658,19 @@ function useReturnedRowId(): string | null {
     if (!fromParam || cleared) return;
     const clear = () => setCleared(true);
     document.addEventListener('pointerdown', clear, { once: true });
-    return () => document.removeEventListener('pointerdown', clear);
+    document.addEventListener('keydown', clear, { once: true });
+    return () => {
+      document.removeEventListener('pointerdown', clear);
+      document.removeEventListener('keydown', clear);
+    };
   }, [fromParam, cleared]);
   return cleared ? null : fromParam;
-}
-
-/** Combines a caller-supplied ref (dnd-kit's, possibly) with our own. */
-function mergeRefs<T>(...refs: Array<React.Ref<T> | undefined>): React.RefCallback<T> {
-  return (node) => {
-    for (const ref of refs) {
-      if (!ref) continue;
-      if (typeof ref === 'function') ref(node);
-      else (ref as React.MutableRefObject<T | null>).current = node;
-    }
-  };
 }
 
 function DataGridTableBodyRow<TData>({
   children,
   row,
+  returnedFromId = null,
   dndRef,
   dndStyle,
   dndAttributes,
@@ -671,6 +678,13 @@ function DataGridTableBodyRow<TData>({
 }: {
   children: ReactNode;
   row: Row<TData>;
+  /**
+   * The row id the reader's Back should restore to (M5-07), resolved ONCE by the
+   * caller and passed down - see `useReturnedRowId`'s own doc for why (S5/S7, M5
+   * review run 1). Defaults to `null` for the drag-overlay's floating row clone
+   * (`data-grid-table-dnd-rows.tsx`), which is never the settled row to restore.
+   */
+  returnedFromId?: string | null;
   dndRef?: React.Ref<HTMLTableRowElement>;
   dndStyle?: CSSProperties;
   dndAttributes?: Record<string, unknown>;
@@ -680,7 +694,14 @@ function DataGridTableBodyRow<TData>({
 
   // The whole row opens the record, from anywhere on it, by mouse or by keyboard.
   // 78 of 193 lists did this and 26 had a detail route with no way to reach it.
-  const href = props.rowHref ? appendListState(props.rowHref(row.original), table, row) : undefined;
+  //
+  // Read ONCE (S6, M5 review run 1): `appendListState` and `rowRestoreId` below
+  // both want the raw href, and calling `props.rowHref(row.original)` a second
+  // time for the same row was wasted work at best - and a caller-supplied
+  // `rowHref` is not guaranteed pure (it can read from a ref, a Date, etc.), so a
+  // second call is not even guaranteed to return the same thing.
+  const rawHref = props.rowHref?.(row.original);
+  const href = rawHref ? appendListState(rawHref, table, row) : undefined;
 
   // A record on its way out stays visible and says so, rather than vanishing
   // before the reader can cancel (S6-07).
@@ -691,11 +712,11 @@ function DataGridTableBodyRow<TData>({
   const extraAttributes = props.rowAttributes?.(row.original) ?? {};
 
   // M5-07: the row Back should restore, on mount only - `returnedFromId` is
-  // read ONCE from `from=` and cleared on the reader's first pointer
-  // interaction with the page, so it highlights "until the next pointer
+  // read ONCE from `from=` (by the caller now, not this row - see
+  // `useReturnedRowId`) and cleared on the reader's first pointer OR key
+  // interaction with the page, so it highlights "until the next pointer or key
   // event" rather than for the life of the URL.
-  const returnedFromId = useReturnedRowId();
-  const restoreId = href ? rowRestoreId(table, row, props.rowHref?.(row.original)) : undefined;
+  const restoreId = href ? rowRestoreId(table, row, rawHref) : undefined;
   const isReturned = Boolean(restoreId && returnedFromId && restoreId === returnedFromId);
   const scrollRef = React.useRef<HTMLTableRowElement | null>(null);
   React.useEffect(() => {
@@ -703,7 +724,12 @@ function DataGridTableBodyRow<TData>({
   }, [isReturned]);
 
   const rowProps: React.ComponentProps<'tr'> = {
-    ref: mergeRefs(dndRef, scrollRef),
+    ref: (node: HTMLTableRowElement | null) => {
+      // Combines the caller-supplied ref (dnd-kit's, possibly) with our own.
+      if (typeof dndRef === 'function') dndRef(node);
+      else if (dndRef) (dndRef as React.MutableRefObject<HTMLTableRowElement | null>).current = node;
+      scrollRef.current = node;
+    },
     style: { ...(dndStyle ? dndStyle : null) },
     'data-state': table.options.enableRowSelection && row.getIsSelected() ? 'selected' : undefined,
     'data-pending': isPending ? 'true' : undefined,
@@ -1099,6 +1125,11 @@ function DataGridTable<TData>() {
   const { table, props } = useDataGrid();
   const pagination = table.getState().pagination;
   const showBodySkeleton = useBodySkeleton();
+  // ONCE per grid (S5/S7, M5 review run 1), unconditionally - before the branch
+  // below - so it runs exactly once regardless of which render path this grid
+  // takes. See `useReturnedRowId`'s own doc for why this used to be one call PER
+  // ROW instead.
+  const returnedFromId = useReturnedRowId();
   // A phone does NOT pin the identifier column. S1 pinned it under `sm` so the
   // row stayed labelled while the grid scrolled sideways; the user tried it and
   // found a column that refuses to move with the rest weirder than losing sight
@@ -1134,7 +1165,7 @@ function DataGridTable<TData>() {
 
     return (
       <DataGridScroller>
-        <DataGridTableDnd<TData> handleDragEnd={handleDragEnd} />
+        <DataGridTableDnd<TData> handleDragEnd={handleDragEnd} returnedFromId={returnedFromId} />
       </DataGridScroller>
     );
   }
@@ -1216,7 +1247,7 @@ function DataGridTable<TData>() {
                       </td>
                     </tr>
                   )}
-                  <DataGridTableBodyRow row={row} key={index}>
+                  <DataGridTableBodyRow row={row} returnedFromId={returnedFromId} key={index}>
                     {row.getVisibleCells().map((cell: Cell<TData, unknown>, colIndex) => {
                       return (
                         <DataGridTableBodyRowCell cell={cell} key={colIndex}>
@@ -1279,4 +1310,5 @@ export {
   DataGridTableRowSelectAll,
   DataGridTableRowSpacer,
   useBodySkeleton,
+  useReturnedRowId,
 };

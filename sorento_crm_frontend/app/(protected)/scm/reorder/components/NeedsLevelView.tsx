@@ -267,7 +267,7 @@ export function NeedsLevelView({
       table={table}
       recordCount={table.getFilteredRowModel().rows.length}
       listingKey={NO_COLUMN_PERSISTENCE}
-      tableLayout={{ width: 'fixed', columnsResizable: true, headerSticky: true }}
+      tableLayout={{ width: 'fixed', columnsResizable: true }}
       tableClassNames={{
         headerSticky: 'sticky top-0 z-(--z-sticky-content) bg-background shadow-sm',
       }}

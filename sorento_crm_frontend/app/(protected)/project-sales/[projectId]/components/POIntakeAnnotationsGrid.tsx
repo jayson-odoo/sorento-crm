@@ -384,7 +384,6 @@ export function POIntakeAnnotationsGrid({
         tableLayout={{
           width: 'fixed',
           columnsResizable: true,
-          headerSticky: true,
           // The ScrollArea below already bounds the vertical viewport (M5-05:
           // DataGridScroller's own max-height default would double-bound it).
           scrollerMaxHeight: false,

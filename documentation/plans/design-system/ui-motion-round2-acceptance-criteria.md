@@ -275,13 +275,18 @@ Baseline measured on `origin/main` e1adad4d2, 2 Sep 2026.
 - **M5-07** `[UX] [vitest] [browser]` **Back to list restores the row, absolute rule.** A row
   click appends `from=<row id>` to the detail href; Back, the post-delete push and Edit all
   carry it; on list mount the row with that id is scrolled into view (`block: 'center'`) and
-  highlighted until the next pointer event. Browser: open row 38 on Products page 2, press Back,
-  row 38 is centred and highlighted; the same after stepping prev/next three times on the
-  detail pager.
+  highlighted until the next pointer or key event. Browser: open row 38 on Products page 2,
+  press Back, row 38 is centred and highlighted; the same after stepping prev/next three times
+  on the detail pager.
   **Shipped (M5 run 1, `[vitest]` done, `[browser]` open):**
   `components/ui/data-grid-table.listState.test.tsx`, `lib/listNavQuery.test.ts` (reserved-key
   case), `hooks/useListPager.test.ts` (`from=<landing id>` case). The `[browser]` row-38 walk is
   still open.
+  **Review run 1 fix (S5/S7):** `returnedFromId` used to be resolved by a hook called PER ROW
+  (N document listeners, N independent `cleared` states, a row mounting after the reader's
+  first pointer event re-armed its own highlight). Now resolved ONCE per rendered grid
+  (`DataGridTable`/`DataGridTableDnd`/`DataGridTableDndRows`) and passed down as a prop; a
+  `keydown` listener clears it alongside `pointerdown`, hence "next pointer OR key event" above.
 - **M5-08** `[review]` `DESIGN-LANGUAGE.md` sections 4 and 7 and
   `documentation/reference/PR-CHECKLIST.md` state both rules; a new list without them is a
   checklist failure.

@@ -40,16 +40,18 @@ const EXCLUDED_DIRS = [
 
 /**
  * Every current importer of `@/components/ui/table` outside `components/ui`
- * itself, each with a one-line reason. For THIS run every product offender's
- * reason is "pending migration, M5 run 3" (run 3 drains them one module per
- * commit) unless it is one of the three the PR calls out for the captain's
- * ruling on whether it is migratable at all.
+ * itself, each with a one-line reason. Two are DECIDED, permanent exemptions
+ * (the captain's ruling, M5 review run 1): the two `app/(auth)` portal pages
+ * and `ReportPivotTable.tsx`, below. Every other entry's reason is "pending
+ * migration, M5 run 3" (run 3 drains them one module per commit).
  */
 const ALLOWLIST: Record<string, string> = {
-  // Public portal pages with no DataGrid shell around them (no CardHeader,
-  // no toolbar, no pager) - candidate for "not migratable", captain's ruling.
-  'app/(auth)/approval/page.tsx': 'public portal page with no DataGrid shell around it',
-  'app/(auth)/view/request/page.tsx': 'public portal page with no DataGrid shell around it',
+  // Public portal surfaces outside the authenticated shell, out of M5's scope
+  // entirely - not "not yet migrated", never migrating under this rule.
+  'app/(auth)/approval/page.tsx':
+    'public portal page outside (protected); the DataGrid rule covers product list surfaces inside the shell',
+  'app/(auth)/view/request/page.tsx':
+    'public portal page outside (protected); the DataGrid rule covers product list surfaces inside the shell',
 
   'app/(protected)/complaint-management/complaints/components/ComplaintFulfilmentOrdersSection.tsx':
     'pending migration, M5 run 3',
@@ -103,11 +105,19 @@ const ALLOWLIST: Record<string, string> = {
     'pending migration, M5 run 3',
   // Not a list: a pivot report reshapes rows into a matrix (rows x measures),
   // which is not what a DataGrid's one-row-per-record model expresses.
-  // Candidate for "not migratable", captain's ruling.
-  'components/reports/ReportPivotTable.tsx': 'pivot report, not a list - matrix shape, not one row per record',
+  // Permanently exempt (captain's ruling, M5 review run 1).
+  'components/reports/ReportPivotTable.tsx':
+    'pivot matrix, not a record list - permanently exempt, not a DataGrid candidate',
 };
 
-/** Every `.tsx` under the scanned roots, tests and `components/ui` excluded. */
+/**
+ * Every `.tsx` AND `.ts` under the scanned roots, tests and `components/ui`
+ * excluded. `.ts` joined the walk in M5 review run 1 (nit): a raw `<Table>`
+ * import realistically only shows up in a `.tsx`, but a `.ts` file re-exporting
+ * or re-rendering one (a service module returning JSX, a `.ts`-suffixed hook
+ * file) would otherwise sit outside the walk entirely rather than failing it -
+ * `.d.ts` is excluded, it declares types, never imports a component.
+ */
 function sourceFiles(): string[] {
   const out: string[] = [];
   const walk = (dir: string) => {
@@ -119,7 +129,11 @@ function sourceFiles(): string[] {
         if (rel === 'components/ui') continue;
         if (EXCLUDED_DIRS.includes(rel)) continue;
         walk(full);
-      } else if (entry.name.endsWith('.tsx') && !/\.(test|spec)\./.test(entry.name)) {
+      } else if (
+        (entry.name.endsWith('.tsx') || entry.name.endsWith('.ts')) &&
+        !entry.name.endsWith('.d.ts') &&
+        !/\.(test|spec)\./.test(entry.name)
+      ) {
         out.push(rel);
       }
     }

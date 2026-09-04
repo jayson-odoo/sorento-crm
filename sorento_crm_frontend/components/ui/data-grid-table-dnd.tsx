@@ -131,7 +131,14 @@ function DataGridTableDndCell<TData>({ cell }: { cell: Cell<TData, unknown> }) {
   );
 }
 
-function DataGridTableDnd<TData>({ handleDragEnd }: { handleDragEnd: (event: DragEndEvent) => void }) {
+function DataGridTableDnd<TData>({
+  handleDragEnd,
+  returnedFromId,
+}: {
+  handleDragEnd: (event: DragEndEvent) => void;
+  /** Resolved once by `DataGridTable` and passed down - see `useReturnedRowId`'s doc. */
+  returnedFromId: string | null;
+}) {
   const { table, props } = useDataGrid();
   const pagination = table.getState().pagination;
   const showBodySkeleton = useBodySkeleton();
@@ -219,7 +226,7 @@ function DataGridTableDnd<TData>({ handleDragEnd }: { handleDragEnd: (event: Dra
                         </td>
                       </tr>
                     )}
-                    <DataGridTableBodyRow row={row} key={index}>
+                    <DataGridTableBodyRow row={row} returnedFromId={returnedFromId} key={index}>
                       {row.getVisibleCells().map((cell: Cell<TData, unknown>) => {
                         return (
                           <SortableContext

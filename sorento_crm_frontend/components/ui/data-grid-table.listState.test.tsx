@@ -151,9 +151,9 @@ const ROWS: Row[] = [
 ];
 const COLUMNS: ColumnDef<Row>[] = [{ id: 'name', accessorKey: 'name', header: 'Name', size: 400 }];
 
-function ListHarness() {
+function ListHarness({ rows = ROWS }: { rows?: Row[] }) {
   const table = useReactTable({
-    data: ROWS,
+    data: rows,
     columns: COLUMNS,
     getRowId: (r) => r.id,
     getCoreRowModel: getCoreRowModel(),
@@ -161,7 +161,7 @@ function ListHarness() {
   return (
     <DataGrid
       table={table}
-      recordCount={ROWS.length}
+      recordCount={rows.length}
       isLoading={false}
       rowHref={(r) => `/order-management/orders/${r.id}`}
       tableLayout={{ width: 'fixed', columnsResizable: true }}
@@ -173,8 +173,7 @@ function ListHarness() {
 
 describe('DataGridTable restores the row on the way in (M5-07)', () => {
   it('scrolls the matching row into view and marks it returned, on mount', () => {
-    const scrollIntoView = vi.fn();
-    Element.prototype.scrollIntoView = scrollIntoView;
+    const scrollIntoView = vi.spyOn(Element.prototype, 'scrollIntoView');
     setLocationSearch('from=a2');
 
     render(<ListHarness />);
@@ -187,7 +186,7 @@ describe('DataGridTable restores the row on the way in (M5-07)', () => {
   });
 
   it('clears the highlight on the next pointerdown, anywhere', () => {
-    Element.prototype.scrollIntoView = vi.fn();
+    vi.spyOn(Element.prototype, 'scrollIntoView');
     setLocationSearch('from=a2');
 
     render(<ListHarness />);
@@ -198,9 +197,21 @@ describe('DataGridTable restores the row on the way in (M5-07)', () => {
     expect(screen.getByText('Beta').closest('tr')).not.toHaveAttribute('data-returned', 'true');
   });
 
+  it('clears the highlight on the next keydown too, anywhere (S5/S7, M5 review run 1)', () => {
+    vi.spyOn(Element.prototype, 'scrollIntoView');
+    setLocationSearch('from=a2');
+
+    render(<ListHarness />);
+    expect(screen.getByText('Beta').closest('tr')).toHaveAttribute('data-returned', 'true');
+
+    // A keyboard reader tabbing through the page never fires pointerdown at all.
+    fireEvent.keyDown(document.body, { key: 'Tab' });
+
+    expect(screen.getByText('Beta').closest('tr')).not.toHaveAttribute('data-returned', 'true');
+  });
+
   it('is a no-op when the from id is not on the current page', () => {
-    const scrollIntoView = vi.fn();
-    Element.prototype.scrollIntoView = scrollIntoView;
+    const scrollIntoView = vi.spyOn(Element.prototype, 'scrollIntoView');
     setLocationSearch('from=not-on-this-page');
 
     render(<ListHarness />);
@@ -209,6 +220,31 @@ describe('DataGridTable restores the row on the way in (M5-07)', () => {
     for (const label of ['Alpha', 'Beta', 'Gamma']) {
       expect(screen.getByText(label).closest('tr')).not.toHaveAttribute('data-returned', 'true');
     }
+  });
+
+  it('a row that mounts AFTER the clearing event does not re-arm the highlight (S5/S7, M5 review run 1)', () => {
+    // The bug this guards: `returnedFromId` used to be read PER ROW, each with its
+    // OWN `cleared` state and its OWN document listener. A row that mounted after
+    // the reader had already dismissed the highlight (e.g. a later page's rows, or
+    // - as here - a row that simply was not on the page yet) started with
+    // `cleared: false` all over again and registered a fresh listener, so it
+    // highlighted and scrolled on ITS OWN mount even though the reader had already
+    // moved on. Lifting the resolve to once-per-grid means every row, however late
+    // it mounts, reads the SAME already-cleared value.
+    const scrollIntoView = vi.spyOn(Element.prototype, 'scrollIntoView');
+    setLocationSearch('from=a2');
+
+    const { rerender } = render(<ListHarness rows={[ROWS[0]]} />);
+    // `a2` (Beta) is not on the page yet, so nothing highlights or scrolls.
+    expect(scrollIntoView).not.toHaveBeenCalled();
+
+    fireEvent.pointerDown(document.body);
+
+    // `a2` mounts now, for the first time, AFTER the clearing event.
+    rerender(<ListHarness rows={ROWS} />);
+
+    expect(screen.getByText('Beta').closest('tr')).not.toHaveAttribute('data-returned', 'true');
+    expect(scrollIntoView).not.toHaveBeenCalled();
   });
 });
 

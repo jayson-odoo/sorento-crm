@@ -15,6 +15,7 @@ import {
   DataGridTableHeadRowCellResize,
   DataGridTableRowSpacer,
   useBodySkeleton,
+  useReturnedRowId,
 } from '@/components/ui/data-grid-table';
 import {
   closestCenter,
@@ -48,7 +49,14 @@ function DataGridTableDndRowHandle({ rowId }: { rowId: string }) {
   );
 }
 
-function DataGridTableDndRow<TData>({ row }: { row: Row<TData> }) {
+function DataGridTableDndRow<TData>({
+  row,
+  returnedFromId,
+}: {
+  row: Row<TData>;
+  /** Resolved once by `DataGridTableDndRows` and passed down - see `useReturnedRowId`'s doc. */
+  returnedFromId: string | null;
+}) {
   const { transform, transition, setNodeRef, isDragging } = useSortable({
     id: row.id,
   });
@@ -61,7 +69,13 @@ function DataGridTableDndRow<TData>({ row }: { row: Row<TData> }) {
     position: 'relative',
   };
   return (
-    <DataGridTableBodyRow row={row} dndRef={setNodeRef} dndStyle={style} key={row.id}>
+    <DataGridTableBodyRow
+      row={row}
+      returnedFromId={returnedFromId}
+      dndRef={setNodeRef}
+      dndStyle={style}
+      key={row.id}
+    >
       {row.getVisibleCells().map((cell: Cell<TData, unknown>, colIndex) => {
         return (
           <DataGridTableBodyRowCell cell={cell} key={colIndex}>
@@ -83,6 +97,9 @@ function DataGridTableDndRows<TData>({
   const { table, props } = useDataGrid();
   const pagination = table.getState().pagination;
   const showBodySkeleton = useBodySkeleton();
+  // ONCE per grid (S5/S7, M5 review run 1) - this render path does not go through
+  // `DataGridTable`, so it resolves its own, the same way that one does.
+  const returnedFromId = useReturnedRowId();
   const [activeRow, setActiveRow] = useState<Row<TData> | null>(null);
 
   // Same activation constraint as the column reorderer (data-grid-table-dnd.tsx,
@@ -155,7 +172,9 @@ function DataGridTableDndRows<TData>({
             ) : table.getRowModel().rows.length ? (
               <SortableContext items={dataIds} strategy={verticalListSortingStrategy}>
                 {table.getRowModel().rows.map((row: Row<TData>) => {
-                  return <DataGridTableDndRow row={row} key={row.id} />;
+                  return (
+                    <DataGridTableDndRow row={row} returnedFromId={returnedFromId} key={row.id} />
+                  );
                 })}
               </SortableContext>
             ) : (
@@ -176,6 +195,8 @@ function DataGridTableDndRows<TData>({
           <div className="overflow-x-auto rounded-md border border-border bg-background shadow-lg">
             <table className="w-full caption-bottom text-sm">
               <tbody>
+                {/* No `returnedFromId`: this floating clone follows the pointer, it is
+                    never the settled row the reader returned to. */}
                 <DataGridTableBodyRow row={activeRow}>
                   {activeRow.getVisibleCells().map((cell: Cell<TData, unknown>, colIndex) => (
                     <DataGridTableBodyRowCell cell={cell} key={colIndex}>
