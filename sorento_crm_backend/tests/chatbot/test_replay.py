@@ -146,16 +146,19 @@ def test_stale_capture_is_skipped_with_its_reason(node: str, name: str, reason: 
     stopped having. One skip per entry means `pytest -rs` lists them and the run's own
     skip count is the number of captures not being graded.
     """
-    on_disk = (_corpus.VENDORED_ROOT / node / f"{name}.json").exists() or any(
-        (root / "nodes" / slug / node / f"{name}.json").exists()
-        for root in [_corpus.corpus_root()]
-        if root is not None
-        for slug in _corpus.NODE_SLUGS.get(node, ())
-    )
-    assert on_disk, (
-        f"{node}/{name} is registered stale but no such fixture exists - retire the "
-        "STALE_FIXTURES entry rather than leaving a dead exclusion in place"
-    )
+    root = _corpus.corpus_root()
+    if root is not None:
+        # A dead exclusion is only detectable where the corpus actually is. In the CI
+        # shape (vendored subset only) a stale capture is legitimately absent from disk:
+        # it is excluded from vendoring precisely BECAUSE it cannot be graded.
+        on_disk = (_corpus.VENDORED_ROOT / node / f"{name}.json").exists() or any(
+            (root / "nodes" / slug / node / f"{name}.json").exists()
+            for slug in _corpus.NODE_SLUGS.get(node, ())
+        )
+        assert on_disk, (
+            f"{node}/{name} is registered stale but no such fixture exists - retire the "
+            "STALE_FIXTURES entry rather than leaving a dead exclusion in place"
+        )
     pytest.skip(f"stale capture {node}/{name}: {reason}")
 
 
