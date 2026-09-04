@@ -108,37 +108,17 @@ def exclude_already_shown(candidates: Any, *, shown_codes: Any) -> list[Any]:
 # The per-lane completion switch.
 # --------------------------------------------------------------------------- #
 
-# The three arms the business lane owns. Kept here rather than re-derived so the gate and
-# `lanes/business/__init__.py`'s `ENTRY_BY_BRANCH_KIND` cannot disagree about the set.
-from app.services.chatbot.lanes.business import ENTRY_BY_BRANCH_KIND  # noqa: E402
-
-
-def _completed_lanes(row: Any) -> list[str]:
-    """`system_settings.chatbot_completed_lanes` off an already-read settings row.
-
-    TODO(S4-merge): S4 owns this column, its migration and the engine helper that reads the
-    settings row ONCE per turn. This helper exists so S6c's completion logic can be written
-    and tested against the agreed NAME before that lands; when S4 is on the lane, delete it
-    and call S4's helper with the row the engine already has.
-
-    Reading it defensively rather than as a declared attribute is deliberate for the same
-    window: on a build where the column does not exist yet the answer lane must behave as
-    if the list were empty, which is "delegate everything" - the safe direction.
-    """
-    value = getattr(row, "chatbot_completed_lanes", None) if row is not None else None
-    return list(value) if isinstance(value, list) else []
-
-
 def completed_lanes(db: Any) -> list[str]:
-    """The same list, for a caller that has a session rather than a row.
+    """`system_settings.chatbot_completed_lanes`, as a list, default EMPTY.
 
-    ONE query. The engine reads the settings row once per turn (S4's rule) and should pass
-    the row to `_completed_lanes` instead; this is the convenience wrapper the tests and
-    any single-shot caller use.
+    A thin adapter over S4's own reader (`engine._enabled_lanes`, itself over
+    `delegate.enabled_lanes_from`) so this lane has no second copy of the parsing rules -
+    hostile input tolerance included. The engine reads the settings ROW once per turn and
+    should pass that row down; this wrapper is for a caller holding only a session.
     """
-    from app.models.user import SystemSetting
+    from app.services.chatbot.engine import _enabled_lanes
 
-    return _completed_lanes(db.query(SystemSetting).first())
+    return sorted(_enabled_lanes(db))
 
 
 def lane_disposition(
@@ -146,13 +126,18 @@ def lane_disposition(
 ) -> Literal["complete", "delegate"]:
     """Does the CRM finish this turn, or hand it back to n8n?
 
-    Only an arm the business lane actually owns can be completed: a stray entry naming
-    some other branch kind is ignored rather than silently changing a lane this code does
-    not implement.
+    The same TWO conditions `delegate.delegate_for` applies, phrased for this lane: the
+    CODE must be able to complete the arm, and the OWNER must have turned it on. Expressed
+    through `delegate_for` itself rather than re-implemented, so the two can never drift
+    about a lane's disposition - that drift is the whole reason the pair is checked in one
+    place.
     """
-    if branch_kind in ENTRY_BY_BRANCH_KIND and branch_kind in jsc.array(completed_lanes):
-        return "complete"
-    return "delegate"
+    from app.services.chatbot.delegate import delegate_for
+
+    if branch_kind is None:
+        return "delegate"
+    enabled = frozenset(jsc.array(completed_lanes))
+    return "complete" if delegate_for(branch_kind, enabled) is None else "delegate"
 
 
 # --------------------------------------------------------------------------- #

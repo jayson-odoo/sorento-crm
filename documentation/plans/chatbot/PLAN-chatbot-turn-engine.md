@@ -280,6 +280,7 @@ previous reply. A reviewer finding one is a merge blocker.
 | respond.io `space_id` | default respond workspace row (`respond_workspaces.space_id`) | already the integration's home; kills the hard-coded `364817` |
 | unsupported domains | `system_settings.chatbot_unsupported_domains` (JSON, default the two today) | the one list the owner has changed; column, not table (CLAUDE.md "both dict builders") |
 | stock denial lanes | `system_settings.chatbot_stock_denial_enabled` (bool, default false) | R1: the corrected vocabulary turns two never-tested lanes on; a data switch with a test, not a surprise |
+| which lanes the CRM may FINISH | `system_settings.chatbot_completed_lanes` (JSON array of `branch_kind`, default `[]`) | S4: `CRM_COMPLETED_BRANCH_KINDS` says what the CODE can complete, this says what it MAY, and both are required. Without it a lane starts answering the moment it deploys and the n8n edit has to land in the same window or the lane runs twice. With it, deploy / compare / switch on / cut n8n are four separate reversible steps, one lane at a time (AC-308) |
 | worker offload, wait | env `CHATBOT_TURN_ON_WORKER` (off), `CHATBOT_TURN_WAIT_SECONDS` (60), `WORKER_QUEUES` | ops, not owner |
 
 ### Test strategy (the reason for the port)
@@ -562,6 +563,31 @@ through `MCPRuntimeClient` like every business tool. `chatbot_unsupported_domain
 `lanes/casual.py`: resolve-for-prompt (in-process), `construct-user-prompt` port, prompt key
 `chatbot_clarifier`, `central-exchange` fence-stripping. Error = failed turn + today's text
 (AC-403). n8n: three nodes deleted (AC-404).
+
+**Delivered 5 Sep 2026.** Two decisions worth recording, because neither is in the UAC and
+both change what an operator sees:
+
+1. **A lane setup failure is the LANE's failure, not the engine's.** `resolve_for_prompt`,
+   `construct_user_prompt` and `resolve_clarifier_config` all exist to make the clarifier
+   call possible, so a missing AI-assistant config or API key is the same customer-visible
+   event as the call itself failing: the lane cannot answer. All three are therefore inside
+   the lane's own `try`, and the turn fails at `stage = casual_llm` with `branch_kind` still
+   `low_signal` and today's `sub-error-logger` text (AC-403). Letting them reach
+   `run_turn`'s catch-all instead would null the branch kind and send the PARSER's error
+   reply, which is a different lane's words for a different failure. Two pre-existing tests
+   (`test_trace_legibility::test_low_signal`, `test_s6a_gate_dry_run_and_seams[low_signal]`)
+   assert the branch kind survives, and both were red until this was folded in.
+2. **A successful turn ends at `remembered`, not `casual_llm`.** The lane runs S2's tail
+   (`complete_turn`: outcome -> compile-state -> compose -> session write), so it closes
+   where every other completed lane closes. `casual_llm` is the FAILURE stage only. The row
+   passes through `delegated` / `routed` first, which is not bookkeeping: it is the state
+   the turn is genuinely in while the clarifier runs, it is what `complete_turn` refuses to
+   run without, and it is what the trace screen should show if the process dies mid-call.
+   The item handed to the tail is `sub-answer`'s own output shape
+   (`{...central-exchange, outcome_fragment}`), NOT `route-turn`'s item - hand it the latter
+   and the entry gate runs `escalate-catalog`, which has no case for `low_signal`, produces
+   an empty `response`, and wins the compile-state ladder over `central-exchange`. The reply
+   comes out blank. Measured, not reasoned: the first wiring did exactly that.
 
 ### S5 - Escalation (400 lines)
 

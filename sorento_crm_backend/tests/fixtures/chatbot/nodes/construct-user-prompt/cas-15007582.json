@@ -1,0 +1,684 @@
+{
+  "source": {
+    "execution_id": "15007582",
+    "workflow_id": "4dPJ8ykop8VIpddY",
+    "workflow_version": "08bf56a5-4363-481c-89d8-8ad6e3ba306b",
+    "node": "construct-user-prompt",
+    "captured_at": "2026-09-04T20:40:46+00:00",
+    "expected_from": "runData",
+    "dedupe_sig": "ee51a0e3abe4c0a2a8719eed2075ee700d0cb870d712dcf49f03a9cfb769825e"
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "contact_id": "900000064",
+          "build_ctx": {
+            "ctx": {
+              "contact": {
+                "id": 900000064,
+                "firstName": "Person 80",
+                "lastName": "Person 81",
+                "phone": "+60100000032",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "locale": null,
+                "countryCode": "MY",
+                "status": "open",
+                "isBlocked": false,
+                "custom_fields": [
+                  {
+                    "name": "enquiry_type",
+                    "value": null
+                  },
+                  {
+                    "name": "user_type",
+                    "value": null
+                  },
+                  {
+                    "name": "complaint_id",
+                    "value": null
+                  },
+                  {
+                    "name": "is_allowed_stock",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_human_intervened",
+                    "value": "false"
+                  },
+                  {
+                    "name": "backend_id",
+                    "value": "https://fe-sorento.foundryx.my/user-management/contacts/23aaef94-6ff4-4d7f-9198-1eb9135814ed"
+                  },
+                  {
+                    "name": "is_allowed_ai",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_allowed_voice",
+                    "value": "true"
+                  }
+                ],
+                "tags": [
+                  "imported_20260510_200514",
+                  "imported_20260627_150636"
+                ],
+                "assignee": null,
+                "lifecycle": "New Lead",
+                "created_at": 1775526461
+              },
+              "text": {
+                "event_type": "message.received",
+                "event_id": "c954816b-4d10-4f32-b5b5-5f5878716107",
+                "contact": {
+                  "id": 900000064,
+                  "firstName": "Person 80",
+                  "lastName": "Person 81",
+                  "phone": "+60100000032",
+                  "email": null,
+                  "language": null,
+                  "profilePic": null,
+                  "countryCode": "MY",
+                  "status": "open",
+                  "assignee": {
+                    "id": null,
+                    "firstName": null,
+                    "lastName": null,
+                    "email": null
+                  },
+                  "created_at": 1775526461
+                },
+                "message": {
+                  "messageId": 1788416535000000,
+                  "channelMessageId": "wamid.HBgMNjAxMTM5OTE3ODAwFQIAEhgUM0FFNjg3REUyOUExODkyNEUzMkIA",
+                  "contactId": 900000064,
+                  "channelId": 453209,
+                  "traffic": "incoming",
+                  "timestamp": 1788416535000,
+                  "message": {
+                    "type": "text",
+                    "text": "Srtwt7203"
+                  }
+                },
+                "channel": {
+                  "id": 453209,
+                  "name": "Internal (+60 11-1673 1179)",
+                  "source": "whatsapp_business",
+                  "meta": null,
+                  "created_at": 1767682908
+                },
+                "sender": {
+                  "source": "contact",
+                  "userId": null,
+                  "teamId": null,
+                  "workflowId": null,
+                  "broadcastHistoryId": null
+                }
+              },
+              "session": {
+                "respond_io_id": "900000064",
+                "session_vars": {
+                  "variables": {
+                    "response": "text"
+                  },
+                  "user_response": "text"
+                }
+              },
+              "parse": {
+                "output": {
+                  "message_type": "business_query",
+                  "intent_hint": null,
+                  "domain_hint": null,
+                  "scope_intent": null,
+                  "is_affirmative": null,
+                  "user_goal": "trying to check the item Srtwt7203",
+                  "access_levels": [],
+                  "broaden_axis": null,
+                  "date_mode": null,
+                  "date_filter_start": null,
+                  "date_filter_end": null,
+                  "match_mode": "and",
+                  "demand_qty": null,
+                  "entities": [
+                    {
+                      "raw": "Srtwt7203",
+                      "hint": "product",
+                      "canonical_code": null,
+                      "current_message": true,
+                      "confident": true
+                    }
+                  ],
+                  "entity_op": "replace_combine",
+                  "scope_exclusive": false,
+                  "requested_attributes": [],
+                  "contains_flyer": false,
+                  "reference_positions": [],
+                  "reference_target": null,
+                  "person_mention": null,
+                  "is_active": null,
+                  "order_status": null,
+                  "correction": false,
+                  "routing": {
+                    "suggested_team": "customer_service",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "domain_signal_source": "intent_none",
+                  "scope_exclusive_applied": false,
+                  "entity_op_applied": "replace_combine",
+                  "query_brands": []
+                },
+                "_parser_raw": {
+                  "message_type": "business_query",
+                  "intent_hint": null,
+                  "domain_hint": null,
+                  "scope_intent": null,
+                  "is_affirmative": null,
+                  "user_goal": "trying to check the item Srtwt7203",
+                  "access_levels": [],
+                  "broaden_axis": null,
+                  "date_mode": null,
+                  "date_filter_start": null,
+                  "date_filter_end": null,
+                  "match_mode": "and",
+                  "demand_qty": null,
+                  "entities": [
+                    {
+                      "raw": "Srtwt7203",
+                      "hint": "product",
+                      "canonical_code": null,
+                      "current_message": true,
+                      "confident": true
+                    }
+                  ],
+                  "entity_op": "replace_combine",
+                  "scope_exclusive": false,
+                  "requested_attributes": [],
+                  "contains_flyer": false,
+                  "reference_positions": [],
+                  "reference_target": null,
+                  "person_mention": null,
+                  "is_active": null,
+                  "order_status": null,
+                  "correction": false,
+                  "routing": {
+                    "suggested_team": null,
+                    "suggested_agent": null
+                  },
+                  "escalation": {
+                    "is_escalation_confirmation": false,
+                    "company_pick": null
+                  }
+                }
+              },
+              "access": {
+                "allowed": true,
+                "decision": "allow",
+                "agent_name": "General Enquiries",
+                "attributes": null,
+                "all_attributes_allowed": null
+              },
+              "media": null
+            }
+          }
+        }
+      }
+    ],
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 900000064,
+              "firstName": "Person 80",
+              "lastName": "Person 81",
+              "phone": "+60100000032",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/23aaef94-6ff4-4d7f-9198-1eb9135814ed"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": "true"
+                }
+              ],
+              "tags": [
+                "imported_20260510_200514",
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": "New Lead",
+              "created_at": 1775526461
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "c954816b-4d10-4f32-b5b5-5f5878716107",
+              "contact": {
+                "id": 900000064,
+                "firstName": "Person 80",
+                "lastName": "Person 81",
+                "phone": "+60100000032",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1775526461
+              },
+              "message": {
+                "messageId": 1788416535000000,
+                "channelMessageId": "wamid.HBgMNjAxMTM5OTE3ODAwFQIAEhgUM0FFNjg3REUyOUExODkyNEUzMkIA",
+                "contactId": 900000064,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788416535000,
+                "message": {
+                  "type": "text",
+                  "text": "Srtwt7203"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": null,
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000064",
+              "session_vars": {
+                "variables": {
+                  "response": "text"
+                },
+                "user_response": "text"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": null,
+                "domain_hint": null,
+                "scope_intent": null,
+                "is_affirmative": null,
+                "user_goal": "trying to check the item Srtwt7203",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "Srtwt7203",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "customer_service",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_none",
+                "scope_exclusive_applied": false,
+                "entity_op_applied": "replace_combine",
+                "query_brands": []
+              },
+              "_parser_raw": {
+                "message_type": "business_query",
+                "intent_hint": null,
+                "domain_hint": null,
+                "scope_intent": null,
+                "is_affirmative": null,
+                "user_goal": "trying to check the item Srtwt7203",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "Srtwt7203",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": null,
+                  "suggested_agent": null
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "General Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null
+          }
+        }
+      }
+    ],
+    "resolve-entity-clarification": [
+      {
+        "json": {
+          "tokens": [
+            "Srtwt7203"
+          ],
+          "elapsed_ms": 31.9,
+          "resolutions": [
+            {
+              "token": "Srtwt7203",
+              "resolved": false,
+              "ambiguous": true,
+              "matches": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "SRTWT7203",
+                  "uuid": "b12b5b53-8520-4cae-9f55-7f2fb136da06",
+                  "match_field": "product_code",
+                  "match_tier": "exact",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "product_name": "SRTWT7203",
+                    "is_active": true,
+                    "brand": {
+                      "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                      "brand_code": "SORENTO",
+                      "brand_name": "SORENTO"
+                    }
+                  }
+                },
+                {
+                  "entity_type": "product",
+                  "canonical_code": "SRTWT7203-BL",
+                  "uuid": "f1c1008b-1b37-4d03-9d79-ac48f1023ba3",
+                  "match_field": "product_code",
+                  "match_tier": "prefix",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "product_name": "SRTWT7203-BL",
+                    "is_active": true,
+                    "brand": {
+                      "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                      "brand_code": "SORENTO",
+                      "brand_name": "SORENTO"
+                    }
+                  }
+                },
+                {
+                  "entity_type": "product",
+                  "canonical_code": "SRTWT7203-GM",
+                  "uuid": "b442f4ce-b912-4f5c-8dff-f3a71c984011",
+                  "match_field": "product_code",
+                  "match_tier": "prefix",
+                  "similarity": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "product_name": "SRTWT7203-GM",
+                    "is_active": true,
+                    "brand": {
+                      "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                      "brand_code": "SORENTO",
+                      "brand_name": "SORENTO"
+                    }
+                  }
+                }
+              ],
+              "alternatives": []
+            }
+          ],
+          "unresolved_tokens": []
+        }
+      }
+    ],
+    "construct-user-prompt": [
+      {
+        "json": {
+          "message_type": "business_query",
+          "intent_hint": null,
+          "domain_hint": null,
+          "session_vars": {
+            "variables": {
+              "response": "text"
+            },
+            "user_response": "text"
+          },
+          "entities": [
+            {
+              "entity_type": "product",
+              "canonical_code": "SRTWT7203"
+            },
+            {
+              "entity_type": "product",
+              "canonical_code": "SRTWT7203-BL"
+            },
+            {
+              "entity_type": "product",
+              "canonical_code": "SRTWT7203-GM"
+            }
+          ],
+          "user_goal": "trying to check the item Srtwt7203"
+        }
+      }
+    ],
+    "OpenAI Chat Model": [],
+    "Basic LLM Chain": [
+      {
+        "json": {
+          "text": "{\n  \"response\": \"Could you please specify what information you need for item SRTWT7203?\"\n}"
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "tokens": [
+          "Srtwt7203"
+        ],
+        "elapsed_ms": 31.9,
+        "resolutions": [
+          {
+            "token": "Srtwt7203",
+            "resolved": false,
+            "ambiguous": true,
+            "matches": [
+              {
+                "entity_type": "product",
+                "canonical_code": "SRTWT7203",
+                "uuid": "b12b5b53-8520-4cae-9f55-7f2fb136da06",
+                "match_field": "product_code",
+                "match_tier": "exact",
+                "similarity": null,
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "product_name": "SRTWT7203",
+                  "is_active": true,
+                  "brand": {
+                    "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                    "brand_code": "SORENTO",
+                    "brand_name": "SORENTO"
+                  }
+                }
+              },
+              {
+                "entity_type": "product",
+                "canonical_code": "SRTWT7203-BL",
+                "uuid": "f1c1008b-1b37-4d03-9d79-ac48f1023ba3",
+                "match_field": "product_code",
+                "match_tier": "prefix",
+                "similarity": null,
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "product_name": "SRTWT7203-BL",
+                  "is_active": true,
+                  "brand": {
+                    "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                    "brand_code": "SORENTO",
+                    "brand_name": "SORENTO"
+                  }
+                }
+              },
+              {
+                "entity_type": "product",
+                "canonical_code": "SRTWT7203-GM",
+                "uuid": "b442f4ce-b912-4f5c-8dff-f3a71c984011",
+                "match_field": "product_code",
+                "match_tier": "prefix",
+                "similarity": null,
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "product_name": "SRTWT7203-GM",
+                  "is_active": true,
+                  "brand": {
+                    "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                    "brand_code": "SORENTO",
+                    "brand_name": "SORENTO"
+                  }
+                }
+              }
+            ],
+            "alternatives": []
+          }
+        ],
+        "unresolved_tokens": []
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "message_type": "business_query",
+        "intent_hint": null,
+        "domain_hint": null,
+        "session_vars": {
+          "variables": {
+            "response": "text"
+          },
+          "user_response": "text"
+        },
+        "entities": [
+          {
+            "entity_type": "product",
+            "canonical_code": "SRTWT7203"
+          },
+          {
+            "entity_type": "product",
+            "canonical_code": "SRTWT7203-BL"
+          },
+          {
+            "entity_type": "product",
+            "canonical_code": "SRTWT7203-GM"
+          }
+        ],
+        "user_goal": "trying to check the item Srtwt7203"
+      }
+    }
+  ],
+  "runIndex": 0,
+  "execution": {
+    "id": "15007582"
+  },
+  "ran": [
+    "When Executed by Another Workflow",
+    "build-ctx",
+    "resolve-entity-clarification",
+    "construct-user-prompt",
+    "OpenAI Chat Model",
+    "Basic LLM Chain"
+  ]
+}
