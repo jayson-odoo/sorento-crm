@@ -110,7 +110,14 @@ export default function TeamMembersList({
         id: 'user',
         accessorFn: (row) => displayUser(userMap.get(row.user_id), row.user_id),
         header: ({ column }) => <DataGridColumnHeader title="User" column={column} />,
-        cell: ({ row }) => displayUser(userMap.get(row.original.user_id), row.original.user_id),
+        cell: ({ row }) => {
+          const name = displayUser(userMap.get(row.original.user_id), row.original.user_id);
+          return (
+            <span className="block truncate" title={name}>
+              {name}
+            </span>
+          );
+        },
         size: 220,
         meta: { headerTitle: 'User' },
       },

@@ -166,7 +166,9 @@ export default function OrderLinesCard({ orderId, lines }: OrderLinesCardProps) 
       {
         id: 'quantity',
         accessorFn: (row) => row.quantity ?? '',
-        header: ({ column }) => <DataGridColumnHeader title="Qty" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Qty" column={column} className="justify-end" />
+        ),
         cell: ({ row }) => <span className="block text-right">{formatNum(row.original.quantity)}</span>,
         size: 90,
         meta: { headerTitle: 'Qty' },
@@ -174,7 +176,9 @@ export default function OrderLinesCard({ orderId, lines }: OrderLinesCardProps) 
       {
         id: 'unit_price',
         accessorFn: (row) => row.unit_price ?? '',
-        header: ({ column }) => <DataGridColumnHeader title="Unit price" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Unit price" column={column} className="justify-end" />
+        ),
         cell: ({ row }) => (
           <span className="block text-right">{formatNum(row.original.unit_price)}</span>
         ),
@@ -184,7 +188,9 @@ export default function OrderLinesCard({ orderId, lines }: OrderLinesCardProps) 
       {
         id: 'discount',
         accessorFn: (row) => row.discount ?? '',
-        header: ({ column }) => <DataGridColumnHeader title="Discount" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Discount" column={column} className="justify-end" />
+        ),
         cell: ({ row }) => (
           <span className="block text-right">{formatNum(row.original.discount)}</span>
         ),
@@ -194,7 +200,9 @@ export default function OrderLinesCard({ orderId, lines }: OrderLinesCardProps) 
       {
         id: 'total',
         accessorFn: (row) => row.total ?? '',
-        header: ({ column }) => <DataGridColumnHeader title="Total" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Total" column={column} className="justify-end" />
+        ),
         cell: ({ row }) => <span className="block text-right">{formatNum(row.original.total)}</span>,
         size: 110,
         meta: { headerTitle: 'Total' },
@@ -202,7 +210,9 @@ export default function OrderLinesCard({ orderId, lines }: OrderLinesCardProps) 
       {
         id: 'tax',
         accessorFn: (row) => row.tax ?? '',
-        header: ({ column }) => <DataGridColumnHeader title="Tax" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Tax" column={column} className="justify-end" />
+        ),
         cell: ({ row }) => <span className="block text-right">{formatNum(row.original.tax)}</span>,
         size: 90,
         meta: { headerTitle: 'Tax' },
@@ -210,7 +220,9 @@ export default function OrderLinesCard({ orderId, lines }: OrderLinesCardProps) 
       {
         id: 'total_excluding_tax',
         accessorFn: (row) => row.total_excluding_tax ?? '',
-        header: ({ column }) => <DataGridColumnHeader title="Total (excl)" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Total (excl)" column={column} className="justify-end" />
+        ),
         cell: ({ row }) => (
           <span className="block text-right">{formatNum(row.original.total_excluding_tax)}</span>
         ),
@@ -220,7 +232,9 @@ export default function OrderLinesCard({ orderId, lines }: OrderLinesCardProps) 
       {
         id: 'total_including_tax',
         accessorFn: (row) => row.total_including_tax ?? '',
-        header: ({ column }) => <DataGridColumnHeader title="Total (incl)" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Total (incl)" column={column} className="justify-end" />
+        ),
         cell: ({ row }) => (
           <span className="block text-right">{formatNum(row.original.total_including_tax)}</span>
         ),
@@ -285,6 +299,9 @@ export default function OrderLinesCard({ orderId, lines }: OrderLinesCardProps) 
         onRowSelectionChange={setRowSelection}
         emptyTitle="No delivery order lines."
         emptyBody="Import from Excel or add manually."
+        // SF-8 (M5 run 3 review): a document's own line table renders every
+        // row - a page-2 would hide lines the reader expects in one scroll.
+        paginate={false}
       />
 
       <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>

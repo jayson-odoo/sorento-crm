@@ -96,6 +96,10 @@ export function McpToolsList() {
             table={table}
             recordCount={rows.length}
             emptyMessage="No tools match."
+            // Nav permission (`system.ai_assistant_settings.view`) is shared by three
+            // sibling pages (Prompts/Usage/Wishlist) - `::mcp-tools` disambiguates the
+            // saved column config from theirs, same convention as ModuleBundlesAdmin.
+            listingKey="system.ai_assistant_settings.view::mcp-tools"
             tableLayout={{ width: 'fixed', columnsResizable: true }}
           >
             <DataGridTable />

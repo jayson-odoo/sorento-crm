@@ -59,7 +59,9 @@ export default function ProductPurchaseHistoryTab({
       },
       {
         accessorKey: 'qty_ordered',
-        header: ({ column }) => <DataGridColumnHeader title="Quantity" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Quantity" column={column} className="justify-end" />
+        ),
         cell: ({ row }) => (
           <span className="block text-end">{row.original.qty_ordered ?? '-'}</span>
         ),
@@ -68,7 +70,9 @@ export default function ProductPurchaseHistoryTab({
       },
       {
         accessorKey: 'qty_received',
-        header: ({ column }) => <DataGridColumnHeader title="Received" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Received" column={column} className="justify-end" />
+        ),
         cell: ({ row }) => (
           <span className="block text-end">{row.original.qty_received ?? '-'}</span>
         ),
@@ -78,7 +82,9 @@ export default function ProductPurchaseHistoryTab({
       {
         id: 'unit_cost',
         accessorFn: (row) => row.unit_cost ?? 0,
-        header: ({ column }) => <DataGridColumnHeader title="Unit Cost" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Unit Cost" column={column} className="justify-end" />
+        ),
         cell: ({ row }) => (
           <span
             className="block text-end font-medium"

@@ -236,9 +236,9 @@ function ScheduledTasksCard({ data }: { data: ScheduledTasksHealth | null }) {
  * The causes, inline. A count tells you something broke; this tells you what,
  * without a round-trip to the logs page.
  *
- * Rendered via `DataGridTable`'s `meta.expandedContent` (M5-06), one column's worth,
- * seeded permanently open for every channel that has causes - there is no toggle
- * here, so nothing ever collapses it once mounted.
+ * Rendered via `DataGridTable`'s `meta.expandedContent` (M5-06), one column's worth.
+ * The sub-row is ALWAYS OPEN BY DESIGN for every channel that has causes - there is
+ * no toggle here, so nothing ever collapses it once mounted.
  */
 function IntegrationFailuresList({
   channel,
@@ -324,14 +324,18 @@ function IntegrationsCard({
       },
       {
         accessorKey: 'success',
-        header: ({ column }) => <DataGridColumnHeader title="Success" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Success" column={column} className="justify-end" />
+        ),
         cell: ({ row }) => <span className="block text-right">{row.original.success}</span>,
         size: 100,
         meta: { headerTitle: 'Success' },
       },
       {
         accessorKey: 'failed',
-        header: ({ column }) => <DataGridColumnHeader title="Failed" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Failed" column={column} className="justify-end" />
+        ),
         cell: ({ row }) => (
           <div className="text-right">
             {row.original.failed > 0 ? (
@@ -353,7 +357,11 @@ function IntegrationsCard({
       },
       {
         accessorKey: 'benign',
-        header: ({ column }) => <DataGridColumnHeader title="Benign" column={column} />,
+        header: ({ column }) => (
+          <span title="Logged as a failure but expected - e.g. an idempotency race">
+            <DataGridColumnHeader title="Benign" column={column} className="justify-end" />
+          </span>
+        ),
         cell: ({ row }) => (
           <div className="text-right text-muted-foreground">
             {row.original.benign > 0 ? (
@@ -370,7 +378,11 @@ function IntegrationsCard({
       },
       {
         accessorKey: 'in_flight',
-        header: ({ column }) => <DataGridColumnHeader title="In flight" column={column} />,
+        header: ({ column }) => (
+          <span title="Still in progress (pending/processing)">
+            <DataGridColumnHeader title="In flight" column={column} className="justify-end" />
+          </span>
+        ),
         cell: ({ row }) => (
           <span className="block text-right text-muted-foreground">{row.original.in_flight}</span>
         ),
@@ -379,7 +391,9 @@ function IntegrationsCard({
       },
       {
         accessorKey: 'total',
-        header: ({ column }) => <DataGridColumnHeader title="Total" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Total" column={column} className="justify-end" />
+        ),
         cell: ({ row }) => <span className="block text-right">{row.original.total}</span>,
         size: 100,
         meta: { headerTitle: 'Total' },

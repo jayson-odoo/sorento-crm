@@ -63,6 +63,7 @@ export function PanelDataGrid<TRow extends object>({
   expanded,
   onExpandedChange,
   pageSize = 10,
+  paginate = true,
   scrollerMaxHeight,
 }: {
   /**
@@ -141,6 +142,14 @@ export function PanelDataGrid<TRow extends object>({
   onExpandedChange?: OnChangeFn<ExpandedState>;
   pageSize?: number;
   /**
+   * SF-8 (M5 run 3 review): `false` renders every row and hides the pager - the
+   * ruling for a line table ON A DOCUMENT (an order's own lines, a GRN's own
+   * picking lines), where a page-2 hides rows the reader expects to see in one
+   * scroll. Default `true` (the 10-row page every other panel keeps) is
+   * unaffected - this is opt-in per caller, not a change to the shared default.
+   */
+  paginate?: boolean;
+  /**
    * Pass `false` when the caller already renders this inside a `DialogBody` or
    * `SheetBody` that owns its own `overflow-y-auto` viewport (B2, M5 review run 1) -
    * without it the grid's own M5-05 bounded scroller nests a second scrollport
@@ -151,7 +160,9 @@ export function PanelDataGrid<TRow extends object>({
 }) {
   const [pagination, setPagination] = React.useState<PaginationState>({
     pageIndex: 0,
-    pageSize,
+    // `Number.MAX_SAFE_INTEGER`: TanStack's pagination row model slices by index,
+    // so an oversized page size is just "every row", not a real second page.
+    pageSize: paginate ? pageSize : Number.MAX_SAFE_INTEGER,
   });
   const [search, setSearch] = React.useState('');
   const [sorting, setSorting] = React.useState<SortingState>([]);
@@ -268,7 +279,7 @@ export function PanelDataGrid<TRow extends object>({
           )}
         </CardTable>
 
-        {filtered.length > 0 && (
+        {paginate && filtered.length > 0 && (
           <CardFooter>
             <DataGridPagination />
           </CardFooter>

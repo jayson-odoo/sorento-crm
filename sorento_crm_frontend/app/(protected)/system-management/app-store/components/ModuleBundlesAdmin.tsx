@@ -314,6 +314,7 @@ export default function ModuleBundlesAdmin() {
               table={bundlesTable}
               recordCount={(bundlesQuery.data ?? []).length}
               listingKey="system.modules.manage::bundles"
+              emptyMessage="No bundles yet."
               tableLayout={{ width: 'fixed', columnsResizable: true }}
             >
               <DataGridTable />

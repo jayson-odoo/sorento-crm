@@ -47,7 +47,9 @@ const ITEM_COLUMNS: ColumnDef<FulfilmentItemRow>[] = [
   {
     id: 'qty',
     accessorFn: (row) => row.qty ?? '',
-    header: ({ column }) => <DataGridColumnHeader title="Qty" column={column} />,
+    header: ({ column }) => (
+      <DataGridColumnHeader title="Qty" column={column} className="justify-end" />
+    ),
     cell: ({ row }) => <span className="block text-right">{row.original.qty ?? '-'}</span>,
     size: 64,
     meta: { headerTitle: 'Qty' },

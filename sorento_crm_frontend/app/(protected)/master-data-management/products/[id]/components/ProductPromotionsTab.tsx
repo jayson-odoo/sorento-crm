@@ -88,14 +88,18 @@ export default function ProductPromotionsTab({ productId, listPrice }: ProductPr
       },
       {
         id: 'list_price',
-        header: ({ column }) => <DataGridColumnHeader title="List Price" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="List Price" column={column} className="justify-end" />
+        ),
         cell: () => <span className="block text-right">{fmtMyr(listPrice)}</span>,
         size: 130,
         meta: { headerTitle: 'List Price' },
       },
       {
         id: 'discount',
-        header: ({ column }) => <DataGridColumnHeader title="Discount" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Discount" column={column} className="justify-end" />
+        ),
         cell: ({ row }) => (
           <span className="block text-right">{formatDiscount(row.original, listPrice)}</span>
         ),
@@ -104,7 +108,9 @@ export default function ProductPromotionsTab({ productId, listPrice }: ProductPr
       },
       {
         id: 'selling_price',
-        header: ({ column }) => <DataGridColumnHeader title="Selling Price" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Selling Price" column={column} className="justify-end" />
+        ),
         cell: ({ row }) => {
           const sell =
             row.original.promotion_price != null ? Number(row.original.promotion_price) : null;

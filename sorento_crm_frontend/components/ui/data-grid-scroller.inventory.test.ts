@@ -174,6 +174,10 @@ const SCROLLER_MAX_HEIGHT_FALSE_SITES = new Map<string, number>([
     1, // bounded-height viewport (max-h) - same reason as its ScrollArea exemption above
   ],
   [
+    'app/(protected)/resource-management/attachments/components/AttachmentDetailModal.tsx',
+    1, // PanelDataGrid inside DialogContent's own scrolling body (SF-1, M5 run 3 review)
+  ],
+  [
     'app/(protected)/scm/components/PlanRowDialog.tsx',
     // 3 direct DataGrid instances (OnHandTable, PoTakesPicker, SoCoveragePicker) + 7 calls
     // to this file's own exported DrillTable (ProjectRetailTabs x2, SpoTabs x2,
@@ -198,6 +202,10 @@ const SCROLLER_MAX_HEIGHT_FALSE_SITES = new Map<string, number>([
   [
     'app/(protected)/scm/loading-plan/components/ContainerRequestSection.tsx',
     1, // BlocksTable's DrillTable, only rendered inside PlanRowDialog's DialogBody
+  ],
+  [
+    'app/(protected)/sla-management/sla-policies/components/SLAPolicyTiersTable.tsx',
+    1, // TierUsersSheetContent's PanelDataGrid inside the tier users Sheet body
   ],
 ]);
 

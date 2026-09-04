@@ -2,16 +2,20 @@
  * M5-06 - the tickets list renders on DataGrid instead of a raw `<Table>`.
  */
 import React from 'react';
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
 }));
 
+// A SHARED `push`, not a fresh `vi.fn()` per `useRouter()` call - SF-4 asserts
+// against it across the whole render, so it has to be the same reference the
+// component actually calls.
+const push = vi.fn();
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useRouter: () => ({ push, replace: vi.fn() }),
   usePathname: () => '/ticket-management/tickets',
   useSearchParams: () => new URLSearchParams(''),
 }));
@@ -66,6 +70,7 @@ vi.mock('../services/ticketService', () => ({
 }));
 
 import TicketsList from './TicketsList';
+import { bulkDeleteTickets } from '../services/ticketService';
 
 function renderList() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -75,6 +80,11 @@ function renderList() {
     </QueryClientProvider>,
   );
 }
+
+beforeEach(() => {
+  push.mockClear();
+  vi.mocked(bulkDeleteTickets).mockClear();
+});
 
 describe('TicketsList - DataGrid', () => {
   it('renders the column headers and a real cell value for each ticket', async () => {
@@ -92,5 +102,37 @@ describe('TicketsList - DataGrid', () => {
     expect(screen.getByText('Invoice mismatch')).toBeInTheDocument();
     expect(screen.getByText('Jane Doe')).toBeInTheDocument();
     expect(screen.getByText('Unassigned')).toBeInTheDocument();
+  });
+});
+
+describe('TicketsList - bulk delete (SF-4)', () => {
+  it('ticking two row checkboxes does not open either record, and Delete selected -> confirm sends exactly those two ids', async () => {
+    renderList();
+
+    await waitFor(() => {
+      expect(screen.getByText('Cannot log in')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select ticket TKT-0001' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select ticket TKT-0002' }));
+
+    // Ticking the row's own checkbox must not also open the record - the box
+    // stops the click from reaching the row (`data-grid-select-column.tsx`'s
+    // `stopPropagation`).
+    expect(push).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete 2 selected' }));
+
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+
+    await waitFor(() => {
+      expect(bulkDeleteTickets).toHaveBeenCalledTimes(1);
+    });
+    const ids = vi.mocked(bulkDeleteTickets).mock.calls[0][0] as string[];
+    expect([...ids].sort()).toEqual(['t-1', 't-2']);
+
+    // Confirming the delete did not open a record either.
+    expect(push).not.toHaveBeenCalled();
   });
 });

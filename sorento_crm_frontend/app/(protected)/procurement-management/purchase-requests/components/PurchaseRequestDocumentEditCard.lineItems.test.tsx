@@ -51,7 +51,15 @@ function request(over: Partial<PurchaseRequest> = {}): PurchaseRequest {
   } as PurchaseRequest;
 }
 
-/** Renders with a REAL useFieldArray, the way PurchaseRequestForm does. */
+/**
+ * Renders with a REAL useFieldArray, the way PurchaseRequestForm does -
+ * INCLUDING the parent's own `form.watch('products')` (PurchaseRequestForm.tsx,
+ * `sponsorshipLineGrandTotal`), so the Harness re-renders on every keystroke
+ * exactly as the real parent does. Without this the test only ever exercised a
+ * Harness that stayed still while typing, which cannot tell a memo keyed on
+ * `fields.length` apart from one that is not - both look identical to a parent
+ * that never re-renders.
+ */
 function Harness({ record }: { record: PurchaseRequest }) {
   const form = useForm<PurchaseRequestSchemaType>({
     defaultValues: {
@@ -64,6 +72,7 @@ function Harness({ record }: { record: PurchaseRequest }) {
     } as unknown as PurchaseRequestSchemaType,
   });
   const { fields, append, remove } = useFieldArray({ control: form.control, name: 'products' });
+  form.watch('products');
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(() => {})}>
@@ -108,6 +117,50 @@ describe('PurchaseRequestDocumentEditCard - line items DataGrid', () => {
 
     expect(document.activeElement).toBe(input);
     expect(input.value).toBe('ITEM-A2');
+  });
+
+  it('SF-5: typing into row 1 then appending a row keeps row 1\'s value AND input identity', () => {
+    // The bug this guards: `fields.length` sat in the columns `useMemo` deps, so
+    // an append recreated every cell type and remounted every input - values
+    // survived (react-hook-form owns them) but identity did not.
+    const Wrapper = () => {
+      const form = useForm<PurchaseRequestSchemaType>({
+        defaultValues: {
+          request_type: 'purchase_request',
+          request_number: 'PR26-0332',
+          products: [{ item_code: 'ITEM-A', quantity: 4, remark: null, unit_price: null, total: null }],
+        } as unknown as PurchaseRequestSchemaType,
+      });
+      const { fields, append, remove } = useFieldArray({ control: form.control, name: 'products' });
+      form.watch('products');
+      return (
+        <Form {...form}>
+          <form onSubmit={form.handleSubmit(() => {})}>
+            <PurchaseRequestDocumentEditCard
+              form={form}
+              request={request()}
+              isSponsorship={false}
+              showTypeSelect={false}
+              fields={fields}
+              append={append}
+              remove={remove}
+              sponsorshipLineGrandTotal={0}
+            />
+          </form>
+        </Form>
+      );
+    };
+    render(<Wrapper />);
+
+    const first = screen.getByDisplayValue('ITEM-A') as HTMLInputElement;
+    fireEvent.change(first, { target: { value: 'ITEM-A2' } });
+    expect(first.value).toBe('ITEM-A2');
+
+    fireEvent.click(screen.getByRole('button', { name: /Add row/i }));
+
+    const inputsAfter = screen.getAllByPlaceholderText('Item code');
+    expect(inputsAfter[0]).toBe(first);
+    expect((inputsAfter[0] as HTMLInputElement).value).toBe('ITEM-A2');
   });
 
   it('shows the U/P and Total columns on a sponsorship form, not on a purchase request', () => {

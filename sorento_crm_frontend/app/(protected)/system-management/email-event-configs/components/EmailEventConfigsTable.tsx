@@ -61,8 +61,15 @@ export default function EmailEventConfigsTable() {
         header: ({ column }) => <DataGridColumnHeader title="Event" column={column} />,
         cell: ({ row }) => (
           <div>
-            <div className="font-medium">{row.original.display_name}</div>
-            <div className="font-mono text-xs text-muted-foreground">{row.original.event_key}</div>
+            <div className="font-medium truncate" title={row.original.display_name}>
+              {row.original.display_name}
+            </div>
+            <div
+              className="font-mono text-xs text-muted-foreground truncate"
+              title={row.original.event_key}
+            >
+              {row.original.event_key}
+            </div>
             {row.original.description && (
               <div className="text-xs text-muted-foreground mt-1 max-w-[480px]">
                 {row.original.description}
@@ -220,6 +227,7 @@ export default function EmailEventConfigsTable() {
             table={table}
             recordCount={(data ?? []).length}
             listingKey="system.email_event_configs.view"
+            emptyMessage="No email events configured."
             tableLayout={{ width: 'fixed', columnsResizable: true }}
           >
             <DataGridTable />

@@ -254,14 +254,19 @@ export function PurchaseRequestDocumentEditCard({
       {
         id: 'actions',
         header: () => <span className="sr-only">Delete</span>,
-        cell: ({ row }) => (
+        // SF-5 (M5 run 3 review): `fields.length` read off the TABLE, not the
+        // closure - `fields.length` in the memo's own deps recreated every
+        // cell type (and remounted every input) on every append/remove. The
+        // row count is read fresh per render regardless, since `table` is
+        // part of `CellContext` and always current.
+        cell: ({ row, table }) => (
           <Button
             type="button"
             variant="ghost"
             size="icon"
             className="h-8 w-8"
             onClick={() => remove(row.index)}
-            disabled={fields.length <= 1}
+            disabled={table.getRowModel().rows.length <= 1}
             aria-label="Delete line"
           >
             <Trash2 className="size-4 text-destructive" />
@@ -275,7 +280,7 @@ export function PurchaseRequestDocumentEditCard({
 
     return [...base, ...pricing, ...tail];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [control, isSponsorship, remove, fields.length]);
+  }, [control, isSponsorship, remove]);
 
   const linesTable = useReactTable({
     columns: lineColumns,

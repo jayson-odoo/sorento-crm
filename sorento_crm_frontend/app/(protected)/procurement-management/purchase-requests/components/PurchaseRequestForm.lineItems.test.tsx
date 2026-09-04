@@ -90,4 +90,22 @@ describe('PurchaseRequestForm - create-mode line items DataGrid', () => {
     expect(document.activeElement).toBe(second);
     expect(second.value).toBe('ITEM-Z');
   });
+
+  it('SF-6: typing into row 1 then appending a row keeps row 1\'s value AND input identity', () => {
+    // The bug this guards: `fields.length` sat in the columns `useMemo` deps, so
+    // an append recreated every cell type and remounted every input - values
+    // survived (react-hook-form owns them) but identity did not.
+    renderForm();
+
+    const first = screen.getByPlaceholderText('Item code') as HTMLInputElement;
+    fireEvent.change(first, { target: { value: 'ITEM-A' } });
+    expect(first.value).toBe('ITEM-A');
+
+    fireEvent.click(screen.getByRole('button', { name: /Add row/i }));
+
+    const inputsAfter = screen.getAllByPlaceholderText('Item code');
+    expect(inputsAfter).toHaveLength(2);
+    expect(inputsAfter[0]).toBe(first);
+    expect((inputsAfter[0] as HTMLInputElement).value).toBe('ITEM-A');
+  });
 });

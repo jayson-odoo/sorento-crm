@@ -94,7 +94,9 @@ export function SourceProformaInvoicesCard({
       {
         id: 'lines',
         accessorFn: (row) => row.lines,
-        header: ({ column }) => <DataGridColumnHeader title="Lines" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Lines" column={column} className="justify-end" />
+        ),
         cell: ({ row }) => (
           <span className="block text-end tabular-nums">
             {row.original.lines} of {row.original.total_lines}
@@ -106,7 +108,9 @@ export function SourceProformaInvoicesCard({
       {
         id: 'qty',
         accessorFn: (row) => row.qty,
-        header: ({ column }) => <DataGridColumnHeader title="Quantity here" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Quantity here" column={column} className="justify-end" />
+        ),
         cell: ({ row }) => (
           <span className="block text-end tabular-nums">
             {row.original.qty} of {row.original.total_qty}
@@ -118,7 +122,9 @@ export function SourceProformaInvoicesCard({
       {
         id: 'amount',
         accessorFn: (row) => row.amount ?? 0,
-        header: ({ column }) => <DataGridColumnHeader title="Amount" column={column} />,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Amount" column={column} className="justify-end" />
+        ),
         cell: ({ row }) => (
           <span className="block text-end tabular-nums">
             {row.original.amount == null
@@ -154,38 +160,47 @@ export function SourceProformaInvoicesCard({
     [],
   );
 
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Source proforma invoices</CardTitle>
-      </CardHeader>
-      <CardContent>
-        {isLoading ? (
+  if (isLoading) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Source proforma invoices</CardTitle>
+        </CardHeader>
+        <CardContent>
           <Skeleton className="h-20 w-full rounded-lg" />
-        ) : (
-          <>
-            <PanelDataGrid<PackingListSourceInvoice>
-              columns={columns}
-              rows={invoices}
-              getRowId={(row) => row.id}
-              listingKey="procurement.packing_lists.view::source-invoices"
-              emptyTitle="Read from a packing list, not drafted from a proforma invoice."
-            />
-            {invoices.length > 0 && (
-              // Who drafted the container and when. Under the table rather than down it: it
-              // is one fact about the container, and a column repeating it on every row
-              // would read as a fact about each invoice. `created_by` is the NAME the server
-              // resolved - `created_by` on the container is a user id, and printing that put
-              // a UUID on the page.
-              <p className="mt-3 text-sm text-muted-foreground">
-                Uploaded by {data?.created_by || 'System'}
-                {convertedOn ? `, converted on ${formatDate(new Date(convertedOn))}` : ''}.
-              </p>
-            )}
-          </>
-        )}
-      </CardContent>
-    </Card>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <>
+      {/* SF-7 (M5 run 3 review): `PanelDataGrid` emits its own Card, so an outer
+          one here was a Card inside a Card - dropped, matching
+          `ProductPurchaseHistoryTab.tsx`'s title-on-the-grid convention. */}
+      <PanelDataGrid<PackingListSourceInvoice>
+        title="Source proforma invoices"
+        columns={columns}
+        rows={invoices}
+        getRowId={(row) => row.id}
+        listingKey="procurement.packing_lists.view::source-invoices"
+        emptyTitle="Read from a packing list, not drafted from a proforma invoice."
+        // SF-8 (M5 run 3 review): a document's own line table renders every
+        // row - a page-2 would hide lines the reader expects in one scroll.
+        paginate={false}
+      />
+      {invoices.length > 0 && (
+        // Who drafted the container and when. Under the table rather than down it: it
+        // is one fact about the container, and a column repeating it on every row
+        // would read as a fact about each invoice. `created_by` is the NAME the server
+        // resolved - `created_by` on the container is a user id, and printing that put
+        // a UUID on the page.
+        <p className="mt-3 text-sm text-muted-foreground">
+          Uploaded by {data?.created_by || 'System'}
+          {convertedOn ? `, converted on ${formatDate(new Date(convertedOn))}` : ''}.
+        </p>
+      )}
+    </>
   );
 }
 

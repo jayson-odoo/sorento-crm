@@ -200,6 +200,9 @@ function PurchaseRequestLineItemsGrid({
       getRowId={(row) => row.id}
       listingKey={`procurement.purchase_requests.view::lines-${showPricing ? 'sponsorship' : 'purchase-request'}`}
       emptyTitle="No line items."
+      // SF-8 (M5 run 3 review): a document's own line table renders every
+      // row - a page-2 would hide lines the reader expects in one scroll.
+      paginate={false}
     />
   );
 }
