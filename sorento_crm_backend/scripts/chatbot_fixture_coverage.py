@@ -117,6 +117,21 @@ CAPTURE_REPORT: dict[str, dict] = {
             "sub-resolve-and-gate",
         ),
     },
+    # `sub-casual-llm` (`4dPJ8ykop8VIpddY`), the low_signal lane's own sub. Every
+    # execution on the current version was scanned, so a cell still under the bar is
+    # exhausted, not short: that traffic does not exist. The thin ones and their real
+    # pools: `business_query` (a bare continuation, session vars CARRIED) 3, `unknown` 0,
+    # `confirmation` 0, and `mark-casual-error` 0 - the error arm has not fired once since
+    # 1 Sep, which is the same "0 is the correct number" statement the two H1 stock arms
+    # make below, reached by luck rather than by typo.
+    "sub-casual-llm-live": {
+        "version": "08bf56a5",
+        "version_pool": 13,
+        "scanned": 13,
+        "all_versions": 13,
+        "captured_on": "2026-09-05",
+        "nodes": ("construct-user-prompt", "mark-casual-error"),
+    },
 }
 
 # Branches that CANNOT be captured because live never reaches them. H1: the spine tests

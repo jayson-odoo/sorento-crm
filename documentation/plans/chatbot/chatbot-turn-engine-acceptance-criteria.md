@@ -108,7 +108,17 @@ Derived, never asked: nothing to configure. The trace is written by the engine o
   `ideate-turn-http` node is deleted at S3.
 - D7 **Strangler by turn stage, then by lane.** Head (parse + route) first, tail (compose +
   persist) second, then lanes one at a time, ingress/dispatch last. Every slice leaves production
-  working and is independently revertible by re-wiring n8n.
+  working and is independently revertible.
+
+  **The control is data, not deploy** (added S4). `contracts.CRM_COMPLETED_BRANCH_KINDS` says
+  which lanes the BUILD can complete; `system_settings.chatbot_completed_lanes` says which the
+  owner has switched ON, default `[]`, and a turn is completed in the CRM only when its
+  `branch_kind` is in both. So each lane is four separately reversible steps - deploy inert,
+  shadow, add the kind to the list, delete the n8n Switch output - instead of one deploy that
+  has to be matched by an n8n edit in the same window or the lane runs twice. Rollback before
+  the n8n cut is removing the kind from the list: a settings edit, effective on the next turn,
+  no deploy. After the cut it is an n8n restore first, which is why the cut comes last.
+  Enabling a kind the build cannot complete does nothing (AC-308).
 - D8 **Parity before improvement.** Each ported function is proven against the captured n8n
   fixtures BEFORE any hazard is fixed. A fix is a separate, named, tested divergence.
 - D9 **n8n sends.** The CRM can send WhatsApp today (`send_text_or_template`), but the owner
@@ -528,12 +538,16 @@ endpoint over `chatbot.turns.trace`. Lands after S2 so the head and tail both wr
 
 ### S4 - low_signal lane (journey A2)
 
-- AC-401 `[BE]` Given `branch_kind == low_signal`, when the head runs, then the engine resolves
+- AC-401 `[BE]` Given `branch_kind == low_signal` **and the lane is enabled in
+  `system_settings.chatbot_completed_lanes`**, when the head runs, then the engine resolves
   entities for the prompt (the service behind `POST /system/references/resolve`, `match_mode =
   or`, `fallback_to_all_types = true`), builds the user prompt with the same six fields
   `construct-user-prompt` builds (session vars blanked for `casual` / `unknown`), calls the LLM
   with prompt key `chatbot_clarifier` (fallback = the inline n8n system prompt verbatim), parses
-  `{response}` through `central-exchange`'s fence-stripping rule, and completes the turn. (A2)
+  `{response}` through `central-exchange`'s fence-stripping rule, and completes the turn through
+  the S2 tail (`complete_turn`), closing `done` at `remembered`. With the lane NOT enabled (the
+  default `[]`) the same turn responds `delegate = "low_signal"`, the clarifier is not called at
+  all, and n8n answers it exactly as today. (A2)
 - AC-402 `[T]` Given every `construct-user-prompt` and `central-exchange` fixture, when
   replayed, then output equals `expected`. (A2)
 - AC-403 `[BE][T]` Given the LLM call fails, when the lane runs, then the turn is `failed` at

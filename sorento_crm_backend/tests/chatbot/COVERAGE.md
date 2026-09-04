@@ -15,6 +15,7 @@ A branch under the bar is `exhausted` - not short - only when EVERY execution on
 | workflow | version | scanned | version pool | all versions | exhausted | captured | nodes |
 | --- | --- | ---: | ---: | ---: | --- | --- | --- |
 | `spine-rs-1a` | `51f7b0d2` | 581 | 581 | 946 | yes | 2026-09-05 | `route-turn`, `build-ctx` |
+| `sub-casual-llm-live` | `08bf56a5` | 13 | 13 | 13 | yes | 2026-09-05 | `construct-user-prompt`, `mark-casual-error` |
 | `sub-output-live` | `c32698c1` | 760 | 760 | 907 | yes | 2026-09-05 | `compile-current-state`, `crossdomain-compose`, `build-outcome`, `escalate-catalog`, `cs-roster-plan`, `build-cs-member-offer` |
 | `sub-resolve-and-gate-rs` | `4f367b1c` | 682 | 682 | 852 | yes | 2026-09-05 | `disallowed-entity-gate`, `tier-gate`, `build-ctx-resolved`, `annotate-incoming-picker`, `annotate-customer-picker`, `resolve-exit-continue`, `resolve-exit-offer`, `resolve-exit-not-found`, `item`, `sub-resolve-and-gate` |
 | `sub-semantic-parser` | `ab3ec985` | 239 | 239 | 3901 | yes | 2026-09-04 | `output_exchange`, `suggest-follow-up` |
@@ -52,7 +53,7 @@ A WORLD is one whole captured turn replayed through `run_turn` + `complete_turn`
 | `build-outcome` | 78 | 78 | 2 |
 | `central-exchange` | 49 | 49 | 2 |
 | `compile-current-state` | 255 | 165 | 5 |
-| `construct-user-prompt` | 3 | 3 | 3 |
+| `construct-user-prompt` | 11 | 11 | 5 |
 | `crossdomain-compose` | 80 | 79 | 5 |
 | `cs-roster-plan` | 14 | 14 | 1 |
 | `disallowed-entity-gate` | 242 | 177 | 6 |
@@ -104,7 +105,7 @@ A WORLD is one whole captured turn replayed through `run_turn` + `complete_turn`
 | `compile-current-state` | `promotion` | 7 | 7 | met |
 | `compile-current-state` | `resource_attachment` | 0 | 2 | exhausted (0) |
 | `compile-current-state` | `spo_allocation` | 4 | 0 | exhausted (4) |
-| `construct-user-prompt` | `all` | 3 | 0 | SHORT |
+| `construct-user-prompt` | `all` | 11 | 0 | met |
 | `crossdomain-compose` | `incoming` | 14 | 1 | met |
 | `crossdomain-compose` | `inventory` | 27 | 0 | met |
 | `crossdomain-compose` | `no_domain` | 11 | 0 | met |
@@ -176,7 +177,7 @@ A WORLD is one whole captured turn replayed through `run_turn` + `complete_turn`
 
 ## Gate 0 status
 
-**BLOCKED: 1 cell(s) short in a pool that was not fully scanned.** Capture more turns for: construct-user-prompt/all (3 of 5).
+**Not blocked.** Every cell is either met, exhausted in a fully-scanned pool, or dead by vocabulary.
 
 Exhausted (41), under the bar with no more traffic to capture: annotate-customer-picker/order (4), build-cs-member-offer/empty_roster (0), build-cs-member-offer/multi_company (0), build-ctx-resolved/forms (1), build-ctx-resolved/portal_link (1), build-ctx-resolved/product_attachment (2), build-ctx-resolved/resource_attachment (2), build-outcome/access_choice (3), build-outcome/not_supported (3), compile-current-state/goods_receive (2), compile-current-state/ideate (3), compile-current-state/resource_attachment (0), compile-current-state/spo_allocation (4), crossdomain-compose/promotion (2), crossdomain-compose/spo_allocation (1), cs-roster-plan/empty_roster (0), cs-roster-plan/multi_company (0), disallowed-entity-gate/forms (3), disallowed-entity-gate/no_domain (0), disallowed-entity-gate/portal_link (1), disallowed-entity-gate/resource_attachment (4), escalate-catalog/access_choice (2), escalate-catalog/clarify_menu (3), escalate-catalog/not_supported (3), escalate-catalog/offer_hold (3), output_exchange/master_products (4), output_exchange/portal_link (0), output_exchange/promotion (0), output_exchange/resource_attachment (1), route-turn/access_denied (1), route-turn/check_promotion (1), route-turn/clarify_menu (0), route-turn/escalate_offer (0), route-turn/escalation_declined (4), route-turn/ideate (0), route-turn/not_supported (1), route-turn/offer_hold (0), sub-resolve-and-gate/access_ask (0), suggest-follow-up/master_products (4), suggest-follow-up/resource_attachment (1), tier-gate/tier_proceed (1).
 

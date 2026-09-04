@@ -499,4 +499,8 @@ class CompleteResponse(BaseModel):
 # S4 one, S5 one, S6 three), and S7 empties it and deletes `delegate` entirely. Derived
 # from BRANCH_KINDS minus what the CRM already completes, so the two can never disagree.
 CRM_COMPLETED_BRANCH_KINDS: frozenset[str] = frozenset({"low_signal"})
-DELEGATED_BRANCH_KINDS: frozenset[str] = frozenset(BRANCH_KINDS) - CRM_COMPLETED_BRANCH_KINDS
+# `DELEGATED_BRANCH_KINDS` used to be the complement of the set above and is GONE: with
+# `system_settings.chatbot_completed_lanes` in the decision, "delegated" is no longer a
+# property of the build at all - the same kind delegates or completes depending on data -
+# so a module-level constant claiming otherwise could only mislead. `delegate.delegate_for`
+# is the one place that answers the question, and it needs both halves to do it.

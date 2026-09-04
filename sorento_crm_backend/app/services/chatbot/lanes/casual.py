@@ -56,6 +56,18 @@ CLARIFIER_MAX_TOKENS = 512
 # has ever built for a failed clarifier call, and AC-403 keeps it.
 CLARIFIER_ERROR_PREFIX = "There is some error encountered by the AI: "
 
+# The SETUP arm's customer text. n8n has no reply for these paths at all - a missing API
+# key or an unset AI-assistant config never reaches `sub-error-logger2`, because in n8n the
+# credential is bound to the node and the turn simply dies - so there is nothing to be
+# faithful to and this is a new sentence rather than a ported one (divergences.py, H32).
+#
+# Fixed, and never `str(exc)`: those messages name providers, configuration keys and
+# occasionally a URL. A customer gets a sentence that tells them what to do; the operator
+# gets the real reason on the turn row and the trace.
+CLARIFIER_UNAVAILABLE_REPLY = (
+    "Sorry, I can't reply to that right now. Please try again in a moment."
+)
+
 # `resolve-entity-clarification`'s own literal, used for all three of query, tokens and
 # allowed_entity_types when the turn named nothing. It is a real string the resolver
 # searches for, not a sentinel, which is why it is reproduced rather than replaced by None.
@@ -222,6 +234,12 @@ def central_exchange(item: dict | None) -> Any:
     """
     item = item or {}
     output = jsc.get(item, "output")
+    # `typeof output === 'object'` in the JS, which is TRUE for an array and for `null`
+    # (guarded here by the `&&` the node writes before it). `isinstance(dict)` is narrower:
+    # an ARRAY reaching this node would take the string branch here and the object branch
+    # there. Left narrow deliberately - `central-exchange`'s producer is an LLM chain whose
+    # `output` is a string or a JSON object, never an array, and 49 real captures agree -
+    # but named, because it is a real difference and not an oversight.
     if isinstance(output, dict):
         return output
 
@@ -298,14 +316,31 @@ def call_clarifier(config: ClarifierConfig, user_prompt: str) -> str:
     return (result.content or "").strip()
 
 
+class ClarifierAnswerEmpty(ClarifierError):
+    """The clarifier answered, and the answer had nothing to say to the customer."""
+
+
 def reply_text(parsed: Any) -> str:
     """The `response` field the clarifier promised, or the raw answer if it did not.
 
-    `central_exchange` returns a bare string when the model answered in prose with no JSON
-    at all. n8n sends that string as the reply, so this does too rather than failing a turn
-    the customer would have been happy with.
+    `central_exchange` returns a bare STRING when the model answered in prose with no JSON
+    at all. n8n sends that string, so this does too rather than failing a turn the customer
+    would have been happy with.
+
+    A JSON object with no usable `response`, though, is a FAILED turn and not an empty
+    message. This is a deliberate divergence from n8n, which would send "" and leave the
+    customer looking at a blank bubble with no record that anything went wrong (H32 - the
+    dropped turn). Raising instead puts the reason on the row, sends today's error text,
+    and is visible on the trace screen.
     """
     if isinstance(parsed, dict):
         response = parsed.get("response")
-        return jsc.js_string(response) if jsc.truthy(response) else ""
-    return jsc.js_string(parsed)
+        if not jsc.truthy(response):
+            raise ClarifierAnswerEmpty(
+                "the clarifier returned an object with no `response` text"
+            )
+        return jsc.js_string(response)
+    text = jsc.js_string(parsed)
+    if not text.strip():
+        raise ClarifierAnswerEmpty("the clarifier returned nothing to say")
+    return text

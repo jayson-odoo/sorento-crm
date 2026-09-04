@@ -1,8 +1,9 @@
 """The `{delegate, ctx, item}` envelope n8n's remaining lanes run on. MIGRATION ONLY.
 
-This file exists so that S1 can ship the head without waiting for the lanes. Each later
-slice removes branch kinds from `DELEGATED_BRANCH_KINDS`; when the set empties at S7 this
-whole module is deleted along with the `delegate` field on the response.
+This file exists so that S1 could ship the head without waiting for the lanes. Each later
+slice adds branch kinds to `CRM_COMPLETED_BRANCH_KINDS`, and the OWNER switches each one on
+in `system_settings.chatbot_completed_lanes`; when every kind is in both, this whole module
+is deleted along with the `delegate` field on the response (S7).
 
 `item` must be BYTE-EQUAL to what `route-turn` emits today (AC-101). n8n replaces five
 spine nodes with one HTTP call plus two one-line Code nodes that re-emit `response.ctx`

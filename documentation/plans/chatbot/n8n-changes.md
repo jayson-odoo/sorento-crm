@@ -14,6 +14,14 @@ Two rules that apply to every section:
 - **The CRM ships first and OFF.** A slice's CRM code is behind a flag or an unread
   response field until the n8n edit is made, so the two can be deployed in either order and
   a bad slice is reverted by turning the flag off, not by re-editing n8n under pressure.
+- **For a LANE, the flag is `system_settings.chatbot_completed_lanes`** (a JSON array of
+  `branch_kind`, default `[]`), and the order is fixed by it: **CRM deploy -> shadow ->
+  the owner adds the kind to the list -> the n8n Switch output is deleted.** The CRM
+  completes a lane only when its kind is in that list AND in
+  `contracts.CRM_COMPLETED_BRANCH_KINDS`, so deploying changes nothing on its own.
+  **Rollback before the n8n cut is removing the kind from the list** - a settings edit,
+  effective on the next turn, no deploy and no n8n edit. That is why the n8n nodes are
+  deleted LAST: after that the flag alone cannot bring the old path back.
 - **A cutover has a named precondition.** It is written in the section. "It looks right" is
   not one.
 

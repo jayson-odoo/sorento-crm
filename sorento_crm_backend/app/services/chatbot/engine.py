@@ -50,6 +50,10 @@ logger = logging.getLogger(__name__)
 
 SessionFactory = Callable[[], Session]
 
+# "the caller did not pass a row", which `None` cannot mean here: `None` is the real value
+# when the settings singleton does not exist yet.
+_UNSET: Any = object()
+
 # H5 / AC-107: `sub-media-intake` did not patch a transcript onto an audio turn, so the
 # spine's audio branch had no successor and the turn died silently. It is now a FAILED
 # turn with an explicit reason and today's error reply.
@@ -702,10 +706,11 @@ def _run_stages(  # noqa: PLR0915
             media=getattr(envelope, "media", None),
         )[0]["json"]["ctx"]
 
-        # Both switches read on the session that is ALREADY open - no extra session, and
-        # nothing is read again later in the turn.
-        stock_denial_enabled = _stock_denial_enabled(db)
-        enabled_lanes = _enabled_lanes(db)
+        # ONE read of the settings singleton for the whole turn, on the session routing
+        # already holds: no extra session, no second query, and nothing read again later.
+        settings_row = _settings_row(db)
+        stock_denial_enabled = _stock_denial_enabled(db, settings_row)
+        enabled_lanes = _enabled_lanes(db, settings_row)
         branch_kind, tier_stamp = decide(ctx, stock_denial_enabled=stock_denial_enabled)
         item = _stamp_item(access, branch_kind, tier_stamp)
 
@@ -923,22 +928,34 @@ def _run_casual_lane(
     )
 
     # -- NO DB SESSION IS OPEN HERE ---------------------------------------- #
+    # Every failure string here is TYPE-PREFIXED, and every test against it is
+    # `is not None`. `str(exc)` alone is EMPTY for `ValueError("")` or a bare
+    # `ClarifierError()`, and an empty string is falsy: `if failed` would read the turn as
+    # a success, close the row `done`, and leave `error` as "" - a turn that failed,
+    # recorded as fine, with nothing on the trace screen to say otherwise.
     failed: str | None = setup_error
     if failed is not None:
-        text = casual.CLARIFIER_ERROR_PREFIX + failed
+        # SETUP failure (the resolver, the registry, the AI config, the API key). The
+        # customer gets a FIXED sentence, never `str(exc)`: these messages carry provider
+        # detail and configuration names, and none of that belongs in a WhatsApp reply.
+        # The real reason is on the row and on the trace, which is where an operator looks.
+        text = casual.CLARIFIER_UNAVAILABLE_REPLY
     else:
         try:
             raw = casual.call_clarifier(clarifier_config, user_message)
             text = casual.reply_text(casual.central_exchange({"text": raw}))
         except casual.ClarifierError as exc:
-            failed = str(exc)
-            text = casual.CLARIFIER_ERROR_PREFIX + failed
+            failed = f"{type(exc).__name__}: {exc}"
+            # The CALL arm keeps today's `sub-error-logger` text, which interpolates the
+            # error and has been what a customer sees on this path since it was written.
+            # Parity, and the reason the two arms differ (divergences.py, H32).
+            text = casual.CLARIFIER_ERROR_PREFIX + str(exc)
         except Exception as exc:  # noqa: BLE001 - a malformed answer is the same failure
             # The model answered but the answer was not usable (invalid JSON out of
             # `central_exchange`). Same lane, same stage, same reply: from the customer's
             # side there is no difference between "no answer" and "an answer I cannot read".
-            failed = str(exc)
-            text = casual.CLARIFIER_ERROR_PREFIX + failed
+            failed = f"{type(exc).__name__}: {exc}"
+            text = casual.CLARIFIER_ERROR_PREFIX + str(exc)
 
     actions = [
         *actions,
@@ -950,10 +967,10 @@ def _run_casual_lane(
     # `replied` so it does not collide with the `replied` record the tail writes below.
     turn_trace.record(
         "looked_up",
-        status="failed" if failed else "ok",
+        status="failed" if failed is not None else "ok",
         summary=(
-            "Could not reach the clarifier."
-            if failed
+            _casual_failure_summary(failed, setup_error)
+            if failed is not None
             else "The clarifier wrote small talk or one clarifying question."
         ),
         why=(
@@ -970,7 +987,7 @@ def _run_casual_lane(
         raw={"user_prompt": user_message},
     )
 
-    if failed:
+    if failed is not None:
         # AC-403: a failed clarifier is a FAILED turn, and the tail does not run. No
         # session is written (the customer's memory must not record an answer that was
         # never composed), and `branch_kind` stays `low_signal` because routing succeeded.
@@ -1062,6 +1079,23 @@ def _run_casual_lane(
     )
 
 
+def _casual_failure_summary(failed: str, setup_error: str | None) -> str:
+    """One sentence for the trace screen, in the operator's words not the provider's.
+
+    "Could not reach the clarifier" is wrong for the commonest setup failure by far - a
+    missing API key or an unset AI-assistant config never reached anything, and telling an
+    operator the model was unreachable sends them to look at the wrong system.
+    """
+    if setup_error is None:
+        return "Could not reach the clarifier."
+    lowered = failed.lower()
+    if "api key" in lowered:
+        return "The clarifier is not configured: no API key for its provider."
+    if "configuration is not set" in lowered:
+        return "The clarifier is not configured: the AI assistant settings are empty."
+    return "Could not prepare the clarifier call."
+
+
 def _stamp_item(access: dict, branch_kind: str, tier_stamp: dict) -> dict[str, Any]:
     """`route-turn`'s output item, byte-equal to today (AC-101)."""
     from app.services.chatbot.contracts import TAG_ONLY_BRANCH_KINDS
@@ -1111,33 +1145,41 @@ def _business_lane_enabled() -> bool:
     return bool(getattr(settings, "chatbot_business_lane_enabled", False))
 
 
-def _stock_denial_enabled(db: Session) -> bool:
+def _settings_row(db: Session) -> Any:
+    """The `system_settings` singleton, read ONCE per turn.
+
+    Both chatbot switches live on it, and both predicates below take the ROW rather than a
+    session so the turn makes one query for the pair instead of one each.
+    """
+    from app.models.user import SystemSetting
+
+    return db.query(SystemSetting).first()
+
+
+def _stock_denial_enabled(db: Session, row: Any = _UNSET) -> bool:
     """R1: `system_settings.chatbot_stock_denial_enabled`, default false.
 
     Off, `isStockCheckDenied` is never evaluated and no turn can reach `stock_denied` or
     `demand_qty` - which is exactly as dead as those two lanes are today, by typo.
-    """
-    from app.models.user import SystemSetting
 
-    row = db.query(SystemSetting).first()
+    Keeps its name and its leading `db` parameter because `test_engine_failure_paths.py`
+    patches it by name with a one-argument lambda. `row` is how the caller passes the
+    singleton it has already read; omit it and this reads its own, which is what that
+    patched call site and any future caller get for free.
+    """
+    if row is _UNSET:
+        row = _settings_row(db)
     return bool(getattr(row, "chatbot_stock_denial_enabled", False)) if row is not None else False
 
 
-def _enabled_lanes(db: Session) -> frozenset[str]:
+def _enabled_lanes(db: Session, row: Any = _UNSET) -> frozenset[str]:
     """`system_settings.chatbot_completed_lanes`: which lanes the CRM may FINISH.
 
     Empty by default, so a newly deployed lane delegates to n8n until the owner turns it
     on, and an absent settings row means "none" rather than "all" - the safe direction.
-
-    A SECOND read of the same singleton, deliberately, rather than folding both flags into
-    one query: `_stock_denial_enabled` is patched BY NAME in
-    `test_engine_failure_paths.py`, and merging the two would have meant either editing
-    that test or hiding the seam it patches. One extra single-row SELECT on the session
-    that is already open is the cheaper trade.
     """
-    from app.models.user import SystemSetting
-
-    row = db.query(SystemSetting).first()
+    if row is _UNSET:
+        row = _settings_row(db)
     return enabled_lanes_from(getattr(row, "chatbot_completed_lanes", None)) if row else frozenset()
 
 

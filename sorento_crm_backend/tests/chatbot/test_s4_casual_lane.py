@@ -104,21 +104,12 @@ CLARIFIER_LIVE_PROMPT_SHA256 = "97f1d279793d6125574bc33866e0cc079935b1d4ecb69cd2
 # ${error}` ``.
 CLARIFIER_ERROR_PREFIX = "There is some error encountered by the AI: "
 
-# AC-402: the two nodes this slice ports also have fixtures in the FULL n8n corpus
-# under slugs `test_replay.py` doesn't already register (that file's `PORTED_NODES`
-# stays scoped to the S1 nodes it ports). Added here, not in `_corpus.py`, so this
-# file stays self-contained; `setdefault` so a later edit to the shared dict can never
-# collide with these two keys.
-_corpus.NODE_SLUGS.setdefault("construct-user-prompt", ("live-spine-sorento-consume-main",))
-_corpus.NODE_SLUGS.setdefault(
-    "central-exchange",
-    (
-        "live-spine-sorento-consume-main",
-        "sub-answer-rs",
-        "sub-send-attachments",
-        "sub-send-attachments-rs",
-    ),
-)
+# AC-402: `construct-user-prompt` and `central-exchange` are registered in the SHARED
+# `_corpus.NODE_SLUGS` (`tests/chatbot/_corpus.py`), not here. That registration
+# deliberately excludes `sub-send-attachments{,-rs}` - `central-exchange` is the same
+# name on two different node bodies, and only the `sub-answer` family is the
+# fence-stripping parse this lane ports (see `_corpus.py`'s comment on that key for the
+# measured 13/13 vs 1/4 agreement that justifies the exclusion). Nothing to add here.
 
 
 def _casual():
@@ -137,16 +128,20 @@ def _casual():
 
 
 def test_low_signal_is_crm_completed_not_delegated():
-    """AC-401: `delegate` is `None` for `low_signal` once S4 lands.
-
-    S1 shipped every branch kind delegated to n8n by default
-    (`CRM_COMPLETED_BRANCH_KINDS = frozenset()`); S4's whole job is to move
-    `low_signal` out of that default.
+    """AC-401 + the completed-lanes switch: `delegate_for` is a TWO-condition gate,
+    both required - `CRM_COMPLETED_BRANCH_KINDS` (what the CODE can complete) AND
+    `enabled_lanes` (what the OWNER has turned on via
+    `system_settings.chatbot_completed_lanes`, default `[]`). Either alone is not
+    enough, which is what makes a lane deployable ahead of its shadow window closing.
     """
     assert "low_signal" in CRM_COMPLETED_BRANCH_KINDS, (
         "S4 has not added 'low_signal' to contracts.CRM_COMPLETED_BRANCH_KINDS yet"
     )
-    assert delegate_for("low_signal") is None
+    assert delegate_for("low_signal", frozenset({"low_signal"})) is None
+    assert delegate_for("low_signal", frozenset()) == "low_signal", (
+        "an owner who has not enabled the lane yet must still get n8n's answer - the "
+        "code alone may not complete a turn"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -381,45 +376,66 @@ _REPLAY_RUNNERS = {
 
 
 @pytest.mark.parametrize("node", sorted(_REPLAY_RUNNERS))
-def test_vendored_subset_is_present(node: str) -> None:
+def test_s4_vendored_subset_is_present(node: str) -> None:
     """AC-008: at least one committed fixture per ported node, so the replay gate
-    runs in CI without the sibling n8n checkout present. Nothing is vendored for
-    either node yet - vendoring a subset is part of landing this slice."""
+    runs in CI without the sibling n8n checkout present."""
     assert _corpus.vendored(node), (
         f"no vendored fixtures for {node} under tests/fixtures/chatbot/nodes/{node}/ - "
         "AC-008 needs a committed subset, not only the full corpus"
     )
 
 
+def _replay(fixture: _corpus.Fixture) -> None:
+    actual = _corpus.json_round_trip(_REPLAY_RUNNERS[fixture.node](fixture))
+    expected = _corpus.json_round_trip(fixture.expected)
+    assert actual == expected, (
+        f"{fixture.node}/{fixture.name} diverges from the captured n8n output\n"
+        f"fixture: {fixture.path}"
+    )
+
+
+# S3 of the review: grade BOTH shapes, the same split `test_replay.py` uses
+# (`test_vendored_replay` / `test_full_corpus_replay`) - `full_corpus` alone reads
+# only the sibling n8n checkout, which CI does not have, so a full_corpus-only
+# parametrisation grades nothing there. `vendored()` is the always-on CI gate;
+# `full_corpus()` is the richer local/owner-machine grading, skipped when absent.
 @pytest.mark.parametrize(
     "fixture",
-    _corpus.graded(_corpus.full_corpus("construct-user-prompt")) or [None],
-    ids=lambda f: f.name if f is not None else "corpus-absent",
+    _corpus.graded([f for node in _REPLAY_RUNNERS for f in _corpus.vendored(node)]),
+    ids=lambda f: f"{f.node}/{f.name}",
 )
-def test_construct_user_prompt_replay(fixture) -> None:
-    if fixture is None:
-        pytest.skip(_corpus.corpus_skip_reason())
-    actual = _corpus.json_round_trip(_run_construct_user_prompt(fixture))
-    expected = _corpus.json_round_trip(fixture.expected)
-    assert actual == expected, f"{fixture.name} diverges from the captured n8n output\nfixture: {fixture.path}"
+def test_s4_vendored_replay(fixture: _corpus.Fixture) -> None:
+    _replay(fixture)
 
 
 @pytest.mark.parametrize(
     "fixture",
-    _corpus.graded(_corpus.full_corpus("central-exchange")) or [None],
-    ids=lambda f: f.name if f is not None else "corpus-absent",
+    _corpus.graded([f for node in _REPLAY_RUNNERS for f in _corpus.full_corpus(node)]) or [None],
+    ids=lambda f: f"{f.node}/{f.name}" if f is not None else "corpus-absent",
 )
-def test_central_exchange_replay(fixture) -> None:
+def test_s4_full_corpus_replay(fixture) -> None:
     if fixture is None:
         pytest.skip(_corpus.corpus_skip_reason())
-    actual = _corpus.json_round_trip(_run_central_exchange(fixture))
-    expected = _corpus.json_round_trip(fixture.expected)
-    assert actual == expected, f"{fixture.name} diverges from the captured n8n output\nfixture: {fixture.path}"
+    _replay(fixture)
 
 
 # --------------------------------------------------------------------------- #
 # AC-401 / AC-403 / D14 / capacity - the lane wired into `engine.run_turn`.
 # --------------------------------------------------------------------------- #
+
+
+@pytest.fixture()
+def low_signal_enabled(session_factory):
+    """`system_settings.chatbot_completed_lanes = ["low_signal"]` - the owner's half
+    of the two-condition switch (`delegate_for`'s `enabled_lanes`). Without this row
+    the CRM has the code to complete `low_signal` but is not TOLD to yet, so the turn
+    still delegates to n8n and the lane's own seams below are never called - the
+    shadow-window default every freshly-shipped lane starts in."""
+    from app.models.user import SystemSetting
+
+    db = session_factory()
+    db.add(SystemSetting(chatbot_completed_lanes=["low_signal"]))
+    db.commit()
 
 
 def _install_stub_lane(monkeypatch, casual, *, response_json="{\"response\": \"hi\"}", error=None):
@@ -442,7 +458,7 @@ class TestLowSignalLaneIntegration:
     reaches an LLM, a DB write outside `chatbot.turns`, or a real resolve call."""
 
     def test_low_signal_finishes_in_turn(
-        self, session_factory, seeded, stub_parser, stub_access, monkeypatch
+        self, session_factory, seeded, stub_parser, stub_access, monkeypatch, low_signal_enabled
     ):
         """AC-401: delegate is None, reply.text is the clarifier's response, one
         send_message action, turn done."""
@@ -474,7 +490,7 @@ class TestLowSignalLaneIntegration:
         assert row.branch_kind == "low_signal"
 
     def test_clarifier_error_is_failed_stage(
-        self, session_factory, seeded, stub_parser, stub_access, monkeypatch
+        self, session_factory, seeded, stub_parser, stub_access, monkeypatch, low_signal_enabled
     ):
         """AC-403: a failed LLM call is a failed turn at stage=casual_llm, with
         today's sub-error-logger2 text, nothing else sent, no session write."""
@@ -510,7 +526,7 @@ class TestLowSignalLaneIntegration:
         assert "provider timeout" in row.error
 
     def test_low_signal_dry_run_writes_nothing(
-        self, session_factory, seeded, stub_parser, stub_access, monkeypatch
+        self, session_factory, seeded, stub_parser, stub_access, monkeypatch, low_signal_enabled
     ):
         """D14: a test envelope for the low_signal lane writes ZERO rows outside
         `chatbot.turns`, and every action carries dry_run: true."""
@@ -549,6 +565,7 @@ class TestLowSignalLaneIntegration:
         stub_parser,
         stub_access,
         monkeypatch,
+        low_signal_enabled,
     ):
         """Capacity rule: the same discipline `head/parser.py` follows for the
         semantic parser - never hold a DB session across LLM I/O. The

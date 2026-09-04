@@ -184,7 +184,7 @@ class TestEndToEndThroughRunTurn:
         assert result.delegate == "low_signal"
         assert "not a branch kind" in caplog.text
 
-    def test_the_settings_row_is_read_on_the_routing_session_not_a_new_one(
+    def test_the_settings_row_is_read_once_on_the_routing_session(
         self,
         counting_session_factory,
         seeded,
@@ -193,23 +193,24 @@ class TestEndToEndThroughRunTurn:
         stub_access,
         monkeypatch,
     ):
-        """No session is opened just to read the switch.
+        """ONE read, on the session routing already holds.
 
-        `_enabled_lanes` is called with the session the routing stage already holds, so
-        the count of open sessions at that moment is whatever routing itself opened - one -
-        and never one more.
+        Both chatbot switches live on the same singleton, so reading it twice would be a
+        second round trip for no new information, and reading it on a session of its own
+        would be the thing the capacity rule forbids. `[1]` is the whole assertion: called
+        once, with exactly the one session routing opened.
         """
         self._enable(system_settings_row, ["low_signal"])
         self._casual(stub_parser, stub_access)
 
         observed: list[int] = []
-        original = engine_mod._enabled_lanes
+        original = engine_mod._settings_row
 
         def watched(db):
             observed.append(counting_session_factory.state["open"])
             return original(db)
 
-        monkeypatch.setattr(engine_mod, "_enabled_lanes", watched)
+        monkeypatch.setattr(engine_mod, "_settings_row", watched)
 
         from app.services.chatbot.lanes import casual
 
@@ -220,8 +221,8 @@ class TestEndToEndThroughRunTurn:
         engine_mod.run_turn(_envelope(), session_factory=counting_session_factory)
 
         assert observed == [1], (
-            "the switch was read outside the routing session (or read more than once): "
-            f"open-session counts at each read were {observed}"
+            "the settings singleton was read outside the routing session, or read more "
+            f"than once: open-session counts at each read were {observed}"
         )
 
 

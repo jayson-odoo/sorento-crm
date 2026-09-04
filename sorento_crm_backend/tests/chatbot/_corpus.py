@@ -83,12 +83,16 @@ NODE_SLUGS: dict[str, tuple[str, ...]] = {
     "annotate-incoming-picker": ("sub-resolve-and-gate-rs", "live-spine-sorento-consume-main"),
     "annotate-customer-picker": ("live-spine-sorento-consume-main",),
     "resolve-exit-continue": ("sub-resolve-and-gate-rs",),
-    # S4 - the low_signal lane. `construct-user-prompt` is captured on the spine slug only,
-    # because that is where `Call 'sub-casual-llm'` runs.
-    "construct-user-prompt": ("live-spine-sorento-consume-main",),
+    # S4 - the low_signal lane. Two slugs, and both are real captures of the same node:
+    # the SPINE sees it through `Call 'sub-casual-llm'`, and `sub-casual-llm-live` is the
+    # sub's own execution list (version 08bf56a5, pool fully scanned - see
+    # `scripts/chatbot_fixture_coverage.py`'s CAPTURE_REPORT).
+    "construct-user-prompt": ("live-spine-sorento-consume-main", "sub-casual-llm-live"),
     # `central-exchange` is the SAME name on two DIFFERENT node bodies, and only one of
-    # them is the fence-stripping parse this lane ports:
-    #   * `sub-answer` / `sub-answer-rs` - sha256 1ad9139d..., 28 lines, the parse;
+    # them is the fence-stripping parse this lane ports. The three slugs registered are
+    # that one: the SPINE (which sees the node through `Call 'sub-answer'`) plus
+    # `sub-answer`'s own two execution lists.
+    #   * `sub-answer{,-live,-rs}` - sha256 1ad9139d..., 28 lines, the parse;
     #   * `sub-send-attachments{,-rs}` - sha256 f7042838..., 12 lines, an RS-5 name-
     #     preserving stub that returns `attachments_src` off the trigger and has nothing to
     #     do with parsing anything.
