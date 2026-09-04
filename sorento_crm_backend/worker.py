@@ -1,11 +1,15 @@
 #!/usr/bin/env python
 """RQ worker + APScheduler combined.
 
-Single process owns both queue draining (see DEFAULT_QUEUES) and cron ticks fired by
-`app.scheduler.task_scheduler`. Compose runs exactly one `worker` service so jobs
-and ticks are never duplicated across blue/green API containers.
+Single process owns both queue draining (see QUEUES / DEFAULT_QUEUES) and cron
+ticks fired by `app.scheduler.task_scheduler`. Since #569, compose runs two services
+sharing this file by role: `worker` (role=batch, owns the scheduler) and
+`worker_fast` (role=fast, no scheduler) - so jobs and ticks are never duplicated
+across blue/green API containers, and a slow batch job never sits in front of a
+customer-facing one on the same drain loop.
 
-Set `ENABLE_SCHEDULER=true` in the worker container; API containers leave it false.
+Set `ENABLE_SCHEDULER=true` in the `worker` container only; every other container
+(API, `worker_fast`) leaves it false.
 """
 import os
 import sys
@@ -85,55 +89,99 @@ def _maybe_start_scheduler():
         sys.exit(1)
 
 
-# Ordered because RQ drains queues in list order.
-#
-# `catalogue_render` is separate on purpose: a Chromium render is slow and
-# memory-hungry, and sharing the imports queue means one catalogue PDF blocks
-# every Excel upload behind it. `flyer_read` is separate for the same reason and
-# is listed LAST: a 20 to 60 second PyMuPDF extraction should not sit in front of
-# every Excel import. `project_docs` (quotation PDF and Excel rendering) sits
-# between them: slower than an import, faster than a flyer read.
-#
-# `media` drains the chatbot media extraction jobs. The /external/media endpoint
-# enqueues and then AWAITS the job, so a worker not draining this queue does not
-# merely delay the work - every media turn waits out media_sync_wait_seconds and
-# returns `pending`.
-#
-# `notifications` drains EVERY notification delivery - email, web push, WhatsApp
+# ONE ordered registry: queue name -> latency role. Tuple order is drain order -
+# `catalogue_render` is separate from `imports` on purpose (a Chromium render is
+# slow and memory-hungry, and sharing the imports queue means one catalogue PDF
+# blocks every Excel upload behind it); `flyer_read` is separate for the same
+# reason and drains last (a 20 to 60 second PyMuPDF extraction should not sit in
+# front of every Excel import); `project_docs` (quotation PDF and Excel
+# rendering) sits between them - slower than an import, faster than a flyer
+# read. `media` drains the chatbot media extraction jobs - the /external/media
+# endpoint enqueues and then AWAITS the job, so a worker not draining it does
+# not merely delay the work, every media turn waits out
+# media_sync_wait_seconds and returns `pending`. `respond_io` is one outbound
+# WhatsApp send per job - a user is looking at "sending...". `notifications`
+# drains EVERY notification delivery - email, web push, WhatsApp
 # (notification_service enqueues them all with queue_name="notifications"). It
-# was missing from this list, so those jobs enqueued and nothing ever ran them:
-# 86 notification_deliveries rows sat `pending` in production, 32 in one month.
-# The failure is silent by construction - the enqueue succeeds and no exception
-# is raised anywhere - so tests/test_worker_queue_defaults.py pins it.
+# was missing from this registry once, so those jobs enqueued and nothing ever
+# ran them: 86 notification_deliveries rows sat `pending` in production, 32 in
+# one month. The failure is silent by construction - the enqueue succeeds and no
+# exception is raised anywhere - so tests/test_worker_queue_defaults.py pins it.
 #
-# PRODUCTION: the compose file on the server is hand-edited and gitignored. If it
-# pins WORKER_QUEUES explicitly, a queue added here does NOT reach production
-# until that file is edited too. Adding a queue is therefore a two-place change.
-DEFAULT_QUEUES = (
-    'imports',
-    'respond_io',
-    'catalogue_render',
-    'media',
-    'project_docs',
-    'flyer_read',
-    'notifications',
+# QUEUES is the ONE place a queue is classified batch vs fast. Compose (see
+# below) names only a ROLE on each service - never a queue - so adding a queue
+# is a single line here, and tests/test_worker_queue_defaults.py fails until
+# every queue has exactly one of the two known roles. Neither compose nor
+# scripts/blue_green_deploy.sh's step 6c changes when a queue is added.
+QUEUES = (
+    ('imports', 'batch'),
+    ('respond_io', 'fast'),
+    ('catalogue_render', 'batch'),
+    ('media', 'fast'),
+    ('project_docs', 'batch'),
+    ('flyer_read', 'batch'),
+    ('notifications', 'fast'),
 )
+ROLES = ('batch', 'fast')
+
+# The no-env fallback (e2e-stack.sh, a bare `python worker.py` with neither
+# WORKER_QUEUES nor WORKER_ROLE set) drains everything, in the order above -
+# byte-identical to the pre-#569 default.
+DEFAULT_QUEUES = tuple(name for name, _role in QUEUES)
+
+
+def queues_for_role(role):
+    """Queue names for a role, preserving QUEUES's relative order."""
+    return [name for name, r in QUEUES if r == role]
 
 
 def resolve_queue_names():
     """The queues this worker drains, in drain order.
 
-    WORKER_QUEUES overrides the default so a checkout can run a worker for only
-    the queues it cares about: every worktree on this machine points at the SAME
-    Redis db 0, so a hardcoded list means whichever worker happens to be running
-    drains another checkout's `imports` jobs with its own branch's task code.
-
-    A blank or whitespace-only override falls back to the default rather than
-    producing a worker that drains nothing at all.
+    Precedence:
+    1. WORKER_QUEUES (explicit list) - dev-worktree override, kept because every
+       worktree on this machine shares Redis db 0 and a hardcoded list means one
+       checkout's worker drains another's `imports` with the wrong branch's code.
+       Blank / whitespace-only is treated as unset.
+    2. WORKER_ROLE - production: compose names a role, QUEUES owns the list.
+       An unknown role exits(1) loudly, same fail-fast as the scheduler, because a
+       typo here would otherwise be a worker draining nothing with a green status.
+    3. Neither - drain everything (e2e-stack.sh and bare local runs rely on it).
     """
     raw = os.getenv('WORKER_QUEUES') or ''
-    names = [q.strip() for q in raw.split(',') if q.strip()]
-    return names or list(DEFAULT_QUEUES)
+    explicit = [q.strip() for q in raw.split(',') if q.strip()]
+    if explicit:
+        return explicit
+
+    role = (os.getenv('WORKER_ROLE') or '').strip()
+    if role:
+        if role not in ROLES:
+            logger.error(
+                "Unknown WORKER_ROLE=%r; known roles: %s", role, ', '.join(ROLES)
+            )
+            sys.exit(1)
+        return queues_for_role(role)
+
+    return list(DEFAULT_QUEUES)
+
+
+def resolve_role_label():
+    """The label reported in the startup log - mirrors resolve_queue_names's precedence.
+
+    "custom" when WORKER_QUEUES overrode, the WORKER_ROLE value when that decided
+    it, "all" when neither was set. scripts/blue_green_deploy.sh step 6c greps for
+    `role=fast` specifically, so this label is the deploy contract - do not rename
+    it without updating that script.
+    """
+    raw = os.getenv('WORKER_QUEUES') or ''
+    if [q.strip() for q in raw.split(',') if q.strip()]:
+        return 'custom'
+
+    role = (os.getenv('WORKER_ROLE') or '').strip()
+    if role:
+        return role  # resolve_queue_names() already exits(1) on an unknown one
+
+    return 'all'
 
 
 def _warn_if_vapid_missing():
@@ -177,6 +225,7 @@ if __name__ == '__main__':
     _maybe_start_scheduler()
     _warn_if_vapid_missing()
     queues = resolve_queue_names()
+    role_label = resolve_role_label()
     worker = ForkSafeWorker(queues, connection=redis_conn)
-    logger.info("Starting RQ worker for queues: %s", ', '.join(queues))
+    logger.info("Starting RQ worker role=%s queues=%s", role_label, ', '.join(queues))
     worker.work()
