@@ -44,11 +44,16 @@ from app.services.chatbot.head.output_exchange import (
 )
 from app.services.chatbot.head.route import decide
 from app.services.chatbot.lanes import business, casual
+from app.services.chatbot.lanes.escalation import run as run_escalation_lane
 from app.services.chatbot.lanes.business import resolve_gate, services as business_services
 
 logger = logging.getLogger(__name__)
 
 SessionFactory = Callable[[], Session]
+
+# The branch kinds whose arm closes its OWN row, after its lane has produced an answer.
+# Everything else closes at `routed` in the block below.
+_CRM_FINISHED_HERE: frozenset[str] = frozenset({"low_signal", "out_of_scope"})
 
 # "the caller did not pass a row", which `None` cannot mean here: `None` is the real value
 # when the settings singleton does not exist yet.
@@ -838,12 +843,11 @@ def _run_stages(  # noqa: PLR0915
         # `routed`, so `WHERE stage = 'looked_up' AND status IN ('delegated','done')` is
         # the operator's query, and `response.delegate_error` beside it carries the reason
         # (`ENTITY_PIN_MISMATCH` included, which arrives here as an AppException).
-        # The lane the CRM is finishing is the exception: its turn is not over yet, so
-        # closing it here would record a `done` turn before the reply exists (and
-        # `_close_turn` is write-once). `_run_casual_lane` closes it after the clarifier
-        # answers. With the lane switched off there is nothing to wait for and this closes
-        # as `delegated`, exactly as it did before S4.
-        if not (branch_kind == "low_signal" and completes_here):
+        # A lane the CRM is FINISHING is the exception: its turn is not over yet, so
+        # closing it here would record a `done` turn before the reply exists. Each such arm
+        # closes the row itself once its lane has answered. With the lane switched off
+        # there is nothing to wait for and this closes as `delegated`, exactly as before.
+        if not (branch_kind in _CRM_FINISHED_HERE and completes_here):
             _close_turn(
                 db,
                 turn_id,
@@ -864,6 +868,18 @@ def _run_stages(  # noqa: PLR0915
                     "delegate_error": lane_error_text,
                 },
             )
+
+    if branch_kind == "out_of_scope" and completes_here:
+        return _run_escalation_arm(
+            turn_id=turn_id,
+            ctx=ctx,
+            item=item,
+            actions=actions,
+            dry_run=dry_run,
+            session_factory=session_factory,
+            turn_trace=turn_trace,
+            stage=stage,
+        )
 
     if branch_kind == "low_signal" and completes_here:
         return _run_casual_lane(
@@ -1076,6 +1092,140 @@ def _run_casual_lane(
         session_patch=completed.session_patch,
         status=completed.status,
         stage=completed.stage,
+    )
+
+
+def _run_escalation_arm(
+    *,
+    turn_id: str,
+    ctx: dict[str, Any],
+    item: dict[str, Any],
+    actions: list[dict[str, Any]],
+    dry_run: bool,
+    session_factory: SessionFactory,
+    turn_trace: Any,
+    stage: list[str],
+) -> TurnResult:
+    """The `out_of_scope` lane, from the lane call to the closed turn (AC-501 to AC-505).
+
+    `run_escalation_lane` is a module-level name so a test can replace it; the real one is
+    `lanes.escalation.run`, whose `services` default builds the production bundle. The lane
+    owns its own unit of work: the round-robin cursor and the SLA row must not roll back
+    with the turn's routing transaction, because a person has already been told.
+
+    A lane failure is a FAILED turn at `looked_up` with today's generic reply and NO
+    partial assignment - the lane returns its whole action list or raises before returning
+    any of it, so "assigned but no SLA row" is not a state this can produce.
+    """
+    stage[0] = "looked_up"
+    try:
+        fragment = run_escalation_lane(ctx, item, dry_run=dry_run)
+    except Exception as exc:  # noqa: BLE001 - a failed lane is recorded, never dropped
+        message = f"{type(exc).__name__}: {exc}"
+        logger.exception("chatbot turn %s: escalation lane failed", turn_id)
+        turn_trace.record(
+            "looked_up",
+            status="failed",
+            summary="Could not hand the conversation to a person.",
+            why="The assignment the escalation lane depends on did not complete.",
+            facts={"lane": "out_of_scope", "dry_run": dry_run},
+            error=message,
+            raw=None,
+        )
+        with _session(session_factory) as db:
+            _close_turn(
+                db,
+                turn_id,
+                status="failed",
+                stage="looked_up",
+                branch_kind="out_of_scope",
+                error=message,
+                records=turn_trace.records,
+                response={"ctx": ctx, "item": item, "actions": actions},
+            )
+        return _failed_result(turn_id, "looked_up", message, actions, dry_run)
+
+    arm = fragment.get("arm")
+    clarify = fragment.get("clarify")
+    lane_actions = list(fragment.get("actions") or [])
+    pending = fragment.get("pending")
+
+    turn_trace.record(
+        "looked_up",
+        summary=(
+            "Asked which company should take it."
+            if arm == "clarify"
+            else "Handed the conversation to a person."
+        ),
+        why=(
+            "More than one company was offered and nobody picked one, so assigning would "
+            "have round-robined a pool the customer never chose."
+            if arm == "clarify"
+            else "The turn asked for a human, so the lane assigns one and starts the SLA clock."
+        ),
+        facts={
+            "lane": "out_of_scope",
+            "arm": arm,
+            "actions": [a.get("kind") for a in lane_actions],
+            "dry_run": dry_run,
+        },
+        raw={"clarify": clarify, "pending": pending},
+    )
+
+    # D9: the CRM never sends. The lane's actions ARE the answer, in the order the caller
+    # must execute them; the first `send_message` is what the customer reads first, and a
+    # clarify arm's text reaches them through the tail instead, so `reply` is null there.
+    first_send = next((a for a in lane_actions if a.get("kind") == "send_message"), None)
+    reply = (
+        {"text": first_send.get("text"), "quick_replies": []} if first_send is not None else None
+    )
+    stage[0] = "replied"
+    turn_trace.record(
+        "replied",
+        summary=(
+            "Told the customer a person is taking over."
+            if first_send is not None
+            else "Asked the customer which company should take it."
+        ),
+        why="The reply is composed from what the lane built, never from the customer's words.",
+        facts={
+            "lane": "out_of_scope",
+            "arm": arm,
+            "sends": sum(1 for a in lane_actions if a.get("kind") == "send_message"),
+        },
+        raw={"reply": reply},
+    )
+
+    all_actions = [*actions, *lane_actions]
+    with _session(session_factory) as db:
+        _close_turn(
+            db,
+            turn_id,
+            status="done",
+            stage="replied",
+            branch_kind="out_of_scope",
+            error=None,
+            records=turn_trace.records,
+            response={
+                "ctx": ctx,
+                "item": item,
+                "actions": all_actions,
+                "reply": reply,
+                "pending": pending,
+            },
+        )
+
+    return TurnResult(
+        turn_id=turn_id,
+        ctx=ctx,
+        item=item,
+        branch_kind="out_of_scope",
+        delegate=None,
+        reply=reply,
+        actions=all_actions,
+        session_patch=None,
+        status="done",
+        stage="replied",
     )
 
 

@@ -591,13 +591,49 @@ both change what an operator sees:
 
 ### S5 - Escalation (400 lines)
 
-`lanes/escalation.py`: `escalation-input`, `fresh-entity-gate` (calls S6a's resolve + gate,
-so S5 lands AFTER S6a, or ships with a temporary in-process call to the resolver only; decide
-at ticketing, default = after S6a), `escalation-context` (six-rank ladder, null never
-defaults, H27), team / company clarify gates and replies (`pending.kind`), assignment path as
-`actions[]` with next-assignee + SLA create in-process behind a dry-run gate evaluated first
-(H37). H2 is structurally impossible in one function (AC-505). n8n: four spine nodes deleted,
-two subs unpublished; the outbound executes assign / comment (AC-506).
+`lanes/escalation.py`: `escalation-input`, `escalation-context`, the company clarify gate and
+reply (`pending.kind`), assignment path as `actions[]` with next-assignee + SLA create
+in-process behind a dry-run gate evaluated FIRST (H37). H2 is structurally impossible in one
+function (AC-505). n8n: four spine nodes deleted, two subs unpublished; the outbound executes
+assign / comment (AC-506).
+
+**Delivered 5 Sep 2026, and the plan above was wrong about the graph.** It described the
+EXPORT of `sub-escalation`, which carries uncommitted riders from two unpromoted builds. The
+LIVE workflow (`fr2u3e6FKg52cPvK` @ `bac9613b`, 10 nodes, confirmed by 33 captures on the
+version) is simpler, and the slice was ported from the live bodies:
+
+* **No `fresh-entity-gate`.** The lane never calls the resolver, so **H26 stays open**:
+  escalation routing is brand-blind exactly as it is in production. `resolve_and_gate` is in
+  the services bundle for the day B-HB-1 promotes and is asserted never called.
+* **No team clarify.** **H27 stays open** too, and the reason is worth writing down: a null
+  `suggested_team` is not reachable through the real pipeline at all, because
+  `head/output_exchange.derive_routing`'s nullish chain hard-defaults it to
+  `customer_service` long before this lane sees it. The hazard lives in the PARSER, not
+  here. Porting a clarify the live graph does not have would have shipped behaviour
+  production has never run.
+* **The ladder has five outcomes, not six, and no `gate` rank**: `picked_member` ->
+  `company_pick` -> `sameTeam` (`prior_state` / `prior_state_no_company` /
+  `multi_company_unpicked`) -> `stated_brand` -> `none`.
+
+Both omissions are `xfail(strict=True)` in `tests/chatbot/test_s5_escalation_lane.py`, so the
+promotion flips them green and forces the markers off rather than being remembered.
+
+**Two decisions, and one open question.**
+
+1. **The lane owns its own unit of work.** `next_assignee` and `sla_create` run on a session
+   of the lane's own, not the turn's routing transaction: a turn that fails later must not
+   roll an assignment back out from under the person who has already been told about it.
+2. **`assign_conversation` is the first action kind the spine does not already perform.**
+   Every earlier slice returned `send_message`, which `head-arm` already routes. The n8n
+   action executor is therefore a PREREQUISITE of switching this lane on, not a follow-up:
+   without it the customer is told a person is coming and nobody is assigned
+   (n8n-changes.md, S5 step 1).
+3. **OPEN: the escalation arm writes no session.** It closes at `replied`; there is no
+   `remembered` stage on this lane, so a CRM-completed out-of-scope turn currently remembers
+   nothing. That may be right - the conversation has just been handed to a human and the bot
+   has nothing to carry - but it is a decision nobody has made explicitly, and while the lane
+   is switched off n8n's `sub-output` still writes the session as today. Owner call before
+   the flag flips.
 
 ### S6 - Business lane (about 7,000 lines, three PRs)
 

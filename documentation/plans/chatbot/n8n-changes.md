@@ -369,6 +369,111 @@ takes the old path away.
 
 ---
 
+## S5 - the escalation lane moves into the CRM
+
+**CRM side (shipped, inert until switched on).** Same shape as S4: `out_of_scope` joins
+`contracts.CRM_COMPLETED_BRANCH_KINDS`, and the CRM completes the turn only when the owner
+also lists `"out_of_scope"` in `system_settings.chatbot_completed_lanes`. Default `[]`,
+so deploying changes nothing.
+
+**This slice is the first one that returns an action the spine does not already perform.**
+Every earlier slice handed back `send_message`, which `head-arm` already routes to
+`send-crm-reply`. S5 returns **`assign_conversation`** and **`add_comment`** as well, and
+nothing in n8n executes those today. **The action executor is a prerequisite, not a
+follow-up:** until it exists, switching this lane on means the customer is told a person is
+coming and no person is ever assigned. help-crm builds it as its own n8n slice.
+
+The four actions, in the order the caller must execute them:
+
+| # | action | what n8n does today | notes |
+| --- | --- | --- | --- |
+| 1 | `send_message` | `sorento-sub-respond-sendmsg-respond-routed-to-pic2` | the out-of-scope acknowledgement, BEFORE the assignment work |
+| 2 | `assign_conversation` | `Assign or unassign a Conversation1` | omitted when the assignee service says `is_already_assigned` |
+| 3 | `add_comment` | `Call 'sub-add-comment-respond'` | the SLA note, mentioning the assignee |
+| 4 | `send_message` | `sorento-sub-respond-sendmsg-respond-routed-to-pic` | "routed to the PIC from <team> team" |
+
+`next-assignee` and the SLA row are NOT actions: they are in-process service calls the lane
+makes itself, exactly as `sub-human-intervention` makes them HTTP calls back into this same
+CRM. The out-of-scope acknowledgement TEXT that `escalate-catalog` composes
+(`includeResponse: false`, "Informed the user that request is out of scope...") is a tail
+concern and stays there; it is not one of these actions.
+
+### Which turns this covers
+
+One `route` output: the `out_of_scope` arm, which is the only path to `escalation`.
+
+### Step 1 - deploy (nothing changes)
+
+Deploy with `chatbot_completed_lanes` unchanged. Turns keep delegating.
+
+**Precondition to proceed: the action executor exists and is wired**, and a test turn with
+`assign_conversation` + `add_comment` in `actions` results in a real assignment and a real
+comment on a throwaway contact. Everything else in this section assumes that.
+
+### Step 2 - flip the lane on
+
+Add `"out_of_scope"` to `system_settings.chatbot_completed_lanes`. From the next turn the
+CRM assigns, starts the SLA clock and hands the caller four actions; `escalation` is never
+entered.
+
+**Precondition to proceed to step 3:** over at least 20 out-of-scope turns,
+
+```sql
+SELECT status, stage, count(*)
+FROM chatbot.turns
+WHERE branch_kind = 'out_of_scope' AND created_at > now() - interval '7 days'
+GROUP BY 1, 2;
+```
+
+shows `done` / `replied` and **zero** `failed` / `looked_up`, and every one of those turns
+has an SLA tracking row. A `failed` / `looked_up` row is the lane saying the assignment did
+not complete; its `error` says which seam.
+
+**Rollback for this step is the flag.** Remove the string and the next turn delegates again.
+
+### Step 3 - delete the cold nodes
+
+| node | today | after |
+| --- | --- | --- |
+| `escalation` | executeWorkflow -> `sub-escalation` | **DELETE** |
+| `escalation-arm` | the If on `arm` | **DELETE** |
+| `clarify-company-reply` | the name-preserving re-emitter | **DELETE** |
+| `tag-out-of-scope` | the Set that stamps the arm | **DELETE** |
+
+Rewire the `route` out-of-scope output straight to `Call 'sub-output'6`, the same shape the
+other CRM-completed arms use.
+
+**`clarify-company-reply` needs one check before it goes.** `build-outcome` reads
+`$('clarify-company-reply').isExecuted` through a static map, and that read is how the
+clarify ask reaches the customer. On the CRM side the clarify arm returns NO actions and a
+`pending: {kind: company_clarify}` marker; the ask itself travels as the tail's
+`clarify_text`. Confirm on a live clarify turn that the customer still gets the ask before
+deleting the node - and note that the arm did not fire once in the 33-execution capture
+window, so a deliberate test turn is the only way to see it.
+
+### Step 4 - unpublish
+
+`sub-escalation` (`fr2u3e6FKg52cPvK`) and `sub-human-intervention` have no other caller once
+step 3 lands. Deactivate both; do not delete them, so rollback is a re-activation.
+
+### Rollback
+
+Before step 3: remove `"out_of_scope"` from the list. After step 3: restore the four nodes
+and re-activate both subs FIRST, then clear the flag.
+
+### Not covered by this slice
+
+- **`fresh-entity-gate` (H26) and the team clarify (H27).** Neither is on the live graph;
+  both belong to unpromoted builds. The lane never calls the resolver, so escalation routing
+  stays brand-blind exactly as today, and a null team is not reachable anyway because the
+  parser hard-defaults it to `customer_service`. Both are `xfail(strict=True)` in the test
+  suite, so the promotion announces itself.
+- **The session write.** The arm closes at `replied`; there is no `remembered` stage on this
+  lane, so an out-of-scope turn completed by the CRM currently remembers nothing. Raised as
+  an open question with the plan.
+
+---
+
 ## S6a - `sub-resolve-and-gate` moves into the CRM
 
 **CRM side (shipped, inert by default).** `POST /api/v1/external/chat/turn` now returns

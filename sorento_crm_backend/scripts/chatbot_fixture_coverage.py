@@ -132,6 +132,24 @@ CAPTURE_REPORT: dict[str, dict] = {
         "captured_on": "2026-09-05",
         "nodes": ("construct-user-prompt", "mark-casual-error"),
     },
+    # `sub-escalation` (`fr2u3e6FKg52cPvK`), the escalation lane. 36 executions exist, 33
+    # of them on the current version and all 33 scanned, so a cell still under the bar is
+    # exhausted rather than short. `clarify-company-reply` at 0 is the honest one: the
+    # multi-company clarify arm did not fire once in the window, and its own gate says why
+    # (it needs an OPEN member offer whose pool nobody picked from).
+    "sub-escalation-live": {
+        "version": "bac9613b",
+        "version_pool": 33,
+        "scanned": 33,
+        "all_versions": 36,
+        "captured_on": "2026-09-05",
+        "nodes": (
+            "escalation-input",
+            "escalation-context",
+            "clarify-company-reply",
+            "escalation-result",
+        ),
+    },
 }
 
 # Branches that CANNOT be captured because live never reaches them. H1: the spine tests

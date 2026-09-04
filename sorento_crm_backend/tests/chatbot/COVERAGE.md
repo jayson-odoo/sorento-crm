@@ -16,6 +16,7 @@ A branch under the bar is `exhausted` - not short - only when EVERY execution on
 | --- | --- | ---: | ---: | ---: | --- | --- | --- |
 | `spine-rs-1a` | `51f7b0d2` | 581 | 581 | 946 | yes | 2026-09-05 | `route-turn`, `build-ctx` |
 | `sub-casual-llm-live` | `08bf56a5` | 13 | 13 | 13 | yes | 2026-09-05 | `construct-user-prompt`, `mark-casual-error` |
+| `sub-escalation-live` | `bac9613b` | 33 | 33 | 36 | yes | 2026-09-05 | `escalation-input`, `escalation-context`, `clarify-company-reply`, `escalation-result` |
 | `sub-output-live` | `c32698c1` | 760 | 760 | 907 | yes | 2026-09-05 | `compile-current-state`, `crossdomain-compose`, `build-outcome`, `escalate-catalog`, `cs-roster-plan`, `build-cs-member-offer` |
 | `sub-resolve-and-gate-rs` | `4f367b1c` | 682 | 682 | 852 | yes | 2026-09-05 | `disallowed-entity-gate`, `tier-gate`, `build-ctx-resolved`, `annotate-incoming-picker`, `annotate-customer-picker`, `resolve-exit-continue`, `resolve-exit-offer`, `resolve-exit-not-found`, `item`, `sub-resolve-and-gate` |
 | `sub-semantic-parser` | `ab3ec985` | 239 | 239 | 3901 | yes | 2026-09-04 | `output_exchange`, `suggest-follow-up` |
@@ -58,6 +59,9 @@ A WORLD is one whole captured turn replayed through `run_turn` + `complete_turn`
 | `cs-roster-plan` | 14 | 14 | 1 |
 | `disallowed-entity-gate` | 242 | 177 | 6 |
 | `escalate-catalog` | 130 | 130 | 5 |
+| `escalation-context` | 22 | 22 | 10 |
+| `escalation-input` | 22 | 22 | 10 |
+| `escalation-result` | 22 | 22 | 10 |
 | `item` | 11 | 11 | 1 |
 | `output_exchange` | 325 | 249 | 98 |
 | `resolve-exit-continue` | 6 | 6 | 1 |
@@ -135,6 +139,9 @@ A WORLD is one whole captured turn replayed through `run_turn` + `complete_turn`
 | `escalate-catalog` | `not_supported` | 3 | 0 | exhausted (3) |
 | `escalate-catalog` | `offer_hold` | 3 | 0 | exhausted (3) |
 | `escalate-catalog` | `out_of_scope` | 15 | 0 | met |
+| `escalation-context` | `all` | 22 | 0 | met |
+| `escalation-input` | `all` | 22 | 0 | met |
+| `escalation-result` | `all` | 22 | 0 | met |
 | `item` | `no_domain` | 11 | 0 | met |
 | `output_exchange` | `incoming` | 65 | 6 | met |
 | `output_exchange` | `inventory` | 119 | 9 | met |
