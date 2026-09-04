@@ -11,6 +11,21 @@ Two sources, always both:
   monorepo root). Absent = those tests skip with a message; present = every capture for
   a ported node replays.
 
+**Only a REAL CAPTURE grades the port.** ``source.expected_from`` says where a fixture's
+``expected`` came from: ``runData`` is what the node actually emitted in a real n8n
+execution, ``reasoned`` is a hand-written expectation. The escalation-routing lane
+hand-revised 31 ``reasoned`` ``output_exchange`` fixtures to encode the UNPROMOTED
+B-TEAM-1' behaviour, under the SAME filenames, so a ``reasoned`` expectation can describe a
+body that has never run in production. Grading against one would make an unpromoted lane
+change a merge gate.
+
+So: ``runData`` fixtures GRADE and a mismatch fails the suite; ``reasoned`` fixtures are
+still loaded and still replayed, and their agreement is REPORTED as a count, but they never
+fail. The same split applies to any worlds derivation. Measured on 5 Sep 2026 after the
+re-port onto the live body: 782 ``runData`` files, all graded and green, and 152
+``reasoned`` files of which 114 agree and 38 (19 distinct fixtures, vendored + full corpus)
+pin B-TEAM-1'.
+
 A fixture is the n8n harness's own shape::
 
     {source, ctx, input, expected, runIndex, execution, ran}
@@ -64,54 +79,20 @@ NODE_SLUGS: dict[str, tuple[str, ...]] = {
 # all replay EQUAL again - they were LIVE-faithful captures being graded against the wrong
 # body, which is exactly the tell.
 #
-# **A version id is not sufficient evidence, and neither is an assertion.** The 19 entries
-# below are the mirror image of the old five, and the evidence for each is mechanical and
-# reproducible: the pre-re-port Python (`git show <the S1 commit>:...output_exchange.py`,
-# faithful to the EXPORT) reproduces each fixture's `expected` exactly, and the live-
-# faithful body does not. 19 of 19, with no "neither matches" residue. They are hand-built
-# pins authored alongside the unpromoted change, not captures of a real execution, so there
-# is no production turn they describe. Retire each one when the owner promotes the
-# escalation-routing lane's B3 step and the port follows (plan, S1 "pending re-port").
+# **The mirror-image set is NOT listed here.** The 19 hand-written fixtures that pin the
+# unpromoted body are handled structurally instead, by `expected_from` (see the module
+# docstring): they are `reasoned`, so they are replayed and reported and never graded. A
+# name list would have to be maintained by hand and would go stale the moment the lane adds
+# another; the field is already on every fixture and says exactly the right thing.
 #
-# They are SKIPPED, not dropped: `test_replay.py` emits one skip per entry with its reason,
-# so `pytest -rs` and the summary count show exactly how much of the corpus is not being
-# graded.
-_UNPROMOTED = (
-    "pins the UNPROMOTED B-TEAM-1' export body, not the live one; the pre-re-port port "
-    "reproduces it exactly and the live-faithful port does not (see the header note)"
-)
-
+# What remains here is genuine capture staleness: a `runData` fixture recorded against an
+# older node body. Those are SKIPPED, not dropped - `test_replay.py` emits one skip per
+# entry with its reason, so `pytest -rs` and the summary count show how much is not graded.
 STALE_FIXTURES: dict[tuple[str, str], str] = {
     ("build-ctx", "rs2-01-notsupported"): "RS-2 capture, predates the RS-4 `media` key",
     ("build-ctx", "rs2-02-escalation"): "RS-2 capture, predates the RS-4 `media` key",
     ("build-ctx", "rs2-03-happy"): "RS-2 capture, predates the RS-4 `media` key",
     ("build-ctx", "rs2-04-access-denied"): "RS-2 capture, predates the RS-4 `media` key",
-    # Hand-built pins for the unpromoted lane change. EVERY real capture in the corpus is
-    # graded; not one `parser-*` / `exec-*` fixture is excluded.
-    **{
-        ("output_exchange", name): _UNPROMOTED
-        for name in (
-            "casual-without-offer-engagement-wipes-entities",
-            "date-filter-gated-records-null-domain",
-            "escalation-offer-confirm-decline-and-pick",
-            "legacy-suffixed-promotion-team-normalised-from-prior",
-            "literal-string-null-hints-coerced",
-            "member-offer-bare-number-reply",
-            "member-offer-clarification-counts-as-a-new-query",
-            "member-offer-long-reply-is-not-digit-scanned",
-            "member-offer-ordinal-numeral-2nd",
-            "member-offer-ordinal-word-first",
-            "member-offer-ordinal-word-second",
-            "member-offer-ordinal-word-third",
-            "member-offer-precedence-arms",
-            "menu-label-stock-enquiry",
-            "pending-pick-from-a-single-row-roster",
-            "request-for-help-llm-team-wins",
-            "resource-attachment-corrected-when-product-present",
-            "routing-domains-multi-item",
-            "tier-offer-out-of-range-position-is-not-a-pick",
-        )
-    },
 }
 
 
@@ -126,6 +107,16 @@ class Fixture:
     name: str
     path: Path
     data: dict
+
+    @property
+    def expected_from(self) -> str:
+        """`runData` (a real execution) or `reasoned` (hand written). See the module
+        docstring: only `runData` grades."""
+        return (self.data.get("source") or {}).get("expected_from") or "runData"
+
+    @property
+    def graded(self) -> bool:
+        return self.expected_from == "runData"
 
     @property
     def ctx(self) -> dict:
@@ -190,6 +181,16 @@ def _load_dir(node: str, directory: Path, prefix: str = "") -> list[Fixture]:
 def vendored(node: str) -> list[Fixture]:
     """The committed subset for one node. Always runs."""
     return _load_dir(node, VENDORED_ROOT / node)
+
+
+def graded(fixtures: list[Fixture]) -> list[Fixture]:
+    """The real captures. A mismatch on one of these fails the suite."""
+    return [f for f in fixtures if f.graded]
+
+
+def reasoned(fixtures: list[Fixture]) -> list[Fixture]:
+    """Hand-written expectations. Replayed and counted, never a gate."""
+    return [f for f in fixtures if not f.graded]
 
 
 def full_corpus(node: str) -> list[Fixture]:
