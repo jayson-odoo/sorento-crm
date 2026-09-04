@@ -353,6 +353,25 @@ Baseline measured on `origin/main` e1adad4d2, 2 Sep 2026.
   the allowlist as `pending migration, M5 run 3`; three are flagged for the captain's ruling on
   whether they can migrate at all (`app/(auth)/approval/page.tsx`,
   `app/(auth)/view/request/page.tsx`, `components/reports/ReportPivotTable.tsx`).
+  **Shipped (M5 run 3, migration complete):** all 27 `pending migration` entries removed from
+  the allowlist, one module per commit (SLA, system-management, tickets, user-management,
+  products, complaints, attachments, procurement, then the three inline-editing files). Most
+  moved to `PanelDataGrid` (`components/common/PanelDataGrid.tsx` - moved there from
+  `project-sales/_shared/components` in the SLA commit, its first caller outside project-sales);
+  a handful of standalone lists and one detail-page section already inside a `Card` use a plain
+  `DataGrid` + `DataGridTable` instead, matching the existing convention at
+  `master-data-management/units-of-measure`. The captain's ruling on the three flagged files
+  landed as PERMANENT exemptions (not migrations): the two `app/(auth)` portal pages are outside
+  the authenticated shell entirely, and `ReportPivotTable.tsx` reshapes rows into a matrix, which
+  is not a DataGrid's one-row-per-record model - both reasons are recorded in the allowlist
+  itself. The "inline editing may prove a real blocker" concern on `OrderLinesCard.tsx`,
+  `PurchaseRequestDocumentEditCard.tsx` and `PurchaseRequestForm.tsx` did not materialise:
+  `OrderLinesCard` turned out to be read-only (its add/import flows are modal dialogs, not
+  inline cells), and the two react-hook-form `useFieldArray` line tables migrated to a plain
+  `DataGrid` (`getCoreRowModel` only, no pagination row model, so no rows hidden behind a page 2
+  on a form) with a dedicated focus-retention test proving typing into a cell, and appending a
+  row, keep the same input identity a hand-rolled `<table>` keyed by `field.id` did. Final
+  allowlist: the three permanent exemptions above, nothing else.
 - **M5-07** `[UX] [vitest] [browser]` **Back to list restores the row, absolute rule.** A row
   click appends `from=<row id>` to the detail href; Back, the post-delete push and Edit all
   carry it; on list mount the row with that id is scrolled into view (`block: 'center'`) and

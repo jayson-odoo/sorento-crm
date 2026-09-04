@@ -20,8 +20,19 @@ widened from S7-04's hard-coded ten to a walk, 113 segments added, 123 of 123 co
 primitive), M5-03 (`ListPageSkeleton` row/header geometry now matches `data-grid-table.tsx`
 exactly; its title/crumb order was corrected against the real `PageHeader.tsx` DOM order rather
 than the brief's assumed one - see the coder's note in the commit and in the UAC), M5-04
-(`app/(protected)/error.tsx` + `not-found.tsx`, render inside the shell). Only the run-3
-raw-table migration is still open.
+(`app/(protected)/error.tsx` + `not-found.tsx`, render inside the shell). M5 run 3 of 3 done
+(same branch): all 27 M5-06 allowlist entries migrated to `DataGrid`, one module per commit -
+`PanelDataGrid` moved from `project-sales/_shared/components` to `components/common` (its first
+caller outside project-sales, in the SLA commit) since 18+ callers across modules now share it.
+The "inline editing may prove a real blocker" concern on `OrderLinesCard.tsx`,
+`PurchaseRequestDocumentEditCard.tsx` and `PurchaseRequestForm.tsx` did not materialise:
+`OrderLinesCard` turned out to be read-only (add/import are modal dialogs), and the two
+react-hook-form `useFieldArray` line tables migrated cleanly to a plain `DataGrid`
+(`getCoreRowModel` only, no pagination) - a dedicated focus-retention test confirms typing and
+row-append keep the same input identity a hand-rolled `<table>` did. Only the three permanent
+M5-06 exemptions (two `app/(auth)` portal pages, `ReportPivotTable.tsx`) remain allowlisted.
+M5 is now fully built; still open: browser re-verification of the full run-3 diff (not yet
+walked in `agent-browser`, unlike runs 1-2).
 **UAC:** `documentation/plans/design-system/ui-motion-round2-acceptance-criteria.md`
 **Audit reports:** session scratchpad `audit-A-existing-motion.md` (36 rows, `/review-animations`
 verdict Block, narrow), `audit-B-opportunities.md` (6 survivors, 10 rejects),
