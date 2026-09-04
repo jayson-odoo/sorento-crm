@@ -885,17 +885,20 @@ class TestUnresolvedReferences:
 # =============================================================== status (AC-A3-6)
 class TestStatusVocabulary:
     @pytest.mark.parametrize(
-        "canonical,stored",
+        "canonical,stored,read_back",
         [
-            ("open", "open"),
-            ("partial", "partially_delivered"),
-            ("fulfilled", "fulfilled"),
-            ("closed", "closed"),
-            ("cancelled", "cancelled"),
+            ("open", "open", "open"),
+            # D6a: partial is stored open (PLAN-autocount-document-ingest-v2) - the
+            # map is no longer injective, so the round trip is NOT the same word:
+            # a canonical `partial` reads back `open`, same as a canonical `open`.
+            ("partial", "open", "open"),
+            ("fulfilled", "fulfilled", "fulfilled"),
+            ("closed", "closed", "closed"),
+            ("cancelled", "cancelled", "cancelled"),
         ],
     )
     def test_every_canonical_sales_order_status_maps_and_reads_back(
-        self, env, canonical, stored
+        self, env, canonical, stored, read_back
     ):
         """AC-A3-6. Five canonical words, two Sorento vocabularies. The map is the
         contract the shared service codes against, and it round-trips."""
@@ -906,7 +909,7 @@ class TestStatusVocabulary:
 
         assert env.header("sales_orders", record["source_ref"])["status"] == stored
         back = env.read(READ_SO, [record["source_ref"]]).json()["records"][0]
-        assert back["status"] == canonical
+        assert back["status"] == read_back
 
     @pytest.mark.parametrize(
         "canonical,stored",
@@ -950,9 +953,10 @@ class TestStatusVocabulary:
         res = env.post(INGEST_SO, [record])
 
         assert res.json()["records"][0]["outcome"] == "created", res.text
+        # D6a: partial is stored open (PLAN-autocount-document-ingest-v2)
         assert (
             env.header("sales_orders", record["source_ref"])["status"]
-            == "partially_delivered"
+            == "open"
         )
 
     def test_cancelled_on_a_re_push_keeps_the_rows(self, env):
@@ -1003,7 +1007,11 @@ class TestDryRun:
         entry = res.json()["records"][0]
         assert entry["outcome"] == "updated", res.text
         assert entry["diff"]["internal_note"] == {"current": "first", "incoming": "second"}
-        assert entry["diff"]["status"]["incoming"] == "partially_delivered"
+        # D6a: partial is stored open (PLAN-autocount-document-ingest-v2) - the
+        # existing row is already open, so restating it as canonical `partial`
+        # writes the SAME stored value and is correctly absent from the diff,
+        # the same as pushing `open` onto an already-open row would be.
+        assert "status" not in entry["diff"], entry["diff"]
         after = env.header("sales_orders", record["source_ref"])
         assert after["internal_note"] == "first"
         assert after["status"] == "open"
@@ -1064,7 +1072,8 @@ class TestReadBack:
         assert got["sales_agent_ref"] == env.agent_ref
         assert got["doc_date"] == "2026-08-30"
         assert got["requested_delivery_date"] == "2026-09-15"
-        assert got["status"] == "partial"
+        # D6a: partial is stored open (PLAN-autocount-document-ingest-v2)
+        assert got["status"] == "open"
         assert got["internal_note"] == "Site A"
 
         assert len(got["lines"]) == 1
