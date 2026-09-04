@@ -1,0 +1,176 @@
+{
+  "turn_id": "db3ec73b-aaa2-48f4-974a-8e942d1891be",
+  "ctx": {
+    "contact": {
+      "id": "437264483",
+      "phone": "+60123450099",
+      "custom_fields": []
+    },
+    "text": {
+      "event_type": "message.received",
+      "contact": {
+        "id": "437264483"
+      },
+      "message": {
+        "messageId": "5704490233114283806a9762a03e9a12",
+        "contactId": "437264483",
+        "channelId": "whatsapp",
+        "traffic": "incoming",
+        "message": {
+          "type": "text",
+          "text": "I need to speak to a human"
+        }
+      }
+    },
+    "session": {
+      "respond_io_id": "437264483",
+      "session_vars": {
+        "variables": {}
+      }
+    },
+    "parse": {
+      "output": {
+        "message_type": "request_for_help",
+        "intent_hint": null,
+        "domain_hint": null,
+        "scope_intent": null,
+        "is_affirmative": null,
+        "user_goal": "trying to reach a person",
+        "access_levels": [],
+        "broaden_axis": null,
+        "date_mode": null,
+        "date_filter_start": null,
+        "date_filter_end": null,
+        "match_mode": "and",
+        "demand_qty": null,
+        "entities": [],
+        "entity_op": "replace_combine",
+        "scope_exclusive": false,
+        "requested_attributes": [],
+        "contains_flyer": false,
+        "reference_positions": [],
+        "reference_target": null,
+        "person_mention": null,
+        "is_active": null,
+        "order_status": null,
+        "correction": false,
+        "routing": {
+          "suggested_team": "customer_service",
+          "suggested_agent": "general_enquiries"
+        },
+        "escalation": {
+          "is_escalation_confirmation": true
+        },
+        "domain_signal_source": "intent_none",
+        "scope_exclusive_applied": false,
+        "entity_op_applied": "replace_combine",
+        "query_brands": []
+      },
+      "_parser_raw": {
+        "message_type": "request_for_help",
+        "intent_hint": null,
+        "domain_hint": null,
+        "scope_intent": null,
+        "is_affirmative": null,
+        "user_goal": "trying to reach a person",
+        "access_levels": [],
+        "broaden_axis": null,
+        "date_mode": null,
+        "date_filter_start": null,
+        "date_filter_end": null,
+        "match_mode": "and",
+        "demand_qty": null,
+        "entities": [],
+        "entity_op": "replace_combine",
+        "scope_exclusive": false,
+        "requested_attributes": [],
+        "contains_flyer": false,
+        "reference_positions": [],
+        "reference_target": null,
+        "person_mention": null,
+        "is_active": null,
+        "order_status": null,
+        "correction": false,
+        "routing": {
+          "suggested_team": "customer_service",
+          "suggested_agent": "general_enquiries"
+        },
+        "escalation": {
+          "is_escalation_confirmation": true,
+          "company_pick": null
+        }
+      }
+    },
+    "access": {
+      "allowed": true,
+      "decision": "allow",
+      "agent_name": "General Enquiries",
+      "attributes": null,
+      "all_attributes_allowed": null
+    },
+    "media": null
+  },
+  "item": {
+    "allowed": true,
+    "decision": "allow",
+    "agent_name": "General Enquiries",
+    "attributes": null,
+    "all_attributes_allowed": null,
+    "branch_kind": "out_of_scope"
+  },
+  "branch_kind": "out_of_scope",
+  "delegate": null,
+  "reply": {
+    "text": null,
+    "quick_replies": null,
+    "result_set": [],
+    "attachments_src": null
+  },
+  "actions": [
+    {
+      "kind": "send_message",
+      "text": "Your request is out of the scope of my ability and require human assistance. We are directing your enquiry to the correct person. Please wait for a moment.",
+      "dry_run": true,
+      "result_set": [],
+      "quick_replies": []
+    }
+  ],
+  "session_patch": {
+    "variables": {
+      "message_type": "request_for_help",
+      "intent_hint": null,
+      "domain_hint": null,
+      "user_goal": "trying to reach a person",
+      "query_brands": [],
+      "access_levels": [],
+      "entities": [],
+      "routing": {
+        "suggested_team": "customer_service",
+        "suggested_agent": "general_enquiries"
+      },
+      "escalation": {
+        "is_escalation_confirmation": true
+      },
+      "response": "Informed the user that request is out of scope and will proceed to escalate to the customer_service team",
+      "last_result_set": [],
+      "selection_context": null,
+      "date_filter_start": null,
+      "requested_attributes": [],
+      "date_filter_end": null,
+      "date_mode": null,
+      "match_mode": "and",
+      "contains_flyer": false,
+      "dym_offer": null,
+      "dym_candidates": [],
+      "ideation": null,
+      "routing_roster_plan": null,
+      "routing_brand": null,
+      "routing_brand_source": null,
+      "routing_company": null,
+      "routing_companies": null,
+      "pending": null
+    }
+  },
+  "delegate_payload": null,
+  "duplicate": false
+}

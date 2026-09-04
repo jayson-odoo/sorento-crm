@@ -628,12 +628,34 @@ promotion flips them green and forces the markers off rather than being remember
    action executor is therefore a PREREQUISITE of switching this lane on, not a follow-up:
    without it the customer is told a person is coming and nobody is assigned
    (n8n-changes.md, S5 step 1).
-3. **OPEN: the escalation arm writes no session.** It closes at `replied`; there is no
-   `remembered` stage on this lane, so a CRM-completed out-of-scope turn currently remembers
-   nothing. That may be right - the conversation has just been handed to a human and the bot
-   has nothing to carry - but it is a decision nobody has made explicitly, and while the lane
-   is switched off n8n's `sub-output` still writes the session as today. Owner call before
-   the flag flips.
+3. **The escalation arm RUNS THE TAIL** (decided 5 Sep). n8n sends this arm through
+   `tag-out-of-scope` -> `sub-output`, which persists the session - the routing axes and
+   `escalate-catalog`'s `includeResponse: false` state text - so skipping the tail would
+   have quietly dropped both the moment the lane was switched on. After the lane produces
+   its actions the arm hands `complete_turn` the `tag-out-of-scope` item
+   (`{branch_kind: "out_of_scope"}`, NOT `route-turn`'s item, which is what makes the entry
+   gate run `escalate-catalog`) plus the `clarify` fragment when the clarify arm fired.
+   Compile-state writes the session, or returns `session_patch` on a dry run, and the trace
+   ends `[..., looked_up, replied, remembered]`. The acknowledgement TEXT stays a tail
+   concern and is not one of the actions.
+4. **The lane writes no chat history** (decided 5 Sep). `sub-add-comment-respond` does two
+   things when it runs - the respond.io comment AND a CRM chat-history POST - and it keeps
+   doing both when the caller executes the `add_comment` action. Writing it here as well
+   would double the comment: one row from this lane, one from the sub, minutes apart and
+   under different authors. Asserted by ROW COUNT in
+   `tests/chatbot/test_s5_no_chat_history_write.py`, not by grep, because a count catches an
+   import three layers down.
+5. **Action shapes** (agreed with the n8n executor author, 5 Sep). `send_message` carries
+   `{kind, text, quick_replies, result_set, dry_run}`, with the two sealed halves filled from
+   the tail's reply after `complete_turn` returns; `assign_conversation` is
+   `{kind, respond_user_id, dry_run}`; `add_comment` is
+   `{kind, text, mention_user_ids, dry_run}` where `mention_user_ids` is exactly one RESPOND
+   user id (the executor maps it to `sub-add-comment-respond`'s `user_id`, which is what
+   respond.io needs for a mention) and the text carries no `{{@user.<id>}}` markup because
+   the sub prefixes that itself. A `send_attachments` action is appended last when the tail
+   produced an `attachments_src`. The comment text was verified byte for byte against the
+   live node expression, timestamps included (`%Y-%m-%d %H:%M:%S` at a fixed +08:00).
+   Sample responses for the executor: `documentation/plans/chatbot/samples/`.
 
 ### S6 - Business lane (about 7,000 lines, three PRs)
 

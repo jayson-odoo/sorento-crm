@@ -30,6 +30,12 @@ than guarding each seam, because "guarded afterwards" is what H37 records going 
 
 **D9: the CRM never sends.** Every effect leaves as an `action` for the caller to execute,
 in the order the live graph performs them.
+
+**This lane never writes chat history.** `sub-add-comment-respond` does two things when it
+runs - the respond.io comment AND a CRM chat-history POST - and it keeps doing both when the
+caller executes the `add_comment` action. Writing the comment here as well would double it:
+one row from this lane and one from the sub. There is no import of the chat-history service
+anywhere in this module, and `test_s5_no_chat_history_write.py` asserts the row count.
 """
 from __future__ import annotations
 
@@ -432,9 +438,7 @@ def run(
 
     result = escalation_result()
     team = jsc.get(context_item, "team")
-    actions: list[dict[str, Any]] = [
-        {"kind": "send_message", "text": OUT_OF_SCOPE_REPLY, "dry_run": dry_run},
-    ]
+    actions: list[dict[str, Any]] = [_send_message(OUT_OF_SCOPE_REPLY, dry_run)]
 
     if dry_run:
         # D14 / H37. The customer acknowledgement is composed - it names nothing and
@@ -453,7 +457,6 @@ def run(
             {
                 "kind": "assign_conversation",
                 "respond_user_id": jsc.get(assignee, "assignee_respond_user_id"),
-                "contact_id": jsc.get(jsc.get(ctx, "contact"), "id"),
                 "dry_run": dry_run,
             }
         )
@@ -464,19 +467,34 @@ def run(
         {
             "kind": "add_comment",
             "text": _comment_text(ctx, team, sla),
-            "contact_id": jsc.get(jsc.get(ctx, "contact"), "id"),
-            "mention_user_ids": [jsc.get(assignee, "assignee_id")],
+            # The RESPOND user id, not the CRM one, and exactly one of them: the executor
+            # maps this to `sub-add-comment-respond`'s `user_id`, which is what respond.io
+            # needs to turn a comment into a mention. `assign_conversation` above carries
+            # the same id for the same reason.
+            "mention_user_ids": [jsc.get(assignee, "assignee_respond_user_id")],
             "dry_run": dry_run,
         }
     )
-    actions.append(
-        {
-            "kind": "send_message",
-            "text": ROUTED_TO_PIC_REPLY.format(team=_pretty_team(team)),
-            "dry_run": dry_run,
-        }
-    )
+    actions.append(_send_message(ROUTED_TO_PIC_REPLY.format(team=_pretty_team(team)), dry_run))
     return {**result, "actions": actions, "pending": None}
+
+
+def _send_message(text: str, dry_run: bool) -> dict[str, Any]:
+    """One `send_message` action, in the shape the n8n executor takes.
+
+    `quick_replies` and `result_set` are declared here and left empty ON PURPOSE. They are
+    SEALED values that only exist once the tail has composed the reply, and the engine arm
+    fills them in from `complete_turn`'s output before the actions leave. Declaring them
+    here rather than adding them later keeps every `send_message` the same shape whoever
+    built it, so the executor never has to test for a missing key.
+    """
+    return {
+        "kind": "send_message",
+        "text": text,
+        "quick_replies": [],
+        "result_set": None,
+        "dry_run": dry_run,
+    }
 
 
 def _next_assignee_body(ctx: dict[str, Any], context_item: dict[str, Any]) -> dict[str, Any]:
@@ -530,10 +548,21 @@ def _sla_body(
 
 
 def _comment_text(ctx: dict[str, Any], team: Any, sla: Any) -> str:
-    """`Call 'sub-add-comment-respond'`'s `comment`, line for line.
+    """`Call 'sub-add-comment-respond'`'s `comment`, byte for byte.
+
+    Verified against the live node expression by substituting its six `{{ }}` blocks and
+    diffing the literal skeleton: equal. The three timestamps are Luxon's
+    `fromISO(v, {zone:'utc'}).setZone('Asia/Kuala_Lumpur').toFormat('yyyy-MM-dd HH:mm:ss')`,
+    which is `%Y-%m-%d %H:%M:%S` at a fixed +08:00 (Malaysia has no DST), and they come from
+    the CRM's OWN in-process SLA create - n8n no longer calls that endpoint or composes this
+    text.
 
     The team is the RAW slug here, not prettified: this is an internal note to the person
     picking the case up, and the slug is what they will search the CRM by.
+
+    **No mention markup.** The text carries no `{{@user.<id>}}`; `sub-add-comment-respond`
+    prefixes that itself from the `user_id` it is given, which is why the action carries the
+    respond user id in `mention_user_ids` and not a formatted string.
     """
     contact_id = jsc.get(jsc.get(ctx, "contact"), "id")
     message_id = jsc.get(jsc.get(jsc.get(ctx, "text"), "message"), "messageId")

@@ -1150,6 +1150,8 @@ def _run_escalation_arm(
     lane_actions = list(fragment.get("actions") or [])
     pending = fragment.get("pending")
 
+    # Only `looked_up` is recorded here. `replied` and `remembered` are the TAIL's, and
+    # recording a `replied` of our own would put two of them on the trace.
     turn_trace.record(
         "looked_up",
         summary=(
@@ -1172,48 +1174,65 @@ def _run_escalation_arm(
         raw={"clarify": clarify, "pending": pending},
     )
 
-    # D9: the CRM never sends. The lane's actions ARE the answer, in the order the caller
-    # must execute them; the first `send_message` is what the customer reads first, and a
-    # clarify arm's text reaches them through the tail instead, so `reply` is null there.
-    first_send = next((a for a in lane_actions if a.get("kind") == "send_message"), None)
-    reply = (
-        {"text": first_send.get("text"), "quick_replies": []} if first_send is not None else None
-    )
-    stage[0] = "replied"
-    turn_trace.record(
-        "replied",
-        summary=(
-            "Told the customer a person is taking over."
-            if first_send is not None
-            else "Asked the customer which company should take it."
-        ),
-        why="The reply is composed from what the lane built, never from the customer's words.",
-        facts={
-            "lane": "out_of_scope",
-            "arm": arm,
-            "sends": sum(1 for a in lane_actions if a.get("kind") == "send_message"),
-        },
-        raw={"reply": reply},
-    )
-
+    # -- the tail, the same one every completed lane runs -------------------- #
+    # n8n sends this arm through `tag-out-of-scope` -> `sub-output`, so the session IS
+    # written today: the routing axes, and `escalate-catalog`'s `includeResponse: false`
+    # state text ("Informed the user that request is out of scope..."). Skipping the tail
+    # would have quietly dropped both the moment the lane was switched on.
+    #
+    # The item handed over is `tag-out-of-scope`'s, `{branch_kind: "out_of_scope"}` and
+    # nothing else - NOT `route-turn`'s item. That is what makes `complete_turn`'s entry
+    # gate run `escalate-catalog` for this arm, which is where the acknowledgement text
+    # comes from. It stays a tail concern and is deliberately not one of the actions.
+    #
+    # The row is closed `delegated` at `routed` first: it is the state the turn is really
+    # in (a lane produced a result, the tail has not folded it in), it is what
+    # `complete_turn` refuses to run without, and it puts the actions on the row before the
+    # tail reads `prior_actions` off it, so a duplicate replays them too (D15).
     all_actions = [*actions, *lane_actions]
     with _session(session_factory) as db:
         _close_turn(
             db,
             turn_id,
-            status="done",
-            stage="replied",
+            status="delegated",
+            stage="routed",
             branch_kind="out_of_scope",
             error=None,
             records=turn_trace.records,
-            response={
-                "ctx": ctx,
-                "item": item,
-                "actions": all_actions,
-                "reply": reply,
-                "pending": pending,
-            },
+            response={"ctx": ctx, "item": item, "actions": all_actions, "pending": pending},
         )
+
+    completed = complete_turn(
+        turn_id,
+        {"item": {"branch_kind": "out_of_scope"}, "ctx": ctx, "clarify": clarify},
+        session_factory=session_factory,
+    )
+
+    # -- seal the send actions with what the tail composed -------------------- #
+    # `quick_replies` and `result_set` are the SEALED reply's, and they do not exist until
+    # the tail has run - the lane declares the keys empty and they are filled here, so the
+    # executor sees one `send_message` shape whoever built it. `attachments_src` is the
+    # same story one step further: when the tail produced one, the send_attachments action
+    # goes LAST, after both messages, which is the order `send-attachments` runs in today.
+    sealed = completed.reply or {}
+    final_actions = [_seal_send(a, sealed) for a in (completed.actions or [])]
+    if jsc.truthy(sealed.get("attachments_src")):
+        final_actions.append(
+            {
+                "kind": "send_attachments",
+                "attachments_src": sealed.get("attachments_src"),
+                "reply": sealed,
+                "dry_run": dry_run,
+            }
+        )
+    if final_actions != (completed.actions or []):
+        # The row has to carry what the caller was handed, or a duplicate delivery replays
+        # a different action list than the first turn produced (D15).
+        with _session(session_factory) as db:
+            row = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).first()
+            if row is not None and isinstance(row.response, dict):
+                row.response = {**row.response, "actions": final_actions}
+                db.commit()
 
     return TurnResult(
         turn_id=turn_id,
@@ -1221,12 +1240,25 @@ def _run_escalation_arm(
         item=item,
         branch_kind="out_of_scope",
         delegate=None,
-        reply=reply,
-        actions=all_actions,
-        session_patch=None,
-        status="done",
-        stage="replied",
+        reply=completed.reply,
+        actions=final_actions,
+        # D14: on a dry run the tail wrote nothing and hands back what it WOULD have
+        # written; on a live turn it is already saved.
+        session_patch=completed.session_patch,
+        status=completed.status,
+        stage=completed.stage,
     )
+
+
+def _seal_send(action: dict[str, Any], sealed: dict[str, Any]) -> dict[str, Any]:
+    """Fill a `send_message`'s sealed halves from the tail's reply. Others pass through."""
+    if action.get("kind") != "send_message":
+        return action
+    return {
+        **action,
+        "quick_replies": sealed.get("quick_replies") or [],
+        "result_set": sealed.get("result_set"),
+    }
 
 
 def _casual_failure_summary(failed: str, setup_error: str | None) -> str:
