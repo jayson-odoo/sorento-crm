@@ -5,7 +5,7 @@
 > carried a `project_` prefix dropped it: `project_leads` is now `projects.leads`,
 > `project_quotation_lines` is `projects.quotation_lines`, and so on. The 13 unprefixed
 > ones only changed schema. Nothing else in this document changes. See
-> [ADR-0011](../adr/0011-project-sales-tables-live-in-the-projects-schema.md) and
+> [ADR-0011](../../adr/0011-project-sales-tables-live-in-the-projects-schema.md) and
 > `documentation/plans/PLAN-projects-schema-move.md` for the full mapping.
 
 **Status:** S1-S8 implemented on `feat/project-lead-to-so` (2026-08-04), verified end to end in a
