@@ -205,6 +205,18 @@ def _services(
     )()
 
 
+def _kl_fmt(iso: str) -> str:
+    """`DateTime.fromISO(x, {zone:'utc'}).setZone('Asia/Kuala_Lumpur').toFormat('yyyy-MM-dd
+    HH:mm:ss')` - the exact Luxon call `Call 'sub-add-comment-respond'`'s `comment` input
+    uses on `conversation-sla-tracking-create`'s `initiated_at` / `due_at` /
+    `due_at_resolution` (live-bodies/live-sub-human-intervention@ae310ea1). MYT is UTC+8,
+    no DST."""
+    from datetime import datetime, timedelta, timezone
+
+    dt = datetime.fromisoformat(iso).astimezone(timezone.utc) + timedelta(hours=8)
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
 # --------------------------------------------------------------------------- #
 # AC-501: escalation-context's live precedence ladder (H26, H27)
 # --------------------------------------------------------------------------- #
@@ -363,6 +375,11 @@ def test_clarify_company_ask_always_in_reply() -> None:
     ctx = _ctx(
         routing={"suggested_team": "customer_service"},
         prev_variables={
+            # Live's sameTeam gate is `!!(prev.routing && team && prev.routing.suggested_team
+            # === team)` - without a `routing` key here `sameTeam` is false and the ladder
+            # never reaches the `rp.length > 1` arm that produces `multi_company_unpicked`
+            # (matches `_rank_case("multi_company_unpicked")` above).
+            "routing": {"suggested_team": "customer_service"},
             "selection_context": "member_offer",
             "last_result_set": [{"uuid": "m1"}],
             "routing_roster_plan": [
@@ -406,7 +423,16 @@ def test_assignment_actions_in_order() -> None:
     from app.services.chatbot.lanes.escalation import run
 
     ctx, item = _assignment_ctx_and_item()
-    services = _services(assignee={"assignee_respond_user_id": "respond-usr-7", "assignee_id": "usr-7", "is_already_assigned": False})
+    sla_result = {
+        "id": "sla-row-1",
+        "initiated_at": "2026-09-05T04:00:00+00:00",
+        "due_at": "2026-09-05T08:00:00+00:00",
+        "due_at_resolution": "2026-09-06T04:00:00+00:00",
+    }
+    services = _services(
+        assignee={"assignee_respond_user_id": "respond-usr-7", "assignee_id": "usr-7", "is_already_assigned": False},
+        sla=sla_result,
+    )
 
     result = run(ctx, item, services=services)
 
@@ -418,8 +444,28 @@ def test_assignment_actions_in_order() -> None:
     first_send, assign, comment, second_send = result["actions"]
     assert "out of the scope" in first_send["text"].lower()
     assert assign["respond_user_id"] == "respond-usr-7"
-    assert comment["mention_user_ids"] == ["usr-7"]
-    assert comment["text"]
+    # `Call 'sub-add-comment-respond'`'s own `user_id` input is
+    # `$('get-round-robin-assignee').first().json.assignee_respond_user_id` - the RESPOND
+    # id, not the CRM `assignee_id` - because the comment endpoint it calls resolves respond
+    # ids, exactly like `Assign or unassign a Conversation1`'s `assigneeUserId` above. The
+    # comment sub takes a SINGLE `user_id`, so the action's list is always one element.
+    assert comment["mention_user_ids"] == ["respond-usr-7"]
+    # `Call 'sub-add-comment-respond'`'s own `comment` input, verbatim (live-bodies/
+    # live-sub-human-intervention@ae310ea1/Call_sub-add-comment-respond_.node.json):
+    # `Team: {team}\n⏰ SLA Alert: This contact is routed to you at {initiated_at MYT}.\n
+    # You have until {due_at MYT} to respond.\nYou have until {due_at_resolution MYT} to
+    # resolve.\nReference message: https://app.respond.io/space/364817/inbox/{contact_id}
+    # #{message_id}` - `initiated_at`/`due_at`/`due_at_resolution` off THIS turn's
+    # `sla_create` result, converted UTC -> Asia/Kuala_Lumpur.
+    expected_comment = (
+        f"Team: {item['team']}\n"
+        f"⏰ SLA Alert: This contact is routed to you at {_kl_fmt(sla_result['initiated_at'])}.\n"
+        f"You have until {_kl_fmt(sla_result['due_at'])} to respond.\n"
+        f"You have until {_kl_fmt(sla_result['due_at_resolution'])} to resolve.\n"
+        "Reference message: https://app.respond.io/space/364817/inbox/"
+        f"{ctx['contact']['id']}#{ctx['text']['message']['messageId']}"
+    )
+    assert comment["text"] == expected_comment
     assert "routed" in second_send["text"].lower() and "customer service" in second_send["text"].lower()
 
     for action in result["actions"]:
@@ -651,6 +697,10 @@ def test_pending_marker_written_for_company_clarify_and_none_for_assignment() ->
     company_ctx = _ctx(
         routing={"suggested_team": "customer_service"},
         prev_variables={
+            # See test_clarify_company_ask_always_in_reply: `routing` must be present or
+            # live's `sameTeam` gate never fires and the ladder cannot reach
+            # `multi_company_unpicked`.
+            "routing": {"suggested_team": "customer_service"},
             "selection_context": "member_offer",
             "last_result_set": [{"uuid": "m1"}],
             "routing_roster_plan": [
@@ -743,6 +793,15 @@ def test_out_of_scope_finishes_in_turn(session_factory, system_settings_row, mon
     setting.chatbot_completed_lanes = ["out_of_scope"]
     db.commit()
 
+    before_session_vars = db.execute(
+        text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"),
+        {"c": contact_id},
+    ).scalar()
+    before_count = db.execute(
+        text("SELECT count(*) FROM respond_contacts WHERE respond_io_id = :c"),
+        {"c": contact_id},
+    ).scalar()
+
     def fake_resolve_config(db, *, current_date):
         return parser_mod.ParserConfig(
             system_prompt="stub", prompt_version=1, provider="openai", model="gpt-test", api_key="sk-test"
@@ -798,7 +857,7 @@ def test_out_of_scope_finishes_in_turn(session_factory, system_settings_row, mon
     lane_actions = [
         {"kind": "send_message", "text": "Your request is out of scope...", "dry_run": False},
         {"kind": "assign_conversation", "respond_user_id": "respond-usr-1", "dry_run": False},
-        {"kind": "add_comment", "text": "Team: customer_service", "mention_user_ids": ["usr-1"], "dry_run": False},
+        {"kind": "add_comment", "text": "Team: customer_service", "mention_user_ids": ["respond-usr-1"], "dry_run": False},
         {"kind": "send_message", "text": "This inquiry has been routed...", "dry_run": False},
     ]
 
@@ -827,14 +886,184 @@ def test_out_of_scope_finishes_in_turn(session_factory, system_settings_row, mon
     assert result.branch_kind == "out_of_scope"
     assert result.delegate is None
     assert result.status == "done"
-    assert result.actions == lane_actions
+    # The tail's compose step is free to ENRICH a `send_message` action to the full
+    # transport-contract shape (`{text, quick_replies, result_set}`, plan "Transport
+    # contract") - checked as a subset match, not literal equality, so a normalisation like
+    # that isn't a false red.
+    assert [a["kind"] for a in result.actions] == [a["kind"] for a in lane_actions]
+    for actual, expected in zip(result.actions, lane_actions):
+        for key, value in expected.items():
+            assert actual.get(key) == value, f"action {key}: {actual.get(key)!r} != {value!r}"
+    # `escalate-catalog`'s `includeResponse: false` state text is TAIL bookkeeping (written
+    # to session_vars.response below), never a `send_message` action - see
+    # test_assignment_actions_in_order's docstring for the same distinction at the lane
+    # level.
+    for action in result.actions:
+        assert "Informed the user that request is out of scope" not in str(action)
 
     row = session_factory().query(ChatbotTurn).filter(ChatbotTurn.id == result.turn_id).first()
     assert row.status == "done", row.error
-    assert row.stage == "replied"
+    # `out_of_scope` runs the tail like every other CRM-completed lane (decision, 5 Sep
+    # 2026): today's n8n routes it through `tag-out-of-scope` -> `sub-output`, which
+    # persists the session (routing axes, the "Informed the user..." state text). `replied`
+    # is where the lane's reply/actions are composed; `remembered` is the tail's session
+    # write, one stage further. There is no `sent` stage - D9, the CRM never sends.
+    assert row.stage == "remembered"
     stages = [r["stage"] for r in row.trace]
-    assert stages == ["received", "understood", "access", "routed", "looked_up", "replied"]
+    assert stages == ["received", "understood", "access", "routed", "looked_up", "replied", "remembered"]
     assert all(r["status"] == "ok" for r in row.trace)
+
+    # The session write itself: same contact row (no new insert), but the stored
+    # session_vars actually changed - the tail wrote SOMETHING (routing axes and/or the
+    # state text at minimum), not a no-op pass-through of the `{"variables": {}}` seed.
+    after_count = session_factory().execute(
+        text("SELECT count(*) FROM respond_contacts WHERE respond_io_id = :c"),
+        {"c": contact_id},
+    ).scalar()
+    after_session_vars = session_factory().execute(
+        text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"),
+        {"c": contact_id},
+    ).scalar()
+    assert after_count == before_count == 1
+    assert after_session_vars != before_session_vars
+
+
+def test_out_of_scope_dry_run_carries_session_patch_and_writes_nothing(
+    session_factory, system_settings_row, monkeypatch
+) -> None:
+    """D14 extended to the tail: on a dry run the turn still runs the tail (so the reply and
+    actions are the real ones the customer would get), but the WRITE is replaced by handing
+    the would-be patch back on `TurnResponse.session_patch`, and `respond_contacts.
+    session_vars` is untouched - same guarantee `TestDryRun` already proves for the head-only
+    case in `test_engine.py`, now covering the tail S5 added."""
+    import json as _json
+
+    from sqlalchemy import text
+
+    from app.models.chatbot_turn import ChatbotTurn
+    from app.models.user import SystemSetting
+    from app.services.chatbot import engine as engine_mod
+    from app.services.chatbot.contracts import Envelope
+    from app.services.chatbot.head import parser as parser_mod
+
+    contact_id = "ZZT-esc-engine-dry-1"
+    db = session_factory()
+    db.execute(
+        text(
+            "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars) "
+            "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb))"
+        ),
+        {"cid": contact_id, "phone": "+60000000096", "sv": _json.dumps({"variables": {}})},
+    )
+    db.commit()
+
+    setting = db.query(SystemSetting).filter(SystemSetting.id == system_settings_row.id).one()
+    setting.chatbot_completed_lanes = ["out_of_scope"]
+    db.commit()
+
+    before_session_vars = db.execute(
+        text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"),
+        {"c": contact_id},
+    ).scalar()
+
+    def fake_resolve_config(db, *, current_date):
+        return parser_mod.ParserConfig(
+            system_prompt="stub", prompt_version=1, provider="openai", model="gpt-test", api_key="sk-test"
+        )
+
+    escalation_qf = {
+        "message_type": "request_for_help",
+        "intent_hint": "check_product",
+        "domain_hint": "master_products",
+        "scope_intent": "specific",
+        "is_affirmative": None,
+        "user_goal": "wants a human",
+        "access_levels": [],
+        "broaden_axis": None,
+        "date_mode": None,
+        "date_filter_start": None,
+        "date_filter_end": None,
+        "match_mode": "and",
+        "demand_qty": None,
+        "entities": [],
+        "entity_op": "replace_combine",
+        "scope_exclusive": False,
+        "requested_attributes": [],
+        "contains_flyer": False,
+        "reference_positions": [],
+        "reference_target": None,
+        "person_mention": None,
+        "is_active": None,
+        "order_status": None,
+        "correction": False,
+        "routing": {"suggested_team": "customer_service", "suggested_agent": "general_enquiries", "team_source": "inferred"},
+        "escalation": {"is_escalation_confirmation": True, "company_pick": None},
+    }
+
+    def fake_parse(config, user_block):
+        return escalation_qf
+
+    monkeypatch.setattr(parser_mod, "resolve_config", fake_resolve_config)
+    monkeypatch.setattr(parser_mod, "parse", fake_parse)
+    monkeypatch.setattr(
+        engine_mod,
+        "check_access",
+        lambda db, *, agent_code, contact_id, space_id: {
+            "allowed": True,
+            "decision": "allow",
+            "agent_name": "General Enquiries",
+            "attributes": None,
+            "all_attributes_allowed": None,
+        },
+    )
+    monkeypatch.setattr(engine_mod, "default_space_id", lambda db: "364817")
+
+    dry_lane_actions = [
+        {"kind": "send_message", "text": "Your request is out of scope...", "dry_run": True},
+        {"kind": "assign_conversation", "respond_user_id": "respond-usr-1", "dry_run": True},
+        {"kind": "add_comment", "text": "Team: customer_service", "mention_user_ids": ["respond-usr-1"], "dry_run": True},
+        {"kind": "send_message", "text": "This inquiry has been routed...", "dry_run": True},
+    ]
+
+    def fake_run_escalation_lane(ctx, item, *, dry_run=False):
+        assert dry_run is True, "H37: dry_run must reach the lane, not be dropped on the way in"
+        return {"arm": "human-intervention", "clarify": None, "actions": dry_lane_actions, "pending": None}
+
+    monkeypatch.setattr(engine_mod, "run_escalation_lane", fake_run_escalation_lane)
+
+    envelope = Envelope(
+        contact={"id": contact_id, "phone": "+60000000096", "custom_fields": []},
+        is_test=True,
+        message={
+            "event_type": "message.received",
+            "contact": {"id": contact_id},
+            "message": {
+                "messageId": "ZZT-esc-engine-dry-msg-1",
+                "contactId": contact_id,
+                "channelId": "whatsapp",
+                "traffic": "incoming",
+                "message": {"type": "text", "text": "I need to speak to a human"},
+            },
+        },
+    )
+    assert envelope.dry_run is True
+
+    result = engine_mod.run_turn(envelope, session_factory=session_factory)
+
+    assert result.status == "done"
+    assert result.delegate is None
+    assert all(a.get("dry_run") is True for a in result.actions)
+    assert result.session_patch is not None and isinstance(result.session_patch, dict)
+
+    after_session_vars = session_factory().execute(
+        text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"),
+        {"c": contact_id},
+    ).scalar()
+    assert after_session_vars == before_session_vars
+
+    row = session_factory().query(ChatbotTurn).filter(ChatbotTurn.id == result.turn_id).first()
+    assert row.is_test is True
+    assert row.stage == "remembered"
 
 
 def test_out_of_scope_seam_failure_fails_at_looked_up_with_no_partial_assignment(
