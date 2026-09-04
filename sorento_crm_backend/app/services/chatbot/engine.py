@@ -32,7 +32,7 @@ from sqlalchemy.orm import Session
 from app.models.chatbot_turn import ChatbotTurn
 from app.services.chatbot import jsc, trace as trace_mod
 from app.services.chatbot.contracts import TURN_FAILURE_STAGES, Envelope
-from app.services.chatbot.delegate import delegate_for
+from app.services.chatbot.delegate import delegate_for, enabled_lanes_from
 from app.services.chatbot.head import parser
 from app.services.chatbot.head.access import check_access, default_space_id
 from app.services.chatbot.head.build_ctx import build_ctx
@@ -346,7 +346,11 @@ def _duplicate_result(row: ChatbotTurn) -> TurnResult:
         ctx=response.get("ctx"),
         item=response.get("item"),
         branch_kind=row.branch_kind,
-        delegate=delegate_for(row.branch_kind) if row.branch_kind else None,
+        # D15: replay what the FIRST turn decided, never recompute it. The row's status
+        # already records it, and recomputing would hand a different answer back for the
+        # same message if `chatbot_completed_lanes` changed in between - which is the one
+        # thing a duplicate must not do.
+        delegate=row.branch_kind if row.status == "delegated" else None,
         delegate_payload=response.get("delegate_payload"),
         reply=response.get("reply"),
         actions=response.get("actions") or [],
@@ -614,7 +618,10 @@ def _run_stages(  # noqa: PLR0915
             media=getattr(envelope, "media", None),
         )[0]["json"]["ctx"]
 
+        # Both switches read on the session that is ALREADY open - no extra session, and
+        # nothing is read again later in the turn.
         stock_denial_enabled = _stock_denial_enabled(db)
+        enabled_lanes = _enabled_lanes(db)
         branch_kind, tier_stamp = decide(ctx, stock_denial_enabled=stock_denial_enabled)
         item = _stamp_item(access, branch_kind, tier_stamp)
 
@@ -626,6 +633,8 @@ def _run_stages(  # noqa: PLR0915
                 "lane": branch_kind,
                 "tier_pick": tier_stamp.get("tier_pick"),
                 "stock_denial_enabled": stock_denial_enabled,
+                # Why this turn went to n8n or did not, without reading the settings row.
+                "lane_completed_by_crm": branch_kind in enabled_lanes,
             },
             raw={"item": item},
         )
@@ -643,15 +652,22 @@ def _run_stages(  # noqa: PLR0915
         # provider I/O" rule. Named rather than hidden: S6b moves fetch into its own stage
         # and is where the split belongs, because it adds the MCP call this lane does not
         # yet make.
-        delegate = delegate_for(branch_kind)
+        delegate = delegate_for(branch_kind, enabled_lanes)
+        completes_here = delegate is None
 
         # S4: the low_signal lane finishes INSIDE the CRM, and its model call must not
         # run with a session open. Everything it needs from the database is read here,
         # while one already is; `_run_casual_lane` below does the rest with none.
+        #
+        # Gated on `completes_here`, not on the branch kind alone: while the lane is off in
+        # `chatbot_completed_lanes` this turn belongs to n8n, and running the clarifier
+        # anyway would spend a model call and the customer's time on an answer nobody
+        # reads. Shadow mode compares the two lanes by REPLAYING captures, not by paying
+        # for every live turn twice.
         clarifier_prompt: dict[str, Any] | None = None
         clarifier_config: Any = None
         clarifier_setup_error: str | None = None
-        if branch_kind == "low_signal":
+        if branch_kind == "low_signal" and completes_here:
             try:
                 resolved = casual.resolve_for_prompt(db, ctx=ctx)
                 clarifier_prompt = casual.construct_user_prompt(ctx, resolved)
@@ -733,10 +749,12 @@ def _run_stages(  # noqa: PLR0915
         # `routed`, so `WHERE stage = 'looked_up' AND status IN ('delegated','done')` is
         # the operator's query, and `response.delegate_error` beside it carries the reason
         # (`ENTITY_PIN_MISMATCH` included, which arrives here as an AppException).
-        # `low_signal` is the exception: its turn is not finished yet, so closing it
-        # here would record a `done` turn before the reply exists (and `_close_turn` is
-        # write-once). `_run_casual_lane` closes it after the clarifier answers.
-        if branch_kind != "low_signal":
+        # The lane the CRM is finishing is the exception: its turn is not over yet, so
+        # closing it here would record a `done` turn before the reply exists (and
+        # `_close_turn` is write-once). `_run_casual_lane` closes it after the clarifier
+        # answers. With the lane switched off there is nothing to wait for and this closes
+        # as `delegated`, exactly as it did before S4.
+        if not (branch_kind == "low_signal" and completes_here):
             _close_turn(
                 db,
                 turn_id,
@@ -758,7 +776,7 @@ def _run_stages(  # noqa: PLR0915
                 },
             )
 
-    if branch_kind == "low_signal":
+    if branch_kind == "low_signal" and completes_here:
         return _run_casual_lane(
             turn_id=turn_id,
             ctx=ctx,
@@ -959,6 +977,24 @@ def _stock_denial_enabled(db: Session) -> bool:
 
     row = db.query(SystemSetting).first()
     return bool(getattr(row, "chatbot_stock_denial_enabled", False)) if row is not None else False
+
+
+def _enabled_lanes(db: Session) -> frozenset[str]:
+    """`system_settings.chatbot_completed_lanes`: which lanes the CRM may FINISH.
+
+    Empty by default, so a newly deployed lane delegates to n8n until the owner turns it
+    on, and an absent settings row means "none" rather than "all" - the safe direction.
+
+    A SECOND read of the same singleton, deliberately, rather than folding both flags into
+    one query: `_stock_denial_enabled` is patched BY NAME in
+    `test_engine_failure_paths.py`, and merging the two would have meant either editing
+    that test or hiding the seam it patches. One extra single-row SELECT on the session
+    that is already open is the cheaper trade.
+    """
+    from app.models.user import SystemSetting
+
+    row = db.query(SystemSetting).first()
+    return enabled_lanes_from(getattr(row, "chatbot_completed_lanes", None)) if row else frozenset()
 
 
 # Luxon's `cccc, dd MMMM yyyy` is English regardless of where the process runs. Python's

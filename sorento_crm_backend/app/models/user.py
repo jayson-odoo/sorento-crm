@@ -526,6 +526,20 @@ class SystemSetting(Base):
     # have been dead by typo since they were written (0/150 live fixtures). Turning them
     # on is therefore a DATA change with a test, not a surprise on deploy. Default off.
     chatbot_stock_denial_enabled = Column(Boolean, nullable=False, server_default="false", default=False)
+    # Which lanes the CRM is allowed to FINISH, by `branch_kind`, one at a time.
+    #
+    # `contracts.CRM_COMPLETED_BRANCH_KINDS` says what the code CAN complete; this says
+    # what it MAY. A lane has to be in both, so shipping a lane and switching it on are
+    # two separate events: the code deploys inert, the owner compares it against n8n's
+    # answer for as long as they like, and then flips one string. Default `[]` means the
+    # CRM completes nothing and every turn delegates exactly as it does today, which is
+    # what makes a lane deploy safe on its own.
+    #
+    # A JSON array rather than a column per lane: there are thirteen branch kinds and this
+    # is one decision repeated, not thirteen different ones. An unknown string in the list
+    # is ignored with a warning rather than raising, because this is operator data and a
+    # typo must not take the turn engine down.
+    chatbot_completed_lanes = Column(JSONB, nullable=False, server_default="[]", default=list)
 
 
 class UserQuickAccess(Base):
