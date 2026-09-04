@@ -15,7 +15,7 @@ import {
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateInMalaysia } from '@/lib/helpers';
-import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
+import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { usePileQueue } from '../../_shared/hooks/useFulfilmentPlanning';
 import { aheadFactorLabel } from '../../_shared/lib/fulfilmentBoard';
 import type { PileQueueLine } from '../../_shared/types/fulfilmentPlanning.types';

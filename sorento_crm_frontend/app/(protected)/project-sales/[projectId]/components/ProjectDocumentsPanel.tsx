@@ -29,7 +29,7 @@ import {
   resolveProjectDocumentTypeId,
   uploadProjectDocument,
 } from '../../_shared/services/projectDocumentService';
-import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
+import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import type { Project } from '../../_shared/types/project.types';
 
 /**

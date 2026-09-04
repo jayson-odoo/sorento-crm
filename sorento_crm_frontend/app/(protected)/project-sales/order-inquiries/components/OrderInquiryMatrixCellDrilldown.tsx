@@ -11,7 +11,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 
-import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
+import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import type { OrderInquiryMatrixCell } from '../../_shared/types/orderInquiry.types';
 import { useOrderInquiryWorklistColumns } from './orderInquiryWorklistColumns';
 

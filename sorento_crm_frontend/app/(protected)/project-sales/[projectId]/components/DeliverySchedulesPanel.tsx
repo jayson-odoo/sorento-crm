@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
-import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
+import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { usePurchaseOrders } from '../../_shared/hooks/useProjects';
 import {

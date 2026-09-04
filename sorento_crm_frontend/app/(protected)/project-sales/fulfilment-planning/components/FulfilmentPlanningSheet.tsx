@@ -28,7 +28,7 @@ import {
   useReconciliation,
   useReconciliationMutations,
 } from '../../_shared/hooks/useFulfilmentPlanning';
-import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
+import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { ReviewStatePill } from '../../_shared/components/ReviewStatePill';
 import type {
   FulfilmentPlanningRow,

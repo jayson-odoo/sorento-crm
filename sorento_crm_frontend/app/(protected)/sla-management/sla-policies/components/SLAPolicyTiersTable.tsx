@@ -21,14 +21,7 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { useSLAPolicyTiers } from '../hooks/useSLAPolicies';
 import SLAPolicyTierDialog from './SLAPolicyTierDialog';
 import SLAPolicyTierDeleteDialog from './sla-policy-tier-delete-dialog';
@@ -74,6 +67,35 @@ function useUsersByTier(tierLevels: number[]) {
   }, [data?.data, tierLevels]);
 }
 
+type TierUser = { id: string; name?: string | null; email: string };
+
+const TIER_USER_COLUMNS: ColumnDef<TierUser>[] = [
+  {
+    id: 'name',
+    accessorFn: (row) => row.name ?? '',
+    header: ({ column }) => <DataGridColumnHeader title="Name" column={column} />,
+    cell: ({ row }) => (
+      <span className="truncate font-medium" title={row.original.name?.trim() || '-'}>
+        {row.original.name?.trim() || '-'}
+      </span>
+    ),
+    size: 200,
+    meta: { headerTitle: 'Name' },
+  },
+  {
+    id: 'email',
+    accessorFn: (row) => row.email,
+    header: ({ column }) => <DataGridColumnHeader title="Email" column={column} />,
+    cell: ({ row }) => (
+      <span className="truncate text-muted-foreground" title={row.original.email}>
+        {row.original.email}
+      </span>
+    ),
+    size: 240,
+    meta: { headerTitle: 'Email' },
+  },
+];
+
 /** Fetches and lists users for a single tier in the sheet */
 function TierUsersSheetContent({ tierLevel }: { tierLevel: number }) {
   const { data, isLoading, error } = useQuery({
@@ -90,32 +112,16 @@ function TierUsersSheetContent({ tierLevel }: { tierLevel: number }) {
 
   return (
     <div className="flex-1 overflow-auto py-4">
-      {isLoading ? (
-        <div className="text-sm text-muted-foreground">Loading users...</div>
-      ) : error ? (
-        <div className="text-sm text-destructive">
-          {error instanceof Error ? error.message : 'Failed to load users'}
-        </div>
-      ) : users.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No users assigned to this tier.</p>
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Email</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {users.map((u) => (
-              <TableRow key={u.id}>
-                <TableCell className="font-medium">{u.name?.trim() || '-'}</TableCell>
-                <TableCell className="text-muted-foreground">{u.email}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
+      <PanelDataGrid<TierUser>
+        columns={TIER_USER_COLUMNS}
+        rows={users}
+        getRowId={(row) => row.id}
+        listingKey={`sla_management.sla_policies.view::tier-${tierLevel}-users`}
+        isLoading={isLoading}
+        error={error ?? undefined}
+        emptyTitle="No users assigned to this tier."
+        scrollerMaxHeight={false}
+      />
     </div>
   );
 }

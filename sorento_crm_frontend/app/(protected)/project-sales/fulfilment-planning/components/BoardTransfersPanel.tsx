@@ -19,7 +19,7 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useHasPermission } from '@/hooks/usePermissions';
-import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
+import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import {
   useBoardTransferMutations,
   useBoardTransfers,
