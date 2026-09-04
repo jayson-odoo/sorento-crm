@@ -124,19 +124,31 @@ def _enable_stock_denial(session_factory, system_settings_row) -> None:
 
 
 def _setup_escalate_offer(session_factory, monkeypatch) -> tuple[Envelope, str]:
-    """`is_explicit_correction()`: a correction that is not casual/business_query."""
+    """`is_explicit_correction()`: a correction that is not casual/business_query.
+
+    `output_exchange.derive_routing`'s nullish chain only lets the LLM's own
+    `routing.suggested_team` through on a `request_for_help` turn; this scenario
+    is `message_type = "unknown"`, so that chain falls through to the PRIOR
+    turn's `routing.suggested_team` (rank 3, before the hard "customer_service"
+    default) - carried session state, not the current turn's LLM output. The raw
+    parser `routing` override below is therefore irrelevant to the final team
+    (left null so nothing here implies otherwise); `routing.suggested_team` is
+    seeded on the SESSION instead, which also proves the carry (coder-confirmed
+    live behaviour, round 3 review of this file).
+    """
     overrides = _parser_output(
         message_type="unknown",
         domain_hint=None,
         correction=True,
-        routing={"suggested_team": "purchasing", "suggested_agent": None},
+        routing={"suggested_team": None, "suggested_agent": None},
         escalation={"is_escalation_confirmation": False, "company_pick": None},
     )
+    session_vars = {"routing": {"suggested_team": "purchasing", "suggested_agent": None}}
     expected = (
         "I am sorry the provided answer does not meet your requirements. "
         "Would you like me to escalate to purchasing team?"
     )
-    return overrides, None, expected
+    return overrides, session_vars, expected
 
 
 def _setup_escalation_declined(session_factory, monkeypatch) -> tuple[dict, Any, str]:
@@ -351,9 +363,17 @@ class TestAccessDeniedNoSessionWrite:
         self, session_factory, seeded, system_settings_row, stub_parser, stub_access
     ):
         _seed_completed_lanes(session_factory, system_settings_row)
+        # `derive_routing`'s nullish chain only lets the LLM's raw `routing.suggested_agent`
+        # through on a `request_for_help` turn (coder-confirmed live behaviour); any other
+        # message_type gets replaced by deriveRouting's `general_enquiries` default before
+        # the em-dash fold ever runs, which is why this scenario needs it set explicitly.
+        # The em dash itself is built from `chr(0x2014)`, not a literal, per the repo's
+        # dash guard.
+        em_dash = chr(0x2014)
         stub_parser(
             _parser_output(
-                routing={"suggested_team": None, "suggested_agent": "general—enquiries"}
+                message_type="request_for_help",
+                routing={"suggested_team": None, "suggested_agent": f"general{em_dash}enquiries"},
             )
         )
         stub_access(allowed=False, decision="deny_unknown_agent")
