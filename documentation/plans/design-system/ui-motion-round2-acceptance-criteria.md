@@ -392,6 +392,29 @@ Baseline measured on `origin/main` e1adad4d2, 2 Sep 2026.
   on a form) with a dedicated focus-retention test proving typing into a cell, and appending a
   row, keep the same input identity a hand-rolled `<table>` keyed by `field.id` did. Final
   allowlist: the three permanent exemptions above, nothing else.
+  **Review fix (M5 run 3 review, SF-5/SF-6):** the focus-retention claim above held for typing
+  and for row-append in isolation, but not together: `fields.length` sat in BOTH line tables'
+  columns `useMemo` deps (`PurchaseRequestForm.tsx`, `PurchaseRequestDocumentEditCard.tsx`), so
+  an append or remove recreated every cell type and remounted every input - values survived
+  (react-hook-form owns them), input IDENTITY did not. The delete button's
+  `disabled={fields.length <= 1}` is the only place inside the memo that read `fields.length`;
+  it now reads `table.getRowModel().rows.length` off the `CellContext` instead, and `fields.length`
+  is out of both deps arrays. Corrected claim: typing into row 1, THEN appending a row, keeps row
+  1's value AND its input node identity - proven by a new test in each `*.lineItems.test.tsx`
+  (`PurchaseRequestForm.lineItems.test.tsx`, `PurchaseRequestDocumentEditCard.lineItems.test.tsx`,
+  the latter's harness now also calling `form.watch('products')` so it re-renders on every
+  keystroke the way the real parent, `PurchaseRequestForm`, does - without that the harness never
+  re-rendered while typing and could not tell a memo keyed on `fields.length` apart from one that
+  is not).
+  **Ruling (M5 run 3 review, SF-8):** `PanelDataGrid`'s default `pageSize = 10` paginates detail
+  sections that previously rendered every row. A line table ON A DOCUMENT (an order's own lines,
+  a purchase request's own line items, a container's own source invoices) renders every row -
+  `PanelDataGrid` gains a `paginate` prop (default `true`, unchanged for the other ~15 callers);
+  `paginate={false}` sets `pageSize` to `Number.MAX_SAFE_INTEGER` and hides the pager. Applied to
+  `OrderLinesCard.tsx`, `PurchaseRequestDetail.tsx` (`PurchaseRequestLineItemsGrid`) and
+  `SourceProformaInvoicesCard.tsx`. `GRNDetail.tsx`'s picking lines and the two react-hook-form
+  line tables above were already unaffected - all three render on a plain `DataGrid` with
+  `getCoreRowModel` only, no pagination row model at all.
 - **M5-07** `[UX] [vitest] [browser]` **Back to list restores the row, absolute rule.** A row
   click appends `from=<row id>` to the detail href; Back, the post-delete push and Edit all
   carry it; on list mount the row with that id is scrolled into view (`block: 'center'`) and
@@ -431,6 +454,27 @@ Baseline measured on `origin/main` e1adad4d2, 2 Sep 2026.
   first pointer event re-armed its own highlight). Now resolved ONCE per rendered grid
   (`DataGridTable`/`DataGridTableDnd`/`DataGridTableDndRows`) and passed down as a prop; a
   `keydown` listener clears it alongside `pointerdown`, hence "next pointer OR key event" above.
+  **Review fix (M5 run 3 review, BL-2):** the history rewrite REPLACED the list's entire URL
+  search with the detail href's own search, which has two failure modes proven against real call
+  sites. (a) it wiped any param the list reads off its own URL but never echoes into `rowHref` -
+  `GRNList.tsx` reads `spo_allocation_id` off its own URL (`GRNList.tsx:48`) but its `rowHref`
+  (`:94-107`) never carries it, so Back landed on the unfiltered GRN list; `PurchaseOrdersList.tsx`'s
+  `documents` filter (`:155`) has the same shape. (b) it fired even when the grid is not the
+  current route's OWN list at all - `SeenInProductsTab.tsx`'s `rowHref` (`:91-92`) points at
+  `/master-data-management/products/${id}`, not a child of the spec-key detail route
+  (`SpecKeyRecordDetail.tsx`) it renders inside, so a row click there clobbered THAT page's own
+  pager state (`page=1&limit=10` from the tab) onto the spec-key detail page's URL. Two rules fix
+  both, in one place (`data-grid-table.tsx`'s `LinkableBodyRow`): (a) seed the replacement from
+  `new URLSearchParams(window.location.search)` (the list's CURRENT params) and `.set()` onto it
+  only the reserved list-state keys (`RESERVED_LIST_STATE_KEYS`: `page`, `limit`, `sort`, `dir`,
+  `query`, `advFilter`, `from`), read off the already-built detail href - every other existing
+  param survives untouched; (b) only rewrite when the detail href's path starts with
+  `window.location.pathname + '/'` (a child route of the current page) - anywhere else, history is
+  left alone entirely. Tests added to `data-grid-table.listState.test.tsx`: a list that arrived
+  with `?spo_allocation_id=X&page=2` keeps `spo_allocation_id` and gains `from` plus the grid's own
+  current page (`page=1`, from table state, overriding the stale `page=2` the URL arrived with); a
+  grid whose `rowHref` points outside the current pathname does not call `replaceState` at all. The
+  three run-1 tests (call order, middle-click, keyboard Enter) still pass unchanged.
 - **M5-08** `[review]` `DESIGN-LANGUAGE.md` sections 4 and 7 and
   `documentation/reference/PR-CHECKLIST.md` state both rules; a new list without them is a
   checklist failure.

@@ -21,7 +21,8 @@ primitive), M5-03 (`ListPageSkeleton` row/header geometry now matches `data-grid
 exactly; its title/crumb order was corrected against the real `PageHeader.tsx` DOM order rather
 than the brief's assumed one - see the coder's note in the commit and in the UAC), M5-04
 (`app/(protected)/error.tsx` + `not-found.tsx`, render inside the shell). M5 run 3 of 3 done
-(same branch): all 27 M5-06 allowlist entries migrated to `DataGrid`, one module per commit -
+(same branch): 24 of the 27 M5-06 allowlist entries migrated to `DataGrid` (the other 3
+permanently exempt, below), one module per commit -
 `PanelDataGrid` moved from `project-sales/_shared/components` to `components/common` (its first
 caller outside project-sales, in the SLA commit) since 18+ callers across modules now share it.
 The "inline editing may prove a real blocker" concern on `OrderLinesCard.tsx`,
@@ -33,6 +34,15 @@ row-append keep the same input identity a hand-rolled `<table>` did. Only the th
 M5-06 exemptions (two `app/(auth)` portal pages, `ReportPivotTable.tsx`) remain allowlisted.
 M5 is now fully built; still open: browser re-verification of the full run-3 diff (not yet
 walked in `agent-browser`, unlike runs 1-2).
+**M5 run 3 review (Phase 3) fixed:** BL-2 (`data-grid-table.tsx`'s history rewrite now merges
+into the list's own URL params rather than replacing them, and only rewrites when the row's
+detail href is a child route of the list - see M5-07 note below), BL-1 (scroller guardrail
+enumeration missed `SLAPolicyTiersTable.tsx`), SF-1 through SF-8 (dialog scroller opt-out on
+`AttachmentDetailModal.tsx`, restored header tooltips, right-aligned numeric headers across six
+files, `SourceProformaInvoicesCard`'s Card-in-Card, `PanelDataGrid` gains a `paginate` prop so a
+document's own line table renders every row, `fields.length` out of two columns memo deps, a
+missing bulk-delete test on `TicketsList`) - see `685345d9a`. **M5 code is now complete; still
+open: the browser walk of run 3 (tester next).**
 **UAC:** `documentation/plans/design-system/ui-motion-round2-acceptance-criteria.md`
 **Audit reports:** session scratchpad `audit-A-existing-motion.md` (36 rows, `/review-animations`
 verdict Block, narrow), `audit-B-opportunities.md` (6 survivors, 10 rejects),
