@@ -110,6 +110,20 @@ class RecordResult:
     # overwritten (a create), which is a different statement from an empty dict
     # (an existing row matched, but no value actually changes).
     diff: Optional[dict[str, dict[str, Any]]] = None
+    # Fixed-vocabulary notices that do not fail the record - e.g. a back-created
+    # customer or an unresolved warehouse NULLed onto the line (D9/D10). Same
+    # rule as `errors`: omitted from `as_dict()` when empty.
+    warnings: list[str] = field(default_factory=list)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "source_ref": self.source_ref,
+            "outcome": self.outcome.value,
+            "entity_id": self.entity_id,
+            **({"errors": self.errors} if self.errors else {}),
+            **({"diff": self.diff} if self.diff is not None else {}),
+            **({"warnings": self.warnings} if self.warnings else {}),
+        }
 
 
 @dataclass
@@ -146,16 +160,7 @@ class IngestResult:
                 "failed": self.failed,
                 "retryable": self.retryable,
             },
-            "records": [
-                {
-                    "source_ref": r.source_ref,
-                    "outcome": r.outcome.value,
-                    "entity_id": r.entity_id,
-                    **({"errors": r.errors} if r.errors else {}),
-                    **({"diff": r.diff} if r.diff is not None else {}),
-                }
-                for r in self.records
-            ],
+            "records": [r.as_dict() for r in self.records],
         }
 
 

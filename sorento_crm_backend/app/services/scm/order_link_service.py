@@ -215,6 +215,10 @@ SOURCE_PO_UPLOAD = "po_upload"
 #: The audit row `ProjectOrderInquiryService._write_link` writes beside every placement.
 SOURCE_ORDER_INQUIRY = "order_inquiry"
 
+#: The ESB naming an SO/PO pairing via `from_so_numbers` on a pushed document
+#: (V4, migration 473_scm_claim_autocount_source).
+SOURCE_AUTOCOUNT = "autocount"
+
 
 def find_claim(
     db: Session,

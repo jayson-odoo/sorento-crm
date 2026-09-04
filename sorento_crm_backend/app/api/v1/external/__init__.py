@@ -48,6 +48,7 @@ from app.api.v1.external import (
     ideation,
     ingest,
     media,
+    contract,
 )
 
 router = APIRouter()
@@ -245,4 +246,10 @@ router.include_router(
     prefix="/media",
     tags=["external"],
     dependencies=[Depends(require_external_permission(EXTERNAL_ENDPOINT_PERMISSIONS["media"]))],
+)
+router.include_router(
+    contract.router,
+    prefix="/contract",
+    tags=["external"],
+    dependencies=[Depends(require_external_permission(EXTERNAL_ENDPOINT_PERMISSIONS["contract"]))],
 )

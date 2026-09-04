@@ -141,6 +141,7 @@ EXTERNAL_ENDPOINT_PERMISSIONS: dict[str, str] = {
     "memory": "integration.conversation_context.edit",
     "ideation": "integration.ideation.submit",
     "media": "integration.chatbot_media.process",
+    "contract": "integration.contract.read",
 }
 
 # Slugs invented for this surface because no human-facing equivalent existed.
@@ -183,6 +184,14 @@ NEW_INTEGRATION_PERMISSIONS: list[dict] = [
             "Submit an inbound WhatsApp photo or voice note for gating, metering and "
             "extraction. Spends extraction budget, so it is its own slug rather than "
             "a reused contact or search permission."
+        ),
+    },
+    {
+        "slug": "integration.contract.read",
+        "name": "Read ingest contract",
+        "description": (
+            "Read the AutoCount ESB ingest contract version and supported entity list "
+            "(D8). Granted to every role holding scm.sales_orders.edit by migration 472."
         ),
     },
 ]

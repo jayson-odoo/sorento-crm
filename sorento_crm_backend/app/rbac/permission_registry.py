@@ -337,6 +337,9 @@ PERMISSION_REGISTRY.extend([
     # automatically allowed to charge a photo read to a dealer's allowance.
     # Granted to already-provisioned roles by migration 357.
     {"slug": "integration.chatbot_media.process", "name": "Process chatbot media", "description": "Submit an inbound WhatsApp photo or voice note for gating, metering and extraction."},
+    # AutoCount ingest contract version (D8, PLAN-autocount-document-ingest-v2). Granted
+    # to every role holding `scm.sales_orders.edit` by migration 472.
+    {"slug": "integration.contract.read", "name": "Read ingest contract", "description": "Read the AutoCount ESB ingest contract version and supported entity list."},
 ])
 
 # System
@@ -688,6 +691,10 @@ PERMISSION_REGISTRY.extend([
 # source row to copy. Declared here, `sync_permissions` materialises them at startup.
 PERMISSION_REGISTRY.extend(_crud("scm", "sales_orders", "SCM Sales Orders"))
 PERMISSION_REGISTRY.extend(_crud("scm", "purchase_orders", "SCM Purchase Orders"))
+# The shipping-order entity the ESB pushes from slice S3 (PLAN-autocount-document-ingest-v2).
+# Same shape and same reason as the two above; swept by migration 472 onto every role
+# holding the matching `scm.purchase_orders.*` slug.
+PERMISSION_REGISTRY.extend(_crud("scm", "shipping_orders", "SCM Shipping Orders"))
 
 
 # Dealer Kit - price tag requests + tag templates.

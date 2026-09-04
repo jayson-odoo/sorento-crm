@@ -112,6 +112,12 @@ MAX_BATCH = 1000
 # become reachable here by being spelled correctly in this file.
 SUPPORTED_ENTITIES = set(ENTITY_SPECS) | set(DOCUMENT_ENTITIES)
 
+# Bumped whenever the wire shape of an entity changes in a way the ESB must gate
+# on (a new required field, a changed enum). Read by `GET /external/contract`
+# (D8) so the ESB can check compatibility without trial-and-error against this
+# router.
+CONTRACT_VERSION = 2
+
 
 def _entity(entity: str) -> str:
     if entity not in SUPPORTED_ENTITIES:
