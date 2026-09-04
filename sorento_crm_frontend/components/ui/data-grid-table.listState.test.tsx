@@ -336,6 +336,55 @@ describe('LinkableBodyRow rewrites the list\'s own history entry before pushing 
     expect(replaced.searchParams.get('from')).toBe('a2');
     expect(push).toHaveBeenCalledTimes(1);
   });
+
+  it('BL-2: keeps a param the list reads off its own URL but never echoes into rowHref, and gains from + the grid\'s own page', () => {
+    // GRNList reads `spo_allocation_id` off its own URL (GRNList.tsx:48) but
+    // its `rowHref` (:94-107) never carries it - a naive replace wiped it.
+    setLocationSearch('spo_allocation_id=X&page=2');
+    const replaceStateSpy = vi.spyOn(window.history, 'replaceState');
+
+    render(<ListHarness />);
+    fireEvent.click(screen.getByText('Beta'));
+
+    expect(replaceStateSpy).toHaveBeenCalledTimes(1);
+    const url = replaceStateSpy.mock.calls[0][2] as string;
+    const replaced = new URL(url, 'http://localhost');
+    expect(replaced.searchParams.get('spo_allocation_id')).toBe('X');
+    expect(replaced.searchParams.get('from')).toBe('a2');
+    // The grid's own current page (from table state, page 1 by default) wins
+    // over the stale `page=2` the list arrived with.
+    expect(replaced.searchParams.get('page')).toBe('1');
+  });
+
+  it('BL-2: does not touch history when rowHref points outside the current pathname (grid embedded on another page)', () => {
+    function EmbeddedHarness() {
+      const table = useReactTable({
+        data: ROWS,
+        columns: COLUMNS,
+        getRowId: (r) => r.id,
+        getCoreRowModel: getCoreRowModel(),
+      });
+      return (
+        <DataGrid
+          table={table}
+          recordCount={ROWS.length}
+          isLoading={false}
+          rowHref={(r) => `/master-data-management/product-specifications/${r.id}`}
+          tableLayout={{ width: 'fixed', columnsResizable: true }}
+        >
+          <DataGridTable />
+        </DataGrid>
+      );
+    }
+    setLocationSearch('');
+    const replaceStateSpy = vi.spyOn(window.history, 'replaceState');
+
+    render(<EmbeddedHarness />);
+    fireEvent.click(screen.getByText('Beta'));
+
+    expect(replaceStateSpy).not.toHaveBeenCalled();
+    expect(push).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('useHrefWithListState forwards from unchanged (M5-07)', () => {

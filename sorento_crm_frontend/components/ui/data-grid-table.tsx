@@ -69,6 +69,14 @@ function splitHref(href: string): { path: string; search: string; hash: string }
   return { path, search, hash };
 }
 
+/**
+ * The only params `LinkableBodyRow`'s history rewrite (M5-07/BL-2) is allowed
+ * to touch on the LIST's own URL. Everything else already there (a filter the
+ * list reads off its own URL but never echoes into `rowHref` - e.g. GRNList's
+ * `spo_allocation_id`) survives untouched. `from` is the M5-07 restore id.
+ */
+const RESERVED_LIST_STATE_KEYS = ['page', 'limit', 'sort', 'dir', 'query', 'advFilter', 'from'];
+
 /** The list's own page/sort/query state, in the param shape `appendListState` writes into a detail href. */
 function listStateParams<TData>(table: Table<TData>): URLSearchParams {
   const state = table.getState();
@@ -594,20 +602,48 @@ function LinkableBodyRow({
       // without this stayed the bare URL from first mount (no page, no `from`),
       // so Back silently reset to page 1 with the row never highlighted.
       //
-      // `history.replaceState` rewrites that entry in place, BEFORE the push,
-      // reusing the same search `appendListState` already built into `href`
-      // (page/sort/query/filters + `from=<this row's id>`) - one param
-      // builder, so the list's own history entry and the detail href it is
-      // about to carry the reader to cannot disagree. `history.state` is
-      // passed through unchanged so Next's own router state on this entry
-      // survives the rewrite. Not `router.replace`: that re-renders the list
-      // (and can refetch) for a navigation that is about to leave it anyway.
-      const { search } = splitHref(href);
-      window.history.replaceState(
-        window.history.state,
-        '',
-        `${window.location.pathname}${search ? `?${search}` : ''}`,
-      );
+      // BL-2 (M5 run 3 review): a naive rewrite that just REPLACED the list's
+      // own URL search with `href`'s search (the DETAIL page's query) had two
+      // bugs. (a) it wiped any param the list reads off its own URL but never
+      // echoes into `rowHref` - GRNList's `spo_allocation_id`, for one - so
+      // Back landed on the unfiltered list. (b) it fired even when this grid
+      // is not this route's own list at all (a `PanelDataGrid` embedded on a
+      // detail page's own tab, e.g. `SeenInProductsTab` inside
+      // `SpecKeyRecordDetail`), clobbering THAT page's own pager state with
+      // the tab grid's page/limit.
+      //
+      // Two rules fix both, in one place:
+      //   (a) start from the list's CURRENT URL params, not an empty object,
+      //       and `.set()` only the reserved list-state keys
+      //       (`RESERVED_LIST_STATE_KEYS`, read off the already-built detail
+      //       href, which is where `appendListState` put them) plus `from` -
+      //       every other existing param survives.
+      //   (b) only rewrite when the detail href is a CHILD route of the
+      //       current page (`<pathname>/<id>`); anywhere else, this is not
+      //       "this page's list" and its row click must not touch this
+      //       page's history entry at all.
+      //
+      // `history.replaceState` (not `router.replace`, which would re-render
+      // and can refetch a list that is about to be left anyway) rewrites the
+      // entry in place, BEFORE the push. `history.state` is passed through
+      // unchanged so Next's own router state on this entry survives.
+      const { path: detailPath, search: detailSearch } = splitHref(href);
+      const isListsOwnRoute = detailPath.startsWith(`${window.location.pathname}/`);
+      if (isListsOwnRoute) {
+        const detailParams = new URLSearchParams(detailSearch);
+        const nextParams = new URLSearchParams(window.location.search);
+        for (const key of RESERVED_LIST_STATE_KEYS) {
+          const value = detailParams.get(key);
+          if (value !== null) nextParams.set(key, value);
+          else nextParams.delete(key);
+        }
+        const nextSearch = nextParams.toString();
+        window.history.replaceState(
+          window.history.state,
+          '',
+          `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ''}`,
+        );
+      }
       router.push(href);
     }
   };
