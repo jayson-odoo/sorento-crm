@@ -1,0 +1,143 @@
+{
+ "source": {
+  "hand_crafted": true,
+  "expected_from": "reasoned",
+  "rationale": "The tier ask's answer turn. prevState.selection_context is 'tier_offer' and the roster rows carry TIER values, so a bare '2' must resolve to a TIER TOKEN in access_levels, never to an entity. Reasoned from tierOfferPick: the LLM tagged the reply casual with no positions, so the block extracts the digits itself (the digits-and-connectives regex), maps idx 2 to the roster's 'office' row, and writes access_levels ['office'] in TIER_ORDER order. Part (c) then carries the ORIGINAL query scope forward - prev entities come back current_message:false with entity_op 'reuse' and _tier_pick_scope_reused - and the turn is re-stamped promotion / check_promotion / business_query with scope_intent null. reference_positions/target are CLEARED so the positions were not also minted as entities off the roster. Finally _tier_pick_scope_reused:true is exactly the D11 exemption, so _pending_pick must be ABSENT."
+ },
+ "ctx": {
+  "When Executed by Another Workflow": [
+   {
+    "json": {
+     "latest_user_message": "2",
+     "contact_id": 900000003,
+     "previous_conversation_state": {
+      "selection_context": "tier_offer",
+      "domain_hint": "promotion",
+      "intent_hint": "check_promotion",
+      "routing": {
+       "suggested_team": "marketing_promotion",
+       "suggested_agent": "general_enquiries"
+      },
+      "response": "Which price tier should I use?",
+      "last_result_set": [
+       {
+        "idx": 1,
+        "tier": "dealer",
+        "label": "Dealer"
+       },
+       {
+        "idx": 2,
+        "tier": "office",
+        "label": "Office"
+       }
+      ],
+      "entities": [
+       {
+        "raw": "CBS212-WH",
+        "hint": "product",
+        "canonical_code": "CBS212-WH",
+        "current_message": true
+       }
+      ]
+     },
+     "is_test": null,
+     "mock_reformulator_output": null
+    }
+   }
+  ]
+ },
+ "input": [
+  {
+   "json": {
+    "output": "{\"message_type\":\"casual\",\"intent_hint\":null,\"domain_hint\":null,\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":null,\"suggested_agent\":null},\"escalation\":{\"is_escalation_confirmation\":false}}"
+   }
+  }
+ ],
+ "runIndex": 0,
+ "expected": [
+  {
+   "json": {
+    "output": {
+     "message_type": "business_query",
+     "intent_hint": "check_promotion",
+     "domain_hint": "promotion",
+     "scope_intent": null,
+     "is_affirmative": null,
+     "user_goal": "",
+     "access_levels": [
+      "office"
+     ],
+     "date_mode": null,
+     "date_filter_start": null,
+     "date_filter_end": null,
+     "match_mode": "and",
+     "demand_qty": null,
+     "entities": [
+      {
+       "raw": "CBS212-WH",
+       "hint": "product",
+       "canonical_code": "CBS212-WH",
+       "current_message": false
+      }
+     ],
+     "entity_op": "reuse",
+     "scope_exclusive": false,
+     "requested_attributes": [],
+     "contains_flyer": false,
+     "reference_positions": [],
+     "reference_target": null,
+     "person_mention": null,
+     "is_active": null,
+     "order_status": null,
+     "correction": false,
+     "routing": {
+      "suggested_team": "marketing_promotion",
+      "suggested_agent": "general_enquiries"
+     },
+     "escalation": {
+      "is_escalation_confirmation": false
+     },
+     "domain_signal_source": "intent_none",
+     "scope_exclusive_applied": false,
+     "entity_op_applied": "replace_combine",
+     "_tier_pick_scope_reused": true,
+     "query_brands": [],
+     "entities_filtered": false,
+     "entities_emptied_by_filter": false
+    },
+    "_parser_raw": {
+     "message_type": "casual",
+     "intent_hint": null,
+     "domain_hint": null,
+     "scope_intent": "specific",
+     "is_affirmative": null,
+     "user_goal": "",
+     "access_levels": [],
+     "date_mode": null,
+     "date_filter_start": null,
+     "date_filter_end": null,
+     "match_mode": "and",
+     "demand_qty": null,
+     "entities": [],
+     "entity_op": "replace_combine",
+     "scope_exclusive": false,
+     "requested_attributes": [],
+     "contains_flyer": false,
+     "reference_positions": [],
+     "reference_target": null,
+     "person_mention": null,
+     "is_active": null,
+     "order_status": null,
+     "correction": false,
+     "routing": {
+      "suggested_team": null,
+      "suggested_agent": null
+     },
+     "escalation": {
+      "is_escalation_confirmation": false
+     }
+    }
+   }
+  }
+ ]
+}

@@ -1,0 +1,178 @@
+{
+  "source": {
+    "hand_crafted": true,
+    "expected_from": "reasoned",
+    "rationale": "The positional-pick resolver, all three label shapes plus an out-of-range index. The LLM gives NO domain, so the inherit-for-position block fires first (prior domain master_products, message_type forced business_query, domain_inherited_for_position). Then: idx 1's label 'product: ABC-1' splits on ': ' - HINT_MAP maps the 'product' prefix to hint 'product'; idx 2's label 'DEF-2' has no prefix and the frozen row's entity_type is null, so C2's fallback uses DOMAIN_SUBJECT_HINT.master_products = 'product' (NEVER the domain name, and never the legacy 'promotion' tail); idx 9 is absent from the map so it lands in positions_out_of_range and resolves nothing. TWO picks resolved -> match_mode flips to 'or' and positions_resolved is 2. canonical_code comes from the frozen row's `product`, uuid from the row, and every pick is current_message:true with its ordinal.",
+    "amended": [
+      {
+        "at": "2026-09-04T01:19:34Z",
+        "to_version": "ab3ec985-5371-4ee3-b6e5-8a23e3aef7df",
+        "reason": "baseline catch-up re-pin to live 74ef5116 (other lanes; see commit body)",
+        "paths": [
+          "[0].json.output.routing.suggested_team"
+        ]
+      }
+    ]
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "latest_user_message": "1, 2 and 9",
+          "contact_id": 900000003,
+          "previous_conversation_state": {
+            "domain_hint": "master_products",
+            "intent_hint": "check_product",
+            "selection_context": "disambiguation",
+            "routing": {
+              "suggested_team": "purchasing_product",
+              "suggested_agent": "general_enquiries"
+            },
+            "response": "Which one?",
+            "entities": [],
+            "last_result_set": [
+              {
+                "idx": 1,
+                "label": "product: ABC-1",
+                "uuid": "u1",
+                "product": "ABC-1",
+                "entity_type": "product"
+              },
+              {
+                "idx": 2,
+                "label": "DEF-2",
+                "uuid": "u2",
+                "product": "DEF-2",
+                "entity_type": null
+              },
+              {
+                "idx": 3,
+                "label": "promotion: Raya Sale",
+                "uuid": "u3",
+                "entity_type": "promotion"
+              }
+            ]
+          },
+          "is_test": null,
+          "mock_reformulator_output": null
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "output": "{\"message_type\":\"casual\",\"intent_hint\":null,\"domain_hint\":null,\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[1,2,9],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":null,\"suggested_agent\":null},\"escalation\":{\"is_escalation_confirmation\":false}}"
+      }
+    }
+  ],
+  "runIndex": 0,
+  "expected": [
+    {
+      "json": {
+        "output": {
+          "message_type": "business_query",
+          "intent_hint": "check_product",
+          "domain_hint": "master_products",
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "",
+          "access_levels": [],
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "or",
+          "demand_qty": null,
+          "entities": [
+            {
+              "raw": "ABC-1",
+              "hint": "product",
+              "ordinal": 1,
+              "current_message": true,
+              "uuid": "u1",
+              "canonical_code": "ABC-1"
+            },
+            {
+              "raw": "DEF-2",
+              "hint": "product",
+              "ordinal": 2,
+              "current_message": true,
+              "uuid": "u2",
+              "canonical_code": "DEF-2"
+            }
+          ],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [
+            1,
+            2,
+            9
+          ],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": "purchasing",
+            "suggested_agent": "general_enquiries"
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          },
+          "domain_signal_source": "intent_none",
+          "scope_exclusive_applied": false,
+          "entity_op_applied": "replace_combine",
+          "query_brands": [],
+          "domain_inherited_for_position": true,
+          "positions_resolved": 2,
+          "positions_out_of_range": [
+            9
+          ],
+          "domain_inherited_compatible": true,
+          "entities_filtered": false,
+          "entities_emptied_by_filter": false,
+          "_pending_pick": true
+        },
+        "_parser_raw": {
+          "message_type": "casual",
+          "intent_hint": null,
+          "domain_hint": null,
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "",
+          "access_levels": [],
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [
+            1,
+            2,
+            9
+          ],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": null,
+            "suggested_agent": null
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          }
+        }
+      }
+    }
+  ]
+}

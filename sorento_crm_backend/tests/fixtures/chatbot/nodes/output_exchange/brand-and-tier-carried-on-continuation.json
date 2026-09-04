@@ -1,0 +1,143 @@
+{
+ "source": {
+  "hand_crafted": true,
+  "expected_from": "reasoned",
+  "rationale": "F7 (brand) + F4(b) (tier). 'the august one' is a continuation: entity_op 'reuse', no new entity, no brand or tier word of its own. Both carries require (a) this turn names none and (b) this turn reuses the previous scope - both hold - so query_brands comes back ['cabana'] with _query_brands_carried and access_levels ['dealer'] with _tier_carried. The reuse branch also carries the prior date window, and promotion IS in DATE_FILTER_DOMAINS so the window survives the gate. domain/intent are carried by the entity-less continuity block (_explicit is false: the LLM gave no decisive intent), which stamps domain_reused_entityless."
+ },
+ "ctx": {
+  "When Executed by Another Workflow": [
+   {
+    "json": {
+     "latest_user_message": "the august one",
+     "contact_id": 900000003,
+     "previous_conversation_state": {
+      "domain_hint": "promotion",
+      "intent_hint": "check_promotion",
+      "routing": {
+       "suggested_team": "marketing_promotion",
+       "suggested_agent": "general_enquiries"
+      },
+      "query_brands": [
+       "cabana"
+      ],
+      "access_levels": [
+       "dealer"
+      ],
+      "is_active": true,
+      "date_filter_start": "2026-08-01",
+      "date_filter_end": "2026-08-31",
+      "date_mode": "range",
+      "response": "Here are the promos.",
+      "entities": [
+       {
+        "raw": "CBS212-WH",
+        "hint": "product",
+        "canonical_code": "CBS212-WH",
+        "current_message": true
+       }
+      ]
+     },
+     "is_test": null,
+     "mock_reformulator_output": null
+    }
+   }
+  ]
+ },
+ "input": [
+  {
+   "json": {
+    "output": "{\"message_type\":\"business_query\",\"intent_hint\":null,\"domain_hint\":null,\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"the august one\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[],\"entity_op\":\"reuse\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":null,\"suggested_agent\":null},\"escalation\":{\"is_escalation_confirmation\":false}}"
+   }
+  }
+ ],
+ "runIndex": 0,
+ "expected": [
+  {
+   "json": {
+    "output": {
+     "message_type": "business_query",
+     "intent_hint": "check_promotion",
+     "domain_hint": "promotion",
+     "scope_intent": "specific",
+     "is_affirmative": null,
+     "user_goal": "the august one",
+     "access_levels": [
+      "dealer"
+     ],
+     "date_mode": "range",
+     "date_filter_start": "2026-08-01",
+     "date_filter_end": "2026-08-31",
+     "match_mode": "and",
+     "demand_qty": null,
+     "entities": [
+      {
+       "raw": "CBS212-WH",
+       "hint": "product",
+       "canonical_code": "CBS212-WH",
+       "current_message": false
+      }
+     ],
+     "entity_op": "reuse",
+     "scope_exclusive": false,
+     "requested_attributes": [],
+     "contains_flyer": false,
+     "reference_positions": [],
+     "reference_target": null,
+     "person_mention": null,
+     "is_active": true,
+     "order_status": null,
+     "correction": false,
+     "routing": {
+      "suggested_team": "marketing_promotion",
+      "suggested_agent": "general_enquiries"
+     },
+     "escalation": {
+      "is_escalation_confirmation": false
+     },
+     "domain_signal_source": "intent_none",
+     "domain_reused_entityless": true,
+     "entity_op_applied": "reuse",
+     "query_brands": [
+      "cabana"
+     ],
+     "_query_brands_carried": true,
+     "_tier_carried": true,
+     "entities_filtered": false,
+     "entities_emptied_by_filter": false
+    },
+    "_parser_raw": {
+     "message_type": "business_query",
+     "intent_hint": null,
+     "domain_hint": null,
+     "scope_intent": "specific",
+     "is_affirmative": null,
+     "user_goal": "the august one",
+     "access_levels": [],
+     "date_mode": null,
+     "date_filter_start": null,
+     "date_filter_end": null,
+     "match_mode": "and",
+     "demand_qty": null,
+     "entities": [],
+     "entity_op": "reuse",
+     "scope_exclusive": false,
+     "requested_attributes": [],
+     "contains_flyer": false,
+     "reference_positions": [],
+     "reference_target": null,
+     "person_mention": null,
+     "is_active": null,
+     "order_status": null,
+     "correction": false,
+     "routing": {
+      "suggested_team": null,
+      "suggested_agent": null
+     },
+     "escalation": {
+      "is_escalation_confirmation": false
+     }
+    }
+   }
+  }
+ ]
+}

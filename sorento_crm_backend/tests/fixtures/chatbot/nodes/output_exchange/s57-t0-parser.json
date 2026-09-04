@@ -1,0 +1,1748 @@
+{
+  "source": {
+    "execution_id": "14403854",
+    "workflow_id": "XTODTw-dJcV0uRdC056hG",
+    "workflow_version": "7671ebe7-d6db-4687-818f-c2e88df802a4",
+    "node": "output_exchange",
+    "captured_at": "2026-08-29T14:42:26+00:00",
+    "expected_from": "runData",
+    "dedupe_sig": "93c5a90b55ec8d0dbe8d60474d84139eed377ecf51565d9051617377574e952f",
+    "dev_contact": true
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "latest_user_message": "delivery roder srtwc286 hanlim\n\n",
+          "contact_id": "900000009",
+          "previous_conversation_state": {
+            "routing": {
+              "suggested_team": "customer_service",
+              "suggested_agent": "order_enquiries"
+            },
+            "entities": [
+              {
+                "raw": "srtwc286",
+                "hint": "product",
+                "confident": true,
+                "canonical_code": null,
+                "current_message": false
+              }
+            ],
+            "ideation": null,
+            "response": "Previous turn (order): returned 144 records",
+            "date_mode": null,
+            "dym_offer": null,
+            "user_goal": "trying to view the delivery order for the previously returned records",
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "match_mode": "and",
+            "domain_hint": "order",
+            "intent_hint": "check_order",
+            "message_type": "business_query",
+            "query_brands": [],
+            "access_levels": [],
+            "routing_brand": "sorento",
+            "contains_flyer": false,
+            "dym_candidates": [],
+            "date_filter_end": "2026-08-31",
+            "last_result_set": [
+              {
+                "idx": 1,
+                "uuid": null,
+                "label": "202608-4345",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 2,
+                "uuid": null,
+                "label": "202608-4435",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 3,
+                "uuid": null,
+                "label": "202608-4397",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 4,
+                "uuid": null,
+                "label": "202608-4287",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 5,
+                "uuid": null,
+                "label": "REP202608-0469",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 6,
+                "uuid": null,
+                "label": "202608-4186",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 7,
+                "uuid": null,
+                "label": "202608-4347",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 8,
+                "uuid": null,
+                "label": "202608-4104",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 9,
+                "uuid": null,
+                "label": "202608-3892",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 10,
+                "uuid": null,
+                "label": "202608-3909",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 11,
+                "uuid": null,
+                "label": "202608-4341",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 12,
+                "uuid": null,
+                "label": "202608-4205",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 13,
+                "uuid": null,
+                "label": "PS202608-0400",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 14,
+                "uuid": null,
+                "label": "202608-0212",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 15,
+                "uuid": null,
+                "label": "202608-3911",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 16,
+                "uuid": null,
+                "label": "202608-3945",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 17,
+                "uuid": null,
+                "label": "REP202608-0457",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 18,
+                "uuid": null,
+                "label": "REP202608-0489",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 19,
+                "uuid": null,
+                "label": "202608-3224",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 20,
+                "uuid": null,
+                "label": "202608-3982",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 21,
+                "uuid": null,
+                "label": "202608-3987",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 22,
+                "uuid": null,
+                "label": "202608-3879",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 23,
+                "uuid": null,
+                "label": "202608-3586",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 24,
+                "uuid": null,
+                "label": "202608-3746",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 25,
+                "uuid": null,
+                "label": "202608-3583",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 26,
+                "uuid": null,
+                "label": "REP202608-0447",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 27,
+                "uuid": null,
+                "label": "202608-3565",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 28,
+                "uuid": null,
+                "label": "202608-3624",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 29,
+                "uuid": null,
+                "label": "202608-3585",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 30,
+                "uuid": null,
+                "label": "202608-3206",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 31,
+                "uuid": null,
+                "label": "PS202608-0334",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 32,
+                "uuid": null,
+                "label": "202608-3406",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 33,
+                "uuid": null,
+                "label": "202608-3452",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 34,
+                "uuid": null,
+                "label": "202608-3371",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 35,
+                "uuid": null,
+                "label": "202608-3361",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 36,
+                "uuid": null,
+                "label": "PS202608-0336",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 37,
+                "uuid": null,
+                "label": "202608-3184",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 38,
+                "uuid": null,
+                "label": "202608-3181",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 39,
+                "uuid": null,
+                "label": "PS202608-0335",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 40,
+                "uuid": null,
+                "label": "202608-3359",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 41,
+                "uuid": null,
+                "label": "202608-3183",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 42,
+                "uuid": null,
+                "label": "PS202608-0347",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 43,
+                "uuid": null,
+                "label": "202608-3186",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 44,
+                "uuid": null,
+                "label": "202608-3353",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 45,
+                "uuid": null,
+                "label": "202608-3203",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 46,
+                "uuid": null,
+                "label": "202608-2841",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 47,
+                "uuid": null,
+                "label": "202608-2850",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 48,
+                "uuid": null,
+                "label": "202608-2690",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 49,
+                "uuid": null,
+                "label": "SMC202608-0109",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 50,
+                "uuid": null,
+                "label": "202608-2866",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 51,
+                "uuid": null,
+                "label": "202608-2834",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 52,
+                "uuid": null,
+                "label": "202608-2865",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 53,
+                "uuid": null,
+                "label": "202608-2863",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 54,
+                "uuid": null,
+                "label": "SMC202608-0100",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 55,
+                "uuid": null,
+                "label": "PS202608-0321",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 56,
+                "uuid": null,
+                "label": "202608-2671",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 57,
+                "uuid": null,
+                "label": "202608-2800",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 58,
+                "uuid": null,
+                "label": "202608-2691",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 59,
+                "uuid": null,
+                "label": "202608-2578",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 60,
+                "uuid": null,
+                "label": "202608-2788",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 61,
+                "uuid": null,
+                "label": "202608-2864",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 62,
+                "uuid": null,
+                "label": "REP202608-0335",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 63,
+                "uuid": null,
+                "label": "202608-2163",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 64,
+                "uuid": null,
+                "label": "202608-2191",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 65,
+                "uuid": null,
+                "label": "202608-2404",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 66,
+                "uuid": null,
+                "label": "202608-2165",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 67,
+                "uuid": null,
+                "label": "202608-2422",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 68,
+                "uuid": null,
+                "label": "202608-2437",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 69,
+                "uuid": null,
+                "label": "REP202608-0311",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 70,
+                "uuid": null,
+                "label": "REP202608-0279",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 71,
+                "uuid": null,
+                "label": "202608-2484",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 72,
+                "uuid": null,
+                "label": "202608-2349",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 73,
+                "uuid": null,
+                "label": "202608-1927",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 74,
+                "uuid": null,
+                "label": "202608-2169",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 75,
+                "uuid": null,
+                "label": "202608-2164",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 76,
+                "uuid": null,
+                "label": "202608-2247",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 77,
+                "uuid": null,
+                "label": "202608-1926",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 78,
+                "uuid": null,
+                "label": "202608-2133",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 79,
+                "uuid": null,
+                "label": "202608-1934",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 80,
+                "uuid": null,
+                "label": "202608-2091",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 81,
+                "uuid": null,
+                "label": "202608-2061",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 82,
+                "uuid": null,
+                "label": "202608-2000",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 83,
+                "uuid": null,
+                "label": "202608-2068",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 84,
+                "uuid": null,
+                "label": "202608-1997",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 85,
+                "uuid": null,
+                "label": "REP202608-0229",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 86,
+                "uuid": null,
+                "label": "202608-1931",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 87,
+                "uuid": null,
+                "label": "202608-1935",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 88,
+                "uuid": null,
+                "label": "202608-1923",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 89,
+                "uuid": null,
+                "label": "202608-1285",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 90,
+                "uuid": null,
+                "label": "202608-1928",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 91,
+                "uuid": null,
+                "label": "202608-1922",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 92,
+                "uuid": null,
+                "label": "202608-2092",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 93,
+                "uuid": null,
+                "label": "202608-2014",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 94,
+                "uuid": null,
+                "label": "202608-1924",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 95,
+                "uuid": null,
+                "label": "202608-1633",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 96,
+                "uuid": null,
+                "label": "202608-1727",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 97,
+                "uuid": null,
+                "label": "202608-2004",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 98,
+                "uuid": null,
+                "label": "202608-1932",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 99,
+                "uuid": null,
+                "label": "202608-1925",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 100,
+                "uuid": null,
+                "label": "202608-1933",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 101,
+                "uuid": null,
+                "label": "202608-1777",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 102,
+                "uuid": null,
+                "label": "202608-1914",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 103,
+                "uuid": null,
+                "label": "202608-1930",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 104,
+                "uuid": null,
+                "label": "202608-1806",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 105,
+                "uuid": null,
+                "label": "202608-1936",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 106,
+                "uuid": null,
+                "label": "202608-1775",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 107,
+                "uuid": null,
+                "label": "202608-1809",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 108,
+                "uuid": null,
+                "label": "202608-1566",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 109,
+                "uuid": null,
+                "label": "202608-1239",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 110,
+                "uuid": null,
+                "label": "202608-1219",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 111,
+                "uuid": null,
+                "label": "202608-1232",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 112,
+                "uuid": null,
+                "label": "PS202608-0180",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 113,
+                "uuid": null,
+                "label": "SMC202608-0037",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 114,
+                "uuid": null,
+                "label": "202608-1280",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 115,
+                "uuid": null,
+                "label": "202608-1372",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 116,
+                "uuid": null,
+                "label": "REP202608-0127",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 117,
+                "uuid": null,
+                "label": "REP202608-0079",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 118,
+                "uuid": null,
+                "label": "REP202608-0109",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 119,
+                "uuid": null,
+                "label": "REP202608-0124",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 120,
+                "uuid": null,
+                "label": "PS202608-0070",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 121,
+                "uuid": null,
+                "label": "REP202608-0120",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 122,
+                "uuid": null,
+                "label": "REP202608-0046",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 123,
+                "uuid": null,
+                "label": "202608-1001",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 124,
+                "uuid": null,
+                "label": "202608-0981",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 125,
+                "uuid": null,
+                "label": "202608-0879",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 126,
+                "uuid": null,
+                "label": "202608-0666",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 127,
+                "uuid": null,
+                "label": "REP202608-0056",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 128,
+                "uuid": null,
+                "label": "SMC202608-0024",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 129,
+                "uuid": null,
+                "label": "202608-0935",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 130,
+                "uuid": null,
+                "label": "202608-0560",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 131,
+                "uuid": null,
+                "label": "202608-0031",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 132,
+                "uuid": null,
+                "label": "202608-0596",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 133,
+                "uuid": null,
+                "label": "202607-4912",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 134,
+                "uuid": null,
+                "label": "202608-0030",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 135,
+                "uuid": null,
+                "label": "202608-0199",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 136,
+                "uuid": null,
+                "label": "202608-0029",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 137,
+                "uuid": null,
+                "label": "REP202607-0649",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 138,
+                "uuid": null,
+                "label": "202608-0201",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 139,
+                "uuid": null,
+                "label": "202608-0182",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 140,
+                "uuid": null,
+                "label": "202608-0174",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 141,
+                "uuid": null,
+                "label": "202608-0200",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 142,
+                "uuid": null,
+                "label": "202608-0306",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 143,
+                "uuid": null,
+                "label": "PS202608-0041",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 144,
+                "uuid": null,
+                "label": "202607-5023",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              }
+            ],
+            "routing_company": "00000000-0000-0000-0000-000000000001",
+            "date_filter_start": "2026-08-01",
+            "routing_companies": [
+              {
+                "codes": [
+                  "SRTWC286-SH-200",
+                  "SRTWC286-SH-P",
+                  "SRTWC286-SH-PP",
+                  "SRTWC286-SH",
+                  "SRTWC286-SH-UF",
+                  "SRTWC286-SH-NEW-150",
+                  "SRTWC286-SH-150",
+                  "SRTWC286-SH-NEW-P",
+                  "SRTWC286-SH-NEW-200",
+                  "SRTWC286-SH-NEW"
+                ],
+                "labels": [
+                  "SRTWC286-SH-200",
+                  "SRTWC286-SH-P",
+                  "SRTWC286-SH-PP",
+                  "SRTWC286-SH",
+                  "SRTWC286-SH-UF",
+                  "SRTWC286-SH-NEW-150",
+                  "SRTWC286-SH-150",
+                  "SRTWC286-SH-NEW-P",
+                  "SRTWC286-SH-NEW-200",
+                  "SRTWC286-SH-NEW"
+                ],
+                "brand_code": "sorento",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento"
+              }
+            ],
+            "selection_context": null,
+            "routing_roster_plan": null,
+            "requested_attributes": [
+              "quantity"
+            ],
+            "routing_brand_source": "resolved"
+          },
+          "is_test": true
+        }
+      }
+    ],
+    "test-reformulator-bypass": [],
+    "OpenAI Chat Model": [],
+    "AI Agent": [
+      {
+        "json": {
+          "output": "{\"message_type\":\"business_query\",\"intent_hint\":\"check_order\",\"domain_hint\":\"order\",\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"trying to check the delivery order for srtwc286 for Hanlim\",\"access_levels\":[],\"broaden_axis\":null,\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[{\"raw\":\"srtwc286\",\"hint\":\"order\",\"canonical_code\":null,\"current_message\":true,\"confident\":true},{\"raw\":\"Hanlim\",\"hint\":\"customer\",\"canonical_code\":null,\"current_message\":true,\"confident\":true}],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":\"customer_service\",\"suggested_agent\":\"order_enquiries\"},\"escalation\":{\"is_escalation_confirmation\":false,\"company_pick\":null}}"
+        }
+      }
+    ],
+    "output_exchange": [
+      {
+        "json": {
+          "output": {
+            "message_type": "business_query",
+            "intent_hint": "check_order",
+            "domain_hint": "order",
+            "scope_intent": "specific",
+            "is_affirmative": null,
+            "user_goal": "trying to check the delivery order for srtwc286 for Hanlim",
+            "access_levels": [],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "srtwc286",
+                "hint": "order",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              },
+              {
+                "raw": "Hanlim",
+                "hint": "customer",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "entity_op": "replace_combine",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "customer_service",
+              "suggested_agent": "order_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "domain_signal_source": "intent_explicit",
+            "scope_exclusive_applied": false,
+            "entity_op_applied": "replace_combine",
+            "query_brands": [],
+            "entities_filtered": false,
+            "entities_emptied_by_filter": false
+          },
+          "_parser_raw": {
+            "message_type": "business_query",
+            "intent_hint": "check_order",
+            "domain_hint": "order",
+            "scope_intent": "specific",
+            "is_affirmative": null,
+            "user_goal": "trying to check the delivery order for srtwc286 for Hanlim",
+            "access_levels": [],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "srtwc286",
+                "hint": "order",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              },
+              {
+                "raw": "Hanlim",
+                "hint": "customer",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "entity_op": "replace_combine",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "customer_service",
+              "suggested_agent": "order_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false,
+              "company_pick": null
+            }
+          }
+        }
+      }
+    ],
+    "suggest-follow-up": [
+      {
+        "json": {
+          "output": {
+            "message_type": "business_query",
+            "intent_hint": "check_order",
+            "domain_hint": "order",
+            "scope_intent": "specific",
+            "is_affirmative": null,
+            "user_goal": "trying to check the delivery order for srtwc286 for Hanlim",
+            "access_levels": [],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "srtwc286",
+                "hint": "order",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              },
+              {
+                "raw": "Hanlim",
+                "hint": "customer",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "entity_op": "replace_combine",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "customer_service",
+              "suggested_agent": "order_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "domain_signal_source": "intent_explicit",
+            "scope_exclusive_applied": false,
+            "entity_op_applied": "replace_combine",
+            "query_brands": [],
+            "entities_filtered": false,
+            "entities_emptied_by_filter": false
+          },
+          "_parser_raw": {
+            "message_type": "business_query",
+            "intent_hint": "check_order",
+            "domain_hint": "order",
+            "scope_intent": "specific",
+            "is_affirmative": null,
+            "user_goal": "trying to check the delivery order for srtwc286 for Hanlim",
+            "access_levels": [],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "srtwc286",
+                "hint": "order",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              },
+              {
+                "raw": "Hanlim",
+                "hint": "customer",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "entity_op": "replace_combine",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "customer_service",
+              "suggested_agent": "order_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false,
+              "company_pick": null
+            }
+          }
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "output": "{\"message_type\":\"business_query\",\"intent_hint\":\"check_order\",\"domain_hint\":\"order\",\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"trying to check the delivery order for srtwc286 for Hanlim\",\"access_levels\":[],\"broaden_axis\":null,\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[{\"raw\":\"srtwc286\",\"hint\":\"order\",\"canonical_code\":null,\"current_message\":true,\"confident\":true},{\"raw\":\"Hanlim\",\"hint\":\"customer\",\"canonical_code\":null,\"current_message\":true,\"confident\":true}],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":\"customer_service\",\"suggested_agent\":\"order_enquiries\"},\"escalation\":{\"is_escalation_confirmation\":false,\"company_pick\":null}}"
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "output": {
+          "message_type": "business_query",
+          "intent_hint": "check_order",
+          "domain_hint": "order",
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "trying to check the delivery order for srtwc286 for Hanlim",
+          "access_levels": [],
+          "broaden_axis": null,
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [
+            {
+              "raw": "srtwc286",
+              "hint": "order",
+              "canonical_code": null,
+              "current_message": true,
+              "confident": true
+            },
+            {
+              "raw": "Hanlim",
+              "hint": "customer",
+              "canonical_code": null,
+              "current_message": true,
+              "confident": true
+            }
+          ],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": "customer_service",
+            "suggested_agent": "order_enquiries"
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          },
+          "domain_signal_source": "intent_explicit",
+          "scope_exclusive_applied": false,
+          "entity_op_applied": "replace_combine",
+          "query_brands": [],
+          "entities_filtered": false,
+          "entities_emptied_by_filter": false
+        },
+        "_parser_raw": {
+          "message_type": "business_query",
+          "intent_hint": "check_order",
+          "domain_hint": "order",
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "trying to check the delivery order for srtwc286 for Hanlim",
+          "access_levels": [],
+          "broaden_axis": null,
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [
+            {
+              "raw": "srtwc286",
+              "hint": "order",
+              "canonical_code": null,
+              "current_message": true,
+              "confident": true
+            },
+            {
+              "raw": "Hanlim",
+              "hint": "customer",
+              "canonical_code": null,
+              "current_message": true,
+              "confident": true
+            }
+          ],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": "customer_service",
+            "suggested_agent": "order_enquiries"
+          },
+          "escalation": {
+            "is_escalation_confirmation": false,
+            "company_pick": null
+          }
+        }
+      }
+    }
+  ],
+  "runIndex": 0,
+  "execution": {
+    "id": "14403854"
+  },
+  "ran": [
+    "When Executed by Another Workflow",
+    "test-reformulator-bypass",
+    "OpenAI Chat Model",
+    "AI Agent",
+    "output_exchange",
+    "suggest-follow-up"
+  ]
+}

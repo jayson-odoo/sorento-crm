@@ -1,0 +1,168 @@
+{
+  "source": {
+    "hand_crafted": true,
+    "expected_from": "reasoned",
+    "rationale": "applyDymPick carries the prior date window only when THIS turn named NO date at all - either bound counts. Here the customer's turn names a start and no end, so the carry must not fire and the prior window must not overwrite it: date_filter_start stays 2026-09-01, end stays null, mode stays the LLM's 'from'. The offer's domain is promotion, which IS date-whitelisted, so the gate leaves the window alone and the carry decision is actually observable.",
+    "amended": [
+      {
+        "at": "2026-08-26T13:01:30Z",
+        "to_version": "7671ebe7-d6db-4687-818f-c2e88df802a4",
+        "reason": "baseline catch-up re-pin to live 74ef5116 (other lanes; see commit body)",
+        "paths": [
+          "[0].json.output.dym_superseded_dropped"
+        ]
+      }
+    ]
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "latest_user_message": "P-77",
+          "contact_id": 900000003,
+          "previous_conversation_state": {
+            "domain_hint": "promotion",
+            "intent_hint": "check_promotion",
+            "routing": {
+              "suggested_team": "marketing_promotion",
+              "suggested_agent": "general_enquiries"
+            },
+            "response": "Did you mean one of these?",
+            "date_filter_start": "2026-08-01",
+            "date_filter_end": "2026-08-31",
+            "date_mode": "range",
+            "dym_offer": {
+              "id": "off-4",
+              "domain": "promotion",
+              "candidates": [
+                {
+                  "code": "P-77",
+                  "uuid": "p7",
+                  "entity_type": "promotion",
+                  "for_raw": "p7x",
+                  "for_hint": "promotion",
+                  "for_canonical": null
+                }
+              ]
+            },
+            "entities": [
+              {
+                "raw": "p7x",
+                "hint": "promotion",
+                "canonical_code": null,
+                "current_message": true
+              }
+            ]
+          },
+          "is_test": null,
+          "mock_reformulator_output": null
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "output": "{\"message_type\":\"business_query\",\"intent_hint\":\"check_promotion\",\"domain_hint\":\"promotion\",\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"P-77\",\"access_levels\":[],\"date_mode\":\"from\",\"date_filter_start\":\"2026-09-01\",\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[{\"raw\":\"P-77\",\"hint\":\"promotion\",\"canonical_code\":null,\"current_message\":true}],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":null,\"suggested_agent\":null},\"escalation\":{\"is_escalation_confirmation\":false}}"
+      }
+    }
+  ],
+  "runIndex": 0,
+  "expected": [
+    {
+      "json": {
+        "output": {
+          "message_type": "business_query",
+          "intent_hint": "check_promotion",
+          "domain_hint": "promotion",
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "P-77",
+          "access_levels": [],
+          "date_mode": "from",
+          "date_filter_start": "2026-09-01",
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [
+            {
+              "raw": "P-77",
+              "hint": "promotion",
+              "canonical_code": "P-77",
+              "uuid": "p7",
+              "current_message": true,
+              "dym_slot": "off-4"
+            }
+          ],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": "marketing_promotion",
+            "suggested_agent": "general_enquiries"
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          },
+          "dym_pick_applied": true,
+          "dym_offer_pick_code": "P-77",
+          "dym_pick_domain_forced": "promotion",
+          "domain_signal_source": "intent_explicit",
+          "scope_exclusive_applied": false,
+          "entity_op_applied": "replace_combine",
+          "query_brands": [],
+          "entities_filtered": false,
+          "entities_emptied_by_filter": false,
+          "_pending_pick": true,
+          "dym_superseded_dropped": 0
+        },
+        "_parser_raw": {
+          "message_type": "business_query",
+          "intent_hint": "check_promotion",
+          "domain_hint": "promotion",
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "P-77",
+          "access_levels": [],
+          "date_mode": "from",
+          "date_filter_start": "2026-09-01",
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [
+            {
+              "raw": "P-77",
+              "hint": "promotion",
+              "canonical_code": null,
+              "current_message": true
+            }
+          ],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": null,
+            "suggested_agent": null
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          }
+        }
+      }
+    }
+  ]
+}

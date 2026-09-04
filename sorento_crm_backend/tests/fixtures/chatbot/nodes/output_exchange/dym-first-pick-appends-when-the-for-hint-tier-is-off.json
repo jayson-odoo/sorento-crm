@@ -1,0 +1,169 @@
+{
+  "source": {
+    "hand_crafted": true,
+    "expected_from": "reasoned",
+    "rationale": "RENAMED + REWRITTEN 2026-08-26 (was `dym-first-pick-still-uses-the-for-hint-fallback`). The original pinned the issue-#30 boundary in the other direction - \"the for_hint fallback must still fire for the FIRST pick of a numbered turn, so A-1 replaces B-OLD IN PLACE: one entity out, no dym_replace_unmatched\" - and said in as many words that it would go red if the fix were ever widened to the whole numbered path. It was, on 2026-08-24, and this fixture went red on exactly that sentence. applyDymPick now gates BOTH the dym_slot tier and the for_hint tier on `_useSlot !== false`, and the numbered/accumulating multi-pick path passes `_useSlot = false`, because a hint is a TYPE and not an identity: with an unrelated product pinned beside the missed token, that tier REPLACED the unrelated product and silently dropped one of the two things the customer asked for. So a pick that cannot be tied to its source token by for_raw or for_canonical now APPENDS. That is what is pinned here: two entities out (A-1 prepended, B-OLD retained) and `dym_replace_unmatched: true`.",
+    "amended": [
+      {
+        "at": "2026-08-26T13:01:30Z",
+        "to_version": "7671ebe7-d6db-4687-818f-c2e88df802a4",
+        "reason": "baseline catch-up re-pin to live 74ef5116 (other lanes; see commit body)",
+        "paths": [
+          "[0].json.output.dym_replace_unmatched",
+          "[0].json.output.entities[] LEN"
+        ]
+      }
+    ]
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "latest_user_message": "1",
+          "contact_id": 900000003,
+          "previous_conversation_state": {
+            "domain_hint": "inventory",
+            "intent_hint": "check_stock",
+            "routing": {
+              "suggested_team": "warehouse",
+              "suggested_agent": "general_enquiries"
+            },
+            "response": "No exact match. Did you mean one of these?",
+            "dym_offer": {
+              "id": "off-9",
+              "domain": "inventory",
+              "candidates": []
+            },
+            "dym_last_result_set": [
+              {
+                "idx": 1,
+                "value": "A-1",
+                "uuid": "u1",
+                "entity_type": "product",
+                "for_raw": "zx",
+                "for_hint": "product",
+                "for_canonical": null
+              }
+            ],
+            "entities": [
+              {
+                "raw": "B-OLD",
+                "hint": "product",
+                "canonical_code": "B-OLD",
+                "current_message": true
+              }
+            ]
+          },
+          "is_test": null,
+          "mock_reformulator_output": null
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "output": "{\"message_type\":\"business_query\",\"intent_hint\":\"check_stock\",\"domain_hint\":\"inventory\",\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"1\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[1],\"reference_target\":\"dym\",\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":null,\"suggested_agent\":null},\"escalation\":{\"is_escalation_confirmation\":false}}"
+      }
+    }
+  ],
+  "runIndex": 0,
+  "expected": [
+    {
+      "json": {
+        "output": {
+          "message_type": "business_query",
+          "intent_hint": "check_stock",
+          "domain_hint": "inventory",
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "1",
+          "access_levels": [],
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [
+            {
+              "raw": "A-1",
+              "hint": "product",
+              "canonical_code": "A-1",
+              "uuid": "u1",
+              "current_message": true,
+              "dym_slot": "off-9"
+            },
+            {
+              "raw": "B-OLD",
+              "hint": "product",
+              "canonical_code": "B-OLD",
+              "current_message": true
+            }
+          ],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": "dym",
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": "warehouse",
+            "suggested_agent": "general_enquiries"
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          },
+          "domain_signal_source": "intent_explicit",
+          "scope_exclusive_applied": false,
+          "entity_op_applied": "replace_combine",
+          "query_brands": [],
+          "dym_replace_unmatched": true,
+          "dym_pick_applied": true,
+          "dym_offer_pick_code": "A-1",
+          "dym_pick_domain_forced": "inventory",
+          "entities_filtered": false,
+          "entities_emptied_by_filter": false,
+          "_pending_pick": true
+        },
+        "_parser_raw": {
+          "message_type": "business_query",
+          "intent_hint": "check_stock",
+          "domain_hint": "inventory",
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "1",
+          "access_levels": [],
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [
+            1
+          ],
+          "reference_target": "dym",
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": null,
+            "suggested_agent": null
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          }
+        }
+      }
+    }
+  ]
+}

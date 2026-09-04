@@ -1,0 +1,441 @@
+{
+  "source": {
+    "execution_id": "13484619",
+    "workflow_id": "XTODTw-dJcV0uRdC056hG",
+    "node": "output_exchange",
+    "captured_at": "2026-08-22T11:43:44+00:00",
+    "expected_from": "runData"
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "latest_user_message": "Yes escalate\nreply to: No incoming stock (ETA) for IBKS7245-NG-SS.\nBut here are the stock details for the requested products:\n\n- *Product Code:* IBKS7245-NG-SS\n*Warehouse:* MERU\n*System Location:* HOLD\n*Quantity On Hand:* 10\n\nTry: IBKS7245-NG-BL, IBKS8245-NG-SS, IBKS5245-NG-BL. Reply with a code to continue, or would you like me to escalate to purchasing team?\n",
+          "contact_id": 900000007,
+          "previous_conversation_state": {
+            "routing": {
+              "suggested_team": "purchasing",
+              "suggested_agent": "incoming_stock_enquiries"
+            },
+            "entities": [
+              {
+                "raw": "IBKS7245-NG-SS",
+                "hint": "product",
+                "confident": true,
+                "canonical_code": "IBKS7245-NG-SS",
+                "current_message": true
+              }
+            ],
+            "ideation": null,
+            "response": "No incoming stock (ETA) for IBKS7245-NG-SS. Try: IBKS7245-NG-BL, IBKS8245-NG-SS, IBKS5245-NG-BL. Reply with a code to continue, or would you like me to escalate to purchasing team?",
+            "date_mode": null,
+            "dym_offer": {
+              "id": "13484326",
+              "ttl": 3,
+              "domain": "incoming",
+              "picked": [],
+              "candidates": [
+                {
+                  "code": "IBKS7245-NG-BL",
+                  "uuid": null,
+                  "for_raw": "IBKS7245-NG-SS",
+                  "for_hint": "product",
+                  "entity_type": null,
+                  "for_canonical": "IBKS7245-NG-SS"
+                },
+                {
+                  "code": "IBKS8245-NG-SS",
+                  "uuid": null,
+                  "for_raw": "IBKS7245-NG-SS",
+                  "for_hint": "product",
+                  "entity_type": null,
+                  "for_canonical": "IBKS7245-NG-SS"
+                },
+                {
+                  "code": "IBKS5245-NG-BL",
+                  "uuid": null,
+                  "for_raw": "IBKS7245-NG-SS",
+                  "for_hint": "product",
+                  "entity_type": null,
+                  "for_canonical": "IBKS7245-NG-SS"
+                }
+              ]
+            },
+            "user_goal": "trying to refer to IBKS7245-NG-SS",
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "match_mode": "and",
+            "domain_hint": "incoming",
+            "intent_hint": "check_incoming",
+            "message_type": "business_query",
+            "query_brands": [],
+            "access_levels": [],
+            "routing_brand": null,
+            "contains_flyer": false,
+            "dym_candidates": [
+              {
+                "code": "IBKS7245-NG-BL",
+                "uuid": null,
+                "for_raw": "IBKS7245-NG-SS",
+                "for_hint": "product",
+                "entity_type": null,
+                "for_canonical": "IBKS7245-NG-SS"
+              },
+              {
+                "code": "IBKS8245-NG-SS",
+                "uuid": null,
+                "for_raw": "IBKS7245-NG-SS",
+                "for_hint": "product",
+                "entity_type": null,
+                "for_canonical": "IBKS7245-NG-SS"
+              },
+              {
+                "code": "IBKS5245-NG-BL",
+                "uuid": null,
+                "for_raw": "IBKS7245-NG-SS",
+                "for_hint": "product",
+                "entity_type": null,
+                "for_canonical": "IBKS7245-NG-SS"
+              }
+            ],
+            "date_filter_end": null,
+            "last_result_set": [
+              {
+                "idx": 1,
+                "label": "IBKS7245-NG-BL",
+                "value": "IBKS7245-NG-BL",
+                "display": "IBKS7245-NG-BL",
+                "product": "IBKS7245-NG-BL",
+                "order_number": null
+              },
+              {
+                "idx": 2,
+                "label": "IBKS8245-NG-SS",
+                "value": "IBKS8245-NG-SS",
+                "display": "IBKS8245-NG-SS",
+                "product": "IBKS8245-NG-SS",
+                "order_number": null
+              },
+              {
+                "idx": 3,
+                "label": "IBKS5245-NG-BL",
+                "value": "IBKS5245-NG-BL",
+                "display": "IBKS5245-NG-BL",
+                "product": "IBKS5245-NG-BL",
+                "order_number": null
+              }
+            ],
+            "routing_company": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+            "date_filter_start": null,
+            "routing_companies": [
+              {
+                "codes": [
+                  "IBKS7245-NG-SS"
+                ],
+                "brand_code": null,
+                "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                "company_name": "Mocha"
+              }
+            ],
+            "selection_context": "suggest_offer",
+            "routing_roster_plan": null,
+            "routing_brand_source": null
+          },
+          "referenced_result_set": [
+            {
+              "idx": 1,
+              "label": "IBKS7245-NG-BL",
+              "value": "IBKS7245-NG-BL",
+              "display": "IBKS7245-NG-BL",
+              "product": "IBKS7245-NG-BL",
+              "order_number": null
+            },
+            {
+              "idx": 2,
+              "label": "IBKS8245-NG-SS",
+              "value": "IBKS8245-NG-SS",
+              "display": "IBKS8245-NG-SS",
+              "product": "IBKS8245-NG-SS",
+              "order_number": null
+            },
+            {
+              "idx": 3,
+              "label": "IBKS5245-NG-BL",
+              "value": "IBKS5245-NG-BL",
+              "display": "IBKS5245-NG-BL",
+              "product": "IBKS5245-NG-BL",
+              "order_number": null
+            }
+          ],
+          "is_test": null,
+          "mock_reformulator_output": null
+        }
+      }
+    ],
+    "test-reformulator-bypass": [],
+    "OpenAI Chat Model": [],
+    "AI Agent": [
+      {
+        "json": {
+          "output": "{\"message_type\":\"request_for_help\",\"intent_hint\":null,\"domain_hint\":null,\"scope_intent\":null,\"is_affirmative\":true,\"user_goal\":\"trying to escalate to the purchasing team\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[],\"entity_op\":\"reuse\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":null,\"suggested_agent\":null},\"escalation\":{\"is_escalation_confirmation\":true}}"
+        }
+      }
+    ],
+    "output_exchange": [
+      {
+        "json": {
+          "output": {
+            "message_type": "request_for_help",
+            "intent_hint": null,
+            "domain_hint": null,
+            "scope_intent": null,
+            "is_affirmative": true,
+            "user_goal": "trying to escalate to the purchasing team",
+            "access_levels": [],
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "IBKS7245-NG-SS",
+                "hint": "product",
+                "confident": true,
+                "canonical_code": "IBKS7245-NG-SS",
+                "current_message": false
+              }
+            ],
+            "entity_op": "reuse",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "purchasing",
+              "suggested_agent": "incoming_stock_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": true
+            },
+            "domain_signal_source": "intent_none",
+            "entity_op_applied": "reuse",
+            "query_brands": [],
+            "_pending_pick": true
+          },
+          "_parser_raw": {
+            "message_type": "request_for_help",
+            "intent_hint": null,
+            "domain_hint": null,
+            "scope_intent": null,
+            "is_affirmative": true,
+            "user_goal": "trying to escalate to the purchasing team",
+            "access_levels": [],
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [],
+            "entity_op": "reuse",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": null,
+              "suggested_agent": null
+            },
+            "escalation": {
+              "is_escalation_confirmation": true
+            }
+          }
+        }
+      }
+    ],
+    "suggest-follow-up": [
+      {
+        "json": {
+          "output": {
+            "message_type": "request_for_help",
+            "intent_hint": null,
+            "domain_hint": null,
+            "scope_intent": null,
+            "is_affirmative": true,
+            "user_goal": "trying to escalate to the purchasing team",
+            "access_levels": [],
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [],
+            "entity_op": "reuse",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "purchasing",
+              "suggested_agent": "incoming_stock_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": true
+            },
+            "domain_signal_source": "intent_none",
+            "entity_op_applied": "reuse",
+            "query_brands": [],
+            "_pending_pick": true,
+            "suggest_pick_context": true
+          },
+          "_parser_raw": {
+            "message_type": "request_for_help",
+            "intent_hint": null,
+            "domain_hint": null,
+            "scope_intent": null,
+            "is_affirmative": true,
+            "user_goal": "trying to escalate to the purchasing team",
+            "access_levels": [],
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [],
+            "entity_op": "reuse",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": null,
+              "suggested_agent": null
+            },
+            "escalation": {
+              "is_escalation_confirmation": true
+            }
+          }
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "output": "{\"message_type\":\"request_for_help\",\"intent_hint\":null,\"domain_hint\":null,\"scope_intent\":null,\"is_affirmative\":true,\"user_goal\":\"trying to escalate to the purchasing team\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[],\"entity_op\":\"reuse\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":null,\"suggested_agent\":null},\"escalation\":{\"is_escalation_confirmation\":true}}"
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "output": {
+          "message_type": "request_for_help",
+          "intent_hint": null,
+          "domain_hint": null,
+          "scope_intent": null,
+          "is_affirmative": true,
+          "user_goal": "trying to escalate to the purchasing team",
+          "access_levels": [],
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [
+            {
+              "raw": "IBKS7245-NG-SS",
+              "hint": "product",
+              "confident": true,
+              "canonical_code": "IBKS7245-NG-SS",
+              "current_message": false
+            }
+          ],
+          "entity_op": "reuse",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": "purchasing",
+            "suggested_agent": "incoming_stock_enquiries"
+          },
+          "escalation": {
+            "is_escalation_confirmation": true
+          },
+          "domain_signal_source": "intent_none",
+          "entity_op_applied": "reuse",
+          "query_brands": [],
+          "_pending_pick": true
+        },
+        "_parser_raw": {
+          "message_type": "request_for_help",
+          "intent_hint": null,
+          "domain_hint": null,
+          "scope_intent": null,
+          "is_affirmative": true,
+          "user_goal": "trying to escalate to the purchasing team",
+          "access_levels": [],
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [],
+          "entity_op": "reuse",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": null,
+            "suggested_agent": null
+          },
+          "escalation": {
+            "is_escalation_confirmation": true
+          }
+        }
+      }
+    }
+  ],
+  "runIndex": 0,
+  "ran": [
+    "When Executed by Another Workflow",
+    "test-reformulator-bypass",
+    "OpenAI Chat Model",
+    "AI Agent",
+    "output_exchange",
+    "suggest-follow-up"
+  ]
+}

@@ -1,0 +1,146 @@
+{
+ "source": {
+  "hand_crafted": true,
+  "expected_from": "reasoned",
+  "rationale": "Block (B)'s presence test is deliberately flag-BLIND: an attachment_type already in the entity set counts, whether it arrived this turn or was carried. Here the prior attachment_type survives the executor on its own attachment_scope axis (only the prior PRODUCT is evicted by the new one), so the re-attach must NOT fire - firing it would append a second copy of the same type, which the dedupe would then have to clean up and entities_deduped would record. That absent entities_deduped is the assertion."
+ },
+ "ctx": {
+  "When Executed by Another Workflow": [
+   {
+    "json": {
+     "latest_user_message": "DEF-2",
+     "contact_id": 900000003,
+     "previous_conversation_state": {
+      "domain_hint": "product_attachment",
+      "intent_hint": "check_product_attachment",
+      "routing": {
+       "suggested_team": "marketing_product",
+       "suggested_agent": "general_enquiries"
+      },
+      "response": "Here is the photo.",
+      "entities": [
+       {
+        "raw": "gambar",
+        "hint": "attachment_type",
+        "canonical_code": "photo",
+        "current_message": true
+       },
+       {
+        "raw": "ABC-1",
+        "hint": "product",
+        "canonical_code": "ABC-1",
+        "current_message": true
+       }
+      ]
+     },
+     "is_test": null,
+     "mock_reformulator_output": null
+    }
+   }
+  ]
+ },
+ "input": [
+  {
+   "json": {
+    "output": "{\"message_type\":\"business_query\",\"intent_hint\":\"check_product_attachment\",\"domain_hint\":\"product_attachment\",\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"photo of DEF-2\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[{\"raw\":\"DEF-2\",\"hint\":\"product\",\"canonical_code\":null,\"current_message\":true}],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":null,\"suggested_agent\":null},\"escalation\":{\"is_escalation_confirmation\":false}}"
+   }
+  }
+ ],
+ "runIndex": 0,
+ "expected": [
+  {
+   "json": {
+    "output": {
+     "message_type": "business_query",
+     "intent_hint": "check_product_attachment",
+     "domain_hint": "product_attachment",
+     "scope_intent": "specific",
+     "is_affirmative": null,
+     "user_goal": "photo of DEF-2",
+     "access_levels": [],
+     "date_mode": null,
+     "date_filter_start": null,
+     "date_filter_end": null,
+     "match_mode": "and",
+     "demand_qty": null,
+     "entities": [
+      {
+       "raw": "DEF-2",
+       "hint": "product",
+       "canonical_code": null,
+       "current_message": true
+      },
+      {
+       "raw": "photo",
+       "hint": "attachment_type",
+       "canonical_code": "photo",
+       "current_message": false
+      }
+     ],
+     "entity_op": "replace_combine",
+     "scope_exclusive": false,
+     "requested_attributes": [],
+     "contains_flyer": false,
+     "reference_positions": [],
+     "reference_target": null,
+     "person_mention": null,
+     "is_active": null,
+     "order_status": null,
+     "correction": false,
+     "routing": {
+      "suggested_team": "marketing_product",
+      "suggested_agent": "general_enquiries"
+     },
+     "escalation": {
+      "is_escalation_confirmation": false
+     },
+     "domain_signal_source": "intent_explicit",
+     "scope_exclusive_applied": false,
+     "entity_op_applied": "replace_combine",
+     "query_brands": [],
+     "entities_filtered": false,
+     "entities_emptied_by_filter": false
+    },
+    "_parser_raw": {
+     "message_type": "business_query",
+     "intent_hint": "check_product_attachment",
+     "domain_hint": "product_attachment",
+     "scope_intent": "specific",
+     "is_affirmative": null,
+     "user_goal": "photo of DEF-2",
+     "access_levels": [],
+     "date_mode": null,
+     "date_filter_start": null,
+     "date_filter_end": null,
+     "match_mode": "and",
+     "demand_qty": null,
+     "entities": [
+      {
+       "raw": "DEF-2",
+       "hint": "product",
+       "canonical_code": null,
+       "current_message": true
+      }
+     ],
+     "entity_op": "replace_combine",
+     "scope_exclusive": false,
+     "requested_attributes": [],
+     "contains_flyer": false,
+     "reference_positions": [],
+     "reference_target": null,
+     "person_mention": null,
+     "is_active": null,
+     "order_status": null,
+     "correction": false,
+     "routing": {
+      "suggested_team": null,
+      "suggested_agent": null
+     },
+     "escalation": {
+      "is_escalation_confirmation": false
+     }
+    }
+   }
+  }
+ ]
+}

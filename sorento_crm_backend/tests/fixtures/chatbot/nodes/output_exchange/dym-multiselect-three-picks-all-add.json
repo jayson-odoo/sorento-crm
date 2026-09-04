@@ -1,0 +1,188 @@
+{
+ "source": {
+  "hand_crafted": true,
+  "expected_from": "reasoned",
+  "rationale": "R-v3-1 ADD-BOTH generalises to N: three positions off ONE missed token 'ax' must all survive. Pick 1 resolves the source token by for_raw and replaces 'ax' with A-1. Picks 2 and 3 find no for_raw (pick 1 consumed it) and no for_canonical, and the for_hint fallback is skipped for every 2nd+ numbered pick of a turn (issue #30), so each prepends. Order is therefore newest-first: A-3, A-2, A-1. dym_replace_unmatched is set by the first appending pick and stays set; dym_offer_pick_code records the LAST pick because applyDymPick overwrites it per call, which is what lets the spine append to picked[]. Guards the fix against an off-by-one that would only spare the SECOND pick."
+ },
+ "ctx": {
+  "When Executed by Another Workflow": [
+   {
+    "json": {
+     "latest_user_message": "1, 2 and 3",
+     "contact_id": 900000003,
+     "previous_conversation_state": {
+      "domain_hint": "inventory",
+      "intent_hint": "check_stock",
+      "routing": {
+       "suggested_team": "warehouse",
+       "suggested_agent": "general_enquiries"
+      },
+      "response": "No exact match. Did you mean one of these?",
+      "dym_offer": {
+       "id": "off-9",
+       "domain": "inventory",
+       "candidates": []
+      },
+      "dym_last_result_set": [
+       {
+        "idx": 1,
+        "value": "A-1",
+        "uuid": "u1",
+        "entity_type": "product",
+        "for_raw": "ax",
+        "for_hint": "product",
+        "for_canonical": null
+       },
+       {
+        "idx": 2,
+        "value": "A-2",
+        "uuid": "u2",
+        "entity_type": "product",
+        "for_raw": "ax",
+        "for_hint": "product",
+        "for_canonical": null
+       },
+       {
+        "idx": 3,
+        "value": "A-3",
+        "uuid": "u3",
+        "entity_type": "product",
+        "for_raw": "ax",
+        "for_hint": "product",
+        "for_canonical": null
+       }
+      ],
+      "entities": [
+       {
+        "raw": "ax",
+        "hint": "product",
+        "canonical_code": null,
+        "current_message": true
+       }
+      ]
+     },
+     "is_test": null,
+     "mock_reformulator_output": null
+    }
+   }
+  ]
+ },
+ "input": [
+  {
+   "json": {
+    "output": "{\"message_type\":\"business_query\",\"intent_hint\":\"check_stock\",\"domain_hint\":\"inventory\",\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"1, 2 and 3\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[1,2,3],\"reference_target\":\"dym\",\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":null,\"suggested_agent\":null},\"escalation\":{\"is_escalation_confirmation\":false}}"
+   }
+  }
+ ],
+ "runIndex": 0,
+ "expected": [
+  {
+   "json": {
+    "output": {
+     "message_type": "business_query",
+     "intent_hint": "check_stock",
+     "domain_hint": "inventory",
+     "scope_intent": "specific",
+     "is_affirmative": null,
+     "user_goal": "1, 2 and 3",
+     "access_levels": [],
+     "date_mode": null,
+     "date_filter_start": null,
+     "date_filter_end": null,
+     "match_mode": "and",
+     "demand_qty": null,
+     "entities": [
+      {
+       "raw": "A-3",
+       "hint": "product",
+       "canonical_code": "A-3",
+       "uuid": "u3",
+       "current_message": true,
+       "dym_slot": "off-9"
+      },
+      {
+       "raw": "A-2",
+       "hint": "product",
+       "canonical_code": "A-2",
+       "uuid": "u2",
+       "current_message": true,
+       "dym_slot": "off-9"
+      },
+      {
+       "raw": "A-1",
+       "hint": "product",
+       "canonical_code": "A-1",
+       "uuid": "u1",
+       "current_message": true,
+       "dym_slot": "off-9"
+      }
+     ],
+     "entity_op": "replace_combine",
+     "scope_exclusive": false,
+     "requested_attributes": [],
+     "contains_flyer": false,
+     "reference_positions": [],
+     "reference_target": "dym",
+     "person_mention": null,
+     "is_active": null,
+     "order_status": null,
+     "correction": false,
+     "routing": {
+      "suggested_team": "warehouse",
+      "suggested_agent": "general_enquiries"
+     },
+     "escalation": {
+      "is_escalation_confirmation": false
+     },
+     "domain_signal_source": "intent_explicit",
+     "scope_exclusive_applied": false,
+     "entity_op_applied": "replace_combine",
+     "query_brands": [],
+     "dym_pick_applied": true,
+     "dym_offer_pick_code": "A-3",
+     "dym_pick_domain_forced": "inventory",
+     "dym_replace_unmatched": true,
+     "entities_filtered": false,
+     "entities_emptied_by_filter": false,
+     "_pending_pick": true
+    },
+    "_parser_raw": {
+     "message_type": "business_query",
+     "intent_hint": "check_stock",
+     "domain_hint": "inventory",
+     "scope_intent": "specific",
+     "is_affirmative": null,
+     "user_goal": "1, 2 and 3",
+     "access_levels": [],
+     "date_mode": null,
+     "date_filter_start": null,
+     "date_filter_end": null,
+     "match_mode": "and",
+     "demand_qty": null,
+     "entities": [],
+     "entity_op": "replace_combine",
+     "scope_exclusive": false,
+     "requested_attributes": [],
+     "contains_flyer": false,
+     "reference_positions": [
+      1,
+      2,
+      3
+     ],
+     "reference_target": "dym",
+     "person_mention": null,
+     "is_active": null,
+     "order_status": null,
+     "correction": false,
+     "routing": {
+      "suggested_team": null,
+      "suggested_agent": null
+     },
+     "escalation": {
+      "is_escalation_confirmation": false
+     }
+    }
+   }
+  }
+ ]
+}

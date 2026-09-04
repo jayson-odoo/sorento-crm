@@ -1,0 +1,151 @@
+{
+ "source": {
+  "hand_crafted": true,
+  "expected_from": "reasoned",
+  "rationale": "On the numbered path the picked entity's hint must come from the ROW's resolved entity_type, not from for_hint - for_hint describes the SOURCE token and only coincidentally matches. Here the row resolves to a 'promotion' while the missed token was hinted 'product', so the picked entity must be hinted promotion. Under the offer's forced promotion domain that hint is not blocklisted, so the difference is visible in the final entity set."
+ },
+ "ctx": {
+  "When Executed by Another Workflow": [
+   {
+    "json": {
+     "latest_user_message": "1",
+     "contact_id": 900000003,
+     "previous_conversation_state": {
+      "domain_hint": "promotion",
+      "intent_hint": "check_promotion",
+      "routing": {
+       "suggested_team": "marketing_promotion",
+       "suggested_agent": "general_enquiries"
+      },
+      "response": "Did you mean one of these?",
+      "dym_offer": {
+       "id": "off-5",
+       "domain": "promotion",
+       "candidates": []
+      },
+      "dym_last_result_set": [
+       {
+        "idx": 1,
+        "value": "Raya Sale",
+        "uuid": "p1",
+        "entity_type": "promotion",
+        "for_raw": "raya",
+        "for_hint": "product",
+        "for_canonical": null
+       }
+      ],
+      "entities": [
+       {
+        "raw": "raya",
+        "hint": "product",
+        "canonical_code": null,
+        "current_message": true
+       }
+      ]
+     },
+     "is_test": null,
+     "mock_reformulator_output": null
+    }
+   }
+  ]
+ },
+ "input": [
+  {
+   "json": {
+    "output": "{\"message_type\":\"business_query\",\"intent_hint\":\"check_promotion\",\"domain_hint\":\"promotion\",\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"1\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[1],\"reference_target\":\"dym\",\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":null,\"suggested_agent\":null},\"escalation\":{\"is_escalation_confirmation\":false}}"
+   }
+  }
+ ],
+ "runIndex": 0,
+ "expected": [
+  {
+   "json": {
+    "output": {
+     "message_type": "business_query",
+     "intent_hint": "check_promotion",
+     "domain_hint": "promotion",
+     "scope_intent": "specific",
+     "is_affirmative": null,
+     "user_goal": "1",
+     "access_levels": [],
+     "date_mode": null,
+     "date_filter_start": null,
+     "date_filter_end": null,
+     "match_mode": "and",
+     "demand_qty": null,
+     "entities": [
+      {
+       "raw": "Raya Sale",
+       "hint": "promotion",
+       "canonical_code": "Raya Sale",
+       "uuid": "p1",
+       "current_message": true,
+       "dym_slot": "off-5"
+      }
+     ],
+     "entity_op": "replace_combine",
+     "scope_exclusive": false,
+     "requested_attributes": [],
+     "contains_flyer": false,
+     "reference_positions": [],
+     "reference_target": "dym",
+     "person_mention": null,
+     "is_active": null,
+     "order_status": null,
+     "correction": false,
+     "routing": {
+      "suggested_team": "marketing_promotion",
+      "suggested_agent": "general_enquiries"
+     },
+     "escalation": {
+      "is_escalation_confirmation": false
+     },
+     "domain_signal_source": "intent_explicit",
+     "scope_exclusive_applied": false,
+     "entity_op_applied": "replace_combine",
+     "query_brands": [],
+     "dym_pick_applied": true,
+     "dym_offer_pick_code": "Raya Sale",
+     "dym_pick_domain_forced": "promotion",
+     "entities_filtered": false,
+     "entities_emptied_by_filter": false,
+     "_pending_pick": true
+    },
+    "_parser_raw": {
+     "message_type": "business_query",
+     "intent_hint": "check_promotion",
+     "domain_hint": "promotion",
+     "scope_intent": "specific",
+     "is_affirmative": null,
+     "user_goal": "1",
+     "access_levels": [],
+     "date_mode": null,
+     "date_filter_start": null,
+     "date_filter_end": null,
+     "match_mode": "and",
+     "demand_qty": null,
+     "entities": [],
+     "entity_op": "replace_combine",
+     "scope_exclusive": false,
+     "requested_attributes": [],
+     "contains_flyer": false,
+     "reference_positions": [
+      1
+     ],
+     "reference_target": "dym",
+     "person_mention": null,
+     "is_active": null,
+     "order_status": null,
+     "correction": false,
+     "routing": {
+      "suggested_team": null,
+      "suggested_agent": null
+     },
+     "escalation": {
+      "is_escalation_confirmation": false
+     }
+    }
+   }
+  }
+ ]
+}

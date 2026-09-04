@@ -1,0 +1,242 @@
+{
+  "source": {
+    "hand_crafted": true,
+    "expected_from": "reasoned",
+    "rationale": "The early domain correction: 'resource_attachment' plus a PRODUCT entity is really a product_attachment lookup, so domain and intent are rewritten and domain_corrected records it. Item 1 is the control - the same domain with only a non-product entity stays resource_attachment, and 'attachment' is deliberately NOT in that domain's blocklist (it is the domain's own subject hint), so the entity survives. Routing differs accordingly: item 0 goes through deriveRouting's product_attachment arm (photo, not a cert -> marketing_product) while item 1's domain is not in deriveRouting's switch at all, so it falls to the default arm and the `??` tails.",
+    "amended": [
+      {
+        "at": "2026-09-03T06:52:28Z",
+        "to_version": "7671ebe7-d6db-4687-818f-c2e88df802a4",
+        "reason": "baseline catch-up re-pin to live 74ef5116 (other lanes; see commit body)",
+        "paths": [
+          "[1].json.output.routing.suggested_team"
+        ]
+      },
+      {
+        "at": "2026-09-04T00:00:00Z",
+        "to_version": "unreleased (staged, escalation-routing-rs-plan.md §7 owner routing rule)",
+        "reason": "owner routing rule: resource_attachment (item 1, no product entity -> stays resource_attachment, does NOT get corrected to product_attachment) now derives marketing_product/general_enquiries instead of falling to deriveRouting's switch-default null/null. Item 0 (product present -> corrected to product_attachment) is UNCHANGED — its routing already came from the product_attachment/non-cert row, not the default arm this rev touches.",
+        "paths": [
+          "[1].json.output.routing.suggested_team"
+        ]
+      }
+    ]
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "latest_user_message": "container report",
+          "contact_id": 900000003,
+          "previous_conversation_state": {},
+          "is_test": null,
+          "mock_reformulator_output": null
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "output": "{\"message_type\":\"business_query\",\"intent_hint\":null,\"domain_hint\":\"resource_attachment\",\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"photo for ABC-1\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[{\"raw\":\"ABC-1\",\"hint\":\"product\",\"canonical_code\":null,\"current_message\":true},{\"raw\":\"photo\",\"hint\":\"attachment_type\",\"canonical_code\":null,\"current_message\":true}],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":null,\"suggested_agent\":null},\"escalation\":{\"is_escalation_confirmation\":false}}"
+      }
+    },
+    {
+      "json": {
+        "output": "{\"message_type\":\"business_query\",\"intent_hint\":null,\"domain_hint\":\"resource_attachment\",\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"container status report\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[{\"raw\":\"container report\",\"hint\":\"attachment\",\"canonical_code\":null,\"current_message\":true}],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":null,\"suggested_agent\":null},\"escalation\":{\"is_escalation_confirmation\":false}}"
+      }
+    }
+  ],
+  "runIndex": 0,
+  "expected": [
+    {
+      "json": {
+        "output": {
+          "message_type": "business_query",
+          "intent_hint": "check_product_attachment",
+          "domain_hint": "product_attachment",
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "photo for ABC-1",
+          "access_levels": [],
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [
+            {
+              "raw": "ABC-1",
+              "hint": "product",
+              "canonical_code": null,
+              "current_message": true
+            },
+            {
+              "raw": "photo",
+              "hint": "attachment_type",
+              "canonical_code": null,
+              "current_message": true
+            }
+          ],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": "marketing_product",
+            "suggested_agent": "general_enquiries"
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          },
+          "domain_corrected": "resource_attachment->product_attachment (product present)",
+          "domain_signal_source": "intent_explicit",
+          "scope_exclusive_applied": false,
+          "entity_op_applied": "replace_combine",
+          "query_brands": [],
+          "entities_filtered": false,
+          "entities_emptied_by_filter": false
+        },
+        "_parser_raw": {
+          "message_type": "business_query",
+          "intent_hint": null,
+          "domain_hint": "resource_attachment",
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "photo for ABC-1",
+          "access_levels": [],
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [
+            {
+              "raw": "ABC-1",
+              "hint": "product",
+              "canonical_code": null,
+              "current_message": true
+            },
+            {
+              "raw": "photo",
+              "hint": "attachment_type",
+              "canonical_code": null,
+              "current_message": true
+            }
+          ],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": null,
+            "suggested_agent": null
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          }
+        }
+      }
+    },
+    {
+      "json": {
+        "output": {
+          "message_type": "business_query",
+          "intent_hint": null,
+          "domain_hint": "resource_attachment",
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "container status report",
+          "access_levels": [],
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [
+            {
+              "raw": "container report",
+              "hint": "attachment",
+              "canonical_code": null,
+              "current_message": true
+            }
+          ],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": "marketing_product",
+            "suggested_agent": "general_enquiries"
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          },
+          "domain_signal_source": "intent_none",
+          "scope_exclusive_applied": false,
+          "entity_op_applied": "replace_combine",
+          "query_brands": [],
+          "entities_filtered": false,
+          "entities_emptied_by_filter": false
+        },
+        "_parser_raw": {
+          "message_type": "business_query",
+          "intent_hint": null,
+          "domain_hint": "resource_attachment",
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "container status report",
+          "access_levels": [],
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [
+            {
+              "raw": "container report",
+              "hint": "attachment",
+              "canonical_code": null,
+              "current_message": true
+            }
+          ],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": null,
+            "suggested_agent": null
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          }
+        }
+      }
+    }
+  ]
+}

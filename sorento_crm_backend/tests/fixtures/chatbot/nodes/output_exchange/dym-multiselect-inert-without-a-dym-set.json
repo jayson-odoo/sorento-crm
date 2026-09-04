@@ -1,0 +1,139 @@
+{
+ "source": {
+  "hand_crafted": true,
+  "expected_from": "reasoned",
+  "rationale": "The backbone guard. reference_target comes back 'dym' by DEFAULT from the model even on an ordinary roster pick, so the handler must be inert unless a dym set actually exists in prior state. Here prevState has no dym_last_result_set at all: dymNumberedMultiSelect returns at the empty-set check, reference_positions is LEFT INTACT, and the ordinary byIdx positions block resolves the pick against last_result_set instead. Without this fixture the `if (_dymSet.length === 0) return` guard is unkillable."
+ },
+ "ctx": {
+  "When Executed by Another Workflow": [
+   {
+    "json": {
+     "latest_user_message": "1",
+     "contact_id": 900000003,
+     "previous_conversation_state": {
+      "domain_hint": "inventory",
+      "intent_hint": "check_stock",
+      "selection_context": "disambiguation",
+      "routing": {
+       "suggested_team": "warehouse",
+       "suggested_agent": "general_enquiries"
+      },
+      "response": "Which one?",
+      "entities": [],
+      "last_result_set": [
+       {
+        "idx": 1,
+        "label": "ABC-1",
+        "uuid": "r1",
+        "product": "ABC-1",
+        "entity_type": "product"
+       }
+      ]
+     },
+     "is_test": null,
+     "mock_reformulator_output": null
+    }
+   }
+  ]
+ },
+ "input": [
+  {
+   "json": {
+    "output": "{\"message_type\":\"business_query\",\"intent_hint\":\"check_stock\",\"domain_hint\":\"inventory\",\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"1\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[1],\"reference_target\":\"dym\",\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":null,\"suggested_agent\":null},\"escalation\":{\"is_escalation_confirmation\":false}}"
+   }
+  }
+ ],
+ "runIndex": 0,
+ "expected": [
+  {
+   "json": {
+    "output": {
+     "message_type": "business_query",
+     "intent_hint": "check_stock",
+     "domain_hint": "inventory",
+     "scope_intent": "specific",
+     "is_affirmative": null,
+     "user_goal": "1",
+     "access_levels": [],
+     "date_mode": null,
+     "date_filter_start": null,
+     "date_filter_end": null,
+     "match_mode": "and",
+     "demand_qty": null,
+     "entities": [
+      {
+       "raw": "ABC-1",
+       "hint": "product",
+       "ordinal": 1,
+       "current_message": true,
+       "uuid": "r1",
+       "canonical_code": "ABC-1"
+      }
+     ],
+     "entity_op": "replace_combine",
+     "scope_exclusive": false,
+     "requested_attributes": [],
+     "contains_flyer": false,
+     "reference_positions": [
+      1
+     ],
+     "reference_target": "dym",
+     "person_mention": null,
+     "is_active": null,
+     "order_status": null,
+     "correction": false,
+     "routing": {
+      "suggested_team": "warehouse",
+      "suggested_agent": "general_enquiries"
+     },
+     "escalation": {
+      "is_escalation_confirmation": false
+     },
+     "domain_signal_source": "intent_explicit",
+     "scope_exclusive_applied": false,
+     "entity_op_applied": "replace_combine",
+     "query_brands": [],
+     "positions_resolved": 1,
+     "positions_out_of_range": [],
+     "entities_filtered": false,
+     "entities_emptied_by_filter": false,
+     "_pending_pick": true
+    },
+    "_parser_raw": {
+     "message_type": "business_query",
+     "intent_hint": "check_stock",
+     "domain_hint": "inventory",
+     "scope_intent": "specific",
+     "is_affirmative": null,
+     "user_goal": "1",
+     "access_levels": [],
+     "date_mode": null,
+     "date_filter_start": null,
+     "date_filter_end": null,
+     "match_mode": "and",
+     "demand_qty": null,
+     "entities": [],
+     "entity_op": "replace_combine",
+     "scope_exclusive": false,
+     "requested_attributes": [],
+     "contains_flyer": false,
+     "reference_positions": [
+      1
+     ],
+     "reference_target": "dym",
+     "person_mention": null,
+     "is_active": null,
+     "order_status": null,
+     "correction": false,
+     "routing": {
+      "suggested_team": null,
+      "suggested_agent": null
+     },
+     "escalation": {
+      "is_escalation_confirmation": false
+     }
+    }
+   }
+  }
+ ]
+}

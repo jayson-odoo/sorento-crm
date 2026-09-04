@@ -1,0 +1,175 @@
+{
+  "source": {
+    "hand_crafted": true,
+    "expected_from": "reasoned",
+    "rationale": "dym-single-use-fix, tier 0. The customer already picked A-1 from this offer, so the prior entity carries dym_slot 'off-1' and its raw is no longer the missed token - for_raw can never match again. On the CODE-REPLY path (_useSlot true) the stamped slot is the stable handle back to the offer, so the second bare code A-2 resolves to the SAME entity and replaces it in place rather than appending: one missed token, one answer. dym_replace_unmatched must be absent, which is what proves the slot tier fired rather than the append fallback.",
+    "amended": [
+      {
+        "at": "2026-08-26T13:01:30Z",
+        "to_version": "7671ebe7-d6db-4687-818f-c2e88df802a4",
+        "reason": "baseline catch-up re-pin to live 74ef5116 (other lanes; see commit body)",
+        "paths": [
+          "[0].json.output.dym_superseded_dropped"
+        ]
+      }
+    ]
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "latest_user_message": "A-2",
+          "contact_id": 900000003,
+          "previous_conversation_state": {
+            "domain_hint": "incoming",
+            "intent_hint": "check_incoming",
+            "routing": {
+              "suggested_team": "purchasing",
+              "suggested_agent": "incoming_stock_enquiries"
+            },
+            "response": "Did you mean one of these?",
+            "dym_offer": {
+              "id": "off-1",
+              "domain": "incoming",
+              "candidates": [
+                {
+                  "code": "A-1",
+                  "uuid": "u1",
+                  "entity_type": "product",
+                  "for_raw": "ax",
+                  "for_hint": "product",
+                  "for_canonical": null
+                },
+                {
+                  "code": "A-2",
+                  "uuid": "u2",
+                  "entity_type": "product",
+                  "for_raw": "ax",
+                  "for_hint": "product",
+                  "for_canonical": null
+                }
+              ]
+            },
+            "entities": [
+              {
+                "raw": "A-1",
+                "hint": "product",
+                "canonical_code": "A-1",
+                "uuid": "u1",
+                "current_message": true,
+                "dym_slot": "off-1"
+              }
+            ]
+          },
+          "is_test": null,
+          "mock_reformulator_output": null
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "output": "{\"message_type\":\"business_query\",\"intent_hint\":\"check_product\",\"domain_hint\":\"master_products\",\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"A-2\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[{\"raw\":\"A-2\",\"hint\":\"product\",\"canonical_code\":null,\"current_message\":true}],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":null,\"suggested_agent\":null},\"escalation\":{\"is_escalation_confirmation\":false}}"
+      }
+    }
+  ],
+  "runIndex": 0,
+  "expected": [
+    {
+      "json": {
+        "output": {
+          "message_type": "business_query",
+          "intent_hint": "check_incoming",
+          "domain_hint": "incoming",
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "A-2",
+          "access_levels": [],
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [
+            {
+              "raw": "A-2",
+              "hint": "product",
+              "canonical_code": "A-2",
+              "uuid": "u2",
+              "current_message": true,
+              "dym_slot": "off-1"
+            }
+          ],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": "purchasing",
+            "suggested_agent": "incoming_stock_enquiries"
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          },
+          "dym_pick_applied": true,
+          "dym_offer_pick_code": "A-2",
+          "dym_pick_domain_forced": "incoming",
+          "domain_signal_source": "intent_explicit",
+          "scope_exclusive_applied": false,
+          "entity_op_applied": "replace_combine",
+          "query_brands": [],
+          "entities_filtered": false,
+          "entities_emptied_by_filter": false,
+          "_pending_pick": true,
+          "dym_superseded_dropped": 0
+        },
+        "_parser_raw": {
+          "message_type": "business_query",
+          "intent_hint": "check_product",
+          "domain_hint": "master_products",
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "A-2",
+          "access_levels": [],
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [
+            {
+              "raw": "A-2",
+              "hint": "product",
+              "canonical_code": null,
+              "current_message": true
+            }
+          ],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": null,
+            "suggested_agent": null
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          }
+        }
+      }
+    }
+  ]
+}

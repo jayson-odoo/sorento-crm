@@ -1,0 +1,177 @@
+{
+  "source": {
+    "hand_crafted": true,
+    "expected_from": "reasoned",
+    "rationale": "applyDymPick's lookup is TIERED and stops at the first hit: slot, then for_raw, then for_canonical, then an unambiguous single for_hint. Here for_raw matches the entity at index 0 while for_canonical would match a DIFFERENT entity at index 1, so the tiers are separable: the pick must land on index 0 and leave index 1 alone. A lookup that let the later tier run anyway would silently rewrite the wrong entity.",
+    "amended": [
+      {
+        "at": "2026-08-26T13:01:30Z",
+        "to_version": "7671ebe7-d6db-4687-818f-c2e88df802a4",
+        "reason": "baseline catch-up re-pin to live 74ef5116 (other lanes; see commit body)",
+        "paths": [
+          "[0].json.output.dym_superseded_dropped"
+        ]
+      }
+    ]
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "latest_user_message": "A-9",
+          "contact_id": 900000003,
+          "previous_conversation_state": {
+            "domain_hint": "incoming",
+            "intent_hint": "check_incoming",
+            "routing": {
+              "suggested_team": "purchasing",
+              "suggested_agent": "incoming_stock_enquiries"
+            },
+            "response": "Did you mean one of these?",
+            "dym_offer": {
+              "id": "off-3",
+              "domain": "incoming",
+              "candidates": [
+                {
+                  "code": "A-9",
+                  "uuid": "u9",
+                  "entity_type": "product",
+                  "for_raw": "ax",
+                  "for_hint": "product",
+                  "for_canonical": "OTHER"
+                }
+              ]
+            },
+            "entities": [
+              {
+                "raw": "ax",
+                "hint": "product",
+                "canonical_code": "AX-CANON",
+                "current_message": true
+              },
+              {
+                "raw": "oth",
+                "hint": "product",
+                "canonical_code": "OTHER",
+                "current_message": true
+              }
+            ]
+          },
+          "is_test": null,
+          "mock_reformulator_output": null
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "output": "{\"message_type\":\"business_query\",\"intent_hint\":\"check_product\",\"domain_hint\":\"master_products\",\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"A-9\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[{\"raw\":\"A-9\",\"hint\":\"product\",\"canonical_code\":null,\"current_message\":true}],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":null,\"suggested_agent\":null},\"escalation\":{\"is_escalation_confirmation\":false}}"
+      }
+    }
+  ],
+  "runIndex": 0,
+  "expected": [
+    {
+      "json": {
+        "output": {
+          "message_type": "business_query",
+          "intent_hint": "check_incoming",
+          "domain_hint": "incoming",
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "A-9",
+          "access_levels": [],
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [
+            {
+              "raw": "A-9",
+              "hint": "product",
+              "canonical_code": "A-9",
+              "uuid": "u9",
+              "current_message": true,
+              "dym_slot": "off-3"
+            },
+            {
+              "raw": "oth",
+              "hint": "product",
+              "canonical_code": "OTHER",
+              "current_message": true
+            }
+          ],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": "purchasing",
+            "suggested_agent": "incoming_stock_enquiries"
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          },
+          "dym_pick_applied": true,
+          "dym_offer_pick_code": "A-9",
+          "dym_pick_domain_forced": "incoming",
+          "domain_signal_source": "intent_explicit",
+          "scope_exclusive_applied": false,
+          "entity_op_applied": "replace_combine",
+          "query_brands": [],
+          "entities_filtered": false,
+          "entities_emptied_by_filter": false,
+          "_pending_pick": true,
+          "dym_superseded_dropped": 0
+        },
+        "_parser_raw": {
+          "message_type": "business_query",
+          "intent_hint": "check_product",
+          "domain_hint": "master_products",
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "A-9",
+          "access_levels": [],
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [
+            {
+              "raw": "A-9",
+              "hint": "product",
+              "canonical_code": null,
+              "current_message": true
+            }
+          ],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": null,
+            "suggested_agent": null
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          }
+        }
+      }
+    }
+  ]
+}

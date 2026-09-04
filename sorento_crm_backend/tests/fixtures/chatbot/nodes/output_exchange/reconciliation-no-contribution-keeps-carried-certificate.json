@@ -1,0 +1,138 @@
+{
+ "source": {
+  "hand_crafted": true,
+  "expected_from": "reasoned",
+  "rationale": "The negative case that gives the eviction trigger meaning. This is a pure 'reuse' turn: the LLM names nothing, so BOTH prior entities come back carried. The contribution loop therefore records no attachment and no product contribution, _rcEvict is false, and the carried certificate SURVIVES - a certificate only goes stale when the product scope actually changes. Every other reconciliation fixture has a contributor, so without this one the two contribution flags could be hard-wired true and nothing would notice."
+ },
+ "ctx": {
+  "When Executed by Another Workflow": [
+   {
+    "json": {
+     "latest_user_message": "and?",
+     "contact_id": 900000003,
+     "previous_conversation_state": {
+      "domain_hint": "product_attachment",
+      "intent_hint": "check_product_attachment",
+      "routing": {
+       "suggested_team": "purchasing_certification",
+       "suggested_agent": "general_enquiries"
+      },
+      "response": "Here is the certificate.",
+      "entities": [
+       {
+        "raw": "CERT-9",
+        "hint": "certificate",
+        "canonical_code": "CERT-9",
+        "current_message": true
+       },
+       {
+        "raw": "ABC-1",
+        "hint": "product",
+        "canonical_code": "ABC-1",
+        "current_message": true
+       }
+      ]
+     },
+     "is_test": null,
+     "mock_reformulator_output": null
+    }
+   }
+  ]
+ },
+ "input": [
+  {
+   "json": {
+    "output": "{\"message_type\":\"business_query\",\"intent_hint\":\"check_product_attachment\",\"domain_hint\":\"product_attachment\",\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"and?\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[],\"entity_op\":\"reuse\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":null,\"suggested_agent\":null},\"escalation\":{\"is_escalation_confirmation\":false}}"
+   }
+  }
+ ],
+ "runIndex": 0,
+ "expected": [
+  {
+   "json": {
+    "output": {
+     "message_type": "business_query",
+     "intent_hint": "check_product_attachment",
+     "domain_hint": "product_attachment",
+     "scope_intent": "specific",
+     "is_affirmative": null,
+     "user_goal": "and?",
+     "access_levels": [],
+     "date_mode": null,
+     "date_filter_start": null,
+     "date_filter_end": null,
+     "match_mode": "and",
+     "demand_qty": null,
+     "entities": [
+      {
+       "raw": "CERT-9",
+       "hint": "certificate",
+       "canonical_code": "CERT-9",
+       "current_message": false
+      },
+      {
+       "raw": "ABC-1",
+       "hint": "product",
+       "canonical_code": "ABC-1",
+       "current_message": false
+      }
+     ],
+     "entity_op": "reuse",
+     "scope_exclusive": false,
+     "requested_attributes": [],
+     "contains_flyer": false,
+     "reference_positions": [],
+     "reference_target": null,
+     "person_mention": null,
+     "is_active": null,
+     "order_status": null,
+     "correction": false,
+     "routing": {
+      "suggested_team": "marketing_product",
+      "suggested_agent": "general_enquiries"
+     },
+     "escalation": {
+      "is_escalation_confirmation": false
+     },
+     "domain_signal_source": "intent_explicit",
+     "entity_op_applied": "reuse",
+     "query_brands": [],
+     "entities_filtered": false,
+     "entities_emptied_by_filter": false
+    },
+    "_parser_raw": {
+     "message_type": "business_query",
+     "intent_hint": "check_product_attachment",
+     "domain_hint": "product_attachment",
+     "scope_intent": "specific",
+     "is_affirmative": null,
+     "user_goal": "and?",
+     "access_levels": [],
+     "date_mode": null,
+     "date_filter_start": null,
+     "date_filter_end": null,
+     "match_mode": "and",
+     "demand_qty": null,
+     "entities": [],
+     "entity_op": "reuse",
+     "scope_exclusive": false,
+     "requested_attributes": [],
+     "contains_flyer": false,
+     "reference_positions": [],
+     "reference_target": null,
+     "person_mention": null,
+     "is_active": null,
+     "order_status": null,
+     "correction": false,
+     "routing": {
+      "suggested_team": null,
+      "suggested_agent": null
+     },
+     "escalation": {
+      "is_escalation_confirmation": false
+     }
+    }
+   }
+  }
+ ]
+}
