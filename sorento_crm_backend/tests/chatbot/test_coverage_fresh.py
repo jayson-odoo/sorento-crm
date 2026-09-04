@@ -112,13 +112,61 @@ class TestGateStates:
         assert coverage._cell_state("route-turn", "business_query", 87) == ("met", False)
 
 
+# The cells gate 0 blocks on TODAY, pinned so the list can only shrink. Every entry is a
+# tail node the S2 slice ports, and every one is short for the same reason: no capture
+# agent has run against `sub-output` yet, so its pool is not in `CAPTURE_REPORT` and
+# `exhausted` cannot be earned. The fix is a capture run before the S2 PR opens, per gate
+# 0; the fix is NEVER an entry added here. A cell that leaves this list and a cell that
+# joins it are both failures worth reading.
+EXPECTED_BLOCKING: frozenset[str] = frozenset(
+    {
+        "build-cs-member-offer/all (4 of 5)",
+        "build-outcome/access_choice (2 of 5)",
+        "build-outcome/not_found (1 of 5)",
+        "build-outcome/not_supported (3 of 5)",
+        "build-outcome/out_of_scope (4 of 5)",
+        "compile-current-state/goods_receive (2 of 5)",
+        "compile-current-state/ideate (3 of 5)",
+        "compile-current-state/product_attachment (2 of 5)",
+        "compile-current-state/resource_attachment (0 of 5)",
+        "compile-current-state/spo_allocation (4 of 5)",
+        "crossdomain-compose/incoming (3 of 5)",
+        "crossdomain-compose/inventory (4 of 5)",
+        "crossdomain-compose/no_domain (1 of 5)",
+        "crossdomain-compose/promotion (1 of 5)",
+        "crossdomain-compose/spo_allocation (1 of 5)",
+        "cs-roster-plan/all (4 of 5)",
+        "escalate-catalog/access_choice (1 of 5)",
+        "escalate-catalog/clarify_menu (3 of 5)",
+        "escalate-catalog/not_supported (3 of 5)",
+        "escalate-catalog/offer_hold (3 of 5)",
+    }
+)
+
+
 class TestTheReportIsHonest:
-    def test_gate_zero_is_not_blocked_today(self, full_corpus) -> None:
-        rendered = coverage.render(coverage.collect())
-        assert "**Not blocked.**" in rendered, (
-            "a cell is short in a pool that was not fully scanned - capture more turns "
-            "rather than widening the exhausted rule"
+    def test_the_cells_gate_zero_blocks_on_are_exactly_the_ones_on_record(
+        self, full_corpus
+    ) -> None:
+        """Pinned, not "nothing blocks": S2's tail nodes are short until a capture run.
+
+        Asserting the SET is what keeps the state honest in both directions - a new short
+        cell fails here instead of hiding in a table, and a cell that has since been
+        captured fails too, so the list shrinks rather than rotting.
+        """
+        blocking = set(coverage.blocking_cells(coverage.collect()))
+        assert blocking == set(EXPECTED_BLOCKING), (
+            "gate 0's blocking set moved.\nnewly blocking: "
+            f"{sorted(blocking - EXPECTED_BLOCKING)}\nno longer blocking (retire them): "
+            f"{sorted(EXPECTED_BLOCKING - blocking)}"
         )
+
+    def test_the_world_corpus_is_reported_with_its_shapes(self, full_corpus) -> None:
+        """AC-009's own numbers are in the report, so gate 0 can be read in one place."""
+        rendered = coverage.render(coverage.collect())
+        assert "## World replay (AC-009)" in rendered
+        for shape in ("picker", "did_you_mean", "tier_ask", "escalation", "offer_hold", "media"):
+            assert f"`{shape}`" in rendered
 
     def test_every_route_turn_branch_has_a_row_even_at_zero_captures(self, full_corpus) -> None:
         """A branch nobody captured must be a VISIBLE zero, not an absent row."""

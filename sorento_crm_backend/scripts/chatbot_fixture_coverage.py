@@ -175,6 +175,46 @@ def _provenance(fixture: _corpus.Fixture) -> str:
     return str(source.get("expected_from") or "body-run")
 
 
+def blocking_cells(data: dict) -> list[str]:
+    """`node/branch (n of N)` for every cell gate 0 blocks on.
+
+    Exposed as data, not only as a markdown line, so `test_coverage_fresh.py` can PIN the
+    set rather than assert "nothing blocks". A slice whose captures are outstanding is a
+    real state - the pinned list is what makes it auditable and what makes a NEW short
+    cell a failure instead of one more line in a table nobody diffs.
+    """
+    out: list[str] = []
+    for node in sorted(data["rows"]):
+        for branch in sorted(data["rows"][node]):
+            real = data["rows"][node][branch].get("runData", 0)
+            _, blocks = _cell_state(node, branch, real)
+            if blocks:
+                out.append(f"{node}/{branch} ({real} of {CAPTURES_PER_BRANCH})")
+    return out
+
+
+def world_matrix() -> dict:
+    """The world corpus, counted by branch kind and by shape (AC-009).
+
+    Worlds are DERIVED from spine captures rather than captured, so this is a projection
+    of the same corpus the node matrix above counts - which is the point: growing the
+    node corpus grows the world corpus for free.
+    """
+    from tests.chatbot import worlds as worlds_mod
+
+    derived = worlds_mod.derive_worlds()
+    chains = worlds_mod.multi_turn_worlds(derived)
+    matrix = worlds_mod.matrix(derived)
+    return {
+        "total": len(derived),
+        "ungradeable": sum(1 for world in derived if world.missing_inputs),
+        "chains": len(chains),
+        "chain_turns": sum(len(chain.turns) for chain in chains),
+        "branch_kind": matrix["branch_kind"],
+        "shape": {shape: matrix["shape"].get(shape, 0) for shape in worlds_mod.SHAPES},
+    }
+
+
 def collect() -> dict:
     rows: dict[str, dict[str, Counter]] = defaultdict(lambda: defaultdict(Counter))
     totals: Counter = Counter()
@@ -211,6 +251,7 @@ def collect() -> dict:
         "corpus_root": "$CHATBOT_FIXTURES_DIR"
         if _corpus.corpus_root() is not None
         else "(absent - vendored subset only)",
+        "worlds": world_matrix(),
     }
 
 
@@ -263,6 +304,33 @@ def render(data: dict) -> str:
             + ", ".join(f"`{n}`" for n in report["nodes"])
             + " |"
         )
+    lines.append("")
+
+    # -- worlds (AC-009) ---------------------------------------------------------------- #
+    worlds = data["worlds"]
+    lines.append("## World replay (AC-009)")
+    lines.append("")
+    lines.append(
+        "A WORLD is one whole captured turn replayed through `run_turn` + `complete_turn` "
+        "with the parser, the access check and the CS roster read stubbed from that "
+        "execution's own node outputs. Worlds are DERIVED from spine captures, not "
+        "captured separately - a spine capture already carries every node output of its "
+        "execution - so growing the node corpus grows this one for free."
+    )
+    lines.append("")
+    lines.append(
+        f"**{worlds['total']} worlds** ({worlds['ungradeable']} of them ungradeable in this "
+        "corpus: a spine-only capture whose resolver and entity gate ran inside a sub the "
+        f"fixture never recorded). **{worlds['chains']} multi-turn chains** covering "
+        f"{worlds['chain_turns']} turns, each replayed on the CRM's OWN written memory."
+    )
+    lines.append("")
+    lines.append("| axis | value | worlds |")
+    lines.append("| --- | --- | ---: |")
+    for kind, count in worlds["branch_kind"].items():
+        lines.append(f"| branch kind | `{kind}` | {count} |")
+    for shape, count in worlds["shape"].items():
+        lines.append(f"| shape | `{shape}` | {count} |")
     lines.append("")
 
     lines.append("## Per node")

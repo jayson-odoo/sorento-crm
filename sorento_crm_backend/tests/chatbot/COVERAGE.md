@@ -15,6 +15,27 @@ A branch under the bar is `exhausted` - not short - only when EVERY execution on
 | `spine-rs-1a` | `51f7b0d2` | 567 | 567 | 946 | yes | 2026-09-04 | `route-turn`, `build-ctx` |
 | `sub-semantic-parser` | `ab3ec985` | 239 | 239 | 3901 | yes | 2026-09-04 | `output_exchange`, `suggest-follow-up` |
 
+## World replay (AC-009)
+
+A WORLD is one whole captured turn replayed through `run_turn` + `complete_turn` with the parser, the access check and the CS roster read stubbed from that execution's own node outputs. Worlds are DERIVED from spine captures, not captured separately - a spine capture already carries every node output of its execution - so growing the node corpus grows this one for free.
+
+**103 worlds** (22 of them ungradeable in this corpus: a spine-only capture whose resolver and entity gate ran inside a sub the fixture never recorded). **17 multi-turn chains** covering 72 turns, each replayed on the CRM's OWN written memory.
+
+| axis | value | worlds |
+| --- | --- | ---: |
+| branch kind | `business_query` | 7 |
+| branch kind | `check_promotion` | 4 |
+| branch kind | `not_supported` | 9 |
+| branch kind | `out_of_scope` | 11 |
+| branch kind | `unknown` | 72 |
+| shape | `picker` | 5 |
+| shape | `did_you_mean` | 13 |
+| shape | `tier_ask` | 8 |
+| shape | `escalation` | 20 |
+| shape | `offer_hold` | 0 |
+| shape | `media` | 2 |
+| shape | `plain` | 55 |
+
 ## Per node
 
 | node | fixtures | real captures | vendored (always run) |
