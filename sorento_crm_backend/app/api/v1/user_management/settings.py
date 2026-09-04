@@ -3,7 +3,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from starlette.datastructures import UploadFile as StarletteUploadFile
 from sqlalchemy.orm import Session
-from typing import Literal, Optional
+from typing import List, Literal, Optional
 from pydantic import BaseModel, Field
 from app.database import get_db
 from app.dependencies import get_current_user, require_permission
@@ -149,6 +149,11 @@ class SystemSettingUpdate(BaseModel):
     media_extraction_timeout_seconds: Optional[int] = Field(None, ge=5, le=110)
     media_max_entities: Optional[int] = Field(None, ge=1, le=100)
     chatbot_stock_denial_enabled: Optional[bool] = None
+    # AC-304: the unsupported-domain list, and which lanes the CRM finishes itself. Both
+    # are `List[str]`, so an owner cannot save a bare string that would then be iterated
+    # one CHARACTER at a time by the route's membership test.
+    chatbot_unsupported_domains: Optional[List[str]] = None
+    chatbot_completed_lanes: Optional[List[str]] = None
 
 
 class SmtpTestResult(BaseModel):
@@ -347,6 +352,8 @@ async def get_settings(
                 "media_extraction_timeout_seconds": getattr(settings, "media_extraction_timeout_seconds", 45) if settings else None,
                 "media_max_entities": getattr(settings, "media_max_entities", 10) if settings else None,
                 "chatbot_stock_denial_enabled": getattr(settings, "chatbot_stock_denial_enabled", False) if settings else None,
+                "chatbot_unsupported_domains": getattr(settings, "chatbot_unsupported_domains", None) if settings else None,
+                "chatbot_completed_lanes": getattr(settings, "chatbot_completed_lanes", None) if settings else None,
                 "smtp": smtp_response,
             } if settings else None,
             "roles": [{"id": r.id, "name": r.name} for r in roles]

@@ -52,7 +52,18 @@ def _prev_variables(ctx: dict) -> dict:
     return {}
 
 
-def decide(ctx: dict, *, stock_denial_enabled: bool = False) -> tuple[str, dict]:
+# AC-304: what `is_unsupported_domain` tests when no configured list is supplied. The two
+# literals the JS carries, in one place, so the column's default and the code's fallback
+# cannot drift into two different answers.
+DEFAULT_UNSUPPORTED_DOMAINS: tuple[str, ...] = ("goods_receive", "spo_allocation")
+
+
+def decide(
+    ctx: dict,
+    *,
+    stock_denial_enabled: bool = False,
+    unsupported_domains: Any = None,
+) -> tuple[str, dict]:
     """`(branch_kind, tier_stamp)` for one turn. Pure; no I/O, no session write."""
     qf = jsc.get(jsc.get(ctx, "parse"), "output") or {}
     esc = jsc.get(qf, "escalation") or {}
@@ -134,7 +145,20 @@ def decide(ctx: dict, *, stock_denial_enabled: bool = False) -> tuple[str, dict]
         return qf.get("message_type") == "clarification"
 
     def is_unsupported_domain() -> bool:
-        return qf.get("domain_hint") in ("goods_receive", "spo_allocation")
+        # The CONFIGURED list (D5), falling back to the two the JS hard-codes. A caller
+        # that supplies an EMPTY list means "nothing is unsupported" and gets exactly
+        # that - `or DEFAULT` would quietly re-enable the refusal the owner just cleared.
+        # `isinstance(..., (list, tuple))`, NOT `jsc.is_array`: this value is CONFIG the
+        # engine read out of `system_settings`, not JS-shaped data off a fixture, and
+        # `is_array` models `Array.isArray` - it rejects a tuple, which is what the
+        # settings reader hands over, and the whole configured list would fall silently
+        # back to the default.
+        domains = (
+            unsupported_domains
+            if isinstance(unsupported_domains, (list, tuple))
+            else DEFAULT_UNSUPPORTED_DOMAINS
+        )
+        return qf.get("domain_hint") in domains
 
     def is_check_promotion() -> bool:
         return qf.get("intent_hint") == "check_promotion"
@@ -257,9 +281,18 @@ def decide(ctx: dict, *, stock_denial_enabled: bool = False) -> tuple[str, dict]
     return branch_kind, tier_stamp
 
 
-def route_turn(ctx: dict, *, stock_denial_enabled: bool = False) -> list[dict[str, Any]]:
+def route_turn(
+    ctx: dict,
+    *,
+    stock_denial_enabled: bool = False,
+    unsupported_domains: Any = None,
+) -> list[dict[str, Any]]:
     """The n8n item list `route-turn` emits, so a fixture can be replayed against it."""
-    branch_kind, tier_stamp = decide(ctx, stock_denial_enabled=stock_denial_enabled)
+    branch_kind, tier_stamp = decide(
+        ctx,
+        stock_denial_enabled=stock_denial_enabled,
+        unsupported_domains=unsupported_domains,
+    )
     if branch_kind in TAG_ONLY_BRANCH_KINDS:
         return [{"json": {"branch_kind": branch_kind}}]
     access = jsc.get(ctx, "access") or {}

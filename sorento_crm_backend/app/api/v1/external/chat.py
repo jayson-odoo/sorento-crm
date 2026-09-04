@@ -39,6 +39,7 @@ from sqlalchemy.orm import Session
 from app.database import SessionLocal, get_db
 from app.dependencies import get_external_api_user
 from app.schemas.integration import IntegrationLogCreate
+from app.models.chatbot_turn import ChatbotTurn
 from app.services.chatbot import complete_turn, run_turn
 from app.services.chatbot_reply_copy import CHATBOT_TURN_ERROR_REPLY
 from app.services.chatbot.contracts import (
@@ -47,6 +48,7 @@ from app.services.chatbot.contracts import (
     TurnRequest,
     TurnResponse,
 )
+from app.services.error_handler import AppException
 from app.services.integration_service import IntegrationLogService
 
 logger = logging.getLogger(__name__)
@@ -225,3 +227,90 @@ def chat_turn_complete(
 
     assert response_payload is not None
     return response_payload
+
+
+def _resolve_turn_for_complete(db: Session, payload: CompleteRequest) -> str:
+    """Find the turn a body describes, without an id in the path.
+
+    Agreed with the n8n side so their cut touches ONE workflow: `sub-output` has the `ctx`
+    but not the turn id (the id lives on the spine, two workflows up), and threading it
+    through would mean editing the spine, `sub-main-processing` and every
+    `Call 'sub-output'*` caller. The pair `(contact, respond message id)` already
+    identifies the turn - it is the same pair `chatbot.turns` is UNIQUE on (D15) - so the
+    body it already sends is enough.
+
+    **The HIGHEST attempt wins.** A retry from the trace screen (R4) inserts another row
+    for the same message, and completing the first one would fold the lane's result into
+    the attempt nobody is watching. Ordered by `attempt` then `created_at` so a row
+    written before `attempt` was populated still resolves deterministically.
+    """
+    ctx = payload.ctx or {}
+    contact_id = ((ctx.get("contact") or {}).get("id"))
+    # `ctx.text` IS `tf-message`'s own item, so the respond message id sits at
+    # `ctx.text.message.messageId` - one level up from the message BODY
+    # (`ctx.text.message.message.text`), which is the level that reads like the obvious
+    # one and is wrong.
+    message = (ctx.get("text") or {}).get("message") or {}
+    message_id = message.get("messageId")
+    if contact_id in (None, "") or message_id in (None, ""):
+        raise AppException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            message="This turn could not be identified.",
+            detail=(
+                "the body carries no `ctx.contact.id` / `ctx.text.message.messageId` pair, "
+                "which is what identifies a turn when the path has no id"
+            ),
+            code="CHATBOT_TURN_NOT_IDENTIFIED",
+        )
+
+    row = (
+        db.query(ChatbotTurn)
+        .filter(
+            ChatbotTurn.contact_respond_id == str(contact_id),
+            ChatbotTurn.message_id == str(message_id),
+        )
+        .order_by(ChatbotTurn.attempt.desc(), ChatbotTurn.created_at.desc())
+        .first()
+    )
+    if row is None:
+        raise AppException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            message="This turn could not be found.",
+            detail=(
+                f"no chatbot turn for contact {contact_id} and message {message_id}: the "
+                "head either never ran for it or the row has been pruned"
+            ),
+            code="CHATBOT_TURN_NOT_FOUND",
+        )
+    if row.status != "delegated":
+        # The SAME refusal `/turn/{id}/complete` makes, made here BEFORE the tail runs -
+        # a `failed` turn has no lane result to fold in, and completing it would compose
+        # an answer out of the caller's fragments and erase the failure record.
+        raise AppException(
+            status_code=409,
+            message="This turn cannot be completed.",
+            detail=(
+                f"chatbot turn {row.id} is {row.status!r} at stage {row.stage!r}, not "
+                "'delegated', so it has no lane result to fold in. A failed turn is "
+                "retried from the trace screen, never completed."
+            ),
+            code="CHATBOT_TURN_NOT_DELEGATED",
+        )
+    return str(row.id)
+
+
+@router.post("/turn/complete", response_model=CompleteResponse, status_code=status.HTTP_200_OK)
+def chat_turn_complete_by_body(
+    payload: CompleteRequest,
+    request: Request,
+    current_user: dict = Depends(get_external_api_user),
+    db: Session = Depends(get_db),
+):
+    """`/turn/{id}/complete` without the id: the body says which turn it is.
+
+    Same request body, same response, same engine call. The ONLY difference is how the
+    turn is found, and the reason is the n8n side's: `sub-output` holds the `ctx` and not
+    the id, so this keeps their cut inside one workflow.
+    """
+    turn_id = _resolve_turn_for_complete(db, payload)
+    return chat_turn_complete(turn_id, payload, request, current_user, db)

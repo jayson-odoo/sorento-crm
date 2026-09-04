@@ -526,6 +526,26 @@ class SystemSetting(Base):
     # have been dead by typo since they were written (0/150 live fixtures). Turning them
     # on is therefore a DATA change with a test, not a surprise on deploy. Default off.
     chatbot_stock_denial_enabled = Column(Boolean, nullable=False, server_default="false", default=False)
+    # AC-304 (D5): the ONE list the owner has actually changed, so it is a column and not
+    # a table. `not_supported` is decided against this instead of the two literals the JS
+    # carries, and the default IS those two literals.
+    chatbot_unsupported_domains = Column(
+        JSONB,
+        nullable=False,
+        server_default='["goods_receive", "spo_allocation"]',
+        default=lambda: ["goods_receive", "spo_allocation"],
+    )
+    # Which branch kinds the CRM FINISHES rather than delegating to n8n. The code half of
+    # the rule is `lanes.canned.COMPLETED_BRANCH_KINDS`; a lane completes only when it is
+    # in BOTH, so the cutover is a data change the owner makes after a shadow window, and
+    # the rollback is editing this list rather than a deploy.
+    #
+    # EMPTY on purpose. Every n8n-changes section opens with the same rule - "the CRM
+    # ships first and OFF" - and a lane that completed the moment the code landed would
+    # change what a customer reads before anyone had decided to.
+    chatbot_completed_lanes = Column(
+        JSONB, nullable=False, server_default="[]", default=list
+    )
 
 
 class UserQuickAccess(Base):

@@ -99,17 +99,26 @@ spine are untouched and the rollback is one workflow.
 1. Add an `httpRequest` node `crm-complete-turn` after `When Executed by Another Workflow`:
    - method `POST`, credential `crm-n8n-auth` (the same header auth every other CRM call
      uses), URL
-     `=https://fe-sorento.foundryx.my/api/v1/external/chat/turn/{{ $json.turn_id }}/complete`,
+     `https://fe-sorento.foundryx.my/api/v1/external/chat/turn/complete` - the ID-LESS
+     form, added 5 Sep so this cut touches ONE workflow. `sub-output` holds the `ctx` and
+     not the turn id (the id lives on the spine, two workflows up), so the alternative was
+     editing the spine, `sub-main-processing` and every `Call 'sub-output'*` caller to
+     thread it through. The CRM resolves the turn from the body's own
+     `(ctx.contact.id, ctx.text.message.messageId)` - the same pair `chatbot.turns` is
+     UNIQUE on (D15) - taking the HIGHEST attempt, and refuses anything but a `delegated`
+     turn (404 with a sentence when no row matches, 409 `CHATBOT_TURN_NOT_DELEGATED`
+     otherwise). `/turn/{turn_id}/complete` is unchanged and still works, so step 2 below
+     is reversible either way,
    - body `specifyBody: json`, `jsonBody` = the thirteen fields above,
    - `retryOnFail: false`. **Deliberate:** the tail WRITES the session, and a retry after a
      partial failure would re-run a turn the CRM may already have completed. The CRM's own
      idempotency covers a genuine duplicate (a second `/complete` replays the first answer
      and writes nothing), but an n8n-level retry is the wrong place to decide that.
-2. `turn_id` must reach the sub. `sub-output`'s trigger gains a fourteenth input
-   `turn_id` (`type: string`), and every `Call 'sub-output'*` caller sets it to the
-   `turn_id` the S1 `httpRequest` node returned (AC-110 - the node that replaced
-   `get-session-vars` through `route-turn` on the spine). The spine already carries that
-   value; nothing new is computed for it.
+2. Nothing else has to reach the sub. The trigger's existing thirteen inputs are the
+   whole body, and `ctx` - which every caller already sends - is what identifies the turn.
+   (An earlier draft of this section threaded a fourteenth `turn_id` input down from the
+   spine; the id-less endpoint above is what replaced it, and it is why this cut no longer
+   touches the spine at all.)
 
 ### Step 2 - re-emit, so nothing downstream moves
 
@@ -229,6 +238,79 @@ reads those sessions correctly and simply ignores the extra key.
   all (it falls through the switch to an empty response) and `offer_hold`'s text is
   computed upstream by `offer-hold-reply` rather than canned. Inventing copy for either
   would be inventing behaviour; they land with their lanes at S3 and S5.
+
+---
+
+## S3 - the canned lanes, offer-hold and ideation move into the CRM
+
+**CRM side (shipped, inert by default).** `POST /api/v1/external/chat/turn` can now FINISH
+eight branch kinds itself - `access_denied`, `escalate_offer`, `escalation_declined`,
+`clarify_menu`, `not_supported`, `demand_qty`, `offer_hold`, `ideate` - returning
+`delegate: null` with `reply` and one `send_message` action. Ideation is called as the MCP
+tool `crm_ideation_turn` through the same in-process client every business tool uses (D6,
+D10), so it is not a lane in n8n and not a special case in the CRM.
+
+**It completes NOTHING until the owner says so.** `system_settings.chatbot_completed_lanes`
+is a JSON list, shipped EMPTY, and a lane runs in the CRM only when it is in BOTH that list
+and the code's own `lanes.canned.COMPLETED_BRANCH_KINDS`. That is what makes this cut a
+data change rather than a deploy.
+
+### The order, and it is not negotiable
+
+1. **Deploy the CRM.** `chatbot_completed_lanes` is `[]`, so every one of the eight still
+   delegates and n8n answers exactly as it does today. Nothing a customer sees moves.
+2. **Shadow.** Leave it deployed. The CRM composes nothing for these lanes yet, so the
+   window here is about the REST of the turn being unchanged: zero `chatbot.turns` rows
+   with `status = 'failed'`, and the eight kinds still arriving at n8n with the same
+   `branch_kind` they did before.
+3. **The owner adds the kind(s) to `chatbot_completed_lanes`** in Settings, one lane or
+   several, and watches. From that moment the CRM answers them and the `head-arm` Switch's
+   `finished` route (S1) sends the CRM's reply; n8n's own nodes for those kinds stop being
+   reached, but they are still THERE.
+4. **Only then delete the Switch outputs and the nodes**, below. Deleting before step 3 is
+   what turns a reversible data change into an outage.
+
+**Rollback is editing the list**, at every point before step 4: remove the kind and the
+next turn delegates again. After step 4 the rollback is re-importing the workflow JSON
+exported before it, which is why step 4 waits for a week of step 3.
+
+### Step 4 - the wiring change, in the spine (`sorento-consume-main`)
+
+5. DELETE the `route` Switch outputs for the eight kinds. What remains is
+   `check_promotion`, `stock_denied`, `business_query`, `out_of_scope` and `low_signal` -
+   the five S4 to S6 still own.
+6. DELETE the nodes those outputs fed, now unreachable: `tag-access-denied`,
+   `tag-escalate-offer`, `tag-escalation-declined`, `tag-clarify-menu`,
+   `tag-not-supported`, `tag-demand-qty`, `tag-offer-hold`, `If-ideate`,
+   `ideate-turn-http`, `build-ideate-reply`, `offer-hold-reply`.
+7. `Edit Fields2` STAYS. It carries `not_allowed_check_stock: true` onto the
+   `stock_denied` item, and that lane still delegates - but the CRM now stamps the same
+   field itself (`_stamp_item`), so the node is a no-op that can go with the rest of the
+   business lane at S6.
+
+`sorento-sub-respond-sendmsg-respond5` goes with `tag-access-denied`: its `message`
+expression IS the access-denied reply, and the CRM composes that string now.
+
+### AC-305's proof
+
+```bash
+python scripts/export-workflows.py --verify
+grep -rn "ideate-turn-http\|build-ideate-reply\|offer-hold-reply" n8n-workflows-init/export/*/workflow.json
+```
+
+Only `clone-*` and archived `*-live` exports may match. A hit in the live spine means step
+4 was not completed. And in the CRM, the switch itself is the second proof:
+`SELECT chatbot_completed_lanes FROM system_settings` names exactly the kinds n8n no
+longer routes.
+
+### Not covered by this slice
+
+- `low_signal` (S4), `out_of_scope` and the assignment actions (S5), `check_promotion` /
+  `stock_denied` / `business_query` (S6). Their Switch outputs stay.
+- The canned copy is now editable in Settings > AI Prompts (`chatbot_reply_*`), which
+  means an owner CAN change what these lanes say without a deploy - and can therefore
+  change it to something n8n's own nodes would not have said. That is the point of D5, and
+  it is worth knowing before step 4 removes the comparison.
 
 ---
 
