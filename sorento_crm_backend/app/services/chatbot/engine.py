@@ -26,6 +26,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterator
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.chatbot_turn import ChatbotTurn
@@ -213,13 +214,11 @@ def _read_session_vars(db: Session, *, respond_io_id: str, reply_to_id: str | No
     return {"respond_io_id": respond_io_id, "session_vars": state}
 
 
-def _existing_turn(db: Session, *, contact_respond_id: str, message_id: str | None):
-    """D15: has this respond message already been turned into a turn?
-
-    Checked with a SELECT rather than left to the unique index so a legitimate double
-    delivery (webhook plus failover poller) costs a lookup, not an exception and an LLM
-    call. The index is still there as the real guarantee under concurrency.
-    """
+def _select_turn(db: Session, *, contact_respond_id: str, message_id: str | None):
+    """The raw lookup. Kept separate from `_existing_turn` so the post-collision retry
+    below can re-read WITHOUT going through whatever a test has wrapped around the public
+    helper - the forced-TOCTOU test synchronises on `_existing_turn`, and a second trip
+    through that barrier would deadlock the very path being fixed."""
     if message_id is None:
         return None
     return (
@@ -231,6 +230,17 @@ def _existing_turn(db: Session, *, contact_respond_id: str, message_id: str | No
         .order_by(ChatbotTurn.created_at.asc())
         .first()
     )
+
+
+def _existing_turn(db: Session, *, contact_respond_id: str, message_id: str | None):
+    """D15: has this respond message already been turned into a turn?
+
+    Checked with a SELECT rather than left to the unique index so a legitimate double
+    delivery (webhook plus failover poller) costs a lookup, not an exception and an LLM
+    call. The index is the real guarantee under concurrency, and the collision it raises
+    is caught in `run_turn` - the SELECT alone is a TOCTOU window, not a lock.
+    """
+    return _select_turn(db, contact_respond_id=contact_respond_id, message_id=message_id)
 
 
 def _insert_turn(db: Session, *, envelope: Envelope, contact_respond_id: str) -> ChatbotTurn:
@@ -262,6 +272,7 @@ def _close_turn(
     branch_kind: str | None,
     error: str | None,
     records: list[dict[str, Any]],
+    response: dict[str, Any] | None = None,
 ) -> None:
     row = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).first()
     if row is None:  # pragma: no cover - the row was inserted two lines earlier
@@ -271,8 +282,29 @@ def _close_turn(
     row.branch_kind = branch_kind
     row.error = error
     row.trace = records
+    # D15 needs the ORIGINAL answer, not just the fact that a turn happened: a duplicate
+    # delivery replays this, and n8n's `build-ctx` / `route-turn` re-emitters would throw
+    # on a null. It is also what S2b's Retry reads.
+    row.response = response
     row.finished_at = _now()
     db.commit()
+
+
+def _duplicate_result(row: ChatbotTurn) -> TurnResult:
+    """D15: the same respond message arrived twice. Replay the FIRST turn's answer."""
+    response = row.response if isinstance(row.response, dict) else {}
+    return TurnResult(
+        turn_id=str(row.id),
+        ctx=response.get("ctx"),
+        item=response.get("item"),
+        branch_kind=row.branch_kind,
+        delegate=delegate_for(row.branch_kind) if row.branch_kind else None,
+        reply=response.get("reply"),
+        actions=response.get("actions") or [],
+        duplicate=True,
+        status=row.status,
+        stage=row.stage,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -280,35 +312,100 @@ def _close_turn(
 # --------------------------------------------------------------------------- #
 
 
-def run_turn(envelope: Envelope, *, session_factory: SessionFactory) -> TurnResult:  # noqa: PLR0915
-    """Run the head of one turn. Never raises for a business failure; records it."""
+def run_turn(envelope: Envelope, *, session_factory: SessionFactory) -> TurnResult:
+    """Run the head of one turn. NEVER raises for a business failure; records it.
+
+    Two things happen before the stages: the D15 dedup, and the row insert. Everything
+    after that is wrapped, so an unexpected exception anywhere - a provider error while
+    resolving config, an access-service failure, the stock predicate throwing on a
+    contact with no `is_allowed_stock` field - closes the turn as `failed` with the stage
+    it reached and hands the caller today's error reply. A turn left at `processing` with
+    a null error and no trace is exactly the dropped turn H32 is about.
+    """
     turn_trace = trace_mod.TurnTrace()
     turn_trace.start()
 
     contact_respond_id = _contact_respond_id(envelope)
+    message_id = _message_id(envelope)
     dry_run = envelope.dry_run
 
-    # -- received ---------------------------------------------------------- #
     with _session(session_factory) as db:
-        duplicate = _existing_turn(
-            db, contact_respond_id=contact_respond_id, message_id=_message_id(envelope)
+        existing = _existing_turn(
+            db, contact_respond_id=contact_respond_id, message_id=message_id
         )
-        if duplicate is not None:
+        if existing is not None:
             # D15: the two injectors delivered the same respond message. No second turn
             # runs, no second LLM call, and the caller's Switch on `duplicate` sends
             # nothing.
-            return TurnResult(
-                turn_id=str(duplicate.id),
-                branch_kind=duplicate.branch_kind,
-                delegate=delegate_for(duplicate.branch_kind) if duplicate.branch_kind else None,
-                duplicate=True,
-                status=duplicate.status,
-                stage=duplicate.stage,
+            return _duplicate_result(existing)
+        try:
+            row = _insert_turn(db, envelope=envelope, contact_respond_id=contact_respond_id)
+        except IntegrityError:
+            # The SELECT above is a TOCTOU window, not a lock: a webhook delivery racing a
+            # poller re-delivery can both miss and both insert. The unique index is the
+            # real guarantee, so the loser reads the winner's row rather than 500ing.
+            db.rollback()
+            winner = _select_turn(
+                db, contact_respond_id=contact_respond_id, message_id=message_id
             )
-        row = _insert_turn(db, envelope=envelope, contact_respond_id=contact_respond_id)
+            if winner is None:  # pragma: no cover - some OTHER constraint failed
+                raise
+            return _duplicate_result(winner)
         turn_id = str(row.id)
 
-        actions: list[dict[str, Any]] = []
+    # The stage the turn is currently in, for the catch-all below. A plain list because
+    # the inner stages update it and the handler reads it.
+    stage: list[str] = ["received"]
+    actions: list[dict[str, Any]] = []
+    try:
+        return _run_stages(
+            envelope,
+            session_factory=session_factory,
+            turn_trace=turn_trace,
+            turn_id=turn_id,
+            contact_respond_id=contact_respond_id,
+            dry_run=dry_run,
+            actions=actions,
+            stage=stage,
+        )
+    except Exception as exc:  # noqa: BLE001 - a failed turn is recorded, never dropped
+        message = f"{type(exc).__name__}: {exc}"
+        logger.exception("chatbot turn %s failed at stage %s", turn_id, stage[0])
+        turn_trace.record(
+            stage[0],  # type: ignore[arg-type]
+            status="failed",
+            summary="The turn stopped before it could be answered.",
+            why="Something the turn depends on did not respond as expected.",
+            facts={"stage": stage[0]},
+            error=message,
+            raw=None,
+        )
+        with _session(session_factory) as db:
+            _close_turn(
+                db,
+                turn_id,
+                status="failed",
+                stage=stage[0],
+                branch_kind=None,
+                error=message,
+                records=turn_trace.records,
+            )
+        return _failed_result(turn_id, stage[0], message, actions, dry_run)
+
+
+def _run_stages(  # noqa: PLR0915
+    envelope: Envelope,
+    *,
+    session_factory: SessionFactory,
+    turn_trace: trace_mod.TurnTrace,
+    turn_id: str,
+    contact_respond_id: str,
+    dry_run: bool,
+    actions: list[dict[str, Any]],
+    stage: list[str],
+) -> TurnResult:
+    """received -> understood -> access -> routed. Wrapped by `run_turn`."""
+    with _session(session_factory) as db:
         # AC-108: today's `set-human-intervened` path. The turn CONTINUES; the caller
         # clears the flag on the contact.
         if _is_human_intervened(envelope):
@@ -369,6 +466,7 @@ def run_turn(envelope: Envelope, *, session_factory: SessionFactory) -> TurnResu
     )
 
     # -- understood (NO DB SESSION IS OPEN HERE) ---------------------------- #
+    stage[0] = "understood"
     parent_input = {
         "latest_user_message": latest_user_message,
         "contact_id": contact_respond_id,
@@ -425,6 +523,7 @@ def run_turn(envelope: Envelope, *, session_factory: SessionFactory) -> TurnResu
     )
 
     # -- access + routed ---------------------------------------------------- #
+    stage[0] = "access"
     with _session(session_factory) as db:
         suggested_agent = jsc.get(qf.get("routing"), "suggested_agent")
         access = check_access(
@@ -449,6 +548,7 @@ def run_turn(envelope: Envelope, *, session_factory: SessionFactory) -> TurnResu
             raw=access,
         )
 
+        stage[0] = "routed"
         ctx = build_ctx(
             contact=envelope.contact,
             text=_tf_message(envelope),
@@ -483,6 +583,11 @@ def run_turn(envelope: Envelope, *, session_factory: SessionFactory) -> TurnResu
             branch_kind=branch_kind,
             error=None,
             records=turn_trace.records,
+            # S2 / D15: a duplicate delivery replays THIS, so n8n's re-emitters never see
+            # a null `ctx` or `item`. `actions` rides along because the caller must not
+            # execute them twice either - it gets the original list and its own Switch on
+            # `duplicate` decides to send nothing.
+            response={"ctx": ctx, "item": item, "actions": actions},
         )
 
     return TurnResult(

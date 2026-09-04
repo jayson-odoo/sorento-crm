@@ -12,8 +12,9 @@ the turn) or by `POST /chat/turn/{id}/complete`; `delegated` is the state in bet
 Two columns carry the whole idempotency story (D15, AC-712): `message_id` plus the unique
 index on `(contact_respond_id, message_id)`. The webhook producer and the failover poller
 are two injectors of one envelope shape, so the same respond message can legitimately
-arrive twice; the second insert collides, the original turn's reply is returned with
-`duplicate: true`, and the caller sends nothing.
+arrive twice. The SELECT-then-INSERT dedup in the engine is a TOCTOU window, so the
+unique index is the real backstop: the collision is caught, the winner's row is read, and
+its stored `response` is replayed with `duplicate: true` so the caller sends nothing.
 """
 from __future__ import annotations
 
@@ -73,6 +74,12 @@ class ChatbotTurn(Base):
     # why, facts, error, raw}. `summary` and `why` are sentences the engine writes from
     # structured state (D11: never from the customer's text), so the screen renders words.
     trace = Column(JSONB, nullable=True)
+
+    # The answer this turn returned: `{ctx, item, actions}` today, `{reply, actions}` from
+    # S3. D15 needs it - a duplicate delivery must replay the ORIGINAL answer, and n8n's
+    # `build-ctx` / `route-turn` re-emitters throw on a null `ctx`. It is also what S2b's
+    # Retry reads to show the operator what was actually sent.
+    response = Column(JSONB, nullable=True)
 
     # Gate 4 (shadow mode): the n8n turn id this row shadows, when the live spine also
     # called us with is_test and kept its own reply.

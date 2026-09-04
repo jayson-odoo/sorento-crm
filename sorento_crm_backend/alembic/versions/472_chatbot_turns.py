@@ -5,7 +5,10 @@ Four things, one migration, because none of them is usable without the others:
 1. `CREATE SCHEMA IF NOT EXISTS chatbot` (D12). The module owns its own namespace so an
    uninstall drops its data and nothing else. `respond_contacts.session_vars` stays in
    `public` - it is shared with ideation and with n8n during the migration window.
-2. `chatbot.turns` (AC-003): the turn inbox and its human-readable trace, indexed on
+2. `chatbot.turns` (AC-003 plus `response`): the turn inbox, its human-readable trace
+   and the answer it returned. `response` is what D15 needs and AC-003's column list
+   does not name: a duplicate delivery must replay the ORIGINAL `ctx` / `item`, and
+   n8n's re-emitters throw on a null. Indexed on
    `(contact_respond_id, status, created_at)` for the trace screen's list and UNIQUE on
    `(contact_respond_id, message_id)` for D15's idempotency. A NULL `message_id` (a
    console turn) does not participate in the unique index, which is Postgres's own
@@ -56,6 +59,7 @@ def upgrade():
         sa.Column("error", sa.Text(), nullable=True),
         sa.Column("attempt", sa.Integer(), nullable=False, server_default="1"),
         sa.Column("trace", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column("response", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column("shadow_of", sa.String(length=128), nullable=True),
         sa.Column(
             "created_at",

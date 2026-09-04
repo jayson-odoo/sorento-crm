@@ -11,17 +11,17 @@ rollback-scoped fixture cannot show. Same pattern and same reasoning as
 and `tests/test_media_quota_serialization.py`. Marker-prefixed (`ZZT-`) and cleaned up by
 hand in `finally`, since nothing here rolls back.
 
-**Confirmed finding (tester, not fixed here):** `test_two_threads_same_message_id_leave_exactly_one_turn_row`
-(natural thread timing) is genuinely non-deterministic - one batch of 9 repeats ran clean,
-a later run inside the full suite hit the same `IntegrityError` this file's OTHER test
-forces on purpose, so it is marked `xfail(strict=False)` rather than left to flake CI red.
-`test_forced_toctou_window_between_the_select_and_the_insert` makes the SAME defect
-reproduce every time with a barrier inside `_existing_turn`: the losing thread's INSERT
-raises a real `psycopg2.errors.UniqueViolation` / `IntegrityError`, unhandled anywhere in
-`engine.run_turn`, which `app/api/v1/external/chat.py`'s generic `except Exception` turns
-into a plain 500 - not the `{duplicate: true}` `ChatbotTurn`'s own docstring promises for
-a genuine race. Report only; the fix (catch the `IntegrityError` around `_insert_turn`
-and re-run `_existing_turn` to fetch the winner's row) is the coder's, not the tester's.
+**Defect found here, then FIXED (S1 of the review).** `engine.run_turn`'s dedup was a
+SELECT then, on a miss, an INSERT, with nothing catching the `IntegrityError` the unique
+index raises when two deliveries genuinely race - so the losing thread got a 500 instead
+of `{duplicate: true}`. Natural thread timing hides it (`SessionLocal`'s pool warm-up for
+the second thread usually lets the first finish outright), which is why
+`test_forced_toctou_window_between_the_select_and_the_insert` holds both threads at a
+barrier INSIDE `_existing_turn` until both have missed. Both tests were `xfail` while the
+defect stood; the engine now catches the collision, re-reads the winner's row through
+`_select_turn` (deliberately NOT `_existing_turn`, or the retry would re-enter that
+barrier) and replays its stored response, so the markers are gone and these are ordinary
+passing tests.
 """
 from __future__ import annotations
 
@@ -114,16 +114,6 @@ def stub_engine_seams(monkeypatch):
     monkeypatch.setattr(engine_mod, "default_space_id", lambda db: "364817")
 
 
-@pytest.mark.xfail(
-    reason=(
-        "D15 defect confirmed (tester): NOT deterministic on natural thread timing alone "
-        "- observed both green (9/9 in one batch) and red (IntegrityError) across repeat "
-        "runs, so left xfail(strict=False) rather than flaking CI. "
-        "test_forced_toctou_window_between_the_select_and_the_insert below is the reliable, "
-        "deterministic reproduction of the same defect."
-    ),
-    strict=False,
-)
 def test_two_threads_same_message_id_leave_exactly_one_turn_row(
     real_db_contact, stub_engine_seams
 ):
@@ -197,16 +187,6 @@ def test_two_threads_same_message_id_leave_exactly_one_turn_row(
     assert duplicate_flags.count(False) == 1
 
 
-@pytest.mark.xfail(
-    reason=(
-        "D15 defect confirmed (tester, kill-tested with a forced TOCTOU window): "
-        "engine.run_turn's SELECT-then-INSERT dedup has no IntegrityError handling around "
-        "uq_chatbot_turns_contact_message, so the losing thread of a genuine race raises "
-        "instead of returning {duplicate: true}. Red until the engine catches it; XPASS "
-        "means the fix landed and this marker should be removed."
-    ),
-    strict=False,
-)
 def test_forced_toctou_window_between_the_select_and_the_insert(
     real_db_contact, stub_engine_seams, monkeypatch
 ):
