@@ -90,6 +90,16 @@ NODE_SLUGS: dict[str, tuple[str, ...]] = {
     # arm's own capture. It reuses the `resolve-exit-*` directories rather than having one
     # of its own, so no fixture is invented - see `sub_run_fixtures()`.
     "sub-resolve-and-gate": (),
+    # S6b - `sub-fetch-results`'s own nodes (AC-605, AC-606). Captured under ONE slug,
+    # `sub-fetch-results-rs`. `tier-gate` / `build-ctx` / `build-ctx-resolved` ALSO have
+    # directories inside this slug (the RS-8 name-preserving stand-ins the S6a comment
+    # above already excludes for the same reason: their input is the sub's own trigger and
+    # their expected is a re-emission, not that node's real body), so they are deliberately
+    # NOT re-registered here under this slug.
+    "tool-filter": ("sub-fetch-results-rs",),
+    "tier-probe-plan": ("sub-fetch-results-rs",),
+    "tier-probe-collect": ("sub-fetch-results-rs",),
+    "fetch-result": ("sub-fetch-results-rs",),
 }
 
 # Output keys the SHIPPING node bodies emit that the body an OLD capture was taken
