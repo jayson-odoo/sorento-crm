@@ -8,8 +8,9 @@
  * DevTools Animations panel shows nothing running on it.
  */
 import React from 'react';
-import { describe, it, expect } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
+import { MotionGlobalConfig } from 'motion/react';
 
 import { CommandDialog, CommandInput, CommandList, CommandItem } from './command';
 
@@ -71,6 +72,24 @@ describe('CommandDialog motion={false} (M2-01)', () => {
  * animate" asks for - while the scrim keeps its own fade.
  */
 describe('CommandDialog motion={false} exits on the same frame (M2-01)', () => {
+  /*
+    The one describe that has to opt out of the global
+    `MotionGlobalConfig.skipAnimations` (vitest.setup.ts), because it is the one
+    that reads a value motion WROTE rather than the behaviour that follows from
+    it. Skipping animations applies the final keyframe and reports completion in
+    the same frame, so AnimatePresence unmounts the content before the style
+    flush reaches it: the exit still happens, the held node just keeps the
+    opacity it had and there is nothing left to read it off. Run the real
+    (zero-duration) exit here instead.
+  */
+  const skipAnimations = MotionGlobalConfig.skipAnimations;
+  beforeEach(() => {
+    MotionGlobalConfig.skipAnimations = false;
+  });
+  afterEach(() => {
+    MotionGlobalConfig.skipAnimations = skipAnimations;
+  });
+
   it('drives the content to opacity 0 the moment it closes, not at the end of the scrim fade', async () => {
     const { rerender } = render(
       <CommandDialog open motion={false}>

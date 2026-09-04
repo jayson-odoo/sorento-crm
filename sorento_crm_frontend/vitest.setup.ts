@@ -1,5 +1,6 @@
 import '@testing-library/jest-dom';
 import { configure } from '@testing-library/dom';
+import { MotionGlobalConfig } from 'motion/react';
 
 /*
   Testing Library gives an async assertion one second to come true.
@@ -55,6 +56,21 @@ if (typeof window !== 'undefined' && !window.matchMedia) {
     }),
   });
 }
+
+// The reduced-motion default above shortens every surface transition to 0.01s;
+// it does not remove it. An exit still has to start, tick and finish before
+// AnimatePresence unmounts the surface, and while a Dialog or AlertDialog is
+// mid-exit Radix keeps `aria-hidden` on everything outside it - so a synchronous
+// `getByRole` for a button on the page BEHIND a just-closed dialog finds nothing.
+// It is a race, so it passes on an idle machine and fails on a loaded one (CI).
+//
+// `skipAnimations` makes motion apply the final keyframe and report completion
+// instead of animating, so a closed surface is gone by the time the next
+// assertion runs. A test that cares about the spring asserts the transition it
+// was handed rather than an in-flight value (see lib/motion.test.ts); the one
+// test that has to read a value motion actually wrote turns this back off for
+// its own duration (see components/ui/command.test.tsx).
+MotionGlobalConfig.skipAnimations = true;
 
 if (typeof Element !== 'undefined') {
   Element.prototype.scrollIntoView ??= function scrollIntoView() {};
