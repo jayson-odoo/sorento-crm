@@ -13,8 +13,10 @@ import {
   memoryChips,
   shortTurnId,
   stageLabel,
+  stageRecords,
   turnDuration,
   turnHeadline,
+  turnNotes,
 } from './turnPresentation';
 import type { ChatbotTurn, TurnTraceRecord } from './types/chatbotTurn.types';
 
@@ -142,6 +144,57 @@ describe('buildTimeline (AC-252)', () => {
     const rows = buildTimeline(t);
     const kinds = rows.map((r) => r.kind);
     expect(kinds).toEqual(['stage', 'stage', 'not-reached', 'stage']);
+  });
+
+  it('excludes a note record from the timeline (S2b hardening 1c)', () => {
+    // A note (an operator asking for a retry) is written into the SAME trace array by
+    // the endpoint - `app/api/v1/system/chatbot.py::retry_turn` - carrying the stage the
+    // turn stopped at so it sorts with the failure it belongs to. Drawn as a timeline
+    // row it reads as a second "Sent" stage, not as a record of what someone did.
+    const t = turn({
+      status: 'failed',
+      trace: [
+        record({ stage: 'received' }),
+        record({ stage: 'understood', status: 'failed', error: 'boom' }),
+        {
+          ...record({ stage: 'sent' }),
+          kind: 'note',
+          summary: 'Retry requested by an operator.',
+        },
+      ],
+    });
+    const rows = buildTimeline(t);
+    const stageRows = rows.filter((r) => r.kind === 'stage');
+    // Only `received` and `understood` are real steps; the note must not show up as a
+    // third "Sent" row.
+    expect(stageRows).toHaveLength(2);
+    expect(stageRows.some((r) => r.record.summary.includes('Retry requested'))).toBe(false);
+  });
+});
+
+describe('stageRecords / turnNotes (S2b hardening 1c)', () => {
+  const noteRecord: TurnTraceRecord = {
+    ...record({ stage: 'sent' }),
+    kind: 'note',
+    summary: 'Retry requested by an operator.',
+  };
+  const t = turn({
+    trace: [record({ stage: 'received' }), record({ stage: 'understood' }), noteRecord],
+  });
+
+  it('stageRecords drops every note record', () => {
+    const stages = stageRecords(t);
+    expect(stages).toHaveLength(2);
+    expect(stages.every((r) => r.kind !== 'note')).toBe(true);
+  });
+
+  it('turnNotes returns only the note records, oldest first', () => {
+    const notes = turnNotes(t);
+    expect(notes).toEqual([noteRecord]);
+  });
+
+  it('turnNotes is empty for a turn with no notes', () => {
+    expect(turnNotes(turn({ trace: [record({ stage: 'received' })] }))).toEqual([]);
   });
 });
 

@@ -13,9 +13,11 @@ report notes that explicitly rather than assuming it.
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import uuid
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -198,6 +200,91 @@ def _seed_turn(
 
 
 # =============================================================================
+# (SEC1) After migration 474's grant step, only the admin role holds
+# system.chat_history.manage - the grant is ADMIN ONLY (the migration's own docstring:
+# ".view is held by two integration roles on the production data, and this slug
+# re-injects a message at a real customer"), so holding .view is not enough on its
+# own and an integration_% role never gets .manage regardless of what else it holds.
+# =============================================================================
+
+_MIGRATION_474_PATH = (
+    Path(__file__).resolve().parent.parent.parent
+    / "alembic"
+    / "versions"
+    / "474_chatbot_turn_retry.py"
+)
+_MANAGE_SLUG = "system.chat_history.manage"
+_VIEW_SLUG = "system.chat_history.view"
+
+
+def _migration_474_module():
+    spec = importlib.util.spec_from_file_location("zzt_migration_474", _MIGRATION_474_PATH)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _role_holding(db, role_slug: str, permission_slug: str | None) -> UserRole:
+    role = UserRole(id=str(uuid.uuid4()), slug=role_slug, name=role_slug, description="", is_protected=False, is_default=False)
+    db.add(role)
+    db.flush()
+    if permission_slug:
+        perm = db.query(UserPermission).filter_by(slug=permission_slug).first()
+        if perm is None:
+            perm = UserPermission(id=str(uuid.uuid4()), slug=permission_slug, name=permission_slug)
+            db.add(perm)
+            db.flush()
+        db.add(UserRolePermission(id=str(uuid.uuid4()), role_id=role.id, permission_id=perm.id))
+        db.flush()
+    return role
+
+
+def _role_manage_slugs(db, role_id: str) -> set[str]:
+    from sqlalchemy import text
+
+    rows = db.execute(
+        text(
+            "SELECT p.slug FROM user_role_permissions rp "
+            "JOIN user_permissions p ON p.id = rp.permission_id "
+            "WHERE rp.role_id = :role"
+        ),
+        {"role": role_id},
+    ).all()
+    return {row[0] for row in rows}
+
+
+class TestSEC1ManageGrantScope:
+    def test_only_admin_ends_up_holding_manage_integration_roles_do_not(self, db, monkeypatch):
+        admin_role = _role_holding(db, "admin", None)  # no .view grant needed - the UNION names the slug directly
+        integration_role_a = _role_holding(db, "integration_n8n", None)
+        integration_role_b = _role_holding(db, "integration_sorento_mcp", None)
+        db.commit()
+
+        monkeypatch.setattr("alembic.op.get_bind", lambda: db.connection())
+        _migration_474_module()._register_and_grant()
+
+        assert _MANAGE_SLUG in _role_manage_slugs(db, admin_role.id)
+        assert _MANAGE_SLUG not in _role_manage_slugs(db, integration_role_a.id)
+        assert _MANAGE_SLUG not in _role_manage_slugs(db, integration_role_b.id)
+
+    def test_holding_view_is_not_enough_on_its_own_admin_only(self, db, monkeypatch):
+        """The grant is admin-only, full stop - a non-integration role holding `.view`
+        (a customer-service role, say) must not pick up `.manage` just for that."""
+        view_perm = UserPermission(id=str(uuid.uuid4()), slug=_VIEW_SLUG, name=_VIEW_SLUG)
+        db.add(view_perm)
+        db.flush()
+        view_only_role = _role_holding(db, "customer_service", _VIEW_SLUG)
+        admin_role = _role_holding(db, "admin", None)
+        db.commit()
+
+        monkeypatch.setattr("alembic.op.get_bind", lambda: db.connection())
+        _migration_474_module()._register_and_grant()
+
+        assert _MANAGE_SLUG not in _role_manage_slugs(db, view_only_role.id)
+        assert _MANAGE_SLUG in _role_manage_slugs(db, admin_role.id)
+
+
+# =============================================================================
 # (2) Retry ordering under failure: RetryUnavailable and ReinjectFailed both roll
 # back the claim and log the outcome.
 # =============================================================================
@@ -246,6 +333,47 @@ class TestRetryFailureRollback:
         assert log is not None, "a failed retry must still write an integration_log row"
         assert log.status == "failed"
         assert log.status_code == resp.status_code
+
+
+# =============================================================================
+# (B2) Retry ordering pin: the marker is written and COMMITTED before the outbound
+# POST goes out - the endpoint's own docstring calls the reverse order a race (n8n
+# could re-deliver and the engine could look for the marker before this request's
+# commit lands). Proven with a genuinely SEPARATE session opened INSIDE the
+# `reinject_envelope` stub, not by re-reading the request's own session (which would
+# trivially agree with an in-memory attribute regardless of whether anything landed).
+# =============================================================================
+
+
+class TestRetryOrderB2:
+    def test_the_marker_is_committed_before_the_outbound_post(
+        self, client, db, session_factory, monkeypatch
+    ):
+        _GRANTS.add(MANAGE)
+        contact = _contact("retry-order-b2")
+        turn = _seed_turn(db, contact_respond_id=contact)
+
+        seen: dict[str, object] = {}
+
+        def _stub(row):
+            second_session = session_factory()
+            try:
+                reread = (
+                    second_session.query(ChatbotTurn).filter(ChatbotTurn.id == row.id).one()
+                )
+                seen["retry_requested_at"] = reread.retry_requested_at
+            finally:
+                second_session.close()
+
+        monkeypatch.setattr("app.api.v1.system.chatbot.reinject_envelope", _stub)
+
+        resp = client.post(f"{TURNS_BASE}/{turn.id}/retry")
+        assert resp.status_code == 200, resp.text
+
+        assert seen.get("retry_requested_at") is not None, (
+            "a second session opened INSIDE reinject_envelope must already see the "
+            "committed retry_requested_at - the claim has to land before the POST"
+        )
 
 
 # =============================================================================
@@ -332,6 +460,45 @@ class TestSEC3ResponseCap:
     def test_cap_document_leaves_a_small_document_untouched(self):
         small = {"reply": {"text": "SRTWC8517: 12 pcs on hand."}}
         assert trace_mod.cap_document(small) == small
+
+
+# =============================================================================
+# (SEC6) Entity strings in trace summaries are clipped at 40 chars
+# (trace.py::MAX_ENTITY_CHARS) - an entity's `raw` is CUSTOMER TEXT, and unclipped it
+# turns a one-line "Understood as..." sentence into a paragraph on the trace screen.
+# =============================================================================
+
+
+class TestSEC6EntityClipping:
+    def test_clip_leaves_a_short_string_untouched(self):
+        assert trace_mod._clip("SRTWC8517") == "SRTWC8517"
+
+    def test_clip_truncates_at_max_entity_chars_with_an_ellipsis(self):
+        long_value = "x" * 100
+        clipped = trace_mod._clip(long_value)
+
+        assert len(clipped) == trace_mod.MAX_ENTITY_CHARS
+        assert clipped.endswith("…")
+        assert clipped[:-1] == long_value[: trace_mod.MAX_ENTITY_CHARS - 1]
+
+    def test_clip_is_exactly_at_the_boundary_unclipped(self):
+        exact = "x" * trace_mod.MAX_ENTITY_CHARS
+        assert trace_mod._clip(exact) == exact
+        over_by_one = "x" * (trace_mod.MAX_ENTITY_CHARS + 1)
+        assert trace_mod._clip(over_by_one) != over_by_one
+        assert len(trace_mod._clip(over_by_one)) == trace_mod.MAX_ENTITY_CHARS
+
+    def test_understood_summary_clips_a_long_entity_raw(self):
+        customer_text = "y" * 100
+        qf = {
+            "message_type": "business_query",
+            "entities": [{"raw": customer_text, "canonical_code": None}],
+        }
+
+        summary = trace_mod.understood_summary(qf)
+
+        assert customer_text not in summary
+        assert trace_mod._clip(customer_text) in summary
 
 
 # =============================================================================
