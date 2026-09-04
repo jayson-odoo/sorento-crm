@@ -319,6 +319,160 @@ SUB_REPLAY_SPACE_ID = "364817"
 SUB_REPLAY_PROBE_START = "2026-06-01"
 
 
+# --------------------------------------------------------------------------- #
+# S2, the tail. Two shapes of capture, and the difference is a BODY difference,
+# not a divergence: the live spine's `compile-current-state` predates RS-3 half
+# H2 and returns `{variables, user_response, quick_reply}` bare, while the body
+# the export ships (and the port) re-seals it as `{reply: {text, quick_replies,
+# session_patch}}`. `_unwrap_reply` grades whichever shape the fixture recorded,
+# so 135 live captures stay gradeable instead of being written off.
+# --------------------------------------------------------------------------- #
+
+
+def _ctx_of(fixture: _corpus.Fixture) -> dict:
+    """The six-key hub, from the `build-ctx` node every captured graph carries."""
+    return fixture.first("build-ctx")["ctx"]
+
+
+def _ran(fixture: _corpus.Fixture, node: str):
+    """`$('node').isExecuted ? $('node').first().json : null`, off the capture."""
+    items = fixture.upstream(node)
+    return (items[0] or {}).get("json") if items else None
+
+
+def _producers(fixture: _corpus.Fixture) -> dict:
+    """`build-outcome`'s by-name reads, resolved off the capture's own `ctx`.
+
+    A key that is ABSENT means the producer did not run (or is not in that graph), which
+    is what `_one`'s `catch` also reports as null - so absence and null are the same
+    statement here, exactly as they are in the node.
+    """
+    from app.services.chatbot.tail.outcome import OUTCOME_KEYS
+
+    out = {}
+    for key in OUTCOME_KEYS:
+        items = fixture.upstream(key)
+        if not items:
+            continue
+        if key == "cs-roster-plan":
+            out[key] = [(i or {}).get("json") for i in items]  # the ONE multi-item read
+        else:
+            out[key] = (items[0] or {}).get("json")
+    return out
+
+
+def _execution_id(fixture: _corpus.Fixture) -> str:
+    """`$execution.id`. A hand-built fixture has none, and the n8n shim calls it "test".
+
+    Not cosmetic: a dym offer BORN this turn stamps the execution id as its identity, so
+    the wrong value here fails 18 fixtures on a field that is a harness constant, not a
+    behaviour.
+    """
+    return str((fixture.data.get("source") or {}).get("execution_id") or "test")
+
+
+def _run_build_outcome(fixture: _corpus.Fixture) -> list:
+    from app.services.chatbot.tail.outcome import build_outcome
+
+    return build_outcome(fixture.input, _producers(fixture))
+
+
+def _run_escalate_catalog(fixture: _corpus.Fixture) -> list:
+    from app.services.chatbot.copy import fallback_copy
+    from app.services.chatbot.tail.outcome import escalate_catalog
+
+    return [
+        {
+            "json": escalate_catalog(
+                (fixture.input[0] or {}).get("json") or {},
+                _ctx_of(fixture),
+                fallback_copy(),
+                not_found=_ran(fixture, "not-found-error-message"),
+                incoming_picker=_ran(fixture, "annotate-incoming-picker"),
+                access_choice=_ran(fixture, "access-level-choice-message"),
+                suggest_offer=_ran(fixture, "build-suggest-offer"),
+                gate=_ran(fixture, "disallowed-entity-gate"),
+                offer_hold=_ran(fixture, "offer-hold-reply"),
+            )
+        }
+    ]
+
+
+def _run_cs_roster_plan(fixture: _corpus.Fixture) -> list:
+    from app.services.chatbot.tail.member_offer import cs_roster_plan
+
+    return [{"json": row} for row in cs_roster_plan(_ran(fixture, "disallowed-entity-gate"))]
+
+
+def _run_build_cs_member_offer(fixture: _corpus.Fixture) -> list:
+    from app.services.chatbot.tail.member_offer import build_cs_member_offer
+
+    plan = [(i or {}).get("json") for i in fixture.upstream("cs-roster-plan")]
+    responses = [(i or {}).get("json") for i in fixture.input]
+    return [
+        {
+            "json": build_cs_member_offer(
+                _ran(fixture, "escalate-catalog") or {},
+                plan,
+                responses,
+            )
+        }
+    ]
+
+
+def _run_compile_current_state(fixture: _corpus.Fixture) -> list:
+    from app.services.chatbot.tail.compile_state import compile_current_state
+
+    compiled = compile_current_state(
+        (fixture.input[0] or {}).get("json") or {},
+        _ctx_of(fixture),
+        resolved=_ran(fixture, "resolve-entity"),
+        gate=_ran(fixture, "disallowed-entity-gate"),
+        execution_id=_execution_id(fixture),
+    )
+    # A pre-RS-3 capture recorded the bare patch; the shipping body seals it. Grading the
+    # shape the fixture actually recorded is what keeps 135 live captures gradeable.
+    expected_first = (fixture.expected[0] or {}).get("json") if fixture.expected else None
+    if isinstance(expected_first, dict) and "reply" not in expected_first:
+        return [{"json": compiled.item["reply"]["session_patch"]}]
+    return [{"json": compiled.item}]
+
+
+def _run_crossdomain_compose(fixture: _corpus.Fixture) -> list:
+    """The shipping body reads the block off `build-result`; the live body read it off
+    `crossdomain-render._xdBlock`. The diff between the two exported bodies is exactly
+    that read plus the RS-3 seal, so a live capture is replayed by handing the port the
+    SAME block through the shape it expects, rather than being written off as stale.
+    """
+    from app.services.chatbot.tail.compile_state import seal
+    from app.services.chatbot.tail.compose import crossdomain_compose
+
+    raw = (fixture.input[0] or {}).get("json") or {}
+    sealed = "reply" in raw
+    item = raw if sealed else {"reply": seal(raw)}
+    patch = item["reply"]["session_patch"]
+
+    build_result = _ran(fixture, "build-result")
+    if build_result is not None:
+        result = build_result
+    else:
+        render = _ran(fixture, "crossdomain-render")
+        result = (
+            {"result": {"xd": {"block": (render or {}).get("_xdBlock")}}}
+            if render is not None
+            else None
+        )
+
+    # The port takes `answered` as a VALUE (R3 / D11: no reading a reply back with a
+    # regex). The capture predates the marker, so the replay derives the same fact the
+    # JS derived, from the state the fixture recorded.
+    previous = ((patch.get("variables") or {}).get("response"))
+    answered = isinstance(previous, str) and previous.startswith("Previous turn (")
+
+    out = crossdomain_compose(item, result=result, answered=answered)
+    return [{"json": out if sealed else out["reply"]["session_patch"]}]
+
+
 RUNNERS = {
     "build-ctx": _run_build_ctx,
     "route-turn": _run_route_turn,
@@ -334,6 +488,12 @@ RUNNERS = {
     "resolve-exit-offer": _run_resolve_exit,
     "item": _run_item,
     "sub-resolve-and-gate": _run_whole_sub,
+    "build-outcome": _run_build_outcome,
+    "escalate-catalog": _run_escalate_catalog,
+    "cs-roster-plan": _run_cs_roster_plan,
+    "build-cs-member-offer": _run_build_cs_member_offer,
+    "compile-current-state": _run_compile_current_state,
+    "crossdomain-compose": _run_crossdomain_compose,
 }
 
 # `sub-resolve-and-gate` is the SYNTHETIC whole-sub replay: it has no fixture directory of
@@ -361,8 +521,24 @@ def _compare(fixture: _corpus.Fixture) -> tuple[object, object]:
 
 
 def _replay(fixture: _corpus.Fixture) -> None:
+    # No provenance check here: `_corpus.graded` filters at PARAMETRISATION, so a
+    # `reasoned` fixture never reaches this function, and
+    # `test_reasoned_fixture_agreement_is_reported` is what reports on those. One
+    # declaration of that rule, not two.
     actual, expected = _compare(fixture)
     registered = divergences.find(fixture.node, fixture.name.split("/")[-1])
+    if registered is not None and registered.strip_paths:
+        # A FIELD-scoped divergence: the named paths come off BOTH sides and the rest of
+        # the fixture is still graded byte for byte. A blanket pass here would make the
+        # node's whole replay vacuous for the sake of one added key. Applied AFTER
+        # `_compare`, so a capture that also predates a body addition has both handled.
+        actual = divergences.strip(actual, registered.strip_paths)
+        expected = divergences.strip(expected, registered.strip_paths)
+        assert actual == expected, (
+            f"{fixture.node}/{fixture.name} diverges outside the registered "
+            f"{registered.hazard} fields\nfixture: {fixture.path}"
+        )
+        return
     if actual == expected:
         if registered is not None:
             pytest.fail(

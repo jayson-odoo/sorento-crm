@@ -30,6 +30,17 @@ def full_corpus() -> None:
             "COVERAGE.md describes the FULL corpus, which this checkout cannot see; "
             f"{_corpus.corpus_skip_reason()}"
         )
+    if not (_corpus.corpus_root() / "nodes" / "sub-output-live").is_dir():
+        # TEMPORARY, with a named exit: the 5 Sep tail capture batch (305 files) lives on
+        # an n8n-repo WORKTREE and has not been merged into the sibling checkout yet.
+        # COVERAGE.md describes the corpus WITH it, so comparing against a corpus without
+        # it would be a red for a reason that has nothing to do with drift. This skip
+        # disappears the moment the n8n lane merges the captures - no code change here.
+        pytest.skip(
+            "this corpus has no `sub-output-live` slug, so it predates the 5 Sep tail "
+            "capture batch COVERAGE.md was generated from; point CHATBOT_FIXTURES_DIR at "
+            "the captures worktree, or wait for the n8n lane to merge them"
+        )
 
 
 def test_coverage_md_is_not_stale(full_corpus) -> None:
@@ -112,13 +123,41 @@ class TestGateStates:
         assert coverage._cell_state("route-turn", "business_query", 87) == ("met", False)
 
 
+# The cells gate 0 blocks on TODAY. EMPTY since the 5 Sep tail capture batch: 305 real
+# captures off `sub-output-live` (the body the port implements), and the pool that
+# produced them was scanned end to end - 760 of 760 on version `c32698c1` - so the arms
+# still reading zero are `exhausted`, not short.
+#
+# Pinned as a SET rather than asserted empty, so both directions are failures worth
+# reading: a new short cell fails here instead of hiding in a table, and a cell that has
+# since been captured fails too, so the list shrinks rather than rotting. The fix for a
+# new entry is always more captures, never an entry added here.
+EXPECTED_BLOCKING: frozenset[str] = frozenset()
+
+
 class TestTheReportIsHonest:
-    def test_gate_zero_is_not_blocked_today(self, full_corpus) -> None:
-        rendered = coverage.render(coverage.collect())
-        assert "**Not blocked.**" in rendered, (
-            "a cell is short in a pool that was not fully scanned - capture more turns "
-            "rather than widening the exhausted rule"
+    def test_the_cells_gate_zero_blocks_on_are_exactly_the_ones_on_record(
+        self, full_corpus
+    ) -> None:
+        """Pinned, not "nothing blocks": S2's tail nodes are short until a capture run.
+
+        Asserting the SET is what keeps the state honest in both directions - a new short
+        cell fails here instead of hiding in a table, and a cell that has since been
+        captured fails too, so the list shrinks rather than rotting.
+        """
+        blocking = set(coverage.blocking_cells(coverage.collect()))
+        assert blocking == set(EXPECTED_BLOCKING), (
+            "gate 0's blocking set moved.\nnewly blocking: "
+            f"{sorted(blocking - EXPECTED_BLOCKING)}\nno longer blocking (retire them): "
+            f"{sorted(EXPECTED_BLOCKING - blocking)}"
         )
+
+    def test_the_world_corpus_is_reported_with_its_shapes(self, full_corpus) -> None:
+        """AC-009's own numbers are in the report, so gate 0 can be read in one place."""
+        rendered = coverage.render(coverage.collect())
+        assert "## World replay (AC-009)" in rendered
+        for shape in ("picker", "did_you_mean", "tier_ask", "escalation", "offer_hold", "media"):
+            assert f"`{shape}`" in rendered
 
     def test_every_route_turn_branch_has_a_row_even_at_zero_captures(self, full_corpus) -> None:
         """A branch nobody captured must be a VISIBLE zero, not an absent row."""
