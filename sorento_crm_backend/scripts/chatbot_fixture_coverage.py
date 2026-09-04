@@ -36,24 +36,31 @@ OUTPUT = BACKEND_ROOT / "tests" / "chatbot" / "COVERAGE.md"
 CAPTURES_PER_BRANCH = 5
 
 # What the capture agent actually scanned, per workflow, so "short" can be told apart from
-# "there is no more to capture". `scanned` is the number of live executions ON THE CURRENT
-# WORKFLOW VERSION, all of them examined; `pool` is every execution the instance still
-# holds, the rest of which ran on OLDER versions and cannot be graded against the body the
-# export ships. A branch under the bar in a fully-scanned pool is EXHAUSTED, not short: no
-# amount of further capturing will produce a fixture that does not exist, and blocking the
-# slice on it would block it forever.
+# "there is no more to capture".
+#
+# `version_pool` is the number of live executions ON `version` - the only ones that can be
+# graded against the body the export ships. `scanned` is how many of those were actually
+# captured. `all_versions` is every execution the instance still holds, recorded for
+# context only; the difference ran on OLDER workflow versions.
+#
+# **`exhausted` is earned by `scanned == version_pool`, not by appearing in this table.**
+# A node whose pool was only partly scanned is SHORT and blocks, exactly as it should: the
+# missing captures might be there and nobody looked. That distinction is the whole value of
+# the state, and granting it by membership would have made the table a rubber stamp.
 CAPTURE_REPORT: dict[str, dict] = {
     "spine-rs-1a": {
-        "workflow_version": "51f7b0d2",
+        "version": "51f7b0d2",
+        "version_pool": 567,
         "scanned": 567,
-        "pool": 946,
+        "all_versions": 946,
         "captured_on": "2026-09-04",
         "nodes": ("route-turn", "build-ctx"),
     },
     "sub-semantic-parser": {
-        "workflow_version": "ab3ec985",
+        "version": "ab3ec985",
+        "version_pool": 239,
         "scanned": 239,
-        "pool": 3901,
+        "all_versions": 3901,
         "captured_on": "2026-09-04",
         "nodes": ("output_exchange", "suggest-follow-up"),
     },
@@ -76,15 +83,20 @@ def _pool_for(node: str) -> dict | None:
     return None
 
 
+def _pool_is_exhausted(report: dict | None) -> bool:
+    """Was every execution on the current workflow version actually captured?"""
+    return report is not None and report["scanned"] >= report["version_pool"]
+
+
 def _cell_state(node: str, branch: str, real: int) -> tuple[str, bool]:
     """`(state, blocks_the_slice)` for one coverage cell."""
     if (node, branch) in DEAD_BY_VOCABULARY:
         return "dead by vocabulary", False
     if real >= CAPTURES_PER_BRANCH:
         return "met", False
-    if _pool_for(node) is not None:
-        # The pool for this workflow version was scanned end to end, so this is all the
-        # traffic there is.
+    if _pool_is_exhausted(_pool_for(node)):
+        # Every execution on this workflow version was captured, so this is all the
+        # traffic there is and no further capturing produces more.
         return f"exhausted ({real})", False
     return "SHORT", True
 
@@ -151,7 +163,13 @@ def collect() -> dict:
         "totals": totals,
         "provenance": provenance,
         "vendored": {k: len(v) for k, v in vendored_names.items()},
-        "corpus_root": str(_corpus.corpus_root() or "(absent - vendored subset only)"),
+        # NOT the absolute path: this file is committed, and every checkout resolves the
+        # sibling n8n repo somewhere different, so an absolute path here makes the
+        # freshness test red on someone else's machine for a reason that is not about
+        # coverage at all.
+        "corpus_root": "$CHATBOT_FIXTURES_DIR"
+        if _corpus.corpus_root() is not None
+        else "(absent - vendored subset only)",
     }
 
 
@@ -164,7 +182,11 @@ def render(data: dict) -> str:
         "`tests/chatbot/test_coverage_fresh.py` fails when this file drifts from the corpus."
     )
     lines.append("")
-    lines.append(f"Corpus: `{data['corpus_root']}`")
+    lines.append(
+        f"Corpus: `{data['corpus_root']}` - the sibling n8n checkout's "
+        "`n8n-workflows-init/tests/fixtures`, found by walking up from the backend or "
+        "named explicitly by that environment variable."
+    )
     lines.append("")
     lines.append(
         f"Gate 0 (plan, cutover ladder): every branch of every node a slice ports needs at "
@@ -178,19 +200,25 @@ def render(data: dict) -> str:
     lines.append("## Capture pools scanned")
     lines.append("")
     lines.append(
-        "A branch under the bar in a pool that was scanned END TO END is `exhausted`, not "
-        "short: the traffic does not exist, so no further capturing produces it and gate 0 "
-        "must not block on it. `scanned` counts the live executions ON THE CURRENT WORKFLOW "
-        "VERSION, all examined; the rest of `pool` ran on older versions and cannot be "
-        "graded against the body the export ships."
+        "A branch under the bar is `exhausted` - not short - only when EVERY execution on "
+        "the current workflow version was captured (`scanned == version pool`). Then the "
+        "traffic does not exist, no further capturing produces it, and gate 0 must not "
+        "block on it. A partly-scanned pool stays SHORT and blocks: the missing captures "
+        "might be there and nobody looked. `all versions` is every execution the instance "
+        "still holds; the difference ran on OLDER workflow versions and cannot be graded "
+        "against the body the export ships."
     )
     lines.append("")
-    lines.append("| workflow | version | executions scanned | pool | captured | nodes |")
-    lines.append("| --- | --- | ---: | ---: | --- | --- |")
+    lines.append(
+        "| workflow | version | scanned | version pool | all versions | exhausted | captured | nodes |"
+    )
+    lines.append("| --- | --- | ---: | ---: | ---: | --- | --- | --- |")
     for slug, report in sorted(CAPTURE_REPORT.items()):
         lines.append(
-            f"| `{slug}` | `{report['workflow_version']}` | {report['scanned']} | "
-            f"{report['pool']} | {report['captured_on']} | "
+            f"| `{slug}` | `{report['version']}` | {report['scanned']} | "
+            f"{report['version_pool']} | {report['all_versions']} | "
+            f"{'yes' if _pool_is_exhausted(report) else 'NO, partly scanned'} | "
+            f"{report['captured_on']} | "
             + ", ".join(f"`{n}`" for n in report["nodes"])
             + " |"
         )

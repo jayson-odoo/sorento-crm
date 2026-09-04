@@ -48,7 +48,7 @@ class ParserOutputError(ValueError):
 # ROUTING DERIVATION (mechanical map; parser emits semantic signals only)
 # --------------------------------------------------------------------------- #
 
-_CERT_RE = re.compile(r"cert|ikram|span|sirim|bomba|ms\s?\d|halal", re.IGNORECASE | re.ASCII)
+_CERT_RE = re.compile(r"cert|ikram|span|sirim|bomba|ms\s?[0-9]|halal", re.IGNORECASE)
 _CERTIFICATE_RE = re.compile(r"cert|certificate", re.IGNORECASE)
 _VALID_BRANDS = ("sorento", "cabana", "mocha")
 
@@ -456,10 +456,16 @@ CO_ALIASES = {"sorento": ["sorento", "srt"], "mocha": ["mocha", "mch"], "cabana"
 
 DATE_FILTER_DOMAINS = frozenset({"promotion", "order"})
 
-# ASCII, everywhere a digit or a word boundary is matched. Python's `\d` and `\b` are
-# UNICODE-aware and JavaScript's are not: a full-width "\uff11" satisfies Python's `^\d+$`
-# and not JS's, so a message the live bot reads as free text would have resolved to a
-# member PICK here and fired a real assignment. `re.ASCII` on every one of them.
+# DIGITS and WORD BOUNDARIES are ASCII here; WHITESPACE is not. Python's `\d` and `\b`
+# are Unicode-aware and JavaScript's are not - a full-width "\uff11" satisfies Python's
+# `^\d+$` and not JS's, so a message the live bot reads as free text would have resolved
+# to a member PICK here and fired a real assignment.
+#
+# `re.ASCII` is deliberately NOT used: it narrows `\s` too, and JavaScript's `\s` DOES
+# match Unicode whitespace (a non-breaking space between "1," and "2" is a real IME and
+# copy-paste artefact). Narrowing it would have broken a reply that works today, which is
+# the opposite mistake. So the digit classes are written out as `[0-9]` / `[^0-9]`, the
+# one leading word boundary is written out as a lookbehind, and `\s` is left alone.
 _REPLY_TO_SPLIT = re.compile(r"\s*reply to:", re.IGNORECASE)
 _OFFERED_ESCALATION_RE = re.compile(r"would you like me to escalate", re.IGNORECASE)
 _ALL_RE = re.compile(
@@ -471,14 +477,16 @@ _ALL_EXACT_RE = re.compile(
     re.IGNORECASE,
 )
 _DIGITS_ONLY_RE = re.compile(
-    r"^#?\s*\d+(\s*(?:,|and|&|\+)?\s*\d+)*[\s.!]*$", re.IGNORECASE | re.ASCII
+    r"^#?\s*[0-9]+(\s*(?:,|and|&|\+)?\s*[0-9]+)*[\s.!]*$", re.IGNORECASE
 )
-_BARE_NUMBER_RE = re.compile(r"^#?\s*\d+$", re.ASCII)
-_OPTION_ANY_RE = re.compile(r"\b(?:option|number|no\.?|choice)\s*#?\s*\d+", re.ASCII)
+_BARE_NUMBER_RE = re.compile(r"^#?\s*[0-9]+$")
+_OPTION_ANY_RE = re.compile(
+    r"(?<![A-Za-z0-9_])(?:option|number|no\.?|choice)\s*#?\s*[0-9]+"
+)
 _PROMO_TEAM_RE = re.compile(r"^marketing_promotion_(sorento|cabana|mocha)$")
 _HONORIFIC_RE = re.compile(r"^(ms|miss|mrs|mr|encik|en|puan|pn|cik|tuan|dato|datin|dr)\.?\s+")
-_ISO_DATE_RE = re.compile(r"^\d{4}[-/]\d{1,2}[-/]\d{1,2}$", re.ASCII)
-_SHORT_DATE_RE = re.compile(r"^\d{1,2}[-/]\d{1,2}[-/]\d{2,4}$", re.ASCII)
+_ISO_DATE_RE = re.compile(r"^[0-9]{4}[-/][0-9]{1,2}[-/][0-9]{1,2}$")
+_SHORT_DATE_RE = re.compile(r"^[0-9]{1,2}[-/][0-9]{1,2}[-/][0-9]{2,4}$")
 _FENCE_RE = re.compile(r"```[\s\S]*?```")
 _FENCE_MARK_RE = re.compile(r"```json?|```")
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
@@ -1091,7 +1099,7 @@ def post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  # 
         # the LLM often tags a bare number `casual` with no positions - extract digits
         # ourselves, but ONLY from a digits-and-connectives reply, never a query.
         if not pos and _DIGITS_ONLY_RE.match(msg):
-            pos = [jsc.js_number(d) for d in re.findall(r"\d+", msg, re.ASCII)]
+            pos = [jsc.js_number(d) for d in re.findall(r"[0-9]+", msg)]
         stated = _stated_tiers(msg, o.get("entities"))
         chosen = set(stated)
         if is_all:
@@ -1827,18 +1835,20 @@ def post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  # 
             t = jsc.nullish_str(msg if jsc.truthy(msg) else "").strip().lower()
             c: list = []
             if _BARE_NUMBER_RE.match(t):
-                c.append(int(re.sub(r"\D", "", t, flags=re.ASCII) or 0))
+                c.append(int(re.sub(r"[^0-9]", "", t) or 0))
             for w, n in _ORD.items():
+                # `re.ASCII` is safe HERE: the pattern is a bare word boundary around an
+                # ordinal word, with no `\s` for the flag to narrow. JS's `\b` is ASCII.
                 if re.search(r"\b" + re.escape(w) + r"\b", t, re.ASCII):
                     c.append(n)
             # `t.match(/.../g)` with a capture group returns the FULL matches, so the
             # digits are pulled out of each whole "option 4" / "no. 4" hit.
             for m in _OPTION_ANY_RE.finditer(t):
-                c.append(int(re.sub(r"\D", "", m.group(0), flags=re.ASCII) or 0))
+                c.append(int(re.sub(r"[^0-9]", "", m.group(0)) or 0))
             if len(c) == 0 and len([w for w in re.split(r"\s+", t) if w]) <= 4:
                 for w in re.split(r"\s+", t):
-                    if re.match(r"^#?\d+$", w, re.ASCII):
-                        c.append(int(re.sub(r"\D", "", w, flags=re.ASCII) or 0))
+                    if re.match(r"^#?[0-9]+$", w):
+                        c.append(int(re.sub(r"[^0-9]", "", w) or 0))
             out = []
             for n in c:
                 if n not in out and not jsc.is_nan(n):
@@ -1891,6 +1901,7 @@ def post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  # 
         strict = (
             (jsc.is_array(o.get("reference_positions")) and len(o["reference_positions"]) > 0)
             or bool(_BARE_NUMBER_RE.match(t_low))
+            # ASCII `\b`, as JS has; no `\s` in the pattern for the flag to narrow.
             or any(re.search(r"\b" + re.escape(w) + r"\b", t_low, re.ASCII) for w in _ORD)
             or bool(_OPTION_ANY_RE.search(t_low))
         )
@@ -1901,7 +1912,7 @@ def post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  # 
             raw = jsc.js_string(jsc.get(e, "raw") if jsc.truthy(jsc.get(e, "raw")) else "")
             return any(
                 re.search(
-                    r"(^|\D)" + re.escape(jsc.js_string(n)) + r"(\D|$)", raw, re.ASCII
+                    r"(^|[^0-9])" + re.escape(jsc.js_string(n)) + r"([^0-9]|$)", raw
                 )
                 for n in pos
             )

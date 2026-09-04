@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # --------------------------------------------------------------------------- #
 # Parser vocabularies (AC-109). Values are the parser prompt's own OUTPUT block.
@@ -321,6 +321,24 @@ class Envelope(BaseModel):
     mode: str | None = None
     scope: str | None = None
     ingress: IngressKind = "webhook"
+
+    @field_validator("contact")
+    @classmethod
+    def _contact_must_identify_somebody(cls, contact: dict[str, Any]) -> dict[str, Any]:
+        """`contact.id` is the respond.io contact id, and nothing works without it.
+
+        Validated HERE so a caller that omits it gets a 422 naming the field, which is a
+        misconfigured integration telling its operator what is wrong. Left to the engine
+        it was a `ValueError` raised before the turn row existed, which the endpoint's
+        generic handler turned into a bare 500 - the same symptom as a real outage, with
+        nothing to distinguish them.
+        """
+        if contact.get("id") in (None, ""):
+            raise ValueError(
+                "contact.id is required: it is the respond.io contact id every session "
+                "read, access check and turn row keys on"
+            )
+        return contact
 
     @property
     def dry_run(self) -> bool:

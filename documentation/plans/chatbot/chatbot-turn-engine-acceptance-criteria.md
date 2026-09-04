@@ -189,10 +189,22 @@ clone or live. Each AC traces to a journey step (A1 to D1).
   table `chatbot.turns` exists with `id, contact_respond_id, envelope (jsonb), status
   (queued|processing|delegated|done|failed), stage, branch_kind, error, attempt (int, default
   1), message_id text, ingress text, trace (jsonb: ordered stage records `{stage, status, started_at, ms, summary, why,
-  facts, error, raw}`), created_at, started_at, finished_at`, indexed on
+  facts, error, raw}`), response (jsonb), created_at, started_at, finished_at`, indexed on
   `(contact_respond_id, status, created_at)` and UNIQUE on `(contact_respond_id, message_id)`
   (D15); the model pins
   `__table_args__ = {"schema": "chatbot"}` (D12). (D1, D13)
+
+  `response` was added at implementation (4 Sep 2026) and is listed here so the written AC
+  matches the migration. It holds the answer the turn returned, `{ctx, item, actions}`
+  today and `{reply, actions}` from S3. D15 needs it - "a duplicate delivery returns the
+  ORIGINAL reply" is not implementable without persisting one - and S2b's Retry reads the
+  same column. **Bounded on purpose:** it is written when the turn CLOSES, so a duplicate
+  that arrives while the first turn is still `processing` (the likely timing, since the two
+  injectors are seconds apart and a turn takes seconds) replays `duplicate: true` with a
+  null `ctx` and `status: processing`. Waiting for the first turn would buy nothing - the
+  caller must not answer twice either way - so what guarantees no null is dereferenced is
+  n8n's Switch on `duplicate` sitting BEFORE the `build-ctx` / `route-turn` re-emitters
+  (AC-110, and the plan's S1 n8n section).
 - AC-007 `[BE][T]` Given any stage of a turn, when it completes or fails, then the engine
   appends one trace record with a plain-language `summary` and `why` (no JSON in either), and
   `raw` holds the technical payload; a test asserts every stage name in

@@ -61,9 +61,29 @@ class TestDigitsAndConnectivesReply:
     def test_a_non_ascii_digit_reply_is_not_treated_as_positions(self, digit: str) -> None:
         assert ox._DIGITS_ONLY_RE.match(digit) is None
 
-    def test_the_real_grammars_still_match(self) -> None:
-        for message in ("1", "1 and 2", "1,2", "#3", "1 & 2", "1+2"):
-            assert ox._DIGITS_ONLY_RE.match(message) is not None, message
+    @pytest.mark.parametrize(
+        "message", ["1", "1, 2", "1 and 2", "1,2", "#3", "1 & 2", "1+2", "1 , 2 ", "2."]
+    )
+    def test_the_real_grammars_still_match(self, message: str) -> None:
+        assert ox._DIGITS_ONLY_RE.match(message) is not None, message
+
+    def test_whitespace_stays_UNICODE_the_way_javascript_has_it(self) -> None:
+        r"""The other half of the ASCII fix, and the easy one to get backwards.
+
+        `re.ASCII` would have narrowed `\s` as well as `\d`, but JavaScript's `\s` DOES
+        match Unicode whitespace. A non-breaking space between "1," and "2" is an ordinary
+        IME and copy-paste artefact, and live accepts it - narrowing it here would have
+        broken a reply that works today, which is the opposite mistake to the one being
+        fixed. Hence explicit `[0-9]` classes and no flag.
+        """
+        nbsp = chr(0x00A0)  # NO-BREAK SPACE
+        assert ox._DIGITS_ONLY_RE.match(f"1,{nbsp}2") is not None
+        assert ox._BARE_NUMBER_RE.match(f"#{nbsp}4") is not None
+        assert ox._OPTION_ANY_RE.search(f"option{nbsp}4") is not None
+
+    def test_a_non_ascii_digit_is_still_refused_around_that_whitespace(self) -> None:
+        nbsp = chr(0x00A0)
+        assert ox._DIGITS_ONLY_RE.match(f"1,{nbsp}{FULL_WIDTH_ONE}") is None
 
 
 class TestDateLikeGuard:

@@ -131,9 +131,15 @@ def _message_id(envelope: Envelope) -> str | None:
 
 
 def _contact_respond_id(envelope: Envelope) -> str:
-    """`sorento-sub-respond-findcontact-respond`'s `id`, carried on the envelope (D1)."""
+    """`sorento-sub-respond-findcontact-respond`'s `id`, carried on the envelope (D1).
+
+    Presence is guaranteed by `Envelope`'s own validator, so a caller that omits it gets a
+    422 naming the field instead of a 500 from in here. The guard stays as a belt: this is
+    also reachable from `app/tasks/chat_turns.py` (S7) with an envelope rebuilt from a
+    stored row, and a silent empty string would key a turn to nobody.
+    """
     contact_id = jsc.get(envelope.contact, "id")
-    if contact_id in (None, ""):
+    if contact_id in (None, ""):  # pragma: no cover - Envelope validation catches it first
         raise ValueError("envelope.contact.id is required")
     return str(contact_id)
 
@@ -157,8 +163,17 @@ def _reply_to_message_id(envelope: Envelope) -> str | None:
     return str(value) if value not in (None, "") else None
 
 
-def build_latest_user_message(envelope: Envelope) -> str:
+def build_latest_user_message(envelope: Envelope, session_block: Any = None) -> str:
     """The two-line string `Call 'sub-query-reformulator'` builds today, verbatim.
+
+    The live expression (`export/live-spine-sorento-consume-main/workflow.json`, the
+    `Call 'sub-query-reformulator'` node) chains THREE alternatives on line 1:
+    the message text, an attachment's description, then `$json.message`. All three are
+    reproduced. The third reads the node's own input - `get-session-vars`'s response,
+    `{respond_io_id, session_vars}` - which carries no `message` key today, so it
+    contributes nothing on any captured turn. It is implemented anyway rather than
+    written off as dead: "verbatim" has to mean it, and the day that response grows a
+    `message` key the port would otherwise diverge in silence.
 
     Line 1 is the text, or an image's description when there is no text. Line 2 is the
     quoted message n8n appends as `reply to: ...`; several ported blocks split it back off
@@ -168,6 +183,8 @@ def build_latest_user_message(envelope: Envelope) -> str:
     text = jsc.get(inner, "text")
     if not jsc.truthy(text):
         text = jsc.get(jsc.get(inner, "attachment"), "description")
+    if not jsc.truthy(text):
+        text = jsc.get(session_block, "message")  # the third alternative, `|| $json.message`
     line1 = jsc.js_string(text) if jsc.truthy(text) else ""
 
     reply_to = jsc.get(jsc.get(_tf_message(envelope), "message"), "replyTo")
@@ -288,14 +305,37 @@ def _close_turn(
     row.trace = records
     # D15 needs the ORIGINAL answer, not just the fact that a turn happened: a duplicate
     # delivery replays this, and n8n's `build-ctx` / `route-turn` re-emitters would throw
-    # on a null. It is also what S2b's Retry reads.
+    # on a null. It is also what S2b's Retry reads. Written HERE, at close, which is what
+    # bounds the guarantee - see `_duplicate_result`.
     row.response = response
     row.finished_at = _now()
     db.commit()
 
 
 def _duplicate_result(row: ChatbotTurn) -> TurnResult:
-    """D15: the same respond message arrived twice. Replay the FIRST turn's answer."""
+    """D15: the same respond message arrived twice. Replay the FIRST turn's answer.
+
+    **`ctx` and `item` can still be null here, and that is not a defect to fix in the
+    engine.** `response` is written by `_close_turn`, so it exists only once the first
+    turn has FINISHED. Two cases return nulls:
+
+    * the first turn is still `processing` - which is the LIKELY timing, not the edge
+      case: a webhook delivery and a poller re-delivery arrive within the same second or
+      two, well inside the 5 to 10 seconds a parse plus an access check takes;
+    * the first turn `failed`, so it produced no answer to replay at all.
+
+    Making the second caller WAIT for the first would put a poll loop on a synchronous
+    request for a message the caller must not answer twice anyway, which buys nothing:
+    whatever it waited for, it still sends nothing. **The actual guarantee is on the n8n
+    side** - the Switch on `duplicate` sits BEFORE the `build-ctx` / `route-turn`
+    re-emitters, so a null `ctx` is never dereferenced (plan, S1 n8n section; AC-110).
+    The response body is a courtesy for the trace screen and for a caller that wants to
+    log what the original turn decided, never a contract the caller may depend on.
+
+    `status` is the row's own, so `processing` (in flight), `failed` and `delegated` /
+    `done` are all distinguishable: a caller that sees `duplicate: true, status:
+    processing` knows the nulls mean "not finished yet", not "nothing to say".
+    """
     response = row.response if isinstance(row.response, dict) else {}
     return TurnResult(
         turn_id=str(row.id),
@@ -306,6 +346,8 @@ def _duplicate_result(row: ChatbotTurn) -> TurnResult:
         reply=response.get("reply"),
         actions=response.get("actions") or [],
         duplicate=True,
+        # The row's own status, unmodified: `processing` means the first turn is still in
+        # flight and the nulls above are "not yet", not "never".
         status=row.status,
         stage=row.stage,
     )
@@ -458,7 +500,7 @@ def _run_stages(  # noqa: PLR0915
         referenced_result_set = jsc.get(
             jsc.get(session_block, "session_vars"), "referenced_result_set"
         )
-        latest_user_message = build_latest_user_message(envelope)
+        latest_user_message = build_latest_user_message(envelope, session_block)
         parser_config = parser.resolve_config(db, current_date=_current_date_directive())
 
     turn_trace.record(

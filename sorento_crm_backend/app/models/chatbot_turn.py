@@ -15,6 +15,14 @@ are two injectors of one envelope shape, so the same respond message can legitim
 arrive twice. The SELECT-then-INSERT dedup in the engine is a TOCTOU window, so the
 unique index is the real backstop: the collision is caught, the winner's row is read, and
 its stored `response` is replayed with `duplicate: true` so the caller sends nothing.
+
+`response` is written when the turn CLOSES, so a duplicate that arrives while the first
+turn is still `processing` - the likely timing, since the two injectors are seconds apart
+and a turn takes seconds - replays `duplicate: true` with a null `ctx` and `status:
+processing`. That is deliberate: the caller must not answer twice regardless, so waiting
+for the first turn would buy nothing. What stops the null being dereferenced is n8n's
+Switch on `duplicate` sitting BEFORE the `build-ctx` / `route-turn` re-emitters (plan, S1
+n8n section).
 """
 from __future__ import annotations
 

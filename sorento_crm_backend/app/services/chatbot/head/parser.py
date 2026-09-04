@@ -36,8 +36,8 @@ PARSER_ERROR_REPLY = (
 
 PARSER_MAX_TOKENS = 2048
 
-# NOT bounded by a per-call timeout, and deliberately not pretending to be. The plan's
-# timeout table names 8 s for the parser, but `llm_provider.LLMProvider.chat` has no
+# NOT bounded by a per-call timeout, and deliberately not pretending to be (issue #656;
+# the plan's Capacity section carries the same note). The timeout table names 8 s, but `llm_provider.LLMProvider.chat` has no
 # timeout parameter at all - each provider builds its own SDK client - so wiring one means
 # changing that shared signature and all three implementations, which is core work outside
 # this slice. A declared-but-unapplied constant is worse than none: it reads as a

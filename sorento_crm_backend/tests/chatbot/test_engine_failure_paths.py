@@ -19,6 +19,7 @@ import pytest
 
 from app.models.chatbot_turn import ChatbotTurn
 from app.services.chatbot import engine as engine_mod
+from app.services.chatbot.contracts import Envelope, TurnRequest
 from app.services.chatbot.head import parser as parser_mod
 from tests.chatbot.test_engine import (  # noqa: F401  - fixtures are used by name
     CONTACT_ID,
@@ -224,3 +225,104 @@ class TestStageIsNamedOnEveryFailure:
         result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
         assert result.stage == expected_stage
         assert _only_row(session_factory).stage == expected_stage
+
+
+class TestEnvelopeValidation:
+    """A malformed envelope is the CALLER's mistake, so it must read as 422, not 500."""
+
+    def test_a_contact_without_an_id_is_refused_at_the_schema(self) -> None:
+        import pydantic
+
+        with pytest.raises(pydantic.ValidationError) as excinfo:
+            Envelope(message={}, contact={"firstName": "ZZT"})
+        error = excinfo.value.errors()[0]
+        assert error["loc"] == ("contact",)
+        assert "contact.id is required" in error["msg"]
+
+    @pytest.mark.parametrize("contact", [{}, {"id": None}, {"id": ""}])
+    def test_every_empty_form_of_the_id_is_refused(self, contact: dict) -> None:
+        import pydantic
+
+        with pytest.raises(pydantic.ValidationError):
+            Envelope(message={}, contact=contact)
+
+    def test_a_real_id_passes(self) -> None:
+        assert Envelope(message={}, contact={"id": "900000009"}).contact["id"] == "900000009"
+
+    def test_the_endpoint_answers_422_and_names_the_field(self) -> None:
+        """The whole point: an operator reading the response learns what to fix.
+
+        Built on a bare app around the real request model, so the assertion is about
+        `TurnRequest`'s validation rather than about auth or the module guard, which have
+        their own tests in `test_module_and_endpoint.py`.
+        """
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        api = FastAPI()
+
+        @api.post("/turn")
+        def turn(payload: TurnRequest):  # pragma: no cover - never reached
+            return {"ok": True}
+
+        client = TestClient(api, raise_server_exceptions=False)
+        response = client.post(
+            "/turn", json={"envelope": {"message": {}, "contact": {"firstName": "ZZT"}}}
+        )
+        assert response.status_code == 422
+        body = response.text
+        assert "contact" in body
+        assert "contact.id is required" in body
+
+
+class TestDuplicateWhileTheFirstTurnIsStillRunning:
+    """The LIKELY timing, not the edge case.
+
+    `response` is written when a turn CLOSES, so a duplicate arriving mid-turn has nothing
+    to replay. Two injectors seconds apart against a turn that takes seconds means this is
+    the common shape, and the engine does NOT try to solve it: waiting would buy nothing,
+    because the caller must not answer twice either way. What it MUST do is say so clearly,
+    so `status` tells a caller "not finished yet" apart from "failed, nothing to say".
+    """
+
+    def test_it_returns_duplicate_with_status_processing_and_null_ctx(
+        self, session_factory, seeded
+    ) -> None:
+        from app.models.chatbot_turn import ChatbotTurn
+
+        db = session_factory()
+        row = ChatbotTurn(
+            contact_respond_id=CONTACT_ID,
+            message_id="ZZT-msg-1",
+            ingress="webhook",
+            envelope={},
+            is_test=False,
+            status="processing",   # inserted, not yet closed
+            stage="received",
+            attempt=1,
+            trace=[],
+        )
+        db.add(row)
+        db.commit()
+
+        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
+
+        assert result.duplicate is True
+        assert result.status == "processing"
+        assert result.ctx is None and result.item is None
+        assert result.branch_kind is None
+
+    def test_a_finished_duplicate_is_distinguishable_from_an_in_flight_one(
+        self, session_factory, seeded, stub_parser, stub_access
+    ) -> None:
+        stub_parser()
+        stub_access()
+        engine_mod.run_turn(_envelope(), session_factory=session_factory)
+        finished = engine_mod.run_turn(_envelope(), session_factory=session_factory)
+
+        assert finished.duplicate is True
+        assert finished.status == "delegated"
+        assert finished.ctx is not None, (
+            "a duplicate of a CLOSED turn must replay the stored answer; only the "
+            "in-flight and failed cases legitimately hand back nulls"
+        )

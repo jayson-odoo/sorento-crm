@@ -17,16 +17,22 @@ from scripts import chatbot_fixture_coverage as coverage
 from tests.chatbot import _corpus
 
 
-@pytest.fixture(autouse=True)
-def _needs_the_full_corpus() -> None:
+@pytest.fixture()
+def full_corpus() -> None:
+    """Only the tests that COMPARE the file need the corpus.
+
+    Deliberately not autouse: the gate-state logic below is pure and is exactly what CI
+    (which has the vendored subset only) should still be grading. Skipping it there would
+    leave the `exhausted` rule untested in the one place it decides whether a PR opens.
+    """
     if _corpus.corpus_root() is None:
         pytest.skip(
-            "COVERAGE.md describes the FULL corpus; "
+            "COVERAGE.md describes the FULL corpus, which this checkout cannot see; "
             f"{_corpus.corpus_skip_reason()}"
         )
 
 
-def test_coverage_md_is_not_stale() -> None:
+def test_coverage_md_is_not_stale(full_corpus) -> None:
     rendered = coverage.render(coverage.collect())
     current = coverage.OUTPUT.read_text(encoding="utf-8") if coverage.OUTPUT.exists() else ""
     assert current == rendered, (
@@ -35,7 +41,7 @@ def test_coverage_md_is_not_stale() -> None:
     )
 
 
-def test_the_check_flag_agrees_with_the_file() -> None:
+def test_the_check_flag_agrees_with_the_file(full_corpus) -> None:
     """`--check` is what a human or a CI step would run; keep the two in step."""
     import sys
 
@@ -60,6 +66,40 @@ class TestGateStates:
         assert state == "exhausted (1)"
         assert blocks is False
 
+    def test_a_node_IN_the_report_but_UNDER_scanned_is_still_short(self, monkeypatch) -> None:
+        """`exhausted` is earned by `scanned == version_pool`, never by appearing in the
+        table. A partly-scanned pool means the missing captures might be there and nobody
+        looked, which is precisely what gate 0 must keep blocking on - granting the state
+        by membership would turn the report into a rubber stamp."""
+        partly = dict(coverage.CAPTURE_REPORT["spine-rs-1a"])
+        partly["scanned"] = 300  # of 567 on this version
+        monkeypatch.setitem(coverage.CAPTURE_REPORT, "spine-rs-1a", partly)
+
+        assert coverage._pool_is_exhausted(partly) is False
+        state, blocks = coverage._cell_state("route-turn", "not_supported", 1)
+        assert state == "SHORT"
+        assert blocks is True
+
+    def test_a_dead_by_vocabulary_cell_is_exempt_even_in_an_under_scanned_pool(
+        self, monkeypatch
+    ) -> None:
+        partly = dict(coverage.CAPTURE_REPORT["spine-rs-1a"])
+        partly["scanned"] = 0
+        monkeypatch.setitem(coverage.CAPTURE_REPORT, "spine-rs-1a", partly)
+        assert coverage._cell_state("route-turn", "demand_qty", 0) == (
+            "dead by vocabulary",
+            False,
+        )
+
+    def test_the_scans_on_record_today_are_complete(self) -> None:
+        """If this ever goes red, the report was edited without a re-scan."""
+        for slug, report in coverage.CAPTURE_REPORT.items():
+            assert report["scanned"] == report["version_pool"], (
+                f"{slug} is recorded as {report['scanned']} of {report['version_pool']} "
+                "on its current version, so its branches are SHORT, not exhausted"
+            )
+            assert report["version_pool"] <= report["all_versions"]
+
     def test_a_dead_by_vocabulary_cell_never_blocks_at_any_count(self) -> None:
         """H1: live tests `stock_check` and the parser emits `check_stock`, so these two
         arms have never fired. 0 is the CORRECT number, not a gap."""
@@ -73,22 +113,23 @@ class TestGateStates:
 
 
 class TestTheReportIsHonest:
-    def test_gate_zero_is_not_blocked_today(self) -> None:
+    def test_gate_zero_is_not_blocked_today(self, full_corpus) -> None:
         rendered = coverage.render(coverage.collect())
         assert "**Not blocked.**" in rendered, (
             "a cell is short in a pool that was not fully scanned - capture more turns "
             "rather than widening the exhausted rule"
         )
 
-    def test_every_route_turn_branch_has_a_row_even_at_zero_captures(self) -> None:
+    def test_every_route_turn_branch_has_a_row_even_at_zero_captures(self, full_corpus) -> None:
         """A branch nobody captured must be a VISIBLE zero, not an absent row."""
         from app.services.chatbot.contracts import BRANCH_KINDS
 
         rows = coverage.collect()["rows"]["route-turn"]
         assert set(BRANCH_KINDS) <= set(rows)
 
-    def test_the_capture_pools_are_recorded_with_their_version(self) -> None:
+    def test_the_capture_pools_are_recorded_with_their_version(self, full_corpus) -> None:
         rendered = coverage.render(coverage.collect())
         for report in coverage.CAPTURE_REPORT.values():
-            assert report["workflow_version"] in rendered
+            assert report["version"] in rendered
             assert str(report["scanned"]) in rendered
+            assert str(report["version_pool"]) in rendered

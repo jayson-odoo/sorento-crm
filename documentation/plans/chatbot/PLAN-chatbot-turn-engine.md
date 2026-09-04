@@ -305,7 +305,12 @@ suite on the shared DB.
 - **Rule: never hold a DB session across LLM or MCP I/O.** The engine closes the session before
   the parser / clarifier / MCP calls and reopens after (the 96/100 connection incident is the
   evidence). Guardrail test asserts no open transaction during the parser call.
-- Timeouts: n8n HTTP node 60 s explicit; parser 8 s; each MCP call 10 s; over = failed stage.
+- Timeouts: n8n HTTP node 60 s explicit; parser 8 s **(bound not enforced until #656)**; each
+  MCP call 10 s; over = failed stage. The parser bound is not wired because
+  `llm_provider.LLMProvider.chat` takes no timeout at all - each provider builds its own
+  SDK client - so enforcing it means changing that shared signature and all three
+  implementations, which is core work this program does not own. A declared-but-unapplied
+  constant reads as a guarantee, so S1 ships without one rather than with a fiction.
 - Isolation when measured: a second backend container from the same image, nginx routes
   `/api/v1/external/chat` to it. That is the lift trigger's first step; no code change.
 
