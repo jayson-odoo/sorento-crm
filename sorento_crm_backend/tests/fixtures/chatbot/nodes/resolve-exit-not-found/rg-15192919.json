@@ -1,0 +1,3678 @@
+{
+  "source": {
+    "execution_id": "15192919",
+    "workflow_id": "tKeQUkZK5cFK9BFa",
+    "workflow_version": "4f367b1c-bd82-494f-882d-522fe20b5bc3",
+    "node": "resolve-exit-not-found",
+    "captured_at": "2026-09-04T17:07:38+00:00",
+    "expected_from": "runData",
+    "dedupe_sig": "563e58cfba70f27c3aefe16627407e8278c0fd383ce47a0b20c4ae9507475f1e"
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "ctx": {
+            "ctx": {
+              "contact": {
+                "id": 900000001,
+                "firstName": "Person 1",
+                "lastName": "Person 2",
+                "phone": "+60100000001",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "locale": null,
+                "countryCode": "MY",
+                "status": "open",
+                "isBlocked": false,
+                "custom_fields": [
+                  {
+                    "name": "enquiry_type",
+                    "value": null
+                  },
+                  {
+                    "name": "user_type",
+                    "value": null
+                  },
+                  {
+                    "name": "complaint_id",
+                    "value": null
+                  },
+                  {
+                    "name": "is_allowed_stock",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_human_intervened",
+                    "value": "false"
+                  },
+                  {
+                    "name": "backend_id",
+                    "value": "https://fe-sorento.foundryx.my/user-management/contacts/76f86c51-a319-4545-befe-d1c48aeba7ec"
+                  },
+                  {
+                    "name": "is_allowed_ai",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_allowed_voice",
+                    "value": null
+                  }
+                ],
+                "tags": [
+                  "imported_20260627_150636"
+                ],
+                "assignee": null,
+                "lifecycle": null,
+                "created_at": 1782546255
+              },
+              "text": {
+                "event_type": "message.received",
+                "event_id": "f3da618a-9daf-45db-96f2-0ac36ec0c684",
+                "contact": {
+                  "id": 900000001,
+                  "firstName": "Person 1",
+                  "lastName": "Person 2",
+                  "phone": "+60100000001",
+                  "email": null,
+                  "language": null,
+                  "profilePic": null,
+                  "countryCode": "MY",
+                  "status": "open",
+                  "assignee": {
+                    "id": null,
+                    "firstName": null,
+                    "lastName": null,
+                    "email": null
+                  },
+                  "created_at": 1782546255
+                },
+                "message": {
+                  "messageId": 1788540272000000,
+                  "channelMessageId": "wamid.HBgLNjAxNjIwMjExNzgVAgASGCBBQ0Y5MTJDMjFCQkNCNUNCRDJBN0ZFNDJEMENFRTdEQwA=",
+                  "contactId": 900000001,
+                  "channelId": 453209,
+                  "traffic": "incoming",
+                  "timestamp": 1788540272000,
+                  "message": {
+                    "type": "text",
+                    "text": "8354 ex y"
+                  }
+                },
+                "channel": {
+                  "id": 453209,
+                  "name": "Internal (+60 11-1673 1179)",
+                  "source": "whatsapp_business",
+                  "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 3\"},\"wa_id\":\"60100000001\",\"user_id\":\"MY.900000002\",\"firstName\":\"Person 3\",\"lastName\":\"\"}}",
+                  "created_at": 1767682908
+                },
+                "sender": {
+                  "source": "contact",
+                  "userId": null,
+                  "teamId": null,
+                  "workflowId": null,
+                  "broadcastHistoryId": null
+                }
+              },
+              "session": {
+                "respond_io_id": "900000001",
+                "session_vars": {
+                  "variables": {
+                    "routing": {
+                      "suggested_team": "purchasing",
+                      "suggested_agent": "incoming_stock_enquiries"
+                    },
+                    "entities": [
+                      {
+                        "raw": "SRTBF31516-NEW",
+                        "hint": "product",
+                        "uuid": "fb06ee99-6ff8-4518-8692-21c612d0f2de",
+                        "ordinal": 2,
+                        "canonical_code": "SRTBF31516-NEW",
+                        "current_message": true
+                      }
+                    ],
+                    "ideation": null,
+                    "response": "Here's what you want:\n\u2022 product: SRTBF31516-NEW\n\nBut no incoming matched these. Would you like me to escalate to purchasing team?",
+                    "date_mode": null,
+                    "dym_offer": null,
+                    "user_goal": "trying to check incoming for the second related product",
+                    "escalation": {
+                      "is_escalation_confirmation": false
+                    },
+                    "match_mode": "and",
+                    "domain_hint": "incoming",
+                    "intent_hint": "check_incoming",
+                    "message_type": "business_query",
+                    "query_brands": [],
+                    "access_levels": [],
+                    "routing_brand": "sorento",
+                    "contains_flyer": false,
+                    "dym_candidates": [],
+                    "date_filter_end": null,
+                    "last_result_set": [],
+                    "routing_company": "00000000-0000-0000-0000-000000000001",
+                    "date_filter_start": null,
+                    "routing_companies": [
+                      {
+                        "codes": [
+                          "SRTBF31516-NEW"
+                        ],
+                        "labels": [
+                          "SRTBF31516-NEW"
+                        ],
+                        "brand_code": "sorento",
+                        "company_id": "00000000-0000-0000-0000-000000000001",
+                        "company_name": "Sorento"
+                      }
+                    ],
+                    "selection_context": null,
+                    "routing_roster_plan": null,
+                    "requested_attributes": [
+                      "estimated_arrival_date"
+                    ],
+                    "routing_brand_source": "resolved"
+                  },
+                  "user_response": "Here's what you want:\n\u2022 product: SRTBF31516-NEW\n\nBut no incoming matched these. Would you like me to escalate to purchasing team?"
+                }
+              },
+              "parse": {
+                "output": {
+                  "message_type": "business_query",
+                  "intent_hint": "check_incoming",
+                  "domain_hint": "incoming",
+                  "scope_intent": null,
+                  "is_affirmative": null,
+                  "user_goal": "trying to check incoming for 8354 ex y",
+                  "access_levels": [],
+                  "broaden_axis": null,
+                  "date_mode": null,
+                  "date_filter_start": null,
+                  "date_filter_end": null,
+                  "match_mode": "and",
+                  "demand_qty": null,
+                  "entities": [
+                    {
+                      "raw": "8354 ex y",
+                      "hint": "inbound_shipment",
+                      "canonical_code": null,
+                      "current_message": true,
+                      "confident": true
+                    }
+                  ],
+                  "entity_op": "replace_combine",
+                  "scope_exclusive": false,
+                  "requested_attributes": [],
+                  "contains_flyer": false,
+                  "reference_positions": [],
+                  "reference_target": null,
+                  "person_mention": null,
+                  "is_active": null,
+                  "order_status": null,
+                  "correction": false,
+                  "routing": {
+                    "suggested_team": "purchasing",
+                    "suggested_agent": "incoming_stock_enquiries"
+                  },
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "domain_signal_source": "intent_explicit",
+                  "scope_exclusive_applied": false,
+                  "entity_op_applied": "replace_combine",
+                  "query_brands": [],
+                  "entities_filtered": false,
+                  "entities_emptied_by_filter": false
+                },
+                "_parser_raw": {
+                  "message_type": "business_query",
+                  "intent_hint": "check_incoming",
+                  "domain_hint": "incoming",
+                  "scope_intent": null,
+                  "is_affirmative": null,
+                  "user_goal": "trying to check incoming for 8354 ex y",
+                  "access_levels": [],
+                  "broaden_axis": null,
+                  "date_mode": null,
+                  "date_filter_start": null,
+                  "date_filter_end": null,
+                  "match_mode": "and",
+                  "demand_qty": null,
+                  "entities": [
+                    {
+                      "raw": "8354 ex y",
+                      "hint": "inbound_shipment",
+                      "canonical_code": null,
+                      "current_message": true,
+                      "confident": true
+                    }
+                  ],
+                  "entity_op": "replace_combine",
+                  "scope_exclusive": false,
+                  "requested_attributes": [],
+                  "contains_flyer": false,
+                  "reference_positions": [],
+                  "reference_target": null,
+                  "person_mention": null,
+                  "is_active": null,
+                  "order_status": null,
+                  "correction": false,
+                  "routing": {
+                    "suggested_team": "purchasing",
+                    "suggested_agent": "incoming_stock_enquiries"
+                  },
+                  "escalation": {
+                    "is_escalation_confirmation": false,
+                    "company_pick": null
+                  }
+                }
+              },
+              "access": {
+                "allowed": true,
+                "decision": "allow",
+                "agent_name": "Incoming Stock Enquiries",
+                "attributes": null,
+                "all_attributes_allowed": null
+              },
+              "media": null
+            }
+          },
+          "entry": "resolve",
+          "item": {
+            "allowed": true,
+            "decision": "allow",
+            "agent_name": "Incoming Stock Enquiries",
+            "attributes": null,
+            "all_attributes_allowed": null,
+            "branch_kind": "business_query",
+            "entry": "resolve"
+          },
+          "is_test": false
+        }
+      }
+    ],
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 900000001,
+              "firstName": "Person 1",
+              "lastName": "Person 2",
+              "phone": "+60100000001",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/76f86c51-a319-4545-befe-d1c48aeba7ec"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": null,
+              "created_at": 1782546255
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "f3da618a-9daf-45db-96f2-0ac36ec0c684",
+              "contact": {
+                "id": 900000001,
+                "firstName": "Person 1",
+                "lastName": "Person 2",
+                "phone": "+60100000001",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1782546255
+              },
+              "message": {
+                "messageId": 1788540272000000,
+                "channelMessageId": "wamid.HBgLNjAxNjIwMjExNzgVAgASGCBBQ0Y5MTJDMjFCQkNCNUNCRDJBN0ZFNDJEMENFRTdEQwA=",
+                "contactId": 900000001,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788540272000,
+                "message": {
+                  "type": "text",
+                  "text": "8354 ex y"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 3\"},\"wa_id\":\"60100000001\",\"user_id\":\"MY.900000002\",\"firstName\":\"Person 3\",\"lastName\":\"\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000001",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "purchasing",
+                    "suggested_agent": "incoming_stock_enquiries"
+                  },
+                  "entities": [
+                    {
+                      "raw": "SRTBF31516-NEW",
+                      "hint": "product",
+                      "uuid": "fb06ee99-6ff8-4518-8692-21c612d0f2de",
+                      "ordinal": 2,
+                      "canonical_code": "SRTBF31516-NEW",
+                      "current_message": true
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Here's what you want:\n\u2022 product: SRTBF31516-NEW\n\nBut no incoming matched these. Would you like me to escalate to purchasing team?",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to check incoming for the second related product",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "incoming",
+                  "intent_hint": "check_incoming",
+                  "message_type": "business_query",
+                  "query_brands": [],
+                  "access_levels": [],
+                  "routing_brand": "sorento",
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [],
+                  "routing_company": "00000000-0000-0000-0000-000000000001",
+                  "date_filter_start": null,
+                  "routing_companies": [
+                    {
+                      "codes": [
+                        "SRTBF31516-NEW"
+                      ],
+                      "labels": [
+                        "SRTBF31516-NEW"
+                      ],
+                      "brand_code": "sorento",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "selection_context": null,
+                  "routing_roster_plan": null,
+                  "requested_attributes": [
+                    "estimated_arrival_date"
+                  ],
+                  "routing_brand_source": "resolved"
+                },
+                "user_response": "Here's what you want:\n\u2022 product: SRTBF31516-NEW\n\nBut no incoming matched these. Would you like me to escalate to purchasing team?"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "check_incoming",
+                "domain_hint": "incoming",
+                "scope_intent": null,
+                "is_affirmative": null,
+                "user_goal": "trying to check incoming for 8354 ex y",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "8354 ex y",
+                    "hint": "inbound_shipment",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "purchasing",
+                  "suggested_agent": "incoming_stock_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_explicit",
+                "scope_exclusive_applied": false,
+                "entity_op_applied": "replace_combine",
+                "query_brands": [],
+                "entities_filtered": false,
+                "entities_emptied_by_filter": false
+              },
+              "_parser_raw": {
+                "message_type": "business_query",
+                "intent_hint": "check_incoming",
+                "domain_hint": "incoming",
+                "scope_intent": null,
+                "is_affirmative": null,
+                "user_goal": "trying to check incoming for 8354 ex y",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "8354 ex y",
+                    "hint": "inbound_shipment",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "purchasing",
+                  "suggested_agent": "incoming_stock_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "Incoming Stock Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null
+          }
+        }
+      }
+    ],
+    "item": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "Incoming Stock Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null,
+          "branch_kind": "business_query",
+          "entry": "resolve"
+        }
+      }
+    ],
+    "entry-gate": [],
+    "resolve-entity": [
+      {
+        "json": {
+          "tokens": [
+            "8354 ex y"
+          ],
+          "elapsed_ms": 269.13,
+          "resolutions": [
+            {
+              "token": "8354 ex y",
+              "resolved": false,
+              "ambiguous": false,
+              "matches": [],
+              "alternatives": []
+            }
+          ],
+          "unresolved_tokens": [
+            "8354 ex y"
+          ],
+          "fallback_match_mode": "or",
+          "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+          "spec_candidates": [],
+          "floor_missed": true,
+          "spec_unmet": [],
+          "spec_asked": [],
+          "unrecognized_terms": [],
+          "semantic_used": true,
+          "semantic_ms": 2496
+        }
+      }
+    ],
+    "disallowed-entity-gate": [
+      {
+        "json": {
+          "tokens": [
+            "8354 ex y"
+          ],
+          "elapsed_ms": 269.13,
+          "resolutions": [
+            {
+              "token": "8354 ex y",
+              "resolved": false,
+              "ambiguous": false,
+              "matches": [],
+              "alternatives": []
+            }
+          ],
+          "unresolved_tokens": [
+            "8354 ex y"
+          ],
+          "fallback_match_mode": "or",
+          "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+          "spec_candidates": [],
+          "floor_missed": true,
+          "spec_unmet": [],
+          "spec_asked": [],
+          "unrecognized_terms": [],
+          "semantic_used": true,
+          "semantic_ms": 2496,
+          "gate_passed": true,
+          "require_specific": false,
+          "specific_options": [],
+          "resolved_company": null,
+          "company_team": null,
+          "resolved_companies": [],
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_companies": [],
+          "routing_company": null,
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "no entities; 'incoming' permits broad query",
+          "gate_clarification": "",
+          "compatible_entities": [],
+          "gate_debug": {
+            "domain": "incoming",
+            "allowed_lookup": [
+              "product",
+              "inbound_shipment",
+              "category",
+              "brand"
+            ],
+            "entities_count": 0
+          }
+        }
+      }
+    ],
+    "build-ctx-resolved": [
+      {
+        "json": {
+          "tokens": [
+            "8354 ex y"
+          ],
+          "elapsed_ms": 269.13,
+          "resolutions": [
+            {
+              "token": "8354 ex y",
+              "resolved": false,
+              "ambiguous": false,
+              "matches": [],
+              "alternatives": []
+            }
+          ],
+          "unresolved_tokens": [
+            "8354 ex y"
+          ],
+          "fallback_match_mode": "or",
+          "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+          "spec_candidates": [],
+          "floor_missed": true,
+          "spec_unmet": [],
+          "spec_asked": [],
+          "unrecognized_terms": [],
+          "semantic_used": true,
+          "semantic_ms": 2496,
+          "gate_passed": true,
+          "require_specific": false,
+          "specific_options": [],
+          "resolved_company": null,
+          "company_team": null,
+          "resolved_companies": [],
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_companies": [],
+          "routing_company": null,
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "no entities; 'incoming' permits broad query",
+          "gate_clarification": "",
+          "compatible_entities": [],
+          "gate_debug": {
+            "domain": "incoming",
+            "allowed_lookup": [
+              "product",
+              "inbound_shipment",
+              "category",
+              "brand"
+            ],
+            "entities_count": 0
+          },
+          "ctx": {
+            "contact": {
+              "id": 900000001,
+              "firstName": "Person 1",
+              "lastName": "Person 2",
+              "phone": "+60100000001",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/76f86c51-a319-4545-befe-d1c48aeba7ec"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": null,
+              "created_at": 1782546255
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "f3da618a-9daf-45db-96f2-0ac36ec0c684",
+              "contact": {
+                "id": 900000001,
+                "firstName": "Person 1",
+                "lastName": "Person 2",
+                "phone": "+60100000001",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1782546255
+              },
+              "message": {
+                "messageId": 1788540272000000,
+                "channelMessageId": "wamid.HBgLNjAxNjIwMjExNzgVAgASGCBBQ0Y5MTJDMjFCQkNCNUNCRDJBN0ZFNDJEMENFRTdEQwA=",
+                "contactId": 900000001,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788540272000,
+                "message": {
+                  "type": "text",
+                  "text": "8354 ex y"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 3\"},\"wa_id\":\"60100000001\",\"user_id\":\"MY.900000002\",\"firstName\":\"Person 3\",\"lastName\":\"\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000001",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "purchasing",
+                    "suggested_agent": "incoming_stock_enquiries"
+                  },
+                  "entities": [
+                    {
+                      "raw": "SRTBF31516-NEW",
+                      "hint": "product",
+                      "uuid": "fb06ee99-6ff8-4518-8692-21c612d0f2de",
+                      "ordinal": 2,
+                      "canonical_code": "SRTBF31516-NEW",
+                      "current_message": true
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Here's what you want:\n\u2022 product: SRTBF31516-NEW\n\nBut no incoming matched these. Would you like me to escalate to purchasing team?",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to check incoming for the second related product",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "incoming",
+                  "intent_hint": "check_incoming",
+                  "message_type": "business_query",
+                  "query_brands": [],
+                  "access_levels": [],
+                  "routing_brand": "sorento",
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [],
+                  "routing_company": "00000000-0000-0000-0000-000000000001",
+                  "date_filter_start": null,
+                  "routing_companies": [
+                    {
+                      "codes": [
+                        "SRTBF31516-NEW"
+                      ],
+                      "labels": [
+                        "SRTBF31516-NEW"
+                      ],
+                      "brand_code": "sorento",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "selection_context": null,
+                  "routing_roster_plan": null,
+                  "requested_attributes": [
+                    "estimated_arrival_date"
+                  ],
+                  "routing_brand_source": "resolved"
+                },
+                "user_response": "Here's what you want:\n\u2022 product: SRTBF31516-NEW\n\nBut no incoming matched these. Would you like me to escalate to purchasing team?"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "check_incoming",
+                "domain_hint": "incoming",
+                "scope_intent": null,
+                "is_affirmative": null,
+                "user_goal": "trying to check incoming for 8354 ex y",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "8354 ex y",
+                    "hint": "inbound_shipment",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "purchasing",
+                  "suggested_agent": "incoming_stock_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_explicit",
+                "scope_exclusive_applied": false,
+                "entity_op_applied": "replace_combine",
+                "query_brands": [],
+                "entities_filtered": false,
+                "entities_emptied_by_filter": false
+              },
+              "_parser_raw": {
+                "message_type": "business_query",
+                "intent_hint": "check_incoming",
+                "domain_hint": "incoming",
+                "scope_intent": null,
+                "is_affirmative": null,
+                "user_goal": "trying to check incoming for 8354 ex y",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "8354 ex y",
+                    "hint": "inbound_shipment",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "purchasing",
+                  "suggested_agent": "incoming_stock_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "Incoming Stock Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null,
+            "resolved": {
+              "tokens": [
+                "8354 ex y"
+              ],
+              "elapsed_ms": 269.13,
+              "resolutions": [
+                {
+                  "token": "8354 ex y",
+                  "resolved": false,
+                  "ambiguous": false,
+                  "matches": [],
+                  "alternatives": []
+                }
+              ],
+              "unresolved_tokens": [
+                "8354 ex y"
+              ],
+              "fallback_match_mode": "or",
+              "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+              "spec_candidates": [],
+              "floor_missed": true,
+              "spec_unmet": [],
+              "spec_asked": [],
+              "unrecognized_terms": [],
+              "semantic_used": true,
+              "semantic_ms": 2496
+            },
+            "entities": null,
+            "gate": {
+              "tokens": [
+                "8354 ex y"
+              ],
+              "elapsed_ms": 269.13,
+              "resolutions": [
+                {
+                  "token": "8354 ex y",
+                  "resolved": false,
+                  "ambiguous": false,
+                  "matches": [],
+                  "alternatives": []
+                }
+              ],
+              "unresolved_tokens": [
+                "8354 ex y"
+              ],
+              "fallback_match_mode": "or",
+              "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+              "spec_candidates": [],
+              "floor_missed": true,
+              "spec_unmet": [],
+              "spec_asked": [],
+              "unrecognized_terms": [],
+              "semantic_used": true,
+              "semantic_ms": 2496,
+              "gate_passed": true,
+              "require_specific": false,
+              "specific_options": [],
+              "resolved_company": null,
+              "company_team": null,
+              "resolved_companies": [],
+              "routing_brand": null,
+              "routing_brand_source": null,
+              "routing_companies": [],
+              "routing_company": null,
+              "access_denied_levels": [],
+              "access_notice": "",
+              "brand_gate_empty": false,
+              "brand_unheld": false,
+              "gate_reason": "no entities; 'incoming' permits broad query",
+              "gate_clarification": "",
+              "compatible_entities": [],
+              "gate_debug": {
+                "domain": "incoming",
+                "allowed_lookup": [
+                  "product",
+                  "inbound_shipment",
+                  "category",
+                  "brand"
+                ],
+                "entities_count": 0
+              }
+            }
+          }
+        }
+      }
+    ],
+    "If3": [
+      {
+        "json": {
+          "tokens": [
+            "8354 ex y"
+          ],
+          "elapsed_ms": 269.13,
+          "resolutions": [
+            {
+              "token": "8354 ex y",
+              "resolved": false,
+              "ambiguous": false,
+              "matches": [],
+              "alternatives": []
+            }
+          ],
+          "unresolved_tokens": [
+            "8354 ex y"
+          ],
+          "fallback_match_mode": "or",
+          "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+          "spec_candidates": [],
+          "floor_missed": true,
+          "spec_unmet": [],
+          "spec_asked": [],
+          "unrecognized_terms": [],
+          "semantic_used": true,
+          "semantic_ms": 2496,
+          "gate_passed": true,
+          "require_specific": false,
+          "specific_options": [],
+          "resolved_company": null,
+          "company_team": null,
+          "resolved_companies": [],
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_companies": [],
+          "routing_company": null,
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "no entities; 'incoming' permits broad query",
+          "gate_clarification": "",
+          "compatible_entities": [],
+          "gate_debug": {
+            "domain": "incoming",
+            "allowed_lookup": [
+              "product",
+              "inbound_shipment",
+              "category",
+              "brand"
+            ],
+            "entities_count": 0
+          },
+          "ctx": {
+            "contact": {
+              "id": 900000001,
+              "firstName": "Person 1",
+              "lastName": "Person 2",
+              "phone": "+60100000001",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/76f86c51-a319-4545-befe-d1c48aeba7ec"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": null,
+              "created_at": 1782546255
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "f3da618a-9daf-45db-96f2-0ac36ec0c684",
+              "contact": {
+                "id": 900000001,
+                "firstName": "Person 1",
+                "lastName": "Person 2",
+                "phone": "+60100000001",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1782546255
+              },
+              "message": {
+                "messageId": 1788540272000000,
+                "channelMessageId": "wamid.HBgLNjAxNjIwMjExNzgVAgASGCBBQ0Y5MTJDMjFCQkNCNUNCRDJBN0ZFNDJEMENFRTdEQwA=",
+                "contactId": 900000001,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788540272000,
+                "message": {
+                  "type": "text",
+                  "text": "8354 ex y"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 3\"},\"wa_id\":\"60100000001\",\"user_id\":\"MY.900000002\",\"firstName\":\"Person 3\",\"lastName\":\"\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000001",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "purchasing",
+                    "suggested_agent": "incoming_stock_enquiries"
+                  },
+                  "entities": [
+                    {
+                      "raw": "SRTBF31516-NEW",
+                      "hint": "product",
+                      "uuid": "fb06ee99-6ff8-4518-8692-21c612d0f2de",
+                      "ordinal": 2,
+                      "canonical_code": "SRTBF31516-NEW",
+                      "current_message": true
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Here's what you want:\n\u2022 product: SRTBF31516-NEW\n\nBut no incoming matched these. Would you like me to escalate to purchasing team?",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to check incoming for the second related product",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "incoming",
+                  "intent_hint": "check_incoming",
+                  "message_type": "business_query",
+                  "query_brands": [],
+                  "access_levels": [],
+                  "routing_brand": "sorento",
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [],
+                  "routing_company": "00000000-0000-0000-0000-000000000001",
+                  "date_filter_start": null,
+                  "routing_companies": [
+                    {
+                      "codes": [
+                        "SRTBF31516-NEW"
+                      ],
+                      "labels": [
+                        "SRTBF31516-NEW"
+                      ],
+                      "brand_code": "sorento",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "selection_context": null,
+                  "routing_roster_plan": null,
+                  "requested_attributes": [
+                    "estimated_arrival_date"
+                  ],
+                  "routing_brand_source": "resolved"
+                },
+                "user_response": "Here's what you want:\n\u2022 product: SRTBF31516-NEW\n\nBut no incoming matched these. Would you like me to escalate to purchasing team?"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "check_incoming",
+                "domain_hint": "incoming",
+                "scope_intent": null,
+                "is_affirmative": null,
+                "user_goal": "trying to check incoming for 8354 ex y",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "8354 ex y",
+                    "hint": "inbound_shipment",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "purchasing",
+                  "suggested_agent": "incoming_stock_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_explicit",
+                "scope_exclusive_applied": false,
+                "entity_op_applied": "replace_combine",
+                "query_brands": [],
+                "entities_filtered": false,
+                "entities_emptied_by_filter": false
+              },
+              "_parser_raw": {
+                "message_type": "business_query",
+                "intent_hint": "check_incoming",
+                "domain_hint": "incoming",
+                "scope_intent": null,
+                "is_affirmative": null,
+                "user_goal": "trying to check incoming for 8354 ex y",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "8354 ex y",
+                    "hint": "inbound_shipment",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "purchasing",
+                  "suggested_agent": "incoming_stock_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "Incoming Stock Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null,
+            "resolved": {
+              "tokens": [
+                "8354 ex y"
+              ],
+              "elapsed_ms": 269.13,
+              "resolutions": [
+                {
+                  "token": "8354 ex y",
+                  "resolved": false,
+                  "ambiguous": false,
+                  "matches": [],
+                  "alternatives": []
+                }
+              ],
+              "unresolved_tokens": [
+                "8354 ex y"
+              ],
+              "fallback_match_mode": "or",
+              "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+              "spec_candidates": [],
+              "floor_missed": true,
+              "spec_unmet": [],
+              "spec_asked": [],
+              "unrecognized_terms": [],
+              "semantic_used": true,
+              "semantic_ms": 2496
+            },
+            "entities": null,
+            "gate": {
+              "tokens": [
+                "8354 ex y"
+              ],
+              "elapsed_ms": 269.13,
+              "resolutions": [
+                {
+                  "token": "8354 ex y",
+                  "resolved": false,
+                  "ambiguous": false,
+                  "matches": [],
+                  "alternatives": []
+                }
+              ],
+              "unresolved_tokens": [
+                "8354 ex y"
+              ],
+              "fallback_match_mode": "or",
+              "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+              "spec_candidates": [],
+              "floor_missed": true,
+              "spec_unmet": [],
+              "spec_asked": [],
+              "unrecognized_terms": [],
+              "semantic_used": true,
+              "semantic_ms": 2496,
+              "gate_passed": true,
+              "require_specific": false,
+              "specific_options": [],
+              "resolved_company": null,
+              "company_team": null,
+              "resolved_companies": [],
+              "routing_brand": null,
+              "routing_brand_source": null,
+              "routing_companies": [],
+              "routing_company": null,
+              "access_denied_levels": [],
+              "access_notice": "",
+              "brand_gate_empty": false,
+              "brand_unheld": false,
+              "gate_reason": "no entities; 'incoming' permits broad query",
+              "gate_clarification": "",
+              "compatible_entities": [],
+              "gate_debug": {
+                "domain": "incoming",
+                "allowed_lookup": [
+                  "product",
+                  "inbound_shipment",
+                  "category",
+                  "brand"
+                ],
+                "entities_count": 0
+              }
+            }
+          }
+        }
+      }
+    ],
+    "If-incoming-picker": [],
+    "If-customer-picker": [],
+    "resolve-exit-not-found": [
+      {
+        "json": {
+          "tokens": [
+            "8354 ex y"
+          ],
+          "elapsed_ms": 269.13,
+          "resolutions": [
+            {
+              "token": "8354 ex y",
+              "resolved": false,
+              "ambiguous": false,
+              "matches": [],
+              "alternatives": []
+            }
+          ],
+          "unresolved_tokens": [
+            "8354 ex y"
+          ],
+          "fallback_match_mode": "or",
+          "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+          "spec_candidates": [],
+          "floor_missed": true,
+          "spec_unmet": [],
+          "spec_asked": [],
+          "unrecognized_terms": [],
+          "semantic_used": true,
+          "semantic_ms": 2496,
+          "gate_passed": true,
+          "require_specific": false,
+          "specific_options": [],
+          "resolved_company": null,
+          "company_team": null,
+          "resolved_companies": [],
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_companies": [],
+          "routing_company": null,
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "no entities; 'incoming' permits broad query",
+          "gate_clarification": "",
+          "compatible_entities": [],
+          "gate_debug": {
+            "domain": "incoming",
+            "allowed_lookup": [
+              "product",
+              "inbound_shipment",
+              "category",
+              "brand"
+            ],
+            "entities_count": 0
+          },
+          "ctx": {
+            "contact": {
+              "id": 900000001,
+              "firstName": "Person 1",
+              "lastName": "Person 2",
+              "phone": "+60100000001",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/76f86c51-a319-4545-befe-d1c48aeba7ec"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": null,
+              "created_at": 1782546255
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "f3da618a-9daf-45db-96f2-0ac36ec0c684",
+              "contact": {
+                "id": 900000001,
+                "firstName": "Person 1",
+                "lastName": "Person 2",
+                "phone": "+60100000001",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1782546255
+              },
+              "message": {
+                "messageId": 1788540272000000,
+                "channelMessageId": "wamid.HBgLNjAxNjIwMjExNzgVAgASGCBBQ0Y5MTJDMjFCQkNCNUNCRDJBN0ZFNDJEMENFRTdEQwA=",
+                "contactId": 900000001,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788540272000,
+                "message": {
+                  "type": "text",
+                  "text": "8354 ex y"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 3\"},\"wa_id\":\"60100000001\",\"user_id\":\"MY.900000002\",\"firstName\":\"Person 3\",\"lastName\":\"\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000001",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "purchasing",
+                    "suggested_agent": "incoming_stock_enquiries"
+                  },
+                  "entities": [
+                    {
+                      "raw": "SRTBF31516-NEW",
+                      "hint": "product",
+                      "uuid": "fb06ee99-6ff8-4518-8692-21c612d0f2de",
+                      "ordinal": 2,
+                      "canonical_code": "SRTBF31516-NEW",
+                      "current_message": true
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Here's what you want:\n\u2022 product: SRTBF31516-NEW\n\nBut no incoming matched these. Would you like me to escalate to purchasing team?",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to check incoming for the second related product",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "incoming",
+                  "intent_hint": "check_incoming",
+                  "message_type": "business_query",
+                  "query_brands": [],
+                  "access_levels": [],
+                  "routing_brand": "sorento",
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [],
+                  "routing_company": "00000000-0000-0000-0000-000000000001",
+                  "date_filter_start": null,
+                  "routing_companies": [
+                    {
+                      "codes": [
+                        "SRTBF31516-NEW"
+                      ],
+                      "labels": [
+                        "SRTBF31516-NEW"
+                      ],
+                      "brand_code": "sorento",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "selection_context": null,
+                  "routing_roster_plan": null,
+                  "requested_attributes": [
+                    "estimated_arrival_date"
+                  ],
+                  "routing_brand_source": "resolved"
+                },
+                "user_response": "Here's what you want:\n\u2022 product: SRTBF31516-NEW\n\nBut no incoming matched these. Would you like me to escalate to purchasing team?"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "check_incoming",
+                "domain_hint": "incoming",
+                "scope_intent": null,
+                "is_affirmative": null,
+                "user_goal": "trying to check incoming for 8354 ex y",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "8354 ex y",
+                    "hint": "inbound_shipment",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "purchasing",
+                  "suggested_agent": "incoming_stock_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_explicit",
+                "scope_exclusive_applied": false,
+                "entity_op_applied": "replace_combine",
+                "query_brands": [],
+                "entities_filtered": false,
+                "entities_emptied_by_filter": false
+              },
+              "_parser_raw": {
+                "message_type": "business_query",
+                "intent_hint": "check_incoming",
+                "domain_hint": "incoming",
+                "scope_intent": null,
+                "is_affirmative": null,
+                "user_goal": "trying to check incoming for 8354 ex y",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "8354 ex y",
+                    "hint": "inbound_shipment",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "purchasing",
+                  "suggested_agent": "incoming_stock_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "Incoming Stock Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null,
+            "resolved": {
+              "tokens": [
+                "8354 ex y"
+              ],
+              "elapsed_ms": 269.13,
+              "resolutions": [
+                {
+                  "token": "8354 ex y",
+                  "resolved": false,
+                  "ambiguous": false,
+                  "matches": [],
+                  "alternatives": []
+                }
+              ],
+              "unresolved_tokens": [
+                "8354 ex y"
+              ],
+              "fallback_match_mode": "or",
+              "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+              "spec_candidates": [],
+              "floor_missed": true,
+              "spec_unmet": [],
+              "spec_asked": [],
+              "unrecognized_terms": [],
+              "semantic_used": true,
+              "semantic_ms": 2496
+            },
+            "entities": null,
+            "gate": {
+              "tokens": [
+                "8354 ex y"
+              ],
+              "elapsed_ms": 269.13,
+              "resolutions": [
+                {
+                  "token": "8354 ex y",
+                  "resolved": false,
+                  "ambiguous": false,
+                  "matches": [],
+                  "alternatives": []
+                }
+              ],
+              "unresolved_tokens": [
+                "8354 ex y"
+              ],
+              "fallback_match_mode": "or",
+              "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+              "spec_candidates": [],
+              "floor_missed": true,
+              "spec_unmet": [],
+              "spec_asked": [],
+              "unrecognized_terms": [],
+              "semantic_used": true,
+              "semantic_ms": 2496,
+              "gate_passed": true,
+              "require_specific": false,
+              "specific_options": [],
+              "resolved_company": null,
+              "company_team": null,
+              "resolved_companies": [],
+              "routing_brand": null,
+              "routing_brand_source": null,
+              "routing_companies": [],
+              "routing_company": null,
+              "access_denied_levels": [],
+              "access_notice": "",
+              "brand_gate_empty": false,
+              "brand_unheld": false,
+              "gate_reason": "no entities; 'incoming' permits broad query",
+              "gate_clarification": "",
+              "compatible_entities": [],
+              "gate_debug": {
+                "domain": "incoming",
+                "allowed_lookup": [
+                  "product",
+                  "inbound_shipment",
+                  "category",
+                  "brand"
+                ],
+                "entities_count": 0
+              }
+            }
+          },
+          "resolved": {
+            "tokens": [
+              "8354 ex y"
+            ],
+            "elapsed_ms": 269.13,
+            "resolutions": [
+              {
+                "token": "8354 ex y",
+                "resolved": false,
+                "ambiguous": false,
+                "matches": [],
+                "alternatives": []
+              }
+            ],
+            "unresolved_tokens": [
+              "8354 ex y"
+            ],
+            "fallback_match_mode": "or",
+            "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+            "spec_candidates": [],
+            "floor_missed": true,
+            "spec_unmet": [],
+            "spec_asked": [],
+            "unrecognized_terms": [],
+            "semantic_used": true,
+            "semantic_ms": 2496
+          },
+          "gate": {
+            "tokens": [
+              "8354 ex y"
+            ],
+            "elapsed_ms": 269.13,
+            "resolutions": [
+              {
+                "token": "8354 ex y",
+                "resolved": false,
+                "ambiguous": false,
+                "matches": [],
+                "alternatives": []
+              }
+            ],
+            "unresolved_tokens": [
+              "8354 ex y"
+            ],
+            "fallback_match_mode": "or",
+            "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+            "spec_candidates": [],
+            "floor_missed": true,
+            "spec_unmet": [],
+            "spec_asked": [],
+            "unrecognized_terms": [],
+            "semantic_used": true,
+            "semantic_ms": 2496,
+            "gate_passed": true,
+            "require_specific": false,
+            "specific_options": [],
+            "resolved_company": null,
+            "company_team": null,
+            "resolved_companies": [],
+            "routing_brand": null,
+            "routing_brand_source": null,
+            "routing_companies": [],
+            "routing_company": null,
+            "access_denied_levels": [],
+            "access_notice": "",
+            "brand_gate_empty": false,
+            "brand_unheld": false,
+            "gate_reason": "no entities; 'incoming' permits broad query",
+            "gate_clarification": "",
+            "compatible_entities": [],
+            "gate_debug": {
+              "domain": "incoming",
+              "allowed_lookup": [
+                "product",
+                "inbound_shipment",
+                "category",
+                "brand"
+              ],
+              "entities_count": 0
+            }
+          },
+          "ctx_resolved": {
+            "tokens": [
+              "8354 ex y"
+            ],
+            "elapsed_ms": 269.13,
+            "resolutions": [
+              {
+                "token": "8354 ex y",
+                "resolved": false,
+                "ambiguous": false,
+                "matches": [],
+                "alternatives": []
+              }
+            ],
+            "unresolved_tokens": [
+              "8354 ex y"
+            ],
+            "fallback_match_mode": "or",
+            "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+            "spec_candidates": [],
+            "floor_missed": true,
+            "spec_unmet": [],
+            "spec_asked": [],
+            "unrecognized_terms": [],
+            "semantic_used": true,
+            "semantic_ms": 2496,
+            "gate_passed": true,
+            "require_specific": false,
+            "specific_options": [],
+            "resolved_company": null,
+            "company_team": null,
+            "resolved_companies": [],
+            "routing_brand": null,
+            "routing_brand_source": null,
+            "routing_companies": [],
+            "routing_company": null,
+            "access_denied_levels": [],
+            "access_notice": "",
+            "brand_gate_empty": false,
+            "brand_unheld": false,
+            "gate_reason": "no entities; 'incoming' permits broad query",
+            "gate_clarification": "",
+            "compatible_entities": [],
+            "gate_debug": {
+              "domain": "incoming",
+              "allowed_lookup": [
+                "product",
+                "inbound_shipment",
+                "category",
+                "brand"
+              ],
+              "entities_count": 0
+            },
+            "ctx": {
+              "contact": {
+                "id": 900000001,
+                "firstName": "Person 1",
+                "lastName": "Person 2",
+                "phone": "+60100000001",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "locale": null,
+                "countryCode": "MY",
+                "status": "open",
+                "isBlocked": false,
+                "custom_fields": [
+                  {
+                    "name": "enquiry_type",
+                    "value": null
+                  },
+                  {
+                    "name": "user_type",
+                    "value": null
+                  },
+                  {
+                    "name": "complaint_id",
+                    "value": null
+                  },
+                  {
+                    "name": "is_allowed_stock",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_human_intervened",
+                    "value": "false"
+                  },
+                  {
+                    "name": "backend_id",
+                    "value": "https://fe-sorento.foundryx.my/user-management/contacts/76f86c51-a319-4545-befe-d1c48aeba7ec"
+                  },
+                  {
+                    "name": "is_allowed_ai",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_allowed_voice",
+                    "value": null
+                  }
+                ],
+                "tags": [
+                  "imported_20260627_150636"
+                ],
+                "assignee": null,
+                "lifecycle": null,
+                "created_at": 1782546255
+              },
+              "text": {
+                "event_type": "message.received",
+                "event_id": "f3da618a-9daf-45db-96f2-0ac36ec0c684",
+                "contact": {
+                  "id": 900000001,
+                  "firstName": "Person 1",
+                  "lastName": "Person 2",
+                  "phone": "+60100000001",
+                  "email": null,
+                  "language": null,
+                  "profilePic": null,
+                  "countryCode": "MY",
+                  "status": "open",
+                  "assignee": {
+                    "id": null,
+                    "firstName": null,
+                    "lastName": null,
+                    "email": null
+                  },
+                  "created_at": 1782546255
+                },
+                "message": {
+                  "messageId": 1788540272000000,
+                  "channelMessageId": "wamid.HBgLNjAxNjIwMjExNzgVAgASGCBBQ0Y5MTJDMjFCQkNCNUNCRDJBN0ZFNDJEMENFRTdEQwA=",
+                  "contactId": 900000001,
+                  "channelId": 453209,
+                  "traffic": "incoming",
+                  "timestamp": 1788540272000,
+                  "message": {
+                    "type": "text",
+                    "text": "8354 ex y"
+                  }
+                },
+                "channel": {
+                  "id": 453209,
+                  "name": "Internal (+60 11-1673 1179)",
+                  "source": "whatsapp_business",
+                  "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 3\"},\"wa_id\":\"60100000001\",\"user_id\":\"MY.900000002\",\"firstName\":\"Person 3\",\"lastName\":\"\"}}",
+                  "created_at": 1767682908
+                },
+                "sender": {
+                  "source": "contact",
+                  "userId": null,
+                  "teamId": null,
+                  "workflowId": null,
+                  "broadcastHistoryId": null
+                }
+              },
+              "session": {
+                "respond_io_id": "900000001",
+                "session_vars": {
+                  "variables": {
+                    "routing": {
+                      "suggested_team": "purchasing",
+                      "suggested_agent": "incoming_stock_enquiries"
+                    },
+                    "entities": [
+                      {
+                        "raw": "SRTBF31516-NEW",
+                        "hint": "product",
+                        "uuid": "fb06ee99-6ff8-4518-8692-21c612d0f2de",
+                        "ordinal": 2,
+                        "canonical_code": "SRTBF31516-NEW",
+                        "current_message": true
+                      }
+                    ],
+                    "ideation": null,
+                    "response": "Here's what you want:\n\u2022 product: SRTBF31516-NEW\n\nBut no incoming matched these. Would you like me to escalate to purchasing team?",
+                    "date_mode": null,
+                    "dym_offer": null,
+                    "user_goal": "trying to check incoming for the second related product",
+                    "escalation": {
+                      "is_escalation_confirmation": false
+                    },
+                    "match_mode": "and",
+                    "domain_hint": "incoming",
+                    "intent_hint": "check_incoming",
+                    "message_type": "business_query",
+                    "query_brands": [],
+                    "access_levels": [],
+                    "routing_brand": "sorento",
+                    "contains_flyer": false,
+                    "dym_candidates": [],
+                    "date_filter_end": null,
+                    "last_result_set": [],
+                    "routing_company": "00000000-0000-0000-0000-000000000001",
+                    "date_filter_start": null,
+                    "routing_companies": [
+                      {
+                        "codes": [
+                          "SRTBF31516-NEW"
+                        ],
+                        "labels": [
+                          "SRTBF31516-NEW"
+                        ],
+                        "brand_code": "sorento",
+                        "company_id": "00000000-0000-0000-0000-000000000001",
+                        "company_name": "Sorento"
+                      }
+                    ],
+                    "selection_context": null,
+                    "routing_roster_plan": null,
+                    "requested_attributes": [
+                      "estimated_arrival_date"
+                    ],
+                    "routing_brand_source": "resolved"
+                  },
+                  "user_response": "Here's what you want:\n\u2022 product: SRTBF31516-NEW\n\nBut no incoming matched these. Would you like me to escalate to purchasing team?"
+                }
+              },
+              "parse": {
+                "output": {
+                  "message_type": "business_query",
+                  "intent_hint": "check_incoming",
+                  "domain_hint": "incoming",
+                  "scope_intent": null,
+                  "is_affirmative": null,
+                  "user_goal": "trying to check incoming for 8354 ex y",
+                  "access_levels": [],
+                  "broaden_axis": null,
+                  "date_mode": null,
+                  "date_filter_start": null,
+                  "date_filter_end": null,
+                  "match_mode": "and",
+                  "demand_qty": null,
+                  "entities": [
+                    {
+                      "raw": "8354 ex y",
+                      "hint": "inbound_shipment",
+                      "canonical_code": null,
+                      "current_message": true,
+                      "confident": true
+                    }
+                  ],
+                  "entity_op": "replace_combine",
+                  "scope_exclusive": false,
+                  "requested_attributes": [],
+                  "contains_flyer": false,
+                  "reference_positions": [],
+                  "reference_target": null,
+                  "person_mention": null,
+                  "is_active": null,
+                  "order_status": null,
+                  "correction": false,
+                  "routing": {
+                    "suggested_team": "purchasing",
+                    "suggested_agent": "incoming_stock_enquiries"
+                  },
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "domain_signal_source": "intent_explicit",
+                  "scope_exclusive_applied": false,
+                  "entity_op_applied": "replace_combine",
+                  "query_brands": [],
+                  "entities_filtered": false,
+                  "entities_emptied_by_filter": false
+                },
+                "_parser_raw": {
+                  "message_type": "business_query",
+                  "intent_hint": "check_incoming",
+                  "domain_hint": "incoming",
+                  "scope_intent": null,
+                  "is_affirmative": null,
+                  "user_goal": "trying to check incoming for 8354 ex y",
+                  "access_levels": [],
+                  "broaden_axis": null,
+                  "date_mode": null,
+                  "date_filter_start": null,
+                  "date_filter_end": null,
+                  "match_mode": "and",
+                  "demand_qty": null,
+                  "entities": [
+                    {
+                      "raw": "8354 ex y",
+                      "hint": "inbound_shipment",
+                      "canonical_code": null,
+                      "current_message": true,
+                      "confident": true
+                    }
+                  ],
+                  "entity_op": "replace_combine",
+                  "scope_exclusive": false,
+                  "requested_attributes": [],
+                  "contains_flyer": false,
+                  "reference_positions": [],
+                  "reference_target": null,
+                  "person_mention": null,
+                  "is_active": null,
+                  "order_status": null,
+                  "correction": false,
+                  "routing": {
+                    "suggested_team": "purchasing",
+                    "suggested_agent": "incoming_stock_enquiries"
+                  },
+                  "escalation": {
+                    "is_escalation_confirmation": false,
+                    "company_pick": null
+                  }
+                }
+              },
+              "access": {
+                "allowed": true,
+                "decision": "allow",
+                "agent_name": "Incoming Stock Enquiries",
+                "attributes": null,
+                "all_attributes_allowed": null
+              },
+              "media": null,
+              "resolved": {
+                "tokens": [
+                  "8354 ex y"
+                ],
+                "elapsed_ms": 269.13,
+                "resolutions": [
+                  {
+                    "token": "8354 ex y",
+                    "resolved": false,
+                    "ambiguous": false,
+                    "matches": [],
+                    "alternatives": []
+                  }
+                ],
+                "unresolved_tokens": [
+                  "8354 ex y"
+                ],
+                "fallback_match_mode": "or",
+                "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+                "spec_candidates": [],
+                "floor_missed": true,
+                "spec_unmet": [],
+                "spec_asked": [],
+                "unrecognized_terms": [],
+                "semantic_used": true,
+                "semantic_ms": 2496
+              },
+              "entities": null,
+              "gate": {
+                "tokens": [
+                  "8354 ex y"
+                ],
+                "elapsed_ms": 269.13,
+                "resolutions": [
+                  {
+                    "token": "8354 ex y",
+                    "resolved": false,
+                    "ambiguous": false,
+                    "matches": [],
+                    "alternatives": []
+                  }
+                ],
+                "unresolved_tokens": [
+                  "8354 ex y"
+                ],
+                "fallback_match_mode": "or",
+                "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+                "spec_candidates": [],
+                "floor_missed": true,
+                "spec_unmet": [],
+                "spec_asked": [],
+                "unrecognized_terms": [],
+                "semantic_used": true,
+                "semantic_ms": 2496,
+                "gate_passed": true,
+                "require_specific": false,
+                "specific_options": [],
+                "resolved_company": null,
+                "company_team": null,
+                "resolved_companies": [],
+                "routing_brand": null,
+                "routing_brand_source": null,
+                "routing_companies": [],
+                "routing_company": null,
+                "access_denied_levels": [],
+                "access_notice": "",
+                "brand_gate_empty": false,
+                "brand_unheld": false,
+                "gate_reason": "no entities; 'incoming' permits broad query",
+                "gate_clarification": "",
+                "compatible_entities": [],
+                "gate_debug": {
+                  "domain": "incoming",
+                  "allowed_lookup": [
+                    "product",
+                    "inbound_shipment",
+                    "category",
+                    "brand"
+                  ],
+                  "entities_count": 0
+                }
+              }
+            }
+          },
+          "aggregate": null,
+          "tier_gate": null,
+          "annotate_incoming": null,
+          "_exit_kind": "not_found"
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "tokens": [
+          "8354 ex y"
+        ],
+        "elapsed_ms": 269.13,
+        "resolutions": [
+          {
+            "token": "8354 ex y",
+            "resolved": false,
+            "ambiguous": false,
+            "matches": [],
+            "alternatives": []
+          }
+        ],
+        "unresolved_tokens": [
+          "8354 ex y"
+        ],
+        "fallback_match_mode": "or",
+        "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+        "spec_candidates": [],
+        "floor_missed": true,
+        "spec_unmet": [],
+        "spec_asked": [],
+        "unrecognized_terms": [],
+        "semantic_used": true,
+        "semantic_ms": 2496,
+        "gate_passed": true,
+        "require_specific": false,
+        "specific_options": [],
+        "resolved_company": null,
+        "company_team": null,
+        "resolved_companies": [],
+        "routing_brand": null,
+        "routing_brand_source": null,
+        "routing_companies": [],
+        "routing_company": null,
+        "access_denied_levels": [],
+        "access_notice": "",
+        "brand_gate_empty": false,
+        "brand_unheld": false,
+        "gate_reason": "no entities; 'incoming' permits broad query",
+        "gate_clarification": "",
+        "compatible_entities": [],
+        "gate_debug": {
+          "domain": "incoming",
+          "allowed_lookup": [
+            "product",
+            "inbound_shipment",
+            "category",
+            "brand"
+          ],
+          "entities_count": 0
+        },
+        "ctx": {
+          "contact": {
+            "id": 900000001,
+            "firstName": "Person 1",
+            "lastName": "Person 2",
+            "phone": "+60100000001",
+            "email": null,
+            "language": null,
+            "profilePic": null,
+            "locale": null,
+            "countryCode": "MY",
+            "status": "open",
+            "isBlocked": false,
+            "custom_fields": [
+              {
+                "name": "enquiry_type",
+                "value": null
+              },
+              {
+                "name": "user_type",
+                "value": null
+              },
+              {
+                "name": "complaint_id",
+                "value": null
+              },
+              {
+                "name": "is_allowed_stock",
+                "value": "true"
+              },
+              {
+                "name": "is_human_intervened",
+                "value": "false"
+              },
+              {
+                "name": "backend_id",
+                "value": "https://fe-sorento.foundryx.my/user-management/contacts/76f86c51-a319-4545-befe-d1c48aeba7ec"
+              },
+              {
+                "name": "is_allowed_ai",
+                "value": "true"
+              },
+              {
+                "name": "is_allowed_voice",
+                "value": null
+              }
+            ],
+            "tags": [
+              "imported_20260627_150636"
+            ],
+            "assignee": null,
+            "lifecycle": null,
+            "created_at": 1782546255
+          },
+          "text": {
+            "event_type": "message.received",
+            "event_id": "f3da618a-9daf-45db-96f2-0ac36ec0c684",
+            "contact": {
+              "id": 900000001,
+              "firstName": "Person 1",
+              "lastName": "Person 2",
+              "phone": "+60100000001",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "countryCode": "MY",
+              "status": "open",
+              "assignee": {
+                "id": null,
+                "firstName": null,
+                "lastName": null,
+                "email": null
+              },
+              "created_at": 1782546255
+            },
+            "message": {
+              "messageId": 1788540272000000,
+              "channelMessageId": "wamid.HBgLNjAxNjIwMjExNzgVAgASGCBBQ0Y5MTJDMjFCQkNCNUNCRDJBN0ZFNDJEMENFRTdEQwA=",
+              "contactId": 900000001,
+              "channelId": 453209,
+              "traffic": "incoming",
+              "timestamp": 1788540272000,
+              "message": {
+                "type": "text",
+                "text": "8354 ex y"
+              }
+            },
+            "channel": {
+              "id": 453209,
+              "name": "Internal (+60 11-1673 1179)",
+              "source": "whatsapp_business",
+              "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 3\"},\"wa_id\":\"60100000001\",\"user_id\":\"MY.900000002\",\"firstName\":\"Person 3\",\"lastName\":\"\"}}",
+              "created_at": 1767682908
+            },
+            "sender": {
+              "source": "contact",
+              "userId": null,
+              "teamId": null,
+              "workflowId": null,
+              "broadcastHistoryId": null
+            }
+          },
+          "session": {
+            "respond_io_id": "900000001",
+            "session_vars": {
+              "variables": {
+                "routing": {
+                  "suggested_team": "purchasing",
+                  "suggested_agent": "incoming_stock_enquiries"
+                },
+                "entities": [
+                  {
+                    "raw": "SRTBF31516-NEW",
+                    "hint": "product",
+                    "uuid": "fb06ee99-6ff8-4518-8692-21c612d0f2de",
+                    "ordinal": 2,
+                    "canonical_code": "SRTBF31516-NEW",
+                    "current_message": true
+                  }
+                ],
+                "ideation": null,
+                "response": "Here's what you want:\n\u2022 product: SRTBF31516-NEW\n\nBut no incoming matched these. Would you like me to escalate to purchasing team?",
+                "date_mode": null,
+                "dym_offer": null,
+                "user_goal": "trying to check incoming for the second related product",
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "match_mode": "and",
+                "domain_hint": "incoming",
+                "intent_hint": "check_incoming",
+                "message_type": "business_query",
+                "query_brands": [],
+                "access_levels": [],
+                "routing_brand": "sorento",
+                "contains_flyer": false,
+                "dym_candidates": [],
+                "date_filter_end": null,
+                "last_result_set": [],
+                "routing_company": "00000000-0000-0000-0000-000000000001",
+                "date_filter_start": null,
+                "routing_companies": [
+                  {
+                    "codes": [
+                      "SRTBF31516-NEW"
+                    ],
+                    "labels": [
+                      "SRTBF31516-NEW"
+                    ],
+                    "brand_code": "sorento",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento"
+                  }
+                ],
+                "selection_context": null,
+                "routing_roster_plan": null,
+                "requested_attributes": [
+                  "estimated_arrival_date"
+                ],
+                "routing_brand_source": "resolved"
+              },
+              "user_response": "Here's what you want:\n\u2022 product: SRTBF31516-NEW\n\nBut no incoming matched these. Would you like me to escalate to purchasing team?"
+            }
+          },
+          "parse": {
+            "output": {
+              "message_type": "business_query",
+              "intent_hint": "check_incoming",
+              "domain_hint": "incoming",
+              "scope_intent": null,
+              "is_affirmative": null,
+              "user_goal": "trying to check incoming for 8354 ex y",
+              "access_levels": [],
+              "broaden_axis": null,
+              "date_mode": null,
+              "date_filter_start": null,
+              "date_filter_end": null,
+              "match_mode": "and",
+              "demand_qty": null,
+              "entities": [
+                {
+                  "raw": "8354 ex y",
+                  "hint": "inbound_shipment",
+                  "canonical_code": null,
+                  "current_message": true,
+                  "confident": true
+                }
+              ],
+              "entity_op": "replace_combine",
+              "scope_exclusive": false,
+              "requested_attributes": [],
+              "contains_flyer": false,
+              "reference_positions": [],
+              "reference_target": null,
+              "person_mention": null,
+              "is_active": null,
+              "order_status": null,
+              "correction": false,
+              "routing": {
+                "suggested_team": "purchasing",
+                "suggested_agent": "incoming_stock_enquiries"
+              },
+              "escalation": {
+                "is_escalation_confirmation": false
+              },
+              "domain_signal_source": "intent_explicit",
+              "scope_exclusive_applied": false,
+              "entity_op_applied": "replace_combine",
+              "query_brands": [],
+              "entities_filtered": false,
+              "entities_emptied_by_filter": false
+            },
+            "_parser_raw": {
+              "message_type": "business_query",
+              "intent_hint": "check_incoming",
+              "domain_hint": "incoming",
+              "scope_intent": null,
+              "is_affirmative": null,
+              "user_goal": "trying to check incoming for 8354 ex y",
+              "access_levels": [],
+              "broaden_axis": null,
+              "date_mode": null,
+              "date_filter_start": null,
+              "date_filter_end": null,
+              "match_mode": "and",
+              "demand_qty": null,
+              "entities": [
+                {
+                  "raw": "8354 ex y",
+                  "hint": "inbound_shipment",
+                  "canonical_code": null,
+                  "current_message": true,
+                  "confident": true
+                }
+              ],
+              "entity_op": "replace_combine",
+              "scope_exclusive": false,
+              "requested_attributes": [],
+              "contains_flyer": false,
+              "reference_positions": [],
+              "reference_target": null,
+              "person_mention": null,
+              "is_active": null,
+              "order_status": null,
+              "correction": false,
+              "routing": {
+                "suggested_team": "purchasing",
+                "suggested_agent": "incoming_stock_enquiries"
+              },
+              "escalation": {
+                "is_escalation_confirmation": false,
+                "company_pick": null
+              }
+            }
+          },
+          "access": {
+            "allowed": true,
+            "decision": "allow",
+            "agent_name": "Incoming Stock Enquiries",
+            "attributes": null,
+            "all_attributes_allowed": null
+          },
+          "media": null,
+          "resolved": {
+            "tokens": [
+              "8354 ex y"
+            ],
+            "elapsed_ms": 269.13,
+            "resolutions": [
+              {
+                "token": "8354 ex y",
+                "resolved": false,
+                "ambiguous": false,
+                "matches": [],
+                "alternatives": []
+              }
+            ],
+            "unresolved_tokens": [
+              "8354 ex y"
+            ],
+            "fallback_match_mode": "or",
+            "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+            "spec_candidates": [],
+            "floor_missed": true,
+            "spec_unmet": [],
+            "spec_asked": [],
+            "unrecognized_terms": [],
+            "semantic_used": true,
+            "semantic_ms": 2496
+          },
+          "entities": null,
+          "gate": {
+            "tokens": [
+              "8354 ex y"
+            ],
+            "elapsed_ms": 269.13,
+            "resolutions": [
+              {
+                "token": "8354 ex y",
+                "resolved": false,
+                "ambiguous": false,
+                "matches": [],
+                "alternatives": []
+              }
+            ],
+            "unresolved_tokens": [
+              "8354 ex y"
+            ],
+            "fallback_match_mode": "or",
+            "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+            "spec_candidates": [],
+            "floor_missed": true,
+            "spec_unmet": [],
+            "spec_asked": [],
+            "unrecognized_terms": [],
+            "semantic_used": true,
+            "semantic_ms": 2496,
+            "gate_passed": true,
+            "require_specific": false,
+            "specific_options": [],
+            "resolved_company": null,
+            "company_team": null,
+            "resolved_companies": [],
+            "routing_brand": null,
+            "routing_brand_source": null,
+            "routing_companies": [],
+            "routing_company": null,
+            "access_denied_levels": [],
+            "access_notice": "",
+            "brand_gate_empty": false,
+            "brand_unheld": false,
+            "gate_reason": "no entities; 'incoming' permits broad query",
+            "gate_clarification": "",
+            "compatible_entities": [],
+            "gate_debug": {
+              "domain": "incoming",
+              "allowed_lookup": [
+                "product",
+                "inbound_shipment",
+                "category",
+                "brand"
+              ],
+              "entities_count": 0
+            }
+          }
+        }
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "tokens": [
+          "8354 ex y"
+        ],
+        "elapsed_ms": 269.13,
+        "resolutions": [
+          {
+            "token": "8354 ex y",
+            "resolved": false,
+            "ambiguous": false,
+            "matches": [],
+            "alternatives": []
+          }
+        ],
+        "unresolved_tokens": [
+          "8354 ex y"
+        ],
+        "fallback_match_mode": "or",
+        "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+        "spec_candidates": [],
+        "floor_missed": true,
+        "spec_unmet": [],
+        "spec_asked": [],
+        "unrecognized_terms": [],
+        "semantic_used": true,
+        "semantic_ms": 2496,
+        "gate_passed": true,
+        "require_specific": false,
+        "specific_options": [],
+        "resolved_company": null,
+        "company_team": null,
+        "resolved_companies": [],
+        "routing_brand": null,
+        "routing_brand_source": null,
+        "routing_companies": [],
+        "routing_company": null,
+        "access_denied_levels": [],
+        "access_notice": "",
+        "brand_gate_empty": false,
+        "brand_unheld": false,
+        "gate_reason": "no entities; 'incoming' permits broad query",
+        "gate_clarification": "",
+        "compatible_entities": [],
+        "gate_debug": {
+          "domain": "incoming",
+          "allowed_lookup": [
+            "product",
+            "inbound_shipment",
+            "category",
+            "brand"
+          ],
+          "entities_count": 0
+        },
+        "ctx": {
+          "contact": {
+            "id": 900000001,
+            "firstName": "Person 1",
+            "lastName": "Person 2",
+            "phone": "+60100000001",
+            "email": null,
+            "language": null,
+            "profilePic": null,
+            "locale": null,
+            "countryCode": "MY",
+            "status": "open",
+            "isBlocked": false,
+            "custom_fields": [
+              {
+                "name": "enquiry_type",
+                "value": null
+              },
+              {
+                "name": "user_type",
+                "value": null
+              },
+              {
+                "name": "complaint_id",
+                "value": null
+              },
+              {
+                "name": "is_allowed_stock",
+                "value": "true"
+              },
+              {
+                "name": "is_human_intervened",
+                "value": "false"
+              },
+              {
+                "name": "backend_id",
+                "value": "https://fe-sorento.foundryx.my/user-management/contacts/76f86c51-a319-4545-befe-d1c48aeba7ec"
+              },
+              {
+                "name": "is_allowed_ai",
+                "value": "true"
+              },
+              {
+                "name": "is_allowed_voice",
+                "value": null
+              }
+            ],
+            "tags": [
+              "imported_20260627_150636"
+            ],
+            "assignee": null,
+            "lifecycle": null,
+            "created_at": 1782546255
+          },
+          "text": {
+            "event_type": "message.received",
+            "event_id": "f3da618a-9daf-45db-96f2-0ac36ec0c684",
+            "contact": {
+              "id": 900000001,
+              "firstName": "Person 1",
+              "lastName": "Person 2",
+              "phone": "+60100000001",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "countryCode": "MY",
+              "status": "open",
+              "assignee": {
+                "id": null,
+                "firstName": null,
+                "lastName": null,
+                "email": null
+              },
+              "created_at": 1782546255
+            },
+            "message": {
+              "messageId": 1788540272000000,
+              "channelMessageId": "wamid.HBgLNjAxNjIwMjExNzgVAgASGCBBQ0Y5MTJDMjFCQkNCNUNCRDJBN0ZFNDJEMENFRTdEQwA=",
+              "contactId": 900000001,
+              "channelId": 453209,
+              "traffic": "incoming",
+              "timestamp": 1788540272000,
+              "message": {
+                "type": "text",
+                "text": "8354 ex y"
+              }
+            },
+            "channel": {
+              "id": 453209,
+              "name": "Internal (+60 11-1673 1179)",
+              "source": "whatsapp_business",
+              "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 3\"},\"wa_id\":\"60100000001\",\"user_id\":\"MY.900000002\",\"firstName\":\"Person 3\",\"lastName\":\"\"}}",
+              "created_at": 1767682908
+            },
+            "sender": {
+              "source": "contact",
+              "userId": null,
+              "teamId": null,
+              "workflowId": null,
+              "broadcastHistoryId": null
+            }
+          },
+          "session": {
+            "respond_io_id": "900000001",
+            "session_vars": {
+              "variables": {
+                "routing": {
+                  "suggested_team": "purchasing",
+                  "suggested_agent": "incoming_stock_enquiries"
+                },
+                "entities": [
+                  {
+                    "raw": "SRTBF31516-NEW",
+                    "hint": "product",
+                    "uuid": "fb06ee99-6ff8-4518-8692-21c612d0f2de",
+                    "ordinal": 2,
+                    "canonical_code": "SRTBF31516-NEW",
+                    "current_message": true
+                  }
+                ],
+                "ideation": null,
+                "response": "Here's what you want:\n\u2022 product: SRTBF31516-NEW\n\nBut no incoming matched these. Would you like me to escalate to purchasing team?",
+                "date_mode": null,
+                "dym_offer": null,
+                "user_goal": "trying to check incoming for the second related product",
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "match_mode": "and",
+                "domain_hint": "incoming",
+                "intent_hint": "check_incoming",
+                "message_type": "business_query",
+                "query_brands": [],
+                "access_levels": [],
+                "routing_brand": "sorento",
+                "contains_flyer": false,
+                "dym_candidates": [],
+                "date_filter_end": null,
+                "last_result_set": [],
+                "routing_company": "00000000-0000-0000-0000-000000000001",
+                "date_filter_start": null,
+                "routing_companies": [
+                  {
+                    "codes": [
+                      "SRTBF31516-NEW"
+                    ],
+                    "labels": [
+                      "SRTBF31516-NEW"
+                    ],
+                    "brand_code": "sorento",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento"
+                  }
+                ],
+                "selection_context": null,
+                "routing_roster_plan": null,
+                "requested_attributes": [
+                  "estimated_arrival_date"
+                ],
+                "routing_brand_source": "resolved"
+              },
+              "user_response": "Here's what you want:\n\u2022 product: SRTBF31516-NEW\n\nBut no incoming matched these. Would you like me to escalate to purchasing team?"
+            }
+          },
+          "parse": {
+            "output": {
+              "message_type": "business_query",
+              "intent_hint": "check_incoming",
+              "domain_hint": "incoming",
+              "scope_intent": null,
+              "is_affirmative": null,
+              "user_goal": "trying to check incoming for 8354 ex y",
+              "access_levels": [],
+              "broaden_axis": null,
+              "date_mode": null,
+              "date_filter_start": null,
+              "date_filter_end": null,
+              "match_mode": "and",
+              "demand_qty": null,
+              "entities": [
+                {
+                  "raw": "8354 ex y",
+                  "hint": "inbound_shipment",
+                  "canonical_code": null,
+                  "current_message": true,
+                  "confident": true
+                }
+              ],
+              "entity_op": "replace_combine",
+              "scope_exclusive": false,
+              "requested_attributes": [],
+              "contains_flyer": false,
+              "reference_positions": [],
+              "reference_target": null,
+              "person_mention": null,
+              "is_active": null,
+              "order_status": null,
+              "correction": false,
+              "routing": {
+                "suggested_team": "purchasing",
+                "suggested_agent": "incoming_stock_enquiries"
+              },
+              "escalation": {
+                "is_escalation_confirmation": false
+              },
+              "domain_signal_source": "intent_explicit",
+              "scope_exclusive_applied": false,
+              "entity_op_applied": "replace_combine",
+              "query_brands": [],
+              "entities_filtered": false,
+              "entities_emptied_by_filter": false
+            },
+            "_parser_raw": {
+              "message_type": "business_query",
+              "intent_hint": "check_incoming",
+              "domain_hint": "incoming",
+              "scope_intent": null,
+              "is_affirmative": null,
+              "user_goal": "trying to check incoming for 8354 ex y",
+              "access_levels": [],
+              "broaden_axis": null,
+              "date_mode": null,
+              "date_filter_start": null,
+              "date_filter_end": null,
+              "match_mode": "and",
+              "demand_qty": null,
+              "entities": [
+                {
+                  "raw": "8354 ex y",
+                  "hint": "inbound_shipment",
+                  "canonical_code": null,
+                  "current_message": true,
+                  "confident": true
+                }
+              ],
+              "entity_op": "replace_combine",
+              "scope_exclusive": false,
+              "requested_attributes": [],
+              "contains_flyer": false,
+              "reference_positions": [],
+              "reference_target": null,
+              "person_mention": null,
+              "is_active": null,
+              "order_status": null,
+              "correction": false,
+              "routing": {
+                "suggested_team": "purchasing",
+                "suggested_agent": "incoming_stock_enquiries"
+              },
+              "escalation": {
+                "is_escalation_confirmation": false,
+                "company_pick": null
+              }
+            }
+          },
+          "access": {
+            "allowed": true,
+            "decision": "allow",
+            "agent_name": "Incoming Stock Enquiries",
+            "attributes": null,
+            "all_attributes_allowed": null
+          },
+          "media": null,
+          "resolved": {
+            "tokens": [
+              "8354 ex y"
+            ],
+            "elapsed_ms": 269.13,
+            "resolutions": [
+              {
+                "token": "8354 ex y",
+                "resolved": false,
+                "ambiguous": false,
+                "matches": [],
+                "alternatives": []
+              }
+            ],
+            "unresolved_tokens": [
+              "8354 ex y"
+            ],
+            "fallback_match_mode": "or",
+            "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+            "spec_candidates": [],
+            "floor_missed": true,
+            "spec_unmet": [],
+            "spec_asked": [],
+            "unrecognized_terms": [],
+            "semantic_used": true,
+            "semantic_ms": 2496
+          },
+          "entities": null,
+          "gate": {
+            "tokens": [
+              "8354 ex y"
+            ],
+            "elapsed_ms": 269.13,
+            "resolutions": [
+              {
+                "token": "8354 ex y",
+                "resolved": false,
+                "ambiguous": false,
+                "matches": [],
+                "alternatives": []
+              }
+            ],
+            "unresolved_tokens": [
+              "8354 ex y"
+            ],
+            "fallback_match_mode": "or",
+            "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+            "spec_candidates": [],
+            "floor_missed": true,
+            "spec_unmet": [],
+            "spec_asked": [],
+            "unrecognized_terms": [],
+            "semantic_used": true,
+            "semantic_ms": 2496,
+            "gate_passed": true,
+            "require_specific": false,
+            "specific_options": [],
+            "resolved_company": null,
+            "company_team": null,
+            "resolved_companies": [],
+            "routing_brand": null,
+            "routing_brand_source": null,
+            "routing_companies": [],
+            "routing_company": null,
+            "access_denied_levels": [],
+            "access_notice": "",
+            "brand_gate_empty": false,
+            "brand_unheld": false,
+            "gate_reason": "no entities; 'incoming' permits broad query",
+            "gate_clarification": "",
+            "compatible_entities": [],
+            "gate_debug": {
+              "domain": "incoming",
+              "allowed_lookup": [
+                "product",
+                "inbound_shipment",
+                "category",
+                "brand"
+              ],
+              "entities_count": 0
+            }
+          }
+        },
+        "resolved": {
+          "tokens": [
+            "8354 ex y"
+          ],
+          "elapsed_ms": 269.13,
+          "resolutions": [
+            {
+              "token": "8354 ex y",
+              "resolved": false,
+              "ambiguous": false,
+              "matches": [],
+              "alternatives": []
+            }
+          ],
+          "unresolved_tokens": [
+            "8354 ex y"
+          ],
+          "fallback_match_mode": "or",
+          "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+          "spec_candidates": [],
+          "floor_missed": true,
+          "spec_unmet": [],
+          "spec_asked": [],
+          "unrecognized_terms": [],
+          "semantic_used": true,
+          "semantic_ms": 2496
+        },
+        "gate": {
+          "tokens": [
+            "8354 ex y"
+          ],
+          "elapsed_ms": 269.13,
+          "resolutions": [
+            {
+              "token": "8354 ex y",
+              "resolved": false,
+              "ambiguous": false,
+              "matches": [],
+              "alternatives": []
+            }
+          ],
+          "unresolved_tokens": [
+            "8354 ex y"
+          ],
+          "fallback_match_mode": "or",
+          "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+          "spec_candidates": [],
+          "floor_missed": true,
+          "spec_unmet": [],
+          "spec_asked": [],
+          "unrecognized_terms": [],
+          "semantic_used": true,
+          "semantic_ms": 2496,
+          "gate_passed": true,
+          "require_specific": false,
+          "specific_options": [],
+          "resolved_company": null,
+          "company_team": null,
+          "resolved_companies": [],
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_companies": [],
+          "routing_company": null,
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "no entities; 'incoming' permits broad query",
+          "gate_clarification": "",
+          "compatible_entities": [],
+          "gate_debug": {
+            "domain": "incoming",
+            "allowed_lookup": [
+              "product",
+              "inbound_shipment",
+              "category",
+              "brand"
+            ],
+            "entities_count": 0
+          }
+        },
+        "ctx_resolved": {
+          "tokens": [
+            "8354 ex y"
+          ],
+          "elapsed_ms": 269.13,
+          "resolutions": [
+            {
+              "token": "8354 ex y",
+              "resolved": false,
+              "ambiguous": false,
+              "matches": [],
+              "alternatives": []
+            }
+          ],
+          "unresolved_tokens": [
+            "8354 ex y"
+          ],
+          "fallback_match_mode": "or",
+          "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+          "spec_candidates": [],
+          "floor_missed": true,
+          "spec_unmet": [],
+          "spec_asked": [],
+          "unrecognized_terms": [],
+          "semantic_used": true,
+          "semantic_ms": 2496,
+          "gate_passed": true,
+          "require_specific": false,
+          "specific_options": [],
+          "resolved_company": null,
+          "company_team": null,
+          "resolved_companies": [],
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_companies": [],
+          "routing_company": null,
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "no entities; 'incoming' permits broad query",
+          "gate_clarification": "",
+          "compatible_entities": [],
+          "gate_debug": {
+            "domain": "incoming",
+            "allowed_lookup": [
+              "product",
+              "inbound_shipment",
+              "category",
+              "brand"
+            ],
+            "entities_count": 0
+          },
+          "ctx": {
+            "contact": {
+              "id": 900000001,
+              "firstName": "Person 1",
+              "lastName": "Person 2",
+              "phone": "+60100000001",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/76f86c51-a319-4545-befe-d1c48aeba7ec"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": null,
+              "created_at": 1782546255
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "f3da618a-9daf-45db-96f2-0ac36ec0c684",
+              "contact": {
+                "id": 900000001,
+                "firstName": "Person 1",
+                "lastName": "Person 2",
+                "phone": "+60100000001",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1782546255
+              },
+              "message": {
+                "messageId": 1788540272000000,
+                "channelMessageId": "wamid.HBgLNjAxNjIwMjExNzgVAgASGCBBQ0Y5MTJDMjFCQkNCNUNCRDJBN0ZFNDJEMENFRTdEQwA=",
+                "contactId": 900000001,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788540272000,
+                "message": {
+                  "type": "text",
+                  "text": "8354 ex y"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 3\"},\"wa_id\":\"60100000001\",\"user_id\":\"MY.900000002\",\"firstName\":\"Person 3\",\"lastName\":\"\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000001",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "purchasing",
+                    "suggested_agent": "incoming_stock_enquiries"
+                  },
+                  "entities": [
+                    {
+                      "raw": "SRTBF31516-NEW",
+                      "hint": "product",
+                      "uuid": "fb06ee99-6ff8-4518-8692-21c612d0f2de",
+                      "ordinal": 2,
+                      "canonical_code": "SRTBF31516-NEW",
+                      "current_message": true
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Here's what you want:\n\u2022 product: SRTBF31516-NEW\n\nBut no incoming matched these. Would you like me to escalate to purchasing team?",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to check incoming for the second related product",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "incoming",
+                  "intent_hint": "check_incoming",
+                  "message_type": "business_query",
+                  "query_brands": [],
+                  "access_levels": [],
+                  "routing_brand": "sorento",
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [],
+                  "routing_company": "00000000-0000-0000-0000-000000000001",
+                  "date_filter_start": null,
+                  "routing_companies": [
+                    {
+                      "codes": [
+                        "SRTBF31516-NEW"
+                      ],
+                      "labels": [
+                        "SRTBF31516-NEW"
+                      ],
+                      "brand_code": "sorento",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "selection_context": null,
+                  "routing_roster_plan": null,
+                  "requested_attributes": [
+                    "estimated_arrival_date"
+                  ],
+                  "routing_brand_source": "resolved"
+                },
+                "user_response": "Here's what you want:\n\u2022 product: SRTBF31516-NEW\n\nBut no incoming matched these. Would you like me to escalate to purchasing team?"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "check_incoming",
+                "domain_hint": "incoming",
+                "scope_intent": null,
+                "is_affirmative": null,
+                "user_goal": "trying to check incoming for 8354 ex y",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "8354 ex y",
+                    "hint": "inbound_shipment",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "purchasing",
+                  "suggested_agent": "incoming_stock_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_explicit",
+                "scope_exclusive_applied": false,
+                "entity_op_applied": "replace_combine",
+                "query_brands": [],
+                "entities_filtered": false,
+                "entities_emptied_by_filter": false
+              },
+              "_parser_raw": {
+                "message_type": "business_query",
+                "intent_hint": "check_incoming",
+                "domain_hint": "incoming",
+                "scope_intent": null,
+                "is_affirmative": null,
+                "user_goal": "trying to check incoming for 8354 ex y",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "8354 ex y",
+                    "hint": "inbound_shipment",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "purchasing",
+                  "suggested_agent": "incoming_stock_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "Incoming Stock Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null,
+            "resolved": {
+              "tokens": [
+                "8354 ex y"
+              ],
+              "elapsed_ms": 269.13,
+              "resolutions": [
+                {
+                  "token": "8354 ex y",
+                  "resolved": false,
+                  "ambiguous": false,
+                  "matches": [],
+                  "alternatives": []
+                }
+              ],
+              "unresolved_tokens": [
+                "8354 ex y"
+              ],
+              "fallback_match_mode": "or",
+              "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+              "spec_candidates": [],
+              "floor_missed": true,
+              "spec_unmet": [],
+              "spec_asked": [],
+              "unrecognized_terms": [],
+              "semantic_used": true,
+              "semantic_ms": 2496
+            },
+            "entities": null,
+            "gate": {
+              "tokens": [
+                "8354 ex y"
+              ],
+              "elapsed_ms": 269.13,
+              "resolutions": [
+                {
+                  "token": "8354 ex y",
+                  "resolved": false,
+                  "ambiguous": false,
+                  "matches": [],
+                  "alternatives": []
+                }
+              ],
+              "unresolved_tokens": [
+                "8354 ex y"
+              ],
+              "fallback_match_mode": "or",
+              "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+              "spec_candidates": [],
+              "floor_missed": true,
+              "spec_unmet": [],
+              "spec_asked": [],
+              "unrecognized_terms": [],
+              "semantic_used": true,
+              "semantic_ms": 2496,
+              "gate_passed": true,
+              "require_specific": false,
+              "specific_options": [],
+              "resolved_company": null,
+              "company_team": null,
+              "resolved_companies": [],
+              "routing_brand": null,
+              "routing_brand_source": null,
+              "routing_companies": [],
+              "routing_company": null,
+              "access_denied_levels": [],
+              "access_notice": "",
+              "brand_gate_empty": false,
+              "brand_unheld": false,
+              "gate_reason": "no entities; 'incoming' permits broad query",
+              "gate_clarification": "",
+              "compatible_entities": [],
+              "gate_debug": {
+                "domain": "incoming",
+                "allowed_lookup": [
+                  "product",
+                  "inbound_shipment",
+                  "category",
+                  "brand"
+                ],
+                "entities_count": 0
+              }
+            }
+          }
+        },
+        "aggregate": null,
+        "tier_gate": null,
+        "annotate_incoming": null,
+        "_exit_kind": "not_found"
+      }
+    }
+  ],
+  "runIndex": 0,
+  "execution": {
+    "id": "15192919"
+  },
+  "ran": [
+    "When Executed by Another Workflow",
+    "build-ctx",
+    "item",
+    "entry-gate",
+    "resolve-entity",
+    "disallowed-entity-gate",
+    "build-ctx-resolved",
+    "If3",
+    "If-incoming-picker",
+    "If-customer-picker",
+    "resolve-exit-not-found"
+  ]
+}

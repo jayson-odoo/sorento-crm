@@ -42,6 +42,8 @@ from app.services.chatbot.head.output_exchange import (
     suggest_follow_up,
 )
 from app.services.chatbot.head.route import decide
+from app.services.chatbot.lanes import business
+from app.services.chatbot.lanes.business import resolve_gate, services as business_services
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +67,7 @@ class TurnResult:
         "item",
         "branch_kind",
         "delegate",
+        "delegate_payload",
         "reply",
         "actions",
         "session_patch",
@@ -89,6 +92,7 @@ class TurnResult:
             "item": self.item,
             "branch_kind": self.branch_kind,
             "delegate": self.delegate,
+            "delegate_payload": self.delegate_payload,
             "reply": self.reply,
             "actions": self.actions,
             "session_patch": self.session_patch,
@@ -343,6 +347,7 @@ def _duplicate_result(row: ChatbotTurn) -> TurnResult:
         item=response.get("item"),
         branch_kind=row.branch_kind,
         delegate=delegate_for(row.branch_kind) if row.branch_kind else None,
+        delegate_payload=response.get("delegate_payload"),
         reply=response.get("reply"),
         actions=response.get("actions") or [],
         duplicate=True,
@@ -625,12 +630,89 @@ def _run_stages(  # noqa: PLR0915
             raw={"item": item},
         )
 
+        # -- the business lane's resolve + gate (S6a) ----------------------- #
+        # THE one call site into `lanes/`. Three arms reach `sub-resolve-and-gate` in
+        # n8n (`check_promotion` through `tag-entry-access-check`, `stock_denied` and
+        # `business_query` through `tag-entry-resolve`), so those three run it here and
+        # hand the caller the sub's own output item; the other ten delegate unchanged.
+        #
+        # It runs INSIDE this session on purpose - the resolver is a database service and
+        # cannot be called without one. That leaves the session held across the resolver's
+        # optional spec-search model call (2 to 3 s when `understand_phrase` fires), which
+        # is the ONE place this turn breaks the plan's "never hold a session across
+        # provider I/O" rule. Named rather than hidden: S6b moves fetch into its own stage
+        # and is where the split belongs, because it adds the MCP call this lane does not
+        # yet make.
         delegate = delegate_for(branch_kind)
+        delegate_payload: dict[str, Any] | None = None
+        lane_error_text: str | None = None
+        if business.handles(branch_kind) and _business_lane_enabled():
+            stage[0] = "looked_up"
+            try:
+                fragment = business.run_until_exit(
+                    ctx,
+                    item,
+                    branch_kind=branch_kind,
+                    services=business_services.production_services(db),
+                    space_id=default_space_id(db),
+                    probe_default_start=resolve_gate.default_probe_start(),
+                    # D14, evaluated before anything side-effecting: the resolver's
+                    # spec-search reader is the one row a test turn could still write.
+                    dry_run=dry_run,
+                )
+            except Exception as lane_error:  # noqa: BLE001 - shadow until n8n is rewired
+                # The lane is SHADOW while n8n still calls `sub-resolve-and-gate` itself,
+                # so its failure must not take a turn n8n can still answer. It is recorded
+                # loudly instead: the n8n cutover's own precondition is a shadow window
+                # with zero of these (n8n-changes.md, S6a).
+                logger.exception("chatbot turn %s: business lane failed", turn_id)
+                lane_error_text = f"{type(lane_error).__name__}: {lane_error}"
+                turn_trace.record(
+                    "looked_up",
+                    status="failed",
+                    summary="Could not resolve what the customer named.",
+                    why="The lookup the business lane depends on did not answer.",
+                    facts={"lane": "business", "branch_kind": branch_kind},
+                    error=lane_error_text,
+                    raw=None,
+                )
+            else:
+                payload: dict[str, Any] = fragment["payload"]
+                delegate = fragment["delegate"]
+                delegate_payload = payload
+                gate_block = payload.get("gate") or {}
+                turn_trace.record(
+                    "looked_up",
+                    summary=(
+                        "Resolved what the customer named and checked it against the "
+                        f"{jsc.js_string(qf.get('domain_hint'))} domain."
+                    ),
+                    why=(
+                        "The business lane decides whether the turn can be answered, needs "
+                        "a choice from the customer, or found nothing."
+                    ),
+                    facts={
+                        "exit": payload.get("_exit_kind"),
+                        "gate_passed": gate_block.get("gate_passed"),
+                        "gate_reason": gate_block.get("gate_reason"),
+                    },
+                    raw={"resolve_gate": payload},
+                )
+            stage[0] = "routed"
+
+        # S6a review S1: a SHADOW lane failure must be findable without reading the trace
+        # JSON. `error` and `status` stay as they are - the TURN did not fail, n8n still
+        # answers it, and claiming otherwise would make every shadow blip look like a
+        # customer-visible outage on the trace screen. What changes is `stage`, which
+        # records how far the turn got: it stops at `looked_up` instead of reaching
+        # `routed`, so `WHERE stage = 'looked_up' AND status IN ('delegated','done')` is
+        # the operator's query, and `response.delegate_error` beside it carries the reason
+        # (`ENTITY_PIN_MISMATCH` included, which arrives here as an AppException).
         _close_turn(
             db,
             turn_id,
             status="delegated" if delegate else "done",
-            stage="routed",
+            stage="looked_up" if lane_error_text else "routed",
             branch_kind=branch_kind,
             error=None,
             records=turn_trace.records,
@@ -638,7 +720,13 @@ def _run_stages(  # noqa: PLR0915
             # a null `ctx` or `item`. `actions` rides along because the caller must not
             # execute them twice either - it gets the original list and its own Switch on
             # `duplicate` decides to send nothing.
-            response={"ctx": ctx, "item": item, "actions": actions},
+            response={
+                "ctx": ctx,
+                "item": item,
+                "actions": actions,
+                "delegate_payload": delegate_payload,
+                "delegate_error": lane_error_text,
+            },
         )
 
     return TurnResult(
@@ -647,13 +735,14 @@ def _run_stages(  # noqa: PLR0915
         item=item,
         branch_kind=branch_kind,
         delegate=delegate,
+        delegate_payload=delegate_payload,
         actions=actions,
         # D14: on a dry run the response carries the would-be session patch. The HEAD
         # writes no session state at all, so there is nothing to patch yet and this is
         # null for every turn in S1; the tail (S2) is what fills it.
         session_patch=None,
         status="delegated" if delegate else "done",
-        stage="routed",
+        stage="looked_up" if lane_error_text else "routed",
     )
 
 
@@ -690,6 +779,20 @@ def _failed_result(
         stage=stage,
         error=error,
     )
+
+
+def _business_lane_enabled() -> bool:
+    """`CHATBOT_BUSINESS_LANE_ENABLED`, default FALSE.
+
+    Off, the head behaves exactly as it did in S1: the three business arms delegate by
+    name and carry no payload. On, they run the ported `sub-resolve-and-gate` in process
+    and hand n8n its output item. It is a config flag rather than a `system_settings`
+    column because it is a DEPLOYMENT step, not a tenant preference: it is turned on once
+    per environment, in the same change that rewires n8n, and never again.
+    """
+    from app.config import settings
+
+    return bool(getattr(settings, "chatbot_business_lane_enabled", False))
 
 
 def _stock_denial_enabled(db: Session) -> bool:
