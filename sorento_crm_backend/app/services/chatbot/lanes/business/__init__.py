@@ -442,6 +442,11 @@ def complete_answer(
         promo = answer_mod.promo_picker(
             validated, parser=parser, resolved=resolved, gate=gate
         )
+        # n8n feeds `crossdomain-zeroset` the PROMO-PICKER's output; this feeds it the
+        # VALIDATOR item. Equivalent only because `promo_picker` returns its input
+        # unchanged off the promotion domain and the zeroset gate accepts inventory /
+        # incoming only - so if that early return ever starts reshaping the item, this
+        # call has to take `promo` instead.
         crossdomain = answer_mod.run_crossdomain(
             validated,
             parser=parser,
