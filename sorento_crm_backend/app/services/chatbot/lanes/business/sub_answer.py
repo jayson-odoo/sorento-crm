@@ -63,7 +63,11 @@ def central_exchange(item: dict[str, Any] | None) -> Any:
     does nothing, and "fixing" it would change what the tail receives.
     """
     input_item = item if isinstance(item, dict) else {}
-    if isinstance(input_item.get("output"), dict):
+    # `input.output && typeof input.output === 'object'` - which is TRUE for an ARRAY as
+    # well as an object, and n8n hands that back untouched. Reading only `dict` here would
+    # send an array-valued `output` down the string branch to be `String()`d and scanned
+    # for a brace, which is a different item from the one live emits.
+    if isinstance(input_item.get("output"), (dict, list)):
         return input_item["output"]
 
     raw = jsc.js_string(input_item.get("output") or input_item.get("text") or "")

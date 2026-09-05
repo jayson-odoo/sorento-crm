@@ -450,7 +450,16 @@ def crossdomain_zeroset(
             return
         seen.add(n)
         requested.append(
-            {"_n": n, "code": code, "uuid": us[0] if us else None, "uuids": list(us), "strict": bool(strict)}
+            # `uuid: us[0] || null` - a FALSY first uuid (an empty string is the only one
+            # that reaches here) is stored as null, and `_xd.missing[].uuid` is persisted
+            # into turn state, so the emitted value has to be the one live emits.
+            {
+                "_n": n,
+                "code": code,
+                "uuid": us[0] if (us and jsc.truthy(us[0])) else None,
+                "uuids": list(us),
+                "strict": bool(strict),
+            }
         )
 
     or_resolutions = rz.get("resolutions") if isinstance(rz.get("resolutions"), list) else None
@@ -837,7 +846,6 @@ def run_crossdomain(
 # --------------------------------------------------------------------------- #
 
 _PROMO_ISO_DATE_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}")
-_NUMBERED_LINE_RE = re.compile(r"^\s*([0-9]+)\.\s", re.MULTILINE)
 _DATA_LAST_UPDATED_RE = re.compile(r"_Data last updated:[^\n]*_")
 _NON_ALNUM_RE = re.compile(r"[^a-z0-9]")
 _LEADING_NEWLINES_RE = re.compile(r"^\n+")
@@ -1372,6 +1380,8 @@ def promo_picker(
         # S4b permutes `answers`, that body is stale, so a reordered turn REBUILDS the body -
         # carrying the freshness stamp across verbatim, because that is the trailing matter
         # the customer actually uses.
+        # D11-reproduced: `promo-picker.js:468`'s own `_tail` match, over the response
+        # THIS turn built (never the customer's words).
         tail_match = _DATA_LAST_UPDATED_RE.search(jsc.js_string(env.get("response") or ""))
         tail = tail_match.group(0) if tail_match else None
         swapped = (
@@ -2791,6 +2801,8 @@ def build_suggest_offer(
     if require_spec and dym_ok and isinstance(out.get("escalate_message"), str) and out["escalate_message"]:
         lines = []
         for line in out["escalate_message"].split("\n"):
+            # D11-reproduced: `build-suggest-offer.js:360`'s own numbered-line match, over
+            # the picker the GATE rendered this turn.
             match = _PICKER_LINE_RE.match(line)
             if not match:
                 lines.append(line)  # header / non-item line
