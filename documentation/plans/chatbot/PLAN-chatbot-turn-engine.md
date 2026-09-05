@@ -386,6 +386,15 @@ suite on the shared DB.
   LLM provider (429 = failed stage with backoff); MCP server run with 2 to 4 workers; **n8n
   queue mode's per-worker concurrency limit (default 10) is the first throttle** and is a
   config change (`N8N_CONCURRENCY_PRODUCTION_LIMIT` or more n8n workers).
+- **The 5 Sep 2026 numbers just below measured `access_denied`, not a business turn** - the
+  load gate's seeded contacts carried no access grant until a 6 Sep 2026 fix (see
+  `n8n-changes.md`'s Step 4 and AC-711). Re-measured 6 Sep 2026 with the grant and the
+  business-lane switches on: `branch_kind` confirms real business turns now run (30
+  `business_query`, 0 `access_denied`), but the single dev worker below could not finish 100
+  concurrent business-path turns (each doing real DB work) inside a 120 s client timeout -
+  67 of 100 timed out client-side. The pool/thread numbers below are therefore this section's
+  own open question, not yet re-answered on the corrected path; a multi-worker re-run is the
+  next step, not this fix's job.
 - **What the ceiling actually is, measured (5 Sep 2026, load gate 3b).** The estimate that
   used to sit here ("beyond ~250 concurrent, API threads become the limit") was wrong about
   which resource binds first, and the review that found it was right: the auth dependencies

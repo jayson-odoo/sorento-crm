@@ -841,14 +841,27 @@ contact inside the synchronous request. Different contacts run in parallel.
   in the n8n repo. (A5, D15)
 - AC-711 `[E2E]` Given `scripts/chatbot_load.py` against the S7 backend with 50 contacts x 2
   messages fired at once (dry run), when it completes, then p95 turn time is under 12 s, zero
-  errors, DB pool usage below 60%, and every contact's two replies come back in the order the
-  CRM RECEIVED that contact's messages, with no two of that contact's turns overlapping (both
+  errors, DB pool usage below 60%, every turn's `branch_kind` landing on the business lane
+  (not `access_denied` or anything else - the script refuses before firing unless
+  `system_settings.chatbot_business_lane_enabled` and `chatbot_completed_lanes` already let
+  the business arm ANSWER), and every contact's two replies come back in the order the CRM
+  RECEIVED that contact's messages, with no two of that contact's turns overlapping (both
   graded from `chatbot.turns` after the run, never from the client's send order - AC-709's
   guarantee is arrival order); repeated at 300 turns. (A5)
-  **Measured 5 Sep 2026** (ordering on, one uvicorn worker, mocked parser): 100 turns, zero
-  errors, zero out of order, p95 1.24 s; 300-turn repeat p95 3.77 s. The pool clause is the
-  one that did not hold as written - see the plan's capacity section, where the number and
-  the question for the owner are recorded.
+  **The 5 Sep 2026 measurement below is SUPERSEDED - it measured `access_denied`, not the
+  business path.** The seeded contacts carried no access grant, so `branch_kind` was
+  `access_denied` on 100% of the run's rows and every turn took the free canned-reply lane;
+  a 6 Sep 2026 fix seeds the grant (and checks the two settings above before firing) so the
+  gate reaches resolve/tier-gate/fetch/answer instead. ~~Measured 5 Sep 2026 (ordering on, one
+  uvicorn worker, mocked parser): 100 turns, zero errors, zero out of order, p95 1.24 s;
+  300-turn repeat p95 3.77 s.~~
+  **Re-measured 6 Sep 2026**, same one-uvicorn-worker lane box, business lane switched on:
+  `branch_kind` confirms the fix (30 `business_query`, 0 `access_denied` among the run's
+  landed turns), but a single dev `--reload` worker cannot sustain 100 concurrent
+  business-path turns inside the client's 120 s timeout - 67 of 100 did not finish in time,
+  and the ones that did missed the 12 s target by a wide margin. That is the capacity question
+  this AC was always meant to surface, not a regression from this fix; see the plan's capacity
+  section for the pool clause's open question and the trigger for a multi-worker re-run.
 - AC-707 `[E2E]` Given live traffic for one pilot contact routed through S7, when they send
   three messages quickly, then the three replies arrive in order and `chatbot.turns` shows
   three `done` rows with `finished_at` ascending. (A5)

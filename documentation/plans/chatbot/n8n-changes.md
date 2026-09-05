@@ -1120,20 +1120,27 @@ written anywhere.
 
 ### Step 4 - the load gate (AC-711), before step 2 and again after step 3
 
-`sorento_crm_backend/scripts/chatbot_load.py`, dry-run by default:
+`sorento_crm_backend/scripts/chatbot_load.py`, dry-run by default. The seeded contacts are
+granted the `general_enquiries` access agent (the code the mocked `master_products` question
+resolves to) and the script refuses to fire, with the exact SQL to flip them, unless
+`system_settings.chatbot_business_lane_enabled` and `chatbot_completed_lanes` already let the
+CRM ANSWER a `business_query` turn rather than delegate it - see the script's own module
+docstring for why (a granted contact whose turn still delegates measures the SAME wrong path
+one stage further downstream):
 
 ```bash
 python scripts/chatbot_load.py --base-url http://localhost:8002 --contacts 50 --messages 2
 python scripts/chatbot_load.py --base-url http://localhost:8002 --contacts 50 --messages 6   # the 300-turn repeat
 ```
 
-Green means: p95 turn time under 12 s, zero errors, and every contact's replies in the
-order the CRM RECEIVED that contact's messages, with no two of that contact's turns
-overlapping. Arrival order, not send order: the CRM cannot know which message the customer
-typed first, only which one reached it first, and the script reports the difference
-separately rather than failing on it (at 300 concurrent the load generator's own threads
-reorder its sends for about half the contacts). Order is graded from `chatbot.turns` after
-the run, not from the client's send order.
+Green means: p95 turn time under 12 s, zero errors, every turn's `branch_kind` landing on
+one of the business lane's own arms (not `access_denied` or anything else - printed as a
+histogram every run), and every contact's replies in the order the CRM RECEIVED that
+contact's messages, with no two of that contact's turns overlapping. Arrival order, not send
+order: the CRM cannot know which message the customer typed first, only which one reached it
+first, and the script reports the difference separately rather than failing on it (at 300
+concurrent the load generator's own threads reorder its sends for about half the contacts).
+Order is graded from `chatbot.turns` after the run, not from the client's send order.
 
 It posts `is_test: true` envelopes (D14: nothing outside `chatbot.turns` is written and no
 WhatsApp message can leave), which is what makes it safe to run repeatedly. `--live-llm`
@@ -1142,9 +1149,25 @@ non-production backend. A non-local `--base-url` needs `--i-know`, because the c
 seeded through the CHECKOUT's `DATABASE_URL` and nothing can prove it is the database the
 backend reads.
 
-Measured on this branch, 5 Sep 2026, ordering ON, one uvicorn worker, mocked parser: 100
-turns, zero errors, zero out of order, p95 1.24 s; the 300-turn repeat p95 3.77 s. Pool
-detail and the one number that missed its target are in the plan's capacity section.
+**The 5 Sep 2026 numbers below are SUPERSEDED - they measured the wrong path.** The seeded
+contacts carried no access grant, so `head/route.py`'s first predicate denied every one of
+them and every turn in every run took the free `access_denied` canned lane, never the
+resolve/tier-gate/fetch/answer path AC-711 is actually about (`branch_kind` was
+`access_denied` on 100% of rows; a fix on 6 Sep 2026 seeds the grant and the two settings
+switches above). ~~Measured on this branch, 5 Sep 2026, ordering ON, one uvicorn worker,
+mocked parser: 100 turns, zero errors, zero out of order, p95 1.24 s; the 300-turn repeat p95
+3.77 s.~~
+
+**Re-measured 6 Sep 2026, same one-uvicorn-worker lane box, mocked parser, business lane and
+`business_query` both switched on:** `branch_kind` confirms the fix - 30 of the run's landed
+turns were `business_query`, zero `access_denied` - but the single dev `--reload` worker
+cannot sustain 100 concurrent business-path turns (each does real DB work: resolve, gate,
+fetch) the way it could the free canned reply: the client's 120 s timeout was reached before
+67 of the 100 turns finished, and the 33 that did averaged well over the 12 s target. This is
+not a regression this fix introduced - it is the capacity question AC-711 was supposed to be
+answering all along, hidden by the wrong-path measurement above. A real capacity number needs
+either a multi-worker lane box or a smaller burst run first; that work is tracked in the
+plan's capacity section, not this one.
 
 ### Step 5 - the switchover proof (AC-714), on the clone
 
