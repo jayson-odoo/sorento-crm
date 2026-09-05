@@ -182,11 +182,11 @@ describe('RespondWorkspacesAdmin - chatbot retry ingress fields', () => {
     expect(retryBody.chatbot_retry_ingress_url).toBe('');
     // The key was neither typed nor explicitly removed, so it is not mentioned at all.
     expect('chatbot_retry_ingress_key' in retryBody).toBe(false);
-    // And the two fields do NOT ride along on the row PUT any more: that route carries
-    // api_key / base_url / is_default and keeps its own stronger slug.
-    const [, rowBody] = updateRespondWorkspace.mock.calls[0];
-    expect('chatbot_retry_ingress_url' in rowBody).toBe(false);
-    expect('chatbot_retry_ingress_key' in rowBody).toBe(false);
+    // And the row PUT is not sent AT ALL, because no field it carries changed
+    // (security review round 2). That route keeps its own stronger slug, so sending it
+    // unconditionally 403'd a principal holding only `user_management.settings.edit` on
+    // the way in and they never reached the narrow retry route AC-804 gave them.
+    expect(updateRespondWorkspace).not.toHaveBeenCalled();
   });
 
   it('"Remove stored key" is what revokes the key, and it sends an explicit blank', async () => {

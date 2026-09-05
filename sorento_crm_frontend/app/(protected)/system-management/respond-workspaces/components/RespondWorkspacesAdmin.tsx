@@ -181,19 +181,28 @@ export default function RespondWorkspacesAdmin() {
 
   const updateMutation = useMutation({
     // Two calls, because the two chatbot retry fields live behind their own route and
-    // their own permission. The row PUT goes first so a validation refusal on either one
-    // still leaves the operator in the dialog with what they typed.
+    // their own permission - and each is sent only when something it carries changed.
+    //
+    // That INDEPENDENCE is the point (security review round 2). AC-804 gave the retry
+    // pair a narrow route so a principal holding `user_management.settings.edit` alone
+    // can set it without also being handed `api_key`, `base_url`, `space_id` and
+    // `is_default`. Sending the row PUT unconditionally handed that principal a 403 on
+    // the way in and they never reached the narrow route at all, which is the whole
+    // capability AC-804 was written to give them. The retry call goes first for the same
+    // reason: it is the one this operator is entitled to make.
+    //
+    // A refusal on either still leaves the operator in the dialog with what they typed.
     mutationFn: async ({
       id,
       body,
       retry,
     }: {
       id: string;
-      body: RespondWorkspaceUpdateBody;
-      retry: RespondWorkspaceChatbotRetryBody;
+      body: RespondWorkspaceUpdateBody | null;
+      retry: RespondWorkspaceChatbotRetryBody | null;
     }) => {
-      await updateRespondWorkspace(id, body);
-      return updateRespondWorkspaceChatbotRetry(id, retry);
+      if (retry) await updateRespondWorkspaceChatbotRetry(id, retry);
+      if (body) await updateRespondWorkspace(id, body);
     },
     onSuccess: () => {
       invalidate();
@@ -286,7 +295,28 @@ export default function RespondWorkspacesAdmin() {
       if (form.chatbot_retry_ingress_key.trim())
         retry.chatbot_retry_ingress_key = form.chatbot_retry_ingress_key.trim();
       else if (clearRetryKey) retry.chatbot_retry_ingress_key = '';
-      updateMutation.mutate({ id: editing.id, body, retry });
+
+      // Which of the two calls is actually needed. Derived from the body's OWN keys
+      // rather than a hand-kept list, so a field added to `body` above joins this
+      // comparison with nothing to remember: a key the row does not carry is one of the
+      // three write-only secrets, which is present here only when it was typed, and a
+      // key the row does carry is compared with null and '' read as the same absence.
+      const current = editing as unknown as Record<string, unknown>;
+      const rowChanged = (Object.keys(body) as (keyof RespondWorkspaceUpdateBody)[]).some(
+        (key) =>
+          current[key] === undefined
+            ? true
+            : (body[key] ?? null) !== (current[key] ?? null),
+      );
+      const retryChanged =
+        retry.chatbot_retry_ingress_url !== (editing.chatbot_retry_ingress_url ?? '') ||
+        retry.chatbot_retry_ingress_key !== undefined;
+
+      updateMutation.mutate({
+        id: editing.id,
+        body: rowChanged ? body : null,
+        retry: retryChanged ? retry : null,
+      });
     } else {
       if (!form.space_id.trim() || !form.api_key.trim()) {
         toast.error('Space ID and API key are required');
