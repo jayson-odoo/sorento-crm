@@ -548,6 +548,8 @@ CRM_COMPLETED_BRANCH_KINDS: frozenset[str] = frozenset(
         "ideate",
         # S4 - the small-talk clarifier.
         "low_signal",
+        # S5 - the escalation lane, which hands the turn to a person.
+        "out_of_scope",
     }
 )
 # `DELEGATED_BRANCH_KINDS` used to be the complement of the set above and is GONE: with

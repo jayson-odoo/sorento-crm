@@ -1,6 +1,6 @@
 # PLAN - Chatbot Turn Engine: n8n business logic moves into the CRM
 
-Status: S0 + S1 IMPLEMENTED on lane feat/chatbot-turn-engine (4 Sep 2026); approved "ok good to go", 6 review rounds, D1 to D16; re-ported onto the LIVE n8n body 5 Sep (see S1 "pending re-port"); S1b DELIVERED 5 Sep (-40.0% prompt, published unlabelled, promote is the owner's call); S2 (the tail) MERGED 5 Sep; S6a MERGED 5 Sep, behind `CHATBOT_BUSINESS_LANE_ENABLED` (default off) until the n8n edit in `n8n-changes.md` S6a is made
+Status: S0 + S1 IMPLEMENTED on lane feat/chatbot-turn-engine (4 Sep 2026); approved "ok good to go", 6 review rounds, D1 to D16; re-ported onto the LIVE n8n body 5 Sep (see S1 "pending re-port"); S1b DELIVERED 5 Sep (-40.0% prompt, published unlabelled, promote is the owner's call); S2 (the tail) MERGED 5 Sep; S6a MERGED 5 Sep, behind `CHATBOT_BUSINESS_LANE_ENABLED` (default off) until the n8n edit in `n8n-changes.md` S6a is made; S4 (the `low_signal` clarifier lane) and S5 (the escalation lane) DELIVERED 5 Sep, both inert until the owner adds their `branch_kind` to `system_settings.chatbot_completed_lanes`
 UAC: `documentation/plans/chatbot/chatbot-turn-engine-acceptance-criteria.md`
 Classification: **MODULE** (`chatbot`), own Postgres schema `chatbot` (D12)
 Owner decisions: D1 to D13 in the UAC; rulings R1 to R6 in the UAC
@@ -147,7 +147,14 @@ the caller sends `reply` and executes `actions`. From S7 there is no `/complete`
 result_set}`, `send_attachments {attachments_src, reply}`, `assign_conversation
 {respond_user_id}`, `add_comment {text, mention_user_ids}`, `update_contact_fields {fields}`.
 Every action carries `dry_run` (true on test envelopes, D14) so the clone's `test-guard`
-records instead of sends, exactly as today.
+records instead of sends, exactly as today. **A dry run returns every action it would have
+taken, flagged `dry_run`, with preview placeholders where a side effect would have supplied
+the value** (AC-507): the lane still reaches no seam, so where a real run would have read an
+id off `next-assignee` the preview carries `null` plus `preview: true`, and where it would
+have read a timestamp off `sla_create` the rendered text carries `<preview>`. Anything not
+behind a seam - a fixed sentence, or one interpolating state the turn already resolved -
+carries its real value on both. The shape, the order and the key set are therefore identical
+live and dry, which is what lets the executor render ONE set of expressions against both.
 
 **Implemented verbatim at S3** (5 Sep 2026, field shapes agreed with the n8n executor), so
 this line needs no amendment - but two properties of it are worth stating because an
@@ -686,13 +693,71 @@ both change what an operator sees:
 
 ### S5 - Escalation (400 lines)
 
-`lanes/escalation.py`: `escalation-input`, `fresh-entity-gate` (calls S6a's resolve + gate,
-so S5 lands AFTER S6a, or ships with a temporary in-process call to the resolver only; decide
-at ticketing, default = after S6a), `escalation-context` (six-rank ladder, null never
-defaults, H27), team / company clarify gates and replies (`pending.kind`), assignment path as
-`actions[]` with next-assignee + SLA create in-process behind a dry-run gate evaluated first
-(H37). H2 is structurally impossible in one function (AC-505). n8n: four spine nodes deleted,
-two subs unpublished; the outbound executes assign / comment (AC-506).
+`lanes/escalation.py`: `escalation-input`, `escalation-context`, the company clarify gate and
+reply (`pending.kind`), assignment path as `actions[]` with next-assignee + SLA create
+in-process behind a dry-run gate evaluated FIRST (H37). H2 is structurally impossible in one
+function (AC-505). n8n: four spine nodes deleted, two subs unpublished; the outbound executes
+assign / comment (AC-506).
+
+**Delivered 5 Sep 2026, and the plan above was wrong about the graph.** It described the
+EXPORT of `sub-escalation`, which carries uncommitted riders from two unpromoted builds. The
+LIVE workflow (`fr2u3e6FKg52cPvK` @ `bac9613b`, 10 nodes, confirmed by 33 captures on the
+version) is simpler, and the slice was ported from the live bodies:
+
+* **No `fresh-entity-gate`.** The lane never calls the resolver, so **H26 stays open**:
+  escalation routing is brand-blind exactly as it is in production. `resolve_and_gate` is in
+  the services bundle for the day B-HB-1 promotes and is asserted never called.
+* **No team clarify.** **H27 stays open** too, and the reason is worth writing down: a null
+  `suggested_team` is not reachable through the real pipeline at all, because
+  `head/output_exchange.derive_routing`'s nullish chain hard-defaults it to
+  `customer_service` long before this lane sees it. The hazard lives in the PARSER, not
+  here. Porting a clarify the live graph does not have would have shipped behaviour
+  production has never run.
+* **The ladder has five outcomes, not six, and no `gate` rank**: `picked_member` ->
+  `company_pick` -> `sameTeam` (`prior_state` / `prior_state_no_company` /
+  `multi_company_unpicked`) -> `stated_brand` -> `none`.
+
+Both omissions are `xfail(strict=True)` in `tests/chatbot/test_s5_escalation_lane.py`, so the
+promotion flips them green and forces the markers off rather than being remembered.
+
+**Two decisions, and one open question.**
+
+1. **The lane owns its own unit of work.** `next_assignee` and `sla_create` run on a session
+   of the lane's own, not the turn's routing transaction: a turn that fails later must not
+   roll an assignment back out from under the person who has already been told about it.
+2. **`assign_conversation` is the first action kind the spine does not already perform.**
+   Every earlier slice returned `send_message`, which `head-arm` already routes. The n8n
+   action executor is therefore a PREREQUISITE of switching this lane on, not a follow-up:
+   without it the customer is told a person is coming and nobody is assigned
+   (n8n-changes.md, S5 step 1).
+3. **The escalation arm RUNS THE TAIL** (decided 5 Sep). n8n sends this arm through
+   `tag-out-of-scope` -> `sub-output`, which persists the session - the routing axes and
+   `escalate-catalog`'s `includeResponse: false` state text - so skipping the tail would
+   have quietly dropped both the moment the lane was switched on. After the lane produces
+   its actions the arm hands `complete_turn` the `tag-out-of-scope` item
+   (`{branch_kind: "out_of_scope"}`, NOT `route-turn`'s item, which is what makes the entry
+   gate run `escalate-catalog`) plus the `clarify` fragment when the clarify arm fired.
+   Compile-state writes the session, or returns `session_patch` on a dry run, and the trace
+   ends `[..., looked_up, replied, remembered]`. The acknowledgement TEXT stays a tail
+   concern and is not one of the actions.
+4. **The lane writes no chat history** (decided 5 Sep). `sub-add-comment-respond` does two
+   things when it runs - the respond.io comment AND a CRM chat-history POST - and it keeps
+   doing both when the caller executes the `add_comment` action. Writing it here as well
+   would double the comment: one row from this lane, one from the sub, minutes apart and
+   under different authors. Asserted by ROW COUNT in
+   `tests/chatbot/test_s5_no_chat_history_write.py`, not by grep, because a count catches an
+   import three layers down.
+5. **Action shapes** (agreed with the n8n executor author, 5 Sep). `send_message` carries
+   `{kind, text, quick_replies, result_set, dry_run}`, with the two sealed halves filled from
+   the tail's reply after `complete_turn` returns; `assign_conversation` is
+   `{kind, respond_user_id, dry_run}`; `add_comment` is
+   `{kind, text, mention_user_ids, dry_run}` where `mention_user_ids` is exactly one RESPOND
+   user id (the executor maps it to `sub-add-comment-respond`'s `user_id`, which is what
+   respond.io needs for a mention) and the text carries no `{{@user.<id>}}` markup because
+   the sub prefixes that itself. A `send_attachments` action is appended last when the tail
+   produced an `attachments_src`. The comment text was verified byte for byte against the
+   live node expression, timestamps included (`%Y-%m-%d %H:%M:%S` at a fixed +08:00).
+   Sample responses for the executor: `documentation/plans/chatbot/samples/`.
 
 ### S6 - Business lane (about 7,000 lines, three PRs)
 

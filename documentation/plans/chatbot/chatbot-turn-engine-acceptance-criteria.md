@@ -140,6 +140,14 @@ Derived, never asked: nothing to configure. The trace is written by the engine o
   SLA row, no chat-history ingest. The response carries the would-be `session_patch` and every
   action flagged `dry_run: true`. Console and clone turns are safe by construction, not by
   which URL they hit.
+  **A dry run returns every action it WOULD have taken, in order, flagged `dry_run`, with
+  preview placeholders where a side effect would have supplied the value** (ruling 5 Sep
+  2026, agreed with the n8n executor; AC-507 is the contract). Returning a shorter list on a
+  dry run would make it a different shape from the live one, and the executor renders one set
+  of expressions against both. So the seams stay unreached and the values they would have
+  returned are stood in for: an id becomes `null` with `preview: true` beside it, a rendered
+  timestamp becomes `"<preview>"`. Anything that does NOT depend on a seam - a fixed sentence,
+  or one interpolating state the turn already resolved - carries its real value either way.
   **A dry run is also an INPUT surface (O2, agreed with the n8n side 5 Sep 2026).** Zero
   writes is only half of what a harness needs; the other half is being able to say what the
   turn should start from. So a dry-run envelope may carry three optional keys and the engine

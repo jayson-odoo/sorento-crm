@@ -45,12 +45,17 @@ from app.services.chatbot.head.output_exchange import (
 )
 from app.services.chatbot.head.route import decide
 from app.services.chatbot.lanes import business, canned as canned_lanes, casual
+from app.services.chatbot.lanes.escalation import run as run_escalation_lane
 from app.services.chatbot.lanes.business import resolve_gate, services as business_services
 from app.services.chatbot.usage import record_parser_usage
 
 logger = logging.getLogger(__name__)
 
 SessionFactory = Callable[[], Session]
+
+# The branch kinds whose arm closes its OWN row, after its lane has produced an answer.
+# Everything else closes at `routed` in the block below.
+_CRM_FINISHED_HERE: frozenset[str] = frozenset({"low_signal", "out_of_scope"})
 
 # "the caller did not pass a row", which `None` cannot mean here: `None` is the real value
 # when the settings singleton does not exist yet.
@@ -1079,12 +1084,14 @@ def _run_stages(  # noqa: PLR0915
                 stage="sent",
             )
 
-        # The lane the CRM is finishing is the exception: its turn is not over yet, so
+        # A lane the CRM is FINISHING is the exception: its turn is not over yet, so
         # closing it here would record a `done` turn before the reply exists (and
-        # `_close_turn` is write-once). `_run_casual_lane` closes it after the clarifier
-        # answers. With the lane switched off there is nothing to wait for and this closes
-        # as `delegated`, exactly as it did before S4.
-        if not (branch_kind == "low_signal" and completes_here):
+        # `_close_turn` is write-once). Each such arm closes the row itself once its lane
+        # has answered - `_run_casual_lane` after the clarifier, `_run_escalation_arm`
+        # after the handover. With the lane switched off there is nothing to wait for and
+        # this closes as `delegated`, exactly as it did before S4. The S3 canned kinds are
+        # not in this set because their block above has already returned.
+        if not (branch_kind in _CRM_FINISHED_HERE and completes_here):
             _close_turn(
                 db,
                 turn_id,
@@ -1105,6 +1112,18 @@ def _run_stages(  # noqa: PLR0915
                     "delegate_error": lane_error_text,
                 },
             )
+
+    if branch_kind == "out_of_scope" and completes_here:
+        return _run_escalation_arm(
+            turn_id=turn_id,
+            ctx=ctx,
+            item=item,
+            actions=actions,
+            dry_run=dry_run,
+            session_factory=session_factory,
+            turn_trace=turn_trace,
+            stage=stage,
+        )
 
     if branch_kind == "low_signal" and completes_here:
         return _run_casual_lane(
@@ -1319,6 +1338,172 @@ def _run_casual_lane(
         status=completed.status,
         stage=completed.stage,
     )
+
+
+def _run_escalation_arm(
+    *,
+    turn_id: str,
+    ctx: dict[str, Any],
+    item: dict[str, Any],
+    actions: list[dict[str, Any]],
+    dry_run: bool,
+    session_factory: SessionFactory,
+    turn_trace: Any,
+    stage: list[str],
+) -> TurnResult:
+    """The `out_of_scope` lane, from the lane call to the closed turn (AC-501 to AC-505).
+
+    `run_escalation_lane` is a module-level name so a test can replace it; the real one is
+    `lanes.escalation.run`, whose `services` default builds the production bundle. The lane
+    owns its own unit of work: the round-robin cursor and the SLA row must not roll back
+    with the turn's routing transaction, because a person has already been told.
+
+    A lane failure is a FAILED turn at `looked_up` with today's generic reply and NO
+    partial assignment - the lane returns its whole action list or raises before returning
+    any of it, so "assigned but no SLA row" is not a state this can produce.
+    """
+    stage[0] = "looked_up"
+    try:
+        fragment = run_escalation_lane(ctx, item, dry_run=dry_run)
+    except Exception as exc:  # noqa: BLE001 - a failed lane is recorded, never dropped
+        message = f"{type(exc).__name__}: {exc}"
+        logger.exception("chatbot turn %s: escalation lane failed", turn_id)
+        turn_trace.record(
+            "looked_up",
+            status="failed",
+            summary="Could not hand the conversation to a person.",
+            why="The assignment the escalation lane depends on did not complete.",
+            facts={"lane": "out_of_scope", "dry_run": dry_run},
+            error=message,
+            raw=None,
+        )
+        with _session(session_factory) as db:
+            _close_turn(
+                db,
+                turn_id,
+                status="failed",
+                stage="looked_up",
+                branch_kind="out_of_scope",
+                error=message,
+                records=turn_trace.records,
+                response={"ctx": ctx, "item": item, "actions": actions},
+            )
+        return _failed_result(turn_id, "looked_up", message, actions, dry_run)
+
+    arm = fragment.get("arm")
+    clarify = fragment.get("clarify")
+    lane_actions = list(fragment.get("actions") or [])
+    pending = fragment.get("pending")
+
+    # Only `looked_up` is recorded here. `replied` and `remembered` are the TAIL's, and
+    # recording a `replied` of our own would put two of them on the trace.
+    turn_trace.record(
+        "looked_up",
+        summary=(
+            "Asked which company should take it."
+            if arm == "clarify"
+            else "Handed the conversation to a person."
+        ),
+        why=(
+            "More than one company was offered and nobody picked one, so assigning would "
+            "have round-robined a pool the customer never chose."
+            if arm == "clarify"
+            else "The turn asked for a human, so the lane assigns one and starts the SLA clock."
+        ),
+        facts={
+            "lane": "out_of_scope",
+            "arm": arm,
+            "actions": [a.get("kind") for a in lane_actions],
+            "dry_run": dry_run,
+        },
+        raw={"clarify": clarify, "pending": pending},
+    )
+
+    # -- the tail, the same one every completed lane runs -------------------- #
+    # n8n sends this arm through `tag-out-of-scope` -> `sub-output`, so the session IS
+    # written today: the routing axes, and `escalate-catalog`'s `includeResponse: false`
+    # state text ("Informed the user that request is out of scope..."). Skipping the tail
+    # would have quietly dropped both the moment the lane was switched on.
+    #
+    # The item handed over is `tag-out-of-scope`'s, `{branch_kind: "out_of_scope"}` and
+    # nothing else - NOT `route-turn`'s item. That is what makes `complete_turn`'s entry
+    # gate run `escalate-catalog` for this arm, which is where the acknowledgement text
+    # comes from. It stays a tail concern and is deliberately not one of the actions.
+    #
+    # The row is closed `delegated` at `routed` first: it is the state the turn is really
+    # in (a lane produced a result, the tail has not folded it in), it is what
+    # `complete_turn` refuses to run without, and it puts the actions on the row before the
+    # tail reads `prior_actions` off it, so a duplicate replays them too (D15).
+    all_actions = [*actions, *lane_actions]
+    with _session(session_factory) as db:
+        _close_turn(
+            db,
+            turn_id,
+            status="delegated",
+            stage="routed",
+            branch_kind="out_of_scope",
+            error=None,
+            records=turn_trace.records,
+            response={"ctx": ctx, "item": item, "actions": all_actions, "pending": pending},
+        )
+
+    completed = complete_turn(
+        turn_id,
+        {"item": {"branch_kind": "out_of_scope"}, "ctx": ctx, "clarify": clarify},
+        session_factory=session_factory,
+    )
+
+    # -- seal the send actions with what the tail composed -------------------- #
+    # `quick_replies` and `result_set` are the SEALED reply's, and they do not exist until
+    # the tail has run - the lane declares the keys empty and they are filled here, so the
+    # executor sees one `send_message` shape whoever built it. `attachments_src` is the
+    # same story one step further: when the tail produced one, the send_attachments action
+    # goes LAST, after both messages, which is the order `send-attachments` runs in today.
+    sealed = completed.reply or {}
+    final_actions = [_seal_send(a, sealed) for a in (completed.actions or [])]
+    if jsc.truthy(sealed.get("attachments_src")):
+        final_actions.append(
+            {
+                "kind": "send_attachments",
+                "attachments_src": sealed.get("attachments_src"),
+                "reply": sealed,
+                "dry_run": dry_run,
+            }
+        )
+    if final_actions != (completed.actions or []):
+        # The row has to carry what the caller was handed, or a duplicate delivery replays
+        # a different action list than the first turn produced (D15).
+        with _session(session_factory) as db:
+            row = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).first()
+            if row is not None and isinstance(row.response, dict):
+                row.response = {**row.response, "actions": final_actions}
+                db.commit()
+
+    return TurnResult(
+        turn_id=turn_id,
+        ctx=ctx,
+        item=item,
+        branch_kind="out_of_scope",
+        delegate=None,
+        reply=completed.reply,
+        actions=final_actions,
+        # D14: on a dry run the tail wrote nothing and hands back what it WOULD have
+        # written; on a live turn it is already saved.
+        session_patch=completed.session_patch,
+        status=completed.status,
+        stage=completed.stage,
+    )
+
+
+def _seal_send(action: dict[str, Any], sealed: dict[str, Any]) -> dict[str, Any]:
+    """Fill a `send_message`'s sealed halves from the tail's reply. Others pass through."""
+    if action.get("kind") != "send_message":
+        return action
+    return {
+        **action,
+        "quick_replies": sealed.get("quick_replies") or [],
+        "result_set": sealed.get("result_set"),
+    }
 
 
 def _casual_failure_summary(failed: str, setup_error: str | None) -> str:

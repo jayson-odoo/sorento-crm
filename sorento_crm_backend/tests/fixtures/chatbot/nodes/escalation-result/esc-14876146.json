@@ -1,0 +1,925 @@
+{
+  "source": {
+    "execution_id": "14876146",
+    "workflow_id": "fr2u3e6FKg52cPvK",
+    "workflow_version": "bac9613b-644a-456b-a17d-f0815672b8cd",
+    "node": "escalation-result",
+    "captured_at": "2026-09-04T19:58:23+00:00",
+    "expected_from": "runData",
+    "dedupe_sig": "8e6789724a45610d6bed62fc59b835f3acb58d5c0e033819f91a4f05c3aeb1c2"
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 900000037,
+              "firstName": "Person 49",
+              "lastName": null,
+              "phone": "+60100000017",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": null
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/495717b4-0ee4-4821-9e89-c2c417b18d78"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [],
+              "assignee": null,
+              "lifecycle": "New Lead",
+              "created_at": 1783310295
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "56c2c03c-e3c2-48d5-9b87-1357ae67d00c",
+              "contact": {
+                "id": 900000037,
+                "firstName": "Person 49",
+                "lastName": "",
+                "phone": "+60100000017",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1783310295
+              },
+              "message": {
+                "messageId": 1788330411000000,
+                "channelMessageId": "wamid.HBgLNjAxNjY2NTEyODUVAgASGBYzRUIwQzJCN0E1RTgxQzMyOERDMEI0AA==",
+                "contactId": 900000037,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788330411000,
+                "message": {
+                  "type": "text",
+                  "text": "SOA sudah keluar. Pls help forward to ur company PIC or finance side for checking ya.\nIf cannot open using phone, pls use computer to open. Tq."
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 49\"},\"wa_id\":\"60100000017\",\"user_id\":\"MY.900000038\",\"firstName\":\"Person 49\",\"lastName\":\"\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000037",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "customer_service",
+                    "suggested_agent": "order_enquiries"
+                  },
+                  "entities": [
+                    {
+                      "raw": "PS202609-0088",
+                      "hint": "customer_order",
+                      "confident": true,
+                      "canonical_code": "PS202609-0088",
+                      "current_message": true
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Order PS202609-0088 (KEE LIN TRADING SDN BHD (PROJECT)) hasn't been delivered yet. Would you like me to escalate to *Sorento* customer service team?\n\nPlease choose who to route to (reply with the number):\n1. Person 92\n2. Person 93\n3. Person 98\n4. Person 99\n5. Person 79\n6. Person 94\n7. Person 100\n8. Person 49\n9. Person 95\n10. Person 96\n\nIf you have no preference, just reply 'yes' and we'll assign automatically.",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to check whether PS202609-0088 has been delivered",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "order",
+                  "intent_hint": "check_order",
+                  "message_type": "business_query",
+                  "query_brands": [],
+                  "access_levels": [],
+                  "routing_brand": null,
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [
+                    {
+                      "idx": 1,
+                      "uuid": "0d69dfb7-dcf7-41fe-8457-f45897895182",
+                      "label": "Person 92",
+                      "companies": [
+                        "Sorento"
+                      ],
+                      "brand_code": null,
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_ids": [
+                        "00000000-0000-0000-0000-000000000001"
+                      ],
+                      "company_name": "Sorento",
+                      "respond_user_id": "1144607"
+                    },
+                    {
+                      "idx": 2,
+                      "uuid": "12246ae8-59e0-46a1-9cf0-fd80f45c1db9",
+                      "label": "Person 93",
+                      "companies": [
+                        "Sorento"
+                      ],
+                      "brand_code": null,
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_ids": [
+                        "00000000-0000-0000-0000-000000000001"
+                      ],
+                      "company_name": "Sorento",
+                      "respond_user_id": "1144556"
+                    },
+                    {
+                      "idx": 3,
+                      "uuid": "4dbed5e6-3be2-47a7-9d17-233d3df25d3f",
+                      "label": "Person 98",
+                      "companies": [
+                        "Sorento"
+                      ],
+                      "brand_code": null,
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_ids": [
+                        "00000000-0000-0000-0000-000000000001"
+                      ],
+                      "company_name": "Sorento",
+                      "respond_user_id": "1136807"
+                    },
+                    {
+                      "idx": 4,
+                      "uuid": "5eec9b80-d431-4e7e-a352-a1e753fc6a7e",
+                      "label": "Person 99",
+                      "companies": [
+                        "Sorento"
+                      ],
+                      "brand_code": null,
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_ids": [
+                        "00000000-0000-0000-0000-000000000001"
+                      ],
+                      "company_name": "Sorento",
+                      "respond_user_id": "1136805"
+                    },
+                    {
+                      "idx": 5,
+                      "uuid": "642699bd-cb2e-44a1-9aa8-9a05b21275e2",
+                      "label": "Person 79",
+                      "companies": [
+                        "Sorento"
+                      ],
+                      "brand_code": null,
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_ids": [
+                        "00000000-0000-0000-0000-000000000001"
+                      ],
+                      "company_name": "Sorento",
+                      "respond_user_id": "1136799"
+                    },
+                    {
+                      "idx": 6,
+                      "uuid": "70578600-0cc5-4040-ac81-c27bb31e917b",
+                      "label": "Person 94",
+                      "companies": [
+                        "Sorento"
+                      ],
+                      "brand_code": null,
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_ids": [
+                        "00000000-0000-0000-0000-000000000001"
+                      ],
+                      "company_name": "Sorento",
+                      "respond_user_id": "1144561"
+                    },
+                    {
+                      "idx": 7,
+                      "uuid": "8c41264e-896f-44e8-91f0-14c39a9432e5",
+                      "label": "Person 100",
+                      "companies": [
+                        "Sorento"
+                      ],
+                      "brand_code": null,
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_ids": [
+                        "00000000-0000-0000-0000-000000000001"
+                      ],
+                      "company_name": "Sorento",
+                      "respond_user_id": "1136808"
+                    },
+                    {
+                      "idx": 8,
+                      "uuid": "a41fbc80-db8c-4c4d-bbe1-7006fb438a06",
+                      "label": "Person 49",
+                      "companies": [
+                        "Sorento"
+                      ],
+                      "brand_code": null,
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_ids": [
+                        "00000000-0000-0000-0000-000000000001"
+                      ],
+                      "company_name": "Sorento",
+                      "respond_user_id": "1144558"
+                    },
+                    {
+                      "idx": 9,
+                      "uuid": "b69bb614-afed-49a2-ae1f-f0351c325bfd",
+                      "label": "Person 95",
+                      "companies": [
+                        "Sorento"
+                      ],
+                      "brand_code": null,
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_ids": [
+                        "00000000-0000-0000-0000-000000000001"
+                      ],
+                      "company_name": "Sorento",
+                      "respond_user_id": "1144554"
+                    },
+                    {
+                      "idx": 10,
+                      "uuid": "c483d959-f8b5-488a-bb9d-168fa0292d75",
+                      "label": "Person 96",
+                      "companies": [
+                        "Sorento"
+                      ],
+                      "brand_code": null,
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_ids": [
+                        "00000000-0000-0000-0000-000000000001"
+                      ],
+                      "company_name": "Sorento",
+                      "respond_user_id": "1144604"
+                    }
+                  ],
+                  "routing_company": "00000000-0000-0000-0000-000000000001",
+                  "date_filter_start": null,
+                  "routing_companies": [
+                    {
+                      "codes": [
+                        "PS202609-0088"
+                      ],
+                      "labels": [
+                        "PS202609-0088"
+                      ],
+                      "brand_code": null,
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "selection_context": "member_offer",
+                  "routing_roster_plan": [
+                    {
+                      "plan_idx": 0,
+                      "brand_code": null,
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "requested_attributes": [],
+                  "routing_brand_source": null
+                },
+                "user_response": "Order PS202609-0088 (KEE LIN TRADING SDN BHD (PROJECT)) hasn't been delivered yet. Would you like me to escalate to *Sorento* customer service team?\n\nPlease choose who to route to (reply with the number):\n1. Person 92\n2. Person 93\n3. Person 98\n4. Person 99\n5. Person 79\n6. Person 94\n7. Person 100\n8. Person 49\n9. Person 95\n10. Person 96\n\nIf you have no preference, just reply 'yes' and we'll assign automatically."
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "request_for_help",
+                "intent_hint": null,
+                "domain_hint": null,
+                "scope_intent": null,
+                "is_affirmative": null,
+                "user_goal": "trying to ask for help forwarding the SOA to the company PIC or finance side for checking, and to use a computer if it cannot be opened on phone",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "PS202609-0088",
+                    "hint": "customer_order",
+                    "confident": true,
+                    "canonical_code": "PS202609-0088",
+                    "current_message": false
+                  }
+                ],
+                "entity_op": "reuse",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": true,
+                "routing": {
+                  "suggested_team": "customer_service",
+                  "suggested_agent": "order_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "member_reprompt": "out_of_range"
+                },
+                "domain_signal_source": "intent_none",
+                "entity_op_applied": "reuse",
+                "query_brands": [],
+                "member_pick_context": true,
+                "_pending_pick": true
+              },
+              "_parser_raw": {
+                "message_type": "request_for_help",
+                "intent_hint": null,
+                "domain_hint": null,
+                "scope_intent": null,
+                "is_affirmative": null,
+                "user_goal": "trying to ask for help forwarding the SOA to the company PIC or finance side for checking, and to use a computer if it cannot be opened on phone",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [],
+                "entity_op": "reuse",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": null,
+                  "suggested_agent": null
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "Order Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null
+          },
+          "item": {
+            "allowed": true,
+            "decision": "allow",
+            "agent_name": "Order Enquiries",
+            "attributes": null,
+            "all_attributes_allowed": null,
+            "branch_kind": "out_of_scope"
+          },
+          "is_test": false
+        }
+      }
+    ],
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 900000037,
+              "firstName": "Person 49",
+              "lastName": null,
+              "phone": "+60100000017",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": null
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/495717b4-0ee4-4821-9e89-c2c417b18d78"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [],
+              "assignee": null,
+              "lifecycle": "New Lead",
+              "created_at": 1783310295
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "56c2c03c-e3c2-48d5-9b87-1357ae67d00c",
+              "contact": {
+                "id": 900000037,
+                "firstName": "Person 49",
+                "lastName": "",
+                "phone": "+60100000017",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1783310295
+              },
+              "message": {
+                "messageId": 1788330411000000,
+                "channelMessageId": "wamid.HBgLNjAxNjY2NTEyODUVAgASGBYzRUIwQzJCN0E1RTgxQzMyOERDMEI0AA==",
+                "contactId": 900000037,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788330411000,
+                "message": {
+                  "type": "text",
+                  "text": "SOA sudah keluar. Pls help forward to ur company PIC or finance side for checking ya.\nIf cannot open using phone, pls use computer to open. Tq."
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 49\"},\"wa_id\":\"60100000017\",\"user_id\":\"MY.900000038\",\"firstName\":\"Person 49\",\"lastName\":\"\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000037",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "customer_service",
+                    "suggested_agent": "order_enquiries"
+                  },
+                  "entities": [
+                    {
+                      "raw": "PS202609-0088",
+                      "hint": "customer_order",
+                      "confident": true,
+                      "canonical_code": "PS202609-0088",
+                      "current_message": true
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Order PS202609-0088 (KEE LIN TRADING SDN BHD (PROJECT)) hasn't been delivered yet. Would you like me to escalate to *Sorento* customer service team?\n\nPlease choose who to route to (reply with the number):\n1. Person 92\n2. Person 93\n3. Person 98\n4. Person 99\n5. Person 79\n6. Person 94\n7. Person 100\n8. Person 49\n9. Person 95\n10. Person 96\n\nIf you have no preference, just reply 'yes' and we'll assign automatically.",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to check whether PS202609-0088 has been delivered",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "order",
+                  "intent_hint": "check_order",
+                  "message_type": "business_query",
+                  "query_brands": [],
+                  "access_levels": [],
+                  "routing_brand": null,
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [
+                    {
+                      "idx": 1,
+                      "uuid": "0d69dfb7-dcf7-41fe-8457-f45897895182",
+                      "label": "Person 92",
+                      "companies": [
+                        "Sorento"
+                      ],
+                      "brand_code": null,
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_ids": [
+                        "00000000-0000-0000-0000-000000000001"
+                      ],
+                      "company_name": "Sorento",
+                      "respond_user_id": "1144607"
+                    },
+                    {
+                      "idx": 2,
+                      "uuid": "12246ae8-59e0-46a1-9cf0-fd80f45c1db9",
+                      "label": "Person 93",
+                      "companies": [
+                        "Sorento"
+                      ],
+                      "brand_code": null,
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_ids": [
+                        "00000000-0000-0000-0000-000000000001"
+                      ],
+                      "company_name": "Sorento",
+                      "respond_user_id": "1144556"
+                    },
+                    {
+                      "idx": 3,
+                      "uuid": "4dbed5e6-3be2-47a7-9d17-233d3df25d3f",
+                      "label": "Person 98",
+                      "companies": [
+                        "Sorento"
+                      ],
+                      "brand_code": null,
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_ids": [
+                        "00000000-0000-0000-0000-000000000001"
+                      ],
+                      "company_name": "Sorento",
+                      "respond_user_id": "1136807"
+                    },
+                    {
+                      "idx": 4,
+                      "uuid": "5eec9b80-d431-4e7e-a352-a1e753fc6a7e",
+                      "label": "Person 99",
+                      "companies": [
+                        "Sorento"
+                      ],
+                      "brand_code": null,
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_ids": [
+                        "00000000-0000-0000-0000-000000000001"
+                      ],
+                      "company_name": "Sorento",
+                      "respond_user_id": "1136805"
+                    },
+                    {
+                      "idx": 5,
+                      "uuid": "642699bd-cb2e-44a1-9aa8-9a05b21275e2",
+                      "label": "Person 79",
+                      "companies": [
+                        "Sorento"
+                      ],
+                      "brand_code": null,
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_ids": [
+                        "00000000-0000-0000-0000-000000000001"
+                      ],
+                      "company_name": "Sorento",
+                      "respond_user_id": "1136799"
+                    },
+                    {
+                      "idx": 6,
+                      "uuid": "70578600-0cc5-4040-ac81-c27bb31e917b",
+                      "label": "Person 94",
+                      "companies": [
+                        "Sorento"
+                      ],
+                      "brand_code": null,
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_ids": [
+                        "00000000-0000-0000-0000-000000000001"
+                      ],
+                      "company_name": "Sorento",
+                      "respond_user_id": "1144561"
+                    },
+                    {
+                      "idx": 7,
+                      "uuid": "8c41264e-896f-44e8-91f0-14c39a9432e5",
+                      "label": "Person 100",
+                      "companies": [
+                        "Sorento"
+                      ],
+                      "brand_code": null,
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_ids": [
+                        "00000000-0000-0000-0000-000000000001"
+                      ],
+                      "company_name": "Sorento",
+                      "respond_user_id": "1136808"
+                    },
+                    {
+                      "idx": 8,
+                      "uuid": "a41fbc80-db8c-4c4d-bbe1-7006fb438a06",
+                      "label": "Person 49",
+                      "companies": [
+                        "Sorento"
+                      ],
+                      "brand_code": null,
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_ids": [
+                        "00000000-0000-0000-0000-000000000001"
+                      ],
+                      "company_name": "Sorento",
+                      "respond_user_id": "1144558"
+                    },
+                    {
+                      "idx": 9,
+                      "uuid": "b69bb614-afed-49a2-ae1f-f0351c325bfd",
+                      "label": "Person 95",
+                      "companies": [
+                        "Sorento"
+                      ],
+                      "brand_code": null,
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_ids": [
+                        "00000000-0000-0000-0000-000000000001"
+                      ],
+                      "company_name": "Sorento",
+                      "respond_user_id": "1144554"
+                    },
+                    {
+                      "idx": 10,
+                      "uuid": "c483d959-f8b5-488a-bb9d-168fa0292d75",
+                      "label": "Person 96",
+                      "companies": [
+                        "Sorento"
+                      ],
+                      "brand_code": null,
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_ids": [
+                        "00000000-0000-0000-0000-000000000001"
+                      ],
+                      "company_name": "Sorento",
+                      "respond_user_id": "1144604"
+                    }
+                  ],
+                  "routing_company": "00000000-0000-0000-0000-000000000001",
+                  "date_filter_start": null,
+                  "routing_companies": [
+                    {
+                      "codes": [
+                        "PS202609-0088"
+                      ],
+                      "labels": [
+                        "PS202609-0088"
+                      ],
+                      "brand_code": null,
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "selection_context": "member_offer",
+                  "routing_roster_plan": [
+                    {
+                      "plan_idx": 0,
+                      "brand_code": null,
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "requested_attributes": [],
+                  "routing_brand_source": null
+                },
+                "user_response": "Order PS202609-0088 (KEE LIN TRADING SDN BHD (PROJECT)) hasn't been delivered yet. Would you like me to escalate to *Sorento* customer service team?\n\nPlease choose who to route to (reply with the number):\n1. Person 92\n2. Person 93\n3. Person 98\n4. Person 99\n5. Person 79\n6. Person 94\n7. Person 100\n8. Person 49\n9. Person 95\n10. Person 96\n\nIf you have no preference, just reply 'yes' and we'll assign automatically."
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "request_for_help",
+                "intent_hint": null,
+                "domain_hint": null,
+                "scope_intent": null,
+                "is_affirmative": null,
+                "user_goal": "trying to ask for help forwarding the SOA to the company PIC or finance side for checking, and to use a computer if it cannot be opened on phone",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "PS202609-0088",
+                    "hint": "customer_order",
+                    "confident": true,
+                    "canonical_code": "PS202609-0088",
+                    "current_message": false
+                  }
+                ],
+                "entity_op": "reuse",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": true,
+                "routing": {
+                  "suggested_team": "customer_service",
+                  "suggested_agent": "order_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "member_reprompt": "out_of_range"
+                },
+                "domain_signal_source": "intent_none",
+                "entity_op_applied": "reuse",
+                "query_brands": [],
+                "member_pick_context": true,
+                "_pending_pick": true
+              },
+              "_parser_raw": {
+                "message_type": "request_for_help",
+                "intent_hint": null,
+                "domain_hint": null,
+                "scope_intent": null,
+                "is_affirmative": null,
+                "user_goal": "trying to ask for help forwarding the SOA to the company PIC or finance side for checking, and to use a computer if it cannot be opened on phone",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [],
+                "entity_op": "reuse",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": null,
+                  "suggested_agent": null
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "Order Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null
+          }
+        }
+      }
+    ],
+    "escalation-input": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "Order Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null,
+          "branch_kind": "out_of_scope"
+        }
+      }
+    ],
+    "escalation-context": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "Order Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null,
+          "branch_kind": "out_of_scope",
+          "brand_code": null,
+          "company_id": "00000000-0000-0000-0000-000000000001",
+          "company_name": "Sorento",
+          "routing_source": "prior_state",
+          "team": "customer_service"
+        }
+      }
+    ],
+    "clarify-company-gate": [],
+    "Call 'sub-human-intervention'": [
+      {
+        "json": {
+          "success": true
+        }
+      }
+    ],
+    "escalation-result": [
+      {
+        "json": {
+          "arm": "human-intervention",
+          "clarify": null
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "success": true
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "arm": "human-intervention",
+        "clarify": null
+      }
+    }
+  ],
+  "runIndex": 0,
+  "execution": {
+    "id": "14876146"
+  },
+  "ran": [
+    "When Executed by Another Workflow",
+    "build-ctx",
+    "escalation-input",
+    "escalation-context",
+    "clarify-company-gate",
+    "Call 'sub-human-intervention'",
+    "escalation-result"
+  ]
+}
