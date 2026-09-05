@@ -245,7 +245,7 @@ export function ReorderPlanView({ runId }: { runId: string }) {
       {header}
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as 'header' | 'lines')} className="w-full">
-        <TabsList variant="line" className="mb-4 w-full justify-start overflow-x-auto">
+        <TabsList variant="line" className="mb-4 w-full justify-start">
           <TabsTrigger value="lines">Lines</TabsTrigger>
           <TabsTrigger value="header">Header</TabsTrigger>
         </TabsList>

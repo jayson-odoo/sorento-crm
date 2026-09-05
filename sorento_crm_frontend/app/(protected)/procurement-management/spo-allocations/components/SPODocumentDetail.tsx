@@ -823,7 +823,7 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
       </Card>
 
       <Tabs value={activeTab} onValueChange={(v) => selectTab(v as 'header' | 'lines')} className="w-full">
-        <TabsList variant="line" className="mb-4 w-full justify-start overflow-x-auto">
+        <TabsList variant="line" className="mb-4 w-full justify-start">
           <TabsTrigger value="header">
             <FileText />
             <span>Header</span>

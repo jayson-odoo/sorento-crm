@@ -1951,10 +1951,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           {/* Same underlined strip the office detail pages use, so a record's
               tabs look the same whichever side of the system you are on. The
               list carries its own bottom margin, so the root drops space-y. */}
-          <TabsList
-            variant="line"
-            className="mb-5 w-full justify-start overflow-x-auto"
-          >
+          <TabsList variant="line" className="mb-5 w-full justify-start">
             <TabsTrigger value="details">
               <FileText />
               <span>Details</span>
