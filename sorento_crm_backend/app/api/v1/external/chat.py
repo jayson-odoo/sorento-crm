@@ -60,7 +60,6 @@ from app.services.chatbot.contracts import (
     TurnRequest,
     TurnResponse,
 )
-from app.services.error_handler import AppException
 from app.services.integration_service import (
     IntegrationLogService,
     sanitize_request_headers,
@@ -515,8 +514,21 @@ def chat_turn_complete_by_body(
     Same request body, same response, same engine call. The ONLY difference is how the
     turn is found, and the reason is the n8n side's: `sub-output` holds the `ctx` and not
     the id, so this keeps their cut inside one workflow.
+
+    **In S7 mode the 410 comes first, before the lookup.** Both forms of the route answer
+    one cause, so they must answer it with one code: resolving the turn first lets a stale
+    caller collect a 404 or a 409 on the way to a route that was going to say 410 anyway,
+    which reads as three different faults instead of one missed promote. It also saves the
+    two queries the lookup costs on every stale call.
     """
     try:
+        if _s7_mode():
+            raise AppException(
+                status_code=status.HTTP_410_GONE,
+                message="This turn engine completes its own turns.",
+                detail=S7_TAIL_GONE_MESSAGE,
+                code=S7_TAIL_GONE_CODE,
+            )
         turn_id = _resolve_turn_for_complete(db, payload)
     except AppException as refused:
         # A refusal is a call too. Logged here because the answer is decided BEFORE

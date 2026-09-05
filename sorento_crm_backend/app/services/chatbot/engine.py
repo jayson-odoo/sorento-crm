@@ -1544,12 +1544,33 @@ def _run_stages(  # noqa: PLR0915
             # 30 turns of a gate run went red on this arm). The trace note below is written
             # for a dry run too, so the harness still SEES the lane it could not complete.
             stage[0] = "looked_up" if lane_error_text else "routed"
-            orphan_error = (
-                f"S7 mode is on (CHATBOT_ORDERING_ENABLED), so the CRM owns the tail and "
-                f"/complete is gone, but the {delegate!r} lane is not completed in the "
-                f"CRM. Add {delegate!r} to system_settings.chatbot_completed_lanes on a "
-                f"build that can complete it, or turn S7 mode off."
-            )
+            # The message has to name the CAUSE, because it is read on a live outage and
+            # acted on. Three of them reach here and they need different instructions:
+            # the arm is not switched on, the arm IS switched on but its deployment flag
+            # is not, or the lane ran and raised. Telling an operator to add a lane that
+            # is already listed leaves them stuck on the settings form with the customer
+            # still waiting.
+            if (
+                business.handles(branch_kind)
+                and not _business_lane_enabled()
+                and branch_kind in enabled_lanes
+            ):
+                orphan_error = (
+                    f"S7 mode is on (CHATBOT_ORDERING_ENABLED), so the CRM owns the tail "
+                    f"and /complete is gone. {branch_kind!r} IS in "
+                    f"system_settings.chatbot_completed_lanes, but the business lane's "
+                    f"deployment switch CHATBOT_BUSINESS_LANE_ENABLED is off, so nothing "
+                    f"in this build runs it. Turn CHATBOT_BUSINESS_LANE_ENABLED on, or "
+                    f"turn S7 mode off."
+                )
+            else:
+                orphan_error = (
+                    f"S7 mode is on (CHATBOT_ORDERING_ENABLED), so the CRM owns the tail "
+                    f"and /complete is gone, but the {delegate!r} lane is not completed in "
+                    f"the CRM. Add {branch_kind!r} to "
+                    f"system_settings.chatbot_completed_lanes on a build that can complete "
+                    f"it, or turn S7 mode off."
+                )
             if lane_error_text:
                 # The lane IS completed by this build and still handed the turn back,
                 # because it raised. Saying only "not completed in the CRM" would send an
@@ -1571,6 +1592,21 @@ def _run_stages(  # noqa: PLR0915
                 error=orphan_error,
                 raw={"item": item},
             )
+            # Built BEFORE the close, exactly as the `fetch_failed_hard` branch above
+            # does it and for the same two reasons: the row must record the apology the
+            # customer was actually sent, so the trace screen shows the whole event, and
+            # a D15 duplicate delivery replays that same reply and action list instead of
+            # a bare `ctx`.
+            orphan_failure = _failed_result(
+                turn_id,
+                stage[0],
+                orphan_error,
+                actions,
+                dry_run,
+                ctx=ctx,
+                item=item,
+                branch_kind=branch_kind,
+            )
             _close_turn(
                 db,
                 turn_id,
@@ -1582,21 +1618,13 @@ def _run_stages(  # noqa: PLR0915
                 response={
                     "ctx": ctx,
                     "item": item,
-                    "actions": actions,
+                    "actions": orphan_failure.actions,
+                    "reply": orphan_failure.reply,
                     "delegate_payload": delegate_payload,
                     "delegate_error": lane_error_text,
                 },
             )
-            return _failed_result(
-                turn_id,
-                stage[0],
-                orphan_error,
-                actions,
-                dry_run,
-                ctx=ctx,
-                item=item,
-                branch_kind=branch_kind,
-            )
+            return orphan_failure
 
         if delegate is not None and _s7_mode() and dry_run:
             # See above: the turn is NOT failed, but the harness is told what would have
@@ -1755,13 +1783,18 @@ def _run_business_answer(
     except Exception as exc:  # noqa: BLE001 - the lane's failure, with the lane's reply
         logger.exception("chatbot turn %s: business answer failed", turn_id)
         failed = f"{type(exc).__name__}: {exc}"
-        reply = {"text": GENERIC_ERROR_REPLY, "quick_replies": []}
+        # AC-507: `quick_replies` is n8n's comma-joined string or null, never a list -
+        # `sub-sendmsg` runs string methods on it, so a list is a send that never leaves.
+        # This is the one path where the lane apologises to the customer, and in S7 mode
+        # the caller executes these actions directly, so getting the type wrong here is
+        # silence on an already-failed turn. Null, like every other hand-built site.
+        reply = {"text": GENERIC_ERROR_REPLY, "quick_replies": None}
         answer_actions = [
             *actions,
             {
                 "kind": "send_message",
                 "text": GENERIC_ERROR_REPLY,
-                "quick_replies": [],
+                "quick_replies": None,
                 "dry_run": dry_run,
             },
         ]
