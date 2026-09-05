@@ -49,11 +49,21 @@ class TestTheTwoConditions:
 
         This is the direction that matters: an owner adding `business_query` before S6
         ships must NOT get a turn answered by a lane that does not exist.
+
+        S6c is the slice that finished the migration: every kind in `BRANCH_KINDS` is now
+        in `CRM_COMPLETED_BRANCH_KINDS`, so the loop below has nothing left to walk. It
+        stays because the guarantee has not changed and a future lane would refill it -
+        and the code condition is graded on a kind outside the build's set either way,
+        which is exactly the "lane that does not exist" the docstring names.
         """
-        not_built = sorted(set(BRANCH_KINDS) - CRM_COMPLETED_BRANCH_KINDS)
-        assert not_built, "every lane is built - this test has outlived the migration"
-        for kind in not_built:
+        for kind in sorted(set(BRANCH_KINDS) - CRM_COMPLETED_BRANCH_KINDS):
             assert delegate_for(kind, frozenset({kind})) == kind, kind
+        assert CRM_COMPLETED_BRANCH_KINDS <= set(BRANCH_KINDS), (
+            "the build claims to complete a kind the router can never produce"
+        )
+        assert delegate_for("a_lane_from_the_future", frozenset({"a_lane_from_the_future"})) == (
+            "a_lane_from_the_future"
+        )
 
     def test_unreadable_settings_fail_towards_n8n(self):
         """`None` means "nothing enabled", never "everything"."""
@@ -124,7 +134,9 @@ class TestEndToEndThroughRunTurn:
 
         called: list[str] = []
         monkeypatch.setattr(
-            casual, "resolve_clarifier_config", lambda db: called.append("config") or object()
+            casual,
+            "resolve_clarifier_config",
+            lambda db, **_: called.append("config") or object(),
         )
         monkeypatch.setattr(
             casual, "call_clarifier", lambda config, prompt: called.append("call") or "{}"
@@ -151,7 +163,7 @@ class TestEndToEndThroughRunTurn:
         from app.services.chatbot.lanes import casual
 
         monkeypatch.setattr(casual, "resolve_for_prompt", lambda db, *, ctx: {"resolutions": []})
-        monkeypatch.setattr(casual, "resolve_clarifier_config", lambda db: object())
+        monkeypatch.setattr(casual, "resolve_clarifier_config", lambda db, **_: object())
         monkeypatch.setattr(
             casual, "call_clarifier", lambda config, prompt: '{"response": "Hi there!"}'
         )
@@ -193,12 +205,18 @@ class TestEndToEndThroughRunTurn:
         stub_access,
         monkeypatch,
     ):
-        """ONE read, on the session routing already holds.
+        """ONE read, on a session the turn already holds.
 
-        Both chatbot switches live on the same singleton, so reading it twice would be a
+        Every chatbot switch lives on the same singleton, so reading it twice would be a
         second round trip for no new information, and reading it on a session of its own
         would be the thing the capacity rule forbids. `[1]` is the whole assertion: called
-        once, with exactly the one session routing opened.
+        once, with exactly one session open.
+
+        AC-810 moved the read EARLIER, from the routing session to the dedup session
+        `run_turn` opens first, because S7 mode is a settings column now and the ordering
+        ticket is taken before the row insert. Routing reads the snapshot instead. The
+        property asserted here is unchanged and is the one that matters: one query, on a
+        session that already exists.
         """
         self._enable(system_settings_row, ["low_signal"])
         self._casual(stub_parser, stub_access)
@@ -215,7 +233,7 @@ class TestEndToEndThroughRunTurn:
         from app.services.chatbot.lanes import casual
 
         monkeypatch.setattr(casual, "resolve_for_prompt", lambda db, *, ctx: {"resolutions": []})
-        monkeypatch.setattr(casual, "resolve_clarifier_config", lambda db: object())
+        monkeypatch.setattr(casual, "resolve_clarifier_config", lambda db, **_: object())
         monkeypatch.setattr(casual, "call_clarifier", lambda config, prompt: '{"response": "hi"}')
 
         engine_mod.run_turn(_envelope(), session_factory=counting_session_factory)

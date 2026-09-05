@@ -109,7 +109,13 @@ class TestTheCompletedLaneSwitch:
     def test_a_lane_the_code_cannot_finish_is_never_completed_however_it_is_configured(
         self, session_factory, seeded, stub_parser, stub_access
     ):
-        """The CODE half is a wall: `business_query` is S6's and no list may claim it."""
+        """The CODE half is a wall, and after S6c the wall is the DEPLOYMENT switch.
+
+        `business_query` is now in `CRM_COMPLETED_BRANCH_KINDS` - the lane shipped - but it
+        only runs when `chatbot_business_lane_enabled` is on, and that is off by default
+        (and off here). Naming the arm in `chatbot_completed_lanes` first must therefore
+        still delegate, not close a turn nothing composed.
+        """
         _set_completed_lanes(session_factory, ["business_query", "check_promotion"])
         stub_parser(_parser_output())
         stub_access()
@@ -129,9 +135,11 @@ class TestTheCompletedLaneSwitch:
         )
         from app.services.chatbot.delegate import delegate_for
 
-        # The kinds with a lane module of their own come off: `low_signal` (S4) and, once
-        # S5 landed, `out_of_scope`. The eight below are still exactly what this module
-        # composes, which is the assertion that matters.
+        # The kinds with a lane module of their own come off: `low_signal` (S4),
+        # `out_of_scope` (S5) and, once S6c landed, the three business arms. The eight
+        # below are still exactly what this module composes, which is the assertion that
+        # matters - and it is the one that catches a new lane leaking into the canned
+        # composer, which is how S6c first broke this file.
         assert (
             canned_lanes.COMPLETED_BRANCH_KINDS
             == CRM_COMPLETED_BRANCH_KINDS - SELF_CLOSING_BRANCH_KINDS
@@ -146,8 +154,16 @@ class TestTheCompletedLaneSwitch:
             "offer_hold",
             "ideate",
         }
-        # A lane the CODE cannot finish is delegated however the list is configured.
-        assert delegate_for("business_query", frozenset({"business_query"})) == "business_query"
+        # A lane the CODE cannot finish is delegated however the list is configured. After
+        # S6c that is no longer `business_query` (the lane shipped), so the assertion moves
+        # to a kind no build claims - `delegate_for` reads the code half either way.
+        assert delegate_for("a_lane_from_the_future", frozenset({"a_lane_from_the_future"})) == (
+            "a_lane_from_the_future"
+        )
+        # `business_query` now passes the CODE half; the engine's second switch
+        # (`chatbot_business_lane_enabled`) is what still delegates it, and the end-to-end
+        # test above is where that is graded.
+        assert delegate_for("business_query", frozenset({"business_query"})) is None
         # A lane the code CAN finish is still delegated until the list names it.
         assert delegate_for("clarify_menu", frozenset()) == "clarify_menu"
         assert delegate_for("clarify_menu", frozenset({"clarify_menu"})) is None
@@ -653,9 +669,18 @@ class TestSendActionShape:
         """AC-507/D9's executor contract, walked across every branch kind the CRM
         completes today rather than pinned lane by lane: the eight canned/ideate/
         offer-hold kinds (`_CANNED_SCENARIOS` plus `access_denied`), the casual lane
-        (`low_signal`, S4), the escalation lane (`out_of_scope`, S5), and a FAILED turn
-        (`_failed_result`) - the fallback shape every other lane drops into on an
-        unhandled error, and the one a live n8n parity check actually caught a list on.
+        (`low_signal`, S4), the escalation lane (`out_of_scope`, S5), the three business
+        arms on their APOLOGY path (`business_query`, `check_promotion`, `stock_denied`,
+        S6c), and a FAILED turn (`_failed_result`) - the fallback shape every other lane
+        drops into on an unhandled error, and the one a live n8n parity check actually
+        caught a list on.
+
+        The business arms are walked on the failure path specifically. `_run_business_answer`
+        hand-builds its own reply and action there instead of going through
+        `_send_actions`, so it is the one CRM-completed site the type is not derived at,
+        and it landed as `[]` because S6c wrote it in parallel with the lane's pin. That
+        is precisely the class of defect this walk exists to catch, so the walk has to
+        reach it.
 
         Measured against 61 live sub-output tail captures (c32698c1): 60 non-empty
         strings, 1 null, 0 empty strings, 0 lists - so the assertion below is the same
@@ -672,7 +697,15 @@ class TestSendActionShape:
 
         _set_completed_lanes(
             session_factory,
-            [*_CANNED_SCENARIOS, "access_denied", "low_signal", "out_of_scope"],
+            [
+                *_CANNED_SCENARIOS,
+                "access_denied",
+                "low_signal",
+                "out_of_scope",
+                "business_query",
+                "check_promotion",
+                "stock_denied",
+            ],
         )
 
         all_actions: list[dict[str, Any]] = []
@@ -773,8 +806,55 @@ class TestSendActionShape:
         assert result.status == "failed"
         all_actions.extend(result.actions)
 
+        # The three business arms (S6c), on the path where the lane apologises. The
+        # answer half is faked at its own seam for the same reason the escalation lane is:
+        # the shape under test is the ACTION the engine hands the caller, not the lane's
+        # own rendering. `run_until_exit` returns a non-`continue` exit so the fetch step
+        # is skipped (those three exits are answers in their own right), and
+        # `complete_answer` raises so `_run_business_answer`'s except arm is what builds
+        # the reply.
+        monkeypatch.setattr(engine_mod, "_business_lane_enabled", lambda *a, **k: True)
+        monkeypatch.setattr(
+            engine_mod.business,
+            "run_until_exit",
+            lambda ctx, item, **kwargs: {
+                "delegate": "business_query",
+                "payload": {"_exit_kind": "not_found", "gate": {"gate_passed": True}},
+            },
+        )
+        monkeypatch.setattr(
+            engine_mod.business,
+            "complete_answer",
+            lambda *a, **k: (_ for _ in ()).throw(RuntimeError("the answer half fell over")),
+            raising=False,
+        )
+        for kind in ("business_query", "check_promotion", "stock_denied"):
+            monkeypatch.setattr(
+                engine_mod,
+                "decide",
+                lambda ctx, *, stock_denial_enabled, _kind=kind, **_: (_kind, {}),
+            )
+            stub_parser(_parser_output())
+            stub_access()
+            business_envelope = _envelope()
+            business_envelope.message["message"]["messageId"] = f"ZZT-contract-{kind}"
+            result = engine_mod.run_turn(business_envelope, session_factory=session_factory)
+            assert result.status == "failed", (
+                f"{kind}: the answer half was made to raise, so this arm must be the "
+                f"lane's own failure (got {result.status!r})"
+            )
+            assert result.branch_kind == kind, (
+                f"{kind}: a lane failure keeps its branch kind, so the trace says which "
+                f"lane broke (got {result.branch_kind!r})"
+            )
+            assert result.delegate is None, (
+                f"{kind}: the CRM owns this turn - handing back a lane here is the ghost "
+                f"S7 mode has nobody left to answer"
+            )
+            all_actions.extend(result.actions)
+
         send_messages = [a for a in all_actions if a.get("kind") == "send_message"]
-        assert len(send_messages) >= 11, (
+        assert len(send_messages) >= 14, (
             f"only {len(send_messages)} send_message actions collected - one lane's setup "
             "did not run, so this is not the full walk the test name promises"
         )

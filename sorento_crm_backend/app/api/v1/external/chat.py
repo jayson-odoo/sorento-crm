@@ -7,10 +7,16 @@ live sender. Returning the data keeps egress with whoever called and keeps the t
 harness's containment model intact. n8n already waits the whole turn today, so nothing
 gets slower.
 
-This module is one of only two files allowed to import `app.services.chatbot`
-(`tests/chatbot/test_import_boundary.py` enforces it). It is a thin adapter: validate,
-call `run_turn`, serialise, log. Every call writes an `integration_log` on success AND
-failure, the same as the ideation turn and the conversation-variables endpoint.
+This module is one of only three files allowed to import `app.services.chatbot`
+(`tests/chatbot/test_import_boundary.py` enforces it; the others are the trace/admin API
+and the RQ task the offload runs on). It is a thin adapter: validate, call `run_turn`,
+serialise, log. Every call writes an `integration_log` on success AND failure, the same as
+the ideation turn and the conversation-variables endpoint.
+
+**In S7 mode (`system_settings.chatbot_ordering_enabled`) `/turn` is the only trigger**: it runs the whole
+turn, orders it per contact, and returns the finished reply and actions, so `/complete`
+answers 410 Gone. The route is still declared because n8n keeps calling it until the S7
+promote lands on the n8n side; it is deleted at S8 (H6, AC-701).
 
 **`SessionLocal` here is the engine's session seam, and it is the ONLY one.** The engine
 opens and closes its own sessions around the LLM call (the capacity rule: never hold one
@@ -39,12 +45,15 @@ from sqlalchemy.orm import Session
 # the single point every test patches to keep the engine off the shared database.
 from app.database import SessionLocal, get_db
 from app.models.chatbot_turn import ChatbotTurn
+from app.models.user import SystemSetting
 from app.dependencies import get_external_api_user
+from app.schemas.chatbot_turn import ChatbotTurnResponse
 from app.schemas.integration import IntegrationLogCreate
 from app.services.chatbot import complete_turn, run_turn
 # The head's OWN lookup for "which row is this message's turn" (D15), so the id-less
 # complete route and the duplicate-delivery check can never pick different rows.
 from app.services.chatbot.engine import find_turn_for_message
+from app.services.error_handler import AppException
 from app.services.chatbot_reply_copy import CHATBOT_TURN_ERROR_REPLY
 from app.services.chatbot.contracts import (
     CompleteRequest,
@@ -52,7 +61,6 @@ from app.services.chatbot.contracts import (
     TurnRequest,
     TurnResponse,
 )
-from app.services.error_handler import AppException
 from app.services.integration_service import (
     IntegrationLogService,
     sanitize_request_headers,
@@ -122,6 +130,40 @@ def _logged_payload(payload: BaseModel, *, reference: str = "") -> str:
 TAIL_ERROR_REPLY = CHATBOT_TURN_ERROR_REPLY
 
 
+# H6, AC-701: the thin spine has ONE trigger. In S7 mode `/turn` runs the whole turn and
+# returns the finished reply, so a caller arriving at `/complete` is running the pre-S7
+# graph against an S7 backend - it has a turn the CRM already answered and is about to
+# answer it a second time. 410 rather than 404: the route existed, it is gone on purpose,
+# and n8n's error branch shows the operator which half of the promote was missed.
+#
+# The ROUTE itself is deleted at S8, not here. n8n's S2 tail keeps calling `/complete`
+# until the S7 promote lands on the n8n side, and deleting the route before that strands
+# every turn a lane still completes (n8n-changes.md, S7).
+S7_TAIL_GONE_CODE = "CHATBOT_S7_MODE_OWNS_THE_TAIL"
+S7_TAIL_GONE_MESSAGE = (
+    "This turn was already completed by the CRM. S7 mode owns the tail: POST /chat/turn "
+    "runs the whole turn and returns the finished reply and actions, so there is nothing "
+    "left for /complete to fold in."
+)
+
+
+def _s7_mode(db: Session) -> bool:
+    """`system_settings.chatbot_ordering_enabled` - the CRM owns the whole turn.
+
+    It is the same switch that turns per-contact ordering on because they are the same
+    promote: the thin spine posts every message to `/turn`, the CRM orders them per
+    contact and answers each one itself. Two switches for one cutover would only let an
+    operator half-arrive.
+
+    A settings COLUMN since AC-810, read on the REQUEST session both callers already hold
+    (no extra session, one query on the way to the 410) rather than from the environment,
+    so the owner can turn it off from Settings > Chatbot and have the next call answer 200
+    without a deploy - which is the whole point of the rollback path.
+    """
+    row = db.query(SystemSetting).first()
+    return bool(getattr(row, "chatbot_ordering_enabled", False)) if row is not None else False
+
+
 @router.post("/turn", response_model=TurnResponse, status_code=status.HTTP_200_OK)
 def chat_turn(
     payload: TurnRequest,
@@ -156,6 +198,19 @@ def chat_turn(
                     "session state, not an attachment - send media by reference."
                 ),
             )
+        # The auth dependencies queried on THIS session and neither committed nor rolled
+        # back, so SQLAlchemy is holding their transaction - and with it one server
+        # connection out of PgBouncer's transaction-mode pool - for as long as the request
+        # runs. That is the whole turn: the parser call, the lookups, and (with ordering
+        # on) up to `chatbot_queue_wait_seconds` of waiting on top. At the burst this
+        # slice is built for, 100 concurrent turns would pin 100 connections from a pool
+        # of 50 before the engine has opened a single session of its own.
+        #
+        # One rollback ends it. Nothing above needs the transaction any more - the
+        # principal and its permission were read into plain dicts - and the integration
+        # log below simply begins a new one. `db.info` (the company scope `get_db` set)
+        # is session state, not transaction state, and survives.
+        db.rollback()
         result = run_turn(payload.envelope, session_factory=SessionLocal)
         response_payload = TurnResponse(**result.as_dict())
         if result.status == "failed":
@@ -202,6 +257,108 @@ def chat_turn(
 
     assert response_payload is not None
     return response_payload
+
+
+# --------------------------------------------------------------------------- #
+# The Prompts screen's "Run a turn" test (AC-807)
+# --------------------------------------------------------------------------- #
+
+# The two prompt keys whose Test action runs a CHATBOT TURN rather than an assistant chat
+# dry run. Neither is part of the assistant pipeline, so `AIAssistantChatService.respond`
+# would have answered from prompts the operator did not edit - a result that looks like an
+# answer and is a category error.
+CHATBOT_PROMPT_KEYS = ("chatbot_semantic_parser", "chatbot_clarifier")
+
+
+class DryRunTurnRefused(ValueError):
+    """The request cannot be turned into a dry-run turn. The caller answers 422."""
+
+
+def run_prompt_dry_run_turn(
+    *, prompt_key: str, version_id: str, message: str, contact_respond_id: str | None
+) -> dict:
+    """One DRY-RUN turn on a pinned prompt version, for the Prompts screen (AC-807).
+
+    **This function exists so `app/api/v1/system/ai_assistant.py` never imports
+    `app.services.chatbot`.** AC-002 lists the files allowed through that boundary and the
+    Prompts screen is not one of them - it is an assistant-settings surface that happens to
+    want a chatbot turn. Putting the doorway HERE, in the file that already owns the turn
+    endpoint, keeps the boundary at one file instead of widening the allow-list for a test
+    button (`tests/chatbot/test_import_boundary.py` enforces it either way, so widening it
+    would have been a decision recorded only in that list).
+
+    `is_test=True`, so D14 applies with no exception: the engine writes `chatbot.turns` and
+    nothing else - no session vars, no assignment, no send, no usage row. `prompt_overrides`
+    is a harness key the engine reads ONLY on a dry run, which is what stops an unpublished
+    prompt version ever reaching a customer.
+
+    Returns `{turn_id, status, branch_kind, stage, trace, reply}`. The caller serialises it
+    itself rather than through a `response_model`, because a declared model would silently
+    drop whatever it does not know about and the trace is the whole point of the button.
+    """
+    contact = (contact_respond_id or "").strip()
+    if not contact:
+        raise DryRunTurnRefused(
+            "contact_respond_id is required to run a chatbot turn: the turn reads that "
+            "contact's access level and remembered state, and there is no meaningful "
+            "default for it."
+        )
+
+    envelope = TurnRequest(
+        envelope={
+            "is_test": True,
+            "ingress": "console",
+            "contact": {"id": contact},
+            "message": {
+                "event_type": "message.received",
+                "contact": {"id": contact},
+                # A fresh id per test click, so two tests of the same message are two turns
+                # rather than the second reading as a D15 duplicate of the first.
+                "message": {
+                    "messageId": f"prompt-test-{uuid.uuid4().hex[:16]}",
+                    "contactId": contact,
+                    "channelId": "prompt-test",
+                    "traffic": "incoming",
+                    "message": {"type": "text", "text": message},
+                },
+            },
+            "prompt_overrides": {prompt_key: version_id},
+        }
+    ).envelope
+
+    result = run_turn(envelope, session_factory=SessionLocal)
+    payload = result.as_dict()
+
+    # Status, stage and trace are read back from the ROW, not off the result: `TurnResult`
+    # carries `status` only on the paths that need to TELL the caller something unusual
+    # (failed, duplicate), so a turn that simply worked returns None there while the row
+    # says `done`. The row is the record either way, and it is the same row the trace
+    # screen renders, so the Test button and Chat History cannot disagree about a turn.
+    status = payload.get("status")
+    stage = payload.get("stage")
+    trace: list = []
+    turn: dict | None = None
+    with SessionLocal() as db:
+        row = db.query(ChatbotTurn).filter(ChatbotTurn.id == payload["turn_id"]).first()
+        if row is not None:
+            status = row.status
+            stage = row.stage
+            trace = list(row.trace or [])
+            # The WHOLE row, in the shape `GET /system/chatbot/turns` returns, so the
+            # Prompts screen renders the result with Chat History's own `TurnPanel`
+            # instead of a second trace viewer that would drift from it (journey D3: "the
+            # same viewer the AI-assistant trace already uses").
+            turn = json.loads(ChatbotTurnResponse.model_validate(row).model_dump_json())
+    return {
+        "turn_id": payload["turn_id"],
+        "status": status,
+        "branch_kind": payload.get("branch_kind"),
+        "stage": stage,
+        "reply": payload.get("reply"),
+        "error": payload.get("error"),
+        "trace": trace,
+        "turn": turn,
+    }
 
 
 def _turn_row(db: Session, turn_id: str) -> ChatbotTurn | None:
@@ -294,6 +451,16 @@ def chat_turn_complete(
     to_reraise: HTTPException | None = None
 
     try:
+        if _s7_mode(db):
+            raise AppException(
+                status_code=status.HTTP_410_GONE,
+                message="This turn engine completes its own turns.",
+                detail=S7_TAIL_GONE_MESSAGE,
+                code=S7_TAIL_GONE_CODE,
+            )
+        # Same reason as `/turn`: end the auth dependencies' transaction before the tail
+        # runs, so the request is not pinning a pooled connection across it.
+        db.rollback()
         result = complete_turn(
             turn_id,
             payload.model_dump(mode="json"),
@@ -456,8 +623,21 @@ def chat_turn_complete_by_body(
     Same request body, same response, same engine call. The ONLY difference is how the
     turn is found, and the reason is the n8n side's: `sub-output` holds the `ctx` and not
     the id, so this keeps their cut inside one workflow.
+
+    **In S7 mode the 410 comes first, before the lookup.** Both forms of the route answer
+    one cause, so they must answer it with one code: resolving the turn first lets a stale
+    caller collect a 404 or a 409 on the way to a route that was going to say 410 anyway,
+    which reads as three different faults instead of one missed promote. It also saves the
+    two queries the lookup costs on every stale call.
     """
     try:
+        if _s7_mode(db):
+            raise AppException(
+                status_code=status.HTTP_410_GONE,
+                message="This turn engine completes its own turns.",
+                detail=S7_TAIL_GONE_MESSAGE,
+                code=S7_TAIL_GONE_CODE,
+            )
         turn_id = _resolve_turn_for_complete(db, payload)
     except AppException as refused:
         # A refusal is a call too. Logged here because the answer is decided BEFORE

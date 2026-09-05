@@ -33,6 +33,11 @@ from app.schemas.ai_prompt import (
     SetAgentModelResponse,
     SetLabelResponse,
 )
+from app.api.v1.external.chat import (
+    CHATBOT_PROMPT_KEYS,
+    DryRunTurnRefused,
+    run_prompt_dry_run_turn,
+)
 from app.services.ai_prompt_registry import PROMPT_KEYS
 from app.services.ai_prompt_service import AIPromptRegistryError, AIPromptService
 from app.schemas.ai_assistant import (
@@ -65,6 +70,8 @@ from app.services.provider_model_catalog import (
     model_choices,
     probe_model,
 )
+from app.services.user_service import UserPermissionService
+from app.services.uuid_path_param import validate_uuid_path
 
 router = APIRouter()
 
@@ -155,6 +162,15 @@ def test_ai_assistant_connection(
 # page for exactly the operator who has to fix a broken degraded model.
 _MODEL_VIEW = ["system.ai_assistant_settings.view", "user_management.settings.view"]
 _MODEL_EDIT = ["system.ai_assistant_settings.edit", "user_management.settings.edit"]
+
+# The slug the Chat History trace screen already uses to show a contact's turn trace
+# (`app/api/v1/system/chat_history.py`, and `VIEW` in `app/api/v1/system/chatbot.py`).
+# The Prompts Test button for the two chatbot keys runs a dry-run turn for a
+# CALLER-NAMED contact and returns its trace, which reads that contact's access level
+# and remembered session state - so it is REQUIRED IN ADDITION to
+# `system.ai_assistant_settings.edit`, which is a prompt-editing slug and says nothing
+# about who may read a customer's conversation state (AC-807, S8a review S3).
+_CHATBOT_TRACE_VIEW = "system.chat_history.view"
 
 
 @router.get("/ai-assistant/models", response_model=ProviderModelsResponse)
@@ -387,7 +403,7 @@ def set_ai_assistant_agent_model(
     return SetAgentModelResponse(**result)
 
 
-@router.post("/ai-assistant/prompts/{name}/test", response_model=DryRunResponse)
+@router.post("/ai-assistant/prompts/{name}/test")
 def test_ai_assistant_prompt_version(
     name: str,
     payload: DryRunRequest,
@@ -399,13 +415,28 @@ def test_ai_assistant_prompt_version(
     is deleted afterwards so it never pollutes history, and write-capable MCP
     tools (``*_submit`` / ``*_create`` / ``*_link``) are stripped for the turn so
     a test can never persist real business data. Dormant key → 400; a key that is not
-    an assistant-pipeline node → 400 as well."""
+    an assistant-pipeline node → 400 as well.
+
+    **The two chatbot keys run a chatbot TURN instead** (AC-807). They are not assistant
+    pipeline nodes, so the chat dry run above would answer from prompts the operator did
+    not edit; the turn is what actually exercises them. Same version pinning, and
+    `is_test` so it writes nothing outside `chatbot.turns` (D14). They need
+    `system.chat_history.view` ON TOP of the edit slug, because that turn reads a named
+    contact's state and hands back the trace.
+
+    **No `response_model`.** The two answers have different shapes (an assistant output
+    and token usage; a turn id, status, branch and trace) and `response_model` silently
+    DROPS undeclared fields, so declaring either one would empty the other
+    (`LESSONS-LEARNT`). Both are serialised as plain dicts and pinned by tests.
+    """
     _ensure_known_prompt(name)
     if not PROMPT_KEYS[name].active:
         raise HTTPException(
             status_code=400,
             detail=f"Prompt '{name}' is dormant and has no runtime call site to test.",
         )
+    if name in CHATBOT_PROMPT_KEYS:
+        return _test_chatbot_prompt_version(name, payload, db, user)
     if not PROMPT_KEYS[name].dry_runnable:
         # Checked BEFORE the version lookup: running a non-assistant key (the spec
         # extractor, the SCM advisory) through the chat pipeline produces an answer
@@ -419,15 +450,7 @@ def test_ai_assistant_prompt_version(
             ),
         )
     # Validate the version belongs to this key before running a real turn.
-    from app.models.ai_prompt import AIPromptVersion
-
-    version = (
-        db.query(AIPromptVersion)
-        .filter(AIPromptVersion.id == payload.version_id, AIPromptVersion.name == name)
-        .first()
-    )
-    if version is None:
-        raise HTTPException(status_code=404, detail="Version not found for this prompt.")
+    _version_for_key_or_404(db, name, payload.version_id)
 
     chat = AIAssistantChatService(db)
     conv, msg = chat.respond(
@@ -476,7 +499,68 @@ def test_ai_assistant_prompt_version(
         token_usage=token_usage,
         tool_calls=tool_calls,
         used_overrides={name: payload.version_id},
+    ).model_dump()
+
+
+def _version_for_key_or_404(db: Session, name: str, version_id: str) -> None:
+    """404 unless `version_id` is a version OF THIS KEY.
+
+    One lookup for both branches of the Test action. A stale id from the browser must be
+    a 404 rather than a turn that quietly ran the published prompt, which would look like
+    a passing test of an edit that was never exercised.
+
+    `validate_uuid_path` first, because `AIPromptVersion.id` is a `uuid` column and
+    Postgres raises on a malformed literal - which surfaced as a 500 where the route
+    promises a 404.
+    """
+    from app.models.ai_prompt import AIPromptVersion
+
+    validate_uuid_path(version_id, resource="Prompt version")
+    version = (
+        db.query(AIPromptVersion)
+        .filter(AIPromptVersion.id == version_id, AIPromptVersion.name == name)
+        .first()
     )
+    if version is None:
+        raise HTTPException(status_code=404, detail="Version not found for this prompt.")
+
+
+def _test_chatbot_prompt_version(
+    name: str, payload: DryRunRequest, db: Session, user: dict
+) -> dict:
+    """AC-807: run one dry-run chatbot turn on the version being edited.
+
+    **Two slugs, not one.** The route's own `system.ai_assistant_settings.edit` says the
+    caller may edit prompts. This branch additionally reads a CALLER-NAMED contact's
+    access level and remembered session state and returns the trace, which is what the
+    Chat History trace screen shows under `system.chat_history.view` - so that slug is
+    required here too, and nobody reads a contact's remembered state through a weaker one
+    (S8a review S3). The contact stays caller-supplied: the workspace has no dev-contact
+    column, and inventing one to satisfy the AC's wording would be a new config surface
+    for a test button.
+    """
+    if not UserPermissionService(db).check_user_has_permission(
+        user["id"], _CHATBOT_TRACE_VIEW
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Permission required: {_CHATBOT_TRACE_VIEW}. Running a chatbot turn "
+                "reads that contact's remembered conversation state."
+            ),
+        )
+    _version_for_key_or_404(db, name, payload.version_id)
+
+    try:
+        result = run_prompt_dry_run_turn(
+            prompt_key=name,
+            version_id=payload.version_id,
+            message=payload.message,
+            contact_respond_id=payload.contact_respond_id,
+        )
+    except DryRunTurnRefused as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {**result, "used_overrides": {name: payload.version_id}}
 
 
 # --- Usage analytics --------------------------------------------------------

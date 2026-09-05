@@ -445,7 +445,7 @@ def _install_stub_lane(monkeypatch, casual, *, response_json="{\"response\": \"h
     the resolve body, the registry fallback and the fence-stripping parse are each
     covered directly above."""
     monkeypatch.setattr(casual, "resolve_for_prompt", lambda db, *, ctx: {"resolutions": []})
-    monkeypatch.setattr(casual, "resolve_clarifier_config", lambda db: object())
+    monkeypatch.setattr(casual, "resolve_clarifier_config", lambda db, **_: object())
 
     def fake_call_clarifier(config, user_prompt):
         if error is not None:
@@ -580,7 +580,7 @@ class TestLowSignalLaneIntegration:
         stub_parser(_parser_output(message_type="casual", domain_hint=None, intent_hint=None))
         stub_access()
         monkeypatch.setattr(casual, "resolve_for_prompt", lambda db, *, ctx: {"resolutions": []})
-        monkeypatch.setattr(casual, "resolve_clarifier_config", lambda db: object())
+        monkeypatch.setattr(casual, "resolve_clarifier_config", lambda db, **_: object())
 
         observed: list[int] = []
 

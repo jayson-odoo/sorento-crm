@@ -107,8 +107,23 @@ beforeEach(() => {
   });
 });
 
-async function waitForLoaded() {
-  await waitFor(() => expect(screen.queryByText(/^loading/i)).toBeNull());
+/**
+ * A CREATE form never renders "Loading..." - `loading` initialises to
+ * `Boolean(submissionId)`, which is false with no id - so waiting for that text to go
+ * is a no-op and waits for nothing at all.
+ *
+ * What these tests actually depend on is the SEED: `salesperson_contact_id` is required
+ * and is filled from the contact `fetchMe` answers with, in an effect that lands a task
+ * after the first paint. Until it does, `handleSubmit` stops at `collectMissingRequired`,
+ * closes the confirm dialog and never calls `saveDraft` - which is exactly what happened
+ * on CI (5 s spent waiting on a mock that could no longer be called). Save Draft does not
+ * validate, which is why only the Submit test failed there.
+ *
+ * The contact's own name is the label the Salesperson select shows once the seed lands,
+ * so waiting for it waits for the exact effect rather than for a clock.
+ */
+async function waitForSeededForm() {
+  await screen.findByText(CONTACT.name as string);
 }
 
 describe('SubmissionForm - retry after create-succeeded/flush-failed does not duplicate (#482)', () => {
@@ -127,7 +142,7 @@ describe('SubmissionForm - retry after create-succeeded/flush-failed does not du
     (uploadAttachment as Mock).mockRejectedValue(new Error('quota exceeded'));
 
     render(<SubmissionForm kind="stock_inquiry" />);
-    await waitForLoaded();
+    await waitForSeededForm();
 
     fireEvent.click(screen.getByTestId('attach-pending-file'));
 
@@ -182,7 +197,7 @@ describe('SubmissionForm - retry after create-succeeded/flush-failed does not du
     (uploadAttachment as Mock).mockRejectedValue(new Error('502 Bad Gateway'));
 
     render(<SubmissionForm kind="stock_inquiry" />);
-    await waitForLoaded();
+    await waitForSeededForm();
 
     fireEvent.click(screen.getByTestId('attach-pending-file'));
 

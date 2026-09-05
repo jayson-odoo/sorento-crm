@@ -1,0 +1,183 @@
+{
+  "source": {
+    "execution_id": "14174326",
+    "workflow_id": "9qVyfUxmRQqrpGRMDLRuz",
+    "node": "build-result",
+    "captured_at": "2026-08-29T05:49:21+00:00",
+    "expected_from": "runData",
+    "harvested_from": "live-spine-sorento-consume-main/compile-current-state/exec-14174326.json"
+  },
+  "ctx": {
+    "validator": [
+      {
+        "json": {
+          "response": "No matching results found.",
+          "response_intro": "No matching results found.",
+          "answers": [],
+          "attachments": [],
+          "action_links": [],
+          "last_updated_at": null,
+          "has_result": false,
+          "alternatives": [],
+          "relaxed_axis": null,
+          "field_access": null,
+          "requested_attributes": [],
+          "keys_served": false,
+          "is_valid": true
+        }
+      }
+    ],
+    "tool-filter": [
+      {
+        "json": {
+          "name": "crm_master_product_attachments_list",
+          "similarity": 0.5223291493765826,
+          "_tool_pick": {
+            "chosen": "crm_master_product_attachments_list",
+            "rejected": [],
+            "count": 1,
+            "has_product": false
+          }
+        }
+      }
+    ],
+    "promo-picker": [
+      {
+        "json": {
+          "response": "No matching results found.",
+          "response_intro": "No matching results found.",
+          "answers": [],
+          "attachments": [],
+          "action_links": [],
+          "last_updated_at": null,
+          "has_result": false,
+          "alternatives": [],
+          "relaxed_axis": null,
+          "field_access": null,
+          "requested_attributes": [],
+          "keys_served": false,
+          "is_valid": true
+        }
+      }
+    ],
+    "crossdomain-zeroset": [
+      {
+        "json": {
+          "response": "No matching results found.",
+          "response_intro": "No matching results found.",
+          "answers": [],
+          "attachments": [],
+          "action_links": [],
+          "last_updated_at": null,
+          "has_result": false,
+          "alternatives": [],
+          "relaxed_axis": null,
+          "field_access": null,
+          "requested_attributes": [],
+          "keys_served": false,
+          "is_valid": true,
+          "_xd": {
+            "active": false,
+            "why": "domain"
+          }
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "response": "No matching results found.",
+        "response_intro": "No matching results found.",
+        "answers": [],
+        "attachments": [],
+        "action_links": [],
+        "last_updated_at": null,
+        "has_result": false,
+        "alternatives": [],
+        "relaxed_axis": null,
+        "field_access": null,
+        "requested_attributes": [],
+        "keys_served": false,
+        "is_valid": true,
+        "_xd": {
+          "active": false,
+          "why": "domain"
+        }
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "response": "No matching results found.",
+        "response_intro": "No matching results found.",
+        "answers": [],
+        "attachments": [],
+        "action_links": [],
+        "last_updated_at": null,
+        "has_result": false,
+        "alternatives": [],
+        "relaxed_axis": null,
+        "field_access": null,
+        "requested_attributes": [],
+        "keys_served": false,
+        "is_valid": true,
+        "_xd": {
+          "active": false,
+          "why": "domain"
+        },
+        "result": {
+          "rows": {
+            "response": "No matching results found.",
+            "response_intro": "No matching results found.",
+            "answers": [],
+            "attachments": [],
+            "action_links": [],
+            "last_updated_at": null,
+            "has_result": false,
+            "alternatives": [],
+            "relaxed_axis": null,
+            "field_access": null,
+            "requested_attributes": [],
+            "keys_served": false,
+            "is_valid": true
+          },
+          "has_result": false,
+          "is_valid": true,
+          "tool": {
+            "name": "crm_master_product_attachments_list",
+            "similarity": 0.5223291493765826,
+            "_tool_pick": {
+              "chosen": "crm_master_product_attachments_list",
+              "rejected": [],
+              "count": 1,
+              "has_product": false
+            }
+          },
+          "promo": {
+            "response": "No matching results found.",
+            "response_intro": "No matching results found.",
+            "answers": [],
+            "attachments": [],
+            "action_links": [],
+            "last_updated_at": null,
+            "has_result": false,
+            "alternatives": [],
+            "relaxed_axis": null,
+            "field_access": null,
+            "requested_attributes": [],
+            "keys_served": false,
+            "is_valid": true
+          },
+          "xd": {
+            "active": false,
+            "block": null
+          },
+          "tier_probe": null
+        }
+      }
+    }
+  ],
+  "runIndex": 0
+}

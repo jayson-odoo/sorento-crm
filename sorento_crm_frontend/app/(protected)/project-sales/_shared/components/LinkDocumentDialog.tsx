@@ -134,24 +134,25 @@ export function LinkDocumentDialog({
   const { placeAllocations } = useOrderInquiryPlacementMutations();
   const candidates = candidatesQuery.data ?? [];
   const [expandedIds, setExpandedIds] = React.useState<Set<string>>(new Set());
-  const [takes, setTakes] = React.useState<Record<string, string>>({});
-  const initialised = React.useRef(false);
+  /**
+   * ONLY the hand edits, keyed by candidate. The cascade's own preview is read straight
+   * off the candidate in `takeFor` below rather than copied into state by an effect, so
+   * it is in force on the very first render that shows the table: no window in which the
+   * dialog offers blank takes and a dead Link button, and no way for a background refetch
+   * to clobber an edit (the reason the copy was taken once, before).
+   */
+  const [edits, setEdits] = React.useState<Record<string, string>>({});
 
-  // The cascade's own preview is the starting point (server-computed, so it can never
-  // disagree with what auto-place itself would do) - picked up once, the first time the
-  // candidates answer, so a hand edit is never clobbered by a background refetch.
-  React.useEffect(() => {
-    if (initialised.current || candidates.length === 0) return;
-    initialised.current = true;
-    setTakes(
-      Object.fromEntries(
-        candidates
-          .filter((candidate) => toNumber(candidate.default_take) > 0)
-          .map((candidate) => [candidateKey(candidate), candidate.default_take]),
-      ),
-    );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [candidates.length]);
+  /**
+   * What this candidate is taking: the hand edit when there is one, else the cascade's own
+   * preview (`default_take`, server-computed, so it can never disagree with what auto-place
+   * itself would do). A preview of zero reads blank - nothing is being taken off that line.
+   */
+  function takeFor(candidate: OrderInquiryPoCandidate): string {
+    const edit = edits[candidateKey(candidate)];
+    if (edit !== undefined) return edit;
+    return toNumber(candidate.default_take) > 0 ? candidate.default_take : '';
+  }
 
   function toggleExpanded(key: string) {
     setExpandedIds((prev) => {
@@ -163,19 +164,19 @@ export function LinkDocumentDialog({
   }
 
   function setTake(key: string, value: string) {
-    setTakes((prev) => ({ ...prev, [key]: value }));
+    setEdits((prev) => ({ ...prev, [key]: value }));
   }
 
   const horizon = formatHorizon(linkUpTo);
   const dueAfter = isDueAfterHorizon(deliveryDate, linkUpTo);
   const need = Math.max(toNumber(qty) - toNumber(linkedQty ?? '0'), 0);
   const totalTaken = candidates.reduce(
-    (sum, candidate) => sum + toNumber(takes[candidateKey(candidate)] ?? '0'),
+    (sum, candidate) => sum + toNumber(takeFor(candidate)),
     0,
   );
   const overTaken = totalTaken > need;
   const lineErrors = candidates.some((candidate) => {
-    const take = toNumber(takes[candidateKey(candidate)] ?? '0');
+    const take = toNumber(takeFor(candidate));
     return take > toNumber(candidate.remaining);
   });
   const remainder = Math.max(need - totalTaken, 0);
@@ -188,11 +189,11 @@ export function LinkDocumentDialog({
         candidate.kind === 'spo'
           ? {
               spo_allocation_id: candidate.spo_allocation_id ?? undefined,
-              qty: takes[candidateKey(candidate)] ?? '0',
+              qty: takeFor(candidate) || '0',
             }
           : {
               po_line_id: candidate.po_line_id ?? undefined,
-              qty: takes[candidateKey(candidate)] ?? '0',
+              qty: takeFor(candidate) || '0',
             },
       )
       .filter((allocation) => toNumber(allocation.qty) > 0);
@@ -298,7 +299,7 @@ export function LinkDocumentDialog({
                       <CandidateRow
                         key={candidateKey(candidate)}
                         candidate={candidate}
-                        take={takes[candidateKey(candidate)] ?? ''}
+                        take={takeFor(candidate)}
                         onTakeChange={(value) => setTake(candidateKey(candidate), value)}
                         expanded={expandedIds.has(candidateKey(candidate))}
                         onToggleExpand={() => toggleExpanded(candidateKey(candidate))}

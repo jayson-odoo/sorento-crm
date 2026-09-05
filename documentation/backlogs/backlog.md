@@ -145,7 +145,18 @@ removed copy, for whoever restores a UI for them:
 - **BL-054** (2026-09-04, same plan): `chatbot.turns` retention sweep (90 days) via the existing
   scheduler pattern; and the text-sniffing sites inventoried in the plan (`tierRepick`,
   `_CO_ALIASES`, keyword domain switches) to move into the parser after parity (D11).
-- **BL-055** (2026-09-05, security review of `PLAN-autocount-document-ingest-v2`): `integration_references`
+- **BL-055** (2026-09-05, same plan, hazard H4): the three `sub-media-intake` guards that stay
+  n8n-side by D1 and therefore did not move with the turn-engine port. (a) `sub-media-intake RS`
+  mocks the CRM media endpoint only when the item has a `test_run_id` AND `scope != 'chat-ui'`,
+  and `zz-chat` sets `scope: 'chat-ui'`, so a media turn from the chat console reaches the real
+  billable `POST /external/media/process` - the gate belongs on the caller, before the side
+  effect, not inside the callee. (b) `if-media-in` is FALSE when there is no fetchable URL, so a
+  media attachment without one is silently a text turn. (c) the async poll loop
+  (`wait-media-poll` / `media-poll-http` / `media-poll-merge`) has zero observed live traffic and
+  was deliberately not ported; measure before porting it. The CRM half of (a) is already closed:
+  the turn engine never calls the media endpoint (`ctx.media` arrives on the envelope) and a
+  dry-run turn writes nothing outside `chatbot.turns` (AC-702).
+- **BL-056** (2026-09-05, security review of `PLAN-autocount-document-ingest-v2`): `integration_references`
   has no `company_id`, and the v2 document ladder now writes master mappings (customers, suppliers,
   agents, products, warehouses) whenever a sent ref misses and a code/name resolves. Two AutoCount
   books minting the same raw key would let company A's push squat a ref company B needs, and B's
@@ -153,19 +164,19 @@ removed copy, for whoever restores a UI for them:
   one book is connected. **Trigger:** a second AutoCount database connects. Fix: add `company_id`
   to `integration_references` and include it in `resolve`/`link`, or skip the auto-link when the
   local row was found by code rather than back-created. | `plans/autocount/PLAN-autocount-document-ingest-v2.md` | Medium | Open |
-- **BL-056** (2026-09-05, same review): a document `.edit` slug (`scm.sales_orders.edit`,
+- **BL-057** (2026-09-05, same review): a document `.edit` slug (`scm.sales_orders.edit`,
   `scm.purchase_orders.edit`, `scm.shipping_orders.edit`) can back-create suppliers, customers and
   shared sales agents through the ladder, while those masters have their own `.edit` slugs on the
   external surface. Accepted for the single trusted ESB. **Trigger:** a narrowly-scoped
   integration key is issued for document ingest. Fix: pass the caller's held slugs into
   `MasterRefResolver` and downgrade a would-be back-create to the unresolved-plus-warning path
   when the master's `.edit` slug is absent. | same plan | Medium | Open |
-- **BL-057** (2026-09-05, plan D7): `planning_change_service.build_batch` is not produced by the
+- **BL-058** (2026-09-05, plan D7): `planning_change_service.build_batch` is not produced by the
   ESB document ingest (it needs the upload's `Diff` of `Line`s). **Trigger:** the captain asks why
   an ingested sales order changed the plan and there is no change batch to show. Fix: synthesise a
   `Diff` from the before/after line sets in `DocumentIngestService._sync_lines` and call
   `build_batch` from the route hook. | same plan | Low | Open |
-- **BL-058** (2026-09-05, real-company load via the ESB): `sales_agents` rows created by the
+- **BL-059** (2026-09-05, real-company load via the ESB): `sales_agents` rows created by the
   masters ingest (A2 `EntitySpec`) carry `source = 'manual'` (the column default) instead of a
   value naming the ESB; the xlsx path stamps `'import'`. Cosmetic today, misleading on the agent
   master screen. Fix: the sales_agents EntitySpec sets `source = 'autocount'` on create, never on

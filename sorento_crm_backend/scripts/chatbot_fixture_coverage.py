@@ -148,6 +148,40 @@ CAPTURE_REPORT: dict[str, dict] = {
     # `confirmation` 0, and `mark-casual-error` 0 - the error arm has not fired once since
     # 1 Sep, which is the same "0 is the correct number" statement the two H1 stock arms
     # make below, reached by luck rather than by typo.
+    # S6c's two sub-workflows, captured on 5 Sep. Both pools were scanned to exhaustion,
+    # which is what lets a thin cell read `exhausted` instead of `SHORT`: that traffic does
+    # not exist rather than having been missed.
+    "sub-answer-live": {
+        "version": "b1357c27",
+        "version_pool": 609,
+        "scanned": 609,
+        "all_versions": 609,
+        "captured_on": "2026-09-05",
+        "nodes": (
+            "answer-input",
+            "central-exchange",
+            "answer-result",
+            "miss-roster-check",
+            "miss-roster-plan",
+            "build-miss-member-offer",
+            "dym-transform-partial",
+            "dym-annotate-partial",
+        ),
+    },
+    "sub-miss-suggest-live": {
+        "version": "f42de9c6",
+        "version_pool": 232,
+        "scanned": 232,
+        "all_versions": 232,
+        "captured_on": "2026-09-05",
+        "nodes": (
+            "dym-transform",
+            "dym-annotate",
+            "sibling-transform",
+            "miss-suggest-result",
+            "promo-dym-plan",
+        ),
+    },
     "sub-casual-llm-live": {
         "version": "08bf56a5",
         "version_pool": 13,
@@ -578,6 +612,7 @@ def render(data: dict) -> str:
     lines.append("| node | branch | real captures | other | gate 0 |")
     lines.append("| --- | --- | ---: | ---: | --- |")
     blocking: list[str] = []
+    blocking_nodes: set[str] = set()
     exhausted: list[str] = []
     for node in sorted(data["rows"]):
         for branch in sorted(data["rows"][node]):
@@ -587,6 +622,7 @@ def render(data: dict) -> str:
             state, blocks = _cell_state(node, branch, real)
             if blocks:
                 blocking.append(f"{node}/{branch} ({real} of {CAPTURES_PER_BRANCH})")
+                blocking_nodes.add(node)
             elif state.startswith("exhausted"):
                 exhausted.append(f"{node}/{branch} ({real})")
             lines.append(f"| `{node}` | `{branch}` | {real} | {other} | {state} |")
@@ -599,6 +635,15 @@ def render(data: dict) -> str:
             f"**BLOCKED: {len(blocking)} cell(s) short in a pool that was not fully scanned.** "
             "Capture more turns for: " + ", ".join(blocking) + "."
         )
+        unpooled = sorted(node for node in blocking_nodes if _pool_for(node) is None)
+        if unpooled:
+            lines.append("")
+            lines.append(
+                "Owed by the n8n side, and the bar does not move to meet it: a capture run "
+                "that produces the missing turns, or a scan report recording the pool as "
+                "exhausted (a `CAPTURE_REPORT` entry, the way every other slug carries "
+                "one). No pool is on record at all for: " + ", ".join(unpooled) + "."
+            )
     else:
         lines.append(
             "**Not blocked.** Every cell is either met, exhausted in a fully-scanned pool, "

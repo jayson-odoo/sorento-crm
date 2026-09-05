@@ -96,3 +96,29 @@ def system_settings_row(session_factory):
     db.add(row)
     db.commit()
     return row
+
+
+def set_chatbot_switches(
+    session_factory: Any,
+    *,
+    business_lane: bool | None = None,
+    ordering: bool | None = None,
+) -> None:
+    """Set the two chatbot switches on the `system_settings` singleton (AC-810).
+
+    They were `app.config.settings` flags until S8, and every test that wanted one on did
+    `monkeypatch.setattr(settings, "chatbot_ordering_enabled", True)`. They are columns
+    now, read per turn, so the ROW is the only lever and this is the one place that pulls
+    it. Creates the singleton when the test has not seeded one, so a caller does not have
+    to also depend on `system_settings_row`; `None` leaves a switch alone.
+    """
+    db = session_factory()
+    row = db.query(SystemSetting).first()
+    if row is None:
+        row = SystemSetting()
+        db.add(row)
+    if business_lane is not None:
+        row.chatbot_business_lane_enabled = business_lane
+    if ordering is not None:
+        row.chatbot_ordering_enabled = ordering
+    db.commit()

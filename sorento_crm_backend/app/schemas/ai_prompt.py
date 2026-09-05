@@ -101,6 +101,10 @@ class SetAgentModelResponse(BaseModel):
 class DryRunRequest(BaseModel):
     message: str = Field(..., min_length=1)
     version_id: str
+    # AC-807: required for the two chatbot keys, whose Test runs a real dry-run TURN and
+    # therefore needs a contact to read access level and remembered state from. Ignored by
+    # every other key, which runs through the assistant chat pipeline instead.
+    contact_respond_id: Optional[str] = None
 
 
 class DryRunToolCall(BaseModel):
