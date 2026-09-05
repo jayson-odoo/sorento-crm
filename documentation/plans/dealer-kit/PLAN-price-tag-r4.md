@@ -108,3 +108,19 @@ User test on live, 5 Sep 2026, after #625. Four findings, one lane, one PR, four
 Agent stack FE :3080 / BE :8080 from this worktree, booted by the main session for the test
 only. agent-browser via the sidebar: Dealer Kit -> Price Tag Requests -> open PT-202609-0001 ->
 Design. Evidence per UAC.
+
+## S5 - Barcode value can be cleared and typed over (FE)
+
+Measured: `InspectorPanel.tsx` barcode input writes `onUpdate({ text_override: e.target.value
+|| null })`, so deleting the text sets the override to null, which MEANS "follow the product"
+(`resolveBarcodeValue`, `product-block.ts:142-147`), and the product barcode snaps straight
+back. The text layer's Content box (`:452-455`) writes the raw value and does not have this
+problem. User, 5 Sep: "I should be able to delete and write whatever I want; if I want to
+relink I should just click the Relink button we already have."
+
+- Barcode input writes `text_override: e.target.value` (empty string is an override that draws
+  no barcode; Relink is the only way back to the product value). `KonvaTagLayer` and the print
+  renderer treat an empty override as "nothing to draw" (no bars, no digits, the plate and the
+  code strip still follow `show_code`), never as "fall back to the product".
+- Test: `InspectorPanel.test.tsx` - clearing the box calls `onUpdate` with `''` and the Relink
+  button stays; `KonvaTagLayer.barcode.test.tsx` - empty override draws no bars.

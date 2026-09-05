@@ -30,3 +30,9 @@ Plan: `PLAN-price-tag-r4.md`
 - AC-S4-7 Escape or clicking empty canvas leaves corner editing; undo reverts one drag.
 - AC-S4-8 A saved document from before this change opens unchanged (no `points` field is required).
 - AC-S4-9 Works at 1280px; the handles are usable with a mouse.
+
+## S5 barcode override
+- AC-S5-1 With a Barcode layer bound to a product that has a barcode, select all in "Barcode value" and press Delete: the box stays empty, the canvas draws no bars, the amber "Unlinked from product data" note and the Relink button show.
+- AC-S5-2 Type any value into the empty box: the canvas draws that value.
+- AC-S5-3 Click Relink: the box shows the product barcode again and the canvas draws it.
+- AC-S5-4 The PDF matches the canvas in all three states.
