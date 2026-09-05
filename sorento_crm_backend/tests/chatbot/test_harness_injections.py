@@ -136,6 +136,43 @@ class TestHarnessInjectionsG6:
         assert result.stage == "understood"
         assert _turn_row(session_factory, result.turn_id).status == "failed"
 
+    def test_a_mock_that_is_an_object_but_not_an_emission_names_the_missing_key(
+        self, session_factory, seeded, exploding_parser, stub_access
+    ) -> None:
+        """The production case, 5 Sep 2026: `mock_reformulator_output = {"nope": true}`.
+
+        It IS an object, so the "did not emit a JSON object" guard passes it, and the first
+        hard subscript hundreds of lines into `post_process` used to raise a bare
+        `KeyError: 'reference_positions'`. The turn failed at the right stage, but the row
+        carried a Python type name as its explanation - which reads as a CRM fault rather
+        than a malformed emission, and says nothing about what to fix.
+
+        The stage and status are unchanged (R5 / H44); what this pins is that the ERROR
+        names the key, and does so for a real model answer too, since both go through the
+        same check.
+        """
+        stub_access()
+        result = engine_mod.run_turn(
+            _envelope(is_test=True, mock_reformulator_output={"nope": True}),
+            session_factory=session_factory,
+        )
+
+        assert result.status == "failed"
+        assert result.stage == "understood"
+        row = _turn_row(session_factory, result.turn_id)
+        assert row.status == "failed"
+        assert row.stage == "understood"
+
+        error = row.error or ""
+        assert "parser emission missing" in error, error
+        assert "'reference_positions'" in error, error
+        # The old message, and nothing like it: a bare exception type on the trace is the
+        # defect this closes.
+        assert "KeyError" not in error, error
+        record = _record(row.trace, "understood")
+        assert record["status"] == "failed"
+        assert "parser emission missing" in (record["error"] or "")
+
     def test_a_live_envelope_ignores_the_mock_and_says_so(
         self, session_factory, seeded, stub_parser, stub_access
     ) -> None:
