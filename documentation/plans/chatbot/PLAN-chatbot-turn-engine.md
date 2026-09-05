@@ -138,8 +138,11 @@ POST /api/v1/external/chat/turn/{id}/complete   body = sub-output input contract
 `delegate` names the n8n lane that must still run during migration (`business_query`,
 `check_promotion`, `stock_denied`, `out_of_scope`, `low_signal`); n8n's `route` Switch
 shrinks by one output per migrated lane. `delegate = null` means the CRM finished the turn:
-the caller sends `reply` and executes `actions`. From S7 there is no `/complete` and no
-`delegate`.
+the caller sends `reply` and executes `actions`. From S7, with `CHATBOT_ORDERING_ENABLED`
+on, the CRM owns the tail: `/turn` returns the finished reply and `/complete` answers 410
+Gone. The `/complete` ROUTE and `delegate.py` are deleted at S8, not S7, because n8n's S2
+tail keeps calling `/complete` until the S7 promote lands on the n8n side and deleting the
+route before that would strand every turn a lane still completes.
 
 `actions[]` vocabulary (the caller executes, in order): `send_message {text, quick_replies,
 result_set}`, `send_attachments {attachments_src, reply}`, `assign_conversation
@@ -324,8 +327,37 @@ suite on the shared DB.
   PgBouncer (compose) with the no-session-across-I/O rule; ~50 parser calls in flight at the
   LLM provider (429 = failed stage with backoff); MCP server run with 2 to 4 workers; **n8n
   queue mode's per-worker concurrency limit (default 10) is the first throttle** and is a
-  config change (`N8N_CONCURRENCY_PRODUCTION_LIMIT` or more n8n workers). Beyond ~250
-  concurrent, API threads become the limit: turn on the worker-offload flag and add replicas.
+  config change (`N8N_CONCURRENCY_PRODUCTION_LIMIT` or more n8n workers).
+- **What the ceiling actually is, measured (5 Sep 2026, load gate 3b).** The estimate that
+  used to sit here ("beyond ~250 concurrent, API threads become the limit") was wrong about
+  which resource binds first, and the review that found it was right: the auth dependencies
+  ran on the request's `Depends(get_db)` session and never ended their transaction, so every
+  in-flight turn pinned one PgBouncer server connection (pool 50) for its whole duration,
+  the 45 s ordering wait included. That is fixed (one `db.rollback()` before `run_turn`).
+  The gate then ran, with `CHATBOT_ORDERING_ENABLED=true` on ONE uvicorn worker, mocked
+  parser, against a local backend:
+  - 50 contacts x 2 messages fired at once (100 turns): zero errors, zero contacts answered
+    out of arrival order, no overlapping turns, p50 0.79 s, **p95 1.15 s** (target 12 s);
+  - the 300-turn repeat (50 x 6): zero errors, zero out of order, p50 2.15 s, **p95 3.81 s**;
+  - database connections: the burst added **19** on top of the idle baseline, and with the
+    other processes on the shared dev database subtracted (6 with this backend stopped) the
+    worker held about **26 of its own 30** (`pool_size=10, max_overflow=20`) at peak. No
+    request ever waited for a connection - zero `QueuePool` timeouts in the log - but that
+    is 87%, not AC-711's "below 60%", on a single-worker lane box. Production runs
+    `WEB_CONCURRENCY: 8`, so the same burst spreads across eight pools; the number to watch
+    there is PgBouncer's 50 server connections, which the rollback above now frees between
+    transactions instead of holding for the whole turn. **Open with the owner: either the
+    60% clause is measured per production worker (where it holds) or the lane box needs a
+    bigger pool for the gate to mean it.**
+  - the real limit at this size is uvicorn's 40-thread pool for sync routes, not the
+    database. At 300 concurrent, 25 to 48 of the 50 contacts had their two messages reach
+    the ENGINE out of send order, because 300 requests contend for 40 threads before any
+    engine code runs. The CRM answers in the order it received them, which is all a
+    per-request ticket can promise; ordering at the true ingress would need `/chat/turn` to
+    be `async` and take the ticket on the event loop. **That is the trigger to make it
+    async** - and the same change is what would make the worker offload raise the
+    concurrency ceiling, which today it does not (it moves the LLM's CPU off the API
+    process, not the thread; see `_run_on_worker`).
 - Sync vs async does not change any of this; a callback design would have moved the same
   work and left the 1/s dispatcher in place.
 - API: `WEB_CONCURRENCY: 8` uvicorn workers (compose), default 40-thread pool each for sync
@@ -714,8 +746,11 @@ two subs unpublished; the outbound executes assign / comment (AC-506).
 
 ### S7 - Thin spine + CRM per-contact ordering
 
-`/turn` and `/complete` collapse into `/turn` returning the finished reply; `delegate.py` is
-deleted. `dispatch.py`: redis ticket FIFO per contact inside the request (AC-709, AC-710).
+`/turn` and `/complete` collapse into `/turn` returning the finished reply: in S7 mode
+(`CHATBOT_ORDERING_ENABLED`) `/complete` answers 410 Gone naming the mode. **Deleting the
+route and `delegate.py` moves to S8** - n8n's S2 tail still calls `/complete` until the S7
+promote lands on the n8n side, so the code stays until the caller is gone.
+`dispatch.py`: redis ticket FIFO per contact inside the request (AC-709, AC-710).
 D14 dry-run asserted by row counts (AC-702). Retry re-posts the envelope through the same
 ordering (AC-705). Optional worker offload behind `CHATBOT_TURN_ON_WORKER` (AC-703). Load gate
 3b before promote (AC-711). n8n: the dispatcher and its redis lists retired; ingress = webhook
@@ -728,7 +763,9 @@ here. Pilot on one contact first (AC-707), console containment proven (AC-708), 
 
 Legacy regex readers removed (AC-801), disabled n8n nodes deleted and exports refreshed
 (AC-802), hazard table closed out (AC-803), n8n repo `CLAUDE.md` updated to say the turn path
-is the CRM. Worktree GC.
+is the CRM. **The `/turn/{id}/complete` route and `delegate.py` are deleted here** (moved
+from S7: the route answers 410 in S7 mode from S7 on, and the code is removed once the S7
+n8n promote means nothing calls it). Worktree GC.
 
 ## Hazard disposition
 

@@ -633,19 +633,27 @@ taken, and the module's docstring says so.
 
 | flag | default | what it does |
 | --- | --- | --- |
-| `CHATBOT_ORDERING_ENABLED` | `false` | the request takes a redis ticket per contact and waits for the ticket before it (`app/services/chatbot/dispatch.py`) |
+| `CHATBOT_ORDERING_ENABLED` | `false` | **S7 mode.** The request takes a redis ticket per contact and waits for the ticket before it (`app/services/chatbot/dispatch.py`), AND the CRM owns the tail: `/turn` returns the finished reply, `/turn/{id}/complete` answers 410 Gone |
 | `CHATBOT_TURN_ON_WORKER` | `false` | the turn runs on the `chat` RQ queue instead of the API thread; the request still waits for it and answers the same body |
 
 Two more knobs, both with defaults that do not need touching for the promote:
 `CHATBOT_QUEUE_WAIT_SECONDS` (45) and `CHATBOT_TURN_WAIT_SECONDS` (60).
 
-**Nothing changes in n8n until the owner flips `CHATBOT_ORDERING_ENABLED`, and nothing
-changes in the CRM when they do except who waits.** That is the whole cutover: today
-`sorento-dispatcher` pops one contact per second and serialises the world; after the flip
-the CRM serialises per contact and different contacts run at once. Flipping the flag while
-the dispatcher is still in front of it is harmless (the CRM's ticket is always free, because
-the dispatcher already made sure of it), which is exactly why the order below is CRM flag
-first, n8n edit second.
+**Nothing changes in n8n until the owner flips `CHATBOT_ORDERING_ENABLED`.** That is the
+whole cutover: today `sorento-dispatcher` pops one contact per second and serialises the
+world; after the flip the CRM serialises per contact and different contacts run at once.
+Flipping the flag while the dispatcher is still in front of it does not disturb the
+ordering (the CRM's ticket is always free, because the dispatcher already made sure of it),
+which is why the order below is CRM flag first, n8n edit second.
+
+**But the flag has a second half, and it is a precondition, not a detail.** In S7 mode the
+CRM owns the tail: `/turn/{id}/complete` answers 410 Gone, because a caller arriving there
+is about to answer a turn the CRM already answered (H6, one trigger). So the flag must not
+be turned on until every lane completes INSIDE the CRM - S6c deployed and every branch kind
+listed in `system_settings.chatbot_completed_lanes`. Turn it on while a lane still
+delegates and that lane has nobody left to finish it: the head answers
+`delegate: <lane>`, n8n's `/complete` call is refused, and the row sits `delegated` until
+the sweep fails it. Check the settings row before step 2.
 
 ### Which turns this covers
 
@@ -670,8 +678,10 @@ ordering is not what is being measured.
 `CHATBOT_ORDERING_ENABLED=true`, restart the API. Nothing in n8n has changed yet, so the
 rollback is the same env var back to `false`: no workflow edit, no deploy of anything else.
 
-**Precondition:** the load gate (step 4) green on the lane's own backend, and
-`chatbot.turns` showing no rows failed at `stage = queued` in the shadow window.
+**Preconditions:** every branch kind in `system_settings.chatbot_completed_lanes` (see
+above - the flag also retires `/complete`), the load gate (step 4) green on the lane's own
+backend, and `chatbot.turns` showing no rows failed at `stage = queued` in the shadow
+window.
 
 ### Step 3 - retire the dispatcher, BOTH injectors in the same promote
 
@@ -703,11 +713,24 @@ python scripts/chatbot_load.py --base-url http://localhost:8002 --contacts 50 --
 python scripts/chatbot_load.py --base-url http://localhost:8002 --contacts 50 --messages 6   # the 300-turn repeat
 ```
 
-Green means: p95 turn time under 12 s, zero errors, every contact's replies in the order
-they were sent. It posts `is_test: true` envelopes (D14: nothing outside `chatbot.turns` is
-written and no WhatsApp message can leave), which is what makes it safe to run repeatedly.
-`--live-llm` exists for the one run that measures the real parser cost and must be pointed
-at a non-production backend.
+Green means: p95 turn time under 12 s, zero errors, and every contact's replies in the
+order the CRM RECEIVED that contact's messages, with no two of that contact's turns
+overlapping. Arrival order, not send order: the CRM cannot know which message the customer
+typed first, only which one reached it first, and the script reports the difference
+separately rather than failing on it (at 300 concurrent the load generator's own threads
+reorder its sends for about half the contacts). Order is graded from `chatbot.turns` after
+the run, not from the client's send order.
+
+It posts `is_test: true` envelopes (D14: nothing outside `chatbot.turns` is written and no
+WhatsApp message can leave), which is what makes it safe to run repeatedly. `--live-llm`
+exists for the one run that measures the real parser cost and must be pointed at a
+non-production backend. A non-local `--base-url` needs `--i-know`, because the contacts are
+seeded through the CHECKOUT's `DATABASE_URL` and nothing can prove it is the database the
+backend reads.
+
+Measured on this branch, 5 Sep 2026, ordering ON, one uvicorn worker, mocked parser: 100
+turns, zero errors, zero out of order, p95 1.15 s; the 300-turn repeat p95 3.81 s. Pool
+detail and the one number that missed its target are in the plan's capacity section.
 
 ### Step 5 - the switchover proof (AC-714), on the clone
 
@@ -728,15 +751,16 @@ week behind step 2 rather than riding with it.
 
 ### Not covered by this slice
 
-- **`/turn` and `/complete` do NOT collapse yet.** The plan's S7 line says the thin spine
-  ends with one trigger, and AC-701 says so "after S6c" - which has not landed. Until every
-  lane completes inside the CRM, `POST /turn/{turn_id}/complete` is how a delegated lane
-  finishes its turn, and deleting it would strand every turn n8n still completes.
-  `tests/chatbot/test_s7_ordering_and_offload.py::TestSingleTrigger` is the guard that goes
-  green on the day that collapse is real; it is red today for that reason and no other.
+- **The `/complete` ROUTE is not deleted yet, only refused.** In S7 mode it answers 410
+  Gone; with the flag off it works exactly as it did. The route and `delegate.py` are
+  deleted at S8, once the S7 promote means nothing calls it - deleting them now would
+  strand every turn a lane still completes.
+  `tests/chatbot/test_s7_ordering_and_offload.py::TestSingleTrigger` pins both halves.
 - **The worker offload stays off.** It is built and tested, and the trigger for turning it
-  on is measured, not scheduled: beyond roughly 250 concurrent turns the API threads become
-  the limit (the plan's capacity section). Turning it on also needs the server compose to
-  run a `worker_fast` container, which already drains `chat` via `worker.QUEUES`.
+  on is measured, not scheduled. Note what it does and does not buy: it moves the LLM
+  call's CPU and memory onto a worker, but the request still waits on an API thread
+  (`/chat/turn` is a synchronous endpoint), so it does not raise the concurrency ceiling.
+  Turning it on also needs the server compose to run a `worker_fast` container, which
+  already drains `chat` via `worker.QUEUES`.
 - **Nothing here changes the egress.** The CRM still never sends; the Switch on
   `action.kind` over the existing send / assign / comment nodes is S1's and stays as it is.
