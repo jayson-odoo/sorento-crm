@@ -944,3 +944,21 @@ contact inside the synchronous request. Different contacts run in parallel.
   stays a deployment property and is not on the screen. Given ordering on, when saved, then the
   screen shows the S7-mode consequence (every /complete answers 410) as the confirm dialog's
   text, and the setting round-trips through GET /settings/general. (D4, D5)
+
+- AC-811 `[BE][T]` **Every session the turn engine opens carries the contact's company scope,
+  resolved by the same rule as the API-key path.** The engine calls route and service
+  functions in process (the resolver route, and through it stock, promotions and product
+  attachments), so the router dependency that stamps company scope never runs for them.
+  Given a contact who belongs to company A, when a turn asks about a product that exists in
+  company A, then the resolve step names that product and the reply is not "Couldn't find".
+  Given a same-coded product in company B, which the contact does NOT belong to, then it
+  never surfaces (the fix must not widen to all companies). Given a contact with no
+  `respond_contact_companies` row, then the scope is an EMPTY frozenset, the product never
+  resolves, and the turn still completes (fail closed, never `None`). The identity rule is
+  the contact respond id plus the default workspace's `space_id`, resolved through
+  `company_scope_resolver.resolve_contact_company_scope`, the same function
+  `_resolve_api_key_scope` calls, so the engine's scope and the resolver route's scope cannot
+  drift. Evidence: `tests/chatbot/test_engine_company_scope.py` (4 tests: the contact's own
+  company resolves, the other company's same-coded product does not, an orphan contact fails
+  closed, and every session `engine._session` opens carries the contact's own company rather
+  than the harness default). (H56)

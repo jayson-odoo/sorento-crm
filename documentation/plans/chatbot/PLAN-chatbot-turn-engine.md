@@ -417,6 +417,13 @@ suite on the shared DB.
     async** - and the same change is what would make the worker offload raise the
     concurrency ceiling, which today it does not (it moves the LLM's CPU off the API
     process, not the thread; see `_run_on_worker`).
+  - **The 6 Sep load gate measured the MISS path and must be re-run after H56's fix.** Every
+    turn in that burst resolved with no company scope, so the resolver returned zero rows and
+    the turn stopped at "Couldn't find" before the fetch step: the p50 / p95 above are the
+    cost of a turn that never looked anything up. The fix adds two indexed reads per turn
+    (contact + memberships, on a session of its own) and, more importantly, lets the fetch
+    and answer halves actually run, so the numbers will move. Re-run the gate before the
+    R7 cutover and replace the figures above.
 - Sync vs async does not change any of this; a callback design would have moved the same
   work and left the 1/s dispatcher in place.
 - API: `WEB_CONCURRENCY: 8` uvicorn workers (compose), default 40-thread pool each for sync
@@ -993,6 +1000,7 @@ exists today - nothing here is an intention:
 | H53 | n8n hits production Postgres | **fixed (AC-604)** - tool search runs in process against the request's own session. The SLA reads by `live-respond-*` are **backlog (BL-049)**. |
 | H54 | dead custom fields | **fixed (AC-108)** - the port emits exactly one contact-field write, `{"is_human_intervened": false}` (`engine.py`, the single `update_contact_fields` action site); none of the five `removed:true` legacy fields is carried. Deleting the fields from n8n's own `Update a Contact` node is **S8b (AC-802)**. |
 | H55 | scope continuity never implemented | **backlog (BL-052)** - an undelivered requirement, not a bug to reproduce; deliver after parity. |
+| H56 | in-process route call skipped the company-scope dependency | **fixed (AC-811, this PR)** - the engine calls the resolver ROUTE (and through it stock, promotions, product attachments) in process, so `apply_company_scope` never ran and every session read `UNSET`, which `build_company_predicate` compiles to `false()` for every owned model: every business turn answered "Couldn't find: `<code>` (product)" for a product in the contact's own company (measured in prod and locally, 6 Sep 2026). `run_turn` now resolves the contact's companies once, from the SAME rule the X-API-Key path uses (`company_scope_resolver.resolve_contact_company_scope`), and wraps the session factory so every session the turn opens carries it; an unknown contact fails closed to zero rows, never to "all companies". Evidence: `tests/chatbot/test_engine_company_scope.py` (4 tests). NOT covered and named rather than left silent: the escalation lane opens its own session through `escalation_services.production_session()` -> `SessionLocal()`, outside the engine's factory, so it still runs unscoped (fail-closed); threading the scope there needs a signature change through `escalation.run()`. |
 
 ## Non-goals
 
