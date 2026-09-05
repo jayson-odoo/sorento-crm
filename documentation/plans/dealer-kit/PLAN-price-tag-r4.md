@@ -182,3 +182,25 @@ Findings, all on the same lane:
   component used by both the text and the price badge sections. Both renderers apply the
   fields to the badge's figure; the struck LP line, SP and NETT parts keep their proportion to
   the figure exactly as they scale today. Text Colour stays the badge's colour field.
+
+## S7 - Rail split survives a line change (GitHub #676)
+
+Reported 5 Sep from the sorento-crm-3d session: drag the TAG SIZE / LAYERS divider in the
+request designer's left rail, click another line, the split snaps back.
+
+Measured: `RequestTagDesigner.tsx:925` mounts `<TagCanvasEditor key={selectedTag.id}>`, so a
+line change remounts the editor. The split IS persisted already: `handleRailResize`
+(`TagCanvasEditor.tsx:1989-1998`) writes `railSplit` through `persistPanelLayout` ->
+`writePanelLayout` (localStorage `dealer-kit.canvas-panels.v1`) on every drag, and the hydrate
+effect (`:1907-1913`) reads it back after mount. But `react-resizable-panels` reads a panel's
+`defaultSize` ONCE at mount, and at first render `panelGroupSize.height` is 0 so `railPercent`
+is computed against the 600 fallback with the DEFAULT layout; when the stored value and the
+real group height arrive one render later, nothing tells the panel to move (the collapsed flags
+already get the same imperative treatment, `:1911-1912`). So the value round-trips through
+storage and is never applied. No state lifting needed.
+
+Fix: hold a ref on the rail `Panel`; after hydration AND once `panelGroupSize.height > 0`,
+call `railPanelRef.current?.resize(percentFromStored)` once (guard with a ref so a later
+ResizeObserver tick does not fight the user). Test in `TagCanvasEditor` panels test: stored
+`railSplit` in localStorage -> after mount the rail panel receives `resize(<percent>)`;
+remount with a new `key` -> same. Close #676 in the PR body.

@@ -47,3 +47,8 @@ Plan: `PLAN-price-tag-r4.md`
 - AC-S6-3 Promo variant is unchanged (always boxed).
 - AC-S6-4 Price badge inspector shows the same typography controls as a text layer; changing font family, size, bold/italic/underline/strike, weight, align, line height and letter spacing changes the figure on canvas and in the PDF identically.
 - AC-S6-5 A saved badge without these fields renders exactly as before.
+
+## S7 rail split (#676)
+- AC-S7-1 Drag the TAG SIZE / LAYERS divider, click another line: the split stays where it was put.
+- AC-S7-2 Reload the designer: the split is restored.
+- AC-S7-3 Collapsing/expanding the left panel still works as before.
