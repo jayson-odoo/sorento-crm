@@ -886,7 +886,9 @@ on save and on use: https only, no redirects followed, host must not resolve to 
 itself, loopback or a private range, so an admin-editable outbound URL is not an SSRF vector.
 `CHATBOT_RETRY_INGRESS_URL` / `_KEY` are deleted from `config.py`; the Retry button reads the
 workspace row and says "not configured" when it is empty. Security nits from the S2-S5
-review close (AC-806). The Prompts screen gets a "Run a turn" test for the two chatbot keys,
+review close (AC-806). The chatbot settings get a screen (AC-809, issue #679) and the two
+owner-operated switches leave the environment for system_settings (AC-810); only
+`CHATBOT_TURN_ON_WORKER` stays a deployment property. The Prompts screen gets a "Run a turn" test for the two chatbot keys,
 a dry-run envelope with the chosen prompt version whose trace renders inline (AC-807). S2's
 `tier_menu` STALE_FIXTURES entries migrate to CAPTURE_BODY_ADDITIONS (AC-808). Hazard table
 closed out (AC-803). Worktree GC.

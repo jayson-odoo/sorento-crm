@@ -890,3 +890,19 @@ contact inside the synchronous request. Different contacts run in parallel.
   writes outside `chatbot.turns` (D14); other keys keep the assistant dry run. (D5, D13)
 - AC-808 `[T]` S2's `tier_menu` STALE_FIXTURES entries are migrated to
   CAPTURE_BODY_ADDITIONS with the live body cited; STALE_FIXTURES is empty. (D8)
+- AC-809 `[BE][FE][T]` Chatbot settings screen (System > Settings > Chatbot, issue #679),
+  admin-only under `user_management.settings.edit`, saving through the existing
+  PUT /settings/general. Given the page, when it loads, then `chatbot_completed_lanes` renders
+  as a checkbox list over the branch-kind vocabulary served by GET /settings/chatbot-lanes
+  (single source `contracts.CRM_COMPLETED_BRANCH_KINDS`, each with a built/not-built flag from
+  the engine), the current list is checked, and `chatbot_stock_denial_enabled` and
+  `chatbot_unsupported_domains` are editable beside it. Given a lane the build cannot complete,
+  when checked, then the save is refused with a 422 naming the lane. No feature explanation
+  text inside the UI. Usable at 375px and 1280px. (D5)
+- AC-810 `[BE][FE][T]` The owner-operated switches leave the environment: `CHATBOT_BUSINESS_LANE_ENABLED`
+  and `CHATBOT_ORDERING_ENABLED` become system_settings columns `chatbot_business_lane_enabled`
+  and `chatbot_ordering_enabled` (default false, additive migration), read by the engine per
+  turn, toggled on the same screen; the env names are removed from config. `CHATBOT_TURN_ON_WORKER`
+  stays a deployment property and is not on the screen. Given ordering on, when saved, then the
+  screen shows the S7-mode consequence (every /complete answers 410) as the confirm dialog's
+  text, and the setting round-trips through GET /settings/general. (D4, D5)
