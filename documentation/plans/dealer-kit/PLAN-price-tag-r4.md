@@ -131,3 +131,35 @@ relink I should just click the Relink button we already have."
   code strip still follow `show_code`), never as "fall back to the product".
 - Test: `InspectorPanel.test.tsx` - clearing the box calls `onUpdate` with `''` and the Relink
   button stays; `KonvaTagLayer.barcode.test.tsx` - empty override draws no bars.
+
+## Round 4b - captain's test on :3080 (5 Sep, after the first six commits)
+
+Findings, all on the same lane:
+
+- **S3 miss.** Double-click on the seeded product-code layer still opens `{{product.code}}`.
+  The layer has a `slot_binding` AND a `text_override` holding the token (D57: a bound layer
+  typed over with a merge field keeps following the product). `editingResolvedValue`
+  (`TagCanvasEditor.tsx:2540`) returns null for any bound layer, so the rule never fires.
+  Fix: drop the `slot_binding` exclusion; the rule is "content is a sole token that resolves",
+  for any layer. Trim the resolved value (review nit 10).
+- **S4 UX.** The user selected Polygon and expected to drag the corners straight away; nothing
+  showed because handles were behind double-click. Revised design: a polygon layer that is the
+  SOLE selection shows its corner and edge handles immediately; the Transformer keeps only the
+  rotation anchor for it (no box anchors, they would sit on top of the corner handles). Corners
+  are no longer clamped to the box: a drag past the box grows the box. On drag end, convert the
+  points to local mm, take the bounding box, shift the layer's x/y along its rotated axes,
+  set width/height, and renormalise the points to [0, 1]. W/H inputs still scale the shape.
+  Double-click is no longer needed (keep it harmless). Label is "Polygon", not "Polygon (free
+  corners)". Edge handle and shape must stop together (review item 3 becomes moot once the
+  clamp is gone, but the handle must still snap to the recomputed midpoint on drag end).
+- **S6 price badge box.** "List price only" ignores Box Fill because `priceBadgeParts` sets
+  `boxed: false` for that variant (D26 kept the box for promo). The user wants the badge itself
+  to be the white callout instead of a shape behind it. Add `showBox?: boolean` to
+  `PriceBadgeLayerProps` (absent = false, so every saved list-only badge prints unchanged);
+  Inspector shows a "Box" checkbox for the list-only variant; promo stays always boxed.
+  `priceBadgeParts` takes `showBox` into account for `boxed`. And the box takes the same
+  optional `points` as a polygon, drawn with `roundedPolygonPath` in both renderers, with the
+  same on-selection handles as S4, so the slanted callout is the badge itself. Text stays
+  centred in the layer box.
+- Review should-fix 1 and 2 (relative font path in the browser; freeze the read-only decision
+  per edit session) and nits 4-9 land in the same pass.

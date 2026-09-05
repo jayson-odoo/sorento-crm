@@ -36,3 +36,12 @@ Plan: `PLAN-price-tag-r4.md`
 - AC-S5-2 Type any value into the empty box: the canvas draws that value.
 - AC-S5-3 Click Relink: the box shows the product barcode again and the canvas draws it.
 - AC-S5-4 The PDF matches the canvas in all three states.
+
+## Round 4b
+- AC-S3-5 The seeded product block's code layer (bound, override holds `{{product.code}}`) opens the inline editor on the resolved code, read-only, trimmed.
+- AC-S4-10 Selecting a polygon shows corner and edge handles at once; no double-click needed; the Transformer shows only the rotation anchor for it.
+- AC-S4-11 Dragging a corner past the layer box grows the box; the Inspector W/H update; the shape is where the cursor left it.
+- AC-S4-12 Shape select label reads "Polygon".
+- AC-S6-1 Price badge, variant "List price only": a "Box" checkbox appears; ticking it draws the box in Box Fill with Corner Radius, text in Text Colour; untick draws no box. Saved documents without the flag print as before (no box).
+- AC-S6-2 A boxed badge shows the same corner and edge handles as a polygon when selected; dragging makes the box a slanted callout on canvas and in the PDF; the price text stays centred.
+- AC-S6-3 Promo variant is unchanged (always boxed).
