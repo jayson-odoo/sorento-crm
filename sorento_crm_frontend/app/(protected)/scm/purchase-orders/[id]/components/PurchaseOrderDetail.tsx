@@ -1017,7 +1017,7 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
           set is the SAME in view and in edit - editing swaps a value for an input inside the
           tab it already lived in. */}
       <Tabs value={tab} onValueChange={setTab} className="w-full">
-        <TabsList variant="line" className="mb-4 w-full justify-start overflow-x-auto">
+        <TabsList variant="line" className="mb-4 w-full justify-start">
           <TabsTrigger value="general">
             <FileText />
             <span>General</span>

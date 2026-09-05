@@ -274,7 +274,7 @@ export function SalesAgentDetail({ id }: { id: string }) {
       {/* One tab per concern of the record, the same shape as the sales-order page. The tab
           set is the SAME in view and in edit. */}
       <Tabs value={tab} onValueChange={setTab} className="w-full">
-        <TabsList variant="line" className="mb-4 w-full justify-start overflow-x-auto">
+        <TabsList variant="line" className="mb-4 w-full justify-start">
           <TabsTrigger value="general">
             <FileText />
             <span>General</span>

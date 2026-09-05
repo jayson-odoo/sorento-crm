@@ -15,15 +15,27 @@ import { RemoveScroll } from 'react-remove-scroll';
  * `aria-hide`s everything outside the popover while open - wrong for a small inline
  * picker (see `SearchableSelect`'s `needsDialogScrollLock` comment for the two real
  * regressions that traced back to it). This wrapper is the scroll-lock half only.
+ *
+ * `open` and `active` are separate on purpose and BOTH gate the lock: `active` says
+ * whether this popover, if open, would need the wrap at all (e.g. only when its
+ * trigger sits inside another open Dialog); `open` is the popover's own open state.
+ * `react-remove-scroll` locks `document.body` for as long as `RemoveScroll` is
+ * MOUNTED, regardless of whether its child ends up rendering any DOM - so a caller
+ * that computes `active` from anything other than the live open state (e.g. a
+ * constant `true` for a `renderTrigger` case) previously left the lock engaged with
+ * nothing open, permanently. Requiring `open` here means that mistake can no longer
+ * reach `RemoveScroll`.
  */
 export function PopoverScrollLock({
+  open,
   active,
   children,
 }: {
+  open: boolean;
   active: boolean;
   children: React.ReactElement;
 }) {
-  if (!active) return children;
+  if (!open || !active) return children;
   return (
     <RemoveScroll as={Slot.Slot} allowPinchZoom>
       {children}

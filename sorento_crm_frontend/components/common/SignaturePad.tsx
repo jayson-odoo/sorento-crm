@@ -459,7 +459,7 @@ export function SignaturePad({
         <Tabs value={mode} onValueChange={(next) => setMode(next as SignatureMode)}>
           {/* Scrolls rather than overflowing the card at 375px, where three triggers plus the
               container padding are tight. */}
-          <TabsList variant="button" size="sm" className="w-full justify-start overflow-x-auto">
+          <TabsList variant="button" size="sm" className="w-full justify-start">
             <TabsTrigger value="draw">Draw</TabsTrigger>
             <TabsTrigger value="type">Type</TabsTrigger>
             <TabsTrigger value="initials">Initials</TabsTrigger>

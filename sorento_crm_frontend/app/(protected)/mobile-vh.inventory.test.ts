@@ -22,6 +22,14 @@
  * converged" fix round, so they land under ONE shared reason as follow-up
  * #567 rather than blocking this one. The original 2 Sep audit's 21 remaining
  * entries (after the three conversions above) keep their own per-file reason.
+ *
+ * Two of those 128 left the list on 5 Sep 2026 - `CellStockTable.tsx` and
+ * `StockDocumentsPanel.tsx`. Not as part of #567's mechanical `vh` -> `dvh`
+ * swap: their `max-h-[50vh]` / `max-h-[35vh]` were two of four nested scroll
+ * regions on the cell breakdown dialog's Stock tab, and they were deleted
+ * outright rather than converted. `cell-breakdown-scroll.inventory.test.ts`
+ * is what keeps them gone, so the baseline below drops by 2 files / 3 lines
+ * (one of the three was a comment naming the other file's 50vh).
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -86,12 +94,10 @@ const FRACTIONAL_VH_FILES = [
   'app/(protected)/project-sales/fulfilment-planning/components/BoardRankPopover.tsx',
   'app/(protected)/project-sales/fulfilment-planning/components/BoardTrailPopover.tsx',
   'app/(protected)/project-sales/fulfilment-planning/components/BorrowAddDialog.tsx',
-  'app/(protected)/project-sales/fulfilment-planning/components/CellStockTable.tsx',
   'app/(protected)/project-sales/fulfilment-planning/components/ClassificationProofPopover.tsx',
   'app/(protected)/project-sales/fulfilment-planning/components/FulfilmentBoardMatrix.tsx',
   'app/(protected)/project-sales/fulfilment-planning/components/PileQueueDialog.tsx',
   'app/(protected)/project-sales/fulfilment-planning/components/ReserveAddDialog.tsx',
-  'app/(protected)/project-sales/fulfilment-planning/components/StockDocumentsPanel.tsx',
   'app/(protected)/project-sales/lead-acceptance/components/NudgeAssigneeDialog.tsx',
   'app/(protected)/project-sales/leads/[leadId]/components/DisqualifyLeadDialog.tsx',
   'app/(protected)/project-sales/leads/[leadId]/components/EditLeadInformantDialog.tsx',
@@ -256,13 +262,13 @@ describe('fixed viewport-height sweep (M6-02 / M6-03)', () => {
     }
   });
 
-  it('the allowlist matches its baseline (226 lines, 150 files)', () => {
+  it('the allowlist matches its baseline (223 lines, 148 files)', () => {
     let matchingLines = 0;
     for (const file of ALLOWLIST.keys()) {
       const lines = fs.readFileSync(file, 'utf8').split('\n');
       matchingLines += lines.filter((line) => PATTERN.test(line)).length;
     }
-    expect(ALLOWLIST.size).toBe(150);
-    expect(matchingLines).toBe(226);
+    expect(ALLOWLIST.size).toBe(148);
+    expect(matchingLines).toBe(223);
   });
 });

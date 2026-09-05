@@ -81,14 +81,15 @@ describe('Tabs (S1-04)', () => {
     expect(list.className).toContain('[&::-webkit-scrollbar]:hidden');
   });
 
-  it('S1-04: the strip is masked at its right edge only while it scrolls', () => {
+  it('S1-04: the strip is masked at whichever edge still has more to show', () => {
     render(<Harness />);
     const list = screen.getByTestId('list');
 
-    // jsdom has no layout, so the strip "fits" and carries no mask.
-    expect(list).toHaveAttribute('data-fade', 'false');
+    // jsdom has no layout, so the strip "fits" and carries no mask on either edge.
+    expect(list).toHaveAttribute('data-fade-start', 'false');
+    expect(list).toHaveAttribute('data-fade-end', 'false');
     expect(list.className).toContain(
-      'data-[fade=true]:[mask-image:linear-gradient(to_right,black_calc(100%-24px),transparent)]',
+      'data-[fade-end=true]:data-[fade-start=false]:[mask-image:linear-gradient(to_right,black_calc(100%-24px),transparent)]',
     );
   });
 });

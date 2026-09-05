@@ -253,8 +253,9 @@ export const CellStockTable = React.forwardRef<
         const addressable = (row: StockSection['rows'][number]) =>
           Boolean(row.location && row.product_id && row.warehouse_id);
         const target =
-          section.rows.find((row) => row.location === location && addressable(row)) ??
-          section.rows.find(addressable);
+          section.rows.find(
+            (row) => row.location === location && addressable(row),
+          ) ?? section.rows.find(addressable);
         if (target?.location) {
           const key = target.location;
           setExpanded((current) => ({ ...current, [key]: true }));
@@ -370,9 +371,19 @@ export const CellStockTable = React.forwardRef<
           {`Available for ${forLine}`}
         </p>
       ) : null}
+      {/* NO vertical bound, and the Stock tab has exactly ONE scroll region: the dialog body
+        above this, which already owns a vertical viewport. This wrapper used to cap itself at
+        half the window height and scroll, which made it one of FOUR nested vertical scrollports
+        on this tab - the dialog body, this wrapper, the documents panel's own cap below it, and
+        the documents grid's scroller. Measured in a browser at 1440x900 with the Site pool
+        subtotal expanded, all four had `scrollHeight > clientHeight` at once, and the documents
+        table's header sat 33px ABOVE its parent panel's visible top, i.e. clipped out of sight,
+        while the wheel moved whichever region the pointer happened to be over rather than the
+        one the reader was reading. Horizontal scroll stays: the table is wider than the dialog
+        and has always scrolled sideways. */}
       <div
         data-testid="cell-stock-table"
-        className="max-h-[50vh] w-full overflow-x-auto overflow-y-auto overscroll-x-contain rounded-lg border border-border"
+        className="w-full overflow-x-auto overscroll-x-contain rounded-lg border border-border"
       >
         {/* `w-full`, never `table-fixed`: the table fills the dialog (the captain's screenshot
           had it stopping at two thirds with an empty band on the right), the numeric columns
@@ -612,7 +623,11 @@ export const CellStockTable = React.forwardRef<
                         // "-" it used to print read as missing data.
                         const total =
                           column.key === 'available-for-project'
-                            ? projectShareSubtotalOf(section, drawn, poolSharePct)
+                            ? projectShareSubtotalOf(
+                                section,
+                                drawn,
+                                poolSharePct,
+                              )
                             : isNet
                               ? section.net
                               : sumOf(section.rows, (entry) =>
@@ -716,14 +731,22 @@ export const CellStockTable = React.forwardRef<
                     column.key === 'available-for-project'
                       ? sumValues(
                           sections.map((section) =>
-                            projectShareSubtotalOf(section, drawn, poolSharePct),
+                            projectShareSubtotalOf(
+                              section,
+                              drawn,
+                              poolSharePct,
+                            ),
                           ),
                         )
                       : column.key === 'available'
                         ? sumValues(
-                            sections.map((section) => availableSubtotalOf(section, drawn)),
+                            sections.map((section) =>
+                              availableSubtotalOf(section, drawn),
+                            ),
                           )
-                        : sumOf(locations, (entry) => valueOf(column, entry, drawn));
+                        : sumOf(locations, (entry) =>
+                            valueOf(column, entry, drawn),
+                          );
                   return (
                     <td key={column.key} className={cn(NUMBER_COL, FOOT_CELL)}>
                       <span
@@ -846,8 +869,14 @@ function labelOf(where: BoardLocationWhere, netOf: string | null): string {
   return `${WHERE_LABELS[where]} subtotal`;
 }
 
+// NOT sticky. The header used to stick to the wrapper's own bounded scrollport, and with that
+// scrollport gone the only thing left to stick to is `DialogBody` - where the dialog's own search-and-jump
+// toolbar is already pinned at `top-0`. Two bands competing for the same offset needs a hard-coded
+// height for the first one, and that toolbar wraps to two lines below ~900px, so the number would
+// be wrong exactly where it matters. Inside a dialog the header scrolling away with its rows is
+// the cheaper trade.
 const HEAD_CELL =
-  'sticky top-0 z-10 border-b border-e border-border bg-muted px-2 py-1.5 text-start align-bottom font-medium';
+  'border-b border-e border-border bg-muted px-2 py-1.5 text-start align-bottom font-medium';
 const BODY_CELL = 'border-b border-e border-border px-2 py-1.5 align-middle';
 const FOOT_CELL =
   'border-b border-e border-border bg-muted/50 px-2 py-1.5 font-medium';
@@ -988,7 +1017,9 @@ function availableSubtotalOf(
 ): string | null {
   if (section.net !== null) return section.net;
   const column = NUMERIC_COLUMNS.find((entry) => entry.key === 'available');
-  return column ? sumOf(section.rows, (entry) => valueOf(column, entry, drawn)) : null;
+  return column
+    ? sumOf(section.rows, (entry) => valueOf(column, entry, drawn))
+    : null;
 }
 
 /**

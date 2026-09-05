@@ -37,7 +37,7 @@ export default function FormDetailWithSLATabs({
       {/* The house underlined strip (same as the product/user detail pages), so
           every record in the system wears one tab style. The list carries its
           own bottom margin, so the root drops space-y. */}
-      <TabsList variant="line" className="mb-5 w-full justify-start overflow-x-auto">
+      <TabsList variant="line" className="mb-5 w-full justify-start">
         <TabsTrigger value="details">
           <FileText />
           <span>Details</span>

@@ -287,7 +287,7 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
           <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
             {/* Same underlined strip the user detail page uses, so a record's tabs look the
                 same wherever you are in the system rather than one screen per style. */}
-            <TabsList variant="line" className="mb-5 w-full justify-start overflow-x-auto">
+            <TabsList variant="line" className="mb-5 w-full justify-start">
               <TabsTrigger value="overview">
                 <FileText />
                 <span>Overview</span>
