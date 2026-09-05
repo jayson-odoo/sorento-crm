@@ -205,12 +205,18 @@ class TestEndToEndThroughRunTurn:
         stub_access,
         monkeypatch,
     ):
-        """ONE read, on the session routing already holds.
+        """ONE read, on a session the turn already holds.
 
-        Both chatbot switches live on the same singleton, so reading it twice would be a
+        Every chatbot switch lives on the same singleton, so reading it twice would be a
         second round trip for no new information, and reading it on a session of its own
         would be the thing the capacity rule forbids. `[1]` is the whole assertion: called
-        once, with exactly the one session routing opened.
+        once, with exactly one session open.
+
+        AC-810 moved the read EARLIER, from the routing session to the dedup session
+        `run_turn` opens first, because S7 mode is a settings column now and the ordering
+        ticket is taken before the row insert. Routing reads the snapshot instead. The
+        property asserted here is unchanged and is the one that matters: one query, on a
+        session that already exists.
         """
         self._enable(system_settings_row, ["low_signal"])
         self._casual(stub_parser, stub_access)

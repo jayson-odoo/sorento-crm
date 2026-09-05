@@ -36,7 +36,7 @@ is untouched here; do not assume it lands as part of this file going green.
 * `engine.run_turn`, at the top of the wrapped stage-runner (`stage[0]` already exists for
   exactly this reason - the generic `except Exception` in `run_turn` records whatever
   `stage[0]` says), sets `stage[0] = "queued"` and - only when
-  `settings.chatbot_ordering_enabled` is `True` (default `False` until S7 promotes) - calls
+  `system_settings.chatbot_ordering_enabled` is `True` (default `False` until S7 promotes) - calls
   `dispatch.contact_ticket` then `dispatch.wait_for_turn(timeout_s=settings.
   chatbot_queue_wait_seconds)`. A `QueueWait` propagates out of the ordering call exactly like
   any other exception the existing handler already catches - `stage[0]` is `"queued"`, so the
@@ -84,6 +84,7 @@ from app.models.chatbot_turn import ChatbotTurn
 from app.services.chatbot import engine as engine_mod
 from app.services.chatbot.contracts import Envelope, TurnRequest
 from app.services.chatbot.head import parser as parser_mod
+from tests.chatbot.conftest import set_chatbot_switches
 from tests.chatbot.test_engine import (  # noqa: F401  - fixtures used by name
     CONTACT_ID,
     _envelope,
@@ -213,7 +214,7 @@ def _complete_in_the_crm(monkeypatch) -> None:
 
     S6c is what makes this possible: before it, `business_query` was not in
     `CRM_COMPLETED_BRANCH_KINDS` and an S7-mode turn on it could only be `failed`. It is
-    now, but the business arms need `CHATBOT_BUSINESS_LANE_ENABLED`, a resolver, a tool
+    now, but the business arms need `chatbot_business_lane_enabled`, a resolver, a tool
     search and two MCP probes - none of which these tests are about. `clarify_menu` is the
     cheapest CRM-completed lane: the copy registry and the tail, no network, no model call.
 
@@ -234,16 +235,17 @@ def _complete_in_the_crm(monkeypatch) -> None:
 
 
 def _enable_ordering(monkeypatch, *, queue_wait_seconds: float = 45.0) -> None:
-    """Isolates the two `AttributeError`s these tests are RED on today.
+    """Turn S7 mode on for the engine, at the predicate rather than at the settings ROW.
 
-    `settings.chatbot_ordering_enabled` / `settings.chatbot_queue_wait_seconds` do not exist
-    on `Settings` yet - `monkeypatch.setattr(settings, name, value, raising=False)` still goes
-    through pydantic's own `__setattr__`, which rejects an undeclared field with
-    `ValueError: "Settings" object has no field "..."` regardless of `raising`. That IS this
-    suite's red reason for every test that calls this helper, until the coder adds both
-    fields to `app.config.Settings`.
+    AC-810 made S7 mode `system_settings.chatbot_ordering_enabled`, and every turn in this
+    file runs on `SessionLocal` - the real database. The same reason `_nothing_enabled`
+    patches `_enabled_lanes` instead of the singleton applies here and applies harder: a
+    test that died between setting the column and restoring it would leave S7 mode on for
+    the whole box, and n8n's `/complete` calls would start answering 410. The column that
+    actually drives this predicate is graded in `test_s8_switches_in_settings.py`, on a
+    blank schema, where flipping it costs nothing.
     """
-    monkeypatch.setattr(settings, "chatbot_ordering_enabled", True, raising=False)
+    monkeypatch.setattr(engine_mod, "_s7_mode", lambda *args, **kwargs: True)
     monkeypatch.setattr(settings, "chatbot_queue_wait_seconds", queue_wait_seconds, raising=False)
 
 
@@ -253,9 +255,9 @@ class TestOrderingFlagDefaultOffBypassesTickets:
     def test_ordering_flag_default_off_bypasses_tickets(
         self, session_factory, seeded, stub_parser, stub_access, monkeypatch
     ) -> None:
-        assert settings.chatbot_ordering_enabled is False, (
-            "this test assumes the field defaults False once it exists; if this line itself "
-            "is the failure, the field is missing entirely (also a valid red reason)"
+        assert engine_mod._s7_mode(session_factory()) is False, (
+            "AC-810: S7 mode defaults off, and a blank install with no system_settings row "
+            "at all reads as off too - the safe direction"
         )
 
         from app.services.chatbot import dispatch  # noqa: F401 - may not exist yet (RED)
@@ -716,8 +718,8 @@ class TestS7ModeRefusesADelegatingLane:
     def test_with_the_flag_off_the_same_turn_still_delegates(
         self, real_contacts, stub_engine_seams, monkeypatch
     ) -> None:
-        """Flag off is production today: the lane delegates and n8n completes it."""
-        monkeypatch.setattr(settings, "chatbot_ordering_enabled", False, raising=False)
+        """The switch off is production today: the lane delegates and n8n completes it."""
+        monkeypatch.setattr(engine_mod, "_s7_mode", lambda *args, **kwargs: False)
         self._nothing_enabled(monkeypatch)
         monkeypatch.setattr(parser_mod, "parse", lambda config, user_block: _parser_output())
         contact = real_contacts("s7-orphan-off")
@@ -742,7 +744,8 @@ class TestSingleTrigger:
     `documentation/plans/chatbot/n8n-changes.md`, S7 "Not covered by this slice").
 
     What S7 owes instead, and what this asserts: with the S7 mode flag on
-    (`CHATBOT_ORDERING_ENABLED`, the same flag that turns per-contact ordering on, because
+    (`system_settings.chatbot_ordering_enabled`, the same switch that turns per-contact
+    ordering on, because
     it is the same promote) `/turn` runs the whole turn and returns the finished reply and
     actions, and every `/complete` variant answers 410 Gone naming S7 mode. With the flag
     off - the default, and what production runs today - nothing changes.
@@ -828,9 +831,9 @@ class TestSingleTrigger:
         )
 
     def test_s7_mode_turn_returns_the_finished_reply_and_complete_is_gone(
-        self, api, monkeypatch
+        self, api, session_factory
     ) -> None:
-        monkeypatch.setattr(settings, "chatbot_ordering_enabled", True, raising=False)
+        set_chatbot_switches(session_factory, ordering=True)
 
         turn = api.post(
             "/chat/turn",
@@ -848,8 +851,8 @@ class TestSingleTrigger:
         assert gone.status_code == 410, gone.text
         assert "S7 mode" in gone.text, gone.text
 
-    def test_with_the_flag_off_complete_still_works(self, api, monkeypatch) -> None:
-        monkeypatch.setattr(settings, "chatbot_ordering_enabled", False, raising=False)
+    def test_with_the_flag_off_complete_still_works(self, api, session_factory) -> None:
+        set_chatbot_switches(session_factory, ordering=False)
 
         completed = api.post(
             f"/chat/turn/{TestSingleTrigger._DONE_TURN['turn_id']}/complete",

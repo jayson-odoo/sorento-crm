@@ -48,7 +48,13 @@ STAGGER_SECONDS = 0.05
 
 @pytest.fixture()
 def _ordering_on(monkeypatch):
-    monkeypatch.setattr(settings, "chatbot_ordering_enabled", True, raising=False)
+    """S7 mode on at the engine's predicate, not at the settings row.
+
+    Same reason as `test_s7_ordering_and_offload._enable_ordering`: this turn runs on
+    `SessionLocal`, the real database, and a singleton left flipped by a test that died
+    mid-run would turn S7 mode on for the whole box (AC-810).
+    """
+    monkeypatch.setattr(engine_mod, "_s7_mode", lambda *args, **kwargs: True)
     monkeypatch.setattr(settings, "chatbot_queue_wait_seconds", 20.0, raising=False)
 
 

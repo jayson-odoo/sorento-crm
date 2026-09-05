@@ -73,6 +73,7 @@ from typing import Any
 import pytest
 
 from tests.chatbot import _corpus, divergences
+from tests.chatbot.conftest import set_chatbot_switches
 from tests.chatbot.test_engine import (  # noqa: F401  - fixtures used by name (S6a precedent)
     _envelope,
     seeded,
@@ -726,7 +727,7 @@ class TestIf6Dispatch:
 # `system_settings.chatbot_completed_lanes` (a JSON list column, default `[]` - new,
 # beside `chatbot_stock_denial_enabled` from S3). With the default (empty list) the
 # business lane still runs up to S6a's delegate seam
-# (`settings.chatbot_business_lane_enabled`) and delegates with `delegate_payload`
+# (`system_settings.chatbot_business_lane_enabled`) and delegates with `delegate_payload`
 # attached, exactly as `test_s6a_gate_dry_run_and_seams.py` already covers - this is
 # the SAME decision, gated by a second, independent flag rather than replacing the
 # first. `engine._enabled_lanes(db, row)` reads the column off the row the turn already
@@ -777,11 +778,10 @@ class TestChatbotCompletedLanesEngineWiring:
         still delegates - the S6c completion gate is ADDITIVE to S6a's existing
         `chatbot_business_lane_enabled` seam, never a silent behaviour change for an
         install that has not opted a lane in yet."""
-        from app.config import settings
         from app.services.chatbot import engine as engine_mod
         from tests.chatbot.test_engine import _envelope
 
-        monkeypatch.setattr(settings, "chatbot_business_lane_enabled", True)
+        set_chatbot_switches(session_factory, business_lane=True)
         calls: list[str] = []
         bundle = self._stub_bundle(calls)
         monkeypatch.setattr(
@@ -805,7 +805,6 @@ class TestChatbotCompletedLanesEngineWiring:
     def test_seeded_completed_lane_finishes_the_turn_without_delegating(
         self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
     ) -> None:
-        from app.config import settings
         from app.models.user import SystemSetting
         from app.services.chatbot import engine as engine_mod
         from tests.chatbot.test_engine import _envelope
@@ -815,7 +814,7 @@ class TestChatbotCompletedLanesEngineWiring:
         setting.chatbot_completed_lanes = ["business_query"]
         db.commit()
 
-        monkeypatch.setattr(settings, "chatbot_business_lane_enabled", True)
+        set_chatbot_switches(session_factory, business_lane=True)
         bundle = self._stub_bundle([])
         monkeypatch.setattr(
             engine_mod.business_services,
@@ -866,10 +865,8 @@ class TestAC604FetchErrorIsAnOutcomeNotAnEmptyTurn:
             "fetch": {"_fetch_arm": "error", "error": "no MCP tool matched this question"},
         }
 
-    def _wire(self, engine_mod, monkeypatch, calls: list) -> None:
-        from app.config import settings
-
-        monkeypatch.setattr(settings, "chatbot_business_lane_enabled", True)
+    def _wire(self, session_factory, engine_mod, monkeypatch, calls: list) -> None:
+        set_chatbot_switches(session_factory, business_lane=True)
         bundle = TestChatbotCompletedLanesEngineWiring._stub_bundle([])
         monkeypatch.setattr(
             engine_mod.business_services,
@@ -911,7 +908,7 @@ class TestAC604FetchErrorIsAnOutcomeNotAnEmptyTurn:
         db.commit()
 
         answered: list[dict] = []
-        self._wire(engine_mod, monkeypatch, answered)
+        self._wire(session_factory, engine_mod, monkeypatch, answered)
         stub_parser()
         stub_access()
 
@@ -932,7 +929,7 @@ class TestAC604FetchErrorIsAnOutcomeNotAnEmptyTurn:
 
         assert (system_settings_row.chatbot_completed_lanes or []) == []
         answered: list[dict] = []
-        self._wire(engine_mod, monkeypatch, answered)
+        self._wire(session_factory, engine_mod, monkeypatch, answered)
         stub_parser()
         stub_access()
 

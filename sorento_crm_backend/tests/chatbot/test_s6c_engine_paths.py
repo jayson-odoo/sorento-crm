@@ -23,6 +23,7 @@ from app.services.chatbot.lanes.business.services import (
     ResolveGateServices,
 )
 from tests.chatbot import _corpus
+from tests.chatbot.conftest import set_chatbot_switches
 from tests.chatbot.test_engine import _envelope, _parser_output, seeded, stub_access, stub_parser
 from tests.chatbot.test_s6c_answer_lane import (
     TestChatbotCompletedLanesEngineWiring as _EngineWiring,
@@ -128,10 +129,8 @@ class TestH11ZeroToolsIsAnOutcomeEndToEnd:
         )
 
     @classmethod
-    def _wire(cls, engine_mod, monkeypatch) -> None:
-        from app.config import settings
-
-        monkeypatch.setattr(settings, "chatbot_business_lane_enabled", True)
+    def _wire(cls, session_factory, engine_mod, monkeypatch) -> None:
+        set_chatbot_switches(session_factory, business_lane=True)
         bundle = _EngineWiring._stub_bundle([])
         monkeypatch.setattr(
             engine_mod.business_services,
@@ -166,7 +165,7 @@ class TestH11ZeroToolsIsAnOutcomeEndToEnd:
         setting.chatbot_completed_lanes = ["business_query"]
         db.commit()
 
-        self._wire(engine_mod, monkeypatch)
+        self._wire(session_factory, engine_mod, monkeypatch)
         stub_parser(_parser_output(domain_hint="forms", entities=[], user_goal="checking a form"))
         stub_access()
 
@@ -188,7 +187,7 @@ class TestH11ZeroToolsIsAnOutcomeEndToEnd:
         from app.services.chatbot import engine as engine_mod
 
         assert (system_settings_row.chatbot_completed_lanes or []) == []
-        self._wire(engine_mod, monkeypatch)
+        self._wire(session_factory, engine_mod, monkeypatch)
         stub_parser(_parser_output(domain_hint="forms", entities=[], user_goal="checking a form"))
         stub_access()
 
@@ -230,10 +229,8 @@ class TestR1DemandQuantityAnswerEndToEnd:
         )
 
     @classmethod
-    def _wire(cls, engine_mod, monkeypatch) -> None:
-        from app.config import settings
-
-        monkeypatch.setattr(settings, "chatbot_business_lane_enabled", True)
+    def _wire(cls, session_factory, engine_mod, monkeypatch) -> None:
+        set_chatbot_switches(session_factory, business_lane=True)
         bundle = _srtwc8517_resolved_bundle()
         monkeypatch.setattr(
             engine_mod.business_services,
@@ -274,7 +271,7 @@ class TestR1DemandQuantityAnswerEndToEnd:
         setting.chatbot_completed_lanes = ["stock_denied"]
         db.commit()
 
-        self._wire(engine_mod, monkeypatch)
+        self._wire(session_factory, engine_mod, monkeypatch)
         stub_parser(
             _parser_output(
                 intent_hint="check_stock",
@@ -314,7 +311,7 @@ class TestR1DemandQuantityAnswerEndToEnd:
         setting.chatbot_completed_lanes = ["business_query"]
         db.commit()
 
-        self._wire(engine_mod, monkeypatch)
+        self._wire(session_factory, engine_mod, monkeypatch)
         stub_parser(
             _parser_output(
                 intent_hint="check_stock",
@@ -396,7 +393,7 @@ class TestTierAskFetchArmReachesAccessLevelChoiceEndToEnd:
         setting.chatbot_completed_lanes = ["business_query"]
         db.commit()
 
-        monkeypatch.setattr(settings, "chatbot_business_lane_enabled", True)
+        set_chatbot_switches(session_factory, business_lane=True)
         bundle = _EngineWiring._stub_bundle([])
         monkeypatch.setattr(
             engine_mod.business_services,

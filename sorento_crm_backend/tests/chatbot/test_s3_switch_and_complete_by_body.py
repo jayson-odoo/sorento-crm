@@ -112,7 +112,7 @@ class TestTheCompletedLaneSwitch:
         """The CODE half is a wall, and after S6c the wall is the DEPLOYMENT switch.
 
         `business_query` is now in `CRM_COMPLETED_BRANCH_KINDS` - the lane shipped - but it
-        only runs when `CHATBOT_BUSINESS_LANE_ENABLED` is on, and that is off by default
+        only runs when `chatbot_business_lane_enabled` is on, and that is off by default
         (and off here). Naming the arm in `chatbot_completed_lanes` first must therefore
         still delegate, not close a turn nothing composed.
         """
@@ -161,7 +161,7 @@ class TestTheCompletedLaneSwitch:
             "a_lane_from_the_future"
         )
         # `business_query` now passes the CODE half; the engine's second switch
-        # (`CHATBOT_BUSINESS_LANE_ENABLED`) is what still delegates it, and the end-to-end
+        # (`chatbot_business_lane_enabled`) is what still delegates it, and the end-to-end
         # test above is where that is graded.
         assert delegate_for("business_query", frozenset({"business_query"})) is None
         # A lane the code CAN finish is still delegated until the list names it.
@@ -813,7 +813,7 @@ class TestSendActionShape:
         # is skipped (those three exits are answers in their own right), and
         # `complete_answer` raises so `_run_business_answer`'s except arm is what builds
         # the reply.
-        monkeypatch.setattr(engine_mod, "_business_lane_enabled", lambda: True)
+        monkeypatch.setattr(engine_mod, "_business_lane_enabled", lambda *a, **k: True)
         monkeypatch.setattr(
             engine_mod.business,
             "run_until_exit",
