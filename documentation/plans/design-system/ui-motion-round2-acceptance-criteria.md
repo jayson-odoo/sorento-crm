@@ -364,6 +364,34 @@ Baseline measured on `origin/main` e1adad4d2, 2 Sep 2026.
   `PlanRowDialog`'s `project`/`retail` kind), the two other families the brief named as unreached
   by the evidence run. All three pass: none of the three families' grid scrollers carries a
   bounding `max-h-` inside its own dialog body today.
+  **Captain ruling (5 Sep 2026): page change keeps the scroller position by design.** A page,
+  sort or filter change does NOT return the grid's scroller to the top. The pager sits below the
+  scroller, so the reader keeps paging from the same spot without the page moving under the
+  cursor. Raised as a candidate fix on 5 Sep (a reader at the bottom of page 1 clicks Next and
+  page 2 arrives still scrolled, because M4's `keepPreviousData` holds the rows through the
+  fetch and `scrollTop` is never reset) and ruled against: the position is the feature.
+  **Evidence run 3, follow-up (5 Sep 2026): the four nested scroll regions, fixed.** Finding 2
+  above left (1), (2) and (3) as PRE-EXISTING and out of M5 scope. They were reported again
+  hands-on, on the lane AND in production, so they are fixed now: the Stock tab has exactly ONE
+  scroll region, the dialog body. `CellStockTable`'s half-viewport wrapper and
+  `StockDocumentsPanel`'s third-of-a-viewport panel are both unbounded, and the stock table's
+  header is no longer sticky - with those scrollports gone the only thing left to stick to is
+  the dialog body, where the dialog's own toolbar is already pinned at `top-0`, and clearing it
+  would need a hard-coded toolbar height that is wrong as soon as the toolbar wraps. The cost,
+  stated: an open ledger renders all its rows (up to 501) and the dialog body scrolls past it.
+  Measured before: four boxes overflowing at once, the inner header 33px above its clip.
+  Measured after: one, `dialog-body` 652/1907.
+  **And the rule behind it, as a DEFAULT (5 Sep 2026).** A grid that finds an enclosing
+  `DataGridContext` renders unbounded and non-sticky unless the caller names a value, so a grid
+  in another grid's body cannot open a scrollport inside one. Fourteen call sites already did
+  this by hand; the fifteenth forgot, which is what shipped. `headerSticky` now follows from the
+  scrollport rather than standing beside it - the M5-05 absolute rule is unchanged wherever it
+  can be observed, and on an unbounded grid the class only ever claimed something untrue.
+  `components/ui/data-grid.nested.test.tsx` (behaviour) and
+  `components/ui/data-grid.nested.inventory.test.ts` (the census of every nesting site, three
+  scans) hold it. One site stays an explicit opt-out: `StockDocumentsPanel`, because one of its
+  three parents is `CellStockTable`'s hand-rolled `<table>` carve-out, which has no grid context
+  for the default to read.
 - **M5-06** `[UX] [vitest]` No product file imports `@/components/ui/table` (baseline 24). Any
   file that cannot migrate sits on an allowlist in the test with a one-line reason, and the PR
   lists them.
