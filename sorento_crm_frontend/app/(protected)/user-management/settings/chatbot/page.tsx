@@ -98,26 +98,33 @@ export default function ChatbotSettingsPage() {
           <CardTitle>Lanes the CRM answers</CardTitle>
         </CardHeader>
         <CardContent className="grid grid-cols-1 gap-4 py-5 sm:grid-cols-2">
-          {lanes.map((lane) => (
-            <div key={lane.kind} className="flex items-center gap-2.5">
-              <Checkbox
-                id={`chatbot-lane-${lane.kind}`}
-                checked={draft.chatbot_completed_lanes.includes(lane.kind)}
-                disabled={!lane.built}
-                onCheckedChange={(checked) => toggleLane(lane.kind, checked === true)}
-              />
-              <Label
-                htmlFor={`chatbot-lane-${lane.kind}`}
-                className="font-normal cursor-pointer truncate"
-                title={lane.kind}
-              >
-                {lane.kind}
-              </Label>
-              {lane.built ? null : (
-                <span className="text-xs text-muted-foreground shrink-0">Not built</span>
-              )}
-            </div>
-          ))}
+          {lanes.map((lane) => {
+            const checked = draft.chatbot_completed_lanes.includes(lane.kind);
+            return (
+              <div key={lane.kind} className="flex items-center gap-2.5">
+                <Checkbox
+                  id={`chatbot-lane-${lane.kind}`}
+                  checked={checked}
+                  // Unbuilt blocks turning one ON, never turning one OFF. A kind listed
+                  // while its switch was on and then stranded when it went off would
+                  // otherwise be a checkbox nobody can clear, which is a trap rather
+                  // than a guard.
+                  disabled={!lane.built && !checked}
+                  onCheckedChange={(next) => toggleLane(lane.kind, next === true)}
+                />
+                <Label
+                  htmlFor={`chatbot-lane-${lane.kind}`}
+                  className="font-normal cursor-pointer truncate"
+                  title={lane.kind}
+                >
+                  {lane.kind}
+                </Label>
+                {lane.built ? null : (
+                  <span className="text-xs text-muted-foreground shrink-0">Not built</span>
+                )}
+              </div>
+            );
+          })}
         </CardContent>
       </Card>
 

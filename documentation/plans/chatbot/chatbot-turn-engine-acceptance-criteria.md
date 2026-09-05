@@ -913,9 +913,30 @@ contact inside the synchronous request. Different contacts run in parallel.
   as a checkbox list over the branch-kind vocabulary served by GET /settings/chatbot-lanes
   (single source `contracts.CRM_COMPLETED_BRANCH_KINDS`, each with a built/not-built flag from
   the engine), the current list is checked, and `chatbot_stock_denial_enabled` and
-  `chatbot_unsupported_domains` are editable beside it. Given a lane the build cannot complete,
-  when checked, then the save is refused with a 422 naming the lane. No feature explanation
-  text inside the UI. Usable at 375px and 1280px. (D5)
+  `chatbot_unsupported_domains` are editable beside it. Given a branch kind outside
+  `contracts.CRM_COMPLETED_BRANCH_KINDS`, when saved, then the save is refused with a 422
+  naming the kind. No feature explanation text inside the UI. Usable at 375px and 1280px. (D5)
+
+  **`built` is a UI hint, and the 422 is scoped to the vocabulary** (amended 5 Sep 2026,
+  at implementation; security review round 2 asked for the line to say what shipped).
+  Two conditions were folded into one sentence here and they are not the same thing:
+
+  - **Not in `CRM_COMPLETED_BRANCH_KINDS`** means no code in this build can finish that
+    kind, so the save is a 422 naming it. That is the sentence above, and
+    `tests/chatbot/test_s8_settings_screen.py` grades it.
+  - **`built == false`** means the kind ships but its second switch
+    (`chatbot_business_lane_enabled`, which only the three business arms have) is off. That
+    combination is NOT refused, because the promote sequence requires it: AC-810's own
+    `test_business_lane_off_via_the_row_still_delegates` lists `business_query` with the
+    switch off and asserts the turn DELEGATES, and `engine.py` restores the delegate for
+    exactly that case so the turn is never left silent. Refusing the save would forbid a
+    state the engine is built to handle, and would make "add the lane, then turn the
+    switch on" unorderable.
+
+  So the screen carries `built` rather than the server: an unbuilt kind's checkbox is
+  disabled and labelled "Not built", and a kind already listed when the switch went off
+  stays enabled so it can be UNCHECKED (a disabled checkbox the owner cannot clear would
+  be a trap, not a guard).
 - AC-810 `[BE][FE][T]` The owner-operated switches leave the environment: `CHATBOT_BUSINESS_LANE_ENABLED`
   and `CHATBOT_ORDERING_ENABLED` become system_settings columns `chatbot_business_lane_enabled`
   and `chatbot_ordering_enabled` (default false, additive migration), read by the engine per
