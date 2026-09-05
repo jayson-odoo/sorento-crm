@@ -12,7 +12,10 @@ Two things, one migration, because both are what the S3 lanes read on their firs
    composed from the persisted pool - so they arrive with their lane, here.
 
 `chatbot_completed_lanes` is NOT here: S4 owns that column and adds it in
-`477_chatbot_lanes`, which this chains onto. One switch, one migration.
+`477_chatbot_lanes`, which this still comes after. One switch, one migration. The
+`down_revision` names S2b's `474_chatbot_turn_retry` rather than 477 directly, because
+both slices branched off 477 and the lane merge would otherwise carry two alembic heads;
+474 chains onto 477, so the order the database applies them in is unchanged.
 
 BACKFILL: `ADD COLUMN ... NOT NULL DEFAULT` fills every existing row in the same
 statement, so the settings singleton reads the two literals immediately rather than
@@ -20,7 +23,7 @@ falling back. That IS the backfill; there is no follow-up UPDATE, because a NOT 
 column cannot hold the NULL such an UPDATE would look for.
 
 Revision ID: 478_chatbot_s3_copy
-Revises: 477_chatbot_lanes
+Revises: 474_chatbot_turn_retry
 """
 import sqlalchemy as sa
 from alembic import op
@@ -29,7 +32,7 @@ from sqlalchemy.dialects import postgresql
 from app.services.ai_prompt_seed import seed_prompt_registry
 
 revision = "478_chatbot_s3_copy"
-down_revision = "477_chatbot_lanes"
+down_revision = "474_chatbot_turn_retry"
 branch_labels = None
 depends_on = None
 
