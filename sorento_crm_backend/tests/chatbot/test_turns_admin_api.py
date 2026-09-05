@@ -19,15 +19,19 @@ Contract this is built against:
 CORRECTED FACT (from the coordinator, superseding this file's original assumption 4):
 n8n's dispatcher redis is a SEPARATE instance on the n8n VPS and must not be touched from
 here. The real pre-S7 retry path is an outbound HTTP POST to n8n's existing inject
-webhook - `settings.chatbot_retry_ingress_url` (env `CHATBOT_RETRY_INGRESS_URL`,
-production `https://automate-sorento.foundryx.my/webhook/sorento-main-inject`) - with the
-ORIGINAL respond.io webhook body (`envelope.message`) and a shared
-`X-Chatbot-Retry-Key` header from `settings.chatbot_retry_ingress_key` (env
-`CHATBOT_RETRY_INGRESS_KEY`). `app/config.py` already carries both settings (added by the
-S2b coder ahead of this file's update) with the note that an unset URL must answer 409
-`retry_unavailable` and make NO call - a dev machine must never silently re-inject into
-production n8n. `test_retry_reinjects_at_ingress` and `test_retry_unavailable_without_url`
-below pin exactly that.
+webhook, with the ORIGINAL respond.io webhook body (`envelope.message`) and a shared
+`X-Chatbot-Retry-Key` header. An unconfigured ingress must answer 409 `retry_unavailable`
+and make NO call - a dev machine must never silently re-inject into production n8n.
+`test_retry_reinjects_at_ingress` and `test_retry_unavailable_without_url` below pin
+exactly that.
+
+UPDATED AT S8a (AC-804): that URL and key moved OFF the environment onto the DEFAULT
+respond workspace row (`chatbot_retry_ingress_url` +
+`chatbot_retry_ingress_key_ciphertext`), because the config is per tenant and `.env` does
+not scale past one. The two fixtures below therefore seed (or omit) a workspace row
+instead of patching `settings`; nothing else about these tests changed. The URL guard
+(`app/services/outbound_url_guard.py`) resolves the host, so the configured fixture
+patches `socket` the same way `test_s8_retry_config.py` does.
 
 ASSUMPTIONS made because the contract doc does not spell these out (flagged to the
 captain/coder, not settled unilaterally):
@@ -57,6 +61,7 @@ captain/coder, not settled unilaterally):
 """
 from __future__ import annotations
 
+import socket
 import uuid
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
@@ -66,11 +71,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.main  # noqa: F401  isort:skip - registers every model before any query
-from app.config import settings
 from app.main import app
 from app.dependencies import get_current_user, get_current_user_or_api_key, get_db
 from app.models.chat_history import ChatHistory
 from app.models.chatbot_turn import ChatbotTurn
+from app.schemas.respond_workspace import RespondWorkspaceCreate
+from app.services.respond_workspace_service import RespondWorkspaceService
 from app.services.user_service import UserPermissionService
 
 RETRY_INGRESS_URL = "https://automate-sorento.foundryx.my/webhook/sorento-main-inject"
@@ -127,13 +133,28 @@ def client(db):
 
 
 @pytest.fixture()
-def retry_ingress_configured(monkeypatch):
-    """The retry endpoint's outbound target, configured to a fake n8n inject webhook.
+def retry_ingress_configured(db, monkeypatch):
+    """The retry endpoint's outbound target, configured on the DEFAULT workspace row.
 
     See module docstring assumption 4: the outbound POST is patched at `httpx.post`.
     """
-    monkeypatch.setattr(settings, "chatbot_retry_ingress_url", RETRY_INGRESS_URL, raising=False)
-    monkeypatch.setattr(settings, "chatbot_retry_ingress_key", RETRY_INGRESS_KEY, raising=False)
+    RespondWorkspaceService(db).create(
+        RespondWorkspaceCreate(
+            space_id=f"ZZT-space-{uuid.uuid4().hex[:8]}",
+            api_key="ZZT-respond-key",
+            is_default=True,
+            chatbot_retry_ingress_url=RETRY_INGRESS_URL,
+            chatbot_retry_ingress_key=RETRY_INGRESS_KEY,
+        )
+    )
+    # The URL guard resolves the host on save and on use; keep both off the network and
+    # off this machine's real hostname so the fixture cannot depend on either.
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda host, *a, **kw: [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("198.51.100.7", 443))],
+    )
+    monkeypatch.setattr(socket, "gethostname", lambda: "zzt-not-the-crm")
     mock_post = MagicMock(
         return_value=httpx.Response(200, request=httpx.Request("POST", RETRY_INGRESS_URL))
     )
@@ -143,10 +164,11 @@ def retry_ingress_configured(monkeypatch):
 
 @pytest.fixture()
 def retry_ingress_unconfigured(monkeypatch):
-    """The retry path with no n8n webhook configured (AC-705's 'unset locally on
-    purpose' - a dev machine must never silently re-inject into production n8n)."""
-    monkeypatch.setattr(settings, "chatbot_retry_ingress_url", None, raising=False)
-    monkeypatch.setattr(settings, "chatbot_retry_ingress_key", None, raising=False)
+    """The retry path with no n8n webhook configured (AC-705's 'unset by default, on
+    purpose' - a dev machine must never silently re-inject into production n8n).
+
+    No workspace row is seeded at all, which is the blank-schema default; the endpoint
+    must answer 409 rather than reaching for a fallback."""
     mock_post = MagicMock()
     monkeypatch.setattr(httpx, "post", mock_post)
     return mock_post

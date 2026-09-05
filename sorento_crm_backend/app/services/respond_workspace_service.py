@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.models.respond_workspace import RespondWorkspace
 from app.schemas.respond_workspace import RespondWorkspaceCreate, RespondWorkspaceUpdate
+from app.services.outbound_url_guard import OutboundUrlRejected, assert_safe_outbound_url
 from app.utils.field_encryption import decrypt_secret, encrypt_secret
 
 
@@ -27,6 +28,26 @@ def _mask_optional_key(_cipher: Optional[str]) -> Optional[str]:
     if not _cipher:
         return None
     return _mask_key(_cipher)
+
+
+def _checked_retry_url(raw: Optional[str]) -> Optional[str]:
+    """The chatbot retry webhook, refused with a 422 that names the rule (AC-804).
+
+    Blank clears it, which is how an operator turns Retry off. Anything else is checked
+    HERE as well as at send time: the operator is looking at the field now, and a message
+    that arrives when somebody later presses Retry is a message nobody connects to what
+    they typed. The check at send time is the one that is load-bearing (see the guard's
+    own docstring on the TOCTOU window); this one is the one that is usable.
+    """
+    candidate = (raw or "").strip()
+    if not candidate:
+        return None
+    try:
+        return assert_safe_outbound_url(candidate, label="The chatbot retry webhook URL")
+    except OutboundUrlRejected as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.message
+        ) from exc
 
 
 class RespondWorkspaceService:
@@ -71,6 +92,7 @@ class RespondWorkspaceService:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="space_id already exists")
         ideation_key = (data.ideation_intake_api_key or "").strip()
         embed_secret = (data.ideation_embed_signing_secret or "").strip()
+        retry_key = (data.chatbot_retry_ingress_key or "").strip()
         row = RespondWorkspace(
             space_id=data.space_id.strip(),
             name=(data.name or "").strip() or None,
@@ -92,6 +114,10 @@ class RespondWorkspaceService:
             ).strip() or None,
             ideation_embed_signing_secret_ciphertext=(
                 encrypt_secret(embed_secret) if embed_secret else None
+            ),
+            chatbot_retry_ingress_url=_checked_retry_url(data.chatbot_retry_ingress_url),
+            chatbot_retry_ingress_key_ciphertext=(
+                encrypt_secret(retry_key) if retry_key else None
             ),
         )
         if data.is_default:
@@ -149,6 +175,12 @@ class RespondWorkspaceService:
             row.ideation_embed_signing_secret_ciphertext = encrypt_secret(
                 data.ideation_embed_signing_secret.strip()
             )
+        if data.chatbot_retry_ingress_url is not None:
+            row.chatbot_retry_ingress_url = _checked_retry_url(data.chatbot_retry_ingress_url)
+        if data.chatbot_retry_ingress_key is not None and data.chatbot_retry_ingress_key.strip():
+            row.chatbot_retry_ingress_key_ciphertext = encrypt_secret(
+                data.chatbot_retry_ingress_key.strip()
+            )
         self.db.commit()
         self.db.refresh(row)
         return row
@@ -190,6 +222,10 @@ class RespondWorkspaceService:
             "ideation_embed_signing_secret_masked": _mask_optional_key(
                 row.ideation_embed_signing_secret_ciphertext
             ),
+            "chatbot_retry_ingress_url": row.chatbot_retry_ingress_url,
+            # A BOOL, never a masked hint. See the response schema: this key authorises
+            # injecting a message into a real customer's conversation.
+            "has_chatbot_retry_key": bool(row.chatbot_retry_ingress_key_ciphertext),
             "created_at": row.created_at,
             "updated_at": row.updated_at,
         }
@@ -211,6 +247,18 @@ class RespondWorkspaceService:
         """Plaintext ideation embed signing secret for server-side use (minting the
         SSO assertion), or None when unset/undecryptable."""
         cipher = getattr(row, "ideation_embed_signing_secret_ciphertext", None)
+        if not cipher:
+            return None
+        try:
+            return decrypt_secret(cipher) or None
+        except ValueError:
+            return None
+
+    @staticmethod
+    def decrypt_chatbot_retry_key(row: RespondWorkspace) -> Optional[str]:
+        """Plaintext chatbot retry key for the `X-Chatbot-Retry-Key` header, or None
+        when unset/undecryptable."""
+        cipher = getattr(row, "chatbot_retry_ingress_key_ciphertext", None)
         if not cipher:
             return None
         try:

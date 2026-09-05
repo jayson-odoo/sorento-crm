@@ -80,12 +80,12 @@ class Settings(BaseSettings):
     # live message uses and gets the same ordering and the same lanes. The CRM never
     # sends to the customer itself (D9).
     #
-    # UNSET LOCALLY ON PURPOSE: with no URL the endpoint answers 409 `retry_unavailable`
-    # and makes no call. A dev machine that silently re-injected into production n8n
-    # would answer a real customer from a developer's click.
-    chatbot_retry_ingress_url: str | None = None  # CHATBOT_RETRY_INGRESS_URL
-    # Sent as `X-Chatbot-Retry-Key`. n8n checks it on its side (owner item).
-    chatbot_retry_ingress_key: str | None = None  # CHATBOT_RETRY_INGRESS_KEY
+    # The ingress URL and its key are NOT here. They live on the respond workspace ROW
+    # and are edited on System > Respond Workspaces: that config is per tenant and an
+    # environment variable does not scale past one (owner ruling, 5 Sep 2026; AC-804).
+    # See `app/models/respond_workspace.py` for the two columns. What stays here is the
+    # timing knob below, which is behaviour of the endpoint rather than a tenant address.
+    #
     # How long a `retry_requested_at` marker blocks a second Retry. The marker is
     # cleared by the re-injected turn arriving; if it never arrives (n8n dropped it,
     # the contact was deleted) the row would otherwise be un-retryable forever, so an

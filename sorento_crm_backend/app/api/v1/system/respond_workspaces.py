@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.dependencies import require_permission
+from app.dependencies import require_any_permission, require_permission
 from app.schemas.respond_workspace import (
     RespondWorkspaceCreate,
     RespondWorkspaceResponse,
@@ -28,6 +28,15 @@ router = APIRouter(prefix="/respond-workspaces", tags=["respond-workspaces"])
 
 _IDEATION_PRODUCTS_PATH = "/ideation/intake/products"
 _IDEATION_HTTP_TIMEOUT = 8.0
+
+# AC-804 says the chatbot retry ingress is edited "under `user_management.settings.edit`",
+# and that field lives on this row, so the EDIT route accepts either slug. The existing
+# one is not removed - anyone who could edit a workspace still can - and the settings slug
+# is added beside it, the same two-slug shape `ai_assistant.py`'s `_MODEL_EDIT` already
+# uses for a value that is a system setting living on a domain row. Nothing else here
+# widens: add, delete and set-default keep their own single slug, because those change
+# which workspace the whole install talks to.
+_WORKSPACE_EDIT = ["system.respond_workspaces.edit", "user_management.settings.edit"]
 
 
 @router.get("/ideation-products")
@@ -150,7 +159,7 @@ def create_workspace(
 def update_workspace(
     workspace_id: str,
     data: RespondWorkspaceUpdate,
-    _user: dict = Depends(require_permission("system.respond_workspaces.edit")),
+    _user: dict = Depends(require_any_permission(_WORKSPACE_EDIT)),
     db: Session = Depends(get_db),
 ):
     validate_uuid_path(workspace_id, resource="Respond Workspace")

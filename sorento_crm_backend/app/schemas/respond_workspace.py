@@ -38,6 +38,15 @@ class RespondWorkspaceBase(BaseModel):
         max_length=512,
         description="Ideas iframe FE root URL (shared-service frontend; the iframe points here, NOT the backend base).",
     )
+    chatbot_retry_ingress_url: Optional[str] = Field(
+        None,
+        max_length=512,
+        description=(
+            "Webhook a failed chatbot turn is re-posted to from the trace screen. https "
+            "only, and must not resolve to this machine or a private range. Blank turns "
+            "Retry off for this workspace."
+        ),
+    )
 
 
 class RespondWorkspaceCreate(RespondWorkspaceBase):
@@ -47,6 +56,13 @@ class RespondWorkspaceCreate(RespondWorkspaceBase):
     )
     ideation_embed_signing_secret: Optional[str] = Field(
         None, description="Plain ideation embed signing secret (mints the SSO assertion)."
+    )
+    chatbot_retry_ingress_key: Optional[str] = Field(
+        None,
+        description=(
+            "Plain chatbot retry key, sent as X-Chatbot-Retry-Key. Write-only: a GET "
+            "reports only whether one is stored."
+        ),
     )
 
 
@@ -68,6 +84,10 @@ class RespondWorkspaceUpdate(BaseModel):
     ideation_embed_signing_secret: Optional[str] = Field(
         None, description="When set, replaces stored ideation embed signing secret"
     )
+    chatbot_retry_ingress_url: Optional[str] = Field(None, max_length=512)
+    chatbot_retry_ingress_key: Optional[str] = Field(
+        None, description="When set, replaces the stored chatbot retry key"
+    )
 
 
 class RespondWorkspaceResponse(BaseModel):
@@ -87,6 +107,12 @@ class RespondWorkspaceResponse(BaseModel):
     ideation_embed_connection_id: Optional[str] = None
     ideation_embed_fe_base_url: Optional[str] = None
     ideation_embed_signing_secret_masked: Optional[str] = None
+    chatbot_retry_ingress_url: Optional[str] = None
+    # A BOOL, not a masked hint. The sibling ideation secrets echo `****abcd`; this one
+    # echoes nothing at all, because it authorises injecting a message into a real
+    # customer's WhatsApp conversation and a last-4 is four characters an attacker no
+    # longer has to guess (AC-804).
+    has_chatbot_retry_key: bool = False
     created_at: datetime
     updated_at: datetime
 

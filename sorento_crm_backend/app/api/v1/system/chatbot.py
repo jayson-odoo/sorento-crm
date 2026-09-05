@@ -40,6 +40,7 @@ from app.schemas.chatbot_turn import (
 )
 from app.services.chatbot.contracts import TURN_STAGES
 from app.services.integration_service import IntegrationLogService
+from app.services.outbound_url_guard import OutboundUrlRejected
 from app.services.chatbot.dispatch import (
     ReinjectFailed,
     RetryUnavailable,
@@ -167,14 +168,17 @@ def list_turns(
     )
     has_more = len(rows) > limit
     page = rows[:limit]
-    available = retry_available()
+    available = retry_available(db)
     return ChatbotTurnListResponse(
         items=page,
         next_cursor=_encode_cursor(page[-1]) if has_more and page else None,
         retry_available=available,
         retry_unavailable_reason=None
         if available
-        else "Retry is not configured in this environment.",
+        else (
+            "Retry is not configured. Set the chatbot retry webhook URL on the default "
+            "workspace under System > Respond Workspaces."
+        ),
     )
 
 
@@ -338,24 +342,36 @@ def retry_turn(
     outcome_status = 200
     error_message: str | None = None
     try:
-        reinject_envelope(row)
-    except (RetryUnavailable, ReinjectFailed) as exc:
+        reinject_envelope(db, row)
+    except (RetryUnavailable, OutboundUrlRejected, ReinjectFailed) as exc:
         # Nothing was accepted by the ingress, so the claim must not stand: another
         # operator has to be able to try again, and a marker nobody will ever clear would
         # make this row permanently un-retryable.
         row.retry_requested_at = None
         row.trace = trace[:-1]
         db.commit()
+        # Three refusals, three codes, because they need three different actions.
+        # 409: nothing is configured, so there is nothing to fix about THIS turn.
+        # 422: something IS configured and it breaks a rule - the URL is the thing to
+        #      change, and saying 409 there would send the operator looking for a blank
+        #      field that is not blank.
+        # 502: the ingress itself refused; try again or look at n8n.
         unavailable = isinstance(exc, RetryUnavailable)
-        outcome_status = 409 if unavailable else 502
+        rejected = isinstance(exc, OutboundUrlRejected)
+        outcome_status = 409 if unavailable else (422 if rejected else 502)
         error_message = str(exc)
         _log_retry(db, request, row, actor_id, outcome_status, error_message)
         if unavailable:
-            # Not an error the operator caused, and not a 500: this environment simply has
+            # Not an error the operator caused, and not a 500: this install simply has
             # no ingress wired, which is the correct state for a developer machine.
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail={"code": "retry_unavailable", "message": error_message},
+            ) from exc
+        if rejected:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "retry_url_rejected", "message": error_message},
             ) from exc
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
