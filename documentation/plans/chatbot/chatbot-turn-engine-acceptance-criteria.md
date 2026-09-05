@@ -695,8 +695,10 @@ endpoint over `chatbot.turns.trace`. Lands after S2 so the head and tail both wr
   removed from the spine; `sub-escalation` and `sub-human-intervention` unpublished; the n8n
   outbound executes `assign_conversation` / `add_comment` via the existing respond.io nodes. (A4)
 - AC-507 `[E2E]` Given the clone with `is_test`, when an escalation turn runs, then
-  `test:egress:{run}` records the four would-send actions in order and no real assignment
-  happens. (A4)
+  `test:egress:{run}` records the four would-send actions in order (`send_message`,
+  `assign_conversation`, `add_comment`, `send_message`), each `send_message.quick_replies`
+  a non-empty comma-joined string or `null` (never a list, never `""`), and no real
+  assignment happens. (A4)
 
 ### S6 - Business lane (journey A2, A3)
 

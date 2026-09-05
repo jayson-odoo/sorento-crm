@@ -646,3 +646,144 @@ class TestSendActionShape:
         )
         assert len(actions) == 2
         assert all(a["dry_run"] is True for a in actions)
+
+    def test_every_completed_lane_pins_quick_replies_string_or_null_never_a_list(
+        self, session_factory, seeded, system_settings_row, stub_parser, stub_access, monkeypatch
+    ):
+        """AC-507/D9's executor contract, walked across every branch kind the CRM
+        completes today rather than pinned lane by lane: the eight canned/ideate/
+        offer-hold kinds (`_CANNED_SCENARIOS` plus `access_denied`), the casual lane
+        (`low_signal`, S4), the escalation lane (`out_of_scope`, S5), and a FAILED turn
+        (`_failed_result`) - the fallback shape every other lane drops into on an
+        unhandled error, and the one a live n8n parity check actually caught a list on.
+
+        Measured against 61 live sub-output tail captures (c32698c1): 60 non-empty
+        strings, 1 null, 0 empty strings, 0 lists - so the assertion below is the same
+        shape as what n8n's `sub-sendmsg` has ever actually been handed. `dry_run` is
+        checked a bool for the identical reason: a stray truthy/falsy value is the same
+        class of type drift the executor cannot coerce.
+        """
+        from tests.chatbot.test_s3_canned_and_ideate import (
+            _CANNED_SCENARIOS,
+            _build_scenario,
+            _enable_stock_denial,
+        )
+        from tests.chatbot.test_s4_casual_lane import _casual, _install_stub_lane
+
+        _set_completed_lanes(
+            session_factory,
+            [*_CANNED_SCENARIOS, "access_denied", "low_signal", "out_of_scope"],
+        )
+
+        all_actions: list[dict[str, Any]] = []
+
+        for index, kind in enumerate(_CANNED_SCENARIOS):
+            if kind == "demand_qty":
+                _enable_stock_denial(session_factory, system_settings_row)
+            envelope, parser_overrides, _expected = _build_scenario(kind, session_factory, monkeypatch)
+            envelope.message["message"]["messageId"] = f"ZZT-contract-{index}"
+            stub_parser(parser_overrides)
+            stub_access()
+            result = engine_mod.run_turn(envelope, session_factory=session_factory)
+            assert result.status != "failed", f"{kind}: {result.error}"
+            all_actions.extend(result.actions)
+
+        # `access_denied` is answered before the tail runs (no fragment table entry),
+        # so it is not one of `_CANNED_SCENARIOS` - pinned separately the same way
+        # `TestAccessDeniedNoSessionWrite` does.
+        stub_parser(
+            _parser_output(
+                message_type="request_for_help",
+                routing={"suggested_team": None, "suggested_agent": "general-enquiries"},
+            )
+        )
+        stub_access(allowed=False, decision="deny_unknown_agent")
+        access_denied_envelope = _envelope()
+        access_denied_envelope.message["message"]["messageId"] = "ZZT-contract-access-denied"
+        result = engine_mod.run_turn(access_denied_envelope, session_factory=session_factory)
+        assert result.status != "failed", result.error
+        all_actions.extend(result.actions)
+
+        # `low_signal` (S4): the clarifier lane, its own seams stubbed the way
+        # `TestLowSignalLaneIntegration` does.
+        casual = _casual()
+        stub_parser(
+            _parser_output(message_type="casual", domain_hint=None, intent_hint=None, entities=[])
+        )
+        stub_access()
+        _install_stub_lane(monkeypatch, casual, response_json='{"response": "Hi! How can I help?"}')
+        low_signal_envelope = _envelope()
+        low_signal_envelope.message["message"]["messageId"] = "ZZT-contract-low-signal"
+        result = engine_mod.run_turn(low_signal_envelope, session_factory=session_factory)
+        assert result.status != "failed", result.error
+        all_actions.extend(result.actions)
+
+        # `out_of_scope` (S5): the escalation lane, faked at its own seam the way
+        # `test_out_of_scope_finishes_in_turn` does - the shape under test is the
+        # engine's sealing, not the lane's own assignment logic.
+        lane_actions = [
+            {"kind": "send_message", "text": "Your request is out of scope...", "dry_run": False},
+            {"kind": "assign_conversation", "respond_user_id": "respond-usr-1", "dry_run": False},
+            {
+                "kind": "add_comment",
+                "text": "Team: customer_service",
+                "mention_user_ids": ["respond-usr-1"],
+                "dry_run": False,
+            },
+            {"kind": "send_message", "text": "This inquiry has been routed...", "dry_run": False},
+        ]
+
+        def fake_run_escalation_lane(ctx, item, *, dry_run=False):
+            return {"arm": "human-intervention", "clarify": None, "actions": lane_actions, "pending": None}
+
+        monkeypatch.setattr(engine_mod, "run_escalation_lane", fake_run_escalation_lane)
+        stub_parser(
+            _parser_output(
+                message_type="request_for_help",
+                user_goal="wants a human",
+                entities=[],
+                routing={
+                    "suggested_team": "customer_service",
+                    "suggested_agent": "general_enquiries",
+                    "team_source": "inferred",
+                },
+                escalation={"is_escalation_confirmation": True, "company_pick": None},
+            )
+        )
+        stub_access()
+        out_of_scope_envelope = _envelope()
+        out_of_scope_envelope.message["message"]["messageId"] = "ZZT-contract-out-of-scope"
+        result = engine_mod.run_turn(out_of_scope_envelope, session_factory=session_factory)
+        assert result.status != "failed", result.error
+        all_actions.extend(result.actions)
+
+        # A FAILED turn (`_failed_result`): a prod parity check against the live n8n
+        # sendmsg node found a list here reads as a type error on the executor's own
+        # typed input ("'quick_reply' expects a string but we got array"), which means
+        # every failed turn was reaching the customer as silence - the highest-stakes
+        # shape in this walk, since it is the one every OTHER lane falls back to.
+        monkeypatch.setattr(
+            engine_mod,
+            "check_access",
+            lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")),
+        )
+        failed_envelope = _envelope()
+        failed_envelope.message["message"]["messageId"] = "ZZT-contract-failed-turn"
+        result = engine_mod.run_turn(failed_envelope, session_factory=session_factory)
+        assert result.status == "failed"
+        all_actions.extend(result.actions)
+
+        send_messages = [a for a in all_actions if a.get("kind") == "send_message"]
+        assert len(send_messages) >= 11, (
+            f"only {len(send_messages)} send_message actions collected - one lane's setup "
+            "did not run, so this is not the full walk the test name promises"
+        )
+        for action in send_messages:
+            quick = action.get("quick_replies")
+            assert quick is None or (isinstance(quick, str) and quick != ""), (
+                f"quick_replies must be a non-empty string or null, got {quick!r} "
+                f"(action: {action})"
+            )
+            assert isinstance(action.get("dry_run"), bool), (
+                f"dry_run must be a bool, got {action.get('dry_run')!r} (action: {action})"
+            )

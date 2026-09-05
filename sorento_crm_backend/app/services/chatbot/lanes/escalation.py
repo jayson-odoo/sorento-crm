@@ -568,12 +568,16 @@ def _send_message(text: str, dry_run: bool) -> dict[str, Any]:
     fills them in from `complete_turn`'s output before the actions leave. Declaring them
     here rather than adding them later keeps every `send_message` the same shape whoever
     built it, so the executor never has to test for a missing key.
+
+    The placeholders match the sealed contract's own empty case (AC-507): `quick_replies`
+    null (n8n's `quick_reply` is a comma-joined string or null, never a list) and
+    `result_set` `[]` (`compile-current-state`'s own default for `last_result_set`).
     """
     return {
         "kind": "send_message",
         "text": text,
-        "quick_replies": [],
-        "result_set": None,
+        "quick_replies": None,
+        "result_set": [],
         "dry_run": dry_run,
     }
 

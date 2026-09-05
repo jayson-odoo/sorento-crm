@@ -97,7 +97,12 @@ the same value `_one` returns today.
 ```
 
 `reply` carries four FIELDS rather than the sealed patch, because that is what turns each
-downstream expression into one read (see step 3).
+downstream expression into one read (see step 3). `quick_replies` is n8n's own
+`compile-current-state.js` value verbatim - a non-empty comma-joined STRING, or `null` when
+the turn offers none - and NEVER a list, on every `send_message` action in every slice
+below; `result_set` is `variables.last_result_set`, whose own empty case is `[]`, never
+`null` (AC-507, measured against 61 live `sub-output` tail captures: 60 non-empty strings,
+1 null, 0 empty strings, 0 lists).
 
 ### Step 1 - the HTTP node, inside `sub-output` (`qa4LWvPrhUnAPgjC`)
 
@@ -549,7 +554,10 @@ The four actions, in the order the caller must execute them:
 makes itself, exactly as `sub-human-intervention` makes them HTTP calls back into this same
 CRM. The out-of-scope acknowledgement TEXT that `escalate-catalog` composes
 (`includeResponse: false`, "Informed the user that request is out of scope...") is a tail
-concern and stays there; it is not one of these actions.
+concern and stays there; it is not one of these actions. This order (`send_message`,
+`assign_conversation`, `add_comment`, `send_message`) is the live lane order and does not
+change; both `send_message` actions carry `quick_replies` as a string-or-null, never a list
+(the type pin above), since this lane seals none.
 
 ### Which turns this covers
 

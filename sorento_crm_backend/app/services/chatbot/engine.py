@@ -1225,7 +1225,9 @@ def _run_casual_lane(
 
     actions = [
         *actions,
-        {"kind": "send_message", "text": text, "quick_replies": [], "dry_run": dry_run},
+        # AC-507: `quick_replies` is n8n's comma-joined string or null, never a list -
+        # this lane offers none, so it is null, matching every other hand-built action.
+        {"kind": "send_message", "text": text, "quick_replies": None, "dry_run": dry_run},
     ]
 
     # The clarifier IS this lane's lookup: it is where the turn's answer comes from, the
@@ -1257,7 +1259,9 @@ def _run_casual_lane(
         # AC-403: a failed clarifier is a FAILED turn, and the tail does not run. No
         # session is written (the customer's memory must not record an answer that was
         # never composed), and `branch_kind` stays `low_signal` because routing succeeded.
-        reply = {"text": text, "quick_replies": []}
+        # AC-507: null, not `[]` - the same string-or-null contract every other reply
+        # carries (a failed clarifier never composed one).
+        reply = {"text": text, "quick_replies": None}
         with _session(session_factory) as db:
             _close_turn(
                 db,
@@ -1506,7 +1510,10 @@ def _seal_send(action: dict[str, Any], sealed: dict[str, Any]) -> dict[str, Any]
         return action
     return {
         **action,
-        "quick_replies": sealed.get("quick_replies") or [],
+        # AC-507/D9: n8n's `quick_reply` is a comma-joined STRING or null, never a list -
+        # `or []` here would hand the sender a type its `quick_reply` input has never
+        # taken. Pass the sealed value through verbatim, empty or not.
+        "quick_replies": sealed.get("quick_replies"),
         "result_set": sealed.get("result_set"),
     }
 
@@ -1550,7 +1557,11 @@ def _stamp_item(access: dict, branch_kind: str, tier_stamp: dict) -> dict[str, A
 def _failed_result(
     turn_id: str, stage: str, error: str, actions: list[dict[str, Any]], dry_run: bool
 ) -> TurnResult:
-    """A failed turn still hands the caller today's error reply to send (AC-105, AC-107)."""
+    """A failed turn still hands the caller today's error reply to send (AC-105, AC-107).
+
+    `quick_replies` is null, never `[]`: AC-507's contract is `quick_reply` is n8n's
+    comma-joined string or null, and a failed turn offered none.
+    """
     return TurnResult(
         turn_id=turn_id,
         is_test=dry_run,
@@ -1558,13 +1569,13 @@ def _failed_result(
         item=None,
         branch_kind=None,
         delegate=None,
-        reply={"text": GENERIC_ERROR_REPLY, "quick_replies": []},
+        reply={"text": GENERIC_ERROR_REPLY, "quick_replies": None},
         actions=[
             *actions,
             {
                 "kind": "send_message",
                 "text": GENERIC_ERROR_REPLY,
-                "quick_replies": [],
+                "quick_replies": None,
                 "dry_run": dry_run,
             },
         ],
