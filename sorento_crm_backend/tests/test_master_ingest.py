@@ -144,6 +144,36 @@ class TestCreateAndUpdate:
         assert result.updated == 1
 
 
+def _customer(code="ZZT-CUST-01", name="Test Sdn Bhd", ref=None, **extra):
+    return {"source_ref": ref or f"DK-{code}", "code": code, "name": name, **extra}
+
+
+class TestCustomerColumnsFixRound2BugB:
+    """Fix round 2, BUG B: `_customer_columns` wrote `credit_limit` and
+    `payment_terms_days`, neither of which is a column on `customers` - every
+    customers push failed with the raw psycopg2 message. This is the one
+    place in this file that inserts a customer through the real column map
+    on Postgres; every other coverage of `CanonicalCustomer` was schema-only.
+    """
+
+    def test_credit_limit_and_payment_terms_days_are_accepted_but_not_written(
+        self, db, svc
+    ):
+        result = svc.ingest(
+            "customers",
+            [_customer(credit_limit="15000.50", payment_terms_days=30)],
+        )
+
+        assert result.created == 1, result.records[0].errors
+        row = db.execute(
+            text(
+                "SELECT customer_code, customer_name FROM customers "
+                "WHERE customer_code = 'ZZT-CUST-01'"
+            )
+        ).first()
+        assert row == ("ZZT-CUST-01", "Test Sdn Bhd")
+
+
 class TestQuarantineNotBlock:
     def test_valid_rows_persist_when_a_sibling_fails(self, db, svc):
         # AC-AC-15. 10,000 products with 12 bad ones must yield 9,988 imported.

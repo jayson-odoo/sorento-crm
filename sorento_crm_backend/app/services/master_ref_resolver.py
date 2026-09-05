@@ -41,6 +41,10 @@ WARN_CUSTOMER_UNRESOLVED = "customer_unresolved"
 WARN_SUPPLIER_CREATED = "supplier_created"
 WARN_AGENT_CREATED = "agent_created"
 WARN_WAREHOUSE_UNRESOLVED = "warehouse_unresolved"
+#: Fix-round-2 BUG A. The code/name rung resolved to a row some OTHER
+#: source_ref already claims, so the sent ref is left unlinked rather than
+#: fought over - see `_resolve_master`'s own comment at the check site.
+WARN_REF_MISMATCH = "ref_mismatch"
 #: D4/S2 - a sales order `classify_document` could not classify, and nothing
 #: was stored before this push either. Declared here (not `demand_class`-
 #: specific) alongside its siblings, even though only `DocumentIngestService`
@@ -187,22 +191,40 @@ class MasterRefResolver:
         entity_id = self._resolve_by_fallback(model, code, name, warnings)
         if entity_id is not None:
             if ref:
-                # The ref did not resolve above, but the row it names now
-                # exists (or was just found by code/name) - register it so
-                # the NEXT push is a step-1 ref match (D1).
-                try:
-                    self.refs.link(
-                        entity_type=model.__tablename__,
-                        entity_id=entity_id,
-                        source_ref=ref,
-                        integration_id=self.integration_id,
-                    )
-                except ReferenceConflict as exc:
-                    # `refs.link` itself always raises under `source_ref`
-                    # (the pre-v2 default) - re-filed under the master field
-                    # this rung is resolving, so the verdict names WHICH
-                    # reference conflicted rather than a fixed generic key.
-                    raise ReferenceConflict(str(exc), field_name=ref_field) from exc
+                # Fix-round-2 BUG A: the row the code/name rung resolved to
+                # may ALREADY be registered under a DIFFERENT source_ref - a
+                # masters push linked this product as "ac_sim:57", and this
+                # SO line names it "ac_sim:174" alongside its (correctly
+                # matching) product_code. Claiming it again under the new ref
+                # would either overwrite a mapping that is still correct or
+                # (a back-created/never-before-adopted row aside) hit
+                # `uq_integration_ref_entity` as a raw IntegrityError - so
+                # when an origin exists under a DIFFERENT ref, the sent ref is
+                # left unlinked and warned about instead. A back-created row,
+                # or one with no prior origin at all, has nothing to
+                # conflict with and links exactly as before.
+                origin = self.refs.origin_of(
+                    entity_type=model.__tablename__, entity_id=entity_id
+                )
+                if origin is not None and origin.source_ref != ref:
+                    warnings.append(WARN_REF_MISMATCH)
+                else:
+                    # The ref did not resolve above, but the row it names now
+                    # exists (or was just found by code/name) - register it so
+                    # the NEXT push is a step-1 ref match (D1).
+                    try:
+                        self.refs.link(
+                            entity_type=model.__tablename__,
+                            entity_id=entity_id,
+                            source_ref=ref,
+                            integration_id=self.integration_id,
+                        )
+                    except ReferenceConflict as exc:
+                        # `refs.link` itself always raises under `source_ref`
+                        # (the pre-v2 default) - re-filed under the master field
+                        # this rung is resolving, so the verdict names WHICH
+                        # reference conflicted rather than a fixed generic key.
+                        raise ReferenceConflict(str(exc), field_name=ref_field) from exc
             return entity_id
 
         if model is Warehouse:

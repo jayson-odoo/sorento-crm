@@ -267,8 +267,10 @@ def _customer_columns(payload: Any, db: Session, company_id: str) -> dict[str, A
         "phone_number": payload.phone_number,
         "registration_number": payload.registration_number,
         "tax_id": payload.tax_id,
-        "credit_limit": payload.credit_limit,
-        "payment_terms_days": payload.payment_terms_days,
+        # `credit_limit` / `payment_terms_days` (fix-round-2 BUG B): no column
+        # on `customers` yet - accepted on `CanonicalCustomer` so a v1 payload
+        # still validates, but not written; every customers push was failing
+        # with the raw psycopg2 UndefinedColumn message before this.
         "country": payload.country,
         "is_active": payload.is_active,
     }
@@ -462,9 +464,19 @@ class MasterIngestService:
                 outcome=IngestOutcome.FAILED,
                 errors=_field_errors(exc),
             )
-        except TypeError as exc:
+        except TypeError:
+            # SEC3-style (fix-round-2): a malformed body, never the caller's
+            # business - logged with exc_info, never echoed.
+            logger.warning(
+                "ingest.record_malformed entity=%s source_ref=%s",
+                entity_type,
+                source_ref,
+                exc_info=True,
+            )
             return RecordResult(
-                source_ref=source_ref, outcome=IngestOutcome.FAILED, errors={"_": str(exc)}
+                source_ref=source_ref,
+                outcome=IngestOutcome.FAILED,
+                errors={"_": INTERNAL_ERROR_MESSAGE},
             )
 
         # Each record commits or rolls back alone. Without this savepoint a
@@ -494,18 +506,21 @@ class MasterIngestService:
                 outcome=IngestOutcome.FAILED,
                 errors={"source_ref": str(exc)},
             )
-        except Exception as exc:  # noqa: BLE001 - one record's failure, not the batch's
+        except Exception:  # noqa: BLE001 - one record's failure, not the batch's
             savepoint.rollback()
+            # SEC3 (fix-round-2): never echo a non-domain exception's own
+            # message - it routinely quotes SQL, a table/column name or a raw
+            # UUID. Logged with exc_info=True instead.
             logger.warning(
-                "ingest.record_failed entity=%s source_ref=%s error=%s",
+                "ingest.record_failed entity=%s source_ref=%s",
                 entity_type,
                 payload.source_ref,
-                exc,
+                exc_info=True,
             )
             return RecordResult(
                 source_ref=payload.source_ref,
                 outcome=IngestOutcome.FAILED,
-                errors={"_": str(exc)},
+                errors={"_": INTERNAL_ERROR_MESSAGE},
             )
 
     def _apply(

@@ -136,6 +136,28 @@ class IntegrationReferenceService:
             self.db.flush()
             return existing
 
+        # Fix-round-2 BUG A, layer 1: `entity_id` may already be registered
+        # under a DIFFERENT source_ref - the masters push linked this product
+        # as "ac_sim:57", and a document's own code rung then resolves the
+        # SAME product and tries to link it again as "ac_sim:174". The unique
+        # index is on `(entity_type, entity_id)` alone (one entity, one
+        # reference, ever), so the INSERT below would hit it and surface as a
+        # raw `IntegrityError` to whichever caller forgot to check first.
+        # Checked here too, not only in `MasterRefResolver` (layer 2), so ANY
+        # caller of `link()` gets a domain exception instead of a DB one.
+        by_entity = (
+            self.db.query(IntegrationReference)
+            .filter(
+                IntegrationReference.entity_type == entity_type,
+                IntegrationReference.entity_id == str(entity_id),
+            )
+            .first()
+        )
+        if by_entity is not None and by_entity.source_ref != source_ref:
+            raise ReferenceConflict(
+                f"{entity_type} {entity_id} is already registered under another reference"
+            )
+
         row = IntegrationReference(
             entity_type=entity_type,
             entity_id=str(entity_id),
