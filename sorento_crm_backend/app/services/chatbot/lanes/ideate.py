@@ -27,6 +27,7 @@ import logging
 from typing import Any, Mapping
 
 from app.services.chatbot import jsc
+from app.services.chatbot.contracts import PREVIEW
 
 logger = logging.getLogger(__name__)
 
@@ -125,8 +126,42 @@ def build_reply(result: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def run(ctx: Mapping[str, Any], item: Mapping[str, Any]) -> dict[str, Any]:
+def preview_result(ctx: Mapping[str, Any]) -> dict[str, Any]:
+    """What the tool WOULD have answered, stood in for (D14, AC-507, H37).
+
+    Fed through `build_reply` like a real result, so the preview and the live fragment can
+    only differ in the values the seam would have supplied - never in the shape.
+
+    `reply_text` and `status` are placeholders because BOTH come out of the tool: unlike
+    the escalation lane, this lane has no sentence of its own to say. `ideation` is the
+    pointer the turn ALREADY resolved out of the contact's session (it is what
+    `build_arguments` sends), so it carries its real value: the preview session patch then
+    reads "unchanged", which is the truth about a turn that wrote nothing. Echoing the
+    prior pointer rather than nulling it also keeps a preview from looking like it wiped an
+    open draft.
+    """
+    session_vars = jsc.get(jsc.get(ctx, "session"), "session_vars") or {}
+    nested = jsc.get(jsc.get(session_vars, "variables"), "ideation")
+    ideation = nested if jsc.truthy(nested) else jsc.get(session_vars, "ideation")
+    return {
+        "status": PREVIEW,
+        "reply_text": PREVIEW,
+        "link": None,
+        "session_vars": {"ideation": ideation if ideation is not None else None},
+    }
+
+
+def run(
+    ctx: Mapping[str, Any], item: Mapping[str, Any], *, dry_run: bool = False
+) -> dict[str, Any]:
     """The whole lane: build the arguments, call the tool, hand the tail its fragment.
+
+    **The dry-run check is the first thing that happens**, the same ordering and for the
+    same reason as `escalation.run` - H37 is a side effect performed before the guard, and
+    here the side effect is not local: `crm_ideation_turn` mints or mutates a REAL idea
+    record in the shared service, pulls the contact's media off respond.io and writes an
+    `integration_log`. None of that is in `chatbot.turns` and none of it rolls back with
+    the session, so D14's "zero writes" can only be met by not calling the tool at all.
 
     The reply rides on `item.outcome_fragment['build-ideate-reply']` - RS-6.1c's own
     mechanism, and the exact key `build-outcome` reads - so the tail needs no ideate arm.
@@ -139,7 +174,7 @@ def run(ctx: Mapping[str, Any], item: Mapping[str, Any]) -> dict[str, Any]:
     the ideate fragment first, so today that empty arm loses; a ladder edit is all it
     would take for it to win, which is exactly the shape S4 hit on `low_signal`.
     """
-    result = call_ideation_tool(**build_arguments(ctx))
+    result = preview_result(ctx) if dry_run else call_ideation_tool(**build_arguments(ctx))
     reply = build_reply(result)
     return {
         "item": {**reply, "outcome_fragment": {"build-ideate-reply": reply}},
@@ -148,4 +183,8 @@ def run(ctx: Mapping[str, Any], item: Mapping[str, Any]) -> dict[str, Any]:
             "includeResponse": reply["includeResponse"],
             "ideate_status": reply["ideate_status"],
         },
+        # The whole reply is a placeholder on a dry run, so the action that carries it
+        # says so beside its `dry_run` flag - the same `preview` key the escalation lane
+        # puts on the two actions whose values a seam would have supplied.
+        "preview": dry_run,
     }

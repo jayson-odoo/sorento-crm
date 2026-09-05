@@ -561,6 +561,14 @@ CRM_COMPLETED_BRANCH_KINDS: frozenset[str] = frozenset(
 # adds a lane - which is exactly what S5 landing on S3 would otherwise have done.
 SELF_CLOSING_BRANCH_KINDS: frozenset[str] = frozenset({"low_signal", "out_of_scope"})
 
+# What a dry run prints where a SEAM would have supplied a value (D14, AC-507). One
+# token, so a reader of a preview action can tell at a glance that nothing behind it
+# happened. Declared here rather than in a lane because two lanes now stand values in -
+# `out_of_scope` for the assignee and the SLA timestamps, `ideate` for the whole reply
+# the write tool would have composed - and an executor that had to match two spellings of
+# "nothing happened" would be matching a typo the day a third lane arrived.
+PREVIEW = "<preview>"
+
 
 # `DELEGATED_BRANCH_KINDS` used to be the complement of the set above and is GONE: with
 # `system_settings.chatbot_completed_lanes` in the decision, "delegated" is no longer a

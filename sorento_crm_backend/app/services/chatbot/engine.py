@@ -1891,7 +1891,9 @@ def run_tail(
     return reply, session_patch
 
 
-def _send_actions(reply: Mapping[str, Any], *, dry_run: bool) -> list[dict[str, Any]]:
+def _send_actions(
+    reply: Mapping[str, Any], *, dry_run: bool, preview: bool = False
+) -> list[dict[str, Any]]:
     """The actions the CALLER executes for a finished turn, in order (D9).
 
     Shape agreed with the n8n executor, and it is the SEALED reply's own values verbatim,
@@ -1907,6 +1909,11 @@ def _send_actions(reply: Mapping[str, Any], *, dry_run: bool) -> list[dict[str, 
       It carries the whole `reply` because `sub-send-attachments` reads more than one
       field off it, and it comes AFTER the message for the same reason n8n wires it that
       way: the text explains the files.
+
+    `preview` adds AC-507's second flag, and only a lane that stood a seam value in sets
+    it: the key is ABSENT on a live action and on a dry run whose text is real, exactly as
+    the escalation lane emits it, so a reader never has to tell `preview: false` from
+    "this build does not report it".
     """
     send: dict[str, Any] = {
         "kind": "send_message",
@@ -1915,17 +1922,20 @@ def _send_actions(reply: Mapping[str, Any], *, dry_run: bool) -> list[dict[str, 
         "result_set": reply.get("result_set"),
         "dry_run": dry_run,
     }
+    if preview:
+        send["preview"] = True
     actions = [send]
     attachments = reply.get("attachments_src")
     if attachments is not None:
-        actions.append(
-            {
-                "kind": "send_attachments",
-                "attachments_src": attachments,
-                "reply": dict(reply),
-                "dry_run": dry_run,
-            }
-        )
+        attach: dict[str, Any] = {
+            "kind": "send_attachments",
+            "attachments_src": attachments,
+            "reply": dict(reply),
+            "dry_run": dry_run,
+        }
+        if preview:
+            attach["preview"] = True
+        actions.append(attach)
     return actions
 
 
@@ -1964,6 +1974,9 @@ def _complete_canned_lane(
 
     canned = copy_mod.resolve(db)
     reply_extras: dict[str, Any] = {}
+    # Only the `ideate` arm can set this: it is the one canned lane whose reply text comes
+    # from a seam, so it is the one whose `send_message` stands a value in (AC-507).
+    preview = False
 
     if branch_kind in canned_lanes.NO_SESSION_WRITE_BRANCH_KINDS:
         text = canned_lanes.access_denied_text(ctx, canned)
@@ -1988,9 +2001,13 @@ def _complete_canned_lane(
             jsc.get(jsc.get(ctx, "session"), "session_vars"), "variables"
         ) or {}
         if branch_kind == "ideate":
-            lane = ideate_mod.run(ctx, item)
+            # D14 / H37: `dry_run` goes INTO the lane, not around it. The lane's seam is
+            # an MCP write tool that mints a real idea record and pulls the contact's
+            # media, so the guard has to sit before the call rather than after it.
+            lane = ideate_mod.run(ctx, item, dry_run=dry_run)
             tail_item = lane["item"]
             reply_extras = lane["reply_extras"]
+            preview = bool(lane.get("preview"))
             fragments: dict[str, Any] = {"item": tail_item}
         else:
             fragments = canned_lanes.fragments_for(branch_kind, item, ctx, prev_variables, canned)
@@ -2010,7 +2027,7 @@ def _complete_canned_lane(
         )
         reply = {**reply, **reply_extras}
 
-    actions = _send_actions(reply, dry_run=dry_run)
+    actions = _send_actions(reply, dry_run=dry_run, preview=preview)
     turn_trace.record(
         "sent",
         summary="Handed the reply to the caller to send.",

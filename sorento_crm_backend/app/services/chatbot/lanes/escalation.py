@@ -44,6 +44,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
 
 from app.services.chatbot import jsc
+from app.services.chatbot.contracts import PREVIEW
 
 logger = logging.getLogger(__name__)
 
@@ -76,10 +77,6 @@ ROUTED_TO_PIC_REPLY = (
 # uses. Asia/Kuala_Lumpur is +08:00 with no DST, so a fixed offset is the whole rule.
 MALAYSIA = timezone(timedelta(hours=8))
 RESPOND_INBOX_URL = "https://app.respond.io/space/{space_id}/inbox/{contact_id}#{message_id}"
-
-# What a dry run prints where a seam would have supplied a value (AC-507). One token, so a
-# reader of a preview action can tell at a glance that nothing behind it happened.
-PREVIEW = "<preview>"
 
 # `get-round-robin-assignee`'s body has these two frozen, as literals in the JSON.
 NEXT_ASSIGNEE_POLICY_CODE = "NORMAL"
