@@ -429,7 +429,8 @@ export function StockDocumentsPanel({
               >
                 {row.original.doc_no}
               </Link>
-            ) : row.original.doc_type === 'SPO' && row.original.doc_no !== '-' ? (
+            ) : row.original.doc_type === 'SPO' &&
+              row.original.doc_no !== '-' ? (
               // The captain's own complaint (3 Sep 2026, SO418869 SRTWCX7405-RL-S-PJ): the
               // sentence above the table jumps TO this row, but there was no way OUT of the
               // dialog onto the document itself. `stopPropagation` because a row here may
@@ -667,8 +668,12 @@ export function StockDocumentsPanel({
       // balance, capped by the five-pool net the SAME stock-detail read now carries
       // (`five_pool_net`) - a GROUP set (`IB`, `BB`, ...) keeps the raw pile, unlabelled and
       // uncapped, exactly as it always has.
-      const balanceHeading = isPoolsSection ? 'Available for Project' : 'Balance after';
-      const fivePoolNet = isPoolsSection ? (detail.data?.five_pool_net ?? null) : null;
+      const balanceHeading = isPoolsSection
+        ? 'Available for Project'
+        : 'Balance after';
+      const fivePoolNet = isPoolsSection
+        ? (detail.data?.five_pool_net ?? null)
+        : null;
       const sharePct = detail.data?.pool_share_pct;
       const displayedBalance = (balance: string | null): string | null =>
         isPoolsSection
@@ -739,10 +744,13 @@ export function StockDocumentsPanel({
     <div
       ref={panelRef}
       data-testid="stock-documents-panel"
-      // Deliberately shorter than the stock table's own 50vh container, so the documents are
-      // what scrolls rather than the position above them: measured at an 800px window, a taller
-      // panel left the contributing lines a two-row sliver.
-      className="max-h-[35vh] space-y-2 overflow-y-auto bg-muted/30 p-3"
+      // NO scrollport of its own. This used to cap itself at roughly a third of the window
+      // height and scroll, one of four nested vertical scroll regions on the Stock tab; the cost
+      // was that this panel then clipped the documents table it contains, including its header,
+      // and swallowed the wheel. The tab has one scroll region now (the dialog body), so an open
+      // ledger renders at full height and the reader scrolls the dialog past it. See
+      // `CellStockTable`'s wrapper for the measurement.
+      className="space-y-2 bg-muted/30 p-3"
     >
       {detail.isError ? (
         <p className="py-6 text-center text-sm text-destructive">
@@ -860,7 +868,9 @@ function dateCellText(row: StockDetailRow): string {
   const stated = row.due_date ? formatDateInMalaysia(row.due_date) : null;
   if (row.assumed_date) {
     const assumed = formatDateInMalaysia(row.assumed_date);
-    return stated ? `assumed ${assumed}, stated ${stated}` : `assumed ${assumed}`;
+    return stated
+      ? `assumed ${assumed}, stated ${stated}`
+      : `assumed ${assumed}`;
   }
   if (stated) return stated;
   return row.doc_type === 'On hand' ? 'Held now' : 'Not stated';
