@@ -1,6 +1,6 @@
 # PLAN - Price Tag Designer Round 5 (shift-locked corners, no duplicate name, padding)
 
-Status: in progress, lane `feat/price-tag-r5` stacked on `fix/price-tag-r4` (PR #682), 5 Sep 2026
+Status: PR open 6 Sep 2026, stacked on #682; all UAC browser-verified incl. PDF
 UAC: `documentation/plans/dealer-kit/price-tag-r5-acceptance-criteria.md`
 Predecessor: `PLAN-price-tag-r4.md`
 
