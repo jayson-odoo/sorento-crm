@@ -327,6 +327,23 @@ class PriceBadgeLayerPropsDoc(_StrictProps):
     textColor: str
     cornerRadius: float
     showNett: bool
+    # The list-only callout (r4b, AC-S6-1/2): absent means no box, so every
+    # badge in the eight seeded layouts prints exactly as it did, and the
+    # corners are the same normalized shape a polygon carries.
+    showBox: Optional[bool] = None
+    points: Optional[list[PolygonPointDoc]] = None
+    # The figure's typography (r4b, AC-S6-4/5). Every field optional, absent
+    # meaning "the size and face this badge already drew at" - the canvas
+    # derives one from the box, the print page uses a fixed point size.
+    fontFamily: Optional[str] = None
+    fontSize: Optional[float] = None
+    fontWeight: Optional[int] = None
+    italic: Optional[bool] = None
+    underline: Optional[bool] = None
+    strikethrough: Optional[bool] = None
+    align: Optional[Literal["left", "center", "right"]] = None
+    lineHeight: Optional[float] = None
+    letterSpacing: Optional[float] = None
 
 
 class BadgeLayerPropsDoc(_StrictProps):

@@ -128,6 +128,165 @@ describe('price_badge on the print page', () => {
   });
 });
 
+describe('the price badge box on the print page (r4b, AC-S6-1/2/5)', () => {
+  it('prints no box for a list-only badge saved before the flag (AC-S6-5)', () => {
+    const { container } = render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({ type: 'price_badge', props: defaultPriceBadgeProps('list_only') }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+      />,
+    );
+
+    expect(container.querySelector('svg')).toBeNull();
+    expect(screen.getByText('RM 1,599')).toBeInTheDocument();
+  });
+
+  it('prints the callout as an SVG path once the layer asks for a box (AC-S6-1)', () => {
+    const { container } = render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            type: 'price_badge',
+            width_mm: 40,
+            height_mm: 20,
+            props: {
+              ...defaultPriceBadgeProps('list_only'),
+              showBox: true,
+              fill: '#ffffff',
+              textColor: '#111111',
+              cornerRadius: 0,
+            },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+      />,
+    );
+
+    const svg = container.querySelector('svg');
+    expect(svg?.getAttribute('viewBox')).toBe('0 0 40 20');
+    const path = svg?.querySelector('path');
+    expect(path?.getAttribute('d')).toBe('M 0 0 L 40 0 L 40 20 L 0 20 Z');
+    expect(path?.getAttribute('fill')).toBe('#ffffff');
+    expect(screen.getByText('RM 1,599')).toHaveStyle({ color: '#111111' });
+  });
+
+  it('follows the layer own corners, so the callout slants in the PDF too (AC-S6-2)', () => {
+    const { container } = render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            type: 'price_badge',
+            width_mm: 40,
+            height_mm: 20,
+            props: {
+              ...defaultPriceBadgeProps('list_only'),
+              showBox: true,
+              cornerRadius: 0,
+              points: [
+                { x: 0.25, y: 0 },
+                { x: 1, y: 0 },
+                { x: 1, y: 1 },
+                { x: 0, y: 1 },
+              ],
+            },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+      />,
+    );
+
+    expect(container.querySelector('svg path')?.getAttribute('d')).toBe(
+      'M 10 0 L 40 0 L 40 20 L 0 20 Z',
+    );
+  });
+
+  it('leaves the promotional block on its rounded rectangle (AC-S6-3)', () => {
+    const { container } = render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({ type: 'price_badge', props: defaultPriceBadgeProps('promo') }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+      />,
+    );
+
+    expect(container.querySelector('svg')).toBeNull();
+    expect(screen.getByText('SP')).toBeInTheDocument();
+  });
+});
+
+describe('the price badge figure typography on the print page (r4b, AC-S6-4/5)', () => {
+  it('sets the figure in the layer own face, size and style', () => {
+    render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            type: 'price_badge',
+            props: {
+              ...defaultPriceBadgeProps('list_only'),
+              fontFamily: 'Bebas Neue',
+              fontSize: 22,
+              fontWeight: 900,
+              italic: true,
+              strikethrough: true,
+              align: 'left',
+              letterSpacing: 0.5,
+            },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+      />,
+    );
+
+    const figure = screen.getByText('RM 1,599');
+    expect(figure).toHaveStyle({
+      fontSize: '22pt',
+      fontWeight: '900',
+      fontStyle: 'italic',
+      textDecoration: 'line-through',
+      textAlign: 'left',
+      letterSpacing: '0.5px',
+    });
+    // The face is set on the frame, so every part of the badge shares it.
+    expect(figure.parentElement).toHaveStyle({ fontFamily: 'Bebas Neue' });
+  });
+
+  it('keeps 13pt / 700 / DM Sans for a badge that names none (AC-S6-5)', () => {
+    render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({ type: 'price_badge', props: defaultPriceBadgeProps('list_only') }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+      />,
+    );
+
+    const figure = screen.getByText('RM 1,599');
+    expect(figure).toHaveStyle({ fontSize: '13pt', fontWeight: '700', textAlign: 'center' });
+    expect(figure.parentElement).toHaveStyle({ fontFamily: 'DM Sans, sans-serif' });
+  });
+
+  it('scales the promotional block struck price, SP and NETT with the figure', () => {
+    render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            type: 'price_badge',
+            props: { ...defaultPriceBadgeProps('promo'), fontSize: 32 },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+      />,
+    );
+
+    expect(screen.getByText('RM 599')).toHaveStyle({ fontSize: '32pt' });
+    expect(screen.getByText('LP: RM 1,599')).toHaveStyle({ fontSize: '18pt' });
+    expect(screen.getByText('NETT')).toHaveStyle({ fontSize: '16pt' });
+  });
+});
+
 describe('bound text and pictures on the print page', () => {
   it('resolves a slot-bound text layer against the line', () => {
     render(

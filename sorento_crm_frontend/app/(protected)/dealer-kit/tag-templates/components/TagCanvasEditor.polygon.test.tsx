@@ -399,6 +399,75 @@ describe('TagCanvasEditor polygon corner handles (S4, r4b)', () => {
     ]);
   });
 
+  it('gives a boxed price badge the same handles (r4b, AC-S6-2)', () => {
+    const badge = {
+      id: 'sh1',
+      type: 'price_badge',
+      x_mm: 0,
+      y_mm: 0,
+      width_mm: 40,
+      height_mm: 20,
+      rotation_deg: 0,
+      z_index: 1,
+      locked: false,
+      visible: true,
+      slot_binding: null,
+      text_override: null,
+      props: {
+        kind: 'price_badge',
+        variant: 'list_only',
+        fill: '#ffffff',
+        textColor: '#000000',
+        cornerRadius: 0,
+        showNett: true,
+        showBox: true,
+      },
+    } as unknown as TagLayer;
+
+    const { container } = render(<TagCanvasEditor doc={docWith(badge)} onChange={vi.fn()} />);
+    selectShape();
+
+    expect(handle(container, 'polygon-vertex-2').getAttribute('data-x')).toBe(String(W_PX));
+    expect(lastAnchors()).toEqual([]);
+
+    const vertex = handle(container, 'polygon-vertex-1');
+    fireEvent.mouseDown(vertex);
+    fireEvent.mouseUp(vertex, { clientX: 180, clientY: 0 });
+
+    expect(boxOf()).toEqual({ x: 0, y: 0, width: 60, height: 20 });
+  });
+
+  it('leaves an unboxed price badge alone - it has no callout to shape', () => {
+    const badge = {
+      id: 'sh1',
+      type: 'price_badge',
+      x_mm: 0,
+      y_mm: 0,
+      width_mm: 40,
+      height_mm: 20,
+      rotation_deg: 0,
+      z_index: 1,
+      locked: false,
+      visible: true,
+      slot_binding: null,
+      text_override: null,
+      props: {
+        kind: 'price_badge',
+        variant: 'list_only',
+        fill: '#ffffff',
+        textColor: '#000000',
+        cornerRadius: 0,
+        showNett: true,
+      },
+    } as unknown as TagLayer;
+
+    const { container } = render(<TagCanvasEditor doc={docWith(badge)} onChange={vi.fn()} />);
+    selectShape();
+
+    expect(container.querySelector('[data-name="polygon-vertex-0"]')).toBeNull();
+    expect(lastAnchors()).toEqual(expect.arrayContaining(['top-left']));
+  });
+
   it('deselecting takes the handles away (AC-S4-7)', () => {
     const { container } = render(
       <TagCanvasEditor doc={docWith(shapeLayer('polygon'))} onChange={vi.fn()} />,

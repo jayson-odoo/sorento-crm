@@ -30,7 +30,7 @@ import {
   resolveSlotText,
   slotImageAttachmentId,
 } from '@/lib/dealer-kit/product-block';
-import { priceBadgeParts } from '@/lib/dealer-kit/price-badge';
+import { priceBadgeParts, priceBadgeTypography } from '@/lib/dealer-kit/price-badge';
 import {
   polygonPoints,
   roundedPolygonPath,
@@ -316,6 +316,7 @@ function renderPriceBadgeLayer(layer: TagLayer, resolved: ResolvedLineData | nul
     offerPrice:
       resolved && resolved.show_promo_price ? resolved.sell_price ?? null : null,
   });
+  const typo = priceBadgeTypography(props);
 
   const frame: CSSProperties = {
     position: 'absolute',
@@ -324,21 +325,37 @@ function renderPriceBadgeLayer(layer: TagLayer, resolved: ResolvedLineData | nul
     width: `${layer.width_mm}mm`,
     height: `${layer.height_mm}mm`,
     transform: layer.rotation_deg ? `rotate(${layer.rotation_deg}deg)` : undefined,
-    fontFamily: 'DM Sans, sans-serif',
+    fontFamily: typo.fontFamily || 'DM Sans, sans-serif',
     display: 'flex',
     flexDirection: 'column',
     justifyContent: 'center',
     overflow: 'hidden',
   };
 
+  /**
+   * The figure's own style. Every absent field falls back to the size and
+   * weight this badge already printed at (AC-S6-5); the caller passes those,
+   * because a plain badge and a boxed one never printed at the same size.
+   */
+  const figureStyle = (size: number, weight: number): CSSProperties => ({
+    fontSize: `${typo.fontSize ?? size}pt`,
+    fontWeight: typo.fontWeight ?? weight,
+    fontStyle: typo.italic ? 'italic' : 'normal',
+    textDecoration:
+      [typo.underline && 'underline', typo.strikethrough && 'line-through']
+        .filter(Boolean)
+        .join(' ') || 'none',
+    textAlign: typo.align,
+    lineHeight: typo.lineHeight ?? undefined,
+    letterSpacing: typo.letterSpacing ? `${typo.letterSpacing}px` : undefined,
+  });
+
   if (!parts.boxed) {
     return (
       <div style={frame}>
         <span
           style={{
-            fontSize: '13pt',
-            fontWeight: 700,
-            textAlign: 'center',
+            ...figureStyle(13, 700),
             color: parts.amountText ? '#000000' : '#999999',
           }}
         >
@@ -348,12 +365,51 @@ function renderPriceBadgeLayer(layer: TagLayer, resolved: ResolvedLineData | nul
     );
   }
 
+  // The flyer's white callout: the badge IS the box (r4b, AC-S6-2). Inline
+  // SVG whose user units ARE millimetres, from the SAME path builder the
+  // Konva canvas draws with, so a corner dragged on the proof is the corner
+  // that prints.
+  if (parts.polygonBox) {
+    return (
+      <div style={frame}>
+        <svg
+          viewBox={`0 0 ${layer.width_mm} ${layer.height_mm}`}
+          width={`${layer.width_mm}mm`}
+          height={`${layer.height_mm}mm`}
+          style={{ position: 'absolute', left: 0, top: 0, overflow: 'visible' }}
+        >
+          <path
+            d={roundedPolygonPath(
+              scalePolygonPoints(polygonPoints(props), layer.width_mm, layer.height_mm),
+              props.cornerRadius,
+            )}
+            fill={props.fill === 'transparent' ? 'none' : props.fill}
+          />
+        </svg>
+        <span
+          style={{
+            ...figureStyle(13, 700),
+            position: 'relative',
+            color: props.textColor,
+          }}
+        >
+          {parts.plainText}
+        </span>
+      </div>
+    );
+  }
+
+  // The small parts keep the proportion to the figure they already printed
+  // at - 9pt and 8pt against 16pt - so a custom size moves the whole block
+  // together rather than only its middle.
+  const figureSize = typo.fontSize ?? 16;
+
   return (
     <div style={frame}>
       {parts.struckText && (
         <span
           style={{
-            fontSize: '9pt',
+            fontSize: `${figureSize * 0.5625}pt`,
             color: '#666666',
             textAlign: 'center',
             textDecoration: 'line-through',
@@ -376,11 +432,15 @@ function renderPriceBadgeLayer(layer: TagLayer, resolved: ResolvedLineData | nul
         }}
       >
         {parts.spLabel && (
-          <span style={{ fontSize: '8pt', fontWeight: 700 }}>{parts.spLabel}</span>
+          <span style={{ fontSize: `${figureSize * 0.5}pt`, fontWeight: 700 }}>
+            {parts.spLabel}
+          </span>
         )}
-        <span style={{ fontSize: '16pt', fontWeight: 800 }}>{parts.amountText}</span>
+        <span style={figureStyle(16, 800)}>{parts.amountText}</span>
         {parts.nettLabel && (
-          <span style={{ fontSize: '8pt', fontWeight: 700 }}>{parts.nettLabel}</span>
+          <span style={{ fontSize: `${figureSize * 0.5}pt`, fontWeight: 700 }}>
+            {parts.nettLabel}
+          </span>
         )}
       </div>
     </div>

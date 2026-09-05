@@ -1,6 +1,6 @@
 # PLAN - Price Tag Designer Round 4 (fonts, stale data, inline copy, free-corner shape)
 
-Status: in progress, lane `fix/price-tag-r4` cut off `origin/main` dbba826bf on 5 Sep 2026
+Status: in progress, round 4b committed, browser verification pending; lane `fix/price-tag-r4` cut off `origin/main` dbba826bf on 5 Sep 2026
 UAC: `documentation/plans/dealer-kit/price-tag-r4-acceptance-criteria.md`
 Predecessor: `documentation/plans/_archive/dealer-kit/PLAN-price-tag-ux-r3.md` (shipped #625)
 
@@ -161,6 +161,16 @@ Findings, all on the same lane:
   optional `points` as a polygon, drawn with `roundedPolygonPath` in both renderers, with the
   same on-selection handles as S4, so the slanted callout is the badge itself. Text stays
   centred in the layer box.
+  Narrowed during implementation, and `priceBadgeParts` now says which of the two it is with a
+  `polygonBox` field: the CORNERS belong to the list-only callout, whose box is the whole
+  layer box in millimetres. The promotional block's box is only the part of the layer left
+  under the struck price - a height the print page never states, because it lays that block
+  out with flex - so it keeps the rounded rectangle it has always had in both renderers, and
+  shows no corner handles. That is what AC-S6-3 asks for; drawing its box from a path would
+  have meant re-laying the promo badge out in fixed proportions and changing what promo
+  prints. One consequence worth knowing: a promo badge that had Box ticked while it was
+  list-only and then loses its offer keeps the box on the list-price fallback, because the
+  flag is read in the shared fallback branch rather than gated on the variant.
 - Review should-fix 1 and 2 (relative font path in the browser; freeze the read-only decision
   per edit session) and nits 4-9 land in the same pass.
 - **S6b price badge typography.** The badge's figure has no text controls; a text layer has

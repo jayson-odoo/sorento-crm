@@ -331,6 +331,14 @@ type PickerState =
   | { kind: 'accessories' }
   | { kind: 'preview'; groupId: string; mode: PickMode };
 
+/**
+ * A layer that can carry its own corners: a polygon shape, or a price badge
+ * drawing the flyer's white callout (S4, r4b AC-S6-2).
+ */
+type CornerHandleLayer = TagLayer & {
+  props: Extract<TagLayerProps, { kind: 'shape' } | { kind: 'price_badge' }>;
+};
+
 /** What a drag is carrying, captured once when it starts. */
 interface DragSession {
   anchorId: string;
@@ -1221,28 +1229,39 @@ export function TagCanvasEditor({
   // -- Polygon corner handles (S4, r4b) --------------------------------------
 
   /**
-   * The polygon the corner handles belong to: the SOLE selection, whenever it
-   * is an unlocked, visible polygon.
+   * The layer the corner handles belong to: the SOLE selection, whenever it
+   * is an unlocked, visible polygon - or a price badge drawing the flyer's
+   * white callout, which is the same shape by another name (AC-S6-2).
    *
    * Selection alone, no double-click (r4b, AC-S4-10). The user picked Polygon
    * from the shape list and dragged at the corner they wanted to move;
    * nothing on screen said a second click was needed first, and a handle
    * nobody can find is a feature nobody has. Derived rather than held in
    * state, so there is one source of truth: clicking empty canvas, selecting
-   * something else, locking it or switching the shape back to a rectangle all
-   * take the handles away without a single setter.
+   * something else, locking it, switching the shape back to a rectangle or
+   * unticking Box all take the handles away without a single setter.
    */
-  const cornerHandleLayer = useMemo(() => {
+  const cornerHandleLayer = useMemo((): CornerHandleLayer | null => {
     if (selectedIds.size !== 1) return null;
     const layer = layers.find((l) => selectedIds.has(l.id));
     if (!layer || layer.locked || !layer.visible) return null;
-    if (layer.props.kind !== 'shape' || layer.props.shape !== 'polygon') return null;
-    return layer;
+    if (layer.props.kind === 'shape') {
+      return layer.props.shape === 'polygon' ? (layer as CornerHandleLayer) : null;
+    }
+    if (layer.props.kind === 'price_badge') {
+      // A promotional badge's box is only the part of the layer under the
+      // struck price, and it keeps its rounded rectangle (AC-S6-3): there are
+      // no corners of its own to drag.
+      return layer.props.variant === 'list_only' && layer.props.showBox === true
+        ? (layer as CornerHandleLayer)
+        : null;
+    }
+    return null;
   }, [selectedIds, layers]);
 
   /** Where every handle sits, in the layer's own pixel space. */
   const polygonHandles = useMemo(() => {
-    if (!cornerHandleLayer || cornerHandleLayer.props.kind !== 'shape') return null;
+    if (!cornerHandleLayer) return null;
     const width = cornerHandleLayer.width_mm * scale;
     const height = cornerHandleLayer.height_mm * scale;
     const vertices = scalePolygonPoints(
@@ -1265,7 +1284,7 @@ export function TagCanvasEditor({
   const startPolygonDrag = useCallback(
     (kind: 'vertex' | 'edge', index: number) => {
       const layer = cornerHandleLayer;
-      if (!layer || layer.props.kind !== 'shape') return;
+      if (!layer) return;
       // The BASE is read once, at the start: every tick of the drag is a
       // delta from where the handle began, so a clamped tick cannot ratchet
       // the corner along by re-basing on its own clamped result.
@@ -1330,7 +1349,7 @@ export function TagCanvasEditor({
       const layer = cornerHandleLayer;
       polygonDragRef.current = null;
       setPolygonPreview(null);
-      if (!next || !layer || layer.props.kind !== 'shape') return;
+      if (!next || !layer) return;
 
       const refit = refitPolygon({
         x: layer.x_mm,
@@ -1379,8 +1398,9 @@ export function TagCanvasEditor({
   const withPolygonPreview = useCallback(
     (layer: TagLayer): TagLayer => {
       if (!polygonPreview || layer.id !== cornerHandleLayer?.id) return layer;
-      if (layer.props.kind !== 'shape') return layer;
-      return { ...layer, props: { ...layer.props, points: polygonPreview } };
+      const props = layer.props;
+      if (props.kind !== 'shape' && props.kind !== 'price_badge') return layer;
+      return { ...layer, props: { ...props, points: polygonPreview } };
     },
     [polygonPreview, cornerHandleLayer],
   );

@@ -171,6 +171,37 @@ export interface PriceBadgeLayerProps {
   textColor: string;
   cornerRadius: number;
   showNett: boolean;
+  /**
+   * Draw the box behind a LIST-ONLY badge (r4b, AC-S6-1).
+   *
+   * Absent means no box, so every badge saved before this prints exactly as
+   * it did. Promo is always boxed and ignores this - the struck price above a
+   * filled block is what a promotional badge IS (D26).
+   */
+  showBox?: boolean;
+  /**
+   * The box's own corners, same normalization as a polygon shape's (r4b,
+   * AC-S6-2): the flyer's price callout has a slanted left edge, and the
+   * badge itself is that callout rather than a shape parked behind it.
+   * Absent = the four corners.
+   */
+  points?: PolygonPoint[];
+  /**
+   * The figure's typography (r4b, AC-S6-4). Every field is optional and every
+   * absent one means "what this badge already looked like" - the canvas sizes
+   * the figure from the box, the print page uses a fixed point size - so a
+   * saved badge renders unchanged (AC-S6-5). `priceBadgeTypography` in
+   * `price-badge.ts` is the one place that resolves them.
+   */
+  fontFamily?: string;
+  fontSize?: number;
+  fontWeight?: number;
+  italic?: boolean;
+  underline?: boolean;
+  strikethrough?: boolean;
+  align?: 'left' | 'center' | 'right';
+  lineHeight?: number;
+  letterSpacing?: number;
 }
 
 /**

@@ -18,8 +18,8 @@ import { Ellipse, Group, Image as KonvaImage, Line, Path, Rect, Text } from 'rea
 import type Konva from 'konva';
 import JsBarcode from 'jsbarcode';
 import type { TagLayer, TagLayerProps } from '@/lib/dealer-kit/tag-template-types';
-import type { PriceBadgeInput } from '@/lib/dealer-kit/price-badge';
-import { priceBadgeParts } from '@/lib/dealer-kit/price-badge';
+import type { PriceBadgeInput, PriceBadgeTypography } from '@/lib/dealer-kit/price-badge';
+import { priceBadgeParts, priceBadgeTypography } from '@/lib/dealer-kit/price-badge';
 import type { TagLayerDisplay } from '@/lib/dealer-kit/product-block';
 import {
   barcodePlateGeometry,
@@ -742,6 +742,11 @@ function PriceBadgeContent({
   input: PriceBadgeInput;
 }) {
   const parts = priceBadgeParts(props, input);
+  const typo = priceBadgeTypography(props);
+
+  // The figure's own size when the layer does not name one: what this badge
+  // has always drawn, so a saved badge is unchanged (AC-S6-5).
+  const plainFont = badgeFontSize(typo, scale, Math.min(h * 0.6, w / 6));
 
   if (!parts.boxed) {
     return (
@@ -749,12 +754,47 @@ function PriceBadgeContent({
         width={w}
         height={h}
         text={parts.plainText}
-        align="center"
+        align={typo.align}
         verticalAlign="middle"
-        fontSize={Math.min(h * 0.6, w / 6)}
-        fontStyle="bold"
+        fontFamily={typo.fontFamily ?? undefined}
+        fontSize={plainFont}
+        fontStyle={badgeFontStyle(typo)}
+        textDecoration={badgeTextDecoration(typo)}
+        lineHeight={typo.lineHeight ?? undefined}
+        letterSpacing={typo.letterSpacing * scale * 0.1}
         fill={parts.amountText ? '#000000' : '#999999'}
       />
+    );
+  }
+
+  // The flyer's white callout: the badge IS the box (r4b, AC-S6-2), drawn
+  // from the layer's own corners through the SAME builder a polygon shape
+  // uses, so a slanted edge looks the same here and in the PDF.
+  if (parts.polygonBox) {
+    return (
+      <>
+        <Path
+          data={roundedPolygonPath(
+            scalePolygonPoints(polygonPoints(props), w, h),
+            mm2px(props.cornerRadius, scale),
+          )}
+          fill={props.fill === 'transparent' ? undefined : props.fill}
+        />
+        <Text
+          width={w}
+          height={h}
+          text={parts.plainText}
+          align={typo.align}
+          verticalAlign="middle"
+          fontFamily={typo.fontFamily ?? undefined}
+          fontSize={plainFont}
+          fontStyle={badgeFontStyle(typo)}
+          textDecoration={badgeTextDecoration(typo)}
+          lineHeight={typo.lineHeight ?? undefined}
+          letterSpacing={typo.letterSpacing * scale * 0.1}
+          fill={props.textColor}
+        />
+      </>
     );
   }
 
@@ -763,8 +803,11 @@ function PriceBadgeContent({
   const strikeH = parts.struckText ? h * 0.3 : 0;
   const boxY = strikeH;
   const boxH = h - strikeH;
-  const smallFont = Math.max(4, boxH * 0.28);
-  const bigFont = Math.max(6, boxH * 0.5);
+  const bigFont = badgeFontSize(typo, scale, Math.max(6, boxH * 0.5));
+  // The small parts keep the proportion to the figure they already had, so a
+  // custom size moves the whole block together rather than only its middle.
+  const smallFont = Math.max(4, bigFont * 0.56);
+  const struckFont = Math.max(4, bigFont * 0.6);
 
   return (
     <>
@@ -775,7 +818,8 @@ function PriceBadgeContent({
           text={parts.struckText}
           align="center"
           verticalAlign="middle"
-          fontSize={Math.max(4, strikeH * 0.7)}
+          fontFamily={typo.fontFamily ?? undefined}
+          fontSize={struckFont}
           fill="#666666"
           textDecoration="line-through"
         />
@@ -794,6 +838,7 @@ function PriceBadgeContent({
           width={w * 0.2}
           height={boxH * 0.4}
           text={parts.spLabel}
+          fontFamily={typo.fontFamily ?? undefined}
           fontSize={smallFont}
           fontStyle="bold"
           fill={props.textColor}
@@ -805,10 +850,14 @@ function PriceBadgeContent({
         width={w}
         height={boxH * 0.55}
         text={parts.amountText}
-        align="center"
+        align={typo.align}
         verticalAlign="middle"
+        fontFamily={typo.fontFamily ?? undefined}
         fontSize={bigFont}
-        fontStyle="bold"
+        fontStyle={badgeFontStyle(typo)}
+        textDecoration={badgeTextDecoration(typo)}
+        lineHeight={typo.lineHeight ?? undefined}
+        letterSpacing={typo.letterSpacing * scale * 0.1}
         fill={props.textColor}
       />
       {parts.nettLabel && (
@@ -819,6 +868,7 @@ function PriceBadgeContent({
           text={parts.nettLabel}
           align="center"
           verticalAlign="middle"
+          fontFamily={typo.fontFamily ?? undefined}
           fontSize={smallFont}
           fontStyle="bold"
           fill={props.textColor}
@@ -826,4 +876,25 @@ function PriceBadgeContent({
       )}
     </>
   );
+}
+
+/**
+ * The figure's size in canvas pixels: the layer's own point size when it
+ * names one, converted the same way a text layer's is, and otherwise the size
+ * this badge already derived from its box (AC-S6-5).
+ */
+function badgeFontSize(typo: PriceBadgeTypography, scale: number, derived: number): number {
+  return typo.fontSize != null ? typo.fontSize * scale * 0.35 : derived;
+}
+
+/** The figure is bold unless the layer says otherwise - it always has been. */
+function badgeFontStyle(typo: PriceBadgeTypography): string {
+  const bold = (typo.fontWeight ?? 700) >= 600;
+  return [typo.italic && 'italic', bold && 'bold'].filter(Boolean).join(' ') || 'normal';
+}
+
+function badgeTextDecoration(typo: PriceBadgeTypography): string {
+  return [typo.underline && 'underline', typo.strikethrough && 'line-through']
+    .filter(Boolean)
+    .join(' ');
 }

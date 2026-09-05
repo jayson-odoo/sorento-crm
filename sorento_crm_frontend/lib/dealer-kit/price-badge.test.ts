@@ -8,7 +8,12 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { NO_PRICE_TEXT, formatTagPrice, priceBadgeParts } from './price-badge';
+import {
+  NO_PRICE_TEXT,
+  formatTagPrice,
+  priceBadgeParts,
+  priceBadgeTypography,
+} from './price-badge';
 
 const LIST_ONLY = { variant: 'list_only' as const, showNett: true };
 const PROMO = { variant: 'promo' as const, showNett: true };
@@ -87,5 +92,111 @@ describe('priceBadgeParts - promo', () => {
 
     expect(parts.struckText).toBeNull();
     expect(parts.plainText).toBe('SP RM 599 NETT');
+  });
+});
+
+describe('priceBadgeParts - the list-only box (r4b, AC-S6-1)', () => {
+  it('draws the box when the layer asks for one', () => {
+    const parts = priceBadgeParts(
+      { ...LIST_ONLY, showBox: true },
+      { listPrice: 1599, offerPrice: null },
+    );
+
+    expect(parts.boxed).toBe(true);
+    // The whole layer box, drawn from the layer's own corners.
+    expect(parts.polygonBox).toBe(true);
+    // Only the box arrives - a list-only badge is still just the figure.
+    expect(parts.plainText).toBe('RM 1,599');
+    expect(parts.spLabel).toBeNull();
+    expect(parts.nettLabel).toBeNull();
+    expect(parts.struckText).toBeNull();
+  });
+
+  it('draws no box for a badge saved before the flag existed (AC-S6-1)', () => {
+    expect(priceBadgeParts(LIST_ONLY, { listPrice: 1599, offerPrice: null }).boxed).toBe(false);
+    expect(
+      priceBadgeParts({ ...LIST_ONLY, showBox: false }, { listPrice: 1599, offerPrice: null })
+        .boxed,
+    ).toBe(false);
+  });
+
+  it('draws no box around a price it does not have', () => {
+    const parts = priceBadgeParts(
+      { ...LIST_ONLY, showBox: true },
+      { listPrice: null, offerPrice: null },
+    );
+
+    expect(parts.boxed).toBe(false);
+    expect(parts.plainText).toBe(NO_PRICE_TEXT);
+  });
+
+  it('keeps the box when a promo badge that asked for one loses its offer', () => {
+    // The fallback branch is shared, and the flag is read there rather than
+    // gated on the variant: a promotion ending mid-design already degrades
+    // the badge to the list price, and taking the callout away at the same
+    // moment would be a second, unrelated jump on the tag.
+    const parts = priceBadgeParts(
+      { ...PROMO, showBox: true },
+      { listPrice: 1599, offerPrice: null },
+    );
+
+    expect(parts.boxed).toBe(true);
+    expect(parts.plainText).toBe('RM 1,599');
+  });
+
+  it('leaves the promo variant exactly as it was (AC-S6-3)', () => {
+    expect(priceBadgeParts(PROMO, { listPrice: 1599, offerPrice: 599 }).boxed).toBe(true);
+    // The promotional block keeps its rounded rectangle under the struck
+    // price: it is the one box whose height the print page cannot state in
+    // millimetres, and nothing about promo changes here (AC-S6-3).
+    expect(priceBadgeParts(PROMO, { listPrice: 1599, offerPrice: 599 }).polygonBox).toBe(false);
+    expect(
+      priceBadgeParts({ ...PROMO, showBox: false }, { listPrice: 1599, offerPrice: 599 }).boxed,
+    ).toBe(true);
+  });
+});
+
+describe('priceBadgeTypography (r4b, AC-S6-4/5)', () => {
+  it('resolves an untouched badge to "whatever each renderer already did"', () => {
+    // Null, not a number: the canvas sizes the figure from the box and the
+    // print page uses a fixed pt, and a badge saved before these fields has
+    // to keep printing exactly as it did (AC-S6-5).
+    expect(priceBadgeTypography({})).toEqual({
+      fontFamily: null,
+      fontSize: null,
+      fontWeight: null,
+      italic: false,
+      underline: false,
+      strikethrough: false,
+      align: 'center',
+      lineHeight: null,
+      letterSpacing: 0,
+    });
+  });
+
+  it('hands back what the layer actually carries', () => {
+    expect(
+      priceBadgeTypography({
+        fontFamily: 'Bebas Neue',
+        fontSize: 22,
+        fontWeight: 900,
+        italic: true,
+        underline: true,
+        strikethrough: true,
+        align: 'left',
+        lineHeight: 1.4,
+        letterSpacing: 0.5,
+      }),
+    ).toEqual({
+      fontFamily: 'Bebas Neue',
+      fontSize: 22,
+      fontWeight: 900,
+      italic: true,
+      underline: true,
+      strikethrough: true,
+      align: 'left',
+      lineHeight: 1.4,
+      letterSpacing: 0.5,
+    });
   });
 });

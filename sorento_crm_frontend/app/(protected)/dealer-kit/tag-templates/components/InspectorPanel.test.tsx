@@ -426,3 +426,95 @@ describe('InspectorPanel - polygon shape (S4, AC-S4-1)', () => {
     expect(screen.getByText('Corner Radius')).toBeInTheDocument();
   });
 });
+
+describe('InspectorPanel - price badge box and typography (r4b, AC-S6-1/4)', () => {
+  function badgeLayer(props: Record<string, unknown> = {}): TagLayer {
+    return {
+      id: 'pb1',
+      type: 'price_badge',
+      x_mm: 0,
+      y_mm: 0,
+      width_mm: 40,
+      height_mm: 20,
+      rotation_deg: 0,
+      z_index: 1,
+      locked: false,
+      visible: true,
+      slot_binding: null,
+      text_override: null,
+      props: {
+        kind: 'price_badge',
+        variant: 'list_only',
+        fill: '#ffffff',
+        textColor: '#000000',
+        cornerRadius: 2,
+        showNett: true,
+        ...props,
+      },
+    } as TagLayer;
+  }
+
+  it('offers a Box checkbox on the list-only variant, and ticking it writes showBox', () => {
+    const onUpdateProps = vi.fn();
+    render(
+      <InspectorPanel layer={badgeLayer()} onUpdate={vi.fn()} onUpdateProps={onUpdateProps} />,
+    );
+
+    const box = screen.getByRole('checkbox', { name: 'Box' });
+    expect(box).not.toBeChecked();
+    fireEvent.click(box);
+
+    expect(onUpdateProps).toHaveBeenCalledWith(
+      'pb1',
+      expect.objectContaining({ showBox: true }),
+    );
+  });
+
+  it('does not offer it on the promo variant, which is always boxed (AC-S6-3)', () => {
+    render(
+      <InspectorPanel
+        layer={badgeLayer({ variant: 'promo' })}
+        onUpdate={vi.fn()}
+        onUpdateProps={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole('checkbox', { name: 'Box' })).toBeNull();
+  });
+
+  it('shows the same typography controls a text layer has, and writes fontSize (AC-S6-4)', () => {
+    const onUpdateProps = vi.fn();
+    render(
+      <InspectorPanel layer={badgeLayer()} onUpdate={vi.fn()} onUpdateProps={onUpdateProps} />,
+    );
+
+    for (const label of [
+      'Font Family',
+      'Font Size',
+      'Font Weight',
+      'Text Colour',
+      'Align',
+      'Line Height',
+      'Letter Spacing',
+    ]) {
+      expect(screen.getByText(label)).toBeInTheDocument();
+    }
+    expect(screen.getByRole('button', { name: 'Bold' })).toBeInTheDocument();
+
+    const size = screen.getByLabelText('Font Size');
+    fireEvent.change(size, { target: { value: '22' } });
+
+    expect(onUpdateProps).toHaveBeenCalledWith(
+      'pb1',
+      expect.objectContaining({ fontSize: 22 }),
+    );
+  });
+
+  it('leaves the size box empty until the badge names one, so nothing is invented', () => {
+    render(
+      <InspectorPanel layer={badgeLayer()} onUpdate={vi.fn()} onUpdateProps={vi.fn()} />,
+    );
+
+    expect(screen.getByLabelText('Font Size')).toHaveValue(null);
+  });
+});

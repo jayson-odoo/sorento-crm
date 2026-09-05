@@ -422,3 +422,72 @@ def test_a_polygon_saved_before_a_corner_moved_needs_no_points():
 def test_a_shape_that_is_not_one_of_the_five_is_still_rejected():
     with pytest.raises(pydantic.ValidationError):
         TagTemplateDocModel.model_validate(_polygon_doc(_shape_props(shape="hexagon")))
+
+
+# ---------------------------------------------------------------------------
+# The price badge box, its corners and its typography (r4b, S6/S6b)
+# ---------------------------------------------------------------------------
+
+
+def _badge_doc(props: dict) -> dict:
+    doc = _polygon_doc(props)
+    doc["layers"][0]["type"] = "price_badge"
+    return doc
+
+
+def _badge_props(**overrides) -> dict:
+    return {
+        "kind": "price_badge",
+        "variant": "list_only",
+        "fill": "#ffffff",
+        "textColor": "#000000",
+        "cornerRadius": 2,
+        "showNett": True,
+        **overrides,
+    }
+
+
+def test_a_price_badge_saved_before_the_box_and_typography_still_validates():
+    """AC-S6-1/S6-5: every new field is optional, so no seeded badge needs a change."""
+    TagTemplateDocModel.model_validate(_badge_doc(_badge_props()))
+
+
+def test_a_boxed_price_badge_with_its_own_corners_is_a_valid_document():
+    """AC-S6-2: the callout is the badge, and it carries corners like a polygon."""
+    doc = _badge_doc(
+        _badge_props(
+            showBox=True,
+            points=[
+                {"x": 0.25, "y": 0},
+                {"x": 1, "y": 0},
+                {"x": 1, "y": 1},
+                {"x": 0, "y": 1},
+            ],
+        )
+    )
+    TagTemplateDocModel.model_validate(doc)
+
+
+def test_a_price_badge_carries_the_same_typography_a_text_layer_does():
+    """AC-S6-4: the figure is text, and it is set the same way."""
+    doc = _badge_doc(
+        _badge_props(
+            fontFamily="Bebas Neue",
+            fontSize=22,
+            fontWeight=900,
+            italic=True,
+            underline=True,
+            strikethrough=True,
+            align="left",
+            lineHeight=1.4,
+            letterSpacing=0.5,
+        )
+    )
+    TagTemplateDocModel.model_validate(doc)
+
+
+def test_a_misspelled_price_badge_field_is_still_rejected():
+    # The whole point of the mirror: `show_box` where the renderer reads
+    # `showBox` would ship as a badge with no box and no error anywhere.
+    with pytest.raises(pydantic.ValidationError):
+        TagTemplateDocModel.model_validate(_badge_doc(_badge_props(show_box=True)))
