@@ -180,6 +180,47 @@ def test_the_guardrail_catches_every_hand_rolled_shape(tmp_path) -> None:
     assert 8 in matched_lines, "dict-literal-with-masked-value shape was not caught"
 
 
+def test_a_credential_header_outside_the_denylist_is_masked_by_name_parts() -> None:
+    """S8a hardening (AC-806): `x-custom-auth-token` is neither an exact `CREDENTIAL_HEADERS`
+    entry nor one of the three regressions above - it survives on the NAME-PARTS rule alone
+    (`_CREDENTIAL_NAME_PARTS` carries both `"auth"` and `"token"`, either is enough). Named
+    for the exact header the S8a coder asked to see covered, distinct from
+    `test_x_forwarded_authorization_is_masked` above (that one is caught by `"auth"` only)."""
+    masked = sanitize_request_headers({"x-custom-auth-token": "sk-live-secret"})
+    assert masked == {"x-custom-auth-token": MASKED_HEADER_VALUE}
+
+
+def test_a_fourth_hand_rolled_shape_a_ternary_inside_a_comprehension_is_caught() -> None:
+    """S8a hardening (AC-806): a FOURTH hand-rolled shape - a dict COMPREHENSION whose
+    value is a ternary comparing the key to a credential header literal, e.g.::
+
+        log["headers"] = {k: ("***" if k.lower() == "x-api-key" else v) for k, v in headers.items()}
+
+    Found as a gap during this hardening pass (measured directly against the three
+    declared patterns before writing this assertion: none matched - pattern 1 wants the
+    credential name as a dict/bracket KEY on an assignment's left side, pattern 2 wants a
+    `.get(` call, pattern 3 wants the masked value as a dict literal's VALUE; this shape
+    has the credential name on the RIGHT of a `==` inside a ternary). Fixed concurrently
+    in the same lane (a fourth pattern joined `HAND_ROLLED_HEADER_MASK_PATTERNS`, per its
+    own comment: "a per-key mask chosen by comparing the key to a credential header name
+    inside a ternary") - this is now the regression guard for that shape, not an open
+    finding.
+    """
+    from app.services.integration_service import HAND_ROLLED_HEADER_MASK_PATTERNS
+
+    source = (
+        "def conditional_comprehension(headers, log):\n"
+        '    log["headers"] = {k: ("***" if k.lower() == "x-api-key" else v) '
+        "for k, v in headers.items()}\n"
+    )
+
+    caught = any(pattern.search(source) for pattern in HAND_ROLLED_HEADER_MASK_PATTERNS)
+    assert caught, (
+        "the ternary-in-comprehension shape is not caught by any of "
+        "HAND_ROLLED_HEADER_MASK_PATTERNS's declared shapes"
+    )
+
+
 def test_archived_fulfilment_feedback_plan_no_longer_carries_a_real_phone_number() -> None:
     """AC-806: the archived plan leaked a real WhatsApp number
     (`documentation/plans/_archive/scm/PLAN-scm-fulfilment-feedback-p4.md`, "the Sorento
