@@ -746,7 +746,18 @@ def crossdomain_render(
             continue  # positive facts only
 
         def qty(it: Any) -> float:
-            n = jsc.js_number(field_pref(it, "quantity_on_hand", "quantity on hand"))
+            """`Number(fieldPref(it, 'quantity_on_hand', 'quantity on hand') ?? NaN)`.
+
+            The `?? NaN` is the whole branch test. `fieldPref` returns `null` when the key
+            and every label are ABSENT, and `Number(null)` is 0 - which would make "some
+            row has a quantity" true for a set that carries none, and the incoming
+            direction (`crm_incoming_stock_list` emits `estimated_arrival_date` and no
+            `quantity_on_hand` at all) would inherit the CRM's jittery row order instead
+            of sorting by soonest ETA. The miss is carried as `undefined`, which
+            `jsc.js_number` reads as NaN exactly as JS does.
+            """
+            value = field_pref(it, "quantity_on_hand", "quantity on hand")
+            n = jsc.js_number(jsc.UNDEFINED if value is None else value)
             return float("nan") if jsc.is_nan(n) else float(n)
 
         def eta(it: Any) -> str:
@@ -754,7 +765,7 @@ def crossdomain_render(
                 field_pref(it, "estimated_arrival_date", "eta", "estimated arrival date")
             )
 
-        if any(not jsc.is_nan(jsc.js_number(qty(it))) for it in rows):
+        if any(not jsc.is_nan(qty(it)) for it in rows):
             rows.sort(key=lambda it: -(0 if jsc.is_nan(qty(it)) else qty(it)))
         elif any(eta(it) for it in rows):
             rows.sort(key=eta)

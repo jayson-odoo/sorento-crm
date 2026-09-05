@@ -993,6 +993,81 @@ class TestCrossdomainProbe:
         assert args["semantic_input"]["access_levels"] == ["Dealer", "End User"]
 
 
+class TestCrossdomainRenderRowOrder:
+    """`crossdomain-render.js:96,101-102`: quantity desc when ANY row has a quantity,
+    otherwise soonest ETA first.
+
+    The incoming direction is the one that has no quantity at all:
+    `sorento_crm_mcp/presenters.py::_incoming_list` emits `estimated_arrival_date`
+    (label "ETA") and never a `quantity_on_hand` key, so `fieldPref` misses and JS's
+    `?? NaN` sends every one of those rows down the ETA branch. Reading the miss as
+    `Number(null) === 0` instead would make the quantity branch win for a set that
+    carries no quantity, and the rows would come back in the CRM's own order - which
+    the node's comment (crossdomain-render.js:88-90) records as jittery between calls.
+    """
+
+    @staticmethod
+    def _incoming_row(code: str, eta: str) -> dict:
+        """One `crm_incoming_stock_list` item, in the presenter's own shape."""
+        return {
+            "fields": [
+                {"key": "product_code", "label": "Product Code", "value": code},
+                {"key": "estimated_arrival_date", "label": "ETA", "value": eta},
+            ]
+        }
+
+    def _render(self, rows: list[dict]) -> str:
+        from app.services.chatbot.lanes.business.answer import crossdomain_render
+
+        out = crossdomain_render(
+            {"items": rows, "has_result": True},
+            zeroset={
+                "active": True,
+                "origin_domain": "inventory",
+                "team": "warehouse",
+                "missing": [{"code": "SRTWC8517", "_n": "SRTWC8517", "uuid": "u1"}],
+            },
+            validator={},
+        )
+        return out["_xdBlock"]["block"]
+
+    def test_rows_with_no_quantity_key_sort_by_soonest_eta(self) -> None:
+        rows = [
+            self._incoming_row("SRTWC8517", "2026-11-30"),
+            self._incoming_row("SRTWC8517", "2026-09-15"),
+            self._incoming_row("SRTWC8517", "2026-10-02"),
+        ]
+        block = self._render(rows)
+        order = re_mod.findall(r"\*ETA:\* (\d{4}-\d{2}-\d{2})", block)
+        assert order == ["2026-09-15", "2026-10-02", "2026-11-30"], (
+            "an absent quantity_on_hand key must read as NaN (JS `?? NaN`), not 0 - "
+            "with 0 the quantity branch wins and the incoming rows keep the CRM's "
+            f"own jittery order: {order}"
+        )
+
+    def test_a_present_quantity_still_wins_over_eta(self) -> None:
+        """Parity in the other direction: one real quantity anywhere in the set and the
+        quantity branch takes it, placeholder rows sorting as 0 (`_qty(b) || 0`)."""
+        rows = [
+            {
+                "fields": [
+                    {"key": "product_code", "label": "Product Code", "value": "SRTWC8517"},
+                    {"key": "quantity_on_hand", "label": "Quantity On Hand", "value": 2},
+                    {"key": "estimated_arrival_date", "label": "ETA", "value": "2026-09-15"},
+                ]
+            },
+            {
+                "fields": [
+                    {"key": "product_code", "label": "Product Code", "value": "SRTWC8517"},
+                    {"key": "quantity_on_hand", "label": "Quantity On Hand", "value": 9},
+                    {"key": "estimated_arrival_date", "label": "ETA", "value": "2026-11-30"},
+                ]
+            },
+        ]
+        block = self._render(rows)
+        assert re_mod.findall(r"\*Quantity On Hand:\* (\d+)", block) == ["9", "2"]
+
+
 # --------------------------------------------------------------------------- #
 # AC-607: the miss lane - dym-transform, its probes, family-fetch (never a raw IP,
 # H52's family-fetch half; D10), then build-suggest-offer.
