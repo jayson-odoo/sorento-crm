@@ -281,6 +281,32 @@ NODE_SLUGS: dict[str, tuple[str, ...]] = {
 CAPTURE_BODY_ADDITIONS: dict[str, tuple[str, ...]] = {
     "disallowed-entity-gate": ("specific_options",),
     "tier-gate": ("tier_pick_domain",),
+    # S8a, AC-808: the ten entries that used to sit in `STALE_FIXTURES` are graded here
+    # instead of skipped. Both groups are the same class as the two keys above - a key
+    # the SHIPPING body emits that the body the capture ran against could not - so they
+    # belong on this mechanism rather than on an exclusion list.
+    #
+    # `build-ctx` / `media` (the four RS-2 captures). The live body writes the key
+    # UNCONDITIONALLY: `export/{live-spine-sorento-consume-main,clone-spine-RS,
+    # spine-rs-1a}/nodes/build-ctx.js` line 47 is `media: $('media-intake').first().json
+    # .media`, inside the one object literal the node returns, with no branch above it,
+    # and its own comment names RS-4 cut 1 as when it arrived. So "absent from expected"
+    # has exactly one cause. Measured over the whole corpus (118 captures): 114 carry
+    # `media`, 4 do not, and those 4 are precisely the RS-2 entries.
+    "build-ctx": ("media",),
+    # `compile-current-state` / `tier_menu` (the six RS-9 Fix 6 captures). This one is
+    # CONDITIONAL - `export/sub-output-live/nodes/compile-current-state.js` lines 1266 to
+    # 1277 end in `if (_tierMenu) output.variables.tier_menu = _tierMenu;`, so an ordinary
+    # turn emits nothing and "absent from expected" could in principle also mean "the port
+    # wrongly emitted it". That is why the disposition is measured rather than argued.
+    # Over all 261 captures for this node: 1 carries `tier_menu` on BOTH sides (graded, not
+    # stripped - the 4 Sep `sub-output-live` run, `out-14871227`, workflow version
+    # c32698c1), 254 carry it on NEITHER (the strip is a no-op), 0 carry it on the expected
+    # side alone, and the 6 where the port emits it and the capture does not are exactly
+    # the six former `STALE_FIXTURES` names. Nothing else in the corpus is masked by this
+    # entry today; the trigger to revisit is a new capture appearing in the "port only"
+    # column that is NOT one of those six.
+    "compile-current-state": ("tier_menu",),
     # These carry the gate's / tier-gate's item onwards, so an old capture of them is
     # missing the same keys one or more levels down.
     "build-ctx-resolved": ("specific_options",),
@@ -351,39 +377,21 @@ def strip_keys(value, keys: tuple[str, ...]):
 # name list would have to be maintained by hand and would go stale the moment the lane adds
 # another; the field is already on every fixture and says exactly the right thing.
 #
-# What remains here is genuine capture staleness: a `runData` fixture recorded against an
-# older node body. Those are SKIPPED, not dropped - `test_replay.py` emits one skip per
-# entry with its reason, so `pytest -rs` and the summary count show how much is not graded.
-STALE_FIXTURES: dict[tuple[str, str], str] = {
-    ("build-ctx", "rs2-01-notsupported"): "RS-2 capture, predates the RS-4 `media` key",
-    ("build-ctx", "rs2-02-escalation"): "RS-2 capture, predates the RS-4 `media` key",
-    ("build-ctx", "rs2-03-happy"): "RS-2 capture, predates the RS-4 `media` key",
-    ("build-ctx", "rs2-04-access-denied"): "RS-2 capture, predates the RS-4 `media` key",
-    # S2, the tail. Six captures that predate the RS-9 "Fix 6" tier-menu block (owner
-    # decision, 2026-09-01). The block is a pure ADDITION in the body the export ships -
-    # visible as a `>`-only hunk in `diff live-spine.../compile-current-state.js
-    # sub-output-live/compile-current-state.js` - so these captures were graded against a
-    # body that could not write `tier_menu` at all. Nothing about the port disagrees with
-    # what ships; re-capturing an access-choice turn retires all six.
-    ("compile-current-state", "exec-14087671"): (
-        "captured before the RS-9 Fix 6 tier_menu block; the live body has no such block"
-    ),
-    ("compile-current-state", "exec-14113654"): (
-        "captured before the RS-9 Fix 6 tier_menu block; the live body has no such block"
-    ),
-    ("compile-current-state", "exec-14120751"): (
-        "captured before the RS-9 Fix 6 tier_menu block; the live body has no such block"
-    ),
-    ("compile-current-state", "hand-tier-ask-roster-and-null-quick-reply"): (
-        "hand-built against the live body, which has no RS-9 Fix 6 tier_menu block"
-    ),
-    ("compile-current-state", "rs34-04-accesschoice"): (
-        "clone capture at workflow version 38cb225d, before the tier_menu block landed"
-    ),
-    ("compile-current-state", "rs6-02-accesschoice"): (
-        "clone capture at workflow version 15495426, before the tier_menu block landed"
-    ),
-}
+# **`STALE_FIXTURES` is EMPTY as of S8a (AC-808)**, and it stays a declaration rather
+# than being deleted, because the mechanism is still the right answer for the next
+# genuinely ungradeable capture. The ten entries it used to hold - four `build-ctx`
+# captures predating the RS-4 `media` key and six `compile-current-state` captures
+# predating the RS-9 Fix 6 `tier_menu` block - were not staleness of a kind that had to
+# cost coverage: each was a capture that could not emit ONE key the shipping body emits,
+# which is exactly what `CAPTURE_BODY_ADDITIONS` is for. They now grade everything except
+# that key, with the live body cited and the corpus-wide footprint measured, at the two
+# entries added there.
+#
+# What still belongs here: a capture whose body differs in a way that cannot be reduced
+# to a set of added keys (a changed VALUE, a different branch taken). Those are SKIPPED,
+# not dropped - `test_replay.py` emits one skip per entry with its reason, so `pytest -rs`
+# and the summary count show how much is not graded.
+STALE_FIXTURES: dict[tuple[str, str], str] = {}
 
 
 def stale_entries() -> list[tuple[str, str, str]]:

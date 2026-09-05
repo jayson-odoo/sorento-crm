@@ -66,20 +66,42 @@ def test_the_migrated_fixtures_are_no_longer_registered_stale() -> None:
 
 
 def test_the_replay_suite_actually_grades_the_migrated_captures() -> None:
-    """Not just "not excluded" - present in the loaded, gradeable fixture list for
+    """Not just "not excluded" - present in the loaded fixture list for
     `compile-current-state` once the full corpus is available (AC-004 skip semantics:
-    this test skips, rather than failing, when the sibling n8n checkout is absent)."""
+    this test skips, rather than failing, when the sibling n8n checkout is absent).
+
+    Two corrections to this test's first draft, both facts about `_corpus` rather than
+    about the port:
+
+    * `full_corpus` prefixes every name with its slug (`_load_dir(..., prefix=f"{slug}/")`),
+      so a bare `exec-14087671` is never a member of that set - the comparison is on the
+      basename;
+    * `hand-tier-ask-roster-and-null-quick-reply` is `expected_from: reasoned`, so
+      `_corpus.graded()` filters it out BY DESIGN (a hand-written expectation is replayed
+      and reported, never a gate). It is asserted LOADED here; the five `runData` captures
+      are the ones asserted GRADED, which is what AC-808 is actually about.
+    """
     root = _corpus.corpus_root()
     if root is None:
         pytest.skip(_corpus.corpus_skip_reason())
 
-    fixtures = _corpus.graded(_corpus.full_corpus("compile-current-state"))
-    loaded_names = {f.name for f in fixtures}
-    missing = [
-        name for name in FORMER_TIER_MENU_STALE_FIXTURES if name not in loaded_names
-    ]
+    fixtures = _corpus.full_corpus("compile-current-state")
+    loaded = {f.name.split("/")[-1] for f in fixtures}
+    missing = [name for name in FORMER_TIER_MENU_STALE_FIXTURES if name not in loaded]
     assert not missing, (
         f"these former STALE_FIXTURES entries are still not loaded for replay: {missing} "
         "(on disk under one of _corpus.NODE_SLUGS['compile-current-state'], or still "
         "filtered by _load_dir because STALE_FIXTURES was not actually cleared)"
     )
+
+    graded = {f.name.split("/")[-1] for f in _corpus.graded(fixtures)}
+    reasoned = {f.name.split("/")[-1] for f in _corpus.reasoned(fixtures)}
+    ungraded = [
+        name
+        for name in FORMER_TIER_MENU_STALE_FIXTURES
+        if name not in graded and name not in reasoned
+    ]
+    assert not ungraded, f"loaded but neither graded nor reported: {ungraded}"
+    assert graded >= set(FORMER_TIER_MENU_STALE_FIXTURES) - {
+        "hand-tier-ask-roster-and-null-quick-reply"
+    }, "the five runData captures must be GRADED again, not merely loaded"

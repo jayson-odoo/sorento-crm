@@ -59,14 +59,14 @@ A WORLD is one whole captured turn replayed through `run_turn` + `complete_turn`
 | `answer-input` | 38 | 38 | 1 |
 | `answer-result` | 38 | 38 | 1 |
 | `build-cs-member-offer` | 14 | 14 | 1 |
-| `build-ctx` | 114 | 114 | 6 |
+| `build-ctx` | 118 | 118 | 6 |
 | `build-ctx-resolved` | 41 | 41 | 2 |
 | `build-miss-member-offer` | 13 | 13 | 1 |
 | `build-outcome` | 78 | 78 | 2 |
 | `build-result` | 42 | 41 | 1 |
 | `build-suggest-offer` | 76 | 19 | 1 |
 | `central-exchange` | 49 | 49 | 3 |
-| `compile-current-state` | 255 | 165 | 5 |
+| `compile-current-state` | 261 | 170 | 5 |
 | `construct-user-prompt` | 11 | 11 | 5 |
 | `crossdomain-compose` | 80 | 79 | 5 |
 | `crossdomain-render` | 7 | 7 | 1 |
@@ -118,7 +118,7 @@ A WORLD is one whole captured turn replayed through `run_turn` + `complete_turn`
 | `build-cs-member-offer` | `empty_roster` | 0 | 0 | exhausted (0) |
 | `build-cs-member-offer` | `multi_company` | 0 | 0 | exhausted (0) |
 | `build-cs-member-offer` | `single_company` | 14 | 0 | met |
-| `build-ctx` | `all` | 114 | 0 | met |
+| `build-ctx` | `all` | 118 | 0 | met |
 | `build-ctx-resolved` | `forms` | 1 | 0 | exhausted (1) |
 | `build-ctx-resolved` | `incoming` | 11 | 0 | met |
 | `build-ctx-resolved` | `inventory` | 7 | 0 | met |
@@ -146,7 +146,7 @@ A WORLD is one whole captured turn replayed through `run_turn` + `complete_turn`
 | `compile-current-state` | `no_domain` | 30 | 3 | met |
 | `compile-current-state` | `order` | 31 | 0 | met |
 | `compile-current-state` | `product_attachment` | 7 | 4 | met |
-| `compile-current-state` | `promotion` | 7 | 7 | met |
+| `compile-current-state` | `promotion` | 12 | 8 | met |
 | `compile-current-state` | `resource_attachment` | 0 | 2 | exhausted (0) |
 | `compile-current-state` | `spo_allocation` | 4 | 0 | exhausted (4) |
 | `construct-user-prompt` | `all` | 11 | 0 | met |
