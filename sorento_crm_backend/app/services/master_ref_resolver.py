@@ -92,6 +92,18 @@ class MasterRefResolver:
         self.integration_id = integration_id
         self.company_id = company_id
         self.refs = IntegrationReferenceService(db)
+        # Perf round 5: one resolver instance already lives for exactly one
+        # batch (a fresh `DocumentIngestService`/`ShippingOrderIngestService`
+        # per `ingest()` call), so a plain instance dict is the whole cache -
+        # never persisted, never shared across instances or companies. Keyed
+        # `(tablename, "ref"|"code", value)` -> entity_id. A ref is cached
+        # only AFTER `_require_same_company` has passed for it (so a cache
+        # hit can skip that check too, safely); a code lookup is cached
+        # positive for every model, negative (`None`) ONLY for `Product` and
+        # `Warehouse`, which this ladder never back-creates - a negative
+        # cache for `Customer`/`Supplier` would go stale the moment this same
+        # batch back-creates the row the first miss reported.
+        self._memo: dict[tuple[str, str, str], Optional[str]] = {}
 
     def _resolve_ref(
         self, field: str, source_ref: Optional[str], model: type
@@ -106,6 +118,9 @@ class MasterRefResolver:
         """
         if source_ref is None or source_ref == "":
             return None
+        memo_key = (model.__tablename__, "ref", source_ref)
+        if memo_key in self._memo:
+            return self._memo[memo_key]
         entity_id = self.refs.resolve(
             entity_type=model.__tablename__, source_ref=source_ref
         )
@@ -114,6 +129,8 @@ class MasterRefResolver:
         self._require_same_company(
             model, entity_id, f"{field} {source_ref!r}", field_name=field
         )
+        # Cached only now that the company check has actually passed for it.
+        self._memo[memo_key] = entity_id
         return entity_id
 
     def _require_same_company(
@@ -258,12 +275,24 @@ class MasterRefResolver:
         if model is SalesAgent:
             if not code:
                 return None
+            # Memoised (perf round 5): keyed like `_resolve_by_code`'s own
+            # cache even though this model bypasses that method (agents are
+            # matched through `sales_agent_service`, not `_CODE_COLUMNS`).
+            # `resolve_or_create` never returns None for a non-blank code, so
+            # caching unconditionally cannot go stale within the batch.
+            memo_key = (
+                SalesAgent.__tablename__, "code", sales_agent_service.normalize_code(code)
+            )
+            if memo_key in self._memo:
+                return self._memo[memo_key]
             agent = sales_agent_service.resolve(self.db, code)
             if agent is None:
                 agent = sales_agent_service.resolve_or_create(self.db, code)
                 if agent is not None:
                     warnings.append(WARN_AGENT_CREATED)
-            return str(agent.id) if agent is not None else None
+            entity_id = str(agent.id) if agent is not None else None
+            self._memo[memo_key] = entity_id
+            return entity_id
 
         if model is Supplier:
             entity_id = self._resolve_by_code(model, code) if code else None
@@ -279,7 +308,15 @@ class MasterRefResolver:
                 )
                 if supplier is not None:
                     warnings.append(WARN_SUPPLIER_CREATED)
-                    return str(supplier.id)
+                    entity_id = str(supplier.id)
+                    if code:
+                        # So the SECOND document in this batch naming the
+                        # same code finds it in the memo instead of racing
+                        # its own back-create (perf round 5).
+                        self._memo[
+                            (model.__tablename__, "code", code.strip().upper())
+                        ] = entity_id
+                    return entity_id
             return None
 
         if model is Customer:
@@ -294,7 +331,12 @@ class MasterRefResolver:
                 )
                 if customer is not None:
                     warnings.append(WARN_CUSTOMER_CREATED)
-                    return str(customer.id)
+                    entity_id = str(customer.id)
+                    # Same reason as the supplier back-create above.
+                    self._memo[
+                        (model.__tablename__, "code", code.strip().upper())
+                    ] = entity_id
+                    return entity_id
             return None
 
         return None
@@ -307,17 +349,31 @@ class MasterRefResolver:
         debtor code routinely carries more than one legal name), and a query
         that raises on more than one row would turn that into a 500 instead of
         a deterministic pick.
+
+        Memoised (perf round 5): a positive hit is cached for every model - a
+        code that resolved once resolves the same way for the rest of this
+        batch, since nothing here writes to the code column mid-batch. A MISS
+        is cached too, but only for `Product`/`Warehouse` - the two models
+        this ladder never back-creates, so "not found" cannot go stale within
+        the batch the way it would for `Customer`/`Supplier`.
         """
+        normalized = code.strip().upper()
+        memo_key = (model.__tablename__, "code", normalized)
+        if memo_key in self._memo:
+            return self._memo[memo_key]
         column = _CODE_COLUMNS[model]
         query = (
             self.db.query(model.id)
-            .filter(func.upper(func.btrim(column)) == code.upper())
+            .filter(func.upper(func.btrim(column)) == normalized)
             .order_by(model.id.desc())
         )
         if _is_company_scoped(model.__tablename__):
             query = query.filter(model.company_id == self.company_id)
         row = query.first()
-        return str(row[0]) if row else None
+        entity_id = str(row[0]) if row else None
+        if entity_id is not None or model in (Product, Warehouse):
+            self._memo[memo_key] = entity_id
+        return entity_id
 
     def _resolve_supplier_by_name(self, name: str) -> Optional[str]:
         """The upload's own name-fallback rule: cleaned name, order by id desc.

@@ -73,7 +73,7 @@ from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
 from app.models.product import Product
 from app.models.sales_agent import SalesAgent
 from app.schemas.canonical_documents import CanonicalPurchaseOrder, CanonicalSalesOrder
-from app.services.dependent_probe import is_referenced
+from app.services.dependent_probe import is_referenced, referrers_of
 from app.services.integration_reference_service import (
     IntegrationReferenceService,
     ReferenceConflict,
@@ -352,6 +352,16 @@ class DocumentIngestService(MasterRefResolver):
         # `outstanding_import_service.apply` follows for its own
         # `before_positions`.
         self.plan_exception_before: dict[str, Any] = {}
+        # Perf round 5: per-batch memos for `_classify_sales_order` - a busy
+        # batch reuses the same agent/customer across hundreds of documents,
+        # and neither read changes mid-batch (nothing here writes to
+        # `sales_agents` or `customers`). `_segment_cache` is handed to
+        # `classify_document` (an otherwise pure, session-free function) as
+        # its own optional keyword so `outstanding_import_service`'s call
+        # site - which passes none - is unaffected.
+        self._agent_class_cache: dict[str, Optional[str]] = {}
+        self._customer_code_cache: dict[str, Optional[str]] = {}
+        self._segment_cache: dict[Any, Optional[str]] = {}
 
     # --------------------------------------------------------------- the batch
     def ingest(
@@ -564,6 +574,18 @@ class DocumentIngestService(MasterRefResolver):
         equivalent: a defect here must cost the route's plan-exception hook
         (which simply has less to compare against), never any record in the
         batch - a document ingest is not the operation this diff is FOR.
+
+        Perf round 5 (B): resolved through `self._resolve_ref` - the SAME
+        ladder rung a line's own `product_ref` resolution calls, and the
+        thing that populates `self._memo` - rather than a bare
+        `self.refs.resolve()`, for two reasons at once: it shares the memo
+        (this runs FIRST, so a ref resolved here is a ref the record loop
+        never re-queries, and vice versa for anything this loop misses), and
+        it applies the SAME cross-company check the ladder's own resolution
+        would, so a memo entry is never trusted without it. `MissingReference`/
+        `ReferenceConflict` are swallowed here exactly as a bare miss was
+        silently dropped before - this is an input to a best-effort snapshot,
+        never the reason a record fails.
         """
         product_ids: set[str] = set()
         codes: set[str] = set()
@@ -575,9 +597,12 @@ class DocumentIngestService(MasterRefResolver):
                     continue
                 ref = line.get("product_ref")
                 if ref:
-                    resolved = self.refs.resolve(entity_type="products", source_ref=ref)
+                    try:
+                        resolved = self._resolve_ref("product_ref", ref, Product)
+                    except (MissingReference, ReferenceConflict):
+                        resolved = None
                     if resolved:
-                        product_ids.add(str(resolved))
+                        product_ids.add(resolved)
                     continue
                 code = (line.get("product_code") or "").strip()
                 if code:
@@ -585,7 +610,7 @@ class DocumentIngestService(MasterRefResolver):
 
         if codes:
             rows = (
-                self.db.query(Product.id)
+                self.db.query(Product.id, func.upper(func.btrim(Product.product_code)))
                 .filter(
                     func.upper(func.btrim(Product.product_code)).in_(
                         [c.upper() for c in codes]
@@ -594,7 +619,15 @@ class DocumentIngestService(MasterRefResolver):
                 )
                 .all()
             )
-            product_ids.update(str(row[0]) for row in rows)
+            by_normalized = {normalized: str(pid) for pid, normalized in rows}
+            for code in codes:
+                pid = by_normalized.get(code.upper())
+                if pid:
+                    product_ids.add(pid)
+                    # Populates the SAME memo `_resolve_by_code` reads, so the
+                    # record loop's own code rung for this product skips its
+                    # query too.
+                    self._memo[(Product.__tablename__, "code", code.upper())] = pid
 
         if not product_ids:
             return
@@ -826,22 +859,14 @@ class DocumentIngestService(MasterRefResolver):
             return
 
         agent_id = values.get("sales_agent_id")
-        agent_demand_class = (
-            self.db.query(SalesAgent.demand_class).filter(SalesAgent.id == agent_id).scalar()
-            if agent_id
-            else None
-        )
+        agent_demand_class = self._agent_demand_class(agent_id)
         debtor_code = customer_code or getattr(header, "debtor_code", None)
         customer_id = values.get("customer_id")
         if not debtor_code and customer_id:
             # No code was SENT and none is stored yet, but the ref resolved to a
             # real customer - its own code is the debtor code this document
             # names, just not spelled out in this particular payload.
-            debtor_code = (
-                self.db.query(Customer.customer_code)
-                .filter(Customer.id == customer_id)
-                .scalar()
-            )
+            debtor_code = self._customer_code_of(customer_id)
 
         cls = classify_document(
             self.db,
@@ -850,11 +875,36 @@ class DocumentIngestService(MasterRefResolver):
             agent_demand_class=agent_demand_class,
             debtor_code=debtor_code,
             company_id=self.company_id,
+            segment_cache=self._segment_cache,
         )
         if cls is not None:
             values["demand_class"] = cls
         else:
             warnings.append(WARN_UNCLASSIFIED_DEMAND)
+
+    def _agent_demand_class(self, agent_id: Optional[str]) -> Optional[str]:
+        """Perf round 5: memoised per batch - a busy batch names the same
+        handful of agents on hundreds of documents, and nothing in this
+        ingest writes `sales_agents.demand_class`."""
+        if not agent_id:
+            return None
+        if agent_id not in self._agent_class_cache:
+            self._agent_class_cache[agent_id] = (
+                self.db.query(SalesAgent.demand_class)
+                .filter(SalesAgent.id == agent_id)
+                .scalar()
+            )
+        return self._agent_class_cache[agent_id]
+
+    def _customer_code_of(self, customer_id: str) -> Optional[str]:
+        """Perf round 5: memoised per batch, same reason as `_agent_demand_class`."""
+        if customer_id not in self._customer_code_cache:
+            self._customer_code_cache[customer_id] = (
+                self.db.query(Customer.customer_code)
+                .filter(Customer.id == customer_id)
+                .scalar()
+            )
+        return self._customer_code_cache[customer_id]
 
     def _line_values(
         self, spec: DocumentSpec, line: Any, index: int, status: str, warnings: list[str]
@@ -969,8 +1019,12 @@ class DocumentIngestService(MasterRefResolver):
             counts["created"] += 1
 
         line_table = spec.line_model.__tablename__
+        # Perf round 5: the catalogue query behind `referrers_of` answers the
+        # same thing for every row of THIS line table in THIS sweep - fetched
+        # once here rather than once per row inside `is_referenced`.
+        line_referrers = referrers_of(self.db, line_table)
         for row in [*by_ref.values(), *pool, *dup_ref, *already_cancelled]:
-            if is_referenced(self.db, line_table, row.id):
+            if is_referenced(self.db, line_table, row.id, referrers=line_referrers):
                 # Quantities and prices are left exactly as they were: this row
                 # is now evidence of what a transfer moved or a plan was built
                 # from, and rewriting it would falsify that record.

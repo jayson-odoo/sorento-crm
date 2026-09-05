@@ -78,6 +78,7 @@ def classify_document(
     agent_demand_class: Optional[str],
     debtor_code: Optional[str],
     company_id,
+    segment_cache: Optional[dict] = None,
 ) -> Optional[str]:
     """The demand class a sales document should carry (D4, plan section 1/2.3).
 
@@ -109,10 +110,24 @@ def classify_document(
     docstring's import-cycle warning) - `app.models.sales_agent` reaches into
     THIS module for `check_constraint_sql`, so a top-level model import here
     would close that cycle at start-up rather than at call time.
+
+    `segment_cache` (perf round 5, optional, default None): a caller-owned
+    dict this function memoises the segment read into, keyed by
+    `(debtor_code, company_id)` - a busy batch calls this once per document
+    and the same handful of debtor codes repeat across hundreds of them, none
+    of which write `customers.market_segment_code` mid-batch.
+    `outstanding_import_service._classify_demand` passes none, so its own
+    per-call read is unchanged.
     """
     cls = class_of(stored_order_type) or class_of(stated_order_type) or agent_demand_class
     if cls is not None:
         return cls
     from app.services.scm.demand_classifier import segment_of
 
-    return class_of(segment_of(db, debtor_code, company_id))
+    if segment_cache is None:
+        return class_of(segment_of(db, debtor_code, company_id))
+
+    key = (debtor_code, company_id)
+    if key not in segment_cache:
+        segment_cache[key] = segment_of(db, debtor_code, company_id)
+    return class_of(segment_cache[key])
