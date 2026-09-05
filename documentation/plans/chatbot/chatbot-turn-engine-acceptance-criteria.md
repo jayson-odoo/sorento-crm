@@ -868,13 +868,23 @@ contact inside the synchronous request. Different contacts run in parallel.
   or `backlog (#issue)`. (C1)
 - AC-804 `[BE][FE][T]` Retry ingress config lives on the respond workspace row
   (`chatbot_retry_ingress_url`, `chatbot_retry_ingress_key_ciphertext`, Fernet like the ideation
-  intake key), editable on the Respond Workspaces screen under `user_management.settings.edit`,
-  key write-only (never echoed). Given a workspace with no URL, when an operator clicks Retry,
+  intake key), editable on the Respond Workspaces screen. The two fields have their OWN route,
+  `PUT /respond-workspaces/{id}/chatbot-retry`, accepting `user_management.settings.edit` OR
+  `system.respond_workspaces.edit` and carrying those two fields and nothing else; the row PUT
+  keeps its single `system.respond_workspaces.edit`, so a holder of the Settings slug alone
+  cannot change `api_key`, `base_url`, `space_id` or `is_default` (S8a security review: the
+  first shape widened the row PUT, which handed that slug the respond.io credential for the
+  whole install). Key write-only (never echoed). Omitting a field leaves it alone; sending it
+  blank or null CLEARS it, so blanking the URL turns Retry off and the key has a revoke path.
+  Given a workspace with no URL, when an operator clicks Retry,
   then the response is 409 "retry not configured" and no outbound call is made. Given a URL
   that is not https, or whose host resolves to loopback, a private range, or the CRM's own
-  host, when saved or used, then it is rejected with a 422 naming the rule. Given a valid URL,
-  when Retry runs, then the POST follows no redirects and sends the key as
-  `X-Chatbot-Retry-Key`. `CHATBOT_RETRY_INGRESS_URL` and `CHATBOT_RETRY_INGRESS_KEY` no longer
+  host, when saved or used, then it is rejected with a 422 naming the RULE and not the address
+  it resolved to; an IPv6 literal carrying a v4 address (`[::ffff:10.0.0.1]`, 6to4, Teredo) is
+  unwrapped by the same normalisation a resolved address goes through, and userinfo in the URL
+  is refused. Given a valid URL, when Retry runs, then the POST follows no redirects and sends
+  the key as `X-Chatbot-Retry-Key`, and when the ingress refuses, the 502 reports the status
+  code and a fixed message, never the ingress response body. `CHATBOT_RETRY_INGRESS_URL` and `CHATBOT_RETRY_INGRESS_KEY` no longer
   exist in `config.py` or `.env.example`. (A4, C1)
 - AC-805 `[BE][T]` After the S7 spine is PUT: `POST /turn/{id}/complete`, the id-less
   `/turn/complete` and `app/services/chatbot/delegate.py` are deleted; the route inventory test
@@ -886,8 +896,15 @@ contact inside the synchronous request. Different contacts run in parallel.
   plan no longer carries the real phone number. (C1)
 - AC-807 `[BE][FE][T]` Prompts screen: for `chatbot_semantic_parser` and `chatbot_clarifier`
   the Test action posts a dry-run turn (`is_test: true`, chosen prompt version pinned via
-  `prompt_overrides`, dev contact from the workspace) and renders the turn trace inline; zero
-  writes outside `chatbot.turns` (D14); other keys keep the assistant dry run. (D5, D13)
+  `prompt_overrides`) and renders the turn trace inline; zero writes outside `chatbot.turns`
+  (D14); other keys keep the assistant dry run. **The contact is CALLER-SUPPLIED**
+  (`contact_respond_id` on the request, blank is a 422), not read from the workspace: the
+  workspace has no dev-contact column, and adding one would be a new config surface for a test
+  button. Because that turn reads THAT contact's access level and remembered session state and
+  hands back the trace, the endpoint requires `system.chat_history.view` - the slug the Chat
+  History trace screen uses to show a contact's turn trace - IN ADDITION to
+  `system.ai_assistant_settings.edit`, so nobody reads a contact's remembered state with a
+  weaker slug. Both slugs, caller-named contact (owner ruling, S8a security review S3). (D5, D13)
 - AC-808 `[T]` S2's `tier_menu` STALE_FIXTURES entries are migrated to
   CAPTURE_BODY_ADDITIONS with the live body cited; STALE_FIXTURES is empty. (D8)
 - AC-809 `[BE][FE][T]` Chatbot settings screen (System > Settings > Chatbot, issue #679),

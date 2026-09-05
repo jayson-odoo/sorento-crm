@@ -910,6 +910,16 @@ closed out (AC-803). Worktree GC.
    0 on the expected side alone, and the 6 the port emits it for are exactly the six former stale
    names. The trigger to revisit is a NEW capture appearing in that "port only" column.
 
+**S8a security review, three decisions recorded here rather than left as omissions.** (1) The
+Settings slug reaches the two chatbot retry fields through a route of their own,
+`PUT /respond-workspaces/{id}/chatbot-retry`; widening the row PUT to that slug had handed it
+`api_key`, `base_url` and `is_default` as well. (2) A retry field sent blank or null now CLEARS,
+which is what the screen's "Leave blank to turn Retry off" always promised, and gives the key a
+revoke path. (3) AC-807's Prompts Test keeps a CALLER-SUPPLIED `contact_respond_id` rather than
+inventing a dev-contact column on the workspace, and the endpoint additionally requires
+`system.chat_history.view` - the slug the Chat History trace screen uses to show a contact's turn
+trace - so nobody reads a contact's remembered state with a weaker slug.
+
 Also closed at S8a, outside the AC list, from a production report: `post_process` used to raise a
 bare `KeyError: 'reference_positions'` on a malformed parser emission. It now validates the
 emission up front and raises `ParserOutputError` naming every missing key, so H44's guarantee

@@ -271,9 +271,9 @@ turn then arrives back the ordinary way, as its own row with the next `attempt`.
 
 | what | value |
 | --- | --- |
-| target | `CHATBOT_RETRY_INGRESS_URL` (the inject webhook; from S7 the thin spine's own webhook) |
+| target | `chatbot_retry_ingress_url` on the DEFAULT respond workspace row (the inject webhook; from S7 the thin spine's own webhook) |
 | method / body | `POST`, `application/json`, the stored respond.io webhook body unchanged |
-| header | `X-Chatbot-Retry-Key: <CHATBOT_RETRY_INGRESS_KEY>`, sent only when the key is set |
+| header | `X-Chatbot-Retry-Key: <the workspace row's retry key>`, sent only when the key is set |
 | timeout | 10 s - the call being answered means "n8n accepted the message", not "the turn finished" |
 | unset URL | 409 `retry_unavailable`, nothing posted, `retry_requested_at` left NULL |
 
@@ -285,13 +285,18 @@ turn then arrives back the ordinary way, as its own row with the next `attempt`.
    secret, reject otherwise), and it has to be in place before S7 moves the ingress, because
    after that the URL is the spine's own and the retry path is the only caller that is not a
    respond.io delivery.
-2. **Both env values are set at deploy.** `CHATBOT_RETRY_INGRESS_URL` and
-   `CHATBOT_RETRY_INGRESS_KEY` are UNSET locally on purpose: a dev machine that silently
-   injected into production n8n would answer a real customer from a developer's click, and
-   the failure would read as a bug in the customer's conversation rather than in somebody's
-   `.env`. Production therefore has to set them explicitly - deploying the code alone leaves
+2. **Both values are entered on the Respond Workspaces screen, in production only.**
+   System > Respond Workspaces > edit the default workspace > Chatbot retry: the webhook
+   URL and the retry key (write-only; the screen only ever says whether one is stored).
+   They live on `respond_workspaces` as of AC-804 and are NOT environment variables any
+   more, so nothing about a deploy sets them. Leave them empty on a dev machine on
+   purpose: one that silently injected into production n8n would answer a real customer
+   from a developer's click, and the failure would read as a bug in the customer's
+   conversation rather than in a config screen. Deploying the code alone therefore leaves
    Retry disabled, which the list response says out loud (`retry_available: false` plus
-   `retry_unavailable_reason`) so the button is greyed rather than offering a 409.
+   `retry_unavailable_reason`) so the button is greyed rather than offering a 409. The URL
+   is refused on save and again on use if it is not https or resolves anywhere internal
+   (`app/services/outbound_url_guard.py`), and blanking it turns Retry off.
 
 Precondition for turning it on: a retry of a known-failed test turn arrives back as a NEW
 turn row with `attempt` 2 for the same `message_id`, and the original row is still `failed`
