@@ -128,12 +128,15 @@ describe('LinkDocumentDialog: the cascade preview', () => {
     );
 
     await screen.findByTestId('po-candidates-table');
+    // Synchronous on purpose: the take is derived from the candidate during render, so
+    // the preview is in force on the FIRST render that shows the table. It used to be
+    // copied into state by a post-commit effect that lands a task later - on CI that
+    // task ran after the read, so the dialog reported '' here and a click on Link in
+    // the same window hit a still-disabled button and did nothing.
     const earlyInput = screen.getByLabelText('Take off ZZT-PO-0001') as HTMLInputElement;
     const laterInput = screen.getByLabelText('Take off ZZT-PO-0002') as HTMLInputElement;
-    // The pre-fill lands in a post-commit effect, so the values arrive a tick after
-    // the table itself does; a synchronous read raced it and read '' on CI.
-    await waitFor(() => expect(earlyInput.value).toBe('15'));
-    await waitFor(() => expect(laterInput.value).toBe('10'));
+    expect(earlyInput.value).toBe('15');
+    expect(laterInput.value).toBe('10');
     expect(screen.getByTestId('po-allocation-summary')).toHaveTextContent('25 of 25 linked');
     expect(screen.getByRole('button', { name: 'Link' })).toBeEnabled();
   });
