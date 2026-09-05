@@ -296,11 +296,13 @@ export default function RespondWorkspacesAdmin() {
         retry.chatbot_retry_ingress_key = form.chatbot_retry_ingress_key.trim();
       else if (clearRetryKey) retry.chatbot_retry_ingress_key = '';
 
-      // Which of the two calls is actually needed. Derived from the body's OWN keys
-      // rather than a hand-kept list, so a field added to `body` above joins this
-      // comparison with nothing to remember: a key the row does not carry is one of the
-      // three write-only secrets, which is present here only when it was typed, and a
-      // key the row does carry is compared with null and '' read as the same absence.
+      // ONLY the row PUT is skippable, and only because a 403 on it used to block the
+      // narrow retry route a `user_management.settings.edit` principal is entitled to
+      // (security review round 2). Which of its fields count as changed is derived from
+      // the body's OWN keys rather than a hand-kept list, so a field added above joins
+      // the comparison with nothing to remember: a key the row does not carry is one of
+      // the three write-only secrets, present only when typed, and a key the row does
+      // carry is compared with null and '' read as the same absence.
       const current = editing as unknown as Record<string, unknown>;
       const rowChanged = (Object.keys(body) as (keyof RespondWorkspaceUpdateBody)[]).some(
         (key) =>
@@ -308,14 +310,19 @@ export default function RespondWorkspacesAdmin() {
             ? true
             : (body[key] ?? null) !== (current[key] ?? null),
       );
-      const retryChanged =
-        retry.chatbot_retry_ingress_url !== (editing.chatbot_retry_ingress_url ?? '') ||
-        retry.chatbot_retry_ingress_key !== undefined;
 
+      // The RETRY call is always sent, and that is deliberate rather than lazy. Skipping
+      // it needs the draft to be compared against `editing`, which is a SNAPSHOT taken
+      // when the dialog opened: after any save that did not refresh it, or a list refetch
+      // that has not landed, a genuine edit compares equal to a stale row and the save is
+      // dropped with the dialog cheerfully reporting success. Blanking the URL is exactly
+      // where that costs the most, because "Retry is still on" is the state the operator
+      // was trying to leave. One idempotent PUT on the low-privilege route is the cheaper
+      // side of that trade (browser evidence, 6 Sep 2026).
       updateMutation.mutate({
         id: editing.id,
         body: rowChanged ? body : null,
-        retry: retryChanged ? retry : null,
+        retry,
       });
     } else {
       if (!form.space_id.trim() || !form.api_key.trim()) {

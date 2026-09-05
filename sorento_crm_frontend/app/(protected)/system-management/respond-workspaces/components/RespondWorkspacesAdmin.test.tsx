@@ -189,6 +189,49 @@ describe('RespondWorkspacesAdmin - chatbot retry ingress fields', () => {
     expect(updateRespondWorkspace).not.toHaveBeenCalled();
   });
 
+  it('clearing the URL to an EMPTY string still sends "", the way the browser does it', async () => {
+    // Browser evidence run, 6 Sep 2026: blanking the field and pressing Update left the
+    // stored URL in place. The sibling test above blanks to whitespace, which is not the
+    // same keystroke sequence a person makes: an operator selects the value and deletes
+    // it, so the input goes to "" exactly. This is that.
+    renderWithClient(<RespondWorkspacesAdmin />);
+    await screen.findByRole('button', { name: /edit/i });
+    fireEvent.click(screen.getByRole('button', { name: /edit/i }));
+    await waitFor(() =>
+      expect(screen.getByText('Ideas embed (iframe SSO)')).toBeInTheDocument(),
+    );
+
+    const url = screen.getByLabelText(/Chatbot retry webhook URL/i) as HTMLInputElement;
+    fireEvent.change(url, { target: { value: '' } });
+    expect(url.value).toBe('');
+    fireEvent.click(screen.getByRole('button', { name: /^update$/i }));
+
+    await waitFor(() => expect(updateRespondWorkspaceChatbotRetry).toHaveBeenCalled());
+    const [, retryBody] = updateRespondWorkspaceChatbotRetry.mock.calls[0];
+    expect(retryBody.chatbot_retry_ingress_url).toBe('');
+  });
+
+  it('clearing the URL AND removing the key sends both blanks in one retry PUT', async () => {
+    // The exact sequence the evidence run drove: the key went out as "" and the URL did
+    // not. Both belong to one route and one save, so both have to travel.
+    renderWithClient(<RespondWorkspacesAdmin />);
+    await screen.findByRole('button', { name: /edit/i });
+    fireEvent.click(screen.getByRole('button', { name: /edit/i }));
+    await waitFor(() =>
+      expect(screen.getByText('Ideas embed (iframe SSO)')).toBeInTheDocument(),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /remove stored key/i }));
+    const url = screen.getByLabelText(/Chatbot retry webhook URL/i) as HTMLInputElement;
+    fireEvent.change(url, { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: /^update$/i }));
+
+    await waitFor(() => expect(updateRespondWorkspaceChatbotRetry).toHaveBeenCalled());
+    const [, retryBody] = updateRespondWorkspaceChatbotRetry.mock.calls[0];
+    expect(retryBody.chatbot_retry_ingress_url).toBe('');
+    expect(retryBody.chatbot_retry_ingress_key).toBe('');
+  });
+
   it('"Remove stored key" is what revokes the key, and it sends an explicit blank', async () => {
     renderWithClient(<RespondWorkspacesAdmin />);
     await screen.findByRole('button', { name: /edit/i });
