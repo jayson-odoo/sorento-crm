@@ -568,22 +568,51 @@ def run_turn(
     redis = None
     try:
         if ordered:
-            # AC-709. The wait happens HERE: after the row exists (so a queue timeout is a
-            # recorded turn, not a vanished one) and before any stage runs. `stage[0]`
+            # AC-709. The ticket is taken HERE: after the row exists (so a queue timeout is
+            # a recorded turn, not a vanished one) and before any stage runs. `stage[0]`
             # carries `queued` through the wait, so the handler below files a `QueueWait`
             # under the stage it actually happened in without a special case (AC-710).
             stage[0] = "queued"
             redis = _ordering_redis()
-            ticket = dispatch.contact_ticket(redis, contact_respond_id)
-            dispatch.wait_for_turn(
-                redis,
-                contact_respond_id,
-                ticket,
-                timeout_s=float(getattr(settings, "chatbot_queue_wait_seconds", 45.0)),
-            )
-            dispatch.mark_running(redis, contact_respond_id, ticket)
-            stage[0] = "received"
+            try:
+                ticket = dispatch.contact_ticket(redis, contact_respond_id)
+            except dispatch.ORDERING_ERRORS:
+                # Redis is not answering. Run the turn UNORDERED rather than failing it:
+                # out-of-order replies are a degradation, a chatbot that answers nothing
+                # is an outage, and until this flag existed a redis blip cost this path
+                # nothing at all.
+                logger.warning(
+                    "chatbot ordering: redis is unavailable, running turn %s unordered",
+                    turn_id,
+                    exc_info=True,
+                )
+                ordered = False
+                ticket = None
+                stage[0] = "received"
         try:
+            if ticket is not None:
+                try:
+                    dispatch.wait_for_turn(
+                        redis,
+                        contact_respond_id,
+                        ticket,
+                        timeout_s=float(
+                            getattr(settings, "chatbot_queue_wait_seconds", 45.0)
+                        ),
+                    )
+                    dispatch.mark_running(redis, contact_respond_id, ticket)
+                except dispatch.ORDERING_ERRORS:
+                    # Redis went away mid-wait. Same call as above: answer unordered
+                    # rather than not at all. `QueueWait` is NOT one of these and still
+                    # fails the turn at `queued` - that one means the ordering worked and
+                    # the predecessor was too slow, which is a real, recordable outcome.
+                    logger.warning(
+                        "chatbot ordering: redis is unavailable mid-wait, running turn "
+                        "%s unordered",
+                        turn_id,
+                        exc_info=True,
+                    )
+                stage[0] = "received"
             return _run_stages(
                 envelope,
                 session_factory=session_factory,
@@ -595,12 +624,29 @@ def run_turn(
                 stage=stage,
             )
         finally:
-            # AC-704. In a `finally`, because the ONE thing worse than a failed turn is a
-            # failed turn that never releases its ticket: every later message from that
-            # contact would then wait out the whole queue window and fail as well, and the
-            # customer would watch one broken turn break the conversation.
+            # AC-704. In a `finally`, and one that covers the WAIT as well as the stages,
+            # because the ONE thing worse than a failed turn is a failed turn that never
+            # releases its ticket: every later message from that contact would then wait
+            # out the whole queue window and fail as well, and the customer would watch one
+            # broken turn break the conversation. The turn most in need of releasing is the
+            # one that gave up waiting (AC-710) - it is the one whose predecessor may be
+            # dead - and a `finally` on the stages alone would be the only one to skip it.
+            #
+            # `mark_done` is monotone, so releasing out of order can never rewind the
+            # counter.
             if ticket is not None:
-                dispatch.mark_done(redis, contact_respond_id, ticket)
+                try:
+                    dispatch.mark_done(redis, contact_respond_id, ticket)
+                except dispatch.ORDERING_ERRORS:
+                    # Best effort, same reasoning as the take above: if redis is down the
+                    # next turn for this contact cannot read the counter either, so it
+                    # runs unordered rather than waiting on a release that never lands.
+                    logger.warning(
+                        "chatbot ordering: could not release ticket %s for %s",
+                        ticket,
+                        contact_respond_id,
+                        exc_info=True,
+                    )
     except Exception as exc:  # noqa: BLE001 - a failed turn is recorded, never dropped
         message = f"{type(exc).__name__}: {exc}"
         logger.exception("chatbot turn %s failed at stage %s", turn_id, stage[0])
