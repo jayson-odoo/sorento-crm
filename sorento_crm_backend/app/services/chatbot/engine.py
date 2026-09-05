@@ -2190,8 +2190,9 @@ def _run_escalation_arm(
     try:
         # The lane opens its OWN session (its writes are a unit of work of their own), and
         # it opens it off THIS factory rather than `SessionLocal`, so the contact's company
-        # scope travels into it (H56) - `Team` / `AgentTeam` are owned models and the
-        # round-robin draw reads them.
+        # scope travels into it (H56). Defence in depth: `post_next_assignee` pins its own
+        # scope before it reads `Team` / `AgentTeam`, so the draw was not failing; the
+        # pre-pin reads and the lane's unit of work were the unscoped half.
         fragment = run_escalation_lane(
             ctx, item, dry_run=dry_run, session_factory=session_factory
         )

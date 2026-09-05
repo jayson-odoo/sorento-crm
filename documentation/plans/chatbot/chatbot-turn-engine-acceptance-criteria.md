@@ -962,8 +962,11 @@ contact inside the synchronous request. Different contacts run in parallel.
   site, via the wrapped factory), the business lane's own family read
   (`answer_services_for`, which opens off that same factory), and the escalation lane's
   `escalation_services.production_session()`, which reached for `SessionLocal` directly and
-  now takes the turn's factory - that lane draws its assignee off `Team` / `AgentTeam`, both
-  owned models, so an unscoped session round-robins an empty pool. The tail (`complete_turn`,
+  now takes the turn's factory. That last one is defence in depth, not a repair:
+  `post_next_assignee` pins its own scope (`_scope_request_to_company`) before every
+  `Team` / `AgentTeam` read, so the draw worked; the pre-pin reads
+  (`_routing_company_for_body`) and the lane's own unit of work are what ran unscoped, and
+  one mechanism for the turn beats a per-callee pin. The tail (`complete_turn`,
   n8n's `/complete` entry) stamps the row's contact unconditionally, since a conditional
   could not be tested: `tests/conftest.py` defaults every new session to Sorento.
   Evidence: `tests/chatbot/test_engine_company_scope.py` (6 tests: the contact's own company

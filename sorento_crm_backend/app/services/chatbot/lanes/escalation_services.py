@@ -110,13 +110,15 @@ def production_session(session_factory: Any) -> Iterator[Any]:
     contradict the trace the operator is reading.
 
     **The FACTORY is required, and it is the turn's own (H56).** The second version reached
-    for `SessionLocal` directly, which is a session with NO company scope on it: this lane
-    draws its assignee off `Team` / `AgentTeam`, both `CompanyScopedMixin`, so an unscoped
-    session round-robins an empty pool and the whole lane fails closed. `run_turn` builds a
-    scoped factory for the turn and the engine hands it down here, so the lane's own unit of
-    work stays its own AND sees the contact's companies. There is deliberately no
-    `SessionLocal` fallback: a caller that forgets gets a loud failure rather than a lane
-    that quietly assigns nobody.
+    for `SessionLocal` directly, which is a session with NO company scope on it. The draw
+    itself did not fail on that: `post_next_assignee` pins its own scope
+    (`_scope_request_to_company`) before every `Team` / `AgentTeam` read. What DID run
+    unscoped is the pre-pin half (`_routing_company_for_body`, which resolves which company
+    is routing this contact) and this lane's own unit of work. Taking the turn's factory is
+    defence in depth and, more usefully, ONE mechanism: the turn scopes every session it
+    opens, instead of each callee remembering to pin its own. There is deliberately no
+    `SessionLocal` fallback: a caller that forgets gets a loud failure rather than a session
+    whose scope depends on which callee happens to pin it.
     """
     if session_factory is None:
         raise ValueError(
