@@ -40,6 +40,7 @@ canvas (seeded product blocks carry a `name` slot layer under the `code` layer).
 - Starter template (`request-tags.ts` `starterTemplateFor`) and the seeded docs
   (`scripts/tag_template_seed_docs.py`) keep their `name` layer: the resolver rule already
   blanks it, and seeds never rewrite existing templates, so a seed edit buys nothing.
+- Also: `formatSetMemberLine` (set-member lines `- CODE (NAME)`) and `buildAlternativesRow` (bakes code/name as literals with no slot) apply the same rule. A set's own `name` vs `set_code` gets the rule too (harmless widening, review nit 5).
 - Tests: `product-block.test.ts` name==code resolves ''; rail test in
   `RequestTagDesigner.test.tsx` shows one line for a duplicate name and two for a different one.
 

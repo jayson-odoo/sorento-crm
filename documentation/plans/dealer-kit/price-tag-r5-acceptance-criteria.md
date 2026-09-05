@@ -5,7 +5,7 @@ Plan: `PLAN-price-tag-r5.md`
 ## S1 shift lock
 - AC-S1-1 Holding Shift while dragging a polygon or boxed-badge corner keeps the corner on a horizontal, vertical or 45-degree line from where the drag started; the handle stays on the shape.
 - AC-S1-2 Releasing Shift mid-drag frees the corner; pressing it again re-locks from the current cursor direction.
-- AC-S1-3 Edge handles under Shift move the edge along the dominant axis only.
+- AC-S1-3 Edge handles under Shift move the edge on a 0, 45 or 90 degree line, the same rule as corners; on a rotated layer the lock is relative to the layer's own axes.
 - AC-S1-4 Without Shift, dragging is unchanged.
 
 ## S2 duplicate name
