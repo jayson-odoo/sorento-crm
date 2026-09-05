@@ -22,13 +22,20 @@ style of `tests/chatbot/test_turns_admin_api.py`'s own docstring):
    fields. This is the one respond-workspace secret the UI must never render even
    a last-4 hint of, because it authorises injecting a message back into a real
    customer's WhatsApp conversation.
-2. `PUT /respond-workspaces/{id}` is the SAME route the other workspace fields use,
-   widened so granting ONLY `user_management.settings.edit` (no
-   `system.respond_workspaces.edit`) is sufficient to write the two chatbot-retry
-   fields. Permission is stubbed at both `UserPermissionService.
-   check_user_has_permission` (`require_permission`) AND
-   `get_user_permission_slugs` / `get_user_role_slugs` (`require_any_permission`),
-   so whichever the coder picks, granting exactly this one slug is enough.
+2. SETTLED DIFFERENTLY by the S8a security review (B2), and the tests below say so.
+   The assumption was that the row PUT would be widened so
+   `user_management.settings.edit` alone could write the two chatbot-retry fields.
+   Widening it also handed that slug `api_key`, `base_url`, `space_id` and
+   `is_default` - the respond.io credential for the whole install, the host every
+   outbound call goes to, and which workspace is default. The two fields now have
+   their own route, `PUT /respond-workspaces/{id}/chatbot-retry`, carrying both
+   slugs; the row PUT kept its single `system.respond_workspaces.edit`. Permission
+   is stubbed at both `UserPermissionService.check_user_has_permission`
+   (`require_permission`) AND `get_user_permission_slugs` / `get_user_role_slugs`
+   (`require_any_permission`), so granting exactly the one slug is enough.
+5. Omitting a retry field leaves it alone; sending it blank or null CLEARS it. That
+   is what makes the screen's "Leave blank to turn Retry off" true and gives the key
+   a revoke path (S8a review S2).
 3. `app.services.chatbot.dispatch.reinject_envelope` (and its `ingress_url` /
    `retry_available` seams) read the DEFAULT respond workspace row instead of
    `settings.chatbot_retry_ingress_url` / `_key`. The retry endpoint tests seed a
@@ -223,14 +230,21 @@ def default_workspace(session) -> RespondWorkspace:
 
 
 class TestUpdateRoutePermission:
+    """AC-804 as amended by the S8a review (B2).
+
+    The AC's "editable ... under `user_management.settings.edit`" is honoured by a route
+    that writes THOSE TWO FIELDS, `PUT /{id}/chatbot-retry`, not by widening the row PUT:
+    `RespondWorkspaceUpdate` also carries `api_key`, `base_url`, `space_id` and
+    `is_default`, so the widened row PUT handed the settings slug the respond.io
+    credential for the whole install and the default-workspace flag with it.
+    """
+
     def test_settings_edit_alone_is_sufficient(self, client, default_workspace):
-        """AC-804: 'editable ... under user_management.settings.edit'. A caller with
-        ONLY this slug - no system.respond_workspaces.edit at all - must be able to
-        save the two chatbot-retry fields. Today only system.respond_workspaces.edit
-        is checked, so this 403s."""
+        """A caller with ONLY `user_management.settings.edit` - no
+        `system.respond_workspaces.edit` at all - can save the two chatbot-retry fields."""
         _GRANTS.add(EDIT_SLUG)
         resp = client.put(
-            f"{WORKSPACES_BASE}/{default_workspace.id}",
+            f"{WORKSPACES_BASE}/{default_workspace.id}/chatbot-retry",
             json={
                 "chatbot_retry_ingress_url": VALID_RETRY_URL,
                 "chatbot_retry_ingress_key": PLAIN_RETRY_KEY,
@@ -241,10 +255,108 @@ class TestUpdateRoutePermission:
 
     def test_no_grant_at_all_is_denied(self, client, default_workspace):
         resp = client.put(
-            f"{WORKSPACES_BASE}/{default_workspace.id}",
+            f"{WORKSPACES_BASE}/{default_workspace.id}/chatbot-retry",
             json={"chatbot_retry_ingress_url": VALID_RETRY_URL},
         )
         assert resp.status_code == 403, resp.text
+
+    def test_settings_edit_alone_cannot_touch_the_rest_of_the_row(
+        self, client, session, default_workspace
+    ):
+        """The whole point of the narrow route: the settings slug must not reach the
+        respond.io API key, the base URL every outbound call goes to, or the default
+        flag. Each of those is a different install-wide consequence, and none of them is
+        what AC-804 asked for."""
+        _GRANTS.add(EDIT_SLUG)
+        before_cipher = default_workspace.api_key_ciphertext
+        resp = client.put(
+            f"{WORKSPACES_BASE}/{default_workspace.id}",
+            json={
+                "api_key": "ZZT-stolen-key",
+                "base_url": "https://collector.attacker.example",
+                "is_default": False,
+            },
+        )
+        assert resp.status_code == 403, resp.text
+
+        session.refresh(default_workspace)
+        assert default_workspace.api_key_ciphertext == before_cipher
+        assert default_workspace.base_url is None
+        assert default_workspace.is_default is True
+
+    def test_the_narrow_route_ignores_every_other_field_in_the_body(
+        self, client, session, default_workspace
+    ):
+        """A body that also names `api_key` / `is_default` writes neither: the narrow
+        model does not declare them, so they are dropped rather than applied."""
+        _GRANTS.add(EDIT_SLUG)
+        before_cipher = default_workspace.api_key_ciphertext
+        resp = client.put(
+            f"{WORKSPACES_BASE}/{default_workspace.id}/chatbot-retry",
+            json={
+                "chatbot_retry_ingress_url": VALID_RETRY_URL,
+                "api_key": "ZZT-stolen-key",
+                "base_url": "https://collector.attacker.example",
+                "is_default": False,
+            },
+        )
+        assert resp.status_code == 200, resp.text
+
+        session.refresh(default_workspace)
+        assert default_workspace.chatbot_retry_ingress_url == VALID_RETRY_URL
+        assert default_workspace.api_key_ciphertext == before_cipher
+        assert default_workspace.base_url is None
+        assert default_workspace.is_default is True
+
+
+class TestClearingTurnsRetryOff:
+    """S8a review S2: the screen says "Leave blank to turn Retry off", so blank must."""
+
+    def test_an_explicit_blank_url_clears_the_stored_one(
+        self, client, session, default_workspace
+    ):
+        _GRANTS.add(EDIT_SLUG)
+        base = f"{WORKSPACES_BASE}/{default_workspace.id}/chatbot-retry"
+        assert (
+            client.put(
+                base,
+                json={
+                    "chatbot_retry_ingress_url": VALID_RETRY_URL,
+                    "chatbot_retry_ingress_key": PLAIN_RETRY_KEY,
+                },
+            ).status_code
+            == 200
+        )
+
+        cleared = client.put(base, json={"chatbot_retry_ingress_url": ""})
+        assert cleared.status_code == 200, cleared.text
+        assert cleared.json().get("chatbot_retry_ingress_url") is None
+        # The KEY was not mentioned, so it is left alone.
+        assert cleared.json().get("has_chatbot_retry_key") is True
+
+    def test_an_explicit_blank_key_revokes_it_and_an_omitted_one_does_not(
+        self, client, session, default_workspace
+    ):
+        _GRANTS.add(EDIT_SLUG)
+        base = f"{WORKSPACES_BASE}/{default_workspace.id}/chatbot-retry"
+        assert (
+            client.put(
+                base,
+                json={
+                    "chatbot_retry_ingress_url": VALID_RETRY_URL,
+                    "chatbot_retry_ingress_key": PLAIN_RETRY_KEY,
+                },
+            ).status_code
+            == 200
+        )
+
+        untouched = client.put(base, json={"chatbot_retry_ingress_url": VALID_RETRY_URL})
+        assert untouched.json().get("has_chatbot_retry_key") is True
+
+        revoked = client.put(base, json={"chatbot_retry_ingress_key": ""})
+        assert revoked.status_code == 200, revoked.text
+        assert revoked.json().get("has_chatbot_retry_key") is False
+        assert revoked.json().get("chatbot_retry_ingress_url") == VALID_RETRY_URL
 
 
 class TestUrlValidationOnSave:
@@ -288,7 +400,7 @@ class TestUrlValidationOnSave:
     ):
         _GRANTS.add(EDIT_SLUG)
         resp = client.put(
-            f"{WORKSPACES_BASE}/{default_workspace.id}",
+            f"{WORKSPACES_BASE}/{default_workspace.id}/chatbot-retry",
             json={"chatbot_retry_ingress_url": url},
         )
         assert resp.status_code == 422, (
@@ -315,7 +427,7 @@ class TestUrlValidationOnSave:
 
         _GRANTS.add(EDIT_SLUG)
         resp = client.put(
-            f"{WORKSPACES_BASE}/{default_workspace.id}",
+            f"{WORKSPACES_BASE}/{default_workspace.id}/chatbot-retry",
             json={"chatbot_retry_ingress_url": f"https://{own_host}/webhook/x"},
         )
         assert resp.status_code == 422, resp.text
@@ -338,7 +450,7 @@ class TestUrlValidationOnSave:
 
         _GRANTS.add(EDIT_SLUG)
         resp = client.put(
-            f"{WORKSPACES_BASE}/{default_workspace.id}",
+            f"{WORKSPACES_BASE}/{default_workspace.id}/chatbot-retry",
             json={"chatbot_retry_ingress_url": VALID_RETRY_URL},
         )
         assert resp.status_code == 200, resp.text

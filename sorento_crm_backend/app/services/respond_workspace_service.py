@@ -7,7 +7,11 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.models.respond_workspace import RespondWorkspace
-from app.schemas.respond_workspace import RespondWorkspaceCreate, RespondWorkspaceUpdate
+from app.schemas.respond_workspace import (
+    RespondWorkspaceChatbotRetryUpdate,
+    RespondWorkspaceCreate,
+    RespondWorkspaceUpdate,
+)
 from app.services.outbound_url_guard import OutboundUrlRejected, assert_safe_outbound_url
 from app.utils.field_encryption import decrypt_secret, encrypt_secret
 
@@ -48,6 +52,28 @@ def _checked_retry_url(raw: Optional[str]) -> Optional[str]:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.message
         ) from exc
+
+
+def _apply_chatbot_retry(
+    row: RespondWorkspace,
+    data: RespondWorkspaceUpdate | RespondWorkspaceChatbotRetryUpdate,
+) -> None:
+    """Write the two chatbot retry fields, for BOTH routes that can write them.
+
+    One function so the narrow `chatbot-retry` route and the full row PUT cannot answer
+    the same body two ways.
+
+    **Presence, not truthiness.** `model_fields_set` says whether the caller MENTIONED the
+    field; the value says what to do with it. Omitted leaves the stored value alone, and an
+    explicit null or blank CLEARS it - including the key, which previously had no revoke
+    path at all (blank kept the ciphertext, and nothing else nulled it).
+    """
+    mentioned = data.model_fields_set
+    if "chatbot_retry_ingress_url" in mentioned:
+        row.chatbot_retry_ingress_url = _checked_retry_url(data.chatbot_retry_ingress_url)
+    if "chatbot_retry_ingress_key" in mentioned:
+        key = (data.chatbot_retry_ingress_key or "").strip()
+        row.chatbot_retry_ingress_key_ciphertext = encrypt_secret(key) if key else None
 
 
 class RespondWorkspaceService:
@@ -175,12 +201,19 @@ class RespondWorkspaceService:
             row.ideation_embed_signing_secret_ciphertext = encrypt_secret(
                 data.ideation_embed_signing_secret.strip()
             )
-        if data.chatbot_retry_ingress_url is not None:
-            row.chatbot_retry_ingress_url = _checked_retry_url(data.chatbot_retry_ingress_url)
-        if data.chatbot_retry_ingress_key is not None and data.chatbot_retry_ingress_key.strip():
-            row.chatbot_retry_ingress_key_ciphertext = encrypt_secret(
-                data.chatbot_retry_ingress_key.strip()
-            )
+        _apply_chatbot_retry(row, data)
+        self.db.commit()
+        self.db.refresh(row)
+        return row
+
+    def update_chatbot_retry(
+        self, workspace_id: str, data: RespondWorkspaceChatbotRetryUpdate
+    ) -> RespondWorkspace:
+        """The two chatbot retry fields only, for the narrow route (S8a review B2)."""
+        row = self.get(workspace_id)
+        if not row:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Respond workspace not found")
+        _apply_chatbot_retry(row, data)
         self.db.commit()
         self.db.refresh(row)
         return row
