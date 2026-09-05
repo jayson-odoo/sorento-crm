@@ -1,6 +1,6 @@
 # PLAN - Chatbot Turn Engine: n8n business logic moves into the CRM
 
-Status: S0 + S1 IMPLEMENTED on lane feat/chatbot-turn-engine (4 Sep 2026); approved "ok good to go", 6 review rounds, D1 to D16; re-ported onto the LIVE n8n body 5 Sep (see S1 "pending re-port"); S1b DELIVERED 5 Sep (-40.0% prompt, published unlabelled, promote is the owner's call); S2 (the tail) MERGED 5 Sep; S6a MERGED 5 Sep, behind `CHATBOT_BUSINESS_LANE_ENABLED` (default off) until the n8n edit in `n8n-changes.md` S6a is made; S4 (the `low_signal` clarifier lane) and S5 (the escalation lane) DELIVERED 5 Sep, both inert until the owner adds their `branch_kind` to `system_settings.chatbot_completed_lanes`; S6c + S7 MERGED 5 Sep (#674); **S8a DELIVERED 5 Sep** (AC-803, AC-804, AC-806, AC-807, AC-808) - chatbot config now lives on the respond workspace row and not in `.env`, and the hazard table below is closed out. S8b is still open and gated on the owner's S7 promote (AC-801, AC-802, AC-805)
+Status: S0 + S1 IMPLEMENTED on lane feat/chatbot-turn-engine (4 Sep 2026); approved "ok good to go", 6 review rounds, D1 to D16; re-ported onto the LIVE n8n body 5 Sep (see S1 "pending re-port"); S1b DELIVERED 5 Sep (-40.0% prompt, published unlabelled, promote is the owner's call); S2 (the tail) MERGED 5 Sep; S6a MERGED 5 Sep, behind `system_settings.chatbot_business_lane_enabled` (default off) until the n8n edit in `n8n-changes.md` S6a is made; S4 (the `low_signal` clarifier lane) and S5 (the escalation lane) DELIVERED 5 Sep, both inert until the owner adds their `branch_kind` to `system_settings.chatbot_completed_lanes`; S6c + S7 MERGED 5 Sep (#674); **S8a DELIVERED 5 Sep** (AC-803, AC-804, AC-806, AC-807, AC-808) - chatbot config now lives on the respond workspace row and not in `.env`, and the hazard table below is closed out. **AC-809 + AC-810 DELIVERED 5 Sep** - System > Settings > Chatbot now owns the lane list, the stock-denial switch, the unsupported-domain list and the two switches that used to be `CHATBOT_BUSINESS_LANE_ENABLED` / `CHATBOT_ORDERING_ENABLED` (both are `system_settings` columns read per turn, migration `480_chatbot_switches`); `CHATBOT_TURN_ON_WORKER` stays a deployment property. S8b is still open and gated on the owner's S7 promote (AC-801, AC-802, AC-805)
 UAC: `documentation/plans/chatbot/chatbot-turn-engine-acceptance-criteria.md`
 Classification: **MODULE** (`chatbot`), own Postgres schema `chatbot` (D12)
 Owner decisions: D1 to D13 in the UAC; rulings R1 to R6 in the UAC
@@ -140,8 +140,8 @@ POST /api/v1/external/chat/turn/complete        same body; the turn is identifie
 `delegate` names the n8n lane that must still run during migration (`business_query`,
 `check_promotion`, `stock_denied`, `out_of_scope`, `low_signal`); n8n's `route` Switch
 shrinks by one output per migrated lane. `delegate = null` means the CRM finished the turn:
-the caller sends `reply` and executes `actions`. From S7, with `CHATBOT_ORDERING_ENABLED`
-on, the CRM owns the tail: `/turn` returns the finished reply and `/complete` answers 410
+the caller sends `reply` and executes `actions`. From S7, with Ordering
+(`system_settings.chatbot_ordering_enabled`) on, the CRM owns the tail: `/turn` returns the finished reply and `/complete` answers 410
 Gone. The `/complete` ROUTE and `delegate.py` are deleted at S8, not S7, because n8n's S2
 tail keeps calling `/complete` until the S7 promote lands on the n8n side and deleting the
 route before that would strand every turn a lane still completes.
@@ -392,7 +392,8 @@ suite on the shared DB.
   ran on the request's `Depends(get_db)` session and never ended their transaction, so every
   in-flight turn pinned one PgBouncer server connection (pool 50) for its whole duration,
   the 45 s ordering wait included. That is fixed (one `db.rollback()` before `run_turn`).
-  The gate then ran, with `CHATBOT_ORDERING_ENABLED=true` on ONE uvicorn worker, mocked
+  The gate then ran, with S7 mode on (then an env flag, a settings column since AC-810)
+  on ONE uvicorn worker, mocked
   parser, against a local backend:
   - 50 contacts x 2 messages fired at once (100 turns): zero errors, zero contacts answered
     out of arrival order, no overlapping turns, p50 0.88 s, **p95 1.24 s** (target 12 s);
@@ -810,8 +811,9 @@ promotion flips them green and forces the markers off rather than being remember
 
   **As built (5 Sep 2026), four things the slice learned and the plan did not say:**
 
-  1. **A config flag, not a silent cutover.** `CHATBOT_BUSINESS_LANE_ENABLED` (default
-     FALSE) decides whether the three business arms run the lane. It exists because the n8n
+  1. **A switch, not a silent cutover.** `chatbot_business_lane_enabled` (default
+     FALSE; a config flag at S6a, a `system_settings` column on the Chatbot settings
+     screen since AC-810) decides whether the three business arms run the lane. It exists because the n8n
      edit is a separate, hand-made, owner-gated step: until it happens n8n still calls
      `sub-resolve-and-gate` itself, so an unflagged CRM would run the resolver twice on
      every business turn, spec-search model call included. The flag is the shadow window's
@@ -863,7 +865,7 @@ promotion flips them green and forces the markers off rather than being remember
 ### S7 - Thin spine + CRM per-contact ordering
 
 `/turn` and `/complete` collapse into `/turn` returning the finished reply: in S7 mode
-(`CHATBOT_ORDERING_ENABLED`) `/complete` answers 410 Gone naming the mode. **Deleting the
+(`system_settings.chatbot_ordering_enabled`) `/complete` answers 410 Gone naming the mode. **Deleting the
 route and `delegate.py` moves to S8** - n8n's S2 tail still calls `/complete` until the S7
 promote lands on the n8n side, so the code stays until the caller is gone.
 `dispatch.py`: redis ticket FIFO per contact inside the request (AC-709, AC-710).

@@ -645,7 +645,7 @@ and re-activate both subs FIRST, then clear the flag.
 `delegate_payload`: exactly the item `sub-resolve-and-gate` returns today - the four
 `resolve-exit-*` arms' `_exit_kind` plus `resolved`, `gate`, `ctx_resolved`, `aggregate`,
 `tier_gate`, `annotate_incoming` and that arm's own item. It is `null` unless
-`CHATBOT_BUSINESS_LANE_ENABLED=true`, and null on every branch kind except the three that
+the business lane switched on, and null on every branch kind except the three that
 reach the sub.
 
 ### Which turns this covers
@@ -676,7 +676,8 @@ of a value n8n still owns.
 
 ### Step 1 - shadow window (no wiring change)
 
-1. Set `CHATBOT_BUSINESS_LANE_ENABLED=true` on the CRM. Nothing in n8n changes: it still
+1. Turn the business lane on under System > Settings > Chatbot
+   (`system_settings.chatbot_business_lane_enabled`). Nothing in n8n changes: it still
    calls `sub-resolve-and-gate` itself and still answers from it.
 2. For a week of live traffic, compare each turn's `delegate_payload` with what
    `Call 'sub-resolve-and-gate'` returned on the same turn. The CRM writes the payload to
@@ -762,7 +763,7 @@ After:
 
 ### Rollback
 
-Turn `CHATBOT_BUSINESS_LANE_ENABLED` off. The CRM returns `delegate_payload: null`, so
+Turn the business lane off on the settings screen. The CRM returns `delegate_payload: null`, so
 `resolve-gate` / `aggregate-gate` / `annotate-incoming-gate` all take their FALSE arms and
 `resolve-arm` receives an item with no `_exit_kind`. **That is a dead turn, not a fallback**
 - so if step 2 has already landed, the rollback is to re-add the
@@ -796,7 +797,7 @@ the workflow JSON from before step 2; that is the actual rollback artefact.
 
 **CRM side (shipped, inert by default).** The fetch step is
 `app/services/chatbot/lanes/business/fetch.py` plus `run_fetch`, behind the SAME
-`CHATBOT_BUSINESS_LANE_ENABLED` flag S6a introduced. Nothing new to turn on: a turn that
+business-lane switch S6a introduced. Nothing new to turn on: a turn that
 does not run S6a's resolve+gate never reaches the fetch either.
 
 Three subs are replaced at once because they are one straight line in n8n:
@@ -867,7 +868,7 @@ picker probes keep calling it.
 
 ### Rollback
 
-Turn `CHATBOT_BUSINESS_LANE_ENABLED` off: with no `resolve_payload` there is no
+Turn the business lane off: with no `resolve_payload` there is no
 `fetch_payload` either, and both arms fall back together. After step 2 has landed the
 rollback is re-adding `Call 'sub-fetch-results'` and repointing `build-result` - keep the
 workflow JSON from before that edit, which is the actual rollback artefact.
@@ -898,7 +899,7 @@ taken, and the module's docstring says so.
 ## S6c - the answer half, `sub-answer` and `sub-miss-suggest` move into the CRM
 
 **CRM side (shipped, inert by default), and it takes TWO switches, not one.**
-`CHATBOT_BUSINESS_LANE_ENABLED` (S6a's flag) decides whether the lane RUNS at all;
+`chatbot_business_lane_enabled` (S6a's switch) decides whether the lane RUNS at all;
 `system_settings.chatbot_completed_lanes` decides whether an arm may ANSWER. Both default
 off, and both are needed: with only the first, the CRM would start answering the moment it
 deploys and the n8n edit would have to land in the same window or every business turn would
@@ -1000,7 +1001,7 @@ All seven stay published, disabled, for one release. The n8n Postgres credential
 ### Rollback
 
 Before step 3: remove the branch kind from `chatbot_completed_lanes`, or turn
-`CHATBOT_BUSINESS_LANE_ENABLED` off. Both are data, both take effect on the next turn, and
+the business lane off. Both are data, both take effect on the next turn, and
 neither needs a deploy.
 
 After step 3: re-add the two `tag-entry-*` nodes, `Edit Fields2` and
@@ -1033,17 +1034,20 @@ can grade. It is a real zero cell in `tests/chatbot/COVERAGE.md`, not an oversig
 
 ## S7 - the dispatcher retires and the CRM orders each contact's turns
 
-**CRM side (shipped, inert by default).** Two flags, both `false` on deploy:
+**CRM side (shipped, inert by default).** Two switches, both `false` on deploy. The first
+is a `system_settings` column edited on System > Settings > Chatbot (AC-810), effective on
+the next turn with no restart; the second stays an environment variable because it is a
+property of the box, not a decision the owner makes:
 
-| flag | default | what it does |
+| switch | default | what it does |
 | --- | --- | --- |
-| `CHATBOT_ORDERING_ENABLED` | `false` | **S7 mode.** The request takes a redis ticket per contact and waits for the ticket before it (`app/services/chatbot/dispatch.py`), AND the CRM owns the tail: `/turn` returns the finished reply, `/turn/{id}/complete` answers 410 Gone |
+| `system_settings.chatbot_ordering_enabled` | `false` | **S7 mode.** The request takes a redis ticket per contact and waits for the ticket before it (`app/services/chatbot/dispatch.py`), AND the CRM owns the tail: `/turn` returns the finished reply, `/turn/{id}/complete` answers 410 Gone |
 | `CHATBOT_TURN_ON_WORKER` | `false` | the turn runs on the `chat` RQ queue instead of the API thread; the request still waits for it and answers the same body |
 
 Two more knobs, both with defaults that do not need touching for the promote:
 `CHATBOT_QUEUE_WAIT_SECONDS` (45) and `CHATBOT_TURN_WAIT_SECONDS` (60).
 
-**Nothing changes in n8n until the owner flips `CHATBOT_ORDERING_ENABLED`.** That is the
+**Nothing changes in n8n until the owner turns Ordering on.** That is the
 whole cutover: today `sorento-dispatcher` pops one contact per second and serialises the
 world; after the flip the CRM serialises per contact and different contacts run at once.
 Flipping the flag while the dispatcher is still in front of it does not disturb the
@@ -1082,10 +1086,11 @@ executions means either the limit raised to cover it or enough workers to add up
 executions sit `waiting` rather than `running`, the limit is still the ceiling and the CRM's
 ordering is not what is being measured.
 
-### Step 2 - flip the CRM flag (the real cutover)
+### Step 2 - turn Ordering on (the real cutover)
 
-`CHATBOT_ORDERING_ENABLED=true`, restart the API. Nothing in n8n has changed yet, so the
-rollback is the same env var back to `false`: no workflow edit, no deploy of anything else.
+System > Settings > Chatbot, Ordering on, confirm the dialog. Effective on the next turn:
+no restart, and no deploy. Nothing in n8n has changed yet, so the rollback is the same
+switch back off: no workflow edit, no deploy of anything else.
 
 **Preconditions:** every branch kind in `system_settings.chatbot_completed_lanes` (see
 above - the flag also retires `/complete`), the load gate (step 4) green on the lane's own
@@ -1154,7 +1159,7 @@ Not a load test, a correctness one, and it is the reason both injectors flip tog
 
 ### Rollback
 
-Before step 3: `CHATBOT_ORDERING_ENABLED=false`. Effective on the next turn, no deploy.
+Before step 3: turn Ordering off on the settings screen. Effective on the next turn, no deploy.
 After step 3 the dispatcher no longer exists to fall back to, which is why step 3 waits a
 week behind step 2 rather than riding with it.
 
