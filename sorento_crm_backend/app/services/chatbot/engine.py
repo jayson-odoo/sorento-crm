@@ -503,12 +503,16 @@ def run_turn(
 ) -> TurnResult:
     """Run the head of one turn. NEVER raises for a business failure; records it.
 
-    Two things happen before the stages: the D15 dedup, and the row insert. Everything
-    after that is wrapped, so an unexpected exception anywhere - a provider error while
-    resolving config, an access-service failure, the stock predicate throwing on a
-    contact with no `is_allowed_stock` field - closes the turn as `failed` with the stage
-    it reached and hands the caller today's error reply. A turn left at `processing` with
-    a null error and no trace is exactly the dropped turn H32 is about.
+    Three things happen before the stages, in this order and for these reasons: the D15
+    dedup (a duplicate answers from the first turn and takes no ticket), the per-contact
+    ticket (AC-709 - taken before the INSERT, because the insert is the widest thing that
+    could reorder two messages a customer sent one after the other), and the row insert.
+    Everything after that is wrapped, so an unexpected exception anywhere - a provider
+    error while resolving config, an access-service failure, the stock predicate throwing
+    on a contact with no `is_allowed_stock` field - closes the turn as `failed` with the
+    stage it reached and hands the caller today's error reply. A turn left at `processing`
+    with a null error and no trace is exactly the dropped turn H32 is about. The ticket is
+    released in a `finally` around all of it.
 
     `offload` exists for ONE caller: the RQ job (`app/tasks/chat_turns.py`) passes `False`
     so the worker actually runs the turn instead of enqueuing it to itself forever. Every
