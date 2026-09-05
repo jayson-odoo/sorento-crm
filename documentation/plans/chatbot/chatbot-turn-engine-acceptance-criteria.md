@@ -855,13 +855,22 @@ contact inside the synchronous request. Different contacts run in parallel.
   gate reaches resolve/tier-gate/fetch/answer instead. ~~Measured 5 Sep 2026 (ordering on, one
   uvicorn worker, mocked parser): 100 turns, zero errors, zero out of order, p95 1.24 s;
   300-turn repeat p95 3.77 s.~~
-  **Re-measured 6 Sep 2026**, same one-uvicorn-worker lane box, business lane switched on:
-  `branch_kind` confirms the fix (30 `business_query`, 0 `access_denied` among the run's
-  landed turns), but a single dev `--reload` worker cannot sustain 100 concurrent
-  business-path turns inside the client's 120 s timeout - 67 of 100 did not finish in time,
-  and the ones that did missed the 12 s target by a wide margin. That is the capacity question
-  this AC was always meant to surface, not a regression from this fix; see the plan's capacity
-  section for the pool clause's open question and the trigger for a multi-worker re-run.
+  **Re-measured 6 Sep 2026**, chatbot-s8 lane backend, one uvicorn `--reload` worker,
+  mocked parser, business lane switched on (`uptime` immediately before: load averages
+  4.88 5.34 6.24). Raw numbers: `wall 120.1s turns 100 p50 120.00s p95 120.06s`,
+  `errors 95`, `branch_kind: {'business_query': 30, '(none)': 3}`. `branch_kind` confirms
+  the fix - real business turns land, zero `access_denied` - but p95 120.06s is the
+  CLIENT's own request timeout, not a completion time, and this run predates the
+  `_wait_for_turns_to_settle` fix that shipped in the same PR: cleanup ran the instant the
+  client gave up, and 21 more turns landed roughly 3 minutes later as
+  `branch_kind=None, stage=received, status=failed` because their contacts had already
+  been deleted mid-drain - the exact bug that fix closes, caught by this run's own
+  evidence. Load average spiked to 52 right after (unrelated concurrent work on the
+  shared machine, confirmed via `ps`), which made a same-session repeat unsafe to compare
+  against. None of this is a regression from this fix - it is the capacity question this
+  AC was always meant to surface, previously hidden by the wrong-path measurement above;
+  see the plan's capacity section for the pool clause's open question and the trigger for
+  a multi-worker re-run.
 - AC-707 `[E2E]` Given live traffic for one pilot contact routed through S7, when they send
   three messages quickly, then the three replies arrive in order and `chatbot.turns` shows
   three `done` rows with `finished_at` ascending. (A5)

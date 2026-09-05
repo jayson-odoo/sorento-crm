@@ -18,8 +18,11 @@ Two modes, because they answer two different questions:
   session reads, row writes - and it is the mode to run in a loop while wiring the cutover,
   because it is free and deterministic.
 * `--live-llm`: the real parser call, still `is_test`. **This is the mode AC-711's 12 s p95
-  applies to**, because the model call is most of a real turn. Point it at a lane backend,
-  never production.
+  applies to**, because the model call is most of a real turn. This is the SECOND burst of
+  the owner's cutover-day pair (mocked first, then this) and, unlike every other mode here,
+  IS allowed against production with `--production` - that pair is what live traffic looks
+  like the day of the cutover. It still spends real model budget and shares workers with
+  live customers, so it prints a warning and needs `--production`'s typed confirmation.
 
 Usage:
 
@@ -50,10 +53,12 @@ contact or an ungranted agent CLOSED. A contact with no workspace link and no
 milliseconds flat, every time - which is exactly what happened here before this paragraph
 existed: the load gate measured the access refusal, not the business answer path
 (resolve, tier-gate, fetch, answer, compose) AC-711 is actually about. So seeding also
-links each contact to the default `respond_workspaces` row and grants it
-`ACCESS_AGENT_CODE` - the agent `derive_routing`
+links each contact to the default `respond_workspaces` row and grants it every code in
+`ACCESS_AGENT_CODES` - the agents `derive_routing`
 (`app/services/chatbot/head/output_exchange.py`) resolves the mocked `master_products`
-domain to - the same two facts a real dealer contact carries in production.
+domain AND every QUESTION's live-parsed domain to (see that constant's own comment for
+why it is more than one code) - the same facts a real dealer contact carries in
+production.
 
 **A granted contact still is not enough - the business lane itself has to be switched
 on, or the turn is refused a stage further downstream.** `branch_kind = "business_query"`
@@ -61,10 +66,32 @@ is decided by `route.decide()` before either switch is read, so the row would ca
 either way; but `system_settings.chatbot_business_lane_enabled` AND
 `TARGET_BRANCH_KIND in chatbot_completed_lanes` (AC-809/AC-810) are what decide whether the
 head ANSWERS that turn in process or DELEGATES it to n8n's canned handoff. `main()` checks
-both before seeding a single contact and refuses with the exact SQL to flip them (never
-flips them itself - this is shared dev state, and the operator restores it after the run).
+both before seeding a single contact. Off a production database it refuses outright,
+naming the Settings > Chatbot screen - this script never writes `system_settings` on a
+live tenant. Off `--production` (shared dev state) it prints the exact SQL to flip them
+and the exact values to restore afterward, and does not flip them itself either way.
 `_grade_business_path`'s `branch_kind` histogram is the backstop for the same failure if
-the switches were right but something else diverted the turn.
+the switches were right but something else diverted the turn - AC-711 reads STRICT: every
+turn has to land on the business lane, not merely one of them, and the run fails if it does
+not.
+
+**A run against a PRODUCTION database needs `--production` and a typed `yes`, never a
+hostname check.** `--base-url` is where the BACKEND lives, and on the prod host that is
+`http://localhost:8000` inside the `backend` container - indistinguishable, by hostname,
+from a laptop's own dev server. What actually says "this writes to the live database" is
+the CHECKOUT's own `ENVIRONMENT` (`app/config.py`), the same value the backend itself
+boots with. `--production` prints exactly what will be written (and removed again) before
+asking for confirmation; refused without it, and refused before seeding a single row.
+
+**Grading and cleanup both wait for the SERVER to actually finish, not just for the
+CLIENT to give up.** A single overloaded worker can still be draining a 100-turn backlog
+minutes after the client's own timeout - measured, 21 rows landed 3 minutes late in this
+fix's own evidence run. `_wait_for_turns_to_settle` polls `chatbot.turns` for this run
+until none are non-terminal (`queued`/`processing`/`delegated`) or `SETTLE_TIMEOUT_SECONDS`
+lapses, and runs BEFORE both grading and the contact cleanup - a contact deleted while its
+turn is still mid-flight fails at `received` ("contact not found"), which is a
+cleanup-timing artefact, not the turn's real outcome, and would otherwise pollute the
+histogram with rows that mean nothing.
 
 **The seeding goes through THIS checkout's `DATABASE_URL`, whatever `--base-url` points
 at.** There is no way for the script to know the two match, so it refuses to run against a
@@ -138,11 +165,20 @@ POOL_SAMPLE_INTERVAL_SECONDS = 0.25
 # Where a base URL may point before the seeding guard demands `--i-know`.
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "[::1]"}
 
-# The agent `derive_routing` resolves the mocked `domain_hint` below to
-# (`app/services/chatbot/head/output_exchange.py`: `master_products` -> `general_enquiries`).
-# `check_access` denies an unknown agent CLOSED (`deny_unknown_agent`), so this has to be
-# the SAME code the seeded grant names, or seeding the grant buys nothing.
-ACCESS_AGENT_CODE = "general_enquiries"
+# Every agent code a live parse of a QUESTION below could route to
+# (`app/services/chatbot/head/output_exchange.py`'s `derive_routing`). `general_enquiries`
+# is what `master_products` / `promotion` / `product_attachment` all resolve to - which
+# covers five of the six QUESTIONS - but "when can it be delivered" is an `order` domain
+# question, and `derive_routing`'s `order` case names `order_enquiries` instead. In the
+# default (mocked) mode this never matters - `MOCK_PARSER_OUTPUT` below is the SAME fixed
+# `master_products` output on every message regardless of which QUESTION text was sent -
+# but `--live-llm` reads the real question, and a seeded contact ungranted for the agent a
+# real parse actually names fails `access_denied` same as an unseeded one, just one
+# question later. `check_access` denies an unknown agent CLOSED (`deny_unknown_agent`), so
+# a code here has to exist and be active, or granting it buys nothing.
+# `tests/chatbot/test_load_script_seeding.py` derives the required set from
+# `derive_routing` itself and asserts this tuple still covers it, so the two cannot drift.
+ACCESS_AGENT_CODES = ("general_enquiries", "order_enquiries")
 
 # O2's harness emission: what the parser would have returned for the questions below. Sent
 # only in the default (no-model) mode; `--live-llm` omits it and the parser runs for real.
@@ -195,12 +231,12 @@ MOCK_PARSER_OUTPUT = {
 from app.services.chatbot_reply_copy import CHATBOT_TURN_ERROR_REPLY as ERROR_REPLY
 
 QUESTIONS = [
-    "price for SRTWC8517",
-    "do you have stock for M6103",
-    "what is the dealer price on that",
-    "any promotion this month",
-    "send me the spec sheet",
-    "when can it be delivered",
+    "price for SRTPTFE1315",  # master_products - the same real code MOCK_PARSER_OUTPUT names
+    "do you have stock for M6103",  # master_products (or inventory - both -> general_enquiries)
+    "what is the dealer price on that",  # master_products
+    "any promotion this month",  # promotion -> general_enquiries
+    "send me the spec sheet",  # product_attachment -> general_enquiries
+    "when can it be delivered",  # order -> order_enquiries (the one outlier, see ACCESS_AGENT_CODES)
 ]
 
 
@@ -218,7 +254,7 @@ CONTACT_PREFIX = "ZZT-load-"
 # a stock denial still counts.
 BUSINESS_BRANCH_KINDS = frozenset({"business_query", "check_promotion", "stock_denied"})
 
-# The one arm THIS script's mocked questions actually drive (see `ACCESS_AGENT_CODE`'s
+# The one arm THIS script's mocked questions actually drive (see `ACCESS_AGENT_CODES`'s
 # comment above) - what the pre-flight switch check in `main()` insists is enabled
 # before firing, so a run cannot silently measure delegation-to-n8n instead.
 TARGET_BRANCH_KIND = "business_query"
@@ -271,7 +307,8 @@ def _resolve_agent_id(db: Any, code: str) -> str | None:
 
 def _seed_access_grants(db: Any, contacts: list[str], *, agent_id: str) -> None:
     """Grant every contact in `contacts` the agent the mocked turn will be checked
-    against (AC-711's fix: see the module docstring's access-gate paragraph).
+    against (AC-711's fix: see the module docstring's access-gate paragraph). Called
+    once per code in `ACCESS_AGENT_CODES`.
 
     `valid_from` / `valid_to` are left `NULL` - `evaluate_agent`'s own `OR ... IS NULL`
     clauses treat that as "always valid", which is simpler than dating a synthetic grant
@@ -283,6 +320,11 @@ def _seed_access_grants(db: Any, contacts: list[str], *, agent_id: str) -> None:
     values, which `create_all` never turns into a DB default - a schema built purely
     from the model (a test's blank schema, `tests/_pg_fixture.blank_schema_engine`) has
     neither, and this raw INSERT bypasses the ORM layer that would otherwise supply them.
+
+    `ON CONFLICT DO NOTHING`, same reasoning as the contact INSERT below: a rerun with a
+    collided phone/contact id would otherwise fail here on
+    `uq_contact_agent_access_respond_contact_id_agent_id` instead of failing where the
+    read run_id already explains itself.
     """
     from sqlalchemy import text
 
@@ -292,17 +334,22 @@ def _seed_access_grants(db: Any, contacts: list[str], *, agent_id: str) -> None:
             "(id, respond_contact_id, respond_contact_phone, agent_id, is_allowed, "
             "synced_to_excel) "
             "SELECT gen_random_uuid(), id, phone_number, :agent_id, true, false "
-            "FROM respond_contacts WHERE respond_io_id = ANY(:ids)"
+            "FROM respond_contacts WHERE respond_io_id = ANY(:ids) "
+            "ON CONFLICT DO NOTHING"
         ),
         {"agent_id": agent_id, "ids": contacts},
     )
 
 
-def _seed_contacts(contacts: list[str], run_id: str) -> None:
+def _seed_contacts(contacts: list[str], run_id: str) -> str | None:
     """Insert the synthetic contacts the turns will read state for, linked to the
-    default workspace and granted the agent the access gate checks (see the module
+    default workspace and granted every agent in `ACCESS_AGENT_CODES` (see the module
     docstring's access-gate paragraph) - without both, every turn is refused at
     `access_denied` before resolve/tier-gate/fetch/answer ever runs.
+
+    Returns an error message for the caller to print and exit on, or `None` on success -
+    `main()`'s own style (`_check_business_lane_switches` set the precedent), rather than
+    `SystemExit` from inside a helper a test also calls directly.
     """
     import json as _json
 
@@ -313,21 +360,24 @@ def _seed_contacts(contacts: list[str], run_id: str) -> None:
     try:
         workspace_id = _resolve_default_workspace_id(db)
         if workspace_id is None:
-            raise SystemExit(
+            return (
                 "no default respond_workspaces row (is_default = true) in "
                 f"{_database_name()} - the access gate cannot resolve a space_id for "
                 "the seeded contacts. Seed one (or point DATABASE_URL at a database "
                 "that already has one) before running the load gate."
             )
-        agent_id = _resolve_agent_id(db, ACCESS_AGENT_CODE)
-        if agent_id is None:
-            raise SystemExit(
-                f"no active access_agents row with code={ACCESS_AGENT_CODE!r} in "
-                f"{_database_name()} - this is what derive_routing resolves the mocked "
-                "master_products domain to (app/services/chatbot/head/output_"
-                "exchange.py), and check_access denies an unknown agent closed. Seed "
-                "one before running the load gate."
-            )
+        agent_ids: dict[str, str] = {}
+        for code in ACCESS_AGENT_CODES:
+            agent_id = _resolve_agent_id(db, code)
+            if agent_id is None:
+                return (
+                    f"no active access_agents row with code={code!r} in "
+                    f"{_database_name()} - this is one of the agents a live parse of "
+                    "QUESTIONS can route to (app/services/chatbot/head/output_"
+                    "exchange.py's derive_routing), and check_access denies an unknown "
+                    "agent closed. Seed one before running the load gate."
+                )
+            agent_ids[code] = agent_id
         for index, contact in enumerate(contacts):
             result = db.execute(
                 text(
@@ -343,7 +393,8 @@ def _seed_contacts(contacts: list[str], run_id: str) -> None:
                 },
             )
             inserted += result.rowcount or 0
-        _seed_access_grants(db, contacts, agent_id=agent_id)
+        for agent_id in agent_ids.values():
+            _seed_access_grants(db, contacts, agent_id=agent_id)
         db.commit()
     finally:
         db.close()
@@ -352,13 +403,14 @@ def _seed_contacts(contacts: list[str], run_id: str) -> None:
         # before giving up. A refusal that leaves its own half-seeded run behind makes the
         # next run collide on the same numbers and refuse as well.
         _delete_contacts(contacts)
-        raise SystemExit(
+        return (
             f"seeded {inserted} of {len(contacts)} contacts - a respond_io_id or a phone "
             "number collided and the insert was skipped. Every turn for the missing "
             "contact would fail at `received` and the run would grade the error path. "
             "This run's own rows have been removed again; clean up any other leftover "
             "ZZT-load- rows and try again."
         )
+    return None
 
 
 # Stamped on every connection this SCRIPT opens, so the gauge can subtract itself: the
@@ -720,26 +772,31 @@ class _BusinessPathReport:
 
     branch_kind_counts: dict[str, int]
     access_denied: int
+    total: int
     business_count: int
     business_incomplete: list[str]
 
 
 def _grade_business_path(run_id: str) -> _BusinessPathReport:
-    """`branch_kind` distribution for this run's turns, plus which `business_query`
+    """`branch_kind` distribution for this run's turns, plus which of the BUSINESS lane's
     turns did NOT finish at `stage=remembered, status=done` - `_run_business_answer`'s own
-    terminal write (`engine.py`, S6c). NOT `stage="sent"`: that stage closes the CANNED
-    lanes (`canned_lanes.COMPLETED_BRANCH_KINDS`, a disjoint set from `BUSINESS_BRANCH_KINDS`
-    below) - a first version of this check used it, on the strength of the incident
-    report that named it, and it turned every successfully-answered `business_query` row
-    into a false "BUSINESS PATH INCOMPLETE", caught by reading the actual column values
-    off a real run (see the PR's evidence section) rather than by inference from the code.
-    A `business_query` turn that stops anywhere else (most tellingly `access_denied`)
-    proves the gate measured a refusal, not an answer.
+    terminal write (`engine.py`, S6c), the same close every `BUSINESS_BRANCH_KINDS` arm
+    uses (`business.complete_answer` for all three). NOT `stage="sent"`: that stage closes
+    the CANNED lanes (`canned_lanes.COMPLETED_BRANCH_KINDS`, a disjoint set from
+    `BUSINESS_BRANCH_KINDS` below) - a first version of this check used it, on the
+    strength of the incident report that named it, and it turned every
+    successfully-answered `business_query` row into a false "BUSINESS PATH INCOMPLETE",
+    caught by reading the actual column values off a real run (see the PR's evidence
+    section) rather than by inference from the code. A turn that stops anywhere else
+    (most tellingly `access_denied`) proves the gate measured a refusal, not an answer.
 
-    `business_count` sums `BUSINESS_BRANCH_KINDS`, not just `TARGET_BRANCH_KIND`: this is
-    the number `main()` refuses to let hit zero, and a run this script fires only ever
-    reaches `business_query`, but the check is written against every arm the lane owns
-    so it does not quietly stop meaning anything the day a different question is added.
+    `business_count` sums `BUSINESS_BRANCH_KINDS`, not just `TARGET_BRANCH_KIND`, and
+    `business_incomplete` checks every row whose `branch_kind` is IN that set (not just
+    `TARGET_BRANCH_KIND`) for the same reason: a run this script fires only ever reaches
+    `business_query` today, but both checks are written against every arm the lane owns
+    so neither quietly stops meaning anything the day a different question is added.
+    `total` is what `main()` compares `business_count` against for AC-711's STRICT
+    reading - every turn lands on the business lane, not merely "at least one did".
     """
     from collections import Counter
 
@@ -760,12 +817,13 @@ def _grade_business_path(run_id: str) -> _BusinessPathReport:
         f"{row.contact_respond_id}#{_index_of(row.message_id)} "
         f"stage={row.stage} status={row.status}"
         for row in rows
-        if row.branch_kind == TARGET_BRANCH_KIND
+        if row.branch_kind in BUSINESS_BRANCH_KINDS
         and not (row.stage == "remembered" and row.status == "done")
     ]
     return _BusinessPathReport(
         branch_kind_counts=dict(counts),
         access_denied=counts.get("access_denied", 0),
+        total=len(rows),
         business_count=sum(counts.get(k, 0) for k in BUSINESS_BRANCH_KINDS),
         business_incomplete=business_incomplete,
     )
@@ -788,7 +846,7 @@ def _business_lane_switches() -> tuple[bool, list[str]]:
     return bool(getattr(row, "chatbot_business_lane_enabled", False)), list(lanes or [])
 
 
-def _check_business_lane_switches() -> str | None:
+def _check_business_lane_switches(*, production: bool = False) -> str | None:
     """`None` when the business lane may both RUN and ANSWER `TARGET_BRANCH_KIND`;
     otherwise the refusal message for `main()` to print and exit on.
 
@@ -799,13 +857,27 @@ def _check_business_lane_switches() -> str | None:
     stamped on it (`route.decide` runs before either switch is consulted), but the head
     DELEGATES rather than answers, so the run would silently measure n8n's canned handoff
     again with a business-looking `branch_kind` on the row - the exact failure mode this
-    whole fix exists to catch, one config flip further downstream. The script does not
-    flip them itself: this is shared dev state, and restoring it is the operator's job
-    once the run has been read (D14's containment is about turn side effects, not this).
+    whole fix exists to catch, one config flip further downstream.
+
+    `production=True` (the `--production` run) never prints the `UPDATE` statement: this
+    script does not flip a LIVE tenant's lane switches by SQL under any circumstance, and
+    a refusal that hands the operator a working statement is an invitation to run it. The
+    Settings > Chatbot screen is the only sanctioned way to flip them on a live database,
+    and refusing there is the whole of the response. Off `--production`, this is shared
+    DEV state instead, and printing the exact flip (with the exact restore) is what makes
+    "run the gate, then put it back" a copy-paste rather than a guess.
     """
     enabled, lanes = _business_lane_switches()
     if enabled and TARGET_BRANCH_KIND in lanes:
         return None
+    if production:
+        return (
+            f"system_settings has chatbot_business_lane_enabled={enabled} and "
+            f"chatbot_completed_lanes={lanes!r} - {TARGET_BRANCH_KIND!r} must be in both "
+            "before this can run against production. Flip the lane switches on the "
+            "Settings > Chatbot screen first (this script never writes system_settings "
+            "on a production database, by SQL or otherwise)."
+        )
     import json as _json
 
     return (
@@ -822,6 +894,59 @@ def _check_business_lane_switches() -> str | None:
         f"{str(enabled).lower()}, chatbot_completed_lanes = "
         f"'{_json.dumps(lanes)}'::jsonb;"
     )
+
+
+# Mirrors `chatbot.turns.status`'s own comment in `app/models/chatbot_turn.py`: a turn
+# closes at `done` or `failed`; `queued` / `processing` / `delegated` are all still open.
+NON_TERMINAL_STATUSES = ("queued", "processing", "delegated")
+
+# How long `_wait_for_turns_to_settle` polls before grading anyway. Generous on purpose:
+# a single dev worker draining a 100-turn backlog past its own client's 120 s timeout is
+# exactly the shape this exists to wait out (measured, this fix's own evidence section -
+# 21 rows still landed 3 minutes after the client gave up).
+SETTLE_TIMEOUT_SECONDS = 180.0
+SETTLE_POLL_INTERVAL_SECONDS = 2.0
+
+
+def _wait_for_turns_to_settle(
+    run_id: str, timeout: float = SETTLE_TIMEOUT_SECONDS
+) -> tuple[float, int]:
+    """Poll `chatbot.turns` for this run until none are non-terminal, or `timeout` lapses.
+    Returns `(seconds waited, rows still non-terminal)`.
+
+    Grading and cleanup used to run the instant the CLIENT gave up waiting - but a single
+    overloaded worker keeps draining its backlog long after that, and `_delete_contacts`
+    running while it does deletes a contact the SERVER is still mid-turn for. The next
+    request for it then fails at `received` ("contact not found") instead of recording
+    whatever the turn was actually doing, which is a different failure with a different
+    cause, mixed into the same report. Measured on this fix's own evidence run: 21 turns
+    landed as `branch_kind=None, stage=received, status=failed` for exactly this reason,
+    3 minutes after the client's 120 s timeout and after cleanup had already run.
+
+    `main()` waits HERE, before grading, and cleans up AFTER grading - so grading and
+    cleanup see the same settled rows, and neither races the backend's own drain.
+    """
+    from app.models.chatbot_turn import ChatbotTurn
+
+    deadline = time.monotonic() + timeout
+    started = time.monotonic()
+    remaining = 0
+    while True:
+        db = _script_session()
+        try:
+            remaining = (
+                db.query(ChatbotTurn)
+                .filter(
+                    ChatbotTurn.contact_respond_id.like(f"{CONTACT_PREFIX}{run_id}-%"),
+                    ChatbotTurn.status.in_(NON_TERMINAL_STATUSES),
+                )
+                .count()
+            )
+        finally:
+            db.close()
+        if remaining == 0 or time.monotonic() >= deadline:
+            return time.monotonic() - started, remaining
+        time.sleep(SETTLE_POLL_INTERVAL_SECONDS)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -841,7 +966,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help=(
             "make the parser call real (still is_test, still no side effects). This is the "
-            "mode AC-711's 12s p95 applies to. Never against production."
+            "SECOND, owner-run burst - mocked first, then this - and the mode AC-711's 12s "
+            "p95 applies to. Allowed with --production (that pair IS what cutover-day "
+            "traffic looks like): it spends real model budget and runs on the same workers "
+            "as live customers, so it prints a warning and still needs --production's "
+            "typed confirmation."
         ),
     )
     parser.add_argument(
@@ -853,19 +982,68 @@ def main(argv: list[str] | None = None) -> int:
             "contacts are seeded locally and the turns are not."
         ),
     )
+    parser.add_argument(
+        "--production",
+        action="store_true",
+        help=(
+            "Acknowledge this checkout's ENVIRONMENT is production and confirm "
+            "interactively before writing to it. Required to run at all when "
+            "ENVIRONMENT=production - refused without it. The settings precheck also "
+            "refuses outright in this mode rather than printing an UPDATE: this script "
+            "never writes system_settings on a live database."
+        ),
+    )
     args = parser.parse_args(argv)
 
     if not args.api_key:
         print("EXTERNAL_API_KEY is not set (or pass --api-key)", file=sys.stderr)
         return 2
-    if "fe-sorento" in args.base_url:
-        # BOTH modes, not just `--live-llm`. The parser is what `--live-llm` changes; the
-        # writes to `respond_contacts` and the load on the backend are the same either way.
+
+    # A DATABASE-level guard, not a hostname substring: `--base-url` is where the
+    # BACKEND lives, and on the prod host that is `http://localhost:8000` inside the
+    # `backend` container - a hostname check localhost trivially bypasses. What actually
+    # says "this writes to the live database" is the CHECKOUT's own `ENVIRONMENT`
+    # (`app/config.py`, `ENVIRONMENT=production` in compose), the same value the backend
+    # itself boots with.
+    from app.config import settings as app_settings
+
+    is_production = app_settings.environment == "production"
+    if is_production and not args.production:
         print(
-            "refusing to run against what looks like production; point it at a lane backend",
+            f"this checkout's ENVIRONMENT is {app_settings.environment!r} - refusing to "
+            "run against a production database without --production. Point this at a "
+            "lane backend instead, or pass --production if this really is the owner's "
+            "cutover-day run.",
             file=sys.stderr,
         )
         return 2
+    if is_production:
+        # Printed BEFORE seeding, and named in full: `--keep-contacts` on a live database
+        # is not a debugging convenience, it is rows left in a customer-facing table, so
+        # the operator confirms having read exactly what lands and what does not.
+        print(
+            "PRODUCTION RUN. This will write, then remove again in a `finally` (unless "
+            "--keep-contacts is also passed, in which case only the chatbot.turns rows "
+            "are left - see the module docstring):\n"
+            f"  - {args.contacts} respond_contacts rows, respond_io_id LIKE 'ZZT-load-%'\n"
+            f"  - {args.contacts * len(ACCESS_AGENT_CODES)} contact_agent_access grants "
+            f"({', '.join(ACCESS_AGENT_CODES)})\n"
+            f"  - up to {args.contacts * args.messages} chatbot.turns rows (kept as "
+            "evidence until deleted by hand - the exit prints the statement)\n"
+        )
+        if args.live_llm:
+            print(
+                "--live-llm on production: this spends real model budget and runs on the "
+                "same workers as live customer traffic."
+            )
+        try:
+            confirmation = input("Type 'yes' to continue: ")
+        except EOFError:
+            confirmation = ""
+        if confirmation.strip() != "yes":
+            print("refused - confirmation was not 'yes'", file=sys.stderr)
+            return 2
+
     host = (urllib.parse.urlparse(args.base_url).hostname or "").lower()
     if host not in LOCAL_HOSTS and not args.i_know:
         # The seeding goes through THIS checkout's DATABASE_URL and the turns go to
@@ -879,7 +1057,7 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
-    switch_problem = _check_business_lane_switches()
+    switch_problem = _check_business_lane_switches(production=is_production)
     if switch_problem:
         # Checked BEFORE any contact is seeded: a run that fires 100 turns only to have
         # every one of them delegate to n8n has spent the burst, the pool sampling and the
@@ -900,7 +1078,10 @@ def main(argv: list[str] | None = None) -> int:
         f"({'dry run, LIVE parser' if args.live_llm else 'dry run, mocked parser'})"
     )
 
-    _seed_contacts(contacts, run_id)
+    seed_problem = _seed_contacts(contacts, run_id)
+    if seed_problem:
+        print(seed_problem, file=sys.stderr)
+        return 2
     gauge = _PoolGauge()
     gauge.start()
     started = time.monotonic()
@@ -931,91 +1112,120 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         wall = time.monotonic() - started
         gauge.stop()
+
+    # Wait for the SERVER to actually finish every turn before grading OR cleaning up -
+    # see `_wait_for_turns_to_settle`'s own docstring for the incident this fixes (a
+    # contact deleted mid-drain fails its still-in-flight turn at `received`, which is a
+    # cleanup-timing artefact, not the turn's real outcome).
+    settle_elapsed, still_pending = _wait_for_turns_to_settle(run_id)
+    if still_pending:
+        print(
+            f"  {still_pending} turn(s) still non-terminal after waiting "
+            f"{settle_elapsed:.1f}s - grading anyway (they may still land later)"
+        )
+    elif settle_elapsed > 1.0:
+        print(f"waited {settle_elapsed:.1f}s for the backend to finish draining before grading")
+
+    try:
+        errors = [o for o in outcomes if o.error is not None or o.status_code != 200]
+        durations = sorted(o.seconds for o in outcomes)
+        p95 = durations[max(0, int(len(durations) * 0.95) - 1)] if durations else 0.0
+        p50 = statistics.median(durations) if durations else 0.0
+
+        # Order, per contact, graded from the SERVER's rows - see `_grade_order`. The
+        # client's own send order cannot answer this: it fired the whole burst at once.
+        report = _grade_order(run_id, args.contacts, args.messages)
+        out_of_order, jitter, missing = report.out_of_order, report.jitter, report.missing
+
+        # Did the turns reach the BUSINESS answer path, or just the access gate in front
+        # of it (this fix - see the module docstring). Printed unconditionally, same
+        # reasoning as `_BusinessPathReport`'s own docstring: a refused turn is fast and
+        # well-ordered, so ordering and error counts alone cannot tell the reader this
+        # gate measured anything.
+        business = _grade_business_path(run_id)
+
+        print(f"wall {wall:.1f}s  turns {len(outcomes)}  p50 {p50:.2f}s  p95 {p95:.2f}s")
+        print(f"errors {len(errors)}  out-of-order contacts {len(out_of_order)}")
+        print(
+            f"overlap pairs checked {report.checked_pairs}  skipped {report.skipped_pairs}"
+        )
+        print(
+            f"db connections: baseline {gauge.baseline}  peak {gauge.peak}  "
+            f"delta {gauge.peak - gauge.baseline} (pg_stat_activity, whole database)"
+        )
+        print(f"branch_kind: {business.branch_kind_counts}")
+        for outcome in errors[:10]:
+            print(
+                f"  ERROR {outcome.contact}#{outcome.index} {outcome.status_code} {outcome.error}"
+            )
+        for entry in out_of_order[:10]:
+            print(f"  OUT OF ORDER {entry}")
+        if jitter:
+            print(
+                f"  (client jitter: {len(jitter)} contact(s) whose messages ARRIVED out of "
+                f"send order - the CRM answers in arrival order, so this is not a failure)"
+            )
+        if missing:
+            print(f"  {missing} turn row(s) missing - the burst did not all reach chatbot.turns")
+        if report.skipped_pairs:
+            print(
+                f"  {report.skipped_pairs} overlap pair(s) could not be evaluated (no "
+                "execution start on the trace) - the no-overlap clause did not cover them"
+            )
+        if business.access_denied:
+            print(
+                f"  {business.access_denied} turn(s) ended access_denied - the access gate "
+                "refused them before resolve/tier-gate/fetch/answer ever ran. Check the "
+                "seeded contacts' workspace link and contact_agent_access grant."
+            )
+        for entry in business.business_incomplete[:10]:
+            print(f"  BUSINESS PATH INCOMPLETE {entry}")
+        off_business = business.total - business.business_count
+        if outcomes and off_business:
+            # STRICT, per AC-711's own wording: every turn lands on the business lane, not
+            # merely "at least one did". `access_denied` and `business_incomplete` each
+            # name their own failure; this is the general case - any row whose branch_kind
+            # is not in BUSINESS_BRANCH_KINDS, for any reason, printed against the
+            # histogram above so the reader sees exactly where it went instead of just a
+            # count.
+            print(
+                f"  {off_business} of {business.total} turn(s) did not land on a business "
+                f"branch ({sorted(BUSINESS_BRANCH_KINDS)}) - see the branch_kind counts "
+                "above for where they actually went."
+            )
+
+        green = (
+            not errors
+            and not out_of_order
+            and not missing
+            and not report.skipped_pairs
+            and not business.business_incomplete
+            and (not outcomes or off_business == 0)
+            and p95 < P95_TARGET_SECONDS
+        )
+        print("GREEN" if green else "RED")
+        if not green and p95 >= P95_TARGET_SECONDS:
+            print(f"  p95 {p95:.2f}s is over the {P95_TARGET_SECONDS}s target")
+        if args.keep_contacts:
+            print(
+                "clean up with:\n"
+                f"  DELETE FROM chatbot.turns WHERE contact_respond_id LIKE "
+                f"'ZZT-load-{run_id}-%';\n"
+                "  DELETE FROM contact_agent_access WHERE respond_contact_id IN "
+                "(SELECT id FROM respond_contacts WHERE respond_io_id LIKE "
+                f"'ZZT-load-{run_id}-%');\n"
+                f"  DELETE FROM respond_contacts WHERE respond_io_id LIKE "
+                f"'ZZT-load-{run_id}-%';"
+            )
+        else:
+            print(
+                "clean up with: DELETE FROM chatbot.turns WHERE contact_respond_id "
+                f"LIKE 'ZZT-load-{run_id}-%';"
+            )
+        return 0 if green else 1
+    finally:
         if not args.keep_contacts:
             _delete_contacts(contacts)
-
-    errors = [o for o in outcomes if o.error is not None or o.status_code != 200]
-    durations = sorted(o.seconds for o in outcomes)
-    p95 = durations[max(0, int(len(durations) * 0.95) - 1)] if durations else 0.0
-    p50 = statistics.median(durations) if durations else 0.0
-
-    # Order, per contact, graded from the SERVER's rows - see `_grade_order`. The client's
-    # own send order cannot answer this: it fired the whole burst at once.
-    report = _grade_order(run_id, args.contacts, args.messages)
-    out_of_order, jitter, missing = report.out_of_order, report.jitter, report.missing
-
-    # Did the turns reach the BUSINESS answer path, or just the access gate in front of
-    # it (this fix - see the module docstring). Printed unconditionally, same reasoning
-    # as `_BusinessPathReport`'s own docstring: a refused turn is fast and well-ordered,
-    # so ordering and error counts alone cannot tell the reader this gate measured
-    # anything.
-    business = _grade_business_path(run_id)
-
-    print(f"wall {wall:.1f}s  turns {len(outcomes)}  p50 {p50:.2f}s  p95 {p95:.2f}s")
-    print(f"errors {len(errors)}  out-of-order contacts {len(out_of_order)}")
-    print(
-        f"overlap pairs checked {report.checked_pairs}  skipped {report.skipped_pairs}"
-    )
-    print(
-        f"db connections: baseline {gauge.baseline}  peak {gauge.peak}  "
-        f"delta {gauge.peak - gauge.baseline} (pg_stat_activity, whole database)"
-    )
-    print(f"branch_kind: {business.branch_kind_counts}")
-    for outcome in errors[:10]:
-        print(f"  ERROR {outcome.contact}#{outcome.index} {outcome.status_code} {outcome.error}")
-    for entry in out_of_order[:10]:
-        print(f"  OUT OF ORDER {entry}")
-    if jitter:
-        print(
-            f"  (client jitter: {len(jitter)} contact(s) whose messages ARRIVED out of "
-            f"send order - the CRM answers in arrival order, so this is not a failure)"
-        )
-    if missing:
-        print(f"  {missing} turn row(s) missing - the burst did not all reach chatbot.turns")
-    if report.skipped_pairs:
-        print(
-            f"  {report.skipped_pairs} overlap pair(s) could not be evaluated (no "
-            "execution start on the trace) - the no-overlap clause did not cover them"
-        )
-    if business.access_denied:
-        print(
-            f"  {business.access_denied} turn(s) ended access_denied - the access gate "
-            "refused them before resolve/tier-gate/fetch/answer ever ran. Check the "
-            "seeded contacts' workspace link and contact_agent_access grant."
-        )
-    for entry in business.business_incomplete[:10]:
-        print(f"  BUSINESS PATH INCOMPLETE {entry}")
-    if outcomes and business.business_count == 0:
-        # The one failure `access_denied` and `business_incomplete` cannot both catch on
-        # their own: every turn landing on some THIRD branch_kind (low_signal, clarify_menu,
-        # ...) with none refused and none incomplete would otherwise print a clean report
-        # and grade green while measuring nothing this script exists to measure. This is
-        # the check the module docstring and AC-711 both point at - zero business turns is
-        # a hard fail regardless of what else is clean.
-        print(
-            "  0 turns took a business branch "
-            f"({sorted(BUSINESS_BRANCH_KINDS)}) - see the branch_kind counts above for "
-            "where they actually went."
-        )
-
-    green = (
-        not errors
-        and not out_of_order
-        and not missing
-        and not report.skipped_pairs
-        and not business.access_denied
-        and not business.business_incomplete
-        and (not outcomes or business.business_count > 0)
-        and p95 < P95_TARGET_SECONDS
-    )
-    print("GREEN" if green else "RED")
-    if not green and p95 >= P95_TARGET_SECONDS:
-        print(f"  p95 {p95:.2f}s is over the {P95_TARGET_SECONDS}s target")
-    print(
-        "clean up with: DELETE FROM chatbot.turns WHERE contact_respond_id "
-        f"LIKE 'ZZT-load-{run_id}-%';"
-    )
-    return 0 if green else 1
 
 
 if __name__ == "__main__":
