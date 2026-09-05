@@ -140,7 +140,14 @@ def _stub_seams(monkeypatch, session_factory):
         )
 
     monkeypatch.setattr(escalation_services, "build", fake_build)
-    monkeypatch.setattr(escalation_services, "production_session", lambda: _FakeSession(session_factory))
+    monkeypatch.setattr(
+        escalation_services,
+        "production_session",
+        # The lane now hands its session factory down (H56); this stand-in ignores it
+        # and keeps yielding the blank-schema session the rest of the turn writes
+        # through, which is the whole point of the fake.
+        lambda _factory=None: _FakeSession(session_factory),
+    )
 
 
 class _FakeSession:

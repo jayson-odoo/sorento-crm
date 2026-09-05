@@ -881,7 +881,7 @@ def test_out_of_scope_finishes_in_turn(session_factory, system_settings_row, mon
         {"kind": "send_message", "text": "This inquiry has been routed...", "dry_run": False},
     ]
 
-    def fake_run_escalation_lane(ctx, item, *, dry_run=False):
+    def fake_run_escalation_lane(ctx, item, *, dry_run=False, session_factory=None):
         return {"arm": "human-intervention", "clarify": None, "actions": lane_actions, "pending": None}
 
     monkeypatch.setattr(engine_mod, "run_escalation_lane", fake_run_escalation_lane)
@@ -1058,7 +1058,7 @@ def test_out_of_scope_dry_run_carries_session_patch_and_writes_nothing(
         {"kind": "send_message", "text": "This inquiry has been routed...", "dry_run": True},
     ]
 
-    def fake_run_escalation_lane(ctx, item, *, dry_run=False):
+    def fake_run_escalation_lane(ctx, item, *, dry_run=False, session_factory=None):
         assert dry_run is True, "H37: dry_run must reach the lane, not be dropped on the way in"
         return {"arm": "human-intervention", "clarify": None, "actions": dry_lane_actions, "pending": None}
 
@@ -1190,7 +1190,7 @@ def test_out_of_scope_seam_failure_fails_at_looked_up_with_no_partial_assignment
     )
     monkeypatch.setattr(engine_mod, "default_space_id", lambda db: "364817")
 
-    def fake_run_escalation_lane_boom(ctx, item, *, dry_run=False):
+    def fake_run_escalation_lane_boom(ctx, item, *, dry_run=False, session_factory=None):
         raise RuntimeError("next-assignee is unreachable")
 
     monkeypatch.setattr(engine_mod, "run_escalation_lane", fake_run_escalation_lane_boom)
@@ -1307,7 +1307,7 @@ def test_out_of_scope_delegates_when_completed_lanes_is_default_empty(
 
     lane_calls: list[tuple] = []
 
-    def spy_run_escalation_lane(ctx, item, *, dry_run=False):  # pragma: no cover - must not run
+    def spy_run_escalation_lane(ctx, item, *, dry_run=False, session_factory=None):  # pragma: no cover - must not run
         lane_calls.append((ctx, item))
         raise AssertionError("run_escalation_lane must not be called when chatbot_completed_lanes is []")
 

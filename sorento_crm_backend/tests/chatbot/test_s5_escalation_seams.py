@@ -286,19 +286,24 @@ class TestProductionSeams:
             def close(self) -> None:
                 events.append("close")
 
-        monkeypatch.setattr(
-            "app.database.SessionLocal", lambda: _FakeSession(), raising=False
-        )
+        # The factory is the TURN's now, not `SessionLocal` (H56): the lane's session has
+        # to carry the contact's company scope, so it can no longer reach for a global one.
+        factory = lambda: _FakeSession()  # noqa: E731
 
-        with escalation_services.production_session() as db:
+        with escalation_services.production_session(factory) as db:
             assert isinstance(db, _FakeSession)
         assert events == ["close"], "a clean exit closes and does not roll back"
 
         events.clear()
         with pytest.raises(RuntimeError):
-            with escalation_services.production_session():
+            with escalation_services.production_session(factory):
                 raise RuntimeError("the seam refused")
         assert events == ["rollback", "close"]
+
+        # No factory at all is a LOUD failure, never a silent unscoped `SessionLocal`.
+        with pytest.raises(ValueError):
+            with escalation_services.production_session(None):
+                raise AssertionError("the session must not open without a factory")
 
     def test_a_seam_failure_leaves_no_partial_assignment(self) -> None:
         """`engine.py` promises "the lane returns its whole action list or raises before
@@ -444,7 +449,7 @@ def test_clarify_arm_surfaces_the_ask_and_re_persists_the_offer_state(
     # The lane's own clarify fragment, exactly as `run()` builds it: no actions (nothing
     # was assigned), the R3 marker, and `clarify_company_reply`'s composed ask riding on
     # the `clarify` carrier the tail reads it off.
-    def fake_run_escalation_lane(ctx, item, *, dry_run=False):
+    def fake_run_escalation_lane(ctx, item, *, dry_run=False, session_factory=None):
         return {
             "arm": "clarify",
             "clarify": {

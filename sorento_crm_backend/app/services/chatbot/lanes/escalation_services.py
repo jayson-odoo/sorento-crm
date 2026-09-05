@@ -96,7 +96,7 @@ def _not_live(name: str):
 
 
 @contextmanager
-def production_session() -> Iterator[Any]:
+def production_session(session_factory: Any) -> Iterator[Any]:
     """A session owned for exactly one assignment, closed whatever happens.
 
     The first version called `SessionLocal()` and walked away: nothing closed it, so every
@@ -108,10 +108,23 @@ def production_session() -> Iterator[Any]:
     Rolls back on the way out of an exception: `run()` turns a seam failure into a failed
     turn with NO partial assignment, and a half-written unit of work in the database would
     contradict the trace the operator is reading.
-    """
-    from app.database import SessionLocal
 
-    db = SessionLocal()
+    **The FACTORY is required, and it is the turn's own (H56).** The second version reached
+    for `SessionLocal` directly, which is a session with NO company scope on it: this lane
+    draws its assignee off `Team` / `AgentTeam`, both `CompanyScopedMixin`, so an unscoped
+    session round-robins an empty pool and the whole lane fails closed. `run_turn` builds a
+    scoped factory for the turn and the engine hands it down here, so the lane's own unit of
+    work stays its own AND sees the contact's companies. There is deliberately no
+    `SessionLocal` fallback: a caller that forgets gets a loud failure rather than a lane
+    that quietly assigns nobody.
+    """
+    if session_factory is None:
+        raise ValueError(
+            "the escalation lane needs the turn's session factory (it carries the "
+            "contact's company scope); pass `session_factory` down from `run_turn`"
+        )
+
+    db = session_factory()
     try:
         yield db
     except Exception:

@@ -32,7 +32,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.models.base import UNSET, get_company_scope, set_company_scope
+from app.models.base import set_company_scope
 from app.models.chatbot_turn import ChatbotTurn
 from app.services.chatbot import dispatch, jsc, trace as trace_mod
 from app.services.chatbot.contracts import (
@@ -2188,7 +2188,13 @@ def _run_escalation_arm(
     """
     stage[0] = "looked_up"
     try:
-        fragment = run_escalation_lane(ctx, item, dry_run=dry_run)
+        # The lane opens its OWN session (its writes are a unit of work of their own), and
+        # it opens it off THIS factory rather than `SessionLocal`, so the contact's company
+        # scope travels into it (H56) - `Team` / `AgentTeam` are owned models and the
+        # round-robin draw reads them.
+        fragment = run_escalation_lane(
+            ctx, item, dry_run=dry_run, session_factory=session_factory
+        )
     except Exception as exc:  # noqa: BLE001 - a failed lane is recorded, never dropped
         message = f"{type(exc).__name__}: {exc}"
         logger.exception("chatbot turn %s: escalation lane failed", turn_id)
@@ -3031,17 +3037,21 @@ def complete_turn(  # noqa: PLR0915 - one linear pipeline, and the order IS the 
         contact_respond_id = row.contact_respond_id
         # H56, the tail's half. `/complete` is n8n's own entry, so this session comes
         # straight off `SessionLocal` and nothing has stamped a company scope on it -
-        # which would empty the CS roster read below (`list_team_roster` walks brands,
-        # an owned model) exactly the way it emptied the resolver. The row's contact is
-        # the only identity a `/complete` call carries, and it is the same one the head
-        # scoped by. Only when the session carries NO scope yet: an in-process caller
-        # (`_run_business_answer`, `_run_escalation_arm`, the business lane) already
-        # opened it through the head's scoped factory, and re-resolving there would be a
-        # second round trip for an answer already in hand.
-        if get_company_scope(db) is UNSET:
-            set_company_scope(
-                db, _contact_company_scope(session_factory, str(contact_respond_id or ""))
-            )
+        # which would empty the CS roster read below (`fetch_rosters` -> `list_team_roster`
+        # walks `Team` / `AgentTeam`, both owned models) exactly the way it emptied the
+        # resolver. The row's contact is the only identity a `/complete` call carries, and
+        # it is the same one the head scoped by.
+        #
+        # UNCONDITIONAL, and the earlier "only when the session carries no scope yet"
+        # version was wrong twice over: it cost an in-process caller nothing, but it made
+        # the property untestable (`tests/conftest.py` defaults every new session to
+        # Sorento, so the guard never fired under test) and it would silently skip a
+        # session some other listener had stamped with a scope that is not this contact's.
+        # Two indexed reads on a path that already makes an LLM call is not a cost worth
+        # a conditional.
+        set_company_scope(
+            db, _contact_company_scope(session_factory, str(contact_respond_id or ""))
+        )
         dry_run = bool(row.is_test)
         stored_response = row.response if isinstance(row.response, dict) else {}
         ctx = fragments.get("ctx") or stored_response.get("ctx") or {}

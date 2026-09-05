@@ -497,3 +497,198 @@ class TestEverySessionTheEngineOpensCarriesTheContactsScope:
             f"scope ({company_id!r}); the test harness's own Sorento default is "
             f"indistinguishable from a fix that never ran: {seen}"
         )
+
+
+# --------------------------------------------------------------------------- #
+# 5. The TAIL's session carries the same scope. `/complete` is n8n's own entry, so
+#    `complete_turn` opens its session straight off the factory the route hands it and
+#    nothing has stamped a scope on it - which empties the CS roster read
+#    (`member_offer.fetch_rosters` -> `list_team_roster`, and `Team` / `AgentTeam` ARE
+#    `CompanyScopedMixin`). Same exact-match assertion as test 4 and for the same reason:
+#    the harness's Sorento default is indistinguishable from a fix that never ran.
+# --------------------------------------------------------------------------- #
+
+
+def _tail_fragments() -> dict[str, Any]:
+    """`sub-output`'s trigger contract, minimal - the shape `test_complete_turn.py` uses."""
+    return {
+        "item": {"branch_kind": "not_supported", "allowed": True},
+        "result": None,
+        "resolved": None,
+        "gate": None,
+        "offer_hold": None,
+        "suggest_offer": None,
+        "not_found": None,
+        "incoming_picker": None,
+        "access_choice": None,
+        "crossdomain_render": None,
+        "answer": None,
+        "clarify": None,
+    }
+
+
+class TestTheTailSessionCarriesTheContactsScope:
+    def test_complete_turn_stamps_the_contacts_own_company_on_its_session(
+        self, session_factory, stub_parser, stub_access, system_settings_row, monkeypatch
+    ) -> None:
+        company_id = _seed_company(session_factory, name="ZZT Scope Co Tail")
+        workspace_id = _seed_workspace(session_factory)
+        contact_id = "ZZT-contact-scope-tail"
+        _seed_contact(
+            session_factory,
+            contact_id=contact_id,
+            phone="+60000000105",
+            workspace_id=workspace_id,
+            company_ids=[company_id],
+        )
+
+        set_chatbot_switches(session_factory, business_lane=False)
+        _set_completed_lanes(session_factory, system_settings_row, [])
+        stub_parser(_parser_output(domain_hint="master_products", entities=[]))
+        stub_access()
+
+        head = engine_mod.run_turn(
+            _scope_envelope(contact_id, message_id="ZZT-msg-scope-tail", text="checking a product"),
+            session_factory=session_factory,
+        )
+        assert _turn_row(session_factory, head.turn_id).status == "delegated", (
+            "the head must hand over to the tail for this test to exercise `complete_turn`"
+        )
+
+        # Installed AFTER the head ran: this test grades the TAIL's own session, which the
+        # `/complete` route opens off a factory nothing has scoped.
+        seen: list[Any] = []
+        original_session = engine_mod._session
+
+        @contextmanager
+        def _recording_session(factory):
+            with original_session(factory) as db:
+                yield db
+                seen.append(get_company_scope(db))
+
+        monkeypatch.setattr(engine_mod, "_session", _recording_session)
+
+        engine_mod.complete_turn(
+            head.turn_id, _tail_fragments(), session_factory=session_factory
+        )
+
+        assert seen, "`complete_turn` never opened a session through `_session` - seam drifted"
+        assert all(scope == frozenset({company_id}) for scope in seen), (
+            "the tail ran on a session that did not carry the contact's own company scope "
+            f"({company_id!r}); the harness's Sorento default is indistinguishable from a "
+            f"fix that never ran: {seen}"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# 6. The escalation lane opens its OWN session (its writes are a unit of work of their
+#    own and must not ride the turn's routing transaction). That session came off
+#    `SessionLocal` directly, outside the engine's factory, so it carried no scope - and
+#    escalation is the lane that READS `Team` / `AgentTeam` to draw a round-robin
+#    assignee, both `CompanyScopedMixin`, so the whole lane fails closed on a real turn.
+# --------------------------------------------------------------------------- #
+
+
+def _escalation_parser_output() -> dict[str, Any]:
+    return _parser_output(
+        message_type="request_for_help",
+        intent_hint=None,
+        domain_hint=None,
+        scope_intent=None,
+        user_goal="wants a human",
+        entities=[],
+        routing={
+            "suggested_team": "customer_service",
+            "suggested_agent": "general_enquiries",
+            "team_source": "inferred",
+        },
+        escalation={"is_escalation_confirmation": True, "company_pick": None},
+    )
+
+
+def _stub_escalation_seams() -> Any:
+    """The four seams, canned. The SESSION is what this test grades, not the assignment."""
+
+    class _Seams:
+        resolve_and_gate = staticmethod(
+            lambda *a, **k: (_ for _ in ()).throw(
+                AssertionError("resolve_and_gate is never called on the live graph")
+            )
+        )
+        next_assignee = staticmethod(
+            lambda body: {
+                "assignee_id": "usr-pic-1",
+                "assignee_email": "pic@sorento.example",
+                "assignee_name": "PIC One",
+                "assignee_respond_user_id": "respond-usr-1",
+                "team_set_code": "CS",
+                "brand_code": None,
+                "company_id": None,
+                "is_already_assigned": False,
+            }
+        )
+        sla_create = staticmethod(
+            lambda body: {
+                "id": "sla-row-1",
+                "initiated_at": "2026-09-05T04:00:00+00:00",
+                "due_at": "2026-09-05T08:00:00+00:00",
+                "due_at_resolution": "2026-09-06T04:00:00+00:00",
+            }
+        )
+        team_members = staticmethod(lambda *a, **k: [])
+
+    return _Seams()
+
+
+class TestEscalationLaneSessionCarriesTheContactsScope:
+    def test_the_lanes_own_session_carries_the_contacts_own_company(
+        self, session_factory, stub_parser, stub_access, system_settings_row, monkeypatch
+    ) -> None:
+        from app.services.chatbot.lanes import escalation as escalation_mod
+
+        company_id = _seed_company(session_factory, name="ZZT Scope Co Escalation")
+        workspace_id = _seed_workspace(session_factory)
+        contact_id = "ZZT-contact-scope-escalation"
+        _seed_contact(
+            session_factory,
+            contact_id=contact_id,
+            phone="+60000000106",
+            workspace_id=workspace_id,
+            company_ids=[company_id],
+        )
+
+        set_chatbot_switches(session_factory, business_lane=False)
+        _set_completed_lanes(session_factory, system_settings_row, ["out_of_scope"])
+        stub_parser(_escalation_parser_output())
+        stub_access()
+
+        # `production_services` is where the lane's own session becomes visible: it is
+        # handed the session `production_session()` opened, which is the seam under test.
+        # The four seams themselves are canned - the assignment is not what this grades.
+        seen: list[Any] = []
+
+        def _recording_production_services(db: Any) -> Any:
+            seen.append(get_company_scope(db))
+            return _stub_escalation_seams()
+
+        monkeypatch.setattr(
+            escalation_mod, "production_services", _recording_production_services
+        )
+
+        result = engine_mod.run_turn(
+            _scope_envelope(
+                contact_id, message_id="ZZT-msg-scope-escalation", text="I want to talk to a person"
+            ),
+            session_factory=session_factory,
+        )
+
+        assert result.status != "failed", result.error
+        assert seen, (
+            "the escalation lane never reached its production session - it either took the "
+            "clarify arm or the lane did not run at all"
+        )
+        assert all(scope == frozenset({company_id}) for scope in seen), (
+            "the escalation lane's own session did not carry the contact's own company "
+            f"scope ({company_id!r}); it reads `Team` / `AgentTeam` to draw an assignee, so "
+            f"an unscoped session draws from nothing: {seen}"
+        )
