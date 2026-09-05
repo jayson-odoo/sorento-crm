@@ -57,6 +57,8 @@ interface FormState {
   ideation_embed_connection_id: string;
   ideation_embed_fe_base_url: string;
   ideation_embed_signing_secret: string;
+  chatbot_retry_ingress_url: string;
+  chatbot_retry_ingress_key: string;
   is_active: boolean;
   is_default: boolean;
 }
@@ -73,6 +75,8 @@ const EMPTY_FORM: FormState = {
   ideation_embed_connection_id: '',
   ideation_embed_fe_base_url: '',
   ideation_embed_signing_secret: '',
+  chatbot_retry_ingress_url: '',
+  chatbot_retry_ingress_key: '',
   is_active: true,
   is_default: false,
 };
@@ -221,6 +225,10 @@ export default function RespondWorkspacesAdmin() {
       ideation_embed_connection_id: row.ideation_embed_connection_id ?? '',
       ideation_embed_fe_base_url: row.ideation_embed_fe_base_url ?? '',
       ideation_embed_signing_secret: '',
+      chatbot_retry_ingress_url: row.chatbot_retry_ingress_url ?? '',
+      // Write-only: the stored key is never sent to the browser, so the input starts
+      // empty on every open and a blank save keeps whatever is on the row.
+      chatbot_retry_ingress_key: '',
       is_active: row.is_active,
       is_default: row.is_default,
     });
@@ -240,8 +248,11 @@ export default function RespondWorkspacesAdmin() {
         ideation_product_id: form.ideation_product_id.trim() || null,
         ideation_embed_connection_id: form.ideation_embed_connection_id.trim() || null,
         ideation_embed_fe_base_url: form.ideation_embed_fe_base_url.trim() || null,
+        chatbot_retry_ingress_url: form.chatbot_retry_ingress_url.trim() || null,
       };
       if (form.api_key.trim()) body.api_key = form.api_key.trim();
+      if (form.chatbot_retry_ingress_key.trim())
+        body.chatbot_retry_ingress_key = form.chatbot_retry_ingress_key.trim();
       if (form.ideation_intake_api_key.trim())
         body.ideation_intake_api_key = form.ideation_intake_api_key.trim();
       if (form.ideation_embed_signing_secret.trim())
@@ -266,6 +277,8 @@ export default function RespondWorkspacesAdmin() {
         ideation_embed_connection_id: form.ideation_embed_connection_id.trim() || null,
         ideation_embed_fe_base_url: form.ideation_embed_fe_base_url.trim() || null,
         ideation_embed_signing_secret: form.ideation_embed_signing_secret.trim() || null,
+        chatbot_retry_ingress_url: form.chatbot_retry_ingress_url.trim() || null,
+        chatbot_retry_ingress_key: form.chatbot_retry_ingress_key.trim() || null,
       };
       createMutation.mutate(body);
     }
@@ -634,6 +647,52 @@ export default function RespondWorkspacesAdmin() {
                 (e.g. <code>https://chat.foundryx.my</code>), NOT the backend / API URL
                 above. These are different values.
               </p>
+            </div>
+            <div className="border-t pt-4 mt-1">
+              <p className="text-sm font-medium">Chatbot retry</p>
+              <p className="text-xs text-muted-foreground">
+                Where a failed chatbot turn is re-sent from Chat History. Leave blank to
+                turn Retry off for this workspace.
+              </p>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="ws-retry-url">Chatbot retry webhook URL</Label>
+              <Input
+                id="ws-retry-url"
+                value={form.chatbot_retry_ingress_url}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, chatbot_retry_ingress_url: e.target.value }))
+                }
+                placeholder="https://…/webhook/…"
+              />
+              <p className="text-xs text-muted-foreground">
+                Must be https, and must not point back at this system or at a private
+                address.
+              </p>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="ws-retry-key">
+                Retry key{' '}
+                {editing && editing.has_chatbot_retry_key && (
+                  <span className="text-muted-foreground">
+                    (Key set - leave blank to keep current)
+                  </span>
+                )}
+              </Label>
+              <Input
+                id="ws-retry-key"
+                type="password"
+                value={form.chatbot_retry_ingress_key}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, chatbot_retry_ingress_key: e.target.value }))
+                }
+                placeholder={
+                  editing && editing.has_chatbot_retry_key
+                    ? '•••• (unchanged)'
+                    : 'Sent with each retry so the receiving end can check it'
+                }
+                autoComplete="new-password"
+              />
             </div>
             <div className="flex items-center gap-2">
               <Checkbox

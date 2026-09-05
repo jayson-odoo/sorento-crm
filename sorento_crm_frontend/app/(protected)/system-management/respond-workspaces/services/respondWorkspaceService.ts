@@ -16,6 +16,11 @@ export interface RespondWorkspace {
   ideation_embed_connection_id: string | null;
   ideation_embed_fe_base_url: string | null;
   ideation_embed_signing_secret_masked: string | null;
+  /** Chatbot retry ingress (AC-804). The URL is plain; the key is NEVER echoed -
+   *  the GET says only whether one is stored, because that key authorises injecting
+   *  a message back into a real customer's WhatsApp conversation. */
+  chatbot_retry_ingress_url: string | null;
+  has_chatbot_retry_key: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -41,6 +46,8 @@ export interface RespondWorkspaceCreateBody {
   ideation_embed_connection_id?: string | null;
   ideation_embed_fe_base_url?: string | null;
   ideation_embed_signing_secret?: string | null;
+  chatbot_retry_ingress_url?: string | null;
+  chatbot_retry_ingress_key?: string | null;
 }
 
 export interface RespondWorkspaceUpdateBody {
@@ -57,6 +64,9 @@ export interface RespondWorkspaceUpdateBody {
   ideation_embed_connection_id?: string | null;
   ideation_embed_fe_base_url?: string | null;
   ideation_embed_signing_secret?: string | null;
+  chatbot_retry_ingress_url?: string | null;
+  /** Write-only: sent when the admin types a new key, never returned. */
+  chatbot_retry_ingress_key?: string | null;
 }
 
 export interface IdeationProductOption {
