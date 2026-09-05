@@ -37,12 +37,20 @@ const loaded = new Set<string>();
  * A stylesheet link rather than `next/font`, because both surfaces address a
  * font by its REAL family name: `next/font` mangles the family into a hashed
  * one, which a layer's `fontFamily: 'Bebas Neue'` would never match.
+ *
+ * `DM Sans` is here for a blunter reason (r4d): it is the family EVERY new
+ * text layer is created with (`defaultTextProps`) and the first entry in the
+ * inspector's font list, and until now nothing loaded it. Chromium answers an
+ * unknown family with its standard font, which is a serif, so a tag left on
+ * the default font drew in Times on the canvas and embedded `Times-Roman` in
+ * the PDF - measured on `PT-202609-0001`, whose spec lines printed in Times
+ * while the Century Gothic layer beside them printed correctly.
  */
 export const TAG_FONT_STYLESHEET =
-  'https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Jost:wght@400;500;600;700&display=swap';
+  'https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@400;500;600;700&family=Jost:wght@400;500;600;700&display=swap';
 
 /** The families `TAG_FONT_STYLESHEET` provides, for a readiness check. */
-export const SEED_FONT_FAMILIES = ['Bebas Neue', 'Jost'] as const;
+export const SEED_FONT_FAMILIES = ['Bebas Neue', 'DM Sans', 'Jost'] as const;
 
 /**
  * Wait for the seeded templates' stand-in faces, best effort.
@@ -68,7 +76,15 @@ export async function ensureSeedFontsLoaded(): Promise<void> {
 
   try {
     await Promise.all(
-      SEED_FONT_FAMILIES.map((family) => document.fonts.load(`16px "${family}"`)),
+      // Both weights: a CSS-connected face loads lazily, per weight, the first
+      // time something asks for it, and the print page raises its ready flag
+      // the moment this resolves. Waiting only for the regular weight left
+      // Chromium free to print a bold price badge before its 700 face had
+      // arrived, in the very fallback this call exists to avoid.
+      SEED_FONT_FAMILIES.flatMap((family) => [
+        document.fonts.load(`16px "${family}"`),
+        document.fonts.load(`700 16px "${family}"`),
+      ]),
     );
   } catch {
     // See the docstring: a missing stand-in face is a styling loss, not a stop.

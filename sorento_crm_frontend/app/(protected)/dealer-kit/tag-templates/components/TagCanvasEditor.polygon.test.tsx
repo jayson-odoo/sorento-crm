@@ -33,7 +33,9 @@ const konva = vi.hoisted(() => ({
 
 vi.mock('konva/lib/Global', () => ({ Konva: { dragButtons: [0, 1] } }));
 
-vi.mock('react-konva', () => {
+vi.mock('react-konva', async () => {
+  const React = await import('react');
+
   const passthrough = (name: string) =>
     function KonvaStandIn({ children }: { children?: React.ReactNode }) {
       return <div data-konva={name}>{children}</div>;
@@ -70,15 +72,41 @@ vi.mock('react-konva', () => {
 
   const draggable = (kind: string) =>
     function KonvaDraggableStandIn(props: HandleProps) {
+      // Konva delivers a `dragend` even when the node is DESTROYED mid-drag:
+      // the drag manager holds the node, not the scene graph, so unmounting a
+      // handle while the button is still down fires the handler one last time
+      // at the position the pointer had reached. That is the whole of the
+      // Escape defect (r4d), so the stand-in has to do it too - held in a ref
+      // and fired from the unmount cleanup, exactly where Konva fires it.
+      const live = React.useRef<{ clientX: number; clientY: number } | null>(null);
+      const latest = React.useRef(props);
+      latest.current = props;
+
+      React.useEffect(
+        () => () => {
+          if (live.current) latest.current.onDragEnd?.(dragged(live.current));
+        },
+        [],
+      );
+
       return (
         <div
           data-konva={kind}
           data-name={props.name}
           data-x={props.x}
           data-y={props.y}
-          onMouseDown={(e) => props.onDragStart?.(dragged(e))}
-          onMouseMove={(e) => props.onDragMove?.(dragged(e))}
-          onMouseUp={(e) => props.onDragEnd?.(dragged(e))}
+          onMouseDown={(e) => {
+            live.current = { clientX: e.clientX, clientY: e.clientY };
+            props.onDragStart?.(dragged(e));
+          }}
+          onMouseMove={(e) => {
+            if (live.current) live.current = { clientX: e.clientX, clientY: e.clientY };
+            props.onDragMove?.(dragged(e));
+          }}
+          onMouseUp={(e) => {
+            live.current = null;
+            props.onDragEnd?.(dragged(e));
+          }}
         >
           {props.children}
         </div>
@@ -503,6 +531,60 @@ describe('TagCanvasEditor polygon corner handles (S4, r4b)', () => {
       { x: 1, y: 1 },
       { x: 0, y: 1 },
     ]);
+  });
+
+  /**
+   * r4d: Escape CANCELS the drag, it does not commit half of it.
+   *
+   * Measured on the request designer: press a corner, move, press Escape, and
+   * the box refitted around wherever the pointer had got to (W 33.2 -> 52.54),
+   * the shape kept the half-drag and the designer autosaved it. The handles
+   * unmount on the Escape, and Konva still delivers that node's `dragend`, so
+   * the commit path ran on a drag the user had just abandoned.
+   */
+  it('Escape mid-drag cancels it: nothing committed, nothing to undo (r4d)', () => {
+    const { container } = render(
+      <TagCanvasEditor doc={docWith(shapeLayer('polygon'))} onChange={vi.fn()} />,
+    );
+    selectShape();
+
+    const before = boxOf();
+    const vertex = handle(container, 'polygon-vertex-1');
+    fireEvent.mouseDown(vertex);
+    fireEvent.mouseMove(vertex, { clientX: 180, clientY: 0 });
+
+    // The handles unmount here, and the stand-in fires the `dragend` Konva
+    // fires on a node destroyed mid-drag.
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    expect(boxOf()).toEqual(before);
+    expect(pointsOf()).toEqual([
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 1, y: 1 },
+      { x: 0, y: 1 },
+    ]);
+    // No history entry either: an abandoned drag is not a step to undo.
+    expect(screen.getByRole('button', { name: 'Undo' })).toBeDisabled();
+  });
+
+  it('releasing after an Escape still commits nothing (r4d)', () => {
+    const { container } = render(
+      <TagCanvasEditor doc={docWith(shapeLayer('polygon'))} onChange={vi.fn()} />,
+    );
+    selectShape();
+
+    const before = boxOf();
+    const vertex = handle(container, 'polygon-vertex-1');
+    fireEvent.mouseDown(vertex);
+    fireEvent.mouseMove(vertex, { clientX: 180, clientY: 0 });
+    fireEvent.keyDown(window, { key: 'Escape' });
+    // The button comes up after the handle has gone; Konva reports it against
+    // the node it was dragging, which no longer exists.
+    fireEvent.mouseUp(vertex, { clientX: 180, clientY: 0 });
+
+    expect(boxOf()).toEqual(before);
+    expect(screen.getByRole('button', { name: 'Undo' })).toBeDisabled();
   });
 
   it('one drag is one undo (AC-S4-7)', () => {

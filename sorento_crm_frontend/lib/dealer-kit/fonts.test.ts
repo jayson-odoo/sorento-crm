@@ -9,7 +9,14 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { _resetLoadedFonts, ensureFontsLoaded, type TagFont } from './fonts';
+import {
+  _resetLoadedFonts,
+  ensureFontsLoaded,
+  ensureSeedFontsLoaded,
+  SEED_FONT_FAMILIES,
+  TAG_FONT_STYLESHEET,
+  type TagFont,
+} from './fonts';
 
 class FakeFontFace {
   static behaviour: 'resolve' | 'reject' = 'resolve';
@@ -95,5 +102,58 @@ describe('ensureFontsLoaded', () => {
 
     expect(result.failed).toEqual([]);
     expect(added).toHaveLength(0);
+  });
+});
+
+/**
+ * The stand-in faces (r4d).
+ *
+ * `DM Sans` is the family every new text layer is created with and the first
+ * entry in the inspector's font list, and nothing loaded it: measured on the
+ * print page for `PT-202609-0001`, `document.fonts` carried Inter, keenicons,
+ * Bebas Neue, Jost and the two uploaded Century Gothic faces and no DM Sans,
+ * so `font-family: "DM Sans"` fell through to Chromium's standard font and
+ * the exported PDF embedded `Times-Roman` for every spec line. Both surfaces
+ * take their stand-ins from this one stylesheet, so naming it here is what
+ * keeps the proof and the print in the same face.
+ */
+describe('ensureSeedFontsLoaded', () => {
+  const requested: string[] = [];
+
+  beforeEach(() => {
+    requested.length = 0;
+    document.getElementById('dk-tag-seed-fonts')?.remove();
+    (
+      document as unknown as { fonts: { load: (spec: string) => Promise<unknown> } }
+    ).fonts = {
+      load: (spec: string) => {
+        requested.push(spec);
+        return Promise.resolve([]);
+      },
+    };
+  });
+
+  it('names every seeded family in the stylesheet it injects', async () => {
+    await ensureSeedFontsLoaded();
+
+    const link = document.getElementById('dk-tag-seed-fonts') as HTMLLinkElement;
+    expect(link).toBeTruthy();
+    for (const family of SEED_FONT_FAMILIES) {
+      expect(link.href).toContain(family.replace(/ /g, '+'));
+    }
+  });
+
+  it('includes DM Sans, the family every text layer defaults to (r4d)', () => {
+    expect(SEED_FONT_FAMILIES).toContain('DM Sans');
+    expect(TAG_FONT_STYLESHEET).toContain('DM+Sans');
+  });
+
+  it('waits for the bold weight too, not only the regular one', async () => {
+    await ensureSeedFontsLoaded();
+
+    for (const family of SEED_FONT_FAMILIES) {
+      expect(requested).toContain(`16px "${family}"`);
+      expect(requested).toContain(`700 16px "${family}"`);
+    }
   });
 });

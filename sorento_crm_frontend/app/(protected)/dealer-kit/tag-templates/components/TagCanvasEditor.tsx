@@ -453,12 +453,20 @@ export function TagCanvasEditor({
   const stageRef = useRef<Konva.Stage | null>(null);
   const transformerRef = useRef<Konva.Transformer>(null);
   const dragRef = useRef<DragSession | null>(null);
-  /** What a polygon handle drag started from (S4), so it can move by a delta. */
+  /**
+   * What a polygon handle drag started from (S4), so it can move by a delta.
+   *
+   * `cancelled` is how Escape abandons one (r4d). Konva delivers a `dragend`
+   * even for a node destroyed mid-drag, and Escape destroys the handles by
+   * deselecting, so the release still reaches `handlePolygonDragEnd` and used
+   * to commit the half-drag the user had just walked away from.
+   */
   const polygonDragRef = useRef<{
     kind: 'vertex' | 'edge';
     index: number;
     base: PolygonPoint[];
     origin: { x: number; y: number };
+    cancelled: boolean;
   } | null>(null);
   const panRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
   const marqueeRef = useRef<{
@@ -1301,10 +1309,26 @@ export function TagCanvasEditor({
         base,
         origin:
           kind === 'vertex' ? from : { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 },
+        cancelled: false,
       };
     },
     [cornerHandleLayer, scale],
   );
+
+  /**
+   * Abandon the drag in flight, leaving the shape exactly as it was (r4d).
+   *
+   * Only the flag and the preview: the drag ref itself has to survive, because
+   * the `dragend` this is cancelling has not arrived yet - it comes when the
+   * handles unmount, or later when the button finally comes up, and it is that
+   * handler which reads the flag and declines to commit.
+   */
+  const cancelPolygonDrag = useCallback(() => {
+    const drag = polygonDragRef.current;
+    if (!drag) return;
+    drag.cancelled = true;
+    setPolygonPreview(null);
+  }, []);
 
   const polygonPointsFromDrag = useCallback(
     (node: Konva.Node) => {
@@ -1351,6 +1375,10 @@ export function TagCanvasEditor({
       const layer = cornerHandleLayer;
       polygonDragRef.current = null;
       setPolygonPreview(null);
+      // Escape already abandoned this one (r4d). Checked FIRST: everything
+      // below writes the layer, and a cancelled drag must leave no trace -
+      // no geometry, no history entry, nothing for the autosave to send.
+      if (drag?.cancelled) return;
       if (!next || !layer) return;
 
       const refit = refitPolygon({
@@ -2354,6 +2382,9 @@ export function TagCanvasEditor({
       }
       if (e.key === 'Escape') {
         e.preventDefault();
+        // Before the deselect, which is what unmounts the handles and lets
+        // Konva's last `dragend` through (r4d).
+        cancelPolygonDrag();
         selectParentGroup();
         return;
       }
@@ -2467,6 +2498,7 @@ export function TagCanvasEditor({
     duplicateSelectedLayers,
     groupSelectedLayers,
     ungroupSelectedLayers,
+    cancelPolygonDrag,
     selectParentGroup,
     selectAll,
     handleUndo,

@@ -61,6 +61,25 @@ describe('CanvasToolbar overflow at narrow viewports (r4c)', () => {
     expect(row.className).toContain('min-w-0');
   });
 
+  /**
+   * r4d: `overflow-x-auto` alone did not stop the PAGE scrolling.
+   *
+   * Every toolbar button carries its label in a `sr-only` span, and `sr-only`
+   * is `position: absolute`. An absolutely positioned box is clipped by an
+   * ancestor's overflow only when that ancestor is in its containing-block
+   * chain, and a `position: static` row is not - so the labels laid out
+   * against the initial containing block and stretched the document instead.
+   * Measured at 375px on the request designer: `documentElement.scrollWidth`
+   * was 898, exactly the right edge of the last label, and setting the row to
+   * `position: relative` took it to 375 with nothing else changed.
+   */
+  it('contains its own absolutely positioned labels so the page cannot scroll', () => {
+    const { container } = renderToolbar();
+    const row = container.firstElementChild as HTMLElement;
+
+    expect(row.className).toContain('relative');
+  });
+
   it('never shrinks a button to make the row fit', () => {
     renderToolbar();
 

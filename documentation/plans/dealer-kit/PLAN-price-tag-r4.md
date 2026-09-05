@@ -204,3 +204,37 @@ call `railPanelRef.current?.resize(percentFromStored)` once (guard with a ref so
 ResizeObserver tick does not fight the user). Test in `TagCanvasEditor` panels test: stored
 `railSplit` in localStorage -> after mount the rail panel receives `resize(<percent>)`;
 remount with a new `key` -> same. Close #676 in the PR body.
+
+## Round 4d - three defects from the run-3 test (5 Sep, on :3080)
+
+- **Text prints in a serif, and it is not a Century Gothic problem.** Measured on the print
+  page for download `a3dddfb3` (page version 5) before any change: the `code` layer, which
+  names `Century Gothic`, embedded `/AAAAAA+CenturyGothic` in the PDF and drew correctly. What
+  printed serif was every layer naming `DM Sans` - the spec lines and the other two tags' code
+  layers - which embedded `/BAAAAA+Times-Roman`. `DM Sans` is the family `defaultTextProps`
+  gives every new text layer and the first entry in `STATIC_FONT_OPTIONS`, and NOTHING loaded
+  it: `document.fonts` on the print page listed Inter, keenicons, Geist, Bebas Neue, Jost and
+  the two uploaded Century Gothic faces, and no DM Sans. Chromium answers an unmatched family
+  with its standard font, which is a serif, so both surfaces drew the app's own default font as
+  Times. Fix: `DM Sans` joins `TAG_FONT_STYLESHEET` and `SEED_FONT_FAMILIES`, the one place both
+  the editor and the print page take their stand-in faces from, and `ensureSeedFontsLoaded`
+  waits for the 700 weight as well as the 400 (a CSS-connected face loads per weight, on
+  demand, and the print page raises its ready flag the moment that wait resolves). Re-rendered:
+  no `Times-Roman` in the PDF at all.
+- **375px scrolled the root.** `documentElement.scrollWidth` was 898 at 375px while
+  `body.scrollWidth` was 375, and nothing unclipped reached past 376. The 898 was the right
+  edge of the LAST toolbar button's `sr-only` label: `sr-only` is `position: absolute`, an
+  absolutely positioned box is clipped by an ancestor's overflow only when that ancestor is in
+  its containing-block chain, and the r4c `overflow-x-auto` row is `position: static`. So the
+  labels laid out against the initial containing block and stretched the document while the
+  toolbar itself sat still. Proved in the page: setting that row to `position: relative` took
+  `scrollWidth` from 898 to 375 with nothing else touched. Fix: the row is `relative`.
+- **Escape mid-drag committed the half-drag.** Konva delivers a `dragend` for a node destroyed
+  mid-drag, and Escape destroys the corner handles by deselecting, so `handlePolygonDragEnd`
+  ran on a drag the user had just abandoned and refitted the box around it (W 33.2 -> 52.54,
+  autosaved). The r4c effect that clears `polygonPreview` when `cornerHandleLayer` goes null
+  runs after that, too late. Fix: `polygonDragRef` carries a `cancelled` flag, the Escape
+  handler sets it before deselecting, and `handlePolygonDragEnd` checks it first - so the
+  release that follows, whenever it arrives, writes nothing. The tester's companion report that
+  Undo was greyed out afterwards did NOT reproduce: on the failing build the commit pushed a
+  history entry and the toolbar Undo both enabled and reverted it.

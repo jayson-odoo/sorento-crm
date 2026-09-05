@@ -148,7 +148,13 @@ export function CanvasToolbar({
   selectionIsGroup,
 }: CanvasToolbarProps) {
   return (
-    <div className="flex h-10 min-w-0 shrink-0 flex-nowrap items-center gap-1 overflow-x-auto border-b bg-background px-2">
+    // `relative` is load-bearing, not decoration (r4d): each button's label is
+    // an `sr-only` span, which is `position: absolute`, and a static row is not
+    // in its containing-block chain - so `overflow-x-auto` never clipped the
+    // labels and they grew the document instead. At 375px that left
+    // `documentElement.scrollWidth` at 898 and the whole page scrolling
+    // sideways while the toolbar itself sat still.
+    <div className="relative flex h-10 min-w-0 shrink-0 flex-nowrap items-center gap-1 overflow-x-auto border-b bg-background px-2">
       {/* Tools */}
       <ToolbarButton
         icon={MousePointer2}
