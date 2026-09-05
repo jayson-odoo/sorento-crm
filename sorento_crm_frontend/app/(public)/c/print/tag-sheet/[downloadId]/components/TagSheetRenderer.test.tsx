@@ -189,6 +189,10 @@ describe('the price badge box on the print page (r4b, AC-S6-1/2/5)', () => {
     expect(path?.getAttribute('d')).toBe('M 0 0 L 40 0 L 40 20 L 0 20 Z');
     expect(path?.getAttribute('fill')).toBe('#ffffff');
     expect(screen.getByText('RM 1,599')).toHaveStyle({ color: '#111111' });
+
+    // The frame clips: a callout whose corners round inward must not bleed a
+    // square edge past the badge's own box (r5 review).
+    expect(svg?.parentElement).toHaveStyle({ overflow: 'hidden' });
   });
 
   it('follows the layer own corners, so the callout slants in the PDF too (AC-S6-2)', () => {
@@ -996,6 +1000,41 @@ describe('padding on text and price badge layers (S3, AC-S3-1/2/3/4)', () => {
     expect(figure.parentElement).toHaveStyle({
       padding: '0mm 0mm 0mm 10mm',
       boxSizing: 'border-box',
+    });
+  });
+
+  it('positions the callout SVG at the padded inset, not the full unpadded box (r5 review)', () => {
+    // An asymmetric pad on both axes - the bug this pins collapsed the SVG
+    // back to the layer's full 40x20 box (`width`/`height: 100%` resolves
+    // against the padding box of its `position: absolute` ancestor, not the
+    // content box padding shrinks), so the viewBox alone could not catch it:
+    // it still read the padded numbers while CSS drew the SVG somewhere else.
+    const { container } = render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            type: 'price_badge',
+            width_mm: 40,
+            height_mm: 20,
+            props: {
+              ...defaultPriceBadgeProps('list_only'),
+              showBox: true,
+              cornerRadius: 0,
+              padding: { top: 10, right: 0, bottom: 0, left: 10 },
+            },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+      />,
+    );
+
+    const svg = container.querySelector('svg');
+    expect(svg?.getAttribute('viewBox')).toBe('0 0 30 10');
+    expect(svg).toHaveStyle({
+      left: '10mm',
+      top: '10mm',
+      width: '30mm',
+      height: '10mm',
     });
   });
 

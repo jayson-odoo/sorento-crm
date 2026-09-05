@@ -227,6 +227,18 @@ describe('buildSetBlock', () => {
     ).toBe('- CAB-01 (Cabinet) 800 x 460 x 550 mm');
   });
 
+  it('drops the parenthetical when a member name only repeats its code (S2, r5 review)', () => {
+    expect(
+      formatSetMemberLine({
+        product_id: 'p1',
+        code: 'CAB-01',
+        name: 'cab-01',
+        dimensions: '800 x 460 x 550 mm',
+        quantity: 1,
+      }),
+    ).toBe('- CAB-01 800 x 460 x 550 mm');
+  });
+
   it('binds the group to the set and fills the members slot', () => {
     const set = productSet();
     const layers = buildSetBlock(set, OPTS);
@@ -348,6 +360,18 @@ describe('buildAlternativesRow', () => {
     const layers = buildAlternativesRow([product(), product({ id: 'b' })], OPTS);
 
     expect(layers.some((layer) => layer.props.kind === 'group')).toBe(false);
+  });
+
+  it('slots each block own code and name, so the resolver rule can apply to them (r5 review)', () => {
+    const layers = buildAlternativesRow(
+      [product({ id: 'a', code: 'TAP-1' }), product({ id: 'b', code: 'TAP-2' })],
+      OPTS,
+    );
+
+    const codeLayers = layers.filter((layer) => layer.slot_binding === 'code');
+    const nameLayers = layers.filter((layer) => layer.slot_binding === 'name');
+    expect(codeLayers).toHaveLength(2);
+    expect(nameLayers).toHaveLength(2);
   });
 });
 

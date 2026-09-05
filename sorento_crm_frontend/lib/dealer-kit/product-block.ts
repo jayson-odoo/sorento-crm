@@ -44,12 +44,6 @@ import { hasMergeField, renderMergeFields } from './merge-fields';
 // Reading a bound value
 // ---------------------------------------------------------------------------
 
-/** `- SK-1234 (Kitchen Sink) 800 x 500 x 220 mm` */
-export function formatSetMemberLine(member: ProductSetMemberTagData): string {
-  const head = `- ${member.code}${member.name ? ` (${member.name})` : ''}`;
-  return member.dimensions ? `${head} ${member.dimensions}` : head;
-}
-
 /**
  * Sorento's product name IS its code (S2). A `name` that only repeats the
  * `code` is redundant on the tag, so it draws nothing - the layer or merge
@@ -59,6 +53,13 @@ export function formatSetMemberLine(member: ProductSetMemberTagData): string {
  */
 function nameOrBlankIfCode(name: string, code: string): string {
   return name.trim().toLowerCase() === code.trim().toLowerCase() ? '' : name;
+}
+
+/** `- SK-1234 (Kitchen Sink) 800 x 500 x 220 mm`, or `- SK-1234` when the name repeats the code. */
+export function formatSetMemberLine(member: ProductSetMemberTagData): string {
+  const name = member.name ? nameOrBlankIfCode(member.name, member.code) : '';
+  const head = `- ${member.code}${name ? ` (${name})` : ''}`;
+  return member.dimensions ? `${head} ${member.dimensions}` : head;
 }
 
 /**
@@ -664,6 +665,7 @@ export function buildAlternativesRow(
           y: 21,
           w: ALTERNATIVE_WIDTH_MM,
           h: 5,
+          slot: 'code',
           props: text(product.code, { fontSize: 8, fontWeight: 700, align: 'center' }),
         },
         {
@@ -672,6 +674,7 @@ export function buildAlternativesRow(
           y: 26,
           w: ALTERNATIVE_WIDTH_MM,
           h: 5,
+          slot: 'name',
           props: text(product.name, { fontSize: 7, align: 'center' }),
         },
         {

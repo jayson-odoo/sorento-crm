@@ -1,7 +1,7 @@
 /**
  * Padding on text and price badge layers (S3, AC-S3-1/2/3/4).
  *
- * The Konva canvas and `TagSheetRenderer` (`TagSheetRenderer.padding.test.tsx`)
+ * The Konva canvas and `TagSheetRenderer` (`TagSheetRenderer.test.tsx`)
  * both have to inset by the SAME box, which is what `paddedBox` in
  * `text-reflow.ts` pins once - this file is the wiring proof that
  * `KonvaTagLayer` actually calls it, the same idiom

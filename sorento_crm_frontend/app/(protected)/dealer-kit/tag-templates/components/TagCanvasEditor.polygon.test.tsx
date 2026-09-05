@@ -481,10 +481,13 @@ describe('TagCanvasEditor polygon corner handles (S4, r4b)', () => {
     const pushedWhileLocked = konva.positions.length;
 
     // Shift comes up: the handler no longer overrides the node's position,
-    // so nothing new is pushed and the corner follows the raw cursor.
-    fireEvent.mouseMove(vertex, { clientX: 150, clientY: 0 });
+    // so nothing new is pushed and the corner follows the raw cursor. clientY
+    // is 4, not 0 (r5 review): a leftover snap would have zeroed y anyway, so
+    // 0 could not have told a freed drag apart from a still-locked one - only
+    // a nonzero y that reaches the shape proves the lock actually let go.
+    fireEvent.mouseMove(vertex, { clientX: 150, clientY: 4 });
     expect(konva.positions.length).toBe(pushedWhileLocked);
-    expect(pointsOf()[1]).toEqual({ x: 1.25, y: 0 });
+    expect(pointsOf()[1]).toEqual({ x: 1.25, y: 4 / 60 });
   });
 
   it('Shift constrains an EDGE drag to its dominant axis too (S1, AC-S1-3)', () => {

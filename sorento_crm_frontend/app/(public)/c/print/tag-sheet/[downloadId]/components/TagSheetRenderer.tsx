@@ -350,6 +350,7 @@ function renderPriceBadgeLayer(layer: TagLayer, resolved: ResolvedLineData | nul
     height: `${layer.height_mm}mm`,
     transform: layer.rotation_deg ? `rotate(${layer.rotation_deg}deg)` : undefined,
     transformOrigin: layer.rotation_deg ? '0 0' : undefined,
+    overflow: 'hidden',
   };
   const padded = paddedBox(layer.width_mm, layer.height_mm, props.padding);
 
@@ -407,27 +408,36 @@ function renderPriceBadgeLayer(layer: TagLayer, resolved: ResolvedLineData | nul
   // The flyer's white callout: the badge IS the box (r4b, AC-S6-2). Inline
   // SVG whose user units ARE millimetres, from the SAME path builder the
   // Konva canvas draws with, so a corner dragged on the proof is the corner
-  // that prints. `width`/`height` are 100% rather than a second mm figure -
-  // `content`'s own padding already shrank its content box to `padded`, so
-  // the SAME number the viewBox states is what CSS actually gives the SVG.
+  // that prints. Positioned in mm off `frame`, NOT sized 100% inside
+  // `content`: an absolutely positioned child resolves against its nearest
+  // positioned ancestor's PADDING box, so a 100%-wide SVG nested inside
+  // `content` (which padding shrinks) drew at the full unpadded size while
+  // its viewBox stated the padded one - the callout printed off-centre from
+  // the figure it surrounds. `padded.x`/`padded.y`/`padded.width`/
+  // `padded.height` are the same box the Konva canvas insets its Group to.
   if (parts.polygonBox) {
     return (
       <div style={frame}>
+        <svg
+          viewBox={`0 0 ${padded.width} ${padded.height}`}
+          style={{
+            position: 'absolute',
+            left: `${padded.x}mm`,
+            top: `${padded.y}mm`,
+            width: `${padded.width}mm`,
+            height: `${padded.height}mm`,
+            overflow: 'visible',
+          }}
+        >
+          <path
+            d={roundedPolygonPath(
+              scalePolygonPoints(polygonPoints(props), padded.width, padded.height),
+              props.cornerRadius,
+            )}
+            fill={props.fill === 'transparent' ? 'none' : props.fill}
+          />
+        </svg>
         <div style={content}>
-          <svg
-            viewBox={`0 0 ${padded.width} ${padded.height}`}
-            width="100%"
-            height="100%"
-            style={{ position: 'absolute', left: 0, top: 0, overflow: 'visible' }}
-          >
-            <path
-              d={roundedPolygonPath(
-                scalePolygonPoints(polygonPoints(props), padded.width, padded.height),
-                props.cornerRadius,
-              )}
-              fill={props.fill === 'transparent' ? 'none' : props.fill}
-            />
-          </svg>
           <span
             style={{
               ...figureStyle(13, 700),
