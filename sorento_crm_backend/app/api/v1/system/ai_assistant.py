@@ -70,6 +70,8 @@ from app.services.provider_model_catalog import (
     model_choices,
     probe_model,
 )
+from app.services.user_service import UserPermissionService
+from app.services.uuid_path_param import validate_uuid_path
 
 router = APIRouter()
 
@@ -160,6 +162,15 @@ def test_ai_assistant_connection(
 # page for exactly the operator who has to fix a broken degraded model.
 _MODEL_VIEW = ["system.ai_assistant_settings.view", "user_management.settings.view"]
 _MODEL_EDIT = ["system.ai_assistant_settings.edit", "user_management.settings.edit"]
+
+# The slug the Chat History trace screen already uses to show a contact's turn trace
+# (`app/api/v1/system/chat_history.py`, and `VIEW` in `app/api/v1/system/chatbot.py`).
+# The Prompts Test button for the two chatbot keys runs a dry-run turn for a
+# CALLER-NAMED contact and returns its trace, which reads that contact's access level
+# and remembered session state - so it is REQUIRED IN ADDITION to
+# `system.ai_assistant_settings.edit`, which is a prompt-editing slug and says nothing
+# about who may read a customer's conversation state (AC-807, S8a review S3).
+_CHATBOT_TRACE_VIEW = "system.chat_history.view"
 
 
 @router.get("/ai-assistant/models", response_model=ProviderModelsResponse)
@@ -408,8 +419,10 @@ def test_ai_assistant_prompt_version(
 
     **The two chatbot keys run a chatbot TURN instead** (AC-807). They are not assistant
     pipeline nodes, so the chat dry run above would answer from prompts the operator did
-    not edit; the turn is what actually exercises them. Same permission, same version
-    pinning, and `is_test` so it writes nothing outside `chatbot.turns` (D14).
+    not edit; the turn is what actually exercises them. Same version pinning, and
+    `is_test` so it writes nothing outside `chatbot.turns` (D14). They need
+    `system.chat_history.view` ON TOP of the edit slug, because that turn reads a named
+    contact's state and hands back the trace.
 
     **No `response_model`.** The two answers have different shapes (an assistant output
     and token usage; a turn id, status, branch and trace) and `response_model` silently
@@ -423,7 +436,7 @@ def test_ai_assistant_prompt_version(
             detail=f"Prompt '{name}' is dormant and has no runtime call site to test.",
         )
     if name in CHATBOT_PROMPT_KEYS:
-        return _test_chatbot_prompt_version(name, payload, db)
+        return _test_chatbot_prompt_version(name, payload, db, user)
     if not PROMPT_KEYS[name].dry_runnable:
         # Checked BEFORE the version lookup: running a non-assistant key (the spec
         # extractor, the SCM advisory) through the chat pipeline produces an answer
@@ -437,15 +450,7 @@ def test_ai_assistant_prompt_version(
             ),
         )
     # Validate the version belongs to this key before running a real turn.
-    from app.models.ai_prompt import AIPromptVersion
-
-    version = (
-        db.query(AIPromptVersion)
-        .filter(AIPromptVersion.id == payload.version_id, AIPromptVersion.name == name)
-        .first()
-    )
-    if version is None:
-        raise HTTPException(status_code=404, detail="Version not found for this prompt.")
+    _version_for_key_or_404(db, name, payload.version_id)
 
     chat = AIAssistantChatService(db)
     conv, msg = chat.respond(
@@ -497,22 +502,54 @@ def test_ai_assistant_prompt_version(
     ).model_dump()
 
 
-def _test_chatbot_prompt_version(name: str, payload: DryRunRequest, db: Session) -> dict:
-    """AC-807: run one dry-run chatbot turn on the version being edited.
+def _version_for_key_or_404(db: Session, name: str, version_id: str) -> None:
+    """404 unless `version_id` is a version OF THIS KEY.
 
-    The version is checked against THIS key first, exactly as the assistant path does, so
-    a stale id from the browser is a 404 rather than a turn that quietly ran the published
-    prompt - which would look like a passing test of an edit that was never exercised.
+    One lookup for both branches of the Test action. A stale id from the browser must be
+    a 404 rather than a turn that quietly ran the published prompt, which would look like
+    a passing test of an edit that was never exercised.
+
+    `validate_uuid_path` first, because `AIPromptVersion.id` is a `uuid` column and
+    Postgres raises on a malformed literal - which surfaced as a 500 where the route
+    promises a 404.
     """
     from app.models.ai_prompt import AIPromptVersion
 
+    validate_uuid_path(version_id, resource="Prompt version")
     version = (
         db.query(AIPromptVersion)
-        .filter(AIPromptVersion.id == payload.version_id, AIPromptVersion.name == name)
+        .filter(AIPromptVersion.id == version_id, AIPromptVersion.name == name)
         .first()
     )
     if version is None:
         raise HTTPException(status_code=404, detail="Version not found for this prompt.")
+
+
+def _test_chatbot_prompt_version(
+    name: str, payload: DryRunRequest, db: Session, user: dict
+) -> dict:
+    """AC-807: run one dry-run chatbot turn on the version being edited.
+
+    **Two slugs, not one.** The route's own `system.ai_assistant_settings.edit` says the
+    caller may edit prompts. This branch additionally reads a CALLER-NAMED contact's
+    access level and remembered session state and returns the trace, which is what the
+    Chat History trace screen shows under `system.chat_history.view` - so that slug is
+    required here too, and nobody reads a contact's remembered state through a weaker one
+    (S8a review S3). The contact stays caller-supplied: the workspace has no dev-contact
+    column, and inventing one to satisfy the AC's wording would be a new config surface
+    for a test button.
+    """
+    if not UserPermissionService(db).check_user_has_permission(
+        user["id"], _CHATBOT_TRACE_VIEW
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Permission required: {_CHATBOT_TRACE_VIEW}. Running a chatbot turn "
+                "reads that contact's remembered conversation state."
+            ),
+        )
+    _version_for_key_or_404(db, name, payload.version_id)
 
     try:
         result = run_prompt_dry_run_turn(

@@ -373,9 +373,11 @@ def retry_turn(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail={"code": "retry_url_rejected", "message": error_message},
             ) from exc
+        # Status code and a fixed sentence, never the ingress response body. See
+        # `ReinjectFailed`: the body would be a read of whatever the request reached.
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"The message could not be re-injected: {error_message}",
+            detail=error_message,
         ) from exc
 
     _log_retry(db, request, row, actor_id, outcome_status, error_message)

@@ -58,13 +58,20 @@ from app.services.user_service import UserPermissionService
 from tests.chatbot.test_engine import CONTACT_ID, _parser_output, seeded, stub_access, stub_parser  # noqa: F401
 
 EDIT = "system.ai_assistant_settings.edit"
+# S8a review S3: the Prompts Test action for the two chatbot keys runs a dry-run turn for
+# a CALLER-NAMED contact and hands back its trace, so it requires the slug the Chat
+# History trace screen uses to show that trace, on top of the prompt-editing one.
+TRACE_VIEW = "system.chat_history.view"
+_GRANTS = {EDIT, TRACE_VIEW}
 TEST_URL = "/api/v1/system/ai-assistant/prompts/{name}/test"
 
 
 @pytest.fixture(autouse=True)
 def _permissions(monkeypatch):
     monkeypatch.setattr(
-        UserPermissionService, "check_user_has_permission", lambda self, uid, slug: slug == EDIT
+        UserPermissionService,
+        "check_user_has_permission",
+        lambda self, uid, slug: slug in _GRANTS,
     )
     monkeypatch.setattr(UserPermissionService, "get_user_role_slugs", lambda self, uid: set())
 
@@ -170,6 +177,39 @@ class TestChatbotSemanticParserRunsATurnNotAssistantChat:
             json={"message": "hi", "version_id": "00000000-0000-0000-0000-000000000000"},
         )
         assert resp.status_code == 404, resp.text
+
+    def test_a_non_uuid_version_id_is_404_not_500(
+        self, client, chatbot_engine_wired_to_test_db
+    ):
+        """S8a review N6: `ai_prompt_versions.id` is a `uuid` column, so an unvalidated
+        string reached Postgres and raised - a 500 where the route promises a 404."""
+        resp = client.post(
+            TEST_URL.format(name="chatbot_semantic_parser"),
+            json={"message": "hi", "version_id": "not-a-uuid"},
+        )
+        assert resp.status_code == 404, resp.text
+
+    def test_the_chat_history_view_slug_is_required_as_well(
+        self, client, chatbot_engine_wired_to_test_db, monkeypatch
+    ):
+        """S8a review S3: `system.ai_assistant_settings.edit` is a prompt-editing slug and
+        says nothing about who may read a customer's remembered conversation state. A
+        caller holding only it must not be able to run a turn for a contact they name."""
+        monkeypatch.setattr(
+            UserPermissionService,
+            "check_user_has_permission",
+            lambda self, uid, slug: slug == EDIT,
+        )
+        resp = client.post(
+            TEST_URL.format(name="chatbot_semantic_parser"),
+            json={
+                "message": "hi",
+                "version_id": "00000000-0000-0000-0000-000000000000",
+                "contact_respond_id": CONTACT_ID,
+            },
+        )
+        assert resp.status_code == 403, resp.text
+        assert "system.chat_history.view" in resp.text
 
 
 class TestChatbotClarifierRunsATurnNotAssistantChat:

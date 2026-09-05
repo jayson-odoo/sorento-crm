@@ -53,7 +53,7 @@ CREDENTIAL_HEADERS = frozenset(
 # credential.
 _CREDENTIAL_NAME_PARTS = ("key", "token", "secret", "auth")
 
-# The three shapes a hand-rolled mask takes, declared ONCE so the guardrail test and
+# The four shapes a hand-rolled mask takes, declared ONCE so the guardrail test and
 # any future scan read the same rule rather than two regexes drifting apart (AC-806).
 # The alternation is BUILT from `CREDENTIAL_HEADERS`, so adding a header to the
 # denylist widens the scan with it - the previous version hard-coded `x-api-key` and
@@ -62,7 +62,9 @@ _CREDENTIAL_NAME_PARTS = ("key", "token", "secret", "auth")
 #   1. bracket assignment  - the header key indexed on the left of an `=` whose right
 #      side is the mask (a run of stars, or a name with "mask" in it);
 #   2. `.get` into a log   - the header key as a dict KEY whose value is a `.get` read;
-#   3. dict literal        - the header key as a dict key whose value is a run of stars.
+#   3. dict literal        - the header key as a dict key whose value is a run of stars;
+#   4. per-key conditional - a mask chosen by comparing the key against a credential
+#      header name, the shape a dict comprehension with a ternary takes.
 #
 # Written as prose rather than as literal examples on purpose: a comment carrying the
 # offending source would be flagged by the scan it describes.
@@ -84,8 +86,22 @@ HAND_ROLLED_HEADER_MASK_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
     re.compile(source, re.IGNORECASE)
     for source in (
         rf"""\[\s*["']({_CREDENTIAL_HEADER_ALTERNATION})["']\s*\]\s*=\s*{_MASK_RHS}""",
-        rf"""["']({_CREDENTIAL_HEADER_ALTERNATION})["']\s*:\s*[A-Za-z_][\w.]*\.get\s*\(""",
+        # The read has to come off HEADERS (`headers.get(...)`, `request.headers.get(...)`).
+        # `[\w.]*\.get\(` matched any dict, so `{"Authorization": creds.get("token")}` -
+        # BUILDING an outbound credential header, the same legitimate shape the note above
+        # exempts from shape 1 - was a hit. No such line exists under `app/` today, so this
+        # was latent rather than broken; the cost of leaving it is that the next endpoint
+        # to build an auth header from a dict fails a test whose message tells it to call
+        # `sanitize_request_headers`, which is how a guardrail becomes something people
+        # learn to skip.
+        rf"""["']({_CREDENTIAL_HEADER_ALTERNATION})["']\s*:\s*[\w.]*headers\.get\s*\(""",
         rf"""["']({_CREDENTIAL_HEADER_ALTERNATION})["']\s*:\s*["']\*+["']""",
+        # Shape 4, found by the S8a tester pass: none of the three above sees it. Shape 1
+        # wants the name as an assignment target, shape 2 a `.get(` call, shape 3 the mask
+        # as a dict literal's value; here the name sits on the RIGHT of a `==` inside a
+        # ternary, and the result is still a per-key mask rolled by hand instead of a call
+        # to `sanitize_request_headers`.
+        rf"""{_MASK_RHS}\s+if\s[^\n]*==\s*["']({_CREDENTIAL_HEADER_ALTERNATION})["']""",
     )
 )
 

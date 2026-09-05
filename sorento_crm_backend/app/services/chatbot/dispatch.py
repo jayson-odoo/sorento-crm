@@ -317,10 +317,23 @@ class RetryUnavailable(RuntimeError):
 
 
 class ReinjectFailed(RuntimeError):
-    """The ingress answered non-2xx. The caller answers 502 and leaves the row alone."""
+    """The ingress answered non-2xx. The caller answers 502 and leaves the row alone.
 
-    def __init__(self, status_code: int, body: str) -> None:
-        super().__init__(f"ingress returned {status_code}: {body}")
+    **The message is the status code and a fixed sentence. It never carries the ingress
+    response body**, and `body` is kept only so the server log can hold it. Echoing the
+    body made the acknowledged DNS-rebinding residual a read oracle: a host that answers
+    public to the guard's `getaddrinfo` and private to httpx's own resolution had its
+    first 500 bytes returned in the 502 an operator reads, and written to
+    `integration_logs.error_message`. That is blind SSRF upgraded to a read of an internal
+    service, and it made the guard's "one DNS round trip wide" claim untrue.
+    """
+
+    def __init__(self, status_code: int, body: str = "") -> None:
+        super().__init__(
+            f"The retry ingress refused the re-injection (HTTP {status_code})."
+            if status_code
+            else "The retry ingress could not be reached."
+        )
         self.status_code = status_code
         self.body = body
 
@@ -407,6 +420,7 @@ def reinject_envelope(db: Any, row: Any) -> None:
         raise ReinjectFailed(0, str(exc)) from exc
 
     if response.status_code >= 300:
+        # The body goes to the SERVER LOG and stops there. See `ReinjectFailed`.
         logger.warning(
             "chatbot retry re-inject rejected: %s %s", response.status_code, response.text[:300]
         )
