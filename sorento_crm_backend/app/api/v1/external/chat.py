@@ -7,10 +7,16 @@ live sender. Returning the data keeps egress with whoever called and keeps the t
 harness's containment model intact. n8n already waits the whole turn today, so nothing
 gets slower.
 
-This module is one of only two files allowed to import `app.services.chatbot`
-(`tests/chatbot/test_import_boundary.py` enforces it). It is a thin adapter: validate,
-call `run_turn`, serialise, log. Every call writes an `integration_log` on success AND
-failure, the same as the ideation turn and the conversation-variables endpoint.
+This module is one of only three files allowed to import `app.services.chatbot`
+(`tests/chatbot/test_import_boundary.py` enforces it; the others are the trace/admin API
+and the RQ task the offload runs on). It is a thin adapter: validate, call `run_turn`,
+serialise, log. Every call writes an `integration_log` on success AND failure, the same as
+the ideation turn and the conversation-variables endpoint.
+
+**In S7 mode (`CHATBOT_ORDERING_ENABLED`) `/turn` is the only trigger**: it runs the whole
+turn, orders it per contact, and returns the finished reply and actions, so `/complete`
+answers 410 Gone. The route is still declared because n8n keeps calling it until the S7
+promote lands on the n8n side; it is deleted at S8 (H6, AC-701).
 
 **`SessionLocal` here is the engine's session seam, and it is the ONLY one.** The engine
 opens and closes its own sessions around the LLM call (the capacity rule: never hold one
@@ -36,10 +42,12 @@ from sqlalchemy.orm import Session
 
 # The engine's session seam. See the module docstring: module-level on purpose, and
 # the single point every test patches to keep the engine off the shared database.
+from app.config import settings
 from app.database import SessionLocal, get_db
 from app.dependencies import get_external_api_user
 from app.schemas.integration import IntegrationLogCreate
 from app.services.chatbot import complete_turn, run_turn
+from app.services.error_handler import AppException
 from app.services.chatbot_reply_copy import CHATBOT_TURN_ERROR_REPLY
 from app.services.chatbot.contracts import (
     CompleteRequest,
@@ -89,6 +97,34 @@ def _logged_payload(payload: TurnRequest) -> str:
 # into two different apologies for the same silence and the package keeps exporting
 # exactly its two entry points (D3).
 TAIL_ERROR_REPLY = CHATBOT_TURN_ERROR_REPLY
+
+
+# H6, AC-701: the thin spine has ONE trigger. In S7 mode `/turn` runs the whole turn and
+# returns the finished reply, so a caller arriving at `/complete` is running the pre-S7
+# graph against an S7 backend - it has a turn the CRM already answered and is about to
+# answer it a second time. 410 rather than 404: the route existed, it is gone on purpose,
+# and n8n's error branch shows the operator which half of the promote was missed.
+#
+# The ROUTE itself is deleted at S8, not here. n8n's S2 tail keeps calling `/complete`
+# until the S7 promote lands on the n8n side, and deleting the route before that strands
+# every turn a lane still completes (n8n-changes.md, S7).
+S7_TAIL_GONE_CODE = "CHATBOT_S7_MODE_OWNS_THE_TAIL"
+S7_TAIL_GONE_MESSAGE = (
+    "This turn was already completed by the CRM. S7 mode owns the tail: POST /chat/turn "
+    "runs the whole turn and returns the finished reply and actions, so there is nothing "
+    "left for /complete to fold in."
+)
+
+
+def _s7_mode() -> bool:
+    """`CHATBOT_ORDERING_ENABLED` - the one flag that says the CRM owns the whole turn.
+
+    It is the same flag that turns per-contact ordering on because they are the same
+    promote: the thin spine posts every message to `/turn`, the CRM orders them per
+    contact and answers each one itself. Two flags for one cutover would only let an
+    operator half-arrive.
+    """
+    return bool(getattr(settings, "chatbot_ordering_enabled", False))
 
 
 @router.post("/turn", response_model=TurnResponse, status_code=status.HTTP_200_OK)
@@ -214,6 +250,13 @@ def chat_turn_complete(
     to_reraise: HTTPException | None = None
 
     try:
+        if _s7_mode():
+            raise AppException(
+                status_code=status.HTTP_410_GONE,
+                message="This turn engine completes its own turns.",
+                detail=S7_TAIL_GONE_MESSAGE,
+                code=S7_TAIL_GONE_CODE,
+            )
         # Same reason as `/turn`: end the auth dependencies' transaction before the tail
         # runs, so the request is not pinning a pooled connection across it.
         db.rollback()

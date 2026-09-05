@@ -615,19 +615,88 @@ class TestEmptyOrMalformedEnvelopeIsExplicit422:
 
 
 class TestSingleTrigger:
-    """H6: 'second unlocked spine entry' - fix S7 by giving the thin spine exactly ONE
-    trigger. Best-effort static check: the external chat router exposes exactly one route
-    that can start/advance a turn (S7 collapses `/turn` + `/complete` into `/turn` and
-    deletes `delegate.py`, per the plan's S7 section). NOTE for whoever reads this red: as
-    of this commit there is only ONE route already (`POST /turn`; no `/complete` route
-    exists in code, only in the `ChatbotTurn` model's docstring describing the pre-S7
-    design) - so this assertion is plausibly GREEN today, not RED. Kept as a named
-    regression guard per the tester brief's own escape hatch ("skip if untestable, say
-    so") rather than skipped outright, since it directly encodes the S7 exit condition and
-    costs nothing to leave in.
+    """H6, AC-701: in S7 mode the thin spine has exactly ONE trigger.
+
+    **Adjusted from a route-inventory check after the captain's ruling of 5 Sep 2026.**
+    The original assertion (`post_routes == ["/turn"]`) is the right end state and the
+    wrong gate for S7: n8n's S2 tail keeps calling `POST /turn/{turn_id}/complete` until
+    the S7 promote lands on the n8n side, so DELETING the route here would strand every
+    turn a lane still completes. The physical deletion is S8 (plan, S8 slice;
+    `documentation/plans/chatbot/n8n-changes.md`, S7 "Not covered by this slice").
+
+    What S7 owes instead, and what this asserts: with the S7 mode flag on
+    (`CHATBOT_ORDERING_ENABLED`, the same flag that turns per-contact ordering on, because
+    it is the same promote) `/turn` runs the whole turn and returns the finished reply and
+    actions, and every `/complete` variant answers 410 Gone naming S7 mode. With the flag
+    off - the default, and what production runs today - nothing changes.
     """
 
-    def test_exactly_one_turn_creating_route_on_the_external_chat_router(self) -> None:
+    _DONE_TURN = {
+        "turn_id": "22222222-2222-2222-2222-222222222222",
+        "is_test": False,
+        "ctx": {"contact": {"id": CONTACT_ID}, "text": {}, "session": {}, "parse": {}, "access": {}, "media": None},
+        "item": {"branch_kind": "low_signal", "allowed": True, "decision": "allow"},
+        "branch_kind": "low_signal",
+        "delegate": None,
+        "reply": {"text": "Sure - which product do you mean?", "quick_replies": []},
+        "actions": [
+            {"kind": "send_message", "text": "Sure - which product do you mean?", "dry_run": False}
+        ],
+        "session_patch": None,
+        "delegate_payload": None,
+        "duplicate": False,
+    }
+
+    @pytest.fixture()
+    def api(self, session_factory, monkeypatch):
+        """The chat router alone, with the auth principal and the request session stubbed.
+
+        Mounted bare rather than through `app.main` on purpose: what is under test is the
+        ROUTER's own surface - which triggers it exposes and what each answers - and the
+        two dependencies below are the only ones the routes declare themselves.
+        """
+        from fastapi import FastAPI as _FastAPI
+
+        from app.api.v1.external import chat as chat_router_mod
+        from app.dependencies import get_db, get_external_api_user
+
+        class _DoneResult:
+            def as_dict(self):
+                return dict(TestSingleTrigger._DONE_TURN)
+
+            status = "done"
+            error = None
+
+        class _CompletedResult:
+            def as_dict(self):
+                return {
+                    "turn_id": TestSingleTrigger._DONE_TURN["turn_id"],
+                    "reply": TestSingleTrigger._DONE_TURN["reply"],
+                    "actions": TestSingleTrigger._DONE_TURN["actions"],
+                    "session_patch": None,
+                }
+
+        monkeypatch.setattr(chat_router_mod, "run_turn", lambda *a, **k: _DoneResult())
+        monkeypatch.setattr(
+            chat_router_mod, "complete_turn", lambda *a, **k: _CompletedResult()
+        )
+
+        api = _FastAPI()
+        api.include_router(chat_router_mod.router, prefix="/chat")
+
+        def _override_db():
+            db = session_factory()
+            try:
+                yield db
+            finally:
+                db.close()
+
+        api.dependency_overrides[get_db] = _override_db
+        api.dependency_overrides[get_external_api_user] = lambda: {"id": "test-principal"}
+        return TestClient(api, raise_server_exceptions=False)
+
+    def test_only_one_route_creates_a_turn(self) -> None:
+        """The inventory half: `/complete` may exist, but only `/turn` starts a turn."""
         from app.api.v1.external import chat as chat_router_mod
 
         post_routes = [
@@ -635,6 +704,39 @@ class TestSingleTrigger:
             for route in chat_router_mod.router.routes
             if "POST" in getattr(route, "methods", set())
         ]
-        assert post_routes == ["/turn"], (
-            f"the thin spine must have exactly one turn-creating trigger, found {post_routes}"
+        assert "/turn" in post_routes
+        creating = [path for path in post_routes if not path.endswith("/complete")]
+        assert creating == ["/turn"], (
+            f"the thin spine must have exactly one turn-creating trigger, found {creating}"
         )
+
+    def test_s7_mode_turn_returns_the_finished_reply_and_complete_is_gone(
+        self, api, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(settings, "chatbot_ordering_enabled", True, raising=False)
+
+        turn = api.post(
+            "/chat/turn",
+            json={"envelope": {"message": {}, "contact": {"id": CONTACT_ID}}},
+        )
+        assert turn.status_code == 200, turn.text
+        body = turn.json()
+        assert body["delegate"] is None, "S7 mode delegates nothing - the CRM owns the tail"
+        assert body["reply"]["text"], "the caller must get the finished reply to send"
+        assert body["actions"], "and the actions to execute"
+
+        gone = api.post(
+            f"/chat/turn/{body['turn_id']}/complete", json={"item": {"branch_kind": "low_signal"}}
+        )
+        assert gone.status_code == 410, gone.text
+        assert "S7 mode" in gone.text, gone.text
+
+    def test_with_the_flag_off_complete_still_works(self, api, monkeypatch) -> None:
+        monkeypatch.setattr(settings, "chatbot_ordering_enabled", False, raising=False)
+
+        completed = api.post(
+            f"/chat/turn/{TestSingleTrigger._DONE_TURN['turn_id']}/complete",
+            json={"item": {"branch_kind": "business_query"}},
+        )
+        assert completed.status_code == 200, completed.text
+        assert completed.json()["reply"]["text"]

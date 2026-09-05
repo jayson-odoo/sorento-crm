@@ -97,11 +97,23 @@ class Settings(BaseSettings):
     # forever - a ghost in the trace list that Retry (failed turns only, R4) cannot touch.
     chatbot_delegated_ttl_minutes: int = 10  # CHATBOT_DELEGATED_TTL_MINUTES
 
-    # S7 per-contact ordering (AC-709, AC-710). OFF until the owner promotes S7, because
-    # until then n8n's own dispatcher is still serialising per contact and doing it twice
-    # would only add the CRM's wait to n8n's. When it is on, a turn takes a redis ticket
-    # for its contact and waits for the ticket before it; different contacts never wait on
-    # each other. CHATBOT_ORDERING_ENABLED.
+    # S7 MODE (AC-701, AC-709, AC-710). OFF until the owner promotes S7, because until
+    # then n8n's own dispatcher is still serialising per contact and doing it twice would
+    # only add the CRM's wait to n8n's.
+    #
+    # It switches on TWO halves of one promote, and they are one flag because they are one
+    # cutover - the thin spine posts every message to `/turn` and the CRM answers it:
+    #
+    #   * per-contact ordering: a turn takes a redis ticket for its contact and waits for
+    #     the ticket before it; different contacts never wait on each other;
+    #   * the CRM owns the tail: `POST /chat/turn` returns the finished reply, and
+    #     `/turn/{id}/complete` answers 410 Gone (H6, one trigger).
+    #
+    # **Precondition for turning it on: the CRM must complete every lane** - S6c landed
+    # and every branch kind listed in `system_settings.chatbot_completed_lanes`. Flip it
+    # while a lane still delegates and that lane's turns have nobody to finish them: the
+    # head answers `delegate: <lane>`, n8n's `/complete` call is refused, and the row sits
+    # `delegated` until the sweep fails it. CHATBOT_ORDERING_ENABLED.
     chatbot_ordering_enabled: bool = False
     # The longest a turn waits for its contact's earlier turns. Past it the turn is failed
     # at stage `queued` with today's error reply rather than holding the request open: n8n's
