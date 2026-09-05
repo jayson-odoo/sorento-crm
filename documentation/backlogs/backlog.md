@@ -145,3 +145,14 @@ removed copy, for whoever restores a UI for them:
 - **BL-054** (2026-09-04, same plan): `chatbot.turns` retention sweep (90 days) via the existing
   scheduler pattern; and the text-sniffing sites inventoried in the plan (`tierRepick`,
   `_CO_ALIASES`, keyword domain switches) to move into the parser after parity (D11).
+- **BL-055** (2026-09-05, same plan, hazard H4): the three `sub-media-intake` guards that stay
+  n8n-side by D1 and therefore did not move with the turn-engine port. (a) `sub-media-intake RS`
+  mocks the CRM media endpoint only when the item has a `test_run_id` AND `scope != 'chat-ui'`,
+  and `zz-chat` sets `scope: 'chat-ui'`, so a media turn from the chat console reaches the real
+  billable `POST /external/media/process` - the gate belongs on the caller, before the side
+  effect, not inside the callee. (b) `if-media-in` is FALSE when there is no fetchable URL, so a
+  media attachment without one is silently a text turn. (c) the async poll loop
+  (`wait-media-poll` / `media-poll-http` / `media-poll-merge`) has zero observed live traffic and
+  was deliberately not ported; measure before porting it. The CRM half of (a) is already closed:
+  the turn engine never calls the media endpoint (`ctx.media` arrives on the envelope) and a
+  dry-run turn writes nothing outside `chatbot.turns` (AC-702).
